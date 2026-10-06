@@ -17,6 +17,8 @@ Early. What works today:
   tools, files), zen, timeline. `ctrl-t` switches.
 - **Recordings**: every session is saved to `~/.local/share/tazuna/sessions/` and replays like a video.
 - **Headless mode** for benchmarks: `tazuna --run prompt.txt` prints claude's result JSON.
+- **Run log**: one line per run in `~/.local/share/tazuna/runs.jsonl` (stop reason, cost, per-turn cache use, tools,
+  files changed). `tazuna --log` shows the latest runs.
 
 Parity check (6 real Go tickets × 2 runs, Opus 5.5 medium): same hidden-test pass rate and judge score as `claude -p` with
 the same profile, identical per-turn overhead.

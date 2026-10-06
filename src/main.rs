@@ -4,12 +4,14 @@
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
 //!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
+//!   tazuna --log [N]   # the last N runs from the run log (~/.local/share/tazuna/runs.jsonl)
 //!
 //! Designs: 1 aurora · 2 cockpit (default) · 3 zen · 4 timeline. Live sessions are saved to
 //! ~/.local/share/tazuna/sessions/ and replay like any recording.
 
 mod live;
 mod replay;
+mod runlog;
 mod session;
 mod ui;
 
@@ -46,6 +48,7 @@ struct Args {
     effort: String,
     allow_non_git: bool,
     run: Option<PathBuf>,
+    log: Option<usize>,
 }
 
 fn args() -> Result<Args> {
@@ -61,6 +64,7 @@ fn args() -> Result<Args> {
         effort: "medium".into(),
         allow_non_git: false,
         run: None,
+        log: None,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -74,6 +78,7 @@ fn args() -> Result<Args> {
             "--effort" => a.effort = val()?,
             "--allow-non-git" => a.allow_non_git = true,
             "--run" => a.run = Some(val()?.into()),
+            "--log" => a.log = Some(it.next().and_then(|n| n.parse().ok()).unwrap_or(20)),
             "--size" => {
                 let v = val()?;
                 let (w, h) = v.split_once('x').context("--size WxH")?;
@@ -92,6 +97,10 @@ fn args() -> Result<Args> {
 
 fn main() -> Result<()> {
     let a = args()?;
+    if let Some(n) = a.log {
+        let home = std::env::var("HOME").context("HOME")?;
+        return runlog::print_recent(&PathBuf::from(home).join(".local/share/tazuna/runs.jsonl"), n);
+    }
     match (&a.path, a.snapshot) {
         (Some(p), Some(n)) => snapshot(Replay::load(p, a.raw_timing)?, n, a.size, a.design),
         (Some(p), None) => {
@@ -130,6 +139,7 @@ fn main() -> Result<()> {
 fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     let prompt = std::fs::read_to_string(prompt_file).with_context(|| format!("reading {}", prompt_file.display()))?;
     let mut live = live::Live::new(&a.model, &a.effort)?;
+    live.mode = "headless";
     live.send(&prompt)?;
     loop {
         for (_, e) in live.poll() {

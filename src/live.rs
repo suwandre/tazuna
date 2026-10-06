@@ -4,9 +4,11 @@
 //! interrupt control request the official Agent SDK uses; if claude does not answer, the process is killed and the
 //! next message resumes the session with `--resume`.
 
+use crate::runlog::Run;
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::{
+    collections::VecDeque,
     fs::File,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
@@ -50,6 +52,13 @@ pub struct Live {
     rec: File,
     pub rec_path: PathBuf,
     t0: Instant,
+    /// Runs in flight, oldest first (one per message; claude answers them in order).
+    runs: VecDeque<Run>,
+    /// claude reports cost cumulatively per process; this is the last total seen.
+    proc_cost: f64,
+    runs_log: PathBuf,
+    /// "live" or "headless", recorded in the run log.
+    pub mode: &'static str,
 }
 
 impl Live {
@@ -85,6 +94,10 @@ impl Live {
             rec,
             rec_path,
             t0: Instant::now(),
+            runs: VecDeque::new(),
+            proc_cost: 0.0,
+            runs_log: data.join("runs.jsonl"),
+            mode: "live",
         })
     }
 
@@ -101,6 +114,8 @@ impl Live {
         let stdin = self.stdin.as_mut().context("claude stdin closed")?;
         writeln!(stdin, "{line}")?;
         stdin.flush()?;
+        let run = Run::new(text, self.elapsed_ms(), &self.cwd);
+        self.runs.push_back(run);
         Ok(self.record(json!({"type": "harness_user", "text": text})))
     }
 
@@ -113,6 +128,9 @@ impl Live {
             return Some(self.kill("stopped"));
         }
         self.interrupting = Some(Instant::now());
+        if let Some(run) = self.runs.front_mut() {
+            run.interrupted();
+        }
         Some(self.record(json!({"type": "harness_interrupt"})))
     }
 
@@ -125,6 +143,7 @@ impl Live {
         self.stdin = None;
         self.generation += 1;
         self.interrupting = None;
+        self.end_runs();
         self.record(json!({"type": "harness_notice", "text": format!("{why} · send a message to continue"), "error": false}))
     }
 
@@ -141,14 +160,23 @@ impl Live {
                     if e["type"] == "system" && e["subtype"] == "init" {
                         self.session_id = e["session_id"].as_str().map(String::from);
                     }
+                    if let Some(run) = self.runs.front_mut() {
+                        run.observe(&e);
+                    }
                     if e["type"] == "result" {
                         self.interrupting = None;
+                        let total = e["total_cost_usd"].as_f64().unwrap_or(self.proc_cost);
+                        if let Some(run) = self.runs.pop_front() {
+                            self.log(run.finish(Some(&e), total - self.proc_cost, self.elapsed_ms(), &self.meta(), &self.cwd));
+                        }
+                        self.proc_cost = total;
                     }
                     out.push(self.record(e));
                 }
                 Msg::Exited(stderr) => {
                     let code = self.child.take().and_then(|mut c| c.wait().ok()).and_then(|st| st.code());
                     self.stdin = None;
+                    self.end_runs();
                     let tail: Vec<&str> = stderr.lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
                     let text = format!("claude exited ({}){}", code.map_or("signal".into(), |c| format!("code {c}")),
                         if tail.is_empty() { String::new() } else { format!(": {}", tail.join(" · ")) });
@@ -160,6 +188,30 @@ impl Live {
             out.push(self.kill("stopped (claude did not respond, process restarted)"));
         }
         out
+    }
+
+    /// The process is gone: runs without a result end here (stopped if the user asked, otherwise crashed).
+    fn end_runs(&mut self) {
+        // ponytail: a dead process reports no cost, so these runs log $0; the session's estimate is in the recording
+        while let Some(run) = self.runs.pop_front() {
+            let line = run.finish(None, 0.0, self.elapsed_ms(), &self.meta(), &self.cwd);
+            self.log(line);
+        }
+        self.proc_cost = 0.0;
+    }
+
+    fn meta(&self) -> Value {
+        json!({
+            "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
+            "cwd": self.cwd, "session_id": self.session_id, "recording": self.rec_path,
+        })
+    }
+
+    fn log(&self, line: Value) {
+        let appended = std::fs::OpenOptions::new().create(true).append(true).open(&self.runs_log).and_then(|mut f| writeln!(f, "{line}"));
+        if let Err(e) = appended {
+            eprintln!("run log: {e}");
+        }
     }
 
     fn record(&mut self, e: Value) -> (f64, Value) {

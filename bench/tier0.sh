@@ -10,10 +10,9 @@ BIN=target/release/tazuna
 
 size=$(stat -f%z "$BIN" 2>/dev/null || stat -c%s "$BIN")
 
-# render cost: replay a whole recorded session headlessly (session state + layout + wrapping)
-start=$(python3 -c 'import time; print(time.time())')
-"$BIN" recordings/caddy-opus-medium.jsonl --snapshot 100000 --size 120x40 >/dev/null
-render_ms=$(python3 -c "import time; print(round((time.time()-$start)*1000))")
+# render cost: replay a whole recorded session headlessly (session state + layout + wrapping). Median of 7 after one
+# warm-up run: macOS scans a freshly built binary on its first launch, which adds ~200 ms.
+render_ms=$(python3 bench/render_ms.py "$BIN")
 
 # per-turn overhead: input tokens of a one-word task (system prompt + tool schemas), via the real live path
 work=$(mktemp -d)
