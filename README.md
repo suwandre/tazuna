@@ -21,6 +21,58 @@ Early. What works today:
 Parity check (6 real Go tickets × 2 runs, Opus 5.5 medium): same hidden-test pass rate and judge score as `claude -p` with
 the same profile, identical per-turn overhead.
 
+## Benchmarks (v0.0.1)
+
+Measured 2026-10-03 to 2026-10-06 on an M5 Pro. Changes per version are tracked in [CHANGELOG.md](CHANGELOG.md).
+
+**Real work: 6 recent merged PRs** in hugo, k6, terraform, prometheus and caddy (Go). Each harness gets the issue text and
+the repo at the PR's parent commit, twice. Hidden tests are the PR's own tests. A blind Opus 5.5 judge scores all
+candidates for a task together (1-10), twice in shuffled order. Every harness runs Claude Sonnet 5.5 at high effort; cost is
+tokens × Sonnet list price for all of them.
+
+| Harness | Judge | All hidden tests pass | Hidden tests passed | Median cost | Median time | Claude billing |
+|---|---|---|---|---|---|---|
+| Hermes | 7.08 | 8/12 | 87% | $0.45 | 410s | routes as Claude Code (extra usage) |
+| OMP | 6.88 | 8/12 | 85% | $0.47 | 339s | direct claude.ai OAuth |
+| OMO | 6.71 | 9/12 | 90% | $0.57 | 290s | official Agent SDK |
+| Claude Code (stock) | 6.42 | 7/12 | 84% | $0.42 | 322s | first-party |
+| **tazuna** | **6.29** | **8/12** | **83%** | **$0.31** | **240s** | **first-party (`claude` CLI)** |
+| Empryo | 6.29 | 8/12 | 85% | $0.48 | 419s | subscription via its own client |
+| pi | 6.00 | 7/12 | 80% | $0.25 | 201s | extra usage (pay per token) |
+
+tazuna v0.0.1 is the lean baseline: about 30-45% cheaper than the feature-rich harnesses for 0.4-0.8 lower judge scores, and
+cheaper than stock Claude Code at equal quality (the gap is within noise). The features planned next target that quality gap.
+
+**Model and effort matter more than the harness** (same tasks, tazuna's profile, cost as billed):
+
+| Model · effort | Judge | Median cost |
+|---|---|---|
+| Sonnet 5.5 · low / medium / high | 4.04 / 5.00 / 6.21 | $0.15 / $0.17 / $0.36 |
+| **Opus 5.5 · medium (tazuna default)** | **7.00** | **$0.44** |
+| Opus 5.5 · high / xhigh | 7.04 / 7.00 | $0.74 / $3.10 |
+
+On the default (Opus 5.5 medium), tazuna scored 7.25 vs 6.67-6.71 for the same profile through `claude -p`, at equal cost
+(within noise; 12 runs each, judged together).
+
+**One-shot tasks** (9 easy-to-hard Python tasks, 2 runs each, Sonnet 5.5 high): every harness passes nearly all hidden tests;
+cost is what differs. tazuna's profile (cc-mid) scored 8.11 at $0.061 per task, vs 8.19 at $0.096 for stock Claude Code,
+7.83 at $0.064 for pi, and 7.67-7.92 at $0.096-0.173 for OMO/OMP. (Measured with the profile through `claude -p`; tazuna
+itself matched that profile on the real-work tasks.)
+
+**Footprint**
+
+| | tazuna | stock Claude Code |
+|---|---|---|
+| Input tokens per turn before any work (system prompt + tools) | 2.9k | 21k |
+| App binary / memory / CPU while animating | 2.0 MB / ~7 MB / ~1% | — |
+
+tazuna runs on top of the `claude` CLI (~200 MB, ~1 s to start) and a Node tool server; porting the tool server to Rust is
+planned.
+
+**How to read these numbers**: one run varies by about ±1.2 judge points and ±$0.40. Re-running the same setup a day later
+moved median cost by 24% (mean 9%) and the judge score by 0.04. We treat judge differences under 0.5 and cost differences under
+15% as noise, and compare against a same-day baseline.
+
 ## Usage
 
 ```sh
