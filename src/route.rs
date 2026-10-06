@@ -15,6 +15,96 @@ pub struct Lane {
     pub reason: String,
     /// Model and effort for the fix rounds after failed verification (None: stay on the lane).
     pub escalate: Option<(String, String)>,
+    pub profile: Profile,
+}
+
+/// How claude runs.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Profile {
+    /// Claude Code's own prompt and tools with the repo's settings, hooks, skills and CLAUDE.md (not the user's personal
+    /// ~/.claude setup). For repos that carry agent config: their rules exist for a reason.
+    Repo,
+    /// tazuna's cc-mid profile: ~10-line prompt, Grep/Glob plus four lean tools, no settings. About 30% cheaper.
+    Lean,
+}
+
+impl Profile {
+    pub fn name(self) -> &'static str {
+        match self {
+            Profile::Repo => "repo",
+            Profile::Lean => "lean",
+        }
+    }
+}
+
+/// What agent config a repo carries.
+#[derive(Default, Debug)]
+pub struct RepoConfig {
+    pub instructions: Vec<String>,
+    pub settings: bool,
+    pub hooks: bool,
+    pub skills: usize,
+    pub commands: usize,
+    pub agents: usize,
+    pub mcp: bool,
+}
+
+impl RepoConfig {
+    pub fn read(cwd: &Path) -> Self {
+        let file = |p: &str| cwd.join(p).is_file();
+        let count = |d: &str| std::fs::read_dir(cwd.join(d)).map(|r| r.flatten().count()).unwrap_or(0);
+        let settings_text: String = [".claude/settings.json", ".claude/settings.local.json"]
+            .iter()
+            .filter_map(|f| std::fs::read_to_string(cwd.join(f)).ok())
+            .collect();
+        RepoConfig {
+            instructions: ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md", "CLAUDE.local.md"].iter().filter(|f| file(f)).map(|f| f.to_string()).collect(),
+            settings: !settings_text.is_empty(),
+            hooks: settings_text.contains("\"hooks\""),
+            skills: count(".claude/skills"),
+            commands: count(".claude/commands"),
+            agents: count(".claude/agents"),
+            mcp: file(".mcp.json"),
+        }
+    }
+
+    pub fn any(&self) -> bool {
+        !self.instructions.is_empty() || self.settings || self.skills > 0 || self.commands > 0 || self.agents > 0 || self.mcp
+    }
+
+    /// Fail closed: any settings file can run code (hooks, apiKeyHelper, statusLine, env, plugins, ...), and so can skills
+    /// (they ship scripts), commands, subagent definitions and MCP servers. Only plain instruction files are inert.
+    pub fn runs_code(&self) -> bool {
+        self.settings || self.skills > 0 || self.commands > 0 || self.agents > 0 || self.mcp
+    }
+
+    pub fn summary(&self) -> String {
+        let mut parts: Vec<String> = self.instructions.clone();
+        if self.hooks {
+            parts.push("hooks".into());
+        } else if self.settings {
+            parts.push("settings".into());
+        }
+        if self.skills > 0 {
+            parts.push(format!("{} skills", self.skills));
+        }
+        if self.commands > 0 {
+            parts.push(format!("{} commands", self.commands));
+        }
+        if self.agents > 0 {
+            parts.push(format!("{} subagents", self.agents));
+        }
+        if self.mcp {
+            parts.push("MCP servers".into());
+        }
+        parts.join(", ")
+    }
+}
+
+/// Repos with agent config get the repo profile; the rest run lean (equal quality on config-less repos, cheaper).
+pub fn profile_for(cwd: &Path) -> (Profile, String) {
+    let c = RepoConfig::read(cwd);
+    if c.any() { (Profile::Repo, format!("repo config: {}", c.summary())) } else { (Profile::Lean, "no repo config".into()) }
 }
 
 /// Repos with at most this many tracked files count as tiny.
@@ -35,20 +125,26 @@ pub fn choose(cwd: &Path) -> Lane {
             effort: "medium".into(),
             reason: format!("tiny repo, {n} tracked file{}", if n == 1 { "" } else { "s" }),
             escalate: Some(("claude-opus-5-5".into(), "high".into())),
+            profile: Profile::Lean,
         },
-        _ => Lane {
-            name: "default",
-            model: "claude-opus-5-5".into(),
-            effort: "medium".into(),
-            reason: files.map_or("not a git repo".into(), |n| format!("{n} tracked files")),
-            escalate: None,
-        },
+        _ => {
+            let (profile, why) = profile_for(cwd);
+            Lane {
+                name: "default",
+                model: "claude-opus-5-5".into(),
+                effort: "medium".into(),
+                reason: format!("{}; {why}", files.map_or("not a git repo".into(), |n| format!("{n} tracked files"))),
+                escalate: None,
+                profile,
+            }
+        }
     }
 }
 
-/// Explicit `--model`/`--effort` turn routing off.
-pub fn manual(model: &str, effort: &str) -> Lane {
-    Lane { name: "manual", model: model.into(), effort: effort.into(), reason: "set on the command line".into(), escalate: None }
+/// Explicit `--model`/`--effort` turn model routing off; the profile still follows the repo's config.
+pub fn manual(cwd: &Path, model: &str, effort: &str) -> Lane {
+    let (profile, why) = profile_for(cwd);
+    Lane { name: "manual", model: model.into(), effort: effort.into(), reason: format!("set on the command line; {why}"), escalate: None, profile }
 }
 
 #[cfg(test)]
@@ -70,7 +166,19 @@ mod tests {
             std::fs::write(dir.join(format!("f{i}.txt")), "x").unwrap();
         }
         git(&["add", "."]);
-        assert_eq!(choose(&dir).name, "default");
+        let lane = choose(&dir);
+        assert_eq!((lane.name, lane.profile), ("default", Profile::Lean), "no repo config: lean");
+        std::fs::create_dir_all(dir.join(".claude/skills/review")).unwrap();
+        std::fs::write(dir.join(".claude/settings.json"), r#"{"hooks": {}}"#).unwrap();
+        std::fs::write(dir.join("CLAUDE.md"), "rules").unwrap();
+        let c = RepoConfig::read(&dir);
+        assert!(c.hooks && c.skills == 1 && c.runs_code() && c.summary() == "CLAUDE.md, hooks, 1 skills", "{c:?}");
+        assert_eq!(choose(&dir).profile, Profile::Repo, "repo config is respected");
+        std::fs::write(dir.join(".claude/settings.json"), r#"{"statusLine": {"type": "command", "command": "evil"}}"#).unwrap();
+        std::fs::remove_dir_all(dir.join(".claude/skills")).unwrap();
+        assert!(RepoConfig::read(&dir).runs_code(), "any settings file needs trust, not just ones with hooks");
+        std::fs::remove_file(dir.join(".claude/settings.json")).unwrap();
+        assert!(!RepoConfig::read(&dir).runs_code(), "a CLAUDE.md alone runs nothing");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

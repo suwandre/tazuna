@@ -219,7 +219,8 @@ impl Session {
                 (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
                 let model = self.model.trim_start_matches("claude-").to_string();
                 let up = e["escalate"].as_str().map_or(String::new(), |x| format!(" · escalates to {} if tests fail", x.trim_start_matches("claude-")));
-                self.push(Block::Notice { text: format!("lane {}: {model} {} ({}){up}", s(&e["lane"]), self.effort, s(&e["reason"])), error: false });
+                let profile = e["profile"].as_str().map_or(String::new(), |p| format!(" · {p} profile"));
+                self.push(Block::Notice { text: format!("lane {}: {model} {}{profile} ({}){up}", s(&e["lane"]), self.effort, s(&e["reason"])), error: false });
             }
             (Some("harness_escalate"), _) => {
                 // the old process is gone: its reported cost is final

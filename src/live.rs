@@ -4,7 +4,7 @@
 //! interrupt control request the official Agent SDK uses; if claude does not answer, the process is killed and the
 //! next message resumes the session with `--resume`.
 
-use crate::{route::Lane, runlog::Run, verify};
+use crate::{route::{Lane, Profile}, runlog::Run, verify};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::{
@@ -61,8 +61,11 @@ pub struct Live {
     pub verify: verify::Mode,
     /// Passed to the tool server: shrink bash output above this many chars (0: off).
     pub bash_cap: usize,
-    /// Add the repo's CLAUDE.md / AGENTS.md to the system prompt.
+    /// Add the repo's CLAUDE.md / AGENTS.md to the system prompt (lean profile; the repo profile lets Claude Code load them).
     pub project_instructions: bool,
+    pub profile: Profile,
+    /// Also load the user's personal ~/.claude settings (repo profile).
+    pub user_settings: bool,
     /// (bytes included, source files) for the run log.
     instructions_used: (usize, Vec<String>),
     verifying: bool,
@@ -116,6 +119,8 @@ impl Live {
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
             project_instructions: true,
+            profile: Profile::Lean,
+            user_settings: false,
             instructions_used: (0, Vec::new()),
             verifying: false,
             held: VecDeque::new(),
@@ -162,10 +167,10 @@ impl Live {
 
     /// Applies the router's decision (before the first message) and returns the event that shows it.
     pub fn set_lane(&mut self, lane: Lane) -> (f64, Value) {
-        (self.model, self.effort, self.escalate) = (lane.model.clone(), lane.effort.clone(), lane.escalate.clone());
+        (self.model, self.effort, self.escalate, self.profile) = (lane.model.clone(), lane.effort.clone(), lane.escalate.clone(), lane.profile);
         self.lane = (lane.name.to_string(), lane.reason.clone());
         self.record(json!({"type": "harness_route", "lane": lane.name, "model": lane.model, "effort": lane.effort, "reason": lane.reason,
-            "escalate": lane.escalate.map(|(m, e)| format!("{m} {e}"))}))
+            "profile": lane.profile.name(), "escalate": lane.escalate.map(|(m, e)| format!("{m} {e}"))}))
     }
 
     /// Switches model and effort for the rest of the session: ends the idle process; the next message resumes the session
@@ -355,6 +360,7 @@ impl Live {
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
             "bash_cap": self.bash_cap,
+            "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
             "claude_version": self.claude_version, "cwd": self.cwd, "session_id": self.session_id, "recording": self.rec_path,
@@ -376,24 +382,43 @@ impl Live {
         (t, e)
     }
 
-    fn spawn(&mut self) -> Result<()> {
-        let date = Command::new("date").arg("+%Y-%m-%d").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-        let mut prompt = MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date);
-        if self.project_instructions {
-            let (text, bytes, sources) = project_instructions(&self.cwd);
-            prompt.push_str(&text);
-            self.instructions_used = (bytes, sources);
+    /// Which settings files claude loads (recorded in the run log).
+    fn setting_sources(&self) -> &'static str {
+        match (self.profile, self.user_settings) {
+            (Profile::Lean, _) => "",
+            (Profile::Repo, false) => "project,local",
+            (Profile::Repo, true) => "user,project,local",
         }
-        // the lean tools are this binary's `mcp` mode
-        let exe = std::env::current_exe().context("locating the tazuna binary")?;
-        let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": exe, "args": ["mcp"], "env": {"LEAN_BASH_CAP": self.bash_cap.to_string()}}}}).to_string();
+    }
+
+    fn spawn(&mut self) -> Result<()> {
         let mut cmd = Command::new("claude");
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
-            .args(["--model", &self.model, "--effort", &self.effort])
-            // cc-mid: lean prompt and tools, none of the user's settings, skills or MCP servers
-            .args(["--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--dangerously-skip-permissions"])
-            .args(["--system-prompt", &prompt, "--tools", "Grep,Glob", "--mcp-config", &mcp])
-            .args(["--allowedTools", "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit"]);
+            .args(["--model", &self.model, "--effort", &self.effort, "--dangerously-skip-permissions"])
+            .args(["--setting-sources", self.setting_sources()]);
+        match self.profile {
+            Profile::Repo => {
+                // Claude Code's own prompt and tools; it loads the repo's CLAUDE.md (nested files, @imports), settings,
+                // hooks and skills itself. Per-machine prompt sections move to the first message for cross-session caching.
+                cmd.arg("--exclude-dynamic-system-prompt-sections");
+            }
+            Profile::Lean => {
+                let date = Command::new("date").arg("+%Y-%m-%d").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+                let mut prompt = MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date);
+                if self.project_instructions {
+                    let (text, bytes, sources) = project_instructions(&self.cwd);
+                    prompt.push_str(&text);
+                    self.instructions_used = (bytes, sources);
+                }
+                // the lean tools are this binary's `mcp` mode
+                let exe = std::env::current_exe().context("locating the tazuna binary")?;
+                let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": exe, "args": ["mcp"], "env": {"LEAN_BASH_CAP": self.bash_cap.to_string()}}}}).to_string();
+                // cc-mid: lean prompt and tools, no skills or other MCP servers
+                cmd.args(["--strict-mcp-config", "--disable-slash-commands"])
+                    .args(["--system-prompt", &prompt, "--tools", "Grep,Glob", "--mcp-config", &mcp])
+                    .args(["--allowedTools", "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit"]);
+            }
+        }
         if let Some(id) = &self.session_id {
             cmd.args(["--resume", id]);
         }

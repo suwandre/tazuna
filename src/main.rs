@@ -5,7 +5,10 @@
 //!          fail; otherwise Opus medium)
 //!          [--verify "<cmd>" | --no-verify]   # after claude says done, tazuna runs the tests (auto-detected by default)
 //!          [--bash-cap N]   # shrink bash output longer than N chars (default 8000; 0 = off)
-//!          [--no-project-instructions]   # don't add the repo's CLAUDE.md / AGENTS.md to the prompt
+//!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
+//!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
+//!          [--trust] [--user-settings]   # trust the repo's hooks/skills without asking; also load your ~/.claude settings
+//!          [--no-project-instructions]   # lean profile: don't add the repo's CLAUDE.md / AGENTS.md to the prompt
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
 //!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
@@ -25,6 +28,7 @@ mod replay;
 mod route;
 mod runlog;
 mod session;
+mod trust;
 mod ui;
 mod verify;
 
@@ -66,6 +70,9 @@ struct Args {
     verify: verify::Mode,
     bash_cap: usize,
     project_instructions: bool,
+    profile: Option<route::Profile>,
+    trust: bool,
+    user_settings: bool,
     verdict: Option<String>,
     note: String,
     run_id: Option<String>,
@@ -88,6 +95,9 @@ fn args() -> Result<Args> {
         verify: verify::Mode::Auto,
         bash_cap: mcp::DEFAULT_BASH_CAP,
         project_instructions: true,
+        profile: None,
+        trust: false,
+        user_settings: false,
         verdict: None,
         note: String::new(),
         run_id: None,
@@ -109,6 +119,15 @@ fn args() -> Result<Args> {
             "--no-verify" => a.verify = verify::Mode::Off,
             "--bash-cap" => a.bash_cap = val()?.parse()?,
             "--no-project-instructions" => a.project_instructions = false,
+            "--profile" => {
+                a.profile = Some(match val()?.as_str() {
+                    "repo" => route::Profile::Repo,
+                    "lean" => route::Profile::Lean,
+                    p => bail!("--profile repo|lean, not {p}"),
+                })
+            }
+            "--trust" => a.trust = true,
+            "--user-settings" => a.user_settings = true,
             "--verdict" => a.verdict = Some(val()?),
             "--note" => a.note = val()?,
             "--run-id" | "--id" => a.run_id = Some(val()?),
@@ -174,7 +193,8 @@ fn main() -> Result<()> {
             // label this repo's older runs from git while we are here (cheap, read-only git)
             let _ = labels::label_git(&base, Some(&std::env::current_dir()?));
             let mut live = live::Live::new("", "")?;
-            let route = live.set_lane(lane(&a)?);
+            live.user_settings = a.user_settings;
+            let route = live.set_lane(lane(&a, true)?);
             live.verify = a.verify.clone();
             live.bash_cap = a.bash_cap;
             live.project_instructions = a.project_instructions;
@@ -189,19 +209,39 @@ fn main() -> Result<()> {
     }
 }
 
-/// The router's lane, unless --model/--effort pin it.
-fn lane(a: &Args) -> Result<route::Lane> {
-    Ok(match (&a.model, &a.effort) {
-        (None, None) => route::choose(&std::env::current_dir()?),
-        (m, e) => route::manual(m.as_deref().unwrap_or("claude-opus-5-5"), e.as_deref().unwrap_or("medium")),
-    })
+/// The router's lane, unless --model/--effort pin it; then the profile, and trust for repos whose config runs code.
+/// `interactive`: ask about trust on the terminal (live mode); headless needs --trust.
+fn lane(a: &Args, interactive: bool) -> Result<route::Lane> {
+    let cwd = std::env::current_dir()?;
+    let mut lane = match (&a.model, &a.effort) {
+        (None, None) => route::choose(&cwd),
+        (m, e) => route::manual(&cwd, m.as_deref().unwrap_or("claude-opus-5-5"), e.as_deref().unwrap_or("medium")),
+    };
+    if let Some(p) = a.profile {
+        lane.profile = p;
+        lane.reason.push_str(&format!("; --profile {}", p.name()));
+    }
+    let config = route::RepoConfig::read(&cwd);
+    if lane.profile == route::Profile::Repo && config.runs_code() {
+        let base = labels::dir()?;
+        let trusted = trust::is_trusted(&base, &cwd) || a.trust || (interactive && trust::ask(&cwd, &config.summary()));
+        if trusted {
+            trust::trust(&base, &cwd)?;
+        } else {
+            // not trusted: nothing from the repo runs; its CLAUDE.md still reaches the lean prompt
+            lane.profile = route::Profile::Lean;
+            lane.reason.push_str("; repo not trusted, so lean (its hooks and skills stay off)");
+        }
+    }
+    Ok(lane)
 }
 
 /// Runs one task without a UI and prints claude's result event, the same JSON `claude -p --output-format json` prints.
 fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     let prompt = std::fs::read_to_string(prompt_file).with_context(|| format!("reading {}", prompt_file.display()))?;
     let mut live = live::Live::new("", "")?;
-    live.set_lane(lane(&a)?);
+    live.user_settings = a.user_settings;
+    live.set_lane(lane(&a, false)?);
     live.mode = "headless";
     live.verify = a.verify.clone();
     live.bash_cap = a.bash_cap;

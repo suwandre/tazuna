@@ -15,6 +15,40 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.9 (2026-10-07)
+
+**Repo config is respected by default.** In repos with agent config (`CLAUDE.md`, `AGENTS.md`, `.claude/`, `.mcp.json`),
+tazuna runs the **repo profile**: Claude Code's own prompt and tools with the repo's settings, hooks and skills, and
+Claude Code's own loading of `CLAUDE.md` (nested files and `@imports` included). The user's personal `~/.claude` setup stays
+out unless `--user-settings`. Repos without config, tiny repos and `--profile lean` run the lean profile (cc-mid, ~30%
+cheaper; the bash output cap only exists there).
+
+**Trust.** When a repo's config can run code (any settings file, skills, commands, subagents, MCP servers), the first live
+start asks "Trust this repo? [y/N]" and remembers the answer (`~/.local/share/tazuna/trusted.json`); headless runs need
+`--trust`. Without trust the run is lean: nothing from the repo runs, and its `CLAUDE.md` still reaches the prompt. The check
+fails closed: any settings file counts, not only ones with hooks (`statusLine`, `apiKeyHelper`, `env` and plugins can run
+code too).
+
+Real-work test on T-872 / PR #1068 (same task as 0.0.8), all 15 runs judged together, Opus 5.5 medium:
+
+| Arm | Runs | Judge | Mean cost | New type errors | Verification |
+|---|---|---|---|---|---|
+| Stock Claude Code, repo hooks off | 3 | 5.67 | $1.91 | 0 | — |
+| Stock Claude Code, repo hooks on | 2 | 5.50 | $2.02 | 0 | — |
+| **tazuna 0.0.9 (repo profile)** | 3 | **5.17** (5.5, 5.0, 5.0) | **$1.79** | **0** | 3/3 verified |
+| cc-mid via `claude -p` | 2 | 5.00 | $1.46 | 0 | — |
+| tazuna 0.0.7 (lean) | 2 | 5.00 | $1.31 | 1 | 2/2 verified |
+| tazuna 0.0.8 (lean + CLAUDE.md) | 3 | 4.83 | $1.37 | 1 | 3/3 verified |
+
+The repo profile is within noise of stock Claude Code (−0.33 to −0.5) at 11% lower cost, with no new type errors and the
+most consistent scores. Against lean it is +0.3 (within noise) at ~30% higher cost. Turning the repo's hooks off did not
+lower stock Claude Code's score, so its earlier lead came from its prompt and tools, not the hooks. Across all 15 runs the
+spread between arms (4.8-5.7) is small next to the spread within arms; only 2 runs found the backend root cause. One task:
+an anecdote, not a benchmark.
+
+Tier 0 (lean probe in a repo without config): 2,983 input tokens per turn (unchanged), binary
+2.41 MB.
+
 ## 0.0.8 (2026-10-06)
 
 **Project instructions.** The repo's own `CLAUDE.md`, `.claude/CLAUDE.md` and `AGENTS.md` are added to tazuna's system prompt
