@@ -705,7 +705,7 @@ pub fn wrap(line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Vec<Li
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-const LIVE_KEYS: &str = "enter send · ctrl-c stop/quit · ctrl-y copy reply · ctrl-t design · ctrl-e expand · scroll: wheel/pgup";
+const LIVE_KEYS: &str = "enter send · /good /bad rate run · ctrl-c stop/quit · ctrl-y copy · ctrl-t design · ctrl-e expand";
 
 /// The composer row: typed text with a cursor in live mode, a placeholder and key hints otherwise.
 pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Line<'static> {

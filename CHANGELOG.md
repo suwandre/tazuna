@@ -1,6 +1,7 @@
 # Changelog
 
-Every change that can affect the agent is measured before it stays. Each entry lists what moved and by how much.
+Every change that can affect the agent is measured before it stays. Each entry lists what moved and by how much. Versions
+that change no measurable metric (CPU, memory, binary size, tokens, cost, quality) get no metric table.
 
 **Tiers**
 - **Tier 0** (every change, free): tests, `bench/tier0.sh` (binary size, replay render time, input tokens per turn).
@@ -13,6 +14,21 @@ Every change that can affect the agent is measured before it stays. Each entry l
 
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
+
+## 0.0.7 (2026-10-06)
+
+**Labels for runs**, the training data for routing by task type later. Kept in `~/.local/share/tazuna/labels.jsonl`
+(append-only, next to the run log):
+- `/good` or `/bad` (with an optional note) in the live UI rates the last finished run; it is never sent to claude.
+- `tazuna --verdict good|bad [--note "..."] [--id RUN]` does the same from the shell (default: the latest run).
+- `tazuna --label-git` labels older runs from git: `kept` when a run's output was later committed unchanged, `discarded`
+  when a day has passed and it is in no commit and gone from the working tree. Runs in the current repo are labelled this
+  way automatically when tazuna starts. A user verdict always wins over a git label.
+- Run log lines now have an `id` and the content hash of every file the run changed (what the git check looks for).
+  `tazuna --log` shows a verdict column.
+
+No change to what claude sees or does. Binary 2.35 MB (0.0.6: 2.31 MB); other Tier 0 metrics
+unchanged (2,980 input tokens per turn, 7 ms replay render).
 
 ## 0.0.6 (2026-10-06)
 

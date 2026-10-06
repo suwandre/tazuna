@@ -9,11 +9,14 @@
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
 //!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
 //!   tazuna --log [N]   # the last N runs from the run log (~/.local/share/tazuna/runs.jsonl)
+//!   tazuna --verdict good|bad [--note "..."] [--id RUN]   # label a run (default: the latest); in the UI: /good, /bad
+//!   tazuna --label-git   # label older runs from git: kept (committed) or discarded
 //!   tazuna mcp   # the lean tool server (claude starts it; not for direct use)
 //!
 //! Designs: 1 aurora · 2 cockpit (default) · 3 zen · 4 timeline. Live sessions are saved to
 //! ~/.local/share/tazuna/sessions/ and replay like any recording.
 
+mod labels;
 mod live;
 mod mcp;
 mod outcap;
@@ -61,6 +64,10 @@ struct Args {
     log: Option<usize>,
     verify: verify::Mode,
     bash_cap: usize,
+    verdict: Option<String>,
+    note: String,
+    run_id: Option<String>,
+    label_git: bool,
 }
 
 fn args() -> Result<Args> {
@@ -78,6 +85,10 @@ fn args() -> Result<Args> {
         log: None,
         verify: verify::Mode::Auto,
         bash_cap: mcp::DEFAULT_BASH_CAP,
+        verdict: None,
+        note: String::new(),
+        run_id: None,
+        label_git: false,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -94,6 +105,10 @@ fn args() -> Result<Args> {
             "--verify" => a.verify = verify::Mode::Command(val()?),
             "--no-verify" => a.verify = verify::Mode::Off,
             "--bash-cap" => a.bash_cap = val()?.parse()?,
+            "--verdict" => a.verdict = Some(val()?),
+            "--note" => a.note = val()?,
+            "--run-id" | "--id" => a.run_id = Some(val()?),
+            "--label-git" => a.label_git = true,
             "--log" => a.log = Some(it.next().and_then(|n| n.parse().ok()).unwrap_or(20)),
             "--size" => {
                 let v = val()?;
@@ -116,9 +131,19 @@ fn main() -> Result<()> {
         return mcp::serve();
     }
     let a = args()?;
+    let base = labels::dir()?;
+    if let Some(v) = &a.verdict {
+        let id = labels::verdict(&base, v, &a.note, a.run_id.as_deref())?;
+        println!("labelled run {id}: {v}");
+        return Ok(());
+    }
+    if a.label_git {
+        let (kept, discarded) = labels::label_git(&base, None)?;
+        println!("labelled from git: {kept} kept, {discarded} discarded");
+        return Ok(());
+    }
     if let Some(n) = a.log {
-        let home = std::env::var("HOME").context("HOME")?;
-        return runlog::print_recent(&PathBuf::from(home).join(".local/share/tazuna/runs.jsonl"), n);
+        return runlog::print_recent(&base, n);
     }
     match (&a.path, a.snapshot) {
         (Some(p), Some(n)) => snapshot(Replay::load(p, a.raw_timing)?, n, a.size, a.design),
@@ -142,6 +167,8 @@ fn main() -> Result<()> {
             if !live::in_git_repo() && !a.allow_non_git {
                 bail!("not inside a git repo: the agent edits files without asking, so run it where `git diff` can review and undo changes (or pass --allow-non-git)");
             }
+            // label this repo's older runs from git while we are here (cheap, read-only git)
+            let _ = labels::label_git(&base, Some(&std::env::current_dir()?));
             let mut live = live::Live::new("", "")?;
             let route = live.set_lane(lane(&a)?);
             live.verify = a.verify.clone();
@@ -426,6 +453,19 @@ fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args
             KeyCode::Enter => {
                 let text = v.input.trim().to_string();
                 if text.is_empty() {
+                    continue;
+                }
+                if let Some(rest) = text.strip_prefix("/good").or_else(|| text.strip_prefix("/bad")) {
+                    // rate the last run locally; never sent to claude
+                    let verdict = if text.starts_with("/good") { "good" } else { "bad" };
+                    let msg = match &live.last_run {
+                        Some(id) => labels::dir()
+                            .and_then(|b| labels::add(&b, id, verdict, rest.trim(), "user"))
+                            .map_or_else(|e| format!("could not save the label: {e:#}"), |_| format!("rated the last run {verdict}")),
+                        None => "no finished run to rate yet".into(),
+                    };
+                    s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
+                    v.input.clear();
                     continue;
                 }
                 match live.send(&text) {

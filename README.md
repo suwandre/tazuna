@@ -23,6 +23,8 @@ Early. What works today:
   if their tests fail; everything else runs Opus 5.5 medium. On tiny-repo tasks: −67% cost, same hidden-test results.
 - **Bash output cap**: long command output is shrunk to its start and end (passing-test chatter removed first); the full
   output is saved where claude can read it. `--bash-cap N` sets the limit (default 8000 chars, `0` = off).
+- **Labels**: rate runs with `/good` or `/bad` (UI) or `tazuna --verdict`; `tazuna --label-git` marks runs whose output you
+  committed (`kept`) or threw away (`discarded`). This is the data for learning which model fits which task.
 - **Run log**: one line per run in `~/.local/share/tazuna/runs.jsonl` (stop reason, cost, per-turn cache use, tools,
   files changed). `tazuna --log` shows the latest runs.
 

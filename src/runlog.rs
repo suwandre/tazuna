@@ -144,8 +144,11 @@ impl Run {
         let sum = |k: usize| self.turns.iter().map(|t| t[k]).sum::<u64>();
         let total_in = sum(0) + sum(1) + sum(2);
         let first_line = self.prompt.lines().next().unwrap_or_default();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
         json!({
-            "ts": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0),
+            // what labels refer to: `tazuna --verdict good --id <id>`
+            "id": format!("{:x}", now.as_millis()),
+            "ts": now.as_secs(),
             "meta": meta,
             "prompt": first_line.chars().take(200).collect::<String>(),
             "prompt_chars": self.prompt.chars().count(),
@@ -169,7 +172,6 @@ impl Run {
             "per_turn": self.turns,
             "tools": self.tools.iter().map(|(k, (c, f))| (k.clone(), json!({"calls": c, "failed": f}))).collect::<serde_json::Map<_, _>>(),
             "git": git_changes(cwd, self.git_before.as_ref()),
-            "verdict": Value::Null,
         })
     }
 }
@@ -210,15 +212,17 @@ fn git_changes(cwd: &Path, before: Option<&BTreeMap<String, String>>) -> Value {
     json!({
         "files_changed": changed.len(),
         "files": changed.iter().take(20).collect::<Vec<_>>(),
+        // content hash of each changed file after the run: lets `--label-git` find it in later commits
+        "after": changed.iter().take(200).map(|p| ((*p).clone(), json!(after.get(*p).map_or("deleted", |h| h.as_str())))).collect::<serde_json::Map<_, _>>(),
         "worktree_vs_head": {"insertions": num("insertion"), "deletions": num("deletion")},
     })
 }
 
 /// `tazuna --log [N]`: the last N runs as a table.
-pub fn print_recent(path: &Path, n: usize) -> anyhow::Result<()> {
-    let text = std::fs::read_to_string(path).unwrap_or_default();
-    let rows: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
-    println!("{:<6} {:<18} {:<16} {:<10} {:<13} {:>6} {:>5} {:>8} {:>6} {:>6} {:>5}  prompt", "ago", "repo", "model", "stop", "verify", "secs", "turns", "cost", "cache", "misses", "files");
+pub fn print_recent(base: &Path, n: usize) -> anyhow::Result<()> {
+    let rows = crate::labels::runs(base);
+    let labels = crate::labels::load(base);
+    println!("{:<6} {:<18} {:<16} {:<10} {:<13} {:<10} {:>6} {:>5} {:>8} {:>6} {:>6} {:>5}  prompt", "ago", "repo", "model", "stop", "verify", "verdict", "secs", "turns", "cost", "cache", "misses", "files");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
     for r in rows.iter().rev().take(n).rev() {
         let ago = now.saturating_sub(r["ts"].as_u64().unwrap_or(now));
@@ -226,12 +230,13 @@ pub fn print_recent(path: &Path, n: usize) -> anyhow::Result<()> {
         let repo = r["meta"]["cwd"].as_str().unwrap_or_default().rsplit('/').next().unwrap_or_default().chars().take(18).collect::<String>();
         let model = r["meta"]["model"].as_str().unwrap_or_default().trim_start_matches("claude-").chars().take(16).collect::<String>();
         println!(
-            "{:<6} {:<18} {:<16} {:<10} {:<13} {:>6.0} {:>5} {:>8} {:>5.0}% {:>6} {:>5}  {}",
+            "{:<6} {:<18} {:<16} {:<10} {:<13} {:<10} {:>6.0} {:>5} {:>8} {:>5.0}% {:>6} {:>5}  {}",
             ago,
             repo,
             model,
             r["stop"].as_str().unwrap_or("?"),
             r["verify"]["status"].as_str().unwrap_or("-"),
+            r["id"].as_str().and_then(|id| labels.get(id)).and_then(|l| l["verdict"].as_str()).unwrap_or("-"),
             r["secs"].as_f64().unwrap_or(0.0),
             r["turns"],
             format!("${:.3}", r["cost_usd"].as_f64().unwrap_or(0.0)),

@@ -69,6 +69,8 @@ pub struct Live {
     pub last_log: Option<Value>,
     /// Router decision: lane name and why.
     lane: (String, String),
+    /// Id of the last run written to the run log (what `/good` and `/bad` label).
+    pub last_run: Option<String>,
     /// Model and effort for fix rounds after failed verification, and whether the session already switched.
     escalate: Option<(String, String)>,
     escalated: bool,
@@ -114,6 +116,7 @@ impl Live {
             last_result: None,
             last_log: None,
             lane: ("manual".into(), String::new()),
+            last_run: None,
             escalate: None,
             escalated: false,
         })
@@ -352,6 +355,7 @@ impl Live {
     }
 
     fn log(&mut self, line: Value) {
+        self.last_run = line["id"].as_str().map(String::from);
         self.last_log = Some(line.clone());
         let appended = std::fs::OpenOptions::new().create(true).append(true).open(&self.runs_log).and_then(|mut f| writeln!(f, "{line}"));
         if let Err(e) = appended {
