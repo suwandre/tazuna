@@ -17,10 +17,6 @@ use std::{
     time::{Instant, SystemTime, UNIX_EPOCH},
 };
 
-/// The lean tool server we benchmarked as cc-mid (bash/read/write/edit with terse schemas).
-// ponytail: still the Node server from the benchmarks; port it to Rust in its own step
-const LEAN_MCP: &str = include_str!("../tools/lean-mcp.mjs");
-
 const MID_PROMPT: &str = "You are a coding agent working in {cwd}. Today is {date}.
 - Read the relevant code before editing. Use Grep/Glob to search.
 - Fix root causes with the smallest change that follows the existing code style.
@@ -40,7 +36,6 @@ pub struct Live {
     pub model: String,
     pub effort: String,
     cwd: PathBuf,
-    mcp: PathBuf,
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     /// Messages carry the process generation, so output from a killed process is ignored.
@@ -76,10 +71,6 @@ impl Live {
     pub fn new(model: &str, effort: &str) -> Result<Self> {
         let cwd = std::env::current_dir()?;
         let data = data_dir()?;
-        let mcp = data.join("lean-mcp.mjs");
-        if std::fs::read_to_string(&mcp).ok().as_deref() != Some(LEAN_MCP) {
-            std::fs::write(&mcp, LEAN_MCP)?;
-        }
         let sessions = data.join("sessions");
         std::fs::create_dir_all(&sessions)?;
         let dir = cwd.file_name().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
@@ -93,7 +84,6 @@ impl Live {
             model: model.into(),
             effort: effort.into(),
             cwd,
-            mcp,
             child: None,
             stdin: None,
             tx,
@@ -329,7 +319,9 @@ impl Live {
     fn spawn(&mut self) -> Result<()> {
         let date = Command::new("date").arg("+%Y-%m-%d").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
         let prompt = MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date);
-        let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": "node", "args": [self.mcp]}}}).to_string();
+        // the lean tools are this binary's `mcp` mode
+        let exe = std::env::current_exe().context("locating the tazuna binary")?;
+        let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": exe, "args": ["mcp"]}}}).to_string();
         let mut cmd = Command::new("claude");
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
             .args(["--model", &self.model, "--effort", &self.effort])

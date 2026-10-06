@@ -6,11 +6,13 @@
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
 //!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
 //!   tazuna --log [N]   # the last N runs from the run log (~/.local/share/tazuna/runs.jsonl)
+//!   tazuna mcp   # the lean tool server (claude starts it; not for direct use)
 //!
 //! Designs: 1 aurora · 2 cockpit (default) · 3 zen · 4 timeline. Live sessions are saved to
 //! ~/.local/share/tazuna/sessions/ and replay like any recording.
 
 mod live;
+mod mcp;
 mod replay;
 mod runlog;
 mod session;
@@ -102,6 +104,9 @@ fn args() -> Result<Args> {
 }
 
 fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("mcp") {
+        return mcp::serve();
+    }
     let a = args()?;
     if let Some(n) = a.log {
         let home = std::env::var("HOME").context("HOME")?;

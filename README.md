@@ -11,8 +11,8 @@ Early. What works today:
 
 - **Live mode**: run `tazuna` in a git repo, type a task. One `claude` process per conversation (warm prompt cache),
   clean interrupts (`ctrl-c`), follow-ups, copy last reply (`ctrl-y`), mouse scrolling.
-- **Profile "cc-mid"**: ~10-line system prompt, `Grep`/`Glob` plus four lean tools (bash/read/write/edit) from a bundled MCP
-  server, and none of the user's settings, skills, hooks or MCP servers. Benchmarked as the best cost/quality profile.
+- **Profile "cc-mid"**: ~10-line system prompt, `Grep`/`Glob` plus four lean tools (bash/read/write/edit) served by tazuna
+  itself (`tazuna mcp`), and none of the user's settings, skills, hooks or MCP servers. Benchmarked as the best cost/quality profile.
 - **Four UI designs** (Ratatui + tachyonfx): aurora, cockpit (default: live context/cache gauges, tokens per turn, cost,
   tools, files), zen, timeline. `ctrl-t` switches.
 - **Recordings**: every session is saved to `~/.local/share/tazuna/sessions/` and replays like a video.
@@ -68,10 +68,10 @@ itself matched that profile on the real-work tasks.)
 | | tazuna | stock Claude Code |
 |---|---|---|
 | Input tokens per turn before any work (system prompt + tools) | 2.9k | 21k |
-| App binary / memory / CPU while animating | 2.0 MB / ~7 MB / ~1% | — |
+| App binary / memory / CPU while animating | 2.3 MB / ~7 MB / ~1% | — |
+| Tool server memory | 1.8 MB (built in) | built in |
 
-tazuna runs on top of the `claude` CLI (~200 MB, ~1 s to start) and a Node tool server; porting the tool server to Rust is
-planned.
+tazuna runs on top of the `claude` CLI (~200 MB, ~1 s to start).
 
 **How to read these numbers**: one run varies by about ±1.2 judge points and ±$0.40. Re-running the same setup a day later
 moved median cost by 24% (mean 9%), and two arms that behaved identically scored 0.67 apart. We treat judge differences
@@ -87,7 +87,7 @@ tazuna --model claude-sonnet-5-5 --effort high
 tazuna ~/.local/share/tazuna/sessions/<file>.jsonl           # replay a session (space pause, ←/→ speed, 1-4 design)
 ```
 
-Requires the `claude` CLI (logged in) and Node (for the bundled lean tool server, until it is ported to Rust).
+Requires the `claude` CLI (logged in). Nothing else: the lean tools are built into the tazuna binary.
 
 tazuna only runs inside a git repo by default: the agent edits without asking, so `git diff` is the review step.
 
@@ -95,10 +95,13 @@ tazuna only runs inside a git repo by default: the agent edits without asking, s
 
 ```
 src/main.rs      modes (live, replay, snapshot, headless) and the event loop
-src/live.rs      the claude process: spawn, stream-json, interrupt, recording
+src/live.rs      the claude process: spawn, stream-json, interrupt, recording, verification
+src/mcp.rs       the lean tool server (`tazuna mcp`)
+src/verify.rs    test detection and running for "verified, not claimed"
+src/runlog.rs    the run log
+bench/           tier 0 metrics script and history
 src/session.rs   session state built from stream-json events
 src/replay.rs    recorded sessions on a virtual clock
 src/ui/          shared transcript renderer + the four designs
-tools/           the lean MCP tool server (bundled into the binary)
 recordings/      sample recording and the recorder used to make it
 ```
