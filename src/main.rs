@@ -5,6 +5,7 @@
 //!          fail; otherwise Opus medium)
 //!          [--verify "<cmd>" | --no-verify]   # after claude says done, tazuna runs the tests (auto-detected by default)
 //!          [--bash-cap N]   # shrink bash output longer than N chars (default 8000; 0 = off)
+//!          [--no-project-instructions]   # don't add the repo's CLAUDE.md / AGENTS.md to the prompt
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
 //!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
@@ -64,6 +65,7 @@ struct Args {
     log: Option<usize>,
     verify: verify::Mode,
     bash_cap: usize,
+    project_instructions: bool,
     verdict: Option<String>,
     note: String,
     run_id: Option<String>,
@@ -85,6 +87,7 @@ fn args() -> Result<Args> {
         log: None,
         verify: verify::Mode::Auto,
         bash_cap: mcp::DEFAULT_BASH_CAP,
+        project_instructions: true,
         verdict: None,
         note: String::new(),
         run_id: None,
@@ -105,6 +108,7 @@ fn args() -> Result<Args> {
             "--verify" => a.verify = verify::Mode::Command(val()?),
             "--no-verify" => a.verify = verify::Mode::Off,
             "--bash-cap" => a.bash_cap = val()?.parse()?,
+            "--no-project-instructions" => a.project_instructions = false,
             "--verdict" => a.verdict = Some(val()?),
             "--note" => a.note = val()?,
             "--run-id" | "--id" => a.run_id = Some(val()?),
@@ -173,6 +177,7 @@ fn main() -> Result<()> {
             let route = live.set_lane(lane(&a)?);
             live.verify = a.verify.clone();
             live.bash_cap = a.bash_cap;
+            live.project_instructions = a.project_instructions;
             let mut term = ratatui::init();
             execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
             let r = run_live(&mut term, &mut live, &a, route);
@@ -200,6 +205,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.mode = "headless";
     live.verify = a.verify.clone();
     live.bash_cap = a.bash_cap;
+    live.project_instructions = a.project_instructions;
     live.send(&prompt)?;
     loop {
         for (_, e) in live.poll() {

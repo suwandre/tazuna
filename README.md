@@ -21,6 +21,8 @@ Early. What works today:
   (up to 2 rounds). `--verify "<cmd>"` overrides the detected command, `--no-verify` turns it off.
 - **Router**: without `--model`/`--effort`, tiny repos (≤ 50 files) start on Sonnet 5.5 medium and escalate to Opus 5.5 high
   if their tests fail; everything else runs Opus 5.5 medium. On tiny-repo tasks: −67% cost, same hidden-test results.
+- **Project instructions**: the repo's `CLAUDE.md` / `AGENTS.md` go into the prompt (cached); nested ones are listed.
+  `--no-project-instructions` turns it off.
 - **Bash output cap**: long command output is shrunk to its start and end (passing-test chatter removed first); the full
   output is saved where claude can read it. `--bash-cap N` sets the limit (default 8000 chars, `0` = off).
 - **Labels**: rate runs with `/good` or `/bad` (UI) or `tazuna --verdict`; `tazuna --label-git` marks runs whose output you

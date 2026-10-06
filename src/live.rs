@@ -61,6 +61,10 @@ pub struct Live {
     pub verify: verify::Mode,
     /// Passed to the tool server: shrink bash output above this many chars (0: off).
     pub bash_cap: usize,
+    /// Add the repo's CLAUDE.md / AGENTS.md to the system prompt.
+    pub project_instructions: bool,
+    /// (bytes included, source files) for the run log.
+    instructions_used: (usize, Vec<String>),
     verifying: bool,
     /// Messages typed while tests run; sent once the run is over.
     held: VecDeque<String>,
@@ -111,6 +115,8 @@ impl Live {
             mode: "live",
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
+            project_instructions: true,
+            instructions_used: (0, Vec::new()),
             verifying: false,
             held: VecDeque::new(),
             last_result: None,
@@ -349,6 +355,7 @@ impl Live {
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
             "bash_cap": self.bash_cap,
+            "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
             "claude_version": self.claude_version, "cwd": self.cwd, "session_id": self.session_id, "recording": self.rec_path,
         })
@@ -371,7 +378,12 @@ impl Live {
 
     fn spawn(&mut self) -> Result<()> {
         let date = Command::new("date").arg("+%Y-%m-%d").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-        let prompt = MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date);
+        let mut prompt = MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date);
+        if self.project_instructions {
+            let (text, bytes, sources) = project_instructions(&self.cwd);
+            prompt.push_str(&text);
+            self.instructions_used = (bytes, sources);
+        }
         // the lean tools are this binary's `mcp` mode
         let exe = std::env::current_exe().context("locating the tazuna binary")?;
         let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": exe, "args": ["mcp"], "env": {"LEAN_BASH_CAP": self.bash_cap.to_string()}}}}).to_string();
@@ -430,7 +442,73 @@ fn data_dir() -> Result<PathBuf> {
     Ok(d)
 }
 
+/// More than this much instruction text is cut (it is re-sent, cached, on every turn).
+const MAX_INSTRUCTIONS: usize = 80_000;
+
+/// The repo's own instructions for agents: root CLAUDE.md, .claude/CLAUDE.md and AGENTS.md in full, nested ones listed so
+/// the agent reads them when it works in that directory (like Claude Code, which loads nested files lazily).
+/// Returns (text for the system prompt, bytes included, files included).
+// ponytail: no `@file` import expansion; add it when a repo relies on imports
+pub fn project_instructions(cwd: &Path) -> (String, usize, Vec<String>) {
+    let mut body = String::new();
+    let mut files = Vec::new();
+    for name in ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"] {
+        let Ok(text) = std::fs::read_to_string(cwd.join(name)) else { continue };
+        if text.trim().is_empty() || body.contains(text.trim()) {
+            continue;
+        }
+        body.push_str(&format!("\n\n## From {name}\n\n{}", text.trim()));
+        files.push(name.to_string());
+    }
+    let nested: Vec<String> = Command::new("git")
+        .args(["ls-files", "--", "*CLAUDE.md", "*AGENTS.md"])
+        .current_dir(cwd)
+        .output()
+        .ok()
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines().filter(|l| l.contains('/') && !l.starts_with(".claude/")).take(30).map(String::from).collect())
+        .unwrap_or_default();
+    if files.is_empty() && nested.is_empty() {
+        return (String::new(), 0, files);
+    }
+    if body.len() > MAX_INSTRUCTIONS {
+        let cut = body.char_indices().map(|(i, _)| i).take_while(|&i| i <= MAX_INSTRUCTIONS).last().unwrap_or(0);
+        body.truncate(cut);
+        body.push_str("\n\n[tazuna: instructions cut here; read the rest of the file if you need it]");
+    }
+    let mut text = format!("\n\n# Project instructions\n\nThe repository's own instructions for coding agents. Follow them.{body}");
+    if !nested.is_empty() {
+        text.push_str(&format!("\n\nMore instruction files in this repo; read the one for a directory before you edit there: {}", nested.join(", ")));
+    }
+    let bytes = text.len();
+    (text, bytes, files)
+}
+
 /// Live mode only runs where every change can be reviewed and undone.
 pub fn in_git_repo() -> bool {
     Command::new("git").args(["rev-parse", "--is-inside-work-tree"]).output().is_ok_and(|o| o.status.success())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_project_instructions() {
+        let dir = std::env::temp_dir().join(format!("tazuna-instr-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("app")).unwrap();
+        let git = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&dir).output().unwrap().status.success());
+        git(&["init", "-q"]);
+        assert_eq!(project_instructions(&dir).1, 0, "no instruction files, nothing added");
+        std::fs::write(dir.join("CLAUDE.md"), "Use npm run test:unit -- <file>.\n").unwrap();
+        std::fs::write(dir.join("AGENTS.md"), "Use npm run test:unit -- <file>.\n").unwrap();
+        std::fs::write(dir.join("app/CLAUDE.md"), "App rules.\n").unwrap();
+        git(&["add", "."]);
+        let (text, bytes, files) = project_instructions(&dir);
+        assert_eq!(files, vec!["CLAUDE.md"], "identical AGENTS.md is not repeated");
+        assert!(text.contains("test:unit") && text.contains("app/CLAUDE.md") && !text.contains("App rules"), "{text}");
+        assert_eq!(bytes, text.len());
+        std::fs::write(dir.join("CLAUDE.md"), "x".repeat(MAX_INSTRUCTIONS + 5000)).unwrap();
+        assert!(project_instructions(&dir).0.contains("instructions cut here"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

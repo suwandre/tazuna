@@ -15,6 +15,33 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.8 (2026-10-06)
+
+**Project instructions.** The repo's own `CLAUDE.md`, `.claude/CLAUDE.md` and `AGENTS.md` are added to tazuna's system prompt
+(duplicates skipped, cut at 80k chars); nested instruction files are listed so the agent reads them before working in that
+directory. The text is the same every turn, so it is cached. Hooks and skills from the repo are still not loaded.
+`--no-project-instructions` turns it off; the run log records which files were included.
+
+First test on real company work: acme/app, T-872 / PR #1068 (TypeScript monorepo, 3k files; the agent gets
+the Jira ticket plus the one log line, the PR's non-test diff is the judge's reference). All arms Opus 5.5 medium, judged
+together:
+
+| Arm | Runs | Judge | Mean cost | Mean time | New failing unit tests (of 17,812) | New type errors |
+|---|---|---|---|---|---|---|
+| Stock Claude Code (repo CLAUDE.md, hooks, skills) | 2 | 6.00 | $2.02 | 271 s | 0 | 0 |
+| cc-mid via `claude -p` | 2 | 5.25 | $1.46 | 298 s | 0 | 0 |
+| **tazuna 0.0.8 (with CLAUDE.md)** | 3 | 4.83 | $1.37 | 261 s | 0 | 0, 1, 0 |
+| tazuna 0.0.7 | 2 | 4.50 | $1.31 | 376 s | 0 | 0, 1 |
+
+Project instructions: +0.33 judge (within noise), +5% cost (CLAUDE.md is ~10k tokens, re-read from cache at 95-97% hit).
+No arm found the backend root cause the PR fixed; all built a frontend workaround (correctness 3/5 for every run). Stock
+Claude Code led in both judge passes; the repo's hooks (a comment linter after every Write/Edit) and Claude Code's full
+prompt and tools are the likely reasons and are not yet separated. One task and 2-3 runs per arm is an anecdote, not a
+benchmark.
+
+Tier 0: 2,980 input tokens per turn in a repo without instruction files (unchanged), binary
+2.35 MB.
+
 ## 0.0.7 (2026-10-06)
 
 **Labels for runs**, the training data for routing by task type later. Kept in `~/.local/share/tazuna/labels.jsonl`
