@@ -18,6 +18,8 @@ pub enum Mode {
 pub struct Outcome {
     pub cmd: String,
     pub ok: bool,
+    /// The test runner found no tests (pytest and unittest exit 5): nothing was verified, nothing failed.
+    pub no_tests: bool,
     pub code: Option<i32>,
     pub secs: f64,
     /// Trimmed to what claude needs to fix the failure.
@@ -57,8 +59,12 @@ fn detect(cwd: &Path, changed: &[String]) -> Option<String> {
     if has(".rs") && cwd.join("Cargo.toml").exists() {
         return Some("cargo test --quiet".into());
     }
-    if has(".py") && ["pytest.ini", "conftest.py", "tests"].iter().any(|f| cwd.join(f).exists()) {
-        return Some("python3 -m pytest -q -x".into());
+    if has(".py") && has_python_tests(cwd) {
+        let pytest = Command::new("python3").args(["-c", "import pytest"]).stdin(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success());
+        let uv = cwd.join("pyproject.toml").exists() && Command::new("uv").arg("--version").stdout(Stdio::null()).status().is_ok_and(|s| s.success());
+        return Some(
+            if pytest { "python3 -m pytest -q -x" } else if uv { "uv run -q pytest -q -x" } else { "python3 -m unittest discover -q" }.into(),
+        );
     }
     if [".ts", ".tsx", ".js", ".jsx"].iter().any(|e| has(e)) {
         let pkg = std::fs::read_to_string(cwd.join("package.json")).unwrap_or_default();
@@ -68,6 +74,12 @@ fn detect(cwd: &Path, changed: &[String]) -> Option<String> {
         }
     }
     None
+}
+
+fn has_python_tests(cwd: &Path) -> bool {
+    let named_test = |n: &str| n.ends_with(".py") && (n.starts_with("test_") || n.ends_with("_test.py"));
+    ["pytest.ini", "conftest.py", "tests"].iter().any(|f| cwd.join(f).exists())
+        || std::fs::read_dir(cwd).into_iter().flatten().flatten().any(|e| named_test(&e.file_name().to_string_lossy()))
 }
 
 fn safe_path(p: &str) -> bool {
@@ -80,7 +92,7 @@ pub fn run(cwd: &Path, cmd: &str) -> Outcome {
     let spawned = Command::new("sh").args(["-c", &format!("{cmd} 2>&1")]).current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).spawn();
     let mut child = match spawned {
         Ok(c) => c,
-        Err(e) => return Outcome { cmd: cmd.into(), ok: false, code: None, secs: 0.0, output: format!("could not start: {e}") },
+        Err(e) => return Outcome { cmd: cmd.into(), ok: false, no_tests: false, code: None, secs: 0.0, output: format!("could not start: {e}") },
     };
     let mut stdout = child.stdout.take().expect("piped");
     let reader = std::thread::spawn(move || {
@@ -104,7 +116,8 @@ pub fn run(cwd: &Path, cmd: &str) -> Outcome {
         output.push_str(&format!("\n[tazuna: killed after {}s]", TIMEOUT.as_secs()));
     }
     let code = status.and_then(|s| s.code());
-    Outcome { cmd: cmd.into(), ok: code == Some(0), code, secs: t0.elapsed().as_secs_f64(), output: trim(&output) }
+    let no_tests = code == Some(5) && (cmd.contains("pytest") || cmd.contains("unittest"));
+    Outcome { cmd: cmd.into(), ok: code == Some(0), no_tests, code, secs: t0.elapsed().as_secs_f64(), output: trim(&output) }
 }
 
 /// Keeps failures readable and short: Go's per-test noise (=== RUN, --- PASS, ok lines) is dropped, then the head and

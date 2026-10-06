@@ -16,6 +16,8 @@ pub enum Block {
 
 pub struct Verify {
     pub cmd: String,
+    /// The runner found no tests.
+    pub no_tests: bool,
     pub round: u64,
     /// None while the tests run.
     pub ok: Option<bool>,
@@ -197,12 +199,13 @@ impl Session {
             }
             (Some("harness_interrupt"), _) => self.stopping = true,
             (Some("harness_verify_start"), _) => {
-                self.push(Block::Verify(Verify { cmd: s(&e["cmd"]), round: e["round"].as_u64().unwrap_or(1), ok: None, secs: 0.0, output: String::new() }));
+                self.push(Block::Verify(Verify { cmd: s(&e["cmd"]), no_tests: false, round: e["round"].as_u64().unwrap_or(1), ok: None, secs: 0.0, output: String::new() }));
                 self.activity = Activity::Verifying;
             }
             (Some("harness_verify_done"), _) => {
                 if let Some(v) = self.blocks.iter_mut().rev().find_map(|b| if let Block::Verify(v) = b { Some(v) } else { None }) {
                     (v.ok, v.secs, v.output) = (e["ok"].as_bool(), e["secs"].as_f64().unwrap_or(0.0), s(&e["output"]));
+                    v.no_tests = e["no_tests"] == true;
                 }
                 self.finished_tools += 1; // pulse like a finished tool
                 self.activity = if e["final"] == true { Activity::Done } else { Activity::Waiting };
@@ -211,6 +214,19 @@ impl Session {
                 let text = format!("↻ sent the failing tests back to claude (round {} of {})", e["round"], e["max"]);
                 self.push(Block::Notice { text, error: false });
                 self.activity = Activity::Waiting;
+            }
+            (Some("harness_route"), _) => {
+                (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
+                let model = self.model.trim_start_matches("claude-").to_string();
+                let up = e["escalate"].as_str().map_or(String::new(), |x| format!(" · escalates to {} if tests fail", x.trim_start_matches("claude-")));
+                self.push(Block::Notice { text: format!("lane {}: {model} {} ({}){up}", s(&e["lane"]), self.effort, s(&e["reason"])), error: false });
+            }
+            (Some("harness_escalate"), _) => {
+                // the old process is gone: its reported cost is final
+                self.cost_base = self.exact_cost.unwrap_or(self.cost_base);
+                (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
+                let text = format!("↑ tests failed on the cheap lane: fixing on {} {}", self.model.trim_start_matches("claude-"), self.effort);
+                self.push(Block::Notice { text, error: false });
             }
             (Some("harness_verify_cancel"), _) => {
                 self.push(Block::Notice { text: "verification cancelled · the run ends when the tests return".into(), error: false });

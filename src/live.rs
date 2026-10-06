@@ -4,7 +4,7 @@
 //! interrupt control request the official Agent SDK uses; if claude does not answer, the process is killed and the
 //! next message resumes the session with `--resume`.
 
-use crate::{runlog::Run, verify};
+use crate::{route::Lane, runlog::Run, verify};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::{
@@ -67,6 +67,11 @@ pub struct Live {
     /// claude's last result event and the last run-log line (headless mode reports them).
     pub last_result: Option<Value>,
     pub last_log: Option<Value>,
+    /// Router decision: lane name and why.
+    lane: (String, String),
+    /// Model and effort for fix rounds after failed verification, and whether the session already switched.
+    escalate: Option<(String, String)>,
+    escalated: bool,
 }
 
 impl Live {
@@ -108,6 +113,9 @@ impl Live {
             held: VecDeque::new(),
             last_result: None,
             last_log: None,
+            lane: ("manual".into(), String::new()),
+            escalate: None,
+            escalated: false,
         })
     }
 
@@ -141,6 +149,27 @@ impl Live {
         writeln!(stdin, "{line}")?;
         stdin.flush()?;
         Ok(())
+    }
+
+    /// Applies the router's decision (before the first message) and returns the event that shows it.
+    pub fn set_lane(&mut self, lane: Lane) -> (f64, Value) {
+        (self.model, self.effort, self.escalate) = (lane.model.clone(), lane.effort.clone(), lane.escalate.clone());
+        self.lane = (lane.name.to_string(), lane.reason.clone());
+        self.record(json!({"type": "harness_route", "lane": lane.name, "model": lane.model, "effort": lane.effort, "reason": lane.reason,
+            "escalate": lane.escalate.map(|(m, e)| format!("{m} {e}"))}))
+    }
+
+    /// Switches model and effort for the rest of the session: ends the idle process; the next message resumes the session
+    /// on the new model (one cache rebuild, since the prompt cache is per model).
+    fn respawn(&mut self, model: String, effort: String) {
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        self.stdin = None;
+        self.generation += 1;
+        self.proc_cost = 0.0;
+        (self.model, self.effort) = (model, effort);
     }
 
     /// Nothing in flight: every run has ended and no message is waiting.
@@ -249,6 +278,12 @@ impl Live {
     /// Tests are back: pass ends the run; a failure goes back to claude while rounds remain.
     fn after_verify(&mut self, o: verify::Outcome) -> Vec<(f64, Value)> {
         self.verifying = false;
+        if o.no_tests {
+            // the runner found nothing to run: not verified, not failed
+            let mut out = vec![self.record(json!({"type": "harness_verify_done", "cmd": o.cmd, "ok": true, "no_tests": true, "secs": o.secs, "output": "", "final": true}))];
+            out.extend(self.finish_front());
+            return out;
+        }
         let Some(run) = self.runs.front_mut() else { return vec![] };
         run.add_verify(&o.cmd, o.ok, o.secs);
         let retry = !o.ok && !run.is_interrupted() && run.failed_rounds() <= verify::MAX_ROUNDS;
@@ -257,6 +292,15 @@ impl Live {
         }))];
         if retry {
             let round = self.runs.front().map_or(1, |r| r.failed_rounds());
+            if let Some((m, e)) = self.escalate.clone().filter(|_| !self.escalated) {
+                // the cheap lane failed its tests: fix rounds run on the stronger model
+                self.escalated = true;
+                if let Some(run) = self.runs.front_mut() {
+                    run.escalated();
+                }
+                out.push(self.record(json!({"type": "harness_escalate", "model": m, "effort": e})));
+                self.respawn(m, e);
+            }
             match self.write_user(&verify::feedback(&o, round)) {
                 Ok(()) => out.push(self.record(json!({"type": "harness_verify_feedback", "round": round, "max": verify::MAX_ROUNDS}))),
                 Err(e) => {
@@ -302,6 +346,7 @@ impl Live {
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
             "bash_cap": self.bash_cap,
+            "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
             "claude_version": self.claude_version, "cwd": self.cwd, "session_id": self.session_id, "recording": self.rec_path,
         })
     }

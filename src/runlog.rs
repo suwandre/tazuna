@@ -25,6 +25,8 @@ pub struct Run {
     verify_cmd: Option<String>,
     /// One entry per verification: (passed, seconds).
     verify_rounds: Vec<(bool, f64)>,
+    /// Failed tests moved this run to the stronger model.
+    escalated: bool,
 }
 
 impl Run {
@@ -40,7 +42,12 @@ impl Run {
             cost: 0.0,
             verify_cmd: None,
             verify_rounds: Vec::new(),
+            escalated: false,
         }
+    }
+
+    pub fn escalated(&mut self) {
+        self.escalated = true;
     }
 
     pub fn add_cost(&mut self, usd: f64) {
@@ -148,6 +155,7 @@ impl Run {
             "secs": ((at_ms - self.started_ms) / 100.0).round() / 10.0,
             "turns": self.turns.len(),
             "cost_usd": (self.cost * 1e6).round() / 1e6,
+            "escalated": self.escalated,
             "verify": {
                 "status": verify,
                 "cmd": self.verify_cmd,

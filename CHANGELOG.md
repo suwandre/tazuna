@@ -14,6 +14,42 @@ Every change that can affect the agent is measured before it stays. Each entry l
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.6 (2026-10-06)
+
+**Rules router v1.** Without `--model`/`--effort`, tazuna picks a lane per session from the number of tracked files:
+tiny repos (≤ 50 files) start on Sonnet 5.5 medium, everything else on Opus 5.5 medium (unchanged default). If
+verification fails on the cheap lane, tazuna switches the session to Opus 5.5 high (resuming it; one cache rebuild) and
+runs the fix rounds there. The lane and reason show at the top of the transcript and go into the run log, with whether the
+run escalated. `--model`/`--effort` turn routing off.
+
+Why only repo size: in the cc-lean sweeps Sonnet medium matched Opus medium on easy and medium tasks in tiny repos at about a
+third of the cost, but no cheap text signal separated hard tasks, and on real tickets in large repos Opus medium was the best
+value. Routing by task type needs labelled outcomes from the run log (the Jev step).
+
+Also: Python verification finds `test_*.py` files, uses pytest only when it is installed (else `uv run pytest`, else
+`unittest`), and treats "no tests ran" (exit 5) as nothing to verify instead of a failure.
+
+Tier 1 (4 tiny-repo tasks, 3 easy and 1 medium, × 3 runs; router vs always Opus 5.5 medium, judged together):
+
+| Metric | Always Opus medium (= 0.0.5) | Router | Change |
+|---|---|---|---|
+| All hidden tests pass | 12/12 | 12/12 | same |
+| Judge | 8.62 | 8.08 | −0.54, within noise (lower on 2 of 4 tasks) |
+| Mean cost | $0.086 | $0.029 | **−67%** |
+| Median time | 19 s | 11 s | −42% |
+| Escalations | — | 0 of 12 | verification passed or found no tests |
+
+Large repos route to Opus medium as before, so the real-work numbers are unchanged. Escalation is exercised by a live test
+(Sonnet medium → failed verification → Opus high → verified), not yet by a benchmark task.
+
+Tier 0:
+
+| Metric | 0.0.5 | 0.0.6 | Change |
+|---|---|---|---|
+| Input tokens per turn before any work | 2,977 | 2,980 | within noise |
+| Binary size | 2.27 MB | 2.31 MB | |
+| Replay render | 7 ms | 7 ms | |
+
 ## 0.0.5 (2026-10-06)
 
 **Bash output cap.** Bash output over 8,000 characters (~2k tokens) is shrunk before claude sees it: passing-test chatter

@@ -1,6 +1,8 @@
 //! tazuna: a lean terminal UI around Claude Code.
 //!
 //!   tazuna [--model M] [--effort E] [--design 1-4] [--allow-non-git]   # live: drive claude in the current repo
+//!          (without --model/--effort the router picks: tiny repos Sonnet medium, escalating to Opus high if tests
+//!          fail; otherwise Opus medium)
 //!          [--verify "<cmd>" | --no-verify]   # after claude says done, tazuna runs the tests (auto-detected by default)
 //!          [--bash-cap N]   # shrink bash output longer than N chars (default 8000; 0 = off)
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
@@ -16,6 +18,7 @@ mod live;
 mod mcp;
 mod outcap;
 mod replay;
+mod route;
 mod runlog;
 mod session;
 mod ui;
@@ -50,8 +53,9 @@ struct Args {
     snapshot: Option<usize>,
     size: (u16, u16),
     design: Design,
-    model: String,
-    effort: String,
+    /// None: the router decides.
+    model: Option<String>,
+    effort: Option<String>,
     allow_non_git: bool,
     run: Option<PathBuf>,
     log: Option<usize>,
@@ -67,9 +71,8 @@ fn args() -> Result<Args> {
         snapshot: None,
         size: (110, 36),
         design: Design::Cockpit,
-        // the best value in our benchmarks: Opus 5.5 at medium effort on the cc-mid profile
-        model: "claude-opus-5-5".into(),
-        effort: "medium".into(),
+        model: None,
+        effort: None,
         allow_non_git: false,
         run: None,
         log: None,
@@ -84,8 +87,8 @@ fn args() -> Result<Args> {
             "--raw-timing" => a.raw_timing = true,
             "--snapshot" => a.snapshot = Some(val()?.parse()?),
             "--design" => a.design = Design::from_number(val()?.parse()?).context("--design 1-4")?,
-            "--model" => a.model = val()?,
-            "--effort" => a.effort = val()?,
+            "--model" => a.model = Some(val()?),
+            "--effort" => a.effort = Some(val()?),
             "--allow-non-git" => a.allow_non_git = true,
             "--run" => a.run = Some(val()?.into()),
             "--verify" => a.verify = verify::Mode::Command(val()?),
@@ -139,12 +142,13 @@ fn main() -> Result<()> {
             if !live::in_git_repo() && !a.allow_non_git {
                 bail!("not inside a git repo: the agent edits files without asking, so run it where `git diff` can review and undo changes (or pass --allow-non-git)");
             }
-            let mut live = live::Live::new(&a.model, &a.effort)?;
+            let mut live = live::Live::new("", "")?;
+            let route = live.set_lane(lane(&a)?);
             live.verify = a.verify.clone();
             live.bash_cap = a.bash_cap;
             let mut term = ratatui::init();
             execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
-            let r = run_live(&mut term, &mut live, &a);
+            let r = run_live(&mut term, &mut live, &a, route);
             let _ = execute!(std::io::stdout(), DisableBracketedPaste, DisableMouseCapture);
             ratatui::restore();
             println!("session saved: {}", live.rec_path.display());
@@ -153,10 +157,19 @@ fn main() -> Result<()> {
     }
 }
 
+/// The router's lane, unless --model/--effort pin it.
+fn lane(a: &Args) -> Result<route::Lane> {
+    Ok(match (&a.model, &a.effort) {
+        (None, None) => route::choose(&std::env::current_dir()?),
+        (m, e) => route::manual(m.as_deref().unwrap_or("claude-opus-5-5"), e.as_deref().unwrap_or("medium")),
+    })
+}
+
 /// Runs one task without a UI and prints claude's result event, the same JSON `claude -p --output-format json` prints.
 fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     let prompt = std::fs::read_to_string(prompt_file).with_context(|| format!("reading {}", prompt_file.display()))?;
-    let mut live = live::Live::new(&a.model, &a.effort)?;
+    let mut live = live::Live::new("", "")?;
+    live.set_lane(lane(&a)?);
     live.mode = "headless";
     live.verify = a.verify.clone();
     live.bash_cap = a.bash_cap;
@@ -345,10 +358,10 @@ fn busy(s: &Session) -> bool {
     !matches!(s.activity, session::Activity::Ready | session::Activity::Done)
 }
 
-fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args) -> Result<()> {
+fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args, route: (f64, serde_json::Value)) -> Result<()> {
     let mut s = Session::new("", &live.effort);
-    s.model = live.model.clone();
     s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
+    s.apply(&route.1, route.0);
     let mut v = view(a.design, true, 1.0);
     let mut fx = Fx::new();
     let mut quit_at: Option<Instant> = None;
