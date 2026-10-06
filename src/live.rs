@@ -452,10 +452,13 @@ const MAX_INSTRUCTIONS: usize = 80_000;
 pub fn project_instructions(cwd: &Path) -> (String, usize, Vec<String>) {
     let mut body = String::new();
     let mut files = Vec::new();
+    let root = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     for name in ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"] {
-        // regular files only: a symlinked CLAUDE.md could point at any file on the machine (e.g. ~/.ssh/id_rsa)
+        // regular files that really live inside the repo: a symlinked file or directory (e.g. `.claude` -> ~/.ssh) could
+        // otherwise put any file on the machine into the prompt
         let path = cwd.join(name);
-        if !std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_file()) {
+        let inside = path.canonicalize().is_ok_and(|real| real.starts_with(&root) && real == root.join(name));
+        if !inside || !std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_file()) {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
@@ -519,6 +522,13 @@ mod tests {
         std::fs::write(dir.join("secret.txt"), "TOP SECRET").unwrap();
         std::os::unix::fs::symlink(dir.join("secret.txt"), dir.join("CLAUDE.md")).unwrap();
         assert!(!project_instructions(&dir).0.contains("TOP SECRET"), "symlinked instruction files are never read");
+        std::fs::remove_file(dir.join("CLAUDE.md")).unwrap();
+        let outside = std::env::temp_dir().join(format!("tazuna-outside-{}", std::process::id()));
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("CLAUDE.md"), "OUTSIDE SECRET").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.join(".claude")).unwrap();
+        assert!(!project_instructions(&dir).0.contains("OUTSIDE SECRET"), "a symlinked .claude directory is not followed");
+        std::fs::remove_dir_all(&outside).ok();
         std::fs::remove_dir_all(&dir).ok();
     }
 }
