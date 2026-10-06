@@ -59,6 +59,8 @@ pub struct Live {
     /// "live" or "headless", recorded in the run log.
     pub mode: &'static str,
     pub verify: verify::Mode,
+    /// Passed to the tool server: shrink bash output above this many chars (0: off).
+    pub bash_cap: usize,
     verifying: bool,
     /// Messages typed while tests run; sent once the run is over.
     held: VecDeque<String>,
@@ -101,6 +103,7 @@ impl Live {
             runs_log: data.join("runs.jsonl"),
             mode: "live",
             verify: verify::Mode::Auto,
+            bash_cap: crate::mcp::DEFAULT_BASH_CAP,
             verifying: false,
             held: VecDeque::new(),
             last_result: None,
@@ -298,6 +301,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
+            "bash_cap": self.bash_cap,
             "claude_version": self.claude_version, "cwd": self.cwd, "session_id": self.session_id, "recording": self.rec_path,
         })
     }
@@ -321,7 +325,7 @@ impl Live {
         let prompt = MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date);
         // the lean tools are this binary's `mcp` mode
         let exe = std::env::current_exe().context("locating the tazuna binary")?;
-        let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": exe, "args": ["mcp"]}}}).to_string();
+        let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": exe, "args": ["mcp"], "env": {"LEAN_BASH_CAP": self.bash_cap.to_string()}}}}).to_string();
         let mut cmd = Command::new("claude");
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
             .args(["--model", &self.model, "--effort", &self.effort])

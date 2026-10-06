@@ -14,6 +14,41 @@ Every change that can affect the agent is measured before it stays. Each entry l
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.5 (2026-10-06)
+
+**Bash output cap.** Bash output over 8,000 characters (~2k tokens) is shrunk before claude sees it: passing-test chatter
+(`=== RUN`, `--- PASS`, `ok`) goes first, then the start (~2.5k chars) and the end (~5.5k chars) are kept with a note saying
+how many lines were omitted and where the full output was saved (a private temp directory outside the repo; claude can read
+any part of it). `--bash-cap N` sets the limit, `0` turns it off. `read` and short output are unchanged.
+
+Tier 1 (6 real-work Go tasks × 2 runs, **Sonnet 5.5 high** to stay inside the 5h usage window, same binary with and without
+`--bash-cap 0`, interleaved, judged together):
+
+| Metric | Cap off (= 0.0.4) | Cap on | Change |
+|---|---|---|---|
+| Judge | 6.79 | 6.58 | within noise |
+| All hidden tests pass | 8/12 | 8/12 | same |
+| Hidden tests passed | 84% | 84% | same |
+| Mean cost | $0.45 | $0.40 | −12%, within noise |
+| Mean input tokens | 833k | 676k | −19% (mostly fewer turns: 17 vs 20) |
+| Tool output chars per run | 61.5k | 58.8k | −4% |
+| Outputs shrunk | — | 7 in 12 runs | |
+
+Long bash output is rare on these tasks, so the direct saving is small (−4% of tool output). The cap costs no quality and
+guards against blowups that would otherwise be re-sent every turn (live check: `seq 1 20000`, ~27k tokens, became ~2k, and
+claude read the one line it needed from the saved file). Kept on by default.
+
+Also: saved outputs go to a private directory (0700, unpredictable name) as new 0600 files, so on a shared /tmp nobody else
+can read them or plant a symlink.
+
+Tier 0:
+
+| Metric | 0.0.4 | 0.0.5 | Change |
+|---|---|---|---|
+| Input tokens per turn before any work | 2,983 | 2,977 | within noise |
+| Binary size | 2.27 MB | 2.27 MB | |
+| Replay render | 8 ms | 7 ms | within noise |
+
 ## 0.0.4 (2026-10-06)
 
 **Lean tool server in Rust.** The bash/read/write/edit tools are now `tazuna mcp`, a mode of the same binary, instead of a

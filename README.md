@@ -19,6 +19,8 @@ Early. What works today:
 - **Headless mode** for benchmarks: `tazuna --run prompt.txt` prints claude's result JSON.
 - **Verified, not claimed**: when claude says it is done, tazuna runs the tests for what changed and sends failures back
   (up to 2 rounds). `--verify "<cmd>"` overrides the detected command, `--no-verify` turns it off.
+- **Bash output cap**: long command output is shrunk to its start and end (passing-test chatter removed first); the full
+  output is saved where claude can read it. `--bash-cap N` sets the limit (default 8000 chars, `0` = off).
 - **Run log**: one line per run in `~/.local/share/tazuna/runs.jsonl` (stop reason, cost, per-turn cache use, tools,
   files changed). `tazuna --log` shows the latest runs.
 

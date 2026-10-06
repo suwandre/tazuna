@@ -17,7 +17,7 @@ const CWD_MARK: &str = "\n__LEAN_CWD__";
 const BASH_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub fn serve() -> anyhow::Result<()> {
-    let mut server = Server { cwd: std::env::current_dir()?, max: max_output() };
+    let mut server = Server { cwd: std::env::current_dir()?, max: max_output(), cap: bash_cap(), saved: 0, out_dir: None };
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();
     for line in stdin.lock().lines() {
@@ -34,14 +34,29 @@ pub fn serve() -> anyhow::Result<()> {
 }
 
 fn max_output() -> usize {
-    // ponytail: hard output cap (chars), carried over from the Node server; head/tail capping is the next step
+    // hard limit for any tool reply (chars), carried over from the Node server
     std::env::var("LEAN_MAX_OUTPUT").ok().and_then(|v| v.parse().ok()).unwrap_or(30000)
+}
+
+/// Bash output longer than this (chars, ~4 per token) is shrunk; 0 turns shrinking off.
+pub const DEFAULT_BASH_CAP: usize = 8000;
+/// Of the kept text, this much comes from the start (compile errors); the rest from the end (failures, summaries).
+const HEAD_CHARS: usize = 2500;
+
+fn bash_cap() -> usize {
+    std::env::var("LEAN_BASH_CAP").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_BASH_CAP)
 }
 
 struct Server {
     /// Persists between bash calls (`cd` sticks); relative paths resolve against it.
     cwd: PathBuf,
     max: usize,
+    /// Shrink bash output above this many chars (0: never).
+    cap: usize,
+    /// Full outputs saved so far (file names).
+    saved: usize,
+    /// Private directory for saved outputs, created on first use.
+    out_dir: Option<PathBuf>,
 }
 
 impl Server {
@@ -134,7 +149,48 @@ impl Server {
             Some(st) => st.code().filter(|&c| c != 0).map(|c| format!("\n[exit {c}]")).unwrap_or_default(),
             None => format!("\n[timed out after {}s; the command and everything it started were killed]", timeout.as_secs()),
         };
-        cap(&format!("{stdout}{stderr}{tail}"), self.max)
+        let full = format!("{stdout}{stderr}{tail}");
+        let shrunk = self.shrink(&full);
+        cap(&shrunk, self.max)
+    }
+
+    /// Long output: drop passing-test chatter, then keep the start and the end. The full text is saved outside the repo
+    /// so the agent can still read any part of it.
+    fn shrink(&mut self, full: &str) -> String {
+        if self.cap == 0 || full.chars().count() <= self.cap {
+            return full.to_string();
+        }
+        let total_lines = full.lines().count();
+        let quiet: String = full.lines().filter(|l| !crate::outcap::is_test_noise(l)).collect::<Vec<_>>().join("\n");
+        let dropped = total_lines - quiet.lines().count();
+        let file = self.save(full);
+        let where_ = file.as_deref().map_or("not saved".into(), |f| format!("full output: {f}"));
+        let note = |omitted: usize| {
+            let noise = if dropped > 0 { format!("{dropped} lines of passing-test output removed, ") } else { String::new() };
+            format!("[tazuna: {noise}{omitted} more lines omitted; {where_} (read it with offset/limit or grep it)]")
+        };
+        match crate::outcap::head_tail(&quiet, self.cap, HEAD_CHARS, note) {
+            Some(kept) => kept,
+            None if dropped > 0 => format!("{quiet}\n[tazuna: {dropped} lines of passing-test output removed; {where_}]"),
+            None => quiet,
+        }
+    }
+
+    /// Saves into a private directory (0700, unpredictable name) with new 0600 files: on a shared /tmp nobody else can read
+    /// the output or plant a symlink for it to be written through.
+    fn save(&mut self, full: &str) -> Option<String> {
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+        if self.out_dir.is_none() {
+            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.subsec_nanos();
+            let dir = std::env::temp_dir().join(format!("tazuna-output-{}-{nanos:x}", std::process::id()));
+            std::fs::DirBuilder::new().mode(0o700).create(&dir).ok()?; // fails if it already exists
+            self.out_dir = Some(dir);
+        }
+        self.saved += 1;
+        let f = self.out_dir.as_ref()?.join(format!("bash-{}.txt", self.saved));
+        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&f).ok()?;
+        file.write_all(full.as_bytes()).ok()?;
+        Some(f.to_string_lossy().into_owned())
     }
 }
 
@@ -211,7 +267,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tazuna-mcp-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("f.txt"), "line1\nline2\nline3\n").unwrap();
-        let mut s = Server { cwd: dir.canonicalize().unwrap(), max: 30000 };
+        let mut s = Server { cwd: dir.canonicalize().unwrap(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None };
         let ask = |s: &mut Server, req: &str| s.handle(req);
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).unwrap(),
@@ -260,8 +316,27 @@ mod tests {
     }
 
     #[test]
+    fn shrinks_long_output_and_saves_it() {
+        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: 2000, saved: 0, out_dir: None };
+        let out = s.bash("for i in $(seq 1 400); do echo \"=== RUN   TestN$i\"; echo \"--- PASS: TestN$i\"; done; echo '--- FAIL: TestBroken'; echo '    x_test.go:3: boom'; seq 1 500; exit 1", Duration::from_secs(30));
+        assert!(out.chars().count() < 2600, "shrunk to about the cap: {}", out.chars().count());
+        assert!(out.contains("--- FAIL: TestBroken") || out.contains("800 lines of passing-test output removed"), "{out}");
+        assert!(out.ends_with("500\n[exit 1]") || out.contains("[exit 1]"), "the end survives: {out}");
+        let file = out.split("full output: ").nth(1).and_then(|r| r.split(' ').next()).map(|f| f.trim_end_matches(']')).expect("points to the saved file");
+        let saved = std::fs::read_to_string(file).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600, "owner-only file");
+        let dir = Path::new(file).parent().unwrap();
+        assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700, "owner-only directory");
+        assert!(saved.contains("=== RUN   TestN1\n") && saved.contains("TestBroken"), "the full output is kept");
+        let mut off = Server { cwd: std::env::temp_dir(), max: 30000, cap: 0, saved: 0, out_dir: None };
+        assert_eq!(off.bash("seq 1 3000 | wc -l", Duration::from_secs(10)).trim(), "3000");
+        assert!(off.bash("seq 1 3000", Duration::from_secs(10)).chars().count() > 13000, "cap 0 leaves output alone");
+    }
+
+    #[test]
     fn timeout_kills_the_whole_command() {
-        let mut s = Server { cwd: std::env::temp_dir(), max: 30000 };
+        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None };
         let t0 = Instant::now();
         // the background sleep would outlive a plain kill of bash
         let out = s.bash("sleep 30 & echo started; wait", Duration::from_millis(500));

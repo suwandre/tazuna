@@ -2,6 +2,7 @@
 //!
 //!   tazuna [--model M] [--effort E] [--design 1-4] [--allow-non-git]   # live: drive claude in the current repo
 //!          [--verify "<cmd>" | --no-verify]   # after claude says done, tazuna runs the tests (auto-detected by default)
+//!          [--bash-cap N]   # shrink bash output longer than N chars (default 8000; 0 = off)
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
 //!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
@@ -13,6 +14,7 @@
 
 mod live;
 mod mcp;
+mod outcap;
 mod replay;
 mod runlog;
 mod session;
@@ -54,6 +56,7 @@ struct Args {
     run: Option<PathBuf>,
     log: Option<usize>,
     verify: verify::Mode,
+    bash_cap: usize,
 }
 
 fn args() -> Result<Args> {
@@ -71,6 +74,7 @@ fn args() -> Result<Args> {
         run: None,
         log: None,
         verify: verify::Mode::Auto,
+        bash_cap: mcp::DEFAULT_BASH_CAP,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -86,6 +90,7 @@ fn args() -> Result<Args> {
             "--run" => a.run = Some(val()?.into()),
             "--verify" => a.verify = verify::Mode::Command(val()?),
             "--no-verify" => a.verify = verify::Mode::Off,
+            "--bash-cap" => a.bash_cap = val()?.parse()?,
             "--log" => a.log = Some(it.next().and_then(|n| n.parse().ok()).unwrap_or(20)),
             "--size" => {
                 let v = val()?;
@@ -136,6 +141,7 @@ fn main() -> Result<()> {
             }
             let mut live = live::Live::new(&a.model, &a.effort)?;
             live.verify = a.verify.clone();
+            live.bash_cap = a.bash_cap;
             let mut term = ratatui::init();
             execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
             let r = run_live(&mut term, &mut live, &a);
@@ -153,6 +159,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     let mut live = live::Live::new(&a.model, &a.effort)?;
     live.mode = "headless";
     live.verify = a.verify.clone();
+    live.bash_cap = a.bash_cap;
     live.send(&prompt)?;
     loop {
         for (_, e) in live.poll() {

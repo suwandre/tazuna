@@ -112,10 +112,7 @@ pub fn run(cwd: &Path, cmd: &str) -> Outcome {
 fn trim(out: &str) -> String {
     let lines: Vec<&str> = out
         .lines()
-        .filter(|l| {
-            let t = l.trim_start();
-            !(t.starts_with("=== RUN") || t.starts_with("=== PAUSE") || t.starts_with("=== CONT") || t.starts_with("--- PASS") || t.starts_with("ok "))
-        })
+        .filter(|l| !crate::outcap::is_test_noise(l))
         .collect();
     let kept: Vec<&str> = if lines.len() > MAX_LINES {
         let (head, tail) = (20, MAX_LINES - 20);
