@@ -6,6 +6,9 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
+// commands the agent runs must not see the auth token claude was started with
+delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+
 const MAX = Number(process.env.LEAN_MAX_OUTPUT) || 30000; // ponytail: hard output cap, add paging if agents hit it often
 const cap = (s) => (s.length > MAX ? s.slice(0, MAX) + `\n[truncated ${s.length - MAX} chars]` : s);
 const obj = (props, required) => ({ type: "object", properties: props, required });
