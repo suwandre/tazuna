@@ -20,6 +20,11 @@ pub struct Run {
     interrupted: bool,
     /// Content hashes of the files that differed from HEAD when the run started.
     git_before: Option<BTreeMap<String, String>>,
+    /// $ across all rounds (claude reports per process; the caller adds each result's share).
+    cost: f64,
+    verify_cmd: Option<String>,
+    /// One entry per verification: (passed, seconds).
+    verify_rounds: Vec<(bool, f64)>,
 }
 
 impl Run {
@@ -32,6 +37,35 @@ impl Run {
             ids: BTreeMap::new(),
             interrupted: false,
             git_before: git_snapshot(cwd),
+            cost: 0.0,
+            verify_cmd: None,
+            verify_rounds: Vec::new(),
+        }
+    }
+
+    pub fn add_cost(&mut self, usd: f64) {
+        self.cost += usd;
+    }
+
+    pub fn add_verify(&mut self, cmd: &str, ok: bool, secs: f64) {
+        self.verify_cmd = Some(cmd.to_string());
+        self.verify_rounds.push((ok, secs));
+    }
+
+    /// Failed verifications so far (each one earned claude another round).
+    pub fn failed_rounds(&self) -> u32 {
+        self.verify_rounds.iter().filter(|(ok, _)| !ok).count() as u32
+    }
+
+    pub fn is_interrupted(&self) -> bool {
+        self.interrupted
+    }
+
+    /// Files this run has changed so far.
+    pub fn changed_files(&self, cwd: &Path) -> Vec<String> {
+        match (&self.git_before, git_snapshot(cwd)) {
+            (Some(before), Some(after)) => changed(before, &after).into_iter().cloned().collect(),
+            _ => Vec::new(),
         }
     }
 
@@ -80,8 +114,16 @@ impl Run {
             .collect()
     }
 
-    /// Builds the log line. `result` is claude's result event, or None if the process died first.
-    pub fn finish(self, result: Option<&Value>, cost_usd: f64, at_ms: f64, meta: &Value, cwd: &Path) -> Value {
+    /// Builds the log line. `result` is claude's last result event, or None if the process died first.
+    pub fn finish(self, result: Option<&Value>, at_ms: f64, meta: &Value, cwd: &Path) -> Value {
+        let verify = match (self.verify_rounds.last(), &self.verify_cmd) {
+            _ if self.interrupted => "skipped",
+            (Some((true, _)), _) => "verified",
+            (Some((false, _)), _) => "verify_failed",
+            (None, _) if result.is_none() => "skipped",
+            (None, _) if meta["verify"] == "off" => "off",
+            (None, _) => "claimed",
+        };
         let stop = match result {
             _ if self.interrupted => "stopped",
             None => "crashed",
@@ -105,7 +147,14 @@ impl Run {
             "terminal_reason": result.map(|r| r["terminal_reason"].clone()).unwrap_or(Value::Null),
             "secs": ((at_ms - self.started_ms) / 100.0).round() / 10.0,
             "turns": self.turns.len(),
-            "cost_usd": (cost_usd * 1e6).round() / 1e6,
+            "cost_usd": (self.cost * 1e6).round() / 1e6,
+            "verify": {
+                "status": verify,
+                "cmd": self.verify_cmd,
+                "rounds": self.verify_rounds.len(),
+                // `+ 0.0`: an empty f64 sum is -0.0
+                "secs": (self.verify_rounds.iter().map(|r| r.1).sum::<f64>() * 10.0).round() / 10.0 + 0.0,
+            },
             "tokens": {"input": sum(0), "cache_write": sum(1), "cache_read": sum(2), "output": sum(3)},
             "cache_hit": if total_in == 0 { 0.0 } else { (sum(2) as f64 / total_in as f64 * 1000.0).round() / 1000.0 },
             "cache_misses": self.cache_misses(),
@@ -137,12 +186,17 @@ fn git_snapshot(cwd: &Path) -> Option<BTreeMap<String, String>> {
     Some(snap)
 }
 
+fn changed<'a>(before: &'a BTreeMap<String, String>, after: &'a BTreeMap<String, String>) -> Vec<&'a String> {
+    let mut v: Vec<&String> = after.iter().filter(|(p, h)| before.get(*p) != Some(h)).map(|(p, _)| p).collect();
+    // files the run reverted to HEAD drop out of `git status`
+    v.extend(before.keys().filter(|p| !after.contains_key(*p)));
+    v
+}
+
 /// Files this run changed (compared with the snapshot at its start), plus the working tree's total diff against HEAD.
 fn git_changes(cwd: &Path, before: Option<&BTreeMap<String, String>>) -> Value {
     let (Some(before), Some(after)) = (before, git_snapshot(cwd)) else { return Value::Null };
-    let mut changed: Vec<&String> = after.iter().filter(|(p, h)| before.get(*p) != Some(h)).map(|(p, _)| p).collect();
-    // files the run reverted to HEAD drop out of `git status`
-    changed.extend(before.keys().filter(|p| !after.contains_key(*p)));
+    let changed = changed(before, &after);
     let stat = git(cwd, &["diff", "--shortstat", "HEAD"]).unwrap_or_default();
     let num = |word: &str| stat.split(',').find(|p| p.contains(word)).and_then(|p| p.split_whitespace().next()?.parse::<u64>().ok()).unwrap_or(0);
     json!({
@@ -156,7 +210,7 @@ fn git_changes(cwd: &Path, before: Option<&BTreeMap<String, String>>) -> Value {
 pub fn print_recent(path: &Path, n: usize) -> anyhow::Result<()> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let rows: Vec<Value> = text.lines().filter_map(|l| serde_json::from_str(l).ok()).collect();
-    println!("{:<6} {:<18} {:<16} {:<10} {:>6} {:>5} {:>8} {:>6} {:>6} {:>5}  prompt", "ago", "repo", "model", "stop", "secs", "turns", "cost", "cache", "misses", "files");
+    println!("{:<6} {:<18} {:<16} {:<10} {:<13} {:>6} {:>5} {:>8} {:>6} {:>6} {:>5}  prompt", "ago", "repo", "model", "stop", "verify", "secs", "turns", "cost", "cache", "misses", "files");
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs();
     for r in rows.iter().rev().take(n).rev() {
         let ago = now.saturating_sub(r["ts"].as_u64().unwrap_or(now));
@@ -164,11 +218,12 @@ pub fn print_recent(path: &Path, n: usize) -> anyhow::Result<()> {
         let repo = r["meta"]["cwd"].as_str().unwrap_or_default().rsplit('/').next().unwrap_or_default().chars().take(18).collect::<String>();
         let model = r["meta"]["model"].as_str().unwrap_or_default().trim_start_matches("claude-").chars().take(16).collect::<String>();
         println!(
-            "{:<6} {:<18} {:<16} {:<10} {:>6.0} {:>5} {:>8} {:>5.0}% {:>6} {:>5}  {}",
+            "{:<6} {:<18} {:<16} {:<10} {:<13} {:>6.0} {:>5} {:>8} {:>5.0}% {:>6} {:>5}  {}",
             ago,
             repo,
             model,
             r["stop"].as_str().unwrap_or("?"),
+            r["verify"]["status"].as_str().unwrap_or("-"),
             r["secs"].as_f64().unwrap_or(0.0),
             r["turns"],
             format!("${:.3}", r["cost_usd"].as_f64().unwrap_or(0.0)),
@@ -197,8 +252,10 @@ mod tests {
                 result = Some(e.clone());
             }
         }
-        let cost = result.as_ref().unwrap()["total_cost_usd"].as_f64().unwrap();
-        let line = run.finish(result.as_ref(), cost, 89_000.0, &json!({"model": "claude-opus-5-5"}), Path::new("/nonexistent"));
+        run.add_cost(result.as_ref().unwrap()["total_cost_usd"].as_f64().unwrap());
+        let line = run.finish(result.as_ref(), 89_000.0, &json!({"model": "claude-opus-5-5"}), Path::new("/nonexistent"));
+        assert_eq!(line["verify"]["status"], "claimed");
+        assert!((line["cost_usd"].as_f64().unwrap() - 0.308).abs() < 0.001);
         assert_eq!(line["stop"], "completed");
         assert_eq!(line["turns"], 16);
         assert_eq!(line["tools"]["bash"]["calls"], 15);

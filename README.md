@@ -17,6 +17,8 @@ Early. What works today:
   tools, files), zen, timeline. `ctrl-t` switches.
 - **Recordings**: every session is saved to `~/.local/share/tazuna/sessions/` and replays like a video.
 - **Headless mode** for benchmarks: `tazuna --run prompt.txt` prints claude's result JSON.
+- **Verified, not claimed**: when claude says it is done, tazuna runs the tests for what changed and sends failures back
+  (up to 2 rounds). `--verify "<cmd>"` overrides the detected command, `--no-verify` turns it off.
 - **Run log**: one line per run in `~/.local/share/tazuna/runs.jsonl` (stop reason, cost, per-turn cache use, tools,
   files changed). `tazuna --log` shows the latest runs.
 
@@ -72,8 +74,8 @@ tazuna runs on top of the `claude` CLI (~200 MB, ~1 s to start) and a Node tool 
 planned.
 
 **How to read these numbers**: one run varies by about ±1.2 judge points and ±$0.40. Re-running the same setup a day later
-moved median cost by 24% (mean 9%) and the judge score by 0.04. We treat judge differences under 0.5 and cost differences under
-15% as noise, and compare against a same-day baseline.
+moved median cost by 24% (mean 9%), and two arms that behaved identically scored 0.67 apart. We treat judge differences
+under 0.75 and cost differences under 15% as noise (12 runs per arm), and compare against a same-day baseline.
 
 ## Usage
 

@@ -4,7 +4,7 @@
 //! interrupt control request the official Agent SDK uses; if claude does not answer, the process is killed and the
 //! next message resumes the session with `--resume`.
 
-use crate::runlog::Run;
+use crate::{runlog::Run, verify};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::{
@@ -32,6 +32,8 @@ enum Msg {
     Line(String),
     /// stderr closed: the process is exiting.
     Exited(String),
+    /// A verification finished.
+    Verified(verify::Outcome),
 }
 
 pub struct Live {
@@ -45,6 +47,8 @@ pub struct Live {
     tx: Sender<(u64, Msg)>,
     rx: Receiver<(u64, Msg)>,
     session_id: Option<String>,
+    /// From claude's init event: its built-in prompt changes between versions, which moves token counts.
+    claude_version: Option<String>,
     generation: u64,
     /// When an interrupt was requested and its run has not ended yet.
     interrupting: Option<Instant>,
@@ -59,6 +63,13 @@ pub struct Live {
     runs_log: PathBuf,
     /// "live" or "headless", recorded in the run log.
     pub mode: &'static str,
+    pub verify: verify::Mode,
+    verifying: bool,
+    /// Messages typed while tests run; sent once the run is over.
+    held: VecDeque<String>,
+    /// claude's last result event and the last run-log line (headless mode reports them).
+    pub last_result: Option<Value>,
+    pub last_log: Option<Value>,
 }
 
 impl Live {
@@ -88,6 +99,7 @@ impl Live {
             tx,
             rx,
             session_id: None,
+            claude_version: None,
             generation: 0,
             interrupting: None,
             interrupts_sent: 0,
@@ -98,6 +110,11 @@ impl Live {
             proc_cost: 0.0,
             runs_log: data.join("runs.jsonl"),
             mode: "live",
+            verify: verify::Mode::Auto,
+            verifying: false,
+            held: VecDeque::new(),
+            last_result: None,
+            last_log: None,
         })
     }
 
@@ -107,6 +124,22 @@ impl Live {
 
     /// Sends a user message, starting (or resuming) the claude process if needed. Returns the event to show.
     pub fn send(&mut self, text: &str) -> Result<(f64, Value)> {
+        if self.verifying {
+            self.held.push_back(text.to_string());
+        } else {
+            self.start_run(text)?;
+        }
+        Ok(self.record(json!({"type": "harness_user", "text": text})))
+    }
+
+    fn start_run(&mut self, text: &str) -> Result<()> {
+        self.write_user(text)?;
+        let run = Run::new(text, self.elapsed_ms(), &self.cwd);
+        self.runs.push_back(run);
+        Ok(())
+    }
+
+    fn write_user(&mut self, text: &str) -> Result<()> {
         if self.child.is_none() {
             self.spawn()?;
         }
@@ -114,13 +147,21 @@ impl Live {
         let stdin = self.stdin.as_mut().context("claude stdin closed")?;
         writeln!(stdin, "{line}")?;
         stdin.flush()?;
-        let run = Run::new(text, self.elapsed_ms(), &self.cwd);
-        self.runs.push_back(run);
-        Ok(self.record(json!({"type": "harness_user", "text": text})))
+        Ok(())
+    }
+
+    /// Nothing in flight: every run has ended and no message is waiting.
+    pub fn idle(&self) -> bool {
+        self.runs.is_empty() && !self.verifying && self.held.is_empty()
     }
 
     /// Asks claude to stop the current run; the process stays up and keeps its cache.
     pub fn interrupt(&mut self) -> Option<(f64, Value)> {
+        if self.verifying {
+            // claude is idle while tests run: nothing to interrupt there, the run ends when the tests return
+            self.runs.front_mut()?.interrupted();
+            return Some(self.record(json!({"type": "harness_verify_cancel"})));
+        }
         let stdin = self.stdin.as_mut()?;
         self.interrupts_sent += 1;
         let req = json!({"type": "control_request", "request_id": format!("interrupt-{}", self.interrupts_sent), "request": {"subtype": "interrupt"}});
@@ -159,20 +200,27 @@ impl Live {
                     let Ok(e) = serde_json::from_str::<Value>(&l) else { continue };
                     if e["type"] == "system" && e["subtype"] == "init" {
                         self.session_id = e["session_id"].as_str().map(String::from);
+                        self.claude_version = e["claude_code_version"].as_str().map(String::from);
                     }
                     if let Some(run) = self.runs.front_mut() {
                         run.observe(&e);
                     }
-                    if e["type"] == "result" {
+                    let is_result = e["type"] == "result";
+                    if is_result {
                         self.interrupting = None;
                         let total = e["total_cost_usd"].as_f64().unwrap_or(self.proc_cost);
-                        if let Some(run) = self.runs.pop_front() {
-                            self.log(run.finish(Some(&e), total - self.proc_cost, self.elapsed_ms(), &self.meta(), &self.cwd));
+                        if let Some(run) = self.runs.front_mut() {
+                            run.add_cost(total - self.proc_cost);
                         }
                         self.proc_cost = total;
+                        self.last_result = Some(e.clone());
                     }
                     out.push(self.record(e));
+                    if is_result {
+                        out.extend(self.after_result());
+                    }
                 }
+                Msg::Verified(o) => out.extend(self.after_verify(o)),
                 Msg::Exited(stderr) => {
                     let code = self.child.take().and_then(|mut c| c.wait().ok()).and_then(|st| st.code());
                     self.stdin = None;
@@ -190,24 +238,82 @@ impl Live {
         out
     }
 
+    /// claude says the front run is done: verify it, or end it.
+    fn after_result(&mut self) -> Vec<(f64, Value)> {
+        let Some(run) = self.runs.front() else { return vec![] };
+        let success = self.last_result.as_ref().is_some_and(|r| r["subtype"] == "success" && r["is_error"] != true);
+        let cmd = (success && !run.is_interrupted()).then(|| verify::command(&self.verify, &self.cwd, &run.changed_files(&self.cwd))).flatten();
+        let Some(cmd) = cmd else { return self.finish_front() };
+        self.verifying = true;
+        let round = run.failed_rounds() + 1;
+        let (tx, g, cwd, c) = (self.tx.clone(), self.generation, self.cwd.clone(), cmd.clone());
+        std::thread::spawn(move || {
+            let _ = tx.send((g, Msg::Verified(verify::run(&cwd, &c))));
+        });
+        vec![self.record(json!({"type": "harness_verify_start", "cmd": cmd, "round": round}))]
+    }
+
+    /// Tests are back: pass ends the run; a failure goes back to claude while rounds remain.
+    fn after_verify(&mut self, o: verify::Outcome) -> Vec<(f64, Value)> {
+        self.verifying = false;
+        let Some(run) = self.runs.front_mut() else { return vec![] };
+        run.add_verify(&o.cmd, o.ok, o.secs);
+        let retry = !o.ok && !run.is_interrupted() && run.failed_rounds() <= verify::MAX_ROUNDS;
+        let mut out = vec![self.record(json!({
+            "type": "harness_verify_done", "cmd": o.cmd, "ok": o.ok, "code": o.code, "secs": o.secs, "output": o.output, "final": !retry,
+        }))];
+        if retry {
+            let round = self.runs.front().map_or(1, |r| r.failed_rounds());
+            match self.write_user(&verify::feedback(&o, round)) {
+                Ok(()) => out.push(self.record(json!({"type": "harness_verify_feedback", "round": round, "max": verify::MAX_ROUNDS}))),
+                Err(e) => {
+                    out.push(self.record(json!({"type": "harness_notice", "text": format!("could not send test failures: {e:#}"), "error": true})));
+                    out.extend(self.finish_front());
+                }
+            }
+        } else {
+            out.extend(self.finish_front());
+        }
+        out
+    }
+
+    /// Logs the front run, then sends any message typed while it was busy.
+    fn finish_front(&mut self) -> Vec<(f64, Value)> {
+        if let Some(run) = self.runs.pop_front() {
+            let line = run.finish(self.last_result.as_ref(), self.elapsed_ms(), &self.meta(), &self.cwd);
+            self.log(line);
+        }
+        let mut out = Vec::new();
+        while self.runs.is_empty() && !self.verifying {
+            let Some(text) = self.held.pop_front() else { break };
+            if let Err(e) = self.start_run(&text) {
+                out.push(self.record(json!({"type": "harness_notice", "text": format!("{e:#}"), "error": true})));
+            }
+        }
+        out
+    }
+
     /// The process is gone: runs without a result end here (stopped if the user asked, otherwise crashed).
     fn end_runs(&mut self) {
         // ponytail: a dead process reports no cost, so these runs log $0; the session's estimate is in the recording
         while let Some(run) = self.runs.pop_front() {
-            let line = run.finish(None, 0.0, self.elapsed_ms(), &self.meta(), &self.cwd);
+            let line = run.finish(None, self.elapsed_ms(), &self.meta(), &self.cwd);
             self.log(line);
         }
         self.proc_cost = 0.0;
+        self.verifying = false;
     }
 
     fn meta(&self) -> Value {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
-            "cwd": self.cwd, "session_id": self.session_id, "recording": self.rec_path,
+            "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
+            "claude_version": self.claude_version, "cwd": self.cwd, "session_id": self.session_id, "recording": self.rec_path,
         })
     }
 
-    fn log(&self, line: Value) {
+    fn log(&mut self, line: Value) {
+        self.last_log = Some(line.clone());
         let appended = std::fs::OpenOptions::new().create(true).append(true).open(&self.runs_log).and_then(|mut f| writeln!(f, "{line}"));
         if let Err(e) = appended {
             eprintln!("run log: {e}");

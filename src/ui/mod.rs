@@ -180,6 +180,7 @@ pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Col
         Activity::Thinking => (spin, "thinking".into(), th.warn),
         Activity::Writing => (spin, "writing".into(), th.accent),
         Activity::Tool => (spin, format!("running {}", last_tool_name(s)), th.accent2),
+        Activity::Verifying => (spin, "verifying".into(), th.accent2),
         Activity::Done => ("✓", "done".into(), th.ok),
     }
 }
@@ -318,7 +319,7 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
             if o.timeline {
                 let lead = if k == 0 {
                     // the node replaces the step's own status glyph
-                    if matches!(b, Block::Tool(_) | Block::Thinking { .. }) && !l.spans.is_empty() {
+                    if matches!(b, Block::Tool(_) | Block::Thinking { .. } | Block::Verify(_)) && !l.spans.is_empty() {
                         let glyph_w = l.spans.remove(0).width();
                         // continuation rows lose the same width so they stay aligned
                         if let Some(first) = cont.first_mut() {
@@ -352,6 +353,9 @@ fn node(b: &Block, v: &View, th: &Theme) -> (&'static str, Color) {
         Block::Tool(t) if t.error => ("✗", th.err),
         Block::Tool(_) => ("◆", th.accent2),
         Block::Done(_) => ("★", th.ok),
+        Block::Verify(x) if x.ok.is_none() => (spinner(v.clock_ms), th.accent2),
+        Block::Verify(x) if x.ok == Some(true) => ("✓", th.ok),
+        Block::Verify(_) => ("✗", th.err),
         Block::Notice { error: true, .. } => ("!", th.err),
         Block::Notice { .. } => ("·", th.warn),
     }
@@ -385,6 +389,7 @@ pub fn render_transcript(f: &mut Frame, area: Rect, lines: Vec<Line<'static>>, l
 fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Prefixed> {
     match b {
         Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o),
+        Block::Verify(x) => verify_lines(x, v, th),
         Block::Notice { text, error } => vec![(
             Line::from(vec![
                 Span::styled(if *error { "! " } else { "· " }, st(if *error { th.err } else { th.warn })),
@@ -448,6 +453,34 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Pr
             ]
         }
     }
+}
+
+const VERIFY_FAIL_LINES: usize = 8;
+
+fn verify_lines(x: &crate::session::Verify, v: &View, th: &Theme) -> Vec<Prefixed> {
+    let (glyph, color, state) = match x.ok {
+        None => (spinner(v.clock_ms), th.accent2, "running…".to_string()),
+        Some(true) => ("✓", th.ok, format!("passed · {:.1}s", x.secs)),
+        Some(false) => ("✗", th.err, format!("failed · {:.1}s", x.secs)),
+    };
+    let round = if x.round > 1 { format!(" (round {})", x.round) } else { String::new() };
+    let mut out = vec![(
+        Line::from(vec![
+            Span::styled(format!("{glyph} "), st(color)),
+            Span::styled("verify", st(th.accent2).add_modifier(Modifier::BOLD)),
+            Span::styled(format!(" {}{round}", x.cmd), st(th.dim)),
+            Span::styled(format!("  · {state}"), st(th.faint)),
+        ]),
+        vec![Span::raw("         ")],
+    )];
+    if x.ok == Some(false) {
+        let lines: Vec<&str> = x.output.lines().filter(|l| !l.trim().is_empty()).collect();
+        let shown = if v.expand_all { lines.len() } else { VERIFY_FAIL_LINES.min(lines.len()) };
+        for l in &lines[lines.len() - shown..] {
+            out.push((Line::from(vec![Span::raw("    "), Span::styled("│ ", st(th.faint)), Span::styled(l.replace('\t', "    "), st(th.err))]), vec![Span::raw("      ")]));
+        }
+    }
+    out
 }
 
 /// The opening message is the task; later ones are follow-ups.

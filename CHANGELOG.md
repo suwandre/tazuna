@@ -8,7 +8,48 @@ Every change that can affect the agent is measured before it stays. Each entry l
   score, hidden tests, cost, turns, time, cache hit rate.
 - **Tier 2** (releases): Tier 1 plus the cross-harness table in the README.
 
-**Noise thresholds**: judge ±0.5, cost ±15% (mean), turns ±20%. Smaller differences are reported as "within noise".
+**Noise thresholds**: judge ±0.75, cost ±15% (mean), turns ±20% at 12 runs per arm. Smaller differences are reported as
+"within noise". (The judge threshold was ±0.5 until 0.0.3, whose two arms behaved identically and still scored 0.67 apart.)
+
+Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
+counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
+
+## 0.0.3 (2026-10-06)
+
+**Verified, not claimed.** When claude says a run is done, tazuna runs the tests for what the run changed (Go: `go test`
+on the changed packages; Rust, Python and JS when set up; `--verify "<cmd>"` to override, `--no-verify` to disable).
+Failures go back to claude as the next message, up to 2 extra rounds in the same process. The run log records
+`verified`, `verify_failed`, `claimed` (nothing to test), `skipped` or `off`.
+
+Tier 1 (6 real-work Go tasks × 2 runs, Opus 5.5 medium, same binary with and without `--no-verify`, interleaved, judged
+together):
+
+| Metric | Verification off (= 0.0.2) | Verification on | Change |
+|---|---|---|---|
+| Judge | 6.71 | 7.38 | +0.67, within noise (see below) |
+| All hidden tests pass | 8/12 | 8/12 | same |
+| Hidden tests passed | 87% | 90% | within noise |
+| Mean cost | $0.67 | $0.71 | +5%, within noise |
+| Median turns | 22 | 23.5 | within noise |
+| Time added by verification | — | median 27 s (10-112 s) | zero tokens |
+
+Verification passed on the first try in all 12 runs: claude already tests its own work on these tasks, so it never had to
+send a failure back. Both arms saw identical inputs, which makes the +0.67 judge difference pure noise and is why the
+judge threshold is now ±0.75. Verification stays on by default: it costs no tokens when tests pass, it is a safety net for
+runs that skip or break tests, and `verified` vs `claimed` is useful data for routing. Possible follow-up: skip it when
+claude's own last test run already covered the same packages after its last edit.
+
+Also:
+- Auto-detected test commands only include plain path characters, so a file name can't inject shell syntax.
+- The run log and Tier 0 now record the `claude` CLI version.
+
+Tier 0:
+
+| Metric | 0.0.2 | 0.0.3 | Change |
+|---|---|---|---|
+| Input tokens per turn before any work | 2,873 (claude 2.1.289) | 2,980 (claude 2.1.291) | +104 from Claude Code's update, not tazuna |
+| Binary size | 2.13 MB | 2.20 MB | +3.2% |
+| Replay render | 5 ms | 6 ms | within noise |
 
 ## 0.0.2 (2026-10-06)
 

@@ -10,6 +10,17 @@ pub enum Block {
     Done(Summary),
     /// Harness messages: stopped runs, process exits.
     Notice { text: String, error: bool },
+    /// tazuna running the tests after claude said it was done.
+    Verify(Verify),
+}
+
+pub struct Verify {
+    pub cmd: String,
+    pub round: u64,
+    /// None while the tests run.
+    pub ok: Option<bool>,
+    pub secs: f64,
+    pub output: String,
 }
 
 pub struct Tool {
@@ -83,6 +94,8 @@ pub enum Activity {
     Thinking,
     Writing,
     Tool,
+    /// tazuna is running the tests.
+    Verifying,
     Done,
 }
 
@@ -183,6 +196,26 @@ impl Session {
                 self.activity = Activity::Waiting;
             }
             (Some("harness_interrupt"), _) => self.stopping = true,
+            (Some("harness_verify_start"), _) => {
+                self.push(Block::Verify(Verify { cmd: s(&e["cmd"]), round: e["round"].as_u64().unwrap_or(1), ok: None, secs: 0.0, output: String::new() }));
+                self.activity = Activity::Verifying;
+            }
+            (Some("harness_verify_done"), _) => {
+                if let Some(v) = self.blocks.iter_mut().rev().find_map(|b| if let Block::Verify(v) = b { Some(v) } else { None }) {
+                    (v.ok, v.secs, v.output) = (e["ok"].as_bool(), e["secs"].as_f64().unwrap_or(0.0), s(&e["output"]));
+                }
+                self.finished_tools += 1; // pulse like a finished tool
+                self.activity = if e["final"] == true { Activity::Done } else { Activity::Waiting };
+            }
+            (Some("harness_verify_feedback"), _) => {
+                let text = format!("↻ sent the failing tests back to claude (round {} of {})", e["round"], e["max"]);
+                self.push(Block::Notice { text, error: false });
+                self.activity = Activity::Waiting;
+            }
+            (Some("harness_verify_cancel"), _) => {
+                self.push(Block::Notice { text: "verification cancelled · the run ends when the tests return".into(), error: false });
+                self.activity = Activity::Ready;
+            }
             // UI-only message (not from the process): no effect on cost or tools
             (Some("harness_info"), _) => self.push(Block::Notice { text: s(&e["text"]), error: false }),
             (Some("harness_notice"), _) => {

@@ -31,5 +31,6 @@ print(json.dumps({
     "replay_render_ms": int(os.environ["RENDER"]),
     "first_turn_input_tokens": u["input_tokens"] + u.get("cache_creation_input_tokens", 0) + u.get("cache_read_input_tokens", 0),
     "probe_cost_usd": r["total_cost_usd"],
+    "claude_version": subprocess.run(["claude", "--version"], capture_output=True, text=True).stdout.split()[0],
 }))
 EOF

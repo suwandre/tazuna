@@ -1,2 +1,3 @@
-{"version": "0.0.1", "commit": "09fe99c", "binary_bytes": 2022400, "replay_render_ms": 6, "first_turn_input_tokens": 2876, "probe_cost_usd": 0.003121, "note": "render re-measured warm (median of 7) after the cold-start fix"}
-{"version": "0.0.2", "commit": "eb2b81d", "binary_bytes": 2132208, "replay_render_ms": 5, "first_turn_input_tokens": 2873, "probe_cost_usd": 0.003078}
+{"version": "0.0.1", "commit": "09fe99c", "binary_bytes": 2022400, "replay_render_ms": 6, "first_turn_input_tokens": 2876, "probe_cost_usd": 0.003121, "note": "render re-measured warm (median of 7) after the cold-start fix", "claude_version": "2.1.289"}
+{"version": "0.0.2", "commit": "eb2b81d", "binary_bytes": 2132208, "replay_render_ms": 5, "first_turn_input_tokens": 2873, "probe_cost_usd": 0.003078, "claude_version": "2.1.289"}
+{"version": "0.0.3", "commit": "8d1987c", "binary_bytes": 2199680, "replay_render_ms": 6, "first_turn_input_tokens": 2980, "probe_cost_usd": 0.003175, "claude_version": "2.1.291"}

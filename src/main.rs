@@ -1,6 +1,7 @@
 //! tazuna: a lean terminal UI around Claude Code.
 //!
 //!   tazuna [--model M] [--effort E] [--design 1-4] [--allow-non-git]   # live: drive claude in the current repo
+//!          [--verify "<cmd>" | --no-verify]   # after claude says done, tazuna runs the tests (auto-detected by default)
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
 //!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
@@ -14,6 +15,7 @@ mod replay;
 mod runlog;
 mod session;
 mod ui;
+mod verify;
 
 use anyhow::{Context, Result, bail};
 use ratatui::{
@@ -49,6 +51,7 @@ struct Args {
     allow_non_git: bool,
     run: Option<PathBuf>,
     log: Option<usize>,
+    verify: verify::Mode,
 }
 
 fn args() -> Result<Args> {
@@ -65,6 +68,7 @@ fn args() -> Result<Args> {
         allow_non_git: false,
         run: None,
         log: None,
+        verify: verify::Mode::Auto,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -78,6 +82,8 @@ fn args() -> Result<Args> {
             "--effort" => a.effort = val()?,
             "--allow-non-git" => a.allow_non_git = true,
             "--run" => a.run = Some(val()?.into()),
+            "--verify" => a.verify = verify::Mode::Command(val()?),
+            "--no-verify" => a.verify = verify::Mode::Off,
             "--log" => a.log = Some(it.next().and_then(|n| n.parse().ok()).unwrap_or(20)),
             "--size" => {
                 let v = val()?;
@@ -124,6 +130,7 @@ fn main() -> Result<()> {
                 bail!("not inside a git repo: the agent edits files without asking, so run it where `git diff` can review and undo changes (or pass --allow-non-git)");
             }
             let mut live = live::Live::new(&a.model, &a.effort)?;
+            live.verify = a.verify.clone();
             let mut term = ratatui::init();
             execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
             let r = run_live(&mut term, &mut live, &a);
@@ -140,20 +147,32 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     let prompt = std::fs::read_to_string(prompt_file).with_context(|| format!("reading {}", prompt_file.display()))?;
     let mut live = live::Live::new(&a.model, &a.effort)?;
     live.mode = "headless";
+    live.verify = a.verify.clone();
     live.send(&prompt)?;
     loop {
         for (_, e) in live.poll() {
-            match e["type"].as_str() {
-                Some("result") => {
-                    println!("{e}");
-                    return Ok(());
-                }
-                Some("harness_notice") if e["error"].as_bool() == Some(true) => bail!("{}", e["text"].as_str().unwrap_or("claude failed")),
-                _ => {}
+            if e["type"] == "harness_notice" && e["error"] == true {
+                bail!("{}", e["text"].as_str().unwrap_or("claude failed"));
             }
+        }
+        if live.idle() {
+            break;
         }
         std::thread::sleep(Duration::from_millis(50));
     }
+    // claude's last result, with usage and turns summed over every round of the run
+    let mut r = live.last_result.clone().context("no result")?;
+    if let Some(log) = &live.last_log {
+        let t = &log["tokens"];
+        r["usage"]["input_tokens"] = t["input"].clone();
+        r["usage"]["cache_creation_input_tokens"] = t["cache_write"].clone();
+        r["usage"]["cache_read_input_tokens"] = t["cache_read"].clone();
+        r["usage"]["output_tokens"] = t["output"].clone();
+        r["num_turns"] = log["turns"].clone();
+        r["tazuna"] = json!({"verify": log["verify"], "stop": log["stop"], "cost_usd": log["cost_usd"]});
+    }
+    println!("{r}");
+    Ok(())
 }
 
 /// Effects state shared by replay and live mode: which changes have already been animated.
