@@ -47,35 +47,59 @@ pub struct RepoConfig {
     pub commands: usize,
     pub agents: usize,
     pub mcp: bool,
+    /// Anything else under a `.claude/` directory (hook scripts, output styles, ...): unknown, so it needs trust.
+    pub other: usize,
 }
 
 impl RepoConfig {
+    /// Config in `cwd` and every parent up to the git root (Claude Code also picks config up from parent directories).
     pub fn read(cwd: &Path) -> Self {
-        let file = |p: &str| cwd.join(p).is_file();
-        let count = |d: &str| std::fs::read_dir(cwd.join(d)).map(|r| r.flatten().count()).unwrap_or(0);
-        let settings_text: String = [".claude/settings.json", ".claude/settings.local.json"]
-            .iter()
-            .filter_map(|f| std::fs::read_to_string(cwd.join(f)).ok())
-            .collect();
-        RepoConfig {
-            instructions: ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md", "CLAUDE.local.md"].iter().filter(|f| file(f)).map(|f| f.to_string()).collect(),
-            settings: !settings_text.is_empty(),
-            hooks: settings_text.contains("\"hooks\""),
-            skills: count(".claude/skills"),
-            commands: count(".claude/commands"),
-            agents: count(".claude/agents"),
-            mcp: file(".mcp.json"),
+        let top = Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .current_dir(cwd)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| std::path::PathBuf::from(String::from_utf8_lossy(&o.stdout).trim()));
+        let start = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+        let mut c = RepoConfig::default();
+        for dir in start.ancestors() {
+            c.add(dir, dir == start);
+            if top.as_deref().is_none_or(|t| dir == t) {
+                break;
+            }
         }
+        c
+    }
+
+    fn add(&mut self, dir: &Path, here: bool) {
+        let file = |p: &str| dir.join(p).is_file();
+        let count = |d: &str| std::fs::read_dir(dir.join(d)).map(|r| r.flatten().count()).unwrap_or(0);
+        let settings_text: String =
+            [".claude/settings.json", ".claude/settings.local.json"].iter().filter_map(|f| std::fs::read_to_string(dir.join(f)).ok()).collect();
+        for f in ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md", "CLAUDE.local.md"].iter().filter(|f| file(f)) {
+            self.instructions.push(if here { f.to_string() } else { dir.join(f).to_string_lossy().into_owned() });
+        }
+        self.settings |= dir.join(".claude/settings.json").exists() || dir.join(".claude/settings.local.json").exists();
+        self.hooks |= settings_text.contains("\"hooks\"");
+        self.skills += count(".claude/skills");
+        self.commands += count(".claude/commands");
+        self.agents += count(".claude/agents");
+        self.mcp |= file(".mcp.json");
+        let known = ["CLAUDE.md", "settings.json", "settings.local.json", "skills", "commands", "agents"];
+        self.other += std::fs::read_dir(dir.join(".claude"))
+            .map(|r| r.flatten().filter(|e| !known.contains(&e.file_name().to_string_lossy().as_ref())).count())
+            .unwrap_or(0);
     }
 
     pub fn any(&self) -> bool {
-        !self.instructions.is_empty() || self.settings || self.skills > 0 || self.commands > 0 || self.agents > 0 || self.mcp
+        !self.instructions.is_empty() || self.runs_code()
     }
 
     /// Fail closed: any settings file can run code (hooks, apiKeyHelper, statusLine, env, plugins, ...), and so can skills
     /// (they ship scripts), commands, subagent definitions and MCP servers. Only plain instruction files are inert.
     pub fn runs_code(&self) -> bool {
-        self.settings || self.skills > 0 || self.commands > 0 || self.agents > 0 || self.mcp
+        self.settings || self.skills > 0 || self.commands > 0 || self.agents > 0 || self.mcp || self.other > 0
     }
 
     pub fn summary(&self) -> String {
@@ -96,6 +120,9 @@ impl RepoConfig {
         }
         if self.mcp {
             parts.push("MCP servers".into());
+        }
+        if self.other > 0 {
+            parts.push(format!("{} other .claude entries", self.other));
         }
         parts.join(", ")
     }
@@ -179,6 +206,12 @@ mod tests {
         assert!(RepoConfig::read(&dir).runs_code(), "any settings file needs trust, not just ones with hooks");
         std::fs::remove_file(dir.join(".claude/settings.json")).unwrap();
         assert!(!RepoConfig::read(&dir).runs_code(), "a CLAUDE.md alone runs nothing");
+        std::fs::create_dir_all(dir.join(".claude/hooks")).unwrap();
+        assert!(RepoConfig::read(&dir).runs_code(), "unknown .claude entries (hook scripts) need trust");
+        std::fs::remove_dir_all(dir.join(".claude/hooks")).unwrap();
+        std::fs::write(dir.join(".claude/settings.json"), "{}").unwrap();
+        std::fs::create_dir_all(dir.join("pkg/sub")).unwrap();
+        assert!(RepoConfig::read(&dir.join("pkg/sub")).runs_code(), "config in a parent directory of the repo counts");
         std::fs::remove_dir_all(&dir).ok();
     }
 }
