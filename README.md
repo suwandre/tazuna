@@ -99,6 +99,10 @@ Requires the `claude` CLI (logged in). Nothing else: the lean tools are built in
 
 tazuna only runs inside a git repo by default: the agent edits without asking, so `git diff` is the review step.
 
+Repo instructions are trusted: `CLAUDE.md` / `AGENTS.md` go into the prompt of an agent that runs commands without asking
+(Claude Code does the same after its "trust this folder?" prompt; tazuna has no such prompt). In repos you did not write, use
+`--no-project-instructions`. Symlinked instruction files are never read.
+
 ## Layout
 
 ```

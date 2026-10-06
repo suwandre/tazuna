@@ -453,7 +453,12 @@ pub fn project_instructions(cwd: &Path) -> (String, usize, Vec<String>) {
     let mut body = String::new();
     let mut files = Vec::new();
     for name in ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"] {
-        let Ok(text) = std::fs::read_to_string(cwd.join(name)) else { continue };
+        // regular files only: a symlinked CLAUDE.md could point at any file on the machine (e.g. ~/.ssh/id_rsa)
+        let path = cwd.join(name);
+        if !std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_file()) {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
         if text.trim().is_empty() || body.contains(text.trim()) {
             continue;
         }
@@ -509,6 +514,11 @@ mod tests {
         assert_eq!(bytes, text.len());
         std::fs::write(dir.join("CLAUDE.md"), "x".repeat(MAX_INSTRUCTIONS + 5000)).unwrap();
         assert!(project_instructions(&dir).0.contains("instructions cut here"));
+        std::fs::remove_file(dir.join("CLAUDE.md")).unwrap();
+        std::fs::remove_file(dir.join("AGENTS.md")).unwrap();
+        std::fs::write(dir.join("secret.txt"), "TOP SECRET").unwrap();
+        std::os::unix::fs::symlink(dir.join("secret.txt"), dir.join("CLAUDE.md")).unwrap();
+        assert!(!project_instructions(&dir).0.contains("TOP SECRET"), "symlinked instruction files are never read");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

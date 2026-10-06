@@ -39,6 +39,10 @@ Claude Code led in both judge passes; the repo's hooks (a comment linter after e
 prompt and tools are the likely reasons and are not yet separated. One task and 2-3 runs per arm is an anecdote, not a
 benchmark.
 
+Security: instruction files are only read when they are regular files (a symlinked `CLAUDE.md` could otherwise put any
+file on the machine into the prompt). Repo instructions are trusted input; the README says to use `--no-project-instructions`
+in repos you did not write.
+
 Tier 0: 2,980 input tokens per turn in a repo without instruction files (unchanged), binary
 2.35 MB.
 
