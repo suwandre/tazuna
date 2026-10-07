@@ -5,6 +5,8 @@
 tazuna drives the official `claude` CLI headlessly (`stream-json` in and out) with a lean profile, so Claude runs on your own
 subscription through first-party Claude Code: no token reuse, no impersonation. Other providers will get their own agent loop.
 
+Goals, order of work and the ideas already tried or parked: [ROADMAP.md](ROADMAP.md).
+
 ## Status
 
 Early. What works today:
