@@ -54,7 +54,7 @@ candidates for a task together (1-10), twice in shuffled order. All harnesses at
 |---|---|---|---|---|---|---|---|
 | **tazuna (default)** | **0.0.11** | **6.67** | **8/12** | **84%** | **$0.41** | **411s** | **first-party (`claude` CLI)** |
 | OMP | 18.8.3 | 6.54 | 8/12 | 86% | $0.51 | 401s | direct claude.ai OAuth |
-| Claude Code (stock) | 2.1.292 | 6.38 | 8/12 | 83% | $0.30 | 420s | first-party |
+| Claude Code (stock) | 2.1.292 | 6.38 | 8/12 | 83% | $0.43 | 420s | first-party |
 | Hermes | 0.21.5 (865ba90) | 6.21 | 7/12 | 81% | $0.55 | 453s | routes as Claude Code (extra usage) |
 | pi | 1.0.4 | 6.08 | 8/12 | 85% | $0.28 | 458s | extra usage (pay per token) |
 | tazuna (`--profile lean`) | 0.0.11 | 6.04 | 8/12 | 84% | $0.31 | 381s | first-party (`claude` CLI) |
@@ -62,10 +62,10 @@ candidates for a task together (1-10), twice in shuffled order. All harnesses at
 | Empryo | 3.8.7-beta | 5.12 | 8/12 | 84% | $0.50 | 464s | subscription via its own client |
 
 How to read it: the top three are within 0.3 judge points, inside the noise. tazuna's default (the repo profile in the five
-repos that carry a `CLAUDE.md`/`AGENTS.md`, lean in terraform) leads on quality and is 20-25% cheaper than OMP and Hermes,
-but costs 37% more than stock Claude Code, which took fewer turns (16.5 vs 24 median). Lean tazuna costs what stock costs
-here, for 0.34 lower. Stock Claude Code cost 29% less than in the first measurement (Oct 3-6), so earlier cost leads did not
-hold; see CHANGELOG for the history.
+repos that carry a `CLAUDE.md`/`AGENTS.md`, lean in terraform) leads on quality at 5% below stock Claude Code's cost and
+20-25% below OMP and Hermes; lean tazuna is 28% cheaper than stock for 0.34 lower. (Stock Claude Code's cost includes every
+result event of a run: when it waits on a background command, `claude -p` reports each wake-up separately. Counting only
+the last one had made three of its runs look nearly free; fixed 2026-10-07.)
 
 On real company work (five tickets in a TypeScript monorepo, Opus 5.5 medium) tazuna lean matched stock Claude Code's
 quality at 19% lower cost; see CHANGELOG 0.0.10-0.0.11.
