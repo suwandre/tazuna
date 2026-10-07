@@ -40,6 +40,26 @@ Input tokens per turn, probe repo with CLAUDE.md, one skill, one hook and a `.mc
 
 Tier 0: binary 2.43 MB (+3 KB), lean 2,977 input tokens per turn.
 
+**Real work, repo-lean vs a same-day stock baseline** (five acme/app tickets, 2 runs per arm per ticket, Opus
+5.5 medium, all runs of a ticket judged as one pool; repo-lean and stock ran 15:00-16:10 the same day):
+
+| Arm | 872 | 921 | 946 | 870 | 698 | Judge avg | Total cost (median per ticket) |
+|---|---|---|---|---|---|---|---|
+| stock Claude Code, same day | 5.50 | 6.75 | 5.00 | 6.75 | 7.75 | **6.35** | $13.20 |
+| stock Claude Code, earlier | 5.00 | 6.25 | 4.50 | 6.75 | 7.50 | 6.00 | $13.38 |
+| tazuna lean (0.0.9) | 4.25 | 6.25 | 5.00 | 7.00 | 7.50 | 6.00 | $10.88 |
+| tazuna repo (0.0.9) | 5.00 | 6.25 | 4.50 | 6.00 | 7.00 | 5.75 | $12.66 |
+| cc-mid via `claude -p` | 4.75 | 6.25 | 3.50 | 7.25 | 6.00 | 5.55 | $10.98 |
+| **tazuna repo-lean (0.0.11)** | 5.50 | 5.00 | 4.50 | 6.25 | 6.00 | **5.45** | **$11.62 (−12% vs same day)** |
+
+repo-lean is 12% cheaper than same-day stock (cheaper on 4 of 5 tickets) but scores 0.90 lower, beyond the 0.75 noise
+threshold, and lowest of the tazuna arms. The judge's notes point at unchecked assumptions (a guessed database column in
+T-921, swallowed lookup errors in T-946), not at repo rules. Lean, with the same prompt, scored 6.00, so the drop comes
+from the combination of Claude's tools, its CLAUDE.md loading and the repo's hooks with the short prompt; not isolated yet.
+Decision: repo-lean stays opt-in; the repo profile stays the default. Stock Claude Code itself moved 0.35 judge and up to
+±20% cost per ticket between two batches on the same and the previous day. The 16 runs and judging used 26 points of the
+5-hour window and 5 points of the weekly limit.
+
 ## 0.0.10 (2026-10-07)
 
 **Verification checks types.** When the repo has a `typecheck` (or `type-check`) script, verification runs it beside the

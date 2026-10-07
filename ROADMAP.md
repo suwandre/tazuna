@@ -31,7 +31,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 
 ## Order of work
 
-1. **Benchmark repo-lean** on the five tickets with a same-day stock baseline; decide the default profile.
+1. ~~Benchmark repo-lean~~ (done 2026-10-07: −12% cost, −0.90 judge vs same-day stock; stays opt-in, repo profile stays
+   the default).
 2. **Re-run the cross-harness table** (Tier 2) on the current version, so we know where we stand before adding more.
 3. **Quality experiments**, one at a time, each against a same-day stock baseline:
    1. Compiler errors in edit results (dirge, OMP): after an edit, return the new type errors at once. For Claude's own
@@ -86,3 +87,5 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 - 2026-10-07: the repo profile loaded the user's claude.ai connectors (~42k tokens per turn); fixed with
   `--strict-mcp-config` in v0.0.11.
 - 2026-10-07: after ten versions, back to the two goals above; this file is the reference against drift.
+- 2026-10-07: repo-lean benchmarked on five tickets: −12% cost but −0.90 judge vs same-day stock (beyond noise). Not the
+  default. Open question: why the same short prompt does well in lean (6.00) and badly with Claude's tools and repo config.
