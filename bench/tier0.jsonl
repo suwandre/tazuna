@@ -8,3 +8,4 @@
 {"version": "0.0.8", "commit": "5d6401b", "binary_bytes": 2349712, "replay_render_ms": 7, "first_turn_input_tokens": 2980, "probe_cost_usd": 0.00313, "claude_version": "2.1.291"}
 {"version": "0.0.9", "commit": "1b30e70", "binary_bytes": 2411184, "replay_render_ms": 8, "first_turn_input_tokens": 2983, "probe_cost_usd": 0.003198, "claude_version": "2.1.291"}
 {"version": "0.0.10", "commit": "68635b8", "binary_bytes": 2431040, "replay_render_ms": 7, "first_turn_input_tokens": 2983, "probe_cost_usd": 0.003228, "claude_version": "2.1.292"}
+{"version": "0.0.11", "commit": "b0fe020", "binary_bytes": 2434544, "replay_render_ms": 6, "first_turn_input_tokens": 2977, "probe_cost_usd": 0.003127, "claude_version": "2.1.292"}
