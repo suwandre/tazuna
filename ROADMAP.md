@@ -35,7 +35,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 2. **Re-run the cross-harness table** (Tier 2) on the current version, so we know where we stand before adding more.
 3. **Quality experiments**, one at a time, each against a same-day stock baseline:
    1. Compiler errors in edit results (dirge, OMP): after an edit, return the new type errors at once. For Claude's own
-      tools, through a `PostToolUse` hook tazuna adds itself, so every profile gets it.
+      tools, through a `PostToolUse` hook tazuna adds itself, so every profile gets it. It must also fire after `Bash`:
+      on the company tickets every arm made most edits with `python3`/`sed` through Bash, not with Edit/Write.
    2. An instruction against ending early, plus a self-review turn before "done" (diff vs acceptance criteria, unrelated
       changes).
    3. A verifier in a fresh context that tries to break the work (a worker and its checker never share a context).
