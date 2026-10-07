@@ -41,27 +41,36 @@ Early. What works today:
 Parity check (6 real Go tickets × 2 runs, Opus 5.5 medium): same hidden-test pass rate and judge score as `claude -p` with
 the same profile, identical per-turn overhead.
 
-## Benchmarks (v0.0.1)
+## Benchmarks (v0.0.11)
 
-Measured 2026-10-03 to 2026-10-06 on an M5 Pro. Changes per version are tracked in [CHANGELOG.md](CHANGELOG.md).
+Changes per version are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 **Real work: 6 recent merged PRs** in hugo, k6, terraform, prometheus and caddy (Go). Each harness gets the issue text and
-the repo at the PR's parent commit, twice. Hidden tests are the PR's own tests. A blind Opus 5.5 judge scores all
-candidates for a task together (1-10), twice in shuffled order. Every harness runs Claude Sonnet 5.5 at high effort; cost is
-tokens × Sonnet list price for all of them.
+the repo at the PR's parent commit, twice. Hidden tests are the PR's own tests. A blind Opus 5.5 judge scores all 26
+candidates for a task together (1-10), twice in shuffled order; every row below was judged in the same pools on
+2026-10-07. Every harness runs Claude Sonnet 5.5 at high effort; cost is tokens × Sonnet list price for all of them.
 
-| Harness | Judge | All hidden tests pass | Hidden tests passed | Median cost | Median time | Claude billing |
-|---|---|---|---|---|---|---|
-| Hermes | 7.08 | 8/12 | 87% | $0.45 | 410s | routes as Claude Code (extra usage) |
-| OMP | 6.88 | 8/12 | 85% | $0.47 | 339s | direct claude.ai OAuth |
-| OMO | 6.71 | 9/12 | 90% | $0.57 | 290s | official Agent SDK |
-| Claude Code (stock) | 6.42 | 7/12 | 84% | $0.42 | 322s | first-party |
-| **tazuna** | **6.29** | **8/12** | **83%** | **$0.31** | **240s** | **first-party (`claude` CLI)** |
-| Empryo | 6.29 | 8/12 | 85% | $0.48 | 419s | subscription via its own client |
-| pi | 6.00 | 7/12 | 80% | $0.25 | 201s | extra usage (pay per token) |
+| Harness | Run on | Judge | All hidden tests pass | Hidden tests passed | Median cost | Median time | Claude billing |
+|---|---|---|---|---|---|---|---|
+| Hermes | Oct 3-6 | 6.88 | 8/12 | 87% | $0.45 | 410s | routes as Claude Code (extra usage) |
+| OMP | Oct 3-6 | 6.67 | 8/12 | 85% | $0.47 | 339s | direct claude.ai OAuth |
+| OMO | Oct 3-6 | 6.67 | 9/12 | 90% | $0.56 | 290s | official Agent SDK |
+| **tazuna 0.0.11 (default)** | Oct 7 | **6.58** | **8/12** | **84%** | **$0.41** | **411s** | **first-party (`claude` CLI)** |
+| Claude Code (stock) | Oct 7 | 6.21 | 8/12 | 83% | $0.30 | 420s | first-party |
+| Empryo | Oct 3-6 | 6.21 | 8/12 | 85% | $0.48 | 419s | subscription via its own client |
+| tazuna 0.0.11 (`--profile lean`) | Oct 7 | 6.08 | 8/12 | 84% | $0.31 | 381s | first-party (`claude` CLI) |
+| Claude Code (stock) | Oct 3-6 | 6.08 | 7/12 | 84% | $0.42 | 322s | first-party |
+| tazuna 0.0.1 (lean) | Oct 3-6 | 6.08 | 8/12 | 83% | $0.31 | 240s | first-party (`claude` CLI) |
+| pi | Oct 3-6 | 6.00 | 7/12 | 80% | $0.25 | 201s | extra usage (pay per token) |
 
-tazuna v0.0.1 is the lean baseline: about 30-45% cheaper than the feature-rich harnesses for 0.4-0.8 lower judge scores, and
-cheaper than stock Claude Code at equal quality (the gap is within noise). The features planned next target that quality gap.
+How to read it: the top four are within 0.3 judge points of each other, inside the noise. tazuna's default (the repo
+profile in the five repos that carry a `CLAUDE.md`/`AGENTS.md`, lean in terraform) scores +0.37 over same-day stock Claude
+Code but costs 37% more there: it took more turns (24 vs 16.5 median). Stock Claude Code itself cost 29% less on Oct 7 than
+on Oct 3-6 for the same tasks, so cost comparisons across days are unreliable; judge scores are comparable because all rows
+were judged together. The other harnesses were not re-run.
+
+On real company work (five tickets in a TypeScript monorepo, Opus 5.5 medium) tazuna lean matched stock Claude Code's
+quality at 19% lower cost; see CHANGELOG 0.0.10-0.0.11.
 
 **Model and effort matter more than the harness** (same tasks, tazuna's profile, cost as billed):
 

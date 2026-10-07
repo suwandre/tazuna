@@ -33,7 +33,9 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 
 1. ~~Benchmark repo-lean~~ (done 2026-10-07: −12% cost, −0.90 judge vs same-day stock; stays opt-in, repo profile stays
    the default).
-2. **Re-run the cross-harness table** (Tier 2) on the current version, so we know where we stand before adding more.
+2. ~~Re-run the cross-harness table~~ for tazuna and stock (done 2026-10-07, README): tazuna default 6.58 (4th of 10, within
+   0.3 of the top) but +37% cost vs same-day stock on the Go tasks. Still open: re-run OMP, OMO, Empryo, Hermes and pi on
+   current versions (Hermes and pi cost ~$10 of extra usage).
 3. **Quality experiments**, one at a time, each against a same-day stock baseline:
    1. Compiler errors in edit results (dirge, OMP): after an edit, return the new type errors at once. For Claude's own
       tools, through a `PostToolUse` hook tazuna adds itself, so every profile gets it. It must also fire after `Bash`:
@@ -89,3 +91,6 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 - 2026-10-07: after ten versions, back to the two goals above; this file is the reference against drift.
 - 2026-10-07: repo-lean benchmarked on five tickets: −12% cost but −0.90 judge vs same-day stock (beyond noise). Not the
   default. Open question: why the same short prompt does well in lean (6.00) and badly with Claude's tools and repo config.
+
+- 2026-10-07: cross-harness re-run (tazuna + stock, Go tasks, Sonnet high, one judge pool per task): quality near the top,
+  cost lead gone on these tasks (stock was 29% cheaper than on Oct 3-6). Cost claims need same-day baselines every time.
