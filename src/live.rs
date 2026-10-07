@@ -91,7 +91,8 @@ impl Live {
         std::fs::create_dir_all(&sessions)?;
         let dir = cwd.file_name().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default();
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-        let rec_path = sessions.join(format!("{stamp}-{dir}.jsonl"));
+        // the pid keeps sessions started in the same second in same-named directories apart
+        let rec_path = sessions.join(format!("{stamp}-{dir}-{}.jsonl", std::process::id()));
         let mut rec = File::create(&rec_path).with_context(|| format!("creating {}", rec_path.display()))?;
         // same header as recordings/record.py, so a live session replays like any recording
         writeln!(rec, "{}", json!({"t": 0, "prompt": "", "effort": effort, "model": model, "cwd": cwd}))?;
@@ -148,8 +149,14 @@ impl Live {
     }
 
     fn start_run(&mut self, text: &str) -> Result<()> {
+        // ponytail: taken while claude starts reading; an edit that lands first is counted as known, never as new
+        let types_before = verify::typecheck_command(&self.verify, &self.cwd).map(|cmd| {
+            let cwd = self.cwd.clone();
+            crate::runlog::Baseline::Pending(std::thread::spawn(move || verify::run_raw(&cwd, &cmd).1))
+        });
         self.write_user(text)?;
-        let run = Run::new(text, self.elapsed_ms(), &self.cwd);
+        let mut run = Run::new(text, self.elapsed_ms(), &self.cwd);
+        run.types_before = types_before;
         self.runs.push_back(run);
         Ok(())
     }
@@ -276,15 +283,25 @@ impl Live {
 
     /// claude says the front run is done: verify it, or end it.
     fn after_result(&mut self) -> Vec<(f64, Value)> {
-        let Some(run) = self.runs.front() else { return vec![] };
         let success = self.last_result.as_ref().is_some_and(|r| r["subtype"] == "success" && r["is_error"] != true);
-        let cmd = (success && !run.is_interrupted()).then(|| verify::command(&self.verify, &self.cwd, &run.changed_files(&self.cwd))).flatten();
-        let Some(cmd) = cmd else { return self.finish_front() };
+        let Some(run) = self.runs.front_mut() else { return vec![] };
+        if !success || run.is_interrupted() {
+            return self.finish_front();
+        }
+        let changed = run.changed_files(&self.cwd);
+        let tests = verify::command(&self.verify, &self.cwd, &changed);
+        // the baseline stays with the run, so fix rounds compare against the state before the run too
+        let before = run.types_before.as_mut().and_then(|b| b.get());
+        let types = verify::typecheck_command(&self.verify, &self.cwd).filter(|_| verify::touches_types(&changed)).zip(before);
+        if tests.is_none() && types.is_none() {
+            return self.finish_front();
+        }
         self.verifying = true;
         let round = run.failed_rounds() + 1;
-        let (tx, g, cwd, c) = (self.tx.clone(), self.generation, self.cwd.clone(), cmd.clone());
+        let cmd = [tests.clone(), types.as_ref().map(|t| t.0.clone())].into_iter().flatten().collect::<Vec<_>>().join(" + ");
+        let (tx, g, cwd) = (self.tx.clone(), self.generation, self.cwd.clone());
         std::thread::spawn(move || {
-            let _ = tx.send((g, Msg::Verified(verify::run(&cwd, &c))));
+            let _ = tx.send((g, Msg::Verified(verify::check(&cwd, tests, types))));
         });
         vec![self.record(json!({"type": "harness_verify_start", "cmd": cmd, "round": round}))]
     }
@@ -370,7 +387,8 @@ impl Live {
     fn log(&mut self, line: Value) {
         self.last_run = line["id"].as_str().map(String::from);
         self.last_log = Some(line.clone());
-        let appended = std::fs::OpenOptions::new().create(true).append(true).open(&self.runs_log).and_then(|mut f| writeln!(f, "{line}"));
+        // one write per line: parallel tazuna runs append to the same log without interleaving
+        let appended = std::fs::OpenOptions::new().create(true).append(true).open(&self.runs_log).and_then(|mut f| f.write_all(format!("{line}\n").as_bytes()));
         if let Err(e) = appended {
             eprintln!("run log: {e}");
         }

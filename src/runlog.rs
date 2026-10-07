@@ -27,6 +27,27 @@ pub struct Run {
     verify_rounds: Vec<(bool, f64)>,
     /// Failed tests moved this run to the stronger model.
     escalated: bool,
+    /// The repo's type check output when the run started, so verification only fails on errors this run added.
+    pub types_before: Option<Baseline>,
+}
+
+/// Output of a command that started with the run: pending until the first verification needs it.
+pub enum Baseline {
+    Pending(std::thread::JoinHandle<String>),
+    Done(Option<String>),
+}
+
+impl Baseline {
+    pub fn get(&mut self) -> Option<String> {
+        if let Baseline::Pending(_) = self {
+            let Baseline::Pending(h) = std::mem::replace(self, Baseline::Done(None)) else { unreachable!() };
+            *self = Baseline::Done(h.join().ok());
+        }
+        match self {
+            Baseline::Done(v) => v.clone(),
+            Baseline::Pending(_) => None,
+        }
+    }
 }
 
 impl Run {
@@ -43,6 +64,7 @@ impl Run {
             verify_cmd: None,
             verify_rounds: Vec::new(),
             escalated: false,
+            types_before: None,
         }
     }
 

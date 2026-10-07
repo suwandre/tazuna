@@ -21,7 +21,8 @@ Early. What works today:
   tools, files), zen, timeline. `ctrl-t` switches.
 - **Recordings**: every session is saved to `~/.local/share/tazuna/sessions/` and replays like a video.
 - **Headless mode** for benchmarks: `tazuna --run prompt.txt` prints claude's result JSON.
-- **Verified, not claimed**: when claude says it is done, tazuna runs the tests for what changed and sends failures back
+- **Verified, not claimed**: when claude says it is done, tazuna runs the tests for what changed (and the repo's
+  `typecheck` script, failing only on type errors the run added) and sends failures back
   (up to 2 rounds). `--verify "<cmd>"` overrides the detected command, `--no-verify` turns it off.
 - **Router**: without `--model`/`--effort`, tiny repos (≤ 50 files) start on Sonnet 5.5 medium and escalate to Opus 5.5 high
   if their tests fail; everything else runs Opus 5.5 medium. On tiny-repo tasks: −67% cost, same hidden-test results.

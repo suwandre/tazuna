@@ -15,6 +15,47 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.10 (2026-10-07)
+
+**Verification checks types.** When the repo has a `typecheck` (or `type-check`) script, verification runs it beside the
+tests and fails only on type errors the run added: the check runs once when the run starts and again at the end, and errors
+are compared without line and column, so known errors that moved are not new. Test runners like `tsx` strip types, so
+before this a run that broke the type-checked build still passed as "verified". Monorepos without a root test script now
+run the tests of the packages whose files changed (`npm --prefix <pkg> test`) instead of skipping verification.
+
+**Fixes.** Parallel runs garbled `runs.jsonl` (each line was written in pieces); every line is now one write, also in
+`labels.jsonl`. Sessions started in the same second in same-named directories wrote one recording; the file name now ends in
+the process id.
+
+Real work, five acme/app tickets (T-872, 921, 946, 870, 698), 2 runs per arm per ticket, Opus 5.5 medium,
+each ticket judged as one pool. Arms ran 0.0.9:
+
+| Arm | Judge avg | Total cost (median per ticket) | New type errors |
+|---|---|---|---|
+| tazuna lean | 5.65 | $10.88 (−19%) | 0 / 10 runs |
+| stock Claude Code | 5.55 | $13.38 | 0 / 10 |
+| cc-mid via `claude -p` | 5.50 | $10.98 (−18%) | 7 in 1 / 10 |
+| tazuna repo profile | 5.35 | $12.66 (−5%) | 0 / 10 |
+
+Quality is tied (all within 0.3). The lean profiles are consistently ~18% cheaper; cc-mid was cheaper than stock on 5 of 5
+tickets. On two tickets (T-872, T-946) no arm found the real root cause.
+
+0.0.10 vs 0.0.9 on T-698 (all 12 runs re-judged together):
+
+| Arm | Judge | Median cost | Verification time | New type errors |
+|---|---|---|---|---|
+| tazuna lean 0.0.9 | 6.75 | $2.79 | 97-101 s | 0 |
+| **tazuna lean 0.0.10** | **7.00** | **$3.10** | **65-73 s** | **0** |
+| tazuna repo 0.0.9 | 5.75 | $3.17 | 96-103 s | 0 |
+| **tazuna repo 0.0.10** | **6.50** | **$3.08** | **72-75 s** | **0** |
+
+All differences are within noise; the type check adds no time (it runs beside the tests; the lower times came from 4
+parallel runs instead of 8). No 0.0.10 run broke the build, so the check had nothing to catch here. Replayed on cc-mid's
+broken T-698 diff, it reports exactly the 7 new errors against the repo's 361 known ones. Re-judging moved the 0.0.9
+arms by up to 0.75, the noise threshold.
+
+Tier 0: binary 2.43 MB (+20 KB), 2,983 input tokens per turn (unchanged), claude 2.1.292.
+
 ## 0.0.9 (2026-10-07)
 
 **Repo config is respected by default.** In repos with agent config (`CLAUDE.md`, `AGENTS.md`, `.claude/`, `.mcp.json`),

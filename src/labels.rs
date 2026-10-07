@@ -29,7 +29,8 @@ pub fn runs(base: &Path) -> Vec<Value> {
 pub fn add(base: &Path, run: &str, verdict: &str, note: &str, source: &str) -> Result<()> {
     let line = json!({"ts": now(), "run": run, "verdict": verdict, "note": note, "source": source});
     let mut f = std::fs::OpenOptions::new().create(true).append(true).open(base.join("labels.jsonl"))?;
-    writeln!(f, "{line}")?;
+    // one write per line: concurrent appends (O_APPEND) then never interleave
+    f.write_all(format!("{line}\n").as_bytes())?;
     Ok(())
 }
 

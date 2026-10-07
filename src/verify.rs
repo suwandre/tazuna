@@ -66,14 +66,98 @@ fn detect(cwd: &Path, changed: &[String]) -> Option<String> {
             if pytest { "python3 -m pytest -q -x" } else if uv { "uv run -q pytest -q -x" } else { "python3 -m unittest discover -q" }.into(),
         );
     }
-    if [".ts", ".tsx", ".js", ".jsx"].iter().any(|e| has(e)) {
-        let pkg = std::fs::read_to_string(cwd.join("package.json")).unwrap_or_default();
-        let script = serde_json::from_str::<serde_json::Value>(&pkg).ok().and_then(|p| p["scripts"]["test"].as_str().map(String::from));
-        if script.is_some_and(|s| !s.contains("no test specified")) {
+    if JS.iter().any(|e| has(e)) {
+        if npm_script(cwd, "test").is_some_and(|s| !s.contains("no test specified")) {
             return Some("npm test --silent".into());
         }
+        // no root test script (a monorepo whose packages test themselves): the nearest package of each changed file
+        let mut pkgs: Vec<String> = changed
+            .iter()
+            .filter(|f| JS.iter().any(|e| f.ends_with(e)) && safe_path(f))
+            .filter_map(|f| Path::new(f).ancestors().skip(1).take_while(|d| !d.as_os_str().is_empty()).find(|d| {
+                npm_script(&cwd.join(d), "test").is_some_and(|s| !s.contains("no test specified"))
+            }).map(|d| d.to_string_lossy().into_owned()))
+            .collect();
+        pkgs.sort();
+        pkgs.dedup();
+        return (!pkgs.is_empty()).then(|| pkgs.iter().map(|d| format!("npm --prefix {d} test --silent")).collect::<Vec<_>>().join(" && "));
     }
     None
+}
+
+const JS: [&str; 6] = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"];
+
+fn npm_script(dir: &Path, name: &str) -> Option<String> {
+    let pkg = std::fs::read_to_string(dir.join("package.json")).ok()?;
+    serde_json::from_str::<serde_json::Value>(&pkg).ok()?["scripts"][name].as_str().map(String::from)
+}
+
+/// The repo's own type check (its `typecheck` script). Tests alone miss type errors: runners like tsx strip types.
+pub fn typecheck_command(mode: &Mode, cwd: &Path) -> Option<String> {
+    if !matches!(mode, Mode::Auto) {
+        return None;
+    }
+    ["typecheck", "type-check"].into_iter().find(|s| npm_script(cwd, s).is_some()).map(|s| format!("npm run {s} --silent"))
+}
+
+/// Whether a change can affect types (worth running the type check after it).
+pub fn touches_types(changed: &[String]) -> bool {
+    changed.iter().any(|f| JS.iter().any(|e| f.ends_with(e)) || f.ends_with("tsconfig.json") || f.ends_with("package.json"))
+}
+
+/// Type errors in `after` that `before` did not have. Errors are compared without their line and column, so code that
+/// only moved is not new; many repos carry known errors, so a failing type check alone means nothing.
+pub fn new_type_errors(before: &str, after: &str) -> Vec<String> {
+    let key = |l: &str| {
+        let i = l.find("): error TS")?;
+        let path = &l[..l[..i].rfind('(')?];
+        Some(format!("{path}: {}", &l[i + 3..]))
+    };
+    let mut known: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for k in before.lines().filter_map(key) {
+        *known.entry(k).or_default() += 1;
+    }
+    after
+        .lines()
+        .filter(|l| match key(l) {
+            Some(k) => match known.get_mut(&k) {
+                Some(n) if *n > 0 => {
+                    *n -= 1;
+                    false
+                }
+                _ => true,
+            },
+            None => false,
+        })
+        .map(String::from)
+        .collect()
+}
+
+/// Runs the tests and the type check side by side and folds them into one outcome. `types` is the type check command
+/// and its output from before the run.
+pub fn check(cwd: &Path, tests: Option<String>, types: Option<(String, String)>) -> Outcome {
+    let tc = types.map(|(cmd, before)| {
+        let cwd = cwd.to_path_buf();
+        std::thread::spawn(move || {
+            let (_, after, secs) = run_raw(&cwd, &cmd);
+            (cmd, new_type_errors(&before, &after), secs)
+        })
+    });
+    let mut o = tests.map(|c| run(cwd, &c));
+    let Some((cmd, errors, secs)) = tc.and_then(|h| h.join().ok()) else {
+        return o.unwrap_or_else(|| Outcome { cmd: String::new(), ok: true, no_tests: true, code: None, secs: 0.0, output: String::new() });
+    };
+    let base = o.take().unwrap_or(Outcome { cmd: String::new(), ok: true, no_tests: false, code: Some(0), secs: 0.0, output: String::new() });
+    let cmd = if base.cmd.is_empty() { cmd } else { format!("{} + {cmd}", base.cmd) };
+    if errors.is_empty() {
+        return Outcome { cmd, no_tests: false, secs: base.secs.max(secs), ..base };
+    }
+    let shown: Vec<&str> = errors.iter().take(40).map(String::as_str).collect();
+    let mut output = format!("{} new type error(s):\n{}", errors.len(), shown.join("\n"));
+    if !base.ok {
+        output = format!("{}\n\n{output}", base.output);
+    }
+    Outcome { cmd, ok: false, no_tests: false, code: base.code.filter(|&c| c != 0).or(Some(1)), secs: base.secs.max(secs), output: trim(&output) }
 }
 
 fn has_python_tests(cwd: &Path) -> bool {
@@ -88,11 +172,18 @@ fn safe_path(p: &str) -> bool {
 
 /// Runs the command (blocking; call from a thread) with a timeout.
 pub fn run(cwd: &Path, cmd: &str) -> Outcome {
+    let (code, output, secs) = run_raw(cwd, cmd);
+    let no_tests = code == Some(5) && (cmd.contains("pytest") || cmd.contains("unittest"));
+    Outcome { cmd: cmd.into(), ok: code == Some(0), no_tests, code, secs, output: trim(&output) }
+}
+
+/// Exit code (None: did not start or timed out), full output, seconds.
+pub fn run_raw(cwd: &Path, cmd: &str) -> (Option<i32>, String, f64) {
     let t0 = Instant::now();
     let spawned = Command::new("sh").args(["-c", &format!("{cmd} 2>&1")]).current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).spawn();
     let mut child = match spawned {
         Ok(c) => c,
-        Err(e) => return Outcome { cmd: cmd.into(), ok: false, no_tests: false, code: None, secs: 0.0, output: format!("could not start: {e}") },
+        Err(e) => return (None, format!("could not start: {e}"), 0.0),
     };
     let mut stdout = child.stdout.take().expect("piped");
     let reader = std::thread::spawn(move || {
@@ -115,9 +206,7 @@ pub fn run(cwd: &Path, cmd: &str) -> Outcome {
     if status.is_none() {
         output.push_str(&format!("\n[tazuna: killed after {}s]", TIMEOUT.as_secs()));
     }
-    let code = status.and_then(|s| s.code());
-    let no_tests = code == Some(5) && (cmd.contains("pytest") || cmd.contains("unittest"));
-    Outcome { cmd: cmd.into(), ok: code == Some(0), no_tests, code, secs: t0.elapsed().as_secs_f64(), output: trim(&output) }
+    (status.and_then(|s| s.code()), output, t0.elapsed().as_secs_f64())
 }
 
 /// Keeps failures readable and short: Go's per-test noise (=== RUN, --- PASS, ok lines) is dropped, then the head and
@@ -174,6 +263,51 @@ mod tests {
         assert_eq!(detect(&dir, &["x;rm -rf ~/a.go".into()]), None, "unsafe path characters are never put in the shell command");
         assert_eq!(command(&Mode::Off, &dir, &changed), None);
         assert_eq!(command(&Mode::Command("make test".into()), &dir, &[]).unwrap(), "make test");
+    }
+
+    #[test]
+    fn only_new_type_errors_count() {
+        let before = "src/a.ts(3,5): error TS2322: Type 'x' is not assignable.\n  Type 'undefined' is not assignable.\nsrc/b.ts(9,1): error TS2304: Cannot find name 'y'.";
+        // a.ts's known error moved lines, b.ts's error is fixed, one new error in a.ts, one duplicate of a known message
+        let after = "src/a.ts(7,5): error TS2322: Type 'x' is not assignable.\nsrc/a.ts(12,2): error TS2304: Cannot find name 'z'.\nsrc/a.ts(20,5): error TS2322: Type 'x' is not assignable.";
+        assert_eq!(new_type_errors(before, after), vec!["src/a.ts(12,2): error TS2304: Cannot find name 'z'.", "src/a.ts(20,5): error TS2322: Type 'x' is not assignable."]);
+        assert_eq!(new_type_errors(after, before), vec!["src/b.ts(9,1): error TS2304: Cannot find name 'y'."], "continuation lines are ignored");
+        assert!(new_type_errors(before, before).is_empty());
+    }
+
+    #[test]
+    fn checks_types_beside_tests() {
+        let dir = std::env::temp_dir().join(format!("tazuna-verify-types-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let before = "a.ts(1,1): error TS1: old".to_string();
+        let tc = |out: &str| Some((format!("printf '{out}\\n'; exit 2"), before.clone()));
+        let o = check(&dir, Some("true".into()), tc("a.ts(5,1): error TS1: old"));
+        assert!(o.ok, "a known error is not a failure even though the type check exits non-zero");
+        assert_eq!(o.cmd, format!("true + printf 'a.ts(5,1): error TS1: old\\n'; exit 2"));
+        let o = check(&dir, Some("true".into()), tc("a.ts(5,1): error TS2: new"));
+        assert!(!o.ok);
+        assert!(o.output.starts_with("1 new type error(s):\na.ts(5,1): error TS2: new"), "{}", o.output);
+        let o = check(&dir, None, tc(""));
+        assert!(o.ok && !o.no_tests, "the type check alone verifies");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tests_packages_when_the_root_has_no_test_script() {
+        let dir = std::env::temp_dir().join(format!("tazuna-verify-npm-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("api/src")).unwrap();
+        std::fs::create_dir_all(dir.join("web/src")).unwrap();
+        std::fs::write(dir.join("package.json"), r#"{"scripts": {"typecheck": "tsc"}}"#).unwrap();
+        std::fs::write(dir.join("api/package.json"), r#"{"scripts": {"test": "node --test"}}"#).unwrap();
+        std::fs::write(dir.join("web/package.json"), r#"{"scripts": {"test": "echo \"Error: no test specified\" && exit 1"}}"#).unwrap();
+        let changed = vec!["api/src/x.ts".into(), "api/src/y.ts".into(), "web/src/z.ts".into()];
+        assert_eq!(detect(&dir, &changed).unwrap(), "npm --prefix api test --silent");
+        assert_eq!(typecheck_command(&Mode::Auto, &dir).unwrap(), "npm run typecheck --silent");
+        assert_eq!(typecheck_command(&Mode::Off, &dir), None);
+        assert!(touches_types(&changed) && !touches_types(&["README.md".into()]));
+        std::fs::write(dir.join("package.json"), r#"{"scripts": {"test": "vitest run"}}"#).unwrap();
+        assert_eq!(detect(&dir, &changed).unwrap(), "npm test --silent", "a root test script covers the whole repo");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
