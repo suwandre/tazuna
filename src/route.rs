@@ -26,6 +26,9 @@ pub enum Profile {
     Repo,
     /// tazuna's cc-mid profile: ~10-line prompt, Grep/Glob plus four lean tools, no settings. About 30% cheaper.
     Lean,
+    /// The lean prompt with Claude Code's own tools and the repo's settings, hooks, skills and CLAUDE.md: the repo's
+    /// rules at close to lean cost. (Hooks match Claude's tool names, so the lean MCP tools would never trigger them.)
+    RepoLean,
 }
 
 impl Profile {
@@ -33,6 +36,7 @@ impl Profile {
         match self {
             Profile::Repo => "repo",
             Profile::Lean => "lean",
+            Profile::RepoLean => "repo-lean",
         }
     }
 }

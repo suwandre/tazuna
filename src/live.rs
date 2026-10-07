@@ -404,9 +404,14 @@ impl Live {
     fn setting_sources(&self) -> &'static str {
         match (self.profile, self.user_settings) {
             (Profile::Lean, _) => "",
-            (Profile::Repo, false) => "project,local",
-            (Profile::Repo, true) => "user,project,local",
+            (Profile::Repo | Profile::RepoLean, false) => "project,local",
+            (Profile::Repo | Profile::RepoLean, true) => "user,project,local",
         }
+    }
+
+    fn mid_prompt(&self) -> String {
+        let date = Command::new("date").arg("+%Y-%m-%d").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+        MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date)
     }
 
     fn spawn(&mut self) -> Result<()> {
@@ -414,17 +419,36 @@ impl Live {
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
             .args(["--model", &self.model, "--effort", &self.effort, "--dangerously-skip-permissions"])
             .args(["--setting-sources", self.setting_sources()]);
+        if self.profile != Profile::Lean && !self.user_settings {
+            // MCP servers from the repo's .mcp.json only: without this, the user's claude.ai connectors (they come with the
+            // account, not a settings file) load too, ~40k tokens of tool schemas per turn in a personal setup
+            cmd.arg("--strict-mcp-config");
+            let mcp = self.cwd.join(".mcp.json");
+            if std::fs::symlink_metadata(&mcp).is_ok_and(|m| m.file_type().is_file()) {
+                cmd.arg("--mcp-config").arg(&mcp);
+            }
+        }
         match self.profile {
             Profile::Repo => {
                 // Claude Code's own prompt and tools; it loads the repo's CLAUDE.md (nested files, @imports), settings,
                 // hooks and skills itself. Per-machine prompt sections move to the first message for cross-session caching.
                 cmd.arg("--exclude-dynamic-system-prompt-sections");
             }
+            Profile::RepoLean => {
+                // Claude Code loads CLAUDE.md (and its @imports) itself, but not AGENTS.md: that one goes in the prompt
+                let mut prompt = self.mid_prompt();
+                let imported = ["CLAUDE.md", ".claude/CLAUDE.md"].iter().any(|f| std::fs::read_to_string(self.cwd.join(f)).is_ok_and(|t| t.contains("@AGENTS.md")));
+                if self.project_instructions && !imported {
+                    let (text, bytes, sources) = project_instructions(&self.cwd, &["AGENTS.md"]);
+                    prompt.push_str(&text);
+                    self.instructions_used = (bytes, sources);
+                }
+                cmd.args(["--system-prompt", &prompt, "--tools", "Bash,Read,Edit,Write,Grep,Glob,Skill"]);
+            }
             Profile::Lean => {
-                let date = Command::new("date").arg("+%Y-%m-%d").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-                let mut prompt = MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date);
+                let mut prompt = self.mid_prompt();
                 if self.project_instructions {
-                    let (text, bytes, sources) = project_instructions(&self.cwd);
+                    let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                     prompt.push_str(&text);
                     self.instructions_used = (bytes, sources);
                 }
@@ -492,11 +516,11 @@ const MAX_INSTRUCTIONS: usize = 80_000;
 /// the agent reads them when it works in that directory (like Claude Code, which loads nested files lazily).
 /// Returns (text for the system prompt, bytes included, files included).
 // ponytail: no `@file` import expansion; add it when a repo relies on imports
-pub fn project_instructions(cwd: &Path) -> (String, usize, Vec<String>) {
+pub fn project_instructions(cwd: &Path, names: &[&str]) -> (String, usize, Vec<String>) {
     let mut body = String::new();
     let mut files = Vec::new();
     let root = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
-    for name in ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"] {
+    for &name in names {
         // regular files that really live inside the repo: a symlinked file or directory (e.g. `.claude` -> ~/.ssh) could
         // otherwise put any file on the machine into the prompt
         let path = cwd.join(name);
@@ -511,8 +535,11 @@ pub fn project_instructions(cwd: &Path) -> (String, usize, Vec<String>) {
         body.push_str(&format!("\n\n## From {name}\n\n{}", text.trim()));
         files.push(name.to_string());
     }
+    let mut patterns: Vec<String> = names.iter().map(|n| format!("*{}", n.rsplit('/').next().unwrap_or(n))).collect();
+    patterns.dedup();
     let nested: Vec<String> = Command::new("git")
-        .args(["ls-files", "--", "*CLAUDE.md", "*AGENTS.md"])
+        .args(["ls-files", "--"])
+        .args(&patterns)
         .current_dir(cwd)
         .output()
         .ok()
@@ -543,34 +570,48 @@ pub fn in_git_repo() -> bool {
 mod tests {
     use super::*;
 
+    const ALL: &[&str] = &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"];
+
+    #[test]
+    fn repo_lean_adds_only_agents_md() {
+        let dir = std::env::temp_dir().join(format!("tazuna-agents-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("CLAUDE.md"), "claude rules").unwrap();
+        std::fs::write(dir.join("AGENTS.md"), "agent rules").unwrap();
+        let (text, _, files) = project_instructions(&dir, &["AGENTS.md"]);
+        assert!(text.contains("agent rules") && !text.contains("claude rules"), "Claude Code loads CLAUDE.md itself");
+        assert_eq!(files, vec!["AGENTS.md"]);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn reads_project_instructions() {
         let dir = std::env::temp_dir().join(format!("tazuna-instr-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("app")).unwrap();
         let git = |args: &[&str]| assert!(Command::new("git").args(args).current_dir(&dir).output().unwrap().status.success());
         git(&["init", "-q"]);
-        assert_eq!(project_instructions(&dir).1, 0, "no instruction files, nothing added");
+        assert_eq!(project_instructions(&dir, ALL).1, 0, "no instruction files, nothing added");
         std::fs::write(dir.join("CLAUDE.md"), "Use npm run test:unit -- <file>.\n").unwrap();
         std::fs::write(dir.join("AGENTS.md"), "Use npm run test:unit -- <file>.\n").unwrap();
         std::fs::write(dir.join("app/CLAUDE.md"), "App rules.\n").unwrap();
         git(&["add", "."]);
-        let (text, bytes, files) = project_instructions(&dir);
+        let (text, bytes, files) = project_instructions(&dir, ALL);
         assert_eq!(files, vec!["CLAUDE.md"], "identical AGENTS.md is not repeated");
         assert!(text.contains("test:unit") && text.contains("app/CLAUDE.md") && !text.contains("App rules"), "{text}");
         assert_eq!(bytes, text.len());
         std::fs::write(dir.join("CLAUDE.md"), "x".repeat(MAX_INSTRUCTIONS + 5000)).unwrap();
-        assert!(project_instructions(&dir).0.contains("instructions cut here"));
+        assert!(project_instructions(&dir, ALL).0.contains("instructions cut here"));
         std::fs::remove_file(dir.join("CLAUDE.md")).unwrap();
         std::fs::remove_file(dir.join("AGENTS.md")).unwrap();
         std::fs::write(dir.join("secret.txt"), "TOP SECRET").unwrap();
         std::os::unix::fs::symlink(dir.join("secret.txt"), dir.join("CLAUDE.md")).unwrap();
-        assert!(!project_instructions(&dir).0.contains("TOP SECRET"), "symlinked instruction files are never read");
+        assert!(!project_instructions(&dir, ALL).0.contains("TOP SECRET"), "symlinked instruction files are never read");
         std::fs::remove_file(dir.join("CLAUDE.md")).unwrap();
         let outside = std::env::temp_dir().join(format!("tazuna-outside-{}", std::process::id()));
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("CLAUDE.md"), "OUTSIDE SECRET").unwrap();
         std::os::unix::fs::symlink(&outside, dir.join(".claude")).unwrap();
-        assert!(!project_instructions(&dir).0.contains("OUTSIDE SECRET"), "a symlinked .claude directory is not followed");
+        assert!(!project_instructions(&dir, ALL).0.contains("OUTSIDE SECRET"), "a symlinked .claude directory is not followed");
         std::fs::remove_dir_all(&outside).ok();
         std::fs::remove_dir_all(&dir).ok();
     }

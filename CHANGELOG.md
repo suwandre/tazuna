@@ -15,6 +15,31 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.11 (2026-10-07)
+
+**`--profile repo-lean`.** The lean prompt with Claude Code's own tools (`Bash`, `Read`, `Edit`, `Write`, `Grep`, `Glob`,
+`Skill`) and the repo's settings, hooks, skills, plugins and `CLAUDE.md`: the repo's rules at close to lean cost. It uses
+Claude's tools, not the lean MCP tools, because repo hooks match Claude's tool names (`Write|Edit`) and would never fire on
+`mcp__lean__edit`; the bash output cap does not apply. `AGENTS.md`, which Claude Code does not read, goes into the prompt
+unless `CLAUDE.md` imports it. Not the default yet: it needs the real-work benchmark first.
+
+**Fix: the repo profile loaded the user's claude.ai connectors.** They come with the account, not a settings file, so
+`--setting-sources project,local` did not keep them out: in a personal setup with Atlassian, Slack and Claude Docs
+connected, every turn carried 76 extra tool schemas (~42k tokens), and the first tool call broke the prompt cache when they
+finished connecting. Both repo profiles now pass `--strict-mcp-config` and load only the repo's `.mcp.json`
+(`--user-settings` keeps everything). Benchmarks ran on an empty config and were not affected.
+
+Input tokens per turn, probe repo with CLAUDE.md, one skill, one hook and a `.mcp.json` server (Haiku 4.5, claude 2.1.292):
+
+| Profile | Tokens per turn | Hook fired | Skill used | Repo MCP server |
+|---|---|---|---|---|
+| repo, 0.0.10, personal setup | ~51,900 | yes | yes | — |
+| repo, 0.0.11 | 21,763 | yes | yes | yes |
+| **repo-lean, 0.0.11** | **9,724** | yes | yes | yes |
+| lean | 2,977 | no | no | no |
+
+Tier 0: binary 2.43 MB (+3 KB), lean 2,977 input tokens per turn.
+
 ## 0.0.10 (2026-10-07)
 
 **Verification checks types.** When the repo has a `typecheck` (or `type-check`) script, verification runs it beside the

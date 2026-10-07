@@ -13,8 +13,9 @@ Early. What works today:
   clean interrupts (`ctrl-c`), follow-ups, copy last reply (`ctrl-y`), mouse scrolling.
 - **Profiles**: repos with agent config (`CLAUDE.md`, `AGENTS.md`, `.claude/`) run the **repo profile**: Claude Code's own
   prompt and tools with the repo's settings, hooks and skills (your personal `~/.claude` setup stays out unless
-  `--user-settings`). Repos whose config runs code ask once "Trust this repo?"; headless runs need `--trust`. Other repos,
-  tiny repos and `--profile lean` use the lean profile below.
+  `--user-settings`; that includes claude.ai connectors). Repos whose config runs code ask once "Trust this repo?";
+  headless runs need `--trust`. `--profile repo-lean` keeps the repo's config with the lean prompt (~10k instead of ~22k
+  tokens per turn). Other repos, tiny repos and `--profile lean` use the lean profile below.
 - **Lean profile "cc-mid"**: ~10-line system prompt, `Grep`/`Glob` plus four lean tools (bash/read/write/edit) served by tazuna
   itself (`tazuna mcp`), and none of the user's settings, skills, hooks or MCP servers. Benchmarked as the best cost/quality profile.
 - **Four UI designs** (Ratatui + tachyonfx): aurora, cockpit (default: live context/cache gauges, tokens per turn, cost,

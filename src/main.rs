@@ -123,7 +123,8 @@ fn args() -> Result<Args> {
                 a.profile = Some(match val()?.as_str() {
                     "repo" => route::Profile::Repo,
                     "lean" => route::Profile::Lean,
-                    p => bail!("--profile repo|lean, not {p}"),
+                    "repo-lean" => route::Profile::RepoLean,
+                    p => bail!("--profile repo|repo-lean|lean, not {p}"),
                 })
             }
             "--trust" => a.trust = true,
@@ -222,7 +223,7 @@ fn lane(a: &Args, interactive: bool) -> Result<route::Lane> {
         lane.reason.push_str(&format!("; --profile {}", p.name()));
     }
     let config = route::RepoConfig::read(&cwd);
-    if lane.profile == route::Profile::Repo && config.runs_code() {
+    if matches!(lane.profile, route::Profile::Repo | route::Profile::RepoLean) && config.runs_code() {
         let base = labels::dir()?;
         let trusted = trust::is_trusted(&base, &cwd) || a.trust || (interactive && trust::ask(&cwd, &config.summary()));
         if trusted {
