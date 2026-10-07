@@ -203,7 +203,7 @@ fn git(cwd: &Path, args: &[&str]) -> Option<String> {
 }
 
 /// Path -> content hash for every file that differs from HEAD (read-only: `git status`, `git hash-object`).
-fn git_snapshot(cwd: &Path) -> Option<BTreeMap<String, String>> {
+pub(crate) fn git_snapshot(cwd: &Path) -> Option<BTreeMap<String, String>> {
     let status = git(cwd, &["status", "--porcelain", "--untracked-files=all"])?;
     // "XY path" or "XY old -> new"
     let paths: Vec<String> = status.lines().filter_map(|l| l.get(3..)).map(|p| p.rsplit(" -> ").next().unwrap_or(p).trim_matches('"').to_string()).collect();
@@ -218,7 +218,7 @@ fn git_snapshot(cwd: &Path) -> Option<BTreeMap<String, String>> {
     Some(snap)
 }
 
-fn changed<'a>(before: &'a BTreeMap<String, String>, after: &'a BTreeMap<String, String>) -> Vec<&'a String> {
+pub(crate) fn changed<'a>(before: &'a BTreeMap<String, String>, after: &'a BTreeMap<String, String>) -> Vec<&'a String> {
     let mut v: Vec<&String> = after.iter().filter(|(p, h)| before.get(*p) != Some(h)).map(|(p, _)| p).collect();
     // files the run reverted to HEAD drop out of `git status`
     v.extend(before.keys().filter(|p| !after.contains_key(*p)));

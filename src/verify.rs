@@ -166,7 +166,7 @@ fn has_python_tests(cwd: &Path) -> bool {
         || std::fs::read_dir(cwd).into_iter().flatten().flatten().any(|e| named_test(&e.file_name().to_string_lossy()))
 }
 
-fn safe_path(p: &str) -> bool {
+pub(crate) fn safe_path(p: &str) -> bool {
     !p.is_empty() && !p.starts_with('-') && p.bytes().all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
 }
 

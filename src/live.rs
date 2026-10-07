@@ -4,7 +4,7 @@
 //! interrupt control request the official Agent SDK uses; if claude does not answer, the process is killed and the
 //! next message resumes the session with `--resume`.
 
-use crate::{route::{Lane, Profile}, runlog::Run, verify};
+use crate::{diag, route::{Lane, Profile}, runlog::Run, verify};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::{
@@ -61,6 +61,9 @@ pub struct Live {
     pub verify: verify::Mode,
     /// Passed to the tool server: shrink bash output above this many chars (0: off).
     pub bash_cap: usize,
+    /// Type/compile errors after each edit (`--diagnostics`): the hook's state directory once started.
+    pub diagnostics: bool,
+    diag_dir: Option<PathBuf>,
     /// Add the repo's CLAUDE.md / AGENTS.md to the system prompt (lean profile; the repo profile lets Claude Code load them).
     pub project_instructions: bool,
     pub profile: Profile,
@@ -119,6 +122,8 @@ impl Live {
             mode: "live",
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
+            diagnostics: false,
+            diag_dir: None,
             project_instructions: true,
             profile: Profile::Lean,
             user_settings: false,
@@ -376,7 +381,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap,
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics,
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -461,6 +466,13 @@ impl Live {
                     .args(["--allowedTools", "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit"]);
             }
         }
+        if self.diagnostics {
+            if self.diag_dir.is_none() {
+                self.diag_dir = Some(diag::prepare(&self.cwd)?);
+            }
+            let exe = std::env::current_exe().context("locating the tazuna binary")?;
+            cmd.args(["--settings", &diag::settings(&exe, self.diag_dir.as_ref().expect("set above"))]);
+        }
         if let Some(id) = &self.session_id {
             cmd.args(["--resume", id]);
         }
@@ -495,6 +507,9 @@ impl Live {
 
 impl Drop for Live {
     fn drop(&mut self) {
+        if let Some(d) = self.diag_dir.take() {
+            let _ = std::fs::remove_dir_all(d);
+        }
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();
             let _ = c.wait();

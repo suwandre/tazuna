@@ -5,6 +5,7 @@
 //!          fail; otherwise Opus medium)
 //!          [--verify "<cmd>" | --no-verify]   # after claude says done, tazuna runs the tests (auto-detected by default)
 //!          [--bash-cap N]   # shrink bash output longer than N chars (default 8000; 0 = off)
+//!          [--diagnostics]  # after each edit, tell claude about type/compile errors it added
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
 //!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
 //!          [--trust] [--user-settings]   # trust the repo's hooks/skills without asking; also load your ~/.claude settings
@@ -20,6 +21,7 @@
 //! Designs: 1 aurora · 2 cockpit (default) · 3 zen · 4 timeline. Live sessions are saved to
 //! ~/.local/share/tazuna/sessions/ and replay like any recording.
 
+mod diag;
 mod labels;
 mod live;
 mod mcp;
@@ -69,6 +71,7 @@ struct Args {
     log: Option<usize>,
     verify: verify::Mode,
     bash_cap: usize,
+    diagnostics: bool,
     project_instructions: bool,
     profile: Option<route::Profile>,
     trust: bool,
@@ -94,6 +97,7 @@ fn args() -> Result<Args> {
         log: None,
         verify: verify::Mode::Auto,
         bash_cap: mcp::DEFAULT_BASH_CAP,
+        diagnostics: false,
         project_instructions: true,
         profile: None,
         trust: false,
@@ -118,6 +122,7 @@ fn args() -> Result<Args> {
             "--verify" => a.verify = verify::Mode::Command(val()?),
             "--no-verify" => a.verify = verify::Mode::Off,
             "--bash-cap" => a.bash_cap = val()?.parse()?,
+            "--diagnostics" => a.diagnostics = true,
             "--no-project-instructions" => a.project_instructions = false,
             "--profile" => {
                 a.profile = Some(match val()?.as_str() {
@@ -153,6 +158,9 @@ fn args() -> Result<Args> {
 fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("mcp") {
         return mcp::serve();
+    }
+    if std::env::args().nth(1).as_deref() == Some("diag") {
+        return diag::hook(std::path::Path::new(&std::env::args().nth(2).unwrap_or_default()));
     }
     let a = args()?;
     let base = labels::dir()?;
@@ -198,6 +206,7 @@ fn main() -> Result<()> {
             let route = live.set_lane(lane(&a, true)?);
             live.verify = a.verify.clone();
             live.bash_cap = a.bash_cap;
+            live.diagnostics = a.diagnostics;
             live.project_instructions = a.project_instructions;
             let mut term = ratatui::init();
             execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
@@ -246,6 +255,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.mode = "headless";
     live.verify = a.verify.clone();
     live.bash_cap = a.bash_cap;
+    live.diagnostics = a.diagnostics;
     live.project_instructions = a.project_instructions;
     live.send(&prompt)?;
     loop {

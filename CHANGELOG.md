@@ -15,6 +15,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.12 (2026-10-07)
+
+**`--diagnostics`: compiler errors right after an edit** (opt-in until benchmarked). tazuna adds a `PostToolUse` hook to
+claude (`--settings`, so it runs beside the repo's own hooks, in every profile). After any tool call that changed files,
+including shell commands (agents make most edits with `python3`/`sed` through Bash), it runs the repo's `typecheck` script
+or `go vet` on the changed Go packages and tells claude about errors the change added, once, while the edit is fresh.
+Errors the repo already had when the session started are left out (same comparison as verification).
+
 ## 0.0.11 (2026-10-07)
 
 **`--profile repo-lean`.** The lean prompt with Claude Code's own tools (`Bash`, `Read`, `Edit`, `Write`, `Grep`, `Glob`,
