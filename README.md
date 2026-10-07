@@ -46,28 +46,26 @@ the same profile, identical per-turn overhead.
 Changes per version are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 **Real work: 6 recent merged PRs** in hugo, k6, terraform, prometheus and caddy (Go). Each harness gets the issue text and
-the repo at the PR's parent commit, twice. Hidden tests are the PR's own tests. A blind Opus 5.5 judge scores all 26
-candidates for a task together (1-10), twice in shuffled order; every row below was judged in the same pools on
-2026-10-07. Every harness runs Claude Sonnet 5.5 at high effort; cost is tokens × Sonnet list price for all of them.
+the repo at the PR's parent commit, twice. Hidden tests are the PR's own tests. A blind Opus 5.5 judge scores all 16
+candidates for a task together (1-10), twice in shuffled order. All harnesses at their current versions, run on
+2026-10-07 on an M5 Pro, Claude Sonnet 5.5 at high effort; cost is tokens × Sonnet list price for all of them.
 
-| Harness | Run on | Judge | All hidden tests pass | Hidden tests passed | Median cost | Median time | Claude billing |
+| Harness | Version | Judge | All hidden tests pass | Hidden tests passed | Median cost | Median time | Claude billing |
 |---|---|---|---|---|---|---|---|
-| Hermes | Oct 3-6 | 6.88 | 8/12 | 87% | $0.45 | 410s | routes as Claude Code (extra usage) |
-| OMP | Oct 3-6 | 6.67 | 8/12 | 85% | $0.47 | 339s | direct claude.ai OAuth |
-| OMO | Oct 3-6 | 6.67 | 9/12 | 90% | $0.56 | 290s | official Agent SDK |
-| **tazuna 0.0.11 (default)** | Oct 7 | **6.58** | **8/12** | **84%** | **$0.41** | **411s** | **first-party (`claude` CLI)** |
-| Claude Code (stock) | Oct 7 | 6.21 | 8/12 | 83% | $0.30 | 420s | first-party |
-| Empryo | Oct 3-6 | 6.21 | 8/12 | 85% | $0.48 | 419s | subscription via its own client |
-| tazuna 0.0.11 (`--profile lean`) | Oct 7 | 6.08 | 8/12 | 84% | $0.31 | 381s | first-party (`claude` CLI) |
-| Claude Code (stock) | Oct 3-6 | 6.08 | 7/12 | 84% | $0.42 | 322s | first-party |
-| tazuna 0.0.1 (lean) | Oct 3-6 | 6.08 | 8/12 | 83% | $0.31 | 240s | first-party (`claude` CLI) |
-| pi | Oct 3-6 | 6.00 | 7/12 | 80% | $0.25 | 201s | extra usage (pay per token) |
+| **tazuna (default)** | **0.0.11** | **6.67** | **8/12** | **84%** | **$0.41** | **411s** | **first-party (`claude` CLI)** |
+| OMP | 18.8.3 | 6.54 | 8/12 | 86% | $0.51 | 401s | direct claude.ai OAuth |
+| Claude Code (stock) | 2.1.292 | 6.38 | 8/12 | 83% | $0.30 | 420s | first-party |
+| Hermes | 0.21.5 (865ba90) | 6.21 | 7/12 | 81% | $0.55 | 453s | routes as Claude Code (extra usage) |
+| pi | 1.0.4 | 6.08 | 8/12 | 85% | $0.28 | 458s | extra usage (pay per token) |
+| tazuna (`--profile lean`) | 0.0.11 | 6.04 | 8/12 | 84% | $0.31 | 381s | first-party (`claude` CLI) |
+| OMO | 5.1.23 | 5.38 | 7/12 | 78% | $0.49 | 307s | official Agent SDK |
+| Empryo | 3.8.7-beta | 5.12 | 8/12 | 84% | $0.50 | 464s | subscription via its own client |
 
-How to read it: the top four are within 0.3 judge points of each other, inside the noise. tazuna's default (the repo
-profile in the five repos that carry a `CLAUDE.md`/`AGENTS.md`, lean in terraform) scores +0.37 over same-day stock Claude
-Code but costs 37% more there: it took more turns (24 vs 16.5 median). Stock Claude Code itself cost 29% less on Oct 7 than
-on Oct 3-6 for the same tasks, so cost comparisons across days are unreliable; judge scores are comparable because all rows
-were judged together. The other harnesses were not re-run.
+How to read it: the top three are within 0.3 judge points, inside the noise. tazuna's default (the repo profile in the five
+repos that carry a `CLAUDE.md`/`AGENTS.md`, lean in terraform) leads on quality and is 20-25% cheaper than OMP and Hermes,
+but costs 37% more than stock Claude Code, which took fewer turns (16.5 vs 24 median). Lean tazuna costs what stock costs
+here, for 0.34 lower. Stock Claude Code cost 29% less than in the first measurement (Oct 3-6), so earlier cost leads did not
+hold; see CHANGELOG for the history.
 
 On real company work (five tickets in a TypeScript monorepo, Opus 5.5 medium) tazuna lean matched stock Claude Code's
 quality at 19% lower cost; see CHANGELOG 0.0.10-0.0.11.

@@ -33,9 +33,9 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 
 1. ~~Benchmark repo-lean~~ (done 2026-10-07: −12% cost, −0.90 judge vs same-day stock; stays opt-in, repo profile stays
    the default).
-2. ~~Re-run the cross-harness table~~ for tazuna and stock (done 2026-10-07, README): tazuna default 6.58 (4th of 10, within
-   0.3 of the top) but +37% cost vs same-day stock on the Go tasks. Still open: re-run OMP, OMO, Empryo, Hermes and pi on
-   current versions (Hermes and pi cost ~$10 of extra usage).
+2. ~~Re-run the cross-harness table~~ (done 2026-10-07, all current versions, one judge pool per task; README): tazuna
+   default 6.67 (1st of 8; OMP 6.54, stock 6.38 within noise) at $0.41, +37% cost vs stock ($0.30), −20-25% vs OMP and
+   Hermes. Lean tazuna 6.04 at stock's cost.
 3. **Quality experiments**, one at a time, each against a same-day stock baseline:
    1. Compiler errors in edit results (dirge, OMP): after an edit, return the new type errors at once. For Claude's own
       tools, through a `PostToolUse` hook tazuna adds itself, so every profile gets it. It must also fire after `Bash`:
@@ -93,3 +93,5 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
   default. Open question: why the same short prompt does well in lean (6.00) and badly with Claude's tools and repo config.
 - 2026-10-07: cross-harness re-run (tazuna + stock, Go tasks, Sonnet high, one judge pool per task): quality near the top,
   cost lead gone on these tasks (stock was 29% cheaper than on Oct 3-6). Cost claims need same-day baselines every time.
+- 2026-10-07: full cross-harness re-run at current versions: tazuna leads on quality (within noise of OMP and stock); the gap
+  to close is cost vs stock Claude Code on these tasks (more turns).
