@@ -25,8 +25,10 @@ Daily-driver features, part 2 (headless runs unchanged).
   marks `/clear` and `/compact` in the transcript, and completes commands with `tab` from the list claude reports.
 - **`@` file completion** from the repo's tracked files (`tab` cycles).
 - **Claude's to-do list** (TodoWrite) shows as a checklist (☐ ◐ ☑).
-- **Images:** a message that names an image file (`@shot.png`, a dragged-in path) sends it as an image; `ctrl-v` saves the
-  clipboard's image to a private temp folder and names it in the message.
+- **Images:** a message the user types that names an image file (`@shot.png`, a dragged-in path) sends it as an image;
+  `ctrl-v` saves the clipboard's image to a private temp folder and names it in the message. Only typed messages attach:
+  after a security review, text tazuna sends on its own (test failures, reviewer findings, `!cmd` output, `--run`
+  prompts) stays text, because claude's or a command's output could name any file and bypass the permission mode.
 - **`!cmd`** runs a command in the repo, shows the output and hands it to claude.
 
 ## 0.0.18 (2026-10-08)

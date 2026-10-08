@@ -175,7 +175,7 @@ pub struct Live {
     instructions_used: (usize, Vec<String>),
     verifying: bool,
     /// Messages typed while tests run; sent once the run is over.
-    held: VecDeque<String>,
+    held: VecDeque<(String, bool)>,
     /// claude's last result event and the last run-log line (headless mode reports them).
     pub last_result: Option<Value>,
     pub last_log: Option<Value>,
@@ -262,34 +262,50 @@ impl Live {
         self.session_id = Some(session_id.to_string());
     }
 
-    /// Sends a user message, starting (or resuming) the claude process if needed. Returns the event to show.
+    /// Sends a message, starting (or resuming) the claude process if needed. Returns the event to show. Image paths in
+    /// it stay text: only `send_typed` attaches files.
     pub fn send(&mut self, text: &str) -> Result<(f64, Value)> {
+        self.send_message(text, false)
+    }
+
+    /// A message the user typed: image files it names are read and sent as images. Never for text that came from
+    /// claude, a command or a reviewer, which could name any file on the machine and bypass the permission mode.
+    pub fn send_typed(&mut self, text: &str) -> Result<(f64, Value)> {
+        self.send_message(text, true)
+    }
+
+    fn send_message(&mut self, text: &str, attach: bool) -> Result<(f64, Value)> {
         if self.verifying {
-            self.held.push_back(text.to_string());
+            self.held.push_back((text.to_string(), attach));
         } else {
-            self.start_run(text)?;
+            self.start_run(text, attach)?;
         }
         Ok(self.record(json!({"type": "harness_user", "text": text})))
     }
 
-    fn start_run(&mut self, text: &str) -> Result<()> {
+    fn start_run(&mut self, text: &str, attach: bool) -> Result<()> {
         // ponytail: taken while claude starts reading; an edit that lands first is counted as known, never as new
         let types_before = verify::typecheck_command(&self.verify, &self.cwd).map(|cmd| {
             let cwd = self.cwd.clone();
             crate::runlog::Baseline::Pending(std::thread::spawn(move || verify::run_raw(&cwd, &cmd).1))
         });
-        self.write_user(text)?;
+        self.write_content(if attach { user_content(text, &self.cwd) } else { json!(text) })?;
         let mut run = Run::new(text, self.elapsed_ms(), &self.cwd);
         run.types_before = types_before;
         self.runs.push_back(run);
         Ok(())
     }
 
+    /// tazuna's own messages to claude (feedback, review): plain text, never attachments.
     fn write_user(&mut self, text: &str) -> Result<()> {
+        self.write_content(json!(text))
+    }
+
+    fn write_content(&mut self, content: Value) -> Result<()> {
         if self.child.is_none() {
             self.spawn()?;
         }
-        let line = json!({"type": "user", "message": {"role": "user", "content": user_content(text, &self.cwd)}});
+        let line = json!({"type": "user", "message": {"role": "user", "content": content}});
         let stdin = self.stdin.as_mut().context("claude stdin closed")?;
         writeln!(stdin, "{line}")?;
         stdin.flush()?;
@@ -602,8 +618,8 @@ impl Live {
         }
         let mut out = Vec::new();
         while self.runs.is_empty() && !self.verifying {
-            let Some(text) = self.held.pop_front() else { break };
-            if let Err(e) = self.start_run(&text) {
+            let Some((text, attach)) = self.held.pop_front() else { break };
+            if let Err(e) = self.start_run(&text, attach) {
                 out.push(self.record(json!({"type": "harness_notice", "text": format!("{e:#}"), "error": true})));
             }
         }

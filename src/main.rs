@@ -738,6 +738,8 @@ fn run_live(
                     continue;
                 }
                 // `!cmd`: run it here, show the output, and hand both to claude (like Claude Code's shell mode)
+                // only what the user typed may attach image files; command output never does
+                let typed = !text.starts_with('!');
                 let text = match text.strip_prefix('!') {
                     Some(cmd) => {
                         // ponytail: blocks the UI while it runs; fine for git status/ls, a thread when long commands matter
@@ -749,7 +751,7 @@ fn run_live(
                     }
                     None => text,
                 };
-                match live.send(&text) {
+                match if typed { live.send_typed(&text) } else { live.send(&text) } {
                     Ok((t, e)) => s.apply(&e, t),
                     Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),
                 }
