@@ -13,7 +13,7 @@ Early. What works today:
 
 - **Live mode**: run `tazuna` in a git repo, type a task. One `claude` process per conversation (warm prompt cache),
   clean interrupts (`ctrl-c`), follow-ups, multi-line input (`ctrl-j`, or shift/alt-enter where the terminal reports
-  it), copy last reply (`ctrl-y`), mouse scrolling.
+  it), copy last reply (`ctrl-y`), mouse scrolling (`ctrl-s` hands the mouse back to the terminal to select text).
 - **Profiles**: repos with agent config (`CLAUDE.md`, `AGENTS.md`, `.claude/`) run the **repo profile**: Claude Code's own
   prompt and tools with the repo's settings, hooks and skills (your personal `~/.claude` setup stays out unless
   `--user-settings`; that includes claude.ai connectors). Repos whose config runs code ask once "Trust this repo?";

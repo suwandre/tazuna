@@ -478,6 +478,8 @@ fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args
     let mut fx = Fx::new();
     let mut quit_at: Option<Instant> = None;
     let mut last = Instant::now();
+    // mouse capture scrolls the transcript but keeps the terminal from selecting text; ctrl-s hands the mouse back
+    let mut mouse = true;
     loop {
         let dt = last.elapsed();
         last = Instant::now();
@@ -527,6 +529,17 @@ fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args
                 fx.boot = true;
             }
             KeyCode::Char('e') if ctrl => v.expand_all = !v.expand_all,
+            KeyCode::Char('s') if ctrl => {
+                mouse = !mouse;
+                let text = if mouse {
+                    let _ = execute!(std::io::stdout(), EnableMouseCapture);
+                    "mouse scrolling on"
+                } else {
+                    let _ = execute!(std::io::stdout(), DisableMouseCapture);
+                    "select mode: drag to select and copy text; ctrl-s again for mouse scrolling"
+                };
+                s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
+            }
             KeyCode::Char('y') if ctrl => {
                 let text = match copy_last_reply(&s) {
                     Ok(n) => format!("copied the last reply ({n} chars)"),
