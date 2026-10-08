@@ -55,7 +55,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    completion, the to-do list as a checklist, images (`@shot.png`, dragged paths, `ctrl-v`), `!` shell mode. Left (nice to
    have): external editor, stash, vim mode, a background-task view, rewind.
 2. **Cheap `claude` levers** before the own loop: ~~5-minute prompt cache~~ (v0.0.20: −10%, same judge; headless default),
-   ~~a lower Bash output limit~~ (+30%: ruled out), then earlier compaction and a cheaper explorer subagent. Each an A/B against the default. Also a **repo map** (Aider, maki): a
+   ~~a lower Bash output limit~~ (+30%: ruled out), ~~repo map~~ (v0.0.21: no gain, the agent reads as much), then
+   earlier compaction and a cheaper explorer subagent. Each an A/B against the default. Also a **repo map** (Aider, maki): a
    compact outline of files and symbols up front, to cut the 150-200k chars of code each run reads (re-reading context is
    52% of a run's cost); works on the `claude` path through the prompt or a hook.
 3. **Own agent loop for other providers** (design: [docs/OWN_LOOP.md](docs/OWN_LOOP.md)): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
@@ -115,6 +116,7 @@ Worth borrowing besides the repo map: an OS sandbox for commands (Codex), checkp
 | Stuck detection | not built | 0 of 184 tazuna runs repeated a call with the same failure |
 | Hash-anchored edits | not built | old text in edits is 0.6% of output tokens, ~0.2% of cost |
 | Bash output capped at 8,000 chars | +30% cost | the agent re-runs commands to see what was cut |
+| Repo map in the first message | +3% cost, same judge | the agent still reads the files it changes in full |
 
 ## Decision log
 
@@ -138,3 +140,4 @@ Worth borrowing besides the repo map: an OS sandbox for commands (Codex), checkp
 - 2026-10-08: repo-lean's gap traced to reading less (short prompt + Claude's tools); two check lines brought it to stock
   quality at stock cost (0.0.17). The default repo profile with diagnostics stays best in its pool (7.12 at stock cost).
 - 2026-10-08: 5-minute prompt cache for headless runs (−10%, same judge); Bash output cap ruled out (+30%).
+- 2026-10-08: repo map A/B: no gain (reads unchanged); stays opt-in.

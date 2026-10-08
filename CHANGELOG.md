@@ -23,6 +23,16 @@ file counts and, for the source files whose path or definitions match the task's
 definitions by plain line matching; tests ranked below the code they test; capped at 12,000 chars). `tazuna map <task-file>`
 prints it. On the company tickets it lists the files the real fixes changed (T-921: 1st and 7th of 25), in 0.7 s.
 
+A/B on T-921 + T-870 (2 runs each, Opus 5.5 medium, 5-minute cache in both arms, judged with the afternoon's runs):
+
+| Arm | 921 | 870 | Judge avg | Cost (4 runs) | Turns | Code read (median) | Searches (median) |
+|---|---|---|---|---|---|---|---|
+| default | 6.0, 6.0 | 6.5, 7.0 | 6.38 | $7.15 | 24-50 | 150k chars | 23 |
+| `--repo-map` | 6.5, 6.0 | 7.0, 6.0 | 6.38 | $7.38 (+3%) | 23-59 | 153k chars | 19 |
+
+No gain: the agent searched a little less but read as much, because it reads the files it changes in full; knowing where
+to look does not shrink what it reads. Stays opt-in (`tazuna map` is still handy for a look at a task's files).
+
 ## 0.0.20 (2026-10-08)
 
 **Prompt cache lifetime by mode.** claude writes its prompt cache with a 1-hour lifetime, billed at 2× input; a 5-minute
