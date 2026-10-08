@@ -24,6 +24,20 @@ then verification runs. The reviewer's cost is added to the run (`total_cost_usd
 total for the run, every process included). Meant for a cheap implementer with a strong reviewer, e.g. Haiku 5.5 implements
 and Opus 5.5 reviews. Smoke test (Haiku 5.5 low + Opus 5.5 low, a two-function fix): review in 2-5 s for $0.006-0.027.
 
+Gauge on one company ticket and one Go task (2 runs each, all arms the same hour, judged in side pools):
+
+| Arm | T-921 judge | T-921 cost | hugo-section-slug judge | hugo cost | Turns |
+|---|---|---|---|---|---|
+| Opus 5.5 medium (default) | 5.75-6.75 (earlier same-day runs) | $1.4-2.6 | **8.00** | $0.56 | 16-45 |
+| Haiku 5.5 high + Opus 5.5 medium reviewer | 5.00 | $1.06 | 6.75 | $0.71 | 60-71 |
+| Haiku 5.5 high alone | 4.50 | $0.45 | 7.00 | $0.26 | 44-67 |
+
+The reviewer flagged a problem in 1 of 4 runs and passed implementations the judge called "diverges most from the spec";
+each review cost $0.25-0.48 (Opus reading code), more than a Haiku run. Haiku 5.5 needs 2-3× the turns of Opus and
+~25 min on the company ticket. Verdict: Haiku + Opus review is not competitive with Opus medium alone (lower score on both
+tasks; on hugo also more expensive). `--review-model` stays opt-in. Usage: 10 runs and both judges, 37% → 46% of the 5-hour
+window.
+
 ## 0.0.14 (2026-10-08)
 
 **`--self-review`** (opt-in until benchmarked): three sentences of finish rules in the system prompt (finish only when every
