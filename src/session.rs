@@ -33,6 +33,8 @@ pub struct Tool {
     pub error: bool,
     pub started_ms: f64,
     pub done_ms: Option<f64>,
+    /// A subagent this call started (Task/Agent): how many tool calls it has made, and the latest one.
+    pub sub: Option<(usize, String)>,
 }
 
 impl Tool {
@@ -188,6 +190,11 @@ impl Session {
     /// Apply one event that happened `at_ms` into the run.
     pub fn apply(&mut self, e: &Value, at_ms: f64) {
         self.now_ms = at_ms;
+        if let Some(parent) = e["parent_tool_use_id"].as_str() {
+            // a subagent's own messages: they belong under the call that started it, not in the main transcript
+            self.subagent(parent, e);
+            return;
+        }
         let s = |v: &Value| v.as_str().unwrap_or_default().to_string();
         match (e["type"].as_str(), e["subtype"].as_str()) {
             (Some("system"), Some("init")) => {
@@ -357,6 +364,7 @@ impl Session {
                             error: false,
                             started_ms: self.now_ms,
                             done_ms: None,
+                            sub: None,
                         }));
                         self.activity = Activity::Tool;
                     }
@@ -396,6 +404,27 @@ impl Session {
         }
     }
 
+    fn subagent(&mut self, parent: &str, e: &Value) {
+        if e["type"] != "assistant" {
+            return;
+        }
+        let calls: Vec<String> = e["message"]["content"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|c| c["type"] == "tool_use")
+            .map(|c| {
+                let i = &c["input"];
+                let arg = ["file_path", "path", "pattern", "command", "description"].iter().find_map(|k| i[*k].as_str()).unwrap_or_default();
+                format!("{} {}", c["name"].as_str().unwrap_or_default(), arg.lines().next().unwrap_or_default())
+            })
+            .collect();
+        if let (Some(t), Some(last)) = (self.tool_mut(parent), calls.last().cloned()) {
+            let n = t.sub.as_ref().map_or(0, |s| s.0) + calls.len();
+            t.sub = Some((n, last));
+        }
+    }
+
     fn tool_mut(&mut self, id: &str) -> Option<&mut Tool> {
         self.blocks.iter_mut().rev().find_map(|b| match b {
             Block::Tool(t) if t.id == id => Some(t),
@@ -407,6 +436,20 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keeps_subagent_messages_under_their_call() {
+        use serde_json::json;
+        let mut s = Session::new("", "medium");
+        s.apply(&json!({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "tool_use", "id": "t1", "name": "Task"}}}), 1.0);
+        let blocks = s.blocks.len();
+        let sub = json!({"type": "assistant", "parent_tool_use_id": "t1", "message": {"content": [{"type": "tool_use", "id": "x", "name": "Read", "input": {"file_path": "src/a.ts"}}]}});
+        s.apply(&sub, 2.0);
+        s.apply(&json!({"type": "user", "parent_tool_use_id": "t1", "message": {"content": [{"type": "tool_result", "tool_use_id": "x", "content": "..."}]}}), 3.0);
+        assert_eq!(s.blocks.len(), blocks, "nothing added to the main transcript");
+        let Block::Tool(t) = s.blocks.last().unwrap() else { panic!() };
+        assert_eq!(t.sub, Some((1, "Read src/a.ts".to_string())));
+    }
 
     #[test]
     fn counts_cache_misses() {

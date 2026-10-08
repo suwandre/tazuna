@@ -554,6 +554,11 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Pref
         (Some(r), _) => format!("{} lines", r.lines().count()),
         (None, _) => String::new(),
     };
+    if let Some((n, last)) = &t.sub {
+        // a running subagent: its progress, not its whole transcript
+        let last: String = last.chars().take(60).collect();
+        meta = if meta.is_empty() { format!("{n} steps · {last}") } else { format!("{meta} · {n} steps") };
+    }
     if let (true, Some(secs)) = (o.durations, t.secs()) {
         meta.push_str(&format!(" · {secs:.1}s"));
     }
@@ -811,7 +816,7 @@ mod tests {
 
     #[test]
     fn claude_and_lean_edits_read_the_same() {
-        let tool = |name: &str, input: serde_json::Value| Tool { id: String::new(), name: name.into(), input, result: None, error: false, started_ms: 0.0, done_ms: None };
+        let tool = |name: &str, input: serde_json::Value| Tool { id: String::new(), name: name.into(), input, result: None, error: false, started_ms: 0.0, done_ms: None, sub: None };
         let lean = tool("mcp__lean__edit", serde_json::json!({"path": "/r/a.ts", "old": "x", "new": "y"}));
         let claude = tool("Edit", serde_json::json!({"file_path": "/r/a.ts", "old_string": "x", "new_string": "y", "replace_all": false}));
         for t in [&lean, &claude] {
