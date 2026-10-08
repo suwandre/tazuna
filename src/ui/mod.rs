@@ -209,8 +209,26 @@ pub fn human(n: u64) -> String {
     }
 }
 
+/// One name per kind of tool, whichever profile ran it: the lean tools (`mcp__lean__edit`) and Claude Code's own (`Edit`).
 pub fn short_name(name: &str) -> &str {
-    name.strip_prefix("mcp__lean__").unwrap_or(name)
+    match name.strip_prefix("mcp__lean__").unwrap_or(name) {
+        "Edit" | "MultiEdit" => "edit",
+        "Write" => "write",
+        "Read" => "read",
+        "Bash" => "bash",
+        n => n,
+    }
+}
+
+/// A tool argument under either profile's key: lean `path`/`old`/`new`, Claude Code `file_path`/`old_string`/`new_string`.
+pub fn tool_arg<'a>(t: &'a Tool, key: &str) -> &'a str {
+    let keys: &[&str] = match key {
+        "path" => &["path", "file_path", "notebook_path"],
+        "old" => &["old", "old_string"],
+        "new" => &["new", "new_string"],
+        k => return t.input[k].as_str().unwrap_or_default(),
+    };
+    keys.iter().find_map(|k| t.input[*k].as_str()).unwrap_or_default()
 }
 
 pub fn model_short(m: &str) -> String {
@@ -224,8 +242,8 @@ pub fn files_touched(s: &Session) -> Vec<String> {
     for b in s.blocks.iter().rev() {
         let Block::Tool(t) = b else { continue };
         let mut found: Vec<String> = Vec::new();
-        if let Some(p) = t.input["path"].as_str() {
-            found.push(rel(s, p));
+        if !tool_arg(t, "path").is_empty() {
+            found.push(rel(s, tool_arg(t, "path")));
         }
         if let Some(cmd) = t.input["command"].as_str() {
             for w in cmd.split(|c: char| c.is_whitespace() || "'\";|&<>()".contains(c)) {
@@ -249,7 +267,7 @@ fn rel(s: &Session, p: &str) -> String {
 
 pub fn tool_summary(t: &Tool, s: &Session) -> String {
     let i = &t.input;
-    let arg = |k: &str| i[k].as_str().unwrap_or_default();
+    let arg = |k: &str| tool_arg(t, k);
     match short_name(&t.name) {
         _ if i.is_null() => "…".to_string(), // input is still streaming
         "bash" => arg("command").lines().next().unwrap_or_default().to_string(),
@@ -522,7 +540,7 @@ fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts) -> Vec<Prefixed> {
 }
 
 fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Prefixed> {
-    let arg = |k: &str| t.input[k].as_str().unwrap_or_default();
+    let arg = |k: &str| tool_arg(t, k);
     let name = short_name(&t.name);
     let (glyph, gcolor) = match (&t.result, t.error) {
         (None, _) => (spinner(v.clock_ms), th.warn),
@@ -790,6 +808,19 @@ pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claude_and_lean_edits_read_the_same() {
+        let tool = |name: &str, input: serde_json::Value| Tool { id: String::new(), name: name.into(), input, result: None, error: false, started_ms: 0.0, done_ms: None };
+        let lean = tool("mcp__lean__edit", serde_json::json!({"path": "/r/a.ts", "old": "x", "new": "y"}));
+        let claude = tool("Edit", serde_json::json!({"file_path": "/r/a.ts", "old_string": "x", "new_string": "y", "replace_all": false}));
+        for t in [&lean, &claude] {
+            assert_eq!(short_name(&t.name), "edit");
+            assert_eq!((tool_arg(t, "path"), tool_arg(t, "old"), tool_arg(t, "new")), ("/r/a.ts", "x", "y"));
+        }
+        assert_eq!(short_name("Grep"), "Grep");
+        assert_eq!(short_name("Bash"), "bash");
+    }
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
