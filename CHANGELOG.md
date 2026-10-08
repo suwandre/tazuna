@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.25 (2026-10-08)
+
+**Haiku explorer on by default** (repo profile; `--no-explorer` turns it off, `--explorer <model>` picks another model). The
+user's measure is price to performance, not quality alone: 0.0.24's −28% cost for a judge −0.25 (within noise) is a better
+ratio, and a strong reviewer can buy quality back where it matters. The default's numbers are now 0.0.24's Haiku column
+(mean per ticket $1.61, 26 turns, judge 5.70).
+
 ## 0.0.24 (2026-10-08)
 
 **Headless runs answer permission questions themselves.** A benchmark run hung for 25 minutes: Opus called
@@ -37,8 +44,7 @@ cache). 2 runs per arm and ticket; one Haiku run on T-946 hung on the bug above 
 
 Cost down well past noise on every ticket; judge −0.25, within noise, though lower on 3 of 5 tickets. No run added type
 errors or unit failures, and each pair passes the same PR tests (one test fewer in one T-872 Haiku run). Haiku answers
-cost a fraction of Opus reading the same files, unlike the Sonnet explorer (+12%). Stays opt-in until a third run per
-ticket shows whether the small judge drop is real.
+cost a fraction of Opus reading the same files, unlike the Sonnet explorer (+12%). Made the default in 0.0.25.
 Usage for this batch: 12 runs + judge ≈ 28% of the 5-hour window.
 
 ## 0.0.23 (2026-10-08)

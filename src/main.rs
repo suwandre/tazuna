@@ -8,7 +8,7 @@
 //!          [--no-diagnostics]  # do not tell claude about type/compile errors right after its edits
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
 //!          [-c | --continue | --resume <session-id>]   # pick up this repo's latest (or a given) session
-//!          [--explorer <model>]   # a subagent on <model> (e.g. sonnet) reads and searches code for the main model
+//!          [--explorer <model> | --no-explorer]   # a subagent on <model> (default haiku) reads and searches code for the main model
 //!          [--repo-map]   # a map of the files that match the task, in front of the first message
 //!          [--cache-ttl 5m|1h]   # prompt cache lifetime (default: 5m for --run, 1h live)
 //!          [--mode auto|ask|edits|plan]   # permissions: never ask (default), ask before edits and commands, ask before
@@ -127,7 +127,7 @@ fn args() -> Result<Args> {
         mode: "bypassPermissions".into(),
         cache_ttl: None,
         repo_map: false,
-        explorer: None,
+        explorer: Some("haiku".into()),
         review_effort: "medium".into(),
         project_instructions: true,
         profile: None,
@@ -161,6 +161,7 @@ fn args() -> Result<Args> {
             "--resume" => a.resume = Some(Some(val()?)),
             "--repo-map" => a.repo_map = true,
             "--explorer" => a.explorer = Some(val()?),
+            "--no-explorer" => a.explorer = None,
             "--cache-ttl" => {
                 a.cache_ttl = Some(match val()?.as_str() {
                     t @ ("5m" | "1h") => t.to_string(),
