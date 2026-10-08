@@ -22,6 +22,19 @@ requirement is met and checked; do not stop to ask; read a name before relying o
 says it is done and the run changed files: read the whole diff, map every acceptance criterion to code, revert what the task
 did not ask for, check unread names, re-run tests. The review comes before verification, so its fixes are tested too.
 
+A/B on T-921 and T-870 (the two company tickets whose cause the ticket names), repo profile with diagnostics, Opus 5.5
+medium, 2 runs per arm per ticket, both arms the same morning, each ticket's whole pool re-judged:
+
+| Arm | 921 | 870 | Judge avg | Median cost (sum of 2 tickets) | Turns (median) |
+|---|---|---|---|---|---|
+| tazuna 0.0.14 `--self-review` | 7.5, 7.0 | 7.0, 6.5 | **7.00** | $5.36 (**+31%**) | 45 |
+| tazuna 0.0.14 without | 6.0, 6.0 | 7.5, 7.0 | 6.62 | $4.10 | 38 |
+
++0.38 judge (within the 0.75 noise threshold) for +31% cost. On T-921 the review lifted correctness (4.5 vs 3.5-4: the
+judge called both reviewed runs "close to the reference"); on T-870 it scored 0.5 lower, one run extending into frontend
+code the ticket scoped out. Earlier arms in the same re-judged pools moved by up to 0.5. Decision: stays opt-in. The 8 runs
+and judging used 25 points of the 5-hour window.
+
 ## 0.0.13 (2026-10-08)
 
 **Diagnostics after each edit are on by default** (`--no-diagnostics` turns them off), after this A/B on the five company

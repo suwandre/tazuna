@@ -39,8 +39,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 3. **Quality experiments**, one at a time, each against a same-day stock baseline:
    1. ~~Compiler errors in edit results~~ (dirge, OMP). Done 2026-10-08 in v0.0.13 as a `PostToolUse` hook that also
       fires after Bash edits; default on: same judge, −11% cost vs without.
-   2. An instruction against ending early, plus a self-review turn before "done" (diff vs acceptance criteria, unrelated
-      changes).
+   2. ~~Finish rules plus a self-review turn~~ (v0.0.14 `--self-review`, opt-in): +0.38 judge for +31% cost on two
+      tickets; not worth the default. Possible follow-up: a cheaper review (Sonnet, or only the acceptance-criteria step).
    3. A verifier in a fresh context that tries to break the work (a worker and its checker never share a context).
 4. **Cost experiments:** stuck detection (stop when two attempts give identical results; back to planning after 3 failed
    fixes); hash-anchored edits in tazuna's own edit tool (OMP claims −61% output tokens).
@@ -97,3 +97,5 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
   cheaper than all Claude Code-based rivals. An apparent +37% cost vs stock was a benchmark bug: `claude -p` emits one
   result event per background-command wake-up and the runner kept only the last; it now sums them all.
 - 2026-10-08: `--diagnostics` A/B on the company tickets: identical judge, −11% cost; made the default in v0.0.13.
+- 2026-10-08: `--self-review` A/B (2 tickets): +0.38 judge, +31% cost; stays opt-in.
+- 2026-10-08: working rule: big benchmarks run in night windows; daytime checks cap new runs at 40% of the 5-hour window.
