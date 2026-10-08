@@ -62,7 +62,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Paragraph::new(vec![
             Line::from(vec![Span::styled(format!("{glyph} "), st(color)), Span::styled(label, st(color).add_modifier(Modifier::BOLD))]),
             Line::from(vec![kv("elapsed", &clock_str(v.clock_ms), th), Span::raw("  "), kv("turn", &s.turns.to_string(), th)]),
-            Line::from(vec![if v.live { kv("mode", "live · cc-mid", th) } else { kv("replay", &play, th) }]),
+            Line::from(vec![if v.live { kv("mode", &format!("live · {}", if s.profile.is_empty() { "lean" } else { &s.profile }), th) } else { kv("replay", &play, th) }]),
         ]),
         a,
     );
@@ -74,7 +74,13 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let [g1, g2] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(a);
     let ctx = s.context as f64 / s.context_window as f64;
     gauge(f, g1, ctx, &format!("ctx {:>6} / {}", human(s.context), human(s.context_window)), th.accent, th);
-    gauge(f, g2, s.usage.cache_hit(), &format!("cache {:>4.0}%", s.usage.cache_hit() * 100.0), th.ok, th);
+    let misses = s.cache_misses();
+    let miss = match misses {
+        0 => String::new(),
+        1 => " · 1 miss".to_string(),
+        n => format!(" · {n} misses"),
+    };
+    gauge(f, g2, s.usage.cache_hit(), &format!("cache {:>4.0}%{miss}", s.usage.cache_hit() * 100.0), if misses == 0 { th.ok } else { th.warn }, th);
 
     // tokens per turn
     let b = panel("tokens", th);

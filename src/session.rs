@@ -128,6 +128,8 @@ pub struct Session {
     pub finished_tools: usize,
     /// Completed runs (one per result event).
     pub results: usize,
+    /// The profile the router chose (live mode).
+    pub profile: String,
 }
 
 impl Session {
@@ -154,6 +156,7 @@ impl Session {
             new_blocks: 1,
             finished_tools: 0,
             results: 0,
+            profile: String::new(),
         }
     }
 
@@ -219,6 +222,7 @@ impl Session {
                 (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
                 let model = self.model.trim_start_matches("claude-").to_string();
                 let up = e["escalate"].as_str().map_or(String::new(), |x| format!(" · escalates to {} if tests fail", x.trim_start_matches("claude-")));
+                self.profile = s(&e["profile"]);
                 let profile = e["profile"].as_str().map_or(String::new(), |p| format!(" · {p} profile"));
                 self.push(Block::Notice { text: format!("lane {}: {model} {}{profile} ({}){up}", s(&e["lane"]), self.effort, s(&e["reason"])), error: false });
             }
@@ -315,6 +319,18 @@ impl Session {
         }
     }
 
+    /// Turns that read back less than half of what the turn before them had cached: a prompt cache miss (same rule as
+    /// the run log). Each one re-sends the context at full price.
+    pub fn cache_misses(&self) -> usize {
+        self.turn_usage
+            .windows(2)
+            .filter(|w| {
+                let cached = w[0].cache_write + w[0].cache_read;
+                cached > 0 && w[1].cache_read * 2 < cached
+            })
+            .count()
+    }
+
     fn stream(&mut self, ev: &Value) {
         match ev["type"].as_str() {
             Some("message_start") => {
@@ -391,6 +407,15 @@ impl Session {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn counts_cache_misses() {
+        let mut s = Session::new("", "medium");
+        let u = |cache_write, cache_read| Usage { input: 10, cache_write, cache_read, output: 50 };
+        s.turn_usage = vec![u(9000, 0), u(200, 9000), u(100, 9200), u(9500, 0), u(0, 9600)];
+        assert_eq!(s.cache_misses(), 1, "only the fourth turn lost the cache");
+        assert_eq!(Session::new("", "medium").cache_misses(), 0);
+    }
 
     #[test]
     fn replays_recorded_run() {
