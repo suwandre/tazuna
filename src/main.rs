@@ -36,6 +36,7 @@ mod replay;
 mod review;
 mod route;
 mod runlog;
+mod select;
 mod session;
 mod trust;
 mod ui;
@@ -48,7 +49,7 @@ use ratatui::{
     crossterm::{
         event::{
             self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyEventKind,
-            KeyModifiers, KeyboardEnhancementFlags, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+            KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
         },
         execute,
         terminal::supports_keyboard_enhancement,
@@ -366,7 +367,8 @@ impl Fx {
         Fx { mgr: EffectManager::default(), boot: true, blocks: 0, tools: 0, results: 0 }
     }
 
-    fn frame(&mut self, f: &mut Frame, s: &Session, v: &View, dt: Duration) {
+    /// Draws one frame; returns where the transcript is.
+    fn frame(&mut self, f: &mut Frame, s: &Session, v: &View, dt: Duration) -> ratatui::layout::Rect {
         let areas = ui::draw(f, s, v);
         let d = v.design;
         if self.boot {
@@ -391,6 +393,7 @@ impl Fx {
         }
         let area = f.area();
         self.mgr.process_effects(dt.into(), f.buffer_mut(), area);
+        areas.transcript
     }
 }
 
@@ -434,7 +437,9 @@ fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args)
             s.apply(e, *t);
         }
         (v.clock_ms, v.speed, v.paused) = (replay.clock, replay.speed, replay.paused);
-        term.draw(|f| fx.frame(f, &s, &v, dt))?;
+        term.draw(|f| {
+            fx.frame(f, &s, &v, dt);
+        })?;
 
         if let Some(t) = quit_at {
             if t.elapsed().as_millis() > QUIT_MS {
@@ -500,12 +505,17 @@ fn scroll_mouse(v: &mut View, kind: MouseEventKind) {
 /// Copies the agent's latest reply to the clipboard (selecting text is awkward while the app captures the mouse).
 // ponytail: macOS pbcopy only; add wl-copy/xclip when tazuna runs on Linux
 fn copy_last_reply(s: &Session) -> Result<usize> {
-    use std::io::Write;
     let text = s.blocks.iter().rev().find_map(|b| if let session::Block::Text { text, .. } = b { Some(text.clone()) } else { None }).context("no reply yet")?;
+    to_clipboard(&text)?;
+    Ok(text.chars().count())
+}
+
+fn to_clipboard(text: &str) -> Result<()> {
+    use std::io::Write;
     let mut child = std::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn().context("pbcopy")?;
     child.stdin.take().context("pbcopy stdin")?.write_all(text.as_bytes())?;
     child.wait()?;
-    Ok(text.chars().count())
+    Ok(())
 }
 
 fn busy(s: &Session) -> bool {
@@ -587,6 +597,10 @@ fn run_live(
     let mut ed = editor::Editor::with_history(labels::dir()?.join("history.jsonl"));
     // when the current permission question first got a key
     let mut asked_at: Option<Instant> = None;
+    // mouse selection in the transcript: drag selects, release copies
+    let mut transcript = ratatui::layout::Rect::default();
+    let mut sel: Option<select::Selection> = None;
+    let (mut copy_now, mut copied) = (false, None::<String>);
     // `@` completion: the repo's tracked files (ponytail: read once per session; new files show up next session)
     let files: Vec<String> = std::process::Command::new("git")
         .args(["ls-files"])
@@ -613,7 +627,23 @@ fn run_live(
             s.apply(&e, t);
         }
         v.clock_ms = live.elapsed_ms();
-        term.draw(|f| fx.frame(f, &s, &v, dt))?;
+        term.draw(|f| {
+            transcript = fx.frame(f, &s, &v, dt);
+            if let Some(sel) = &sel {
+                sel.highlight(f.buffer_mut());
+                if copy_now {
+                    copied = Some(sel.text(f.buffer_mut()));
+                }
+            }
+        })?;
+        if let Some(text) = copied.take() {
+            copy_now = false;
+            let msg = match to_clipboard(&text) {
+                Ok(()) => format!("copied {} chars", text.chars().count()),
+                Err(e) => format!("copy failed: {e:#}"),
+            };
+            s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
+        }
 
         if let Some(t) = quit_at {
             if t.elapsed().as_millis() > QUIT_MS {
@@ -630,7 +660,19 @@ fn run_live(
                 continue;
             }
             Event::Mouse(m) => {
-                scroll_mouse(&mut v, m.kind);
+                match m.kind {
+                    MouseEventKind::Down(MouseButton::Left) => sel = select::Selection::start(m.column, m.row, transcript),
+                    MouseEventKind::Drag(MouseButton::Left) => {
+                        if let Some(sel) = sel.as_mut() {
+                            sel.drag(m.column, m.row);
+                        }
+                    }
+                    MouseEventKind::Up(MouseButton::Left) => match &sel {
+                        Some(x) if !x.is_empty() => copy_now = true,
+                        _ => sel = None,
+                    },
+                    k => scroll_mouse(&mut v, k),
+                }
                 continue;
             }
             Event::Key(k) if k.kind == KeyEventKind::Press => k,
@@ -638,6 +680,7 @@ fn run_live(
         };
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        sel = None;
         // an open permission question owns the keyboard: only y(es), a(lways), n(o)/esc answer it, every other key is
         // ignored, and keys in the first moment after it appears count for nothing (typing must not approve by accident)
         // ctrl-c and ctrl-d still stop or quit: stopping answers every open question with no
@@ -720,6 +763,11 @@ fn run_live(
             KeyCode::Char('k') if ctrl => ed.kill_to_end(),
             KeyCode::Char('w') if ctrl => ed.kill_word(),
             KeyCode::Backspace if alt => ed.kill_word(),
+            // a backslash before enter means a new line, in any terminal (where shift-enter cannot be told apart)
+            KeyCode::Enter if ed.text[..ed.cursor].ends_with('\\') => {
+                ed.backspace();
+                ed.insert("\n");
+            }
             KeyCode::Enter => {
                 if ed.text.trim().is_empty() {
                     continue;

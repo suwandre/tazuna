@@ -13,8 +13,9 @@ Early. What works today:
 
 - **Live mode**: run `tazuna` in a git repo, type a task. One `claude` process per conversation (warm prompt cache),
   clean interrupts (`esc` or `ctrl-c`), follow-ups, readline-style editing (`←→`, `ctrl-a/e/u/k/w`) and history (`↑↓`,
-  kept across sessions), `ctrl-o` to expand tool output, multi-line input (`ctrl-j`, or shift/alt-enter where the terminal reports
-  it), copy last reply (`ctrl-y`), mouse scrolling (`ctrl-s` hands the mouse back to the terminal to select text).
+  kept across sessions), `ctrl-o` to expand tool output, multi-line input (`\` then enter, or `ctrl-j`; shift/alt-enter where the terminal
+  reports it), mouse scrolling, drag over the transcript to select and copy its text (never the side panel), copy the last
+  reply (`ctrl-y`), `ctrl-s` hands the mouse to the terminal.
   `tazuna -c` continues this repo's latest session (`--resume <id>` a given one), with the earlier transcript on screen.
   Slash commands go to claude (built-ins like `/compact`, `/cost`, `/clear`, `/model`, and the repo's own commands and
   skills); `tab` completes them and `@` file paths. Claude's to-do list shows as a checklist. Images named in a message

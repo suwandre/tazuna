@@ -51,5 +51,5 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     ]);
     split_row(f, input, left, right, None);
 
-    Areas { pulse: top, last_block }
+    Areas { pulse: top, last_block, transcript: body }
 }

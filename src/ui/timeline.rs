@@ -53,5 +53,5 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     let mut pulse = status;
     pulse.width = act_w;
-    Areas { pulse, last_block }
+    Areas { pulse, last_block, transcript: area }
 }
