@@ -56,12 +56,28 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    have): external editor, stash, vim mode, a background-task view, rewind.
 2. **Cheap `claude` levers** before the own loop: 5-minute prompt cache (`CLAUDE_CODE_PROMPT_CACHE_TTL=5m`; cache writes
    are 30% of a run's cost at the 1-hour rate), a lower Bash output limit (`BASH_MAX_OUTPUT_LENGTH`), then earlier
-   compaction and a cheaper explorer subagent. Each an A/B against the default.
+   compaction and a cheaper explorer subagent. Each an A/B against the default. Also a **repo map** (Aider, maki): a
+   compact outline of files and symbols up front, to cut the 150-200k chars of code each run reads (re-reading context is
+   52% of a run's cost); works on the `claude` path through the prompt or a hook.
 3. **Own agent loop for other providers** (design: [docs/OWN_LOOP.md](docs/OWN_LOOP.md)): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
    with an API key), runs its own tools and reuses the event format, so the UI, run log, diagnostics, verification and
    reviewer keep working. Unlocks cheap non-Anthropic implementers with a Claude reviewer and the footprint floor (no
    `claude` process). Claude on the subscription stays on the CLI path. Needs an API key and a spending limit.
 4. **Real use and labels** once 1 is good enough: rate runs (`/good`, `/bad`, `--label-git`); the Jev router needs ~100-200.
+
+## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
+
+1. **A router that learns from the user's own outcomes** (`/good`, `/bad`, git kept/discarded): model and effort per kind
+   of task, cheaper and better with use. Needs real use and labels (Next 4) and the Jev router (parked).
+2. **The Claude subscription and cheap API models in one harness, without impersonation:** Claude through the official CLI
+   as planner or reviewer, other models implementing through the own loop (Next 3).
+3. **Measured by default:** per-version metrics, A/B tests on the user's repos, cache health and cost per turn, shown to
+   the user; the CHANGELOG with numbers is part of the product.
+4. **Agent config that travels:** `CLAUDE.md` and `AGENTS.md`, the repo's hooks and skills applied to any model, not only
+   the one whose vendor defined the format.
+5. **Session replay** as a review tool.
+
+Worth borrowing besides the repo map: an OS sandbox for commands (Codex), checkpoints and rewind (parked).
 
 ## Parked (not tested yet)
 
