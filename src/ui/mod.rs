@@ -705,13 +705,13 @@ pub fn wrap(line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Vec<Li
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-const LIVE_KEYS: &str = "enter send · /good /bad rate run · ctrl-c stop/quit · ctrl-y copy · ctrl-t design · ctrl-e expand";
+const LIVE_KEYS: &str = "enter send · ctrl-j new line · /good /bad rate run · ctrl-c stop/quit · ctrl-y copy · ctrl-t design · ctrl-e expand";
 
 /// The composer row: typed text with a cursor in live mode, a placeholder and key hints otherwise.
 pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Line<'static> {
     let mut spans = vec![Span::styled(format!(" {glyph} "), st(th.accent).add_modifier(Modifier::BOLD))];
     if v.live && !v.input.is_empty() {
-        // show the end of what is being typed, newlines as ⏎
+        // one row (zen's footer): the end of what is being typed, newlines as ⏎
         let text = v.input.replace('\n', " ⏎ ");
         let room = (width as usize).saturating_sub(6);
         let shown: String = text.chars().rev().take(room).collect::<Vec<_>>().into_iter().rev().collect();
@@ -727,6 +727,56 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
     Line::from(spans)
 }
 
+/// Rows the composer box may grow to while typing (multi-line input); the latest rows stay visible.
+const COMPOSER_MAX_ROWS: usize = 6;
+
+/// The composer box: typed text on real lines (wrapped to `width`, the box's inside), or the one-line placeholder.
+pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Vec<Line<'static>> {
+    if !(v.live && !v.input.is_empty()) {
+        return vec![composer_line(v, th, glyph, placeholder, width)];
+    }
+    let room = (width as usize).saturating_sub(4).max(1);
+    let mut rows: Vec<String> = Vec::new();
+    for line in v.input.split('\n') {
+        let mut row = String::new();
+        let mut w = 0;
+        for c in line.chars() {
+            let cw = c.width().unwrap_or(0);
+            if w + cw > room {
+                rows.push(std::mem::take(&mut row));
+                w = 0;
+            }
+            row.push(c);
+            w += cw;
+        }
+        rows.push(row);
+    }
+    let skip = rows.len().saturating_sub(COMPOSER_MAX_ROWS);
+    let last = rows.len() - 1;
+    rows.into_iter()
+        .enumerate()
+        .skip(skip)
+        .map(|(i, r)| {
+            let lead = if i == 0 { format!(" {glyph} ") } else { "   ".to_string() };
+            let mut spans = vec![Span::styled(lead, st(th.accent).add_modifier(Modifier::BOLD)), Span::styled(r, st(th.text))];
+            if i == last {
+                spans.push(Span::styled("▍", st(th.accent)));
+            }
+            Line::from(spans)
+        })
+        .collect()
+}
+
+/// Height of a bordered composer box for this input at this outer width.
+pub fn composer_height(v: &View, outer_width: u16) -> u16 {
+    if !(v.live && !v.input.is_empty()) {
+        return 3;
+    }
+    let room = (outer_width as usize).saturating_sub(2 + 4).max(1);
+    let rows: usize = v.input.split('\n').map(|l| l.width().div_ceil(room).max(1)).sum();
+    rows.clamp(1, COMPOSER_MAX_ROWS) as u16 + 2
+}
+
 /// Left and right content on one row.
 pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'static>, bg: Option<Color>) {
     // paint the row background first: a styled Paragraph would repaint over the spans' own colors
@@ -740,6 +790,26 @@ pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn composer_grows_with_lines_and_keeps_the_latest() {
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new() };
+        let th = Design::Cockpit.theme();
+        assert_eq!(composer_height(&v, 40), 3, "empty: one row");
+        v.input = "first\nsecond".into();
+        assert_eq!(composer_height(&v, 40), 4);
+        let rows = composer_rows(&v, th, "›", "", 38);
+        let text: Vec<String> = rows.iter().map(|r| r.spans.iter().map(|s| s.content.to_string()).collect()).collect();
+        assert_eq!(text, vec![" › first", "   second▍"]);
+        v.input = "x".repeat(70); // wraps at 34 columns: 3 rows
+        assert_eq!(composer_height(&v, 40), 5);
+        assert_eq!(composer_rows(&v, th, "›", "", 38).len(), 3);
+        v.input = (1..=10).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        assert_eq!(composer_height(&v, 40), 8, "capped at 6 rows");
+        let rows = composer_rows(&v, th, "›", "", 38);
+        assert_eq!(rows.len(), 6);
+        assert!(rows[5].spans.iter().any(|s| s.content == "10"), "the latest line stays visible");
+    }
 
     #[test]
     fn wrap_respects_width_and_prefix() {

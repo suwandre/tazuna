@@ -44,9 +44,10 @@ use ratatui::{
     crossterm::{
         event::{
             self, DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture, Event, KeyCode, KeyEventKind,
-            KeyModifiers, MouseEventKind,
+            KeyModifiers, KeyboardEnhancementFlags, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
         },
         execute,
+        terminal::supports_keyboard_enhancement,
     },
 };
 use replay::Replay;
@@ -225,7 +226,15 @@ fn main() -> Result<()> {
             live.project_instructions = a.project_instructions;
             let mut term = ratatui::init();
             execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
+            // terminals with the kitty keyboard protocol report Shift-Enter apart from Enter; Ctrl-J works everywhere
+            let enhanced = supports_keyboard_enhancement().unwrap_or(false);
+            if enhanced {
+                execute!(std::io::stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
+            }
             let r = run_live(&mut term, &mut live, &a, route);
+            if enhanced {
+                let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
+            }
             let _ = execute!(std::io::stdout(), DisableBracketedPaste, DisableMouseCapture);
             ratatui::restore();
             println!("session saved: {}", live.rec_path.display());
@@ -526,6 +535,7 @@ fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args
                 s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
             }
             KeyCode::Enter if key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) => v.input.push('\n'),
+            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => v.input.push('\n'),
             KeyCode::Enter => {
                 let text = v.input.trim().to_string();
                 if text.is_empty() {

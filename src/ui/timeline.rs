@@ -13,8 +13,9 @@ fn seg(text: String, fg: Color, bg: Color) -> Span<'static> {
 }
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
+    let ch = composer_height(v, f.area().width);
     let [header, _, body, composer, status] =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(3), Constraint::Length(3), Constraint::Length(1)])
+        Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Min(3), Constraint::Length(ch), Constraint::Length(1)])
             .areas(f.area());
 
     let left = Line::from(vec![
@@ -30,7 +31,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let last_block = render_transcript(f, area, lines, last_rows, v.scroll);
 
     let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.accent2).add_modifier(Modifier::DIM));
-    let hint = composer_line(v, th, "❯", "Message tazuna…", composer.width);
+    let hint = composer_rows(v, th, "❯", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
     let (glyph, label, color) = activity(s, v, th);

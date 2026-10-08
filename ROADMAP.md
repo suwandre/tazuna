@@ -46,7 +46,7 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
       Not worth a full run as is; a stricter reviewer (high effort, acceptance criteria one by one) is the untested next try.
 4. **Cost experiments:** stuck detection (stop when two attempts give identical results; back to planning after 3 failed
    fixes); hash-anchored edits in tazuna's own edit tool (OMP claims −61% output tokens).
-5. **Footprint and UI:** add RAM, CPU and startup time to Tier 0; real multiline input; cache misses in the Cockpit sidebar;
+5. **Footprint and UI:** ~~add RAM, CPU and startup time to Tier 0~~ (done 2026-10-08); ~~real multiline input~~ (done); cache misses in the Cockpit sidebar;
    text selection under mouse capture; thinking text; check the edit-diff view in a real run; README with the company
    results.
 6. **Real use and labels:** use tazuna for real work and rate runs (`/good`, `/bad`, `--label-git`). The Jev router needs

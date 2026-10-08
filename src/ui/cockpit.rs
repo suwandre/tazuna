@@ -18,7 +18,8 @@ fn panel<'a>(title: &'a str, th: &Theme) -> Panel<'a> {
 }
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
-    let [header, body, composer] = Layout::vertical([Constraint::Length(1), Constraint::Min(10), Constraint::Length(3)]).areas(f.area());
+    let ch = composer_height(v, f.area().width);
+    let [header, body, composer] = Layout::vertical([Constraint::Length(1), Constraint::Min(10), Constraint::Length(ch)]).areas(f.area());
     let (glyph, label, color) = activity(s, v, th);
 
     let left = Line::from(vec![
@@ -139,7 +140,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     f.render_widget(Paragraph::new(rows), a);
 
     let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.border));
-    let hint = composer_line(v, th, "›", "Message tazuna…", composer.width);
+    let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
     Areas { pulse: p_tools, last_block }
