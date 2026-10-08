@@ -64,6 +64,10 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 - Own-loop rules for other providers: byte-stable prompt and tools, large outputs to disk, repeat the goal, every loop has
   done/check/stop/budget; Jev context trimming.
 - Other providers: Codex as the OpenAI path, Kimi K3, MiniMax M3.
+- Cross-provider pairs: a cheap non-Anthropic implementer (GPT-6 Luna, MiMo 2.6 Pro, DeepSeek V4.1 Flash) with a Claude
+  reviewer (`--review-model` already works with any implementer). Needs tazuna's own loop for the implementer. Only
+  Haiku 5.5 high + Opus 5.5 medium reviewer has been tried (2026-10-08: worse than Opus alone); other pairs and a stricter
+  reviewer are untested.
 - `--fallback-model`, `--advisor`; a cross-family judge; real sandboxing; git tags and a fixed scoreboard.
 - Smaller items: a verification shortcut, moving the benchmark kit into the repo; attribute result events that arrive
   after a run ended (claude waking up for a background command) to that run in the run log.
