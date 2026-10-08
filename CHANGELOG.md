@@ -16,6 +16,26 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.20 (2026-10-08)
+
+**Prompt cache lifetime by mode.** claude writes its prompt cache with a 1-hour lifetime, billed at 2× input; a 5-minute
+cache is billed at 1.25×. Cache writes are ~30% of a run's cost, and within a run turns come seconds apart, so headless
+runs (`--run`) now use 5 minutes; live sessions keep 1 hour, where a pause over 5 minutes would re-write the whole context.
+`--cache-ttl 5m|1h` overrides; a `CLAUDE_CODE_PROMPT_CACHE_TTL` the user set always wins.
+
+A/B on T-921 + T-870 (2 runs each, Opus 5.5 medium, repo profile, same hour, side pool judged together):
+
+| Arm | 921 | 870 | Judge avg | Cost (4 runs) | Turns |
+|---|---|---|---|---|---|
+| default (1-hour cache) | 6.5, 7.0 | 6.5, 6.5 | 6.62 | $8.16 | 30-46 |
+| **5-minute cache** | 7.0, 7.0 | 6.5, 6.5 | **6.75** | **$7.35 (−10%)** | 32-44 |
+| Bash output capped at 8,000 chars (`BASH_MAX_OUTPUT_LENGTH`) | 8.0, 6.5 | 6.0, 7.0 | 6.88 | $10.59 (+30%) | 40-61 |
+| stock Claude Code (reference, earlier) | 6.0, 7.0 | 6.5, 6.0 | 6.38 | | |
+
+Every 5-minute run was cheaper than every default run, as predicted from the cost breakdown (−11%). Capping Bash output
+backfired: the agent ran more commands to see what was cut (54-61 turns on T-870 vs 42-46); ruled out. Benchmarks of
+tazuna from this version on run with the 5-minute cache.
+
 ## 0.0.19 (2026-10-08)
 
 Daily-driver features, part 2 (headless runs unchanged).

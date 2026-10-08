@@ -54,9 +54,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    them in stream mode; tazuna shows their output, marks /clear and /compact, completes them with tab), `@` file
    completion, the to-do list as a checklist, images (`@shot.png`, dragged paths, `ctrl-v`), `!` shell mode. Left (nice to
    have): external editor, stash, vim mode, a background-task view, rewind.
-2. **Cheap `claude` levers** before the own loop: 5-minute prompt cache (`CLAUDE_CODE_PROMPT_CACHE_TTL=5m`; cache writes
-   are 30% of a run's cost at the 1-hour rate), a lower Bash output limit (`BASH_MAX_OUTPUT_LENGTH`), then earlier
-   compaction and a cheaper explorer subagent. Each an A/B against the default. Also a **repo map** (Aider, maki): a
+2. **Cheap `claude` levers** before the own loop: ~~5-minute prompt cache~~ (v0.0.20: −10%, same judge; headless default),
+   ~~a lower Bash output limit~~ (+30%: ruled out), then earlier compaction and a cheaper explorer subagent. Each an A/B against the default. Also a **repo map** (Aider, maki): a
    compact outline of files and symbols up front, to cut the 150-200k chars of code each run reads (re-reading context is
    52% of a run's cost); works on the `claude` path through the prompt or a hook.
 3. **Own agent loop for other providers** (design: [docs/OWN_LOOP.md](docs/OWN_LOOP.md)): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
@@ -115,6 +114,7 @@ Worth borrowing besides the repo map: an OS sandbox for commands (Codex), checkp
 | Tool search, OmniRoute | skipped | no expected gain; dropped by the user |
 | Stuck detection | not built | 0 of 184 tazuna runs repeated a call with the same failure |
 | Hash-anchored edits | not built | old text in edits is 0.6% of output tokens, ~0.2% of cost |
+| Bash output capped at 8,000 chars | +30% cost | the agent re-runs commands to see what was cut |
 
 ## Decision log
 
@@ -137,3 +137,4 @@ Worth borrowing besides the repo map: an OS sandbox for commands (Codex), checkp
 - 2026-10-08: Haiku 5.5 high + Opus reviewer gauge (1 ticket + 1 Go task): worse than Opus medium alone; full run skipped.
 - 2026-10-08: repo-lean's gap traced to reading less (short prompt + Claude's tools); two check lines brought it to stock
   quality at stock cost (0.0.17). The default repo profile with diagnostics stays best in its pool (7.12 at stock cost).
+- 2026-10-08: 5-minute prompt cache for headless runs (−10%, same judge); Bash output cap ruled out (+30%).

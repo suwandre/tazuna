@@ -8,6 +8,7 @@
 //!          [--no-diagnostics]  # do not tell claude about type/compile errors right after its edits
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
 //!          [-c | --continue | --resume <session-id>]   # pick up this repo's latest (or a given) session
+//!          [--cache-ttl 5m|1h]   # prompt cache lifetime (default: 5m for --run, 1h live)
 //!          [--mode auto|ask|edits|plan]   # permissions: never ask (default), ask before edits and commands, ask before
 //!                                         # commands only, or plan read-only first; shift-tab cycles them live
 //!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once
@@ -87,6 +88,7 @@ struct Args {
     resume: Option<Option<String>>,
     /// Starting permission mode, in claude's names.
     mode: String,
+    cache_ttl: Option<String>,
     review_effort: String,
     project_instructions: bool,
     profile: Option<route::Profile>,
@@ -118,6 +120,7 @@ fn args() -> Result<Args> {
         review_model: None,
         resume: None,
         mode: "bypassPermissions".into(),
+        cache_ttl: None,
         review_effort: "medium".into(),
         project_instructions: true,
         profile: None,
@@ -149,6 +152,12 @@ fn args() -> Result<Args> {
             "--review-model" => a.review_model = Some(val()?),
             "-c" | "--continue" => a.resume = Some(None),
             "--resume" => a.resume = Some(Some(val()?)),
+            "--cache-ttl" => {
+                a.cache_ttl = Some(match val()?.as_str() {
+                    t @ ("5m" | "1h") => t.to_string(),
+                    t => bail!("--cache-ttl 5m|1h, not {t}"),
+                })
+            }
             "--mode" => {
                 a.mode = match val()?.as_str() {
                     "auto" => "bypassPermissions",
@@ -247,6 +256,7 @@ fn main() -> Result<()> {
             live.self_review = a.self_review;
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
             live.project_instructions = a.project_instructions;
+            live.cache_ttl = a.cache_ttl.clone();
             live.permission_mode = a.mode.clone();
             let earlier = match &a.resume {
                 Some(id) => {
@@ -316,6 +326,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.self_review = a.self_review;
     live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
     live.project_instructions = a.project_instructions;
+    live.cache_ttl = a.cache_ttl.clone();
     if let Some(id) = &a.resume {
         let (sid, _) = previous_session(&labels::dir()?, &std::env::current_dir()?, id.as_deref()).context("no earlier tazuna session in this repo to continue")?;
         live.resume(&sid);

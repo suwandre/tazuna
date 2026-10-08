@@ -139,6 +139,9 @@ pub struct Live {
     runs_log: PathBuf,
     /// "live" or "headless", recorded in the run log.
     pub mode: &'static str,
+    /// Prompt cache lifetime for claude (`--cache-ttl`); None picks by mode: 5m headless (turns come seconds apart and cache
+    /// writes cost 1.25× instead of 2×: −10% per run, same judge), 1h live (a pause over 5 minutes would re-write it all).
+    pub cache_ttl: Option<String>,
     pub verify: verify::Mode,
     /// Passed to the tool server: shrink bash output above this many chars (0: off).
     pub bash_cap: usize,
@@ -224,6 +227,7 @@ impl Live {
             proc_cost: 0.0,
             runs_log: data.join("runs.jsonl"),
             mode: "live",
+            cache_ttl: None,
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
             diagnostics: false,
@@ -647,7 +651,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "self_review": self.self_review, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -693,6 +697,11 @@ impl Live {
 
     fn spawn(&mut self) -> Result<()> {
         let mut cmd = Command::new("claude");
+        // the user's own setting wins; otherwise the mode decides
+        if std::env::var_os("CLAUDE_CODE_PROMPT_CACHE_TTL").is_none() {
+            let ttl = self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into());
+            cmd.env("CLAUDE_CODE_PROMPT_CACHE_TTL", ttl);
+        }
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
             .args(["--model", &self.model, "--effort", &self.effort])
             // claude asks tazuna (stdio) instead of a terminal it does not have; "auto" never asks
