@@ -142,6 +142,9 @@ pub struct Live {
     /// Prompt cache lifetime for claude (`--cache-ttl`); None picks by mode: 5m headless (turns come seconds apart and cache
     /// writes cost 1.25× instead of 2×: −10% per run, same judge), 1h live (a pause over 5 minutes would re-write it all).
     pub cache_ttl: Option<String>,
+    /// Put a repo map in front of the session's first message (`--repo-map`); `mapped` once it went out.
+    pub repo_map: bool,
+    mapped: bool,
     pub verify: verify::Mode,
     /// Passed to the tool server: shrink bash output above this many chars (0: off).
     pub bash_cap: usize,
@@ -228,6 +231,8 @@ impl Live {
             runs_log: data.join("runs.jsonl"),
             mode: "live",
             cache_ttl: None,
+            repo_map: false,
+            mapped: false,
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
             diagnostics: false,
@@ -293,7 +298,15 @@ impl Live {
             let cwd = self.cwd.clone();
             crate::runlog::Baseline::Pending(std::thread::spawn(move || verify::run_raw(&cwd, &cmd).1))
         });
-        self.write_content(if attach { user_content(text, &self.cwd) } else { json!(text) })?;
+        // the map orients the first message of a session; the run log keeps the user's own words
+        let first = if self.repo_map && !self.mapped && self.session_id.is_none() {
+            self.mapped = true;
+            crate::repomap::build(&self.cwd, text).map(|m| format!("{m}\n---\n\n{text}"))
+        } else {
+            None
+        };
+        let sent = first.as_deref().unwrap_or(text);
+        self.write_content(if attach { user_content(sent, &self.cwd) } else { json!(sent) })?;
         let mut run = Run::new(text, self.elapsed_ms(), &self.cwd);
         run.types_before = types_before;
         self.runs.push_back(run);
@@ -651,7 +664,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,

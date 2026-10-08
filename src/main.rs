@@ -8,6 +8,7 @@
 //!          [--no-diagnostics]  # do not tell claude about type/compile errors right after its edits
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
 //!          [-c | --continue | --resume <session-id>]   # pick up this repo's latest (or a given) session
+//!          [--repo-map]   # a map of the files that match the task, in front of the first message
 //!          [--cache-ttl 5m|1h]   # prompt cache lifetime (default: 5m for --run, 1h live)
 //!          [--mode auto|ask|edits|plan]   # permissions: never ask (default), ask before edits and commands, ask before
 //!                                         # commands only, or plan read-only first; shift-tab cycles them live
@@ -34,6 +35,7 @@ mod live;
 mod mcp;
 mod outcap;
 mod replay;
+mod repomap;
 mod review;
 mod route;
 mod runlog;
@@ -89,6 +91,7 @@ struct Args {
     /// Starting permission mode, in claude's names.
     mode: String,
     cache_ttl: Option<String>,
+    repo_map: bool,
     review_effort: String,
     project_instructions: bool,
     profile: Option<route::Profile>,
@@ -121,6 +124,7 @@ fn args() -> Result<Args> {
         resume: None,
         mode: "bypassPermissions".into(),
         cache_ttl: None,
+        repo_map: false,
         review_effort: "medium".into(),
         project_instructions: true,
         profile: None,
@@ -152,6 +156,7 @@ fn args() -> Result<Args> {
             "--review-model" => a.review_model = Some(val()?),
             "-c" | "--continue" => a.resume = Some(None),
             "--resume" => a.resume = Some(Some(val()?)),
+            "--repo-map" => a.repo_map = true,
             "--cache-ttl" => {
                 a.cache_ttl = Some(match val()?.as_str() {
                     t @ ("5m" | "1h") => t.to_string(),
@@ -205,6 +210,12 @@ fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("mcp") {
         return mcp::serve();
     }
+    if std::env::args().nth(1).as_deref() == Some("map") {
+        // `tazuna map <task-file>`: the repo map --repo-map would send, for checking it by eye
+        let task = std::fs::read_to_string(std::env::args().nth(2).context("tazuna map <task-file>")?)?;
+        println!("{}", repomap::build(&std::env::current_dir()?, &task).unwrap_or_else(|| "(no match)".into()));
+        return Ok(());
+    }
     if std::env::args().nth(1).as_deref() == Some("diag") {
         return diag::hook(std::path::Path::new(&std::env::args().nth(2).unwrap_or_default()));
     }
@@ -257,6 +268,7 @@ fn main() -> Result<()> {
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
             live.project_instructions = a.project_instructions;
             live.cache_ttl = a.cache_ttl.clone();
+            live.repo_map = a.repo_map;
             live.permission_mode = a.mode.clone();
             let earlier = match &a.resume {
                 Some(id) => {
@@ -327,6 +339,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
     live.project_instructions = a.project_instructions;
     live.cache_ttl = a.cache_ttl.clone();
+    live.repo_map = a.repo_map;
     if let Some(id) = &a.resume {
         let (sid, _) = previous_session(&labels::dir()?, &std::env::current_dir()?, id.as_deref()).context("no earlier tazuna session in this repo to continue")?;
         live.resume(&sid);

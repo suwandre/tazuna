@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.21 (2026-10-08)
+
+**`--repo-map`** (opt-in until benchmarked): the session's first message starts with a map of the repo, the folders with
+file counts and, for the source files whose path or definitions match the task's words, the names they define (top-level
+definitions by plain line matching; tests ranked below the code they test; capped at 12,000 chars). `tazuna map <task-file>`
+prints it. On the company tickets it lists the files the real fixes changed (T-921: 1st and 7th of 25), in 0.7 s.
+
 ## 0.0.20 (2026-10-08)
 
 **Prompt cache lifetime by mode.** claude writes its prompt cache with a 1-hour lifetime, billed at 2× input; a 5-minute
