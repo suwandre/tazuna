@@ -98,6 +98,8 @@ pub struct View {
     pub asking: Option<String>,
     /// Permission mode (auto, ask, edits, plan).
     pub mode: String,
+    /// Tab completions for the word at the cursor (slash commands, `@` files).
+    pub hints: Vec<String>,
 }
 
 /// Screen regions the effects target.
@@ -582,10 +584,24 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Pref
         // edits always show their diff: it is the most useful thing on screen
         "edit" => arg("old").lines().map(|l| (format!("- {l}"), th.err)).chain(arg("new").lines().map(|l| (format!("+ {l}"), th.ok))).collect(),
         "write" if v.expand_all => arg("content").lines().map(|l| (format!("+ {l}"), th.ok)).collect(),
+        // the to-do list as a checklist, always: it is short and it is the plan
+        "TodoWrite" => t.input["todos"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|x| {
+                let (mark, c) = match x["status"].as_str() {
+                    Some("completed") => ("☑", th.ok),
+                    Some("in_progress") => ("◐", th.warn),
+                    _ => ("☐", th.dim),
+                };
+                (format!("{mark} {}", x["content"].as_str().unwrap_or_default()), c)
+            })
+            .collect(),
         _ if v.expand_all => t.result.as_deref().unwrap_or_default().lines().map(|l| (l.to_string(), if t.error { th.err } else { th.dim })).collect(),
         _ => vec![],
     };
-    let limit = if name == "edit" && !v.expand_all { TOOL_LINES } else { TOOL_LINES * 2 };
+    let limit = if name == "edit" && !v.expand_all { TOOL_LINES } else if name == "TodoWrite" { 30 } else { TOOL_LINES * 2 };
     for (l, c) in body.iter().take(limit) {
         let mut spans = gutter();
         spans.push(Span::styled(l.replace('\t', "    "), st(*c)));
@@ -794,6 +810,7 @@ pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
     // keep the cursor's row in view when the input is taller than the box
     let at = rows.iter().position(|r| r.contains(CURSOR)).unwrap_or(rows.len() - 1);
     let skip = (at + 1).saturating_sub(COMPOSER_MAX_ROWS);
+    let hints = hint_row(v, th, width);
     rows.into_iter()
         .enumerate()
         .skip(skip)
@@ -809,7 +826,26 @@ pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
             }
             Line::from(spans)
         })
+        .chain(hints)
         .collect()
+}
+
+/// One row of completions under the input: "   tab › /compact  /clear  /cost".
+fn hint_row(v: &View, th: &Theme, width: u16) -> Option<Line<'static>> {
+    if v.hints.is_empty() {
+        return None;
+    }
+    let mut spans = vec![Span::styled("   tab › ", st(th.faint))];
+    let mut used = 9;
+    for (i, h) in v.hints.iter().enumerate() {
+        let w = h.width() + 2;
+        if used + w > width as usize {
+            break;
+        }
+        used += w;
+        spans.push(Span::styled(format!("{h}  "), if i == 0 { st(th.accent) } else { st(th.dim) }));
+    }
+    Some(Line::from(spans))
 }
 
 const CURSOR: char = '▍';
@@ -828,7 +864,7 @@ pub fn composer_height(v: &View, outer_width: u16) -> u16 {
     }
     let room = (outer_width as usize).saturating_sub(2 + 4).max(1);
     let rows: usize = with_cursor(v).split('\n').map(|l| l.width().div_ceil(room).max(1)).sum();
-    rows.clamp(1, COMPOSER_MAX_ROWS) as u16 + 2
+    rows.clamp(1, COMPOSER_MAX_ROWS) as u16 + 2 + u16::from(!v.hints.is_empty())
 }
 
 /// Left and right content on one row.
@@ -860,7 +896,7 @@ mod tests {
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into() };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new() };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();

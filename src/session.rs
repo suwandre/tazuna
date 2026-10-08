@@ -134,6 +134,12 @@ pub struct Session {
     pub profile: String,
     /// Permission mode in tazuna's words: auto, ask, edits, plan.
     pub mode: String,
+    /// Slash commands claude offers in this session (built-ins, the repo's commands and skills), plus tazuna's own.
+    pub commands: Vec<String>,
+    /// Claude's to-do list (TodoWrite): (status, text).
+    pub todos: Vec<(String, String)>,
+    /// The last thing the user sent, to tell what a command result belongs to.
+    last_prompt: String,
 }
 
 impl Session {
@@ -162,6 +168,9 @@ impl Session {
             results: 0,
             profile: String::new(),
             mode: "auto".into(),
+            commands: vec!["good".into(), "bad".into()],
+            todos: Vec::new(),
+            last_prompt: String::new(),
         }
     }
 
@@ -203,6 +212,11 @@ impl Session {
             (Some("system"), Some("init")) => {
                 self.model = s(&e["model"]);
                 self.cwd = s(&e["cwd"]);
+                let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
+                cmds.extend(["good".to_string(), "bad".to_string()]);
+                cmds.sort();
+                cmds.dedup();
+                self.commands = cmds;
                 self.activity = Activity::Waiting;
             }
             (Some("system"), Some("status")) => {
@@ -211,7 +225,11 @@ impl Session {
                 }
                 self.activity = Activity::Waiting;
             }
+            (Some("system"), Some("compact_boundary")) => {
+                self.push(Block::Notice { text: "── context compacted: earlier turns are now a summary ──".into(), error: false });
+            }
             (Some("harness_user"), _) => {
+                self.last_prompt = s(&e["text"]);
                 self.push(Block::Prompt(s(&e["text"])));
                 self.activity = Activity::Waiting;
             }
@@ -309,6 +327,9 @@ impl Session {
             (Some("assistant"), _) => {
                 // Full message: tool inputs arrive complete here (partial JSON is not worth rendering).
                 for c in e["message"]["content"].as_array().into_iter().flatten() {
+                    if c["type"] == "tool_use" && c["name"] == "TodoWrite" {
+                        self.todos = c["input"]["todos"].as_array().into_iter().flatten().map(|t| (s(&t["status"]), s(&t["content"]))).collect();
+                    }
                     if c["type"] == "tool_use" {
                         let id = s(&c["id"]);
                         if let Some(t) = self.tool_mut(&id) {
@@ -339,6 +360,16 @@ impl Session {
             }
             (Some("result"), _) => {
                 self.end_live();
+                // a slash command answered without a model turn (/cost, /context …): its text is the only output
+                let text = s(&e["result"]);
+                if e["num_turns"] == 0 && self.last_prompt.starts_with('/') {
+                    if self.last_prompt.trim() == "/clear" {
+                        self.todos.clear();
+                        self.push(Block::Notice { text: "── conversation cleared: claude starts fresh from here ──".into(), error: false });
+                    } else if !text.trim().is_empty() {
+                        self.push(Block::Text { text, live: false });
+                    }
+                }
                 if let Some(c) = e["total_cost_usd"].as_f64() {
                     self.exact_cost = Some(self.cost_base + c);
                     self.usage_at_result = self.usage;

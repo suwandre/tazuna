@@ -140,6 +140,20 @@ impl Editor {
         self.cursor = self.text.len();
     }
 
+    /// The word the cursor is at the end of, and where it starts: what Tab completes ("/com", "@src/ma").
+    pub fn token(&self) -> (usize, &str) {
+        let before = &self.text[..self.cursor];
+        let start = before.rfind([' ', '\n', '\t']).map_or(0, |i| i + 1);
+        (start, &before[start..])
+    }
+
+    /// Tab: the word at the cursor becomes `with`.
+    pub fn complete(&mut self, with: &str) {
+        let (start, _) = self.token();
+        self.text.replace_range(start..self.cursor, with);
+        self.cursor = start + with.len();
+    }
+
     pub fn clear(&mut self) {
         self.text.clear();
         self.cursor = 0;
@@ -162,6 +176,28 @@ impl Editor {
         }
         text
     }
+}
+
+/// Tab completions for the word at the cursor: slash commands at the start of a message, `@` file paths anywhere.
+/// Paths that start with the typed text, or whose file name does, come before other matches.
+pub fn suggest(token: &str, at_start: bool, commands: &[String], files: &[String]) -> Vec<String> {
+    const MAX: usize = 6;
+    if let Some(cmd) = token.strip_prefix('/').filter(|_| at_start) {
+        return commands.iter().filter(|c| c.starts_with(cmd)).take(MAX).map(|c| format!("/{c}")).collect();
+    }
+    let Some(want) = token.strip_prefix('@') else { return vec![] };
+    let want = want.to_lowercase();
+    let name = |f: &str| f.rsplit('/').next().unwrap_or(f).to_lowercase();
+    let mut hits: Vec<(u8, &String)> = files
+        .iter()
+        .filter_map(|f| {
+            let l = f.to_lowercase();
+            let rank = if l.starts_with(&want) || name(f).starts_with(&want) { 0 } else if l.contains(&want) { 1 } else { return None };
+            Some((rank, f))
+        })
+        .collect();
+    hits.sort_by_key(|(r, f)| (*r, f.len()));
+    hits.into_iter().take(MAX).map(|(_, f)| format!("@{f}")).collect()
 }
 
 /// Byte index of character column `col` in the line `start..end`, or the line's end if it is shorter.
@@ -195,6 +231,27 @@ mod tests {
         assert_eq!(e.cursor, 0, "up keeps the column (0)");
         e.kill_to_end();
         assert_eq!(e.text, "\n");
+    }
+
+    #[test]
+    fn suggests_commands_and_files() {
+        let cmds: Vec<String> = ["compact", "clear", "cost", "magic"].map(String::from).to_vec();
+        let files: Vec<String> = ["src/main.rs", "src/ui/mod.rs", "README.md", "domain/main_test.go"].map(String::from).to_vec();
+        assert_eq!(suggest("/c", true, &cmds, &files), vec!["/compact", "/clear", "/cost"]);
+        assert!(suggest("/c", false, &cmds, &files).is_empty(), "commands only start a message");
+        assert_eq!(suggest("@main", true, &cmds, &files), vec!["@src/main.rs", "@domain/main_test.go"]);
+        assert_eq!(suggest("@ui/", true, &cmds, &files), vec!["@src/ui/mod.rs"]);
+        assert!(suggest("plain", true, &cmds, &files).is_empty());
+    }
+
+    #[test]
+    fn completes_the_word_at_the_cursor() {
+        let mut e = Editor::default();
+        e.insert("look at @src/ma");
+        assert_eq!(e.token(), (8, "@src/ma"));
+        e.complete("@src/main.rs ");
+        assert_eq!(e.text, "look at @src/main.rs ");
+        assert_eq!(e.token(), (21, ""));
     }
 
     #[test]

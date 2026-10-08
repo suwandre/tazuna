@@ -395,7 +395,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into() }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new() }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -567,11 +567,21 @@ fn run_live(
     let mut ed = editor::Editor::with_history(labels::dir()?.join("history.jsonl"));
     // when the current permission question first got a key
     let mut asked_at: Option<Instant> = None;
+    // `@` completion: the repo's tracked files (ponytail: read once per session; new files show up next session)
+    let files: Vec<String> = std::process::Command::new("git")
+        .args(["ls-files"])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).lines().take(50_000).map(String::from).collect())
+        .unwrap_or_default();
     loop {
         if live.pending.is_empty() {
             asked_at = None;
         } else if asked_at.is_none() {
             asked_at = Some(Instant::now());
+        }
+        if v.input != ed.text || v.cursor != ed.cursor {
+            let (start, token) = ed.token();
+            v.hints = editor::suggest(token, start == 0, &s.commands, &files);
         }
         (v.input, v.cursor) = (ed.text.clone(), ed.cursor);
         // the question on screen is the one an answer applies to: the front of live's queue
@@ -707,6 +717,15 @@ fn run_live(
                     Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),
                 }
                 v.scroll = 0;
+            }
+            // tab takes the first suggestion; again, the next one
+            KeyCode::Tab if !v.hints.is_empty() => {
+                let (_, token) = ed.token();
+                let token = token.trim_end().to_string();
+                let next = v.hints.iter().position(|h| *h == token).map_or(0, |i| (i + 1) % v.hints.len());
+                let pick = v.hints[next].clone();
+                // files keep the list (the next tab cycles); a command is done, so a space follows
+                ed.complete(&if pick.starts_with('/') { format!("{pick} ") } else { pick });
             }
             KeyCode::Backspace => ed.backspace(),
             KeyCode::Delete => ed.delete(),
