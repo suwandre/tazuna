@@ -29,6 +29,8 @@ pub struct Run {
     escalated: bool,
     /// The repo's type check output when the run started, so verification only fails on errors this run added.
     pub types_before: Option<Baseline>,
+    /// The self-review turn was sent (`--self-review`): once per run.
+    pub reviewed: bool,
 }
 
 /// Output of a command that started with the run: pending until the first verification needs it.
@@ -65,6 +67,7 @@ impl Run {
             verify_rounds: Vec::new(),
             escalated: false,
             types_before: None,
+            reviewed: false,
         }
     }
 

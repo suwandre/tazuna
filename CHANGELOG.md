@@ -15,6 +15,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.14 (2026-10-08)
+
+**`--self-review`** (opt-in until benchmarked): three sentences of finish rules in the system prompt (finish only when every
+requirement is met and checked; do not stop to ask; read a name before relying on it), and one review turn when claude first
+says it is done and the run changed files: read the whole diff, map every acceptance criterion to code, revert what the task
+did not ask for, check unread names, re-run tests. The review comes before verification, so its fixes are tested too.
+
 ## 0.0.13 (2026-10-08)
 
 **Diagnostics after each edit are on by default** (`--no-diagnostics` turns them off), after this A/B on the five company

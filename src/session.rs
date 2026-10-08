@@ -234,6 +234,7 @@ impl Session {
                 self.activity = Activity::Ready;
             }
             // UI-only message (not from the process): no effect on cost or tools
+            (Some("harness_review"), _) => self.push(Block::Notice { text: "self-review: checking the change against the task".into(), error: false }),
             (Some("harness_info"), _) => self.push(Block::Notice { text: s(&e["text"]), error: false }),
             (Some("harness_notice"), _) => {
                 self.stopping = false;

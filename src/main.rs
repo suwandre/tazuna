@@ -6,6 +6,7 @@
 //!          [--verify "<cmd>" | --no-verify]   # after claude says done, tazuna runs the tests (auto-detected by default)
 //!          [--bash-cap N]   # shrink bash output longer than N chars (default 8000; 0 = off)
 //!          [--no-diagnostics]  # do not tell claude about type/compile errors right after its edits
+//!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
 //!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
 //!          [--trust] [--user-settings]   # trust the repo's hooks/skills without asking; also load your ~/.claude settings
@@ -72,6 +73,7 @@ struct Args {
     verify: verify::Mode,
     bash_cap: usize,
     diagnostics: bool,
+    self_review: bool,
     project_instructions: bool,
     profile: Option<route::Profile>,
     trust: bool,
@@ -98,6 +100,7 @@ fn args() -> Result<Args> {
         verify: verify::Mode::Auto,
         bash_cap: mcp::DEFAULT_BASH_CAP,
         diagnostics: true,
+        self_review: false,
         project_instructions: true,
         profile: None,
         trust: false,
@@ -124,6 +127,7 @@ fn args() -> Result<Args> {
             "--bash-cap" => a.bash_cap = val()?.parse()?,
             "--diagnostics" => a.diagnostics = true,
             "--no-diagnostics" => a.diagnostics = false,
+            "--self-review" => a.self_review = true,
             "--no-project-instructions" => a.project_instructions = false,
             "--profile" => {
                 a.profile = Some(match val()?.as_str() {
@@ -208,6 +212,7 @@ fn main() -> Result<()> {
             live.verify = a.verify.clone();
             live.bash_cap = a.bash_cap;
             live.diagnostics = a.diagnostics;
+            live.self_review = a.self_review;
             live.project_instructions = a.project_instructions;
             let mut term = ratatui::init();
             execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
@@ -257,6 +262,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.verify = a.verify.clone();
     live.bash_cap = a.bash_cap;
     live.diagnostics = a.diagnostics;
+    live.self_review = a.self_review;
     live.project_instructions = a.project_instructions;
     live.send(&prompt)?;
     loop {

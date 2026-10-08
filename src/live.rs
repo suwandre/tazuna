@@ -24,6 +24,18 @@ const MID_PROMPT: &str = "You are a coding agent working in {cwd}. Today is {dat
 - Never run destructive commands (rm -rf outside the working directory, git reset --hard, force push). Do not commit.
 - Finish with a short summary of what changed and how you verified it.";
 
+/// `--self-review`: appended to the system prompt, against ending early and against unchecked assumptions.
+const FINISH_RULES: &str = "Finish only when the task is fully done: every requirement and acceptance criterion in the request is met and checked. Do not stop to ask for confirmation or leave steps for the user. Before relying on a name you have not read (a database column, function, field, API), read where it is defined.";
+
+/// `--self-review`: sent once when claude first says it is done and the run changed files.
+const REVIEW: &str = "Before you finish, review your own change:
+1. Run `git diff` and read all of it.
+2. Go through every requirement and acceptance criterion in the task. For each, name the code that meets it, or fix the gap.
+3. Revert changes the task did not ask for.
+4. Check names and assumptions you have not read in the code (columns, functions, fields, APIs): read them now.
+5. If you changed anything, run the relevant tests again.
+Then finish with a short summary of what changed.";
+
 enum Msg {
     Line(String),
     /// stderr closed: the process is exiting.
@@ -63,6 +75,8 @@ pub struct Live {
     pub bash_cap: usize,
     /// Type/compile errors after each edit (on by default, `--no-diagnostics`): the hook's state directory once started.
     pub diagnostics: bool,
+    /// Finish rules in the prompt plus one self-review turn per run (`--self-review`).
+    pub self_review: bool,
     diag_dir: Option<PathBuf>,
     /// Add the repo's CLAUDE.md / AGENTS.md to the system prompt (lean profile; the repo profile lets Claude Code load them).
     pub project_instructions: bool,
@@ -123,6 +137,7 @@ impl Live {
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
             diagnostics: false,
+            self_review: false,
             diag_dir: None,
             project_instructions: true,
             profile: Profile::Lean,
@@ -294,6 +309,19 @@ impl Live {
             return self.finish_front();
         }
         let changed = run.changed_files(&self.cwd);
+        if self.self_review && !run.reviewed && !changed.is_empty() {
+            // review before verification: its fixes get tested too
+            run.reviewed = true;
+            return match self.write_user(REVIEW) {
+                Ok(()) => vec![self.record(json!({"type": "harness_review"}))],
+                Err(e) => {
+                    let mut out = vec![self.record(json!({"type": "harness_notice", "text": format!("could not send the self-review: {e:#}"), "error": true}))];
+                    out.extend(self.finish_front());
+                    out
+                }
+            };
+        }
+        let Some(run) = self.runs.front_mut() else { return vec![] };
         let tests = verify::command(&self.verify, &self.cwd, &changed);
         // the baseline stays with the run, so fix rounds compare against the state before the run too
         let before = run.types_before.as_mut().and_then(|b| b.get());
@@ -381,7 +409,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics,
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "self_review": self.self_review,
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -416,7 +444,12 @@ impl Live {
 
     fn mid_prompt(&self) -> String {
         let date = Command::new("date").arg("+%Y-%m-%d").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-        MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date)
+        let mut p = MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date);
+        if self.self_review {
+            p.push_str("\n- ");
+            p.push_str(FINISH_RULES);
+        }
+        p
     }
 
     fn spawn(&mut self) -> Result<()> {
@@ -434,6 +467,9 @@ impl Live {
             }
         }
         match self.profile {
+            Profile::Repo if self.self_review => {
+                cmd.args(["--exclude-dynamic-system-prompt-sections", "--append-system-prompt", FINISH_RULES]);
+            }
             Profile::Repo => {
                 // Claude Code's own prompt and tools; it loads the repo's CLAUDE.md (nested files, @imports), settings,
                 // hooks and skills itself. Per-machine prompt sections move to the first message for cross-session caching.
