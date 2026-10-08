@@ -9,6 +9,7 @@
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
 //!          [-c | --continue | --resume <session-id>]   # pick up this repo's latest (or a given) session
 //!          [--explorer <model> | --no-explorer]   # a subagent on <model> (default haiku) reads and searches code for the main model
+//!          [--tester <model>]   # a subagent on <model> runs tests and type checks and reports only the failures
 //!          [--repo-map]   # a map of the files that match the task, in front of the first message
 //!          [--cache-ttl 5m|1h]   # prompt cache lifetime (default: 5m for --run, 1h live)
 //!          [--mode auto|ask|edits|plan]   # permissions: never ask (default), ask before edits and commands, ask before
@@ -94,6 +95,7 @@ struct Args {
     cache_ttl: Option<String>,
     repo_map: bool,
     explorer: Option<String>,
+    tester: Option<String>,
     review_effort: String,
     project_instructions: bool,
     profile: Option<route::Profile>,
@@ -128,6 +130,7 @@ fn args() -> Result<Args> {
         cache_ttl: None,
         repo_map: false,
         explorer: Some("haiku".into()),
+        tester: None,
         review_effort: "medium".into(),
         project_instructions: true,
         profile: None,
@@ -162,6 +165,7 @@ fn args() -> Result<Args> {
             "--repo-map" => a.repo_map = true,
             "--explorer" => a.explorer = Some(val()?),
             "--no-explorer" => a.explorer = None,
+            "--tester" => a.tester = Some(val()?),
             "--cache-ttl" => {
                 a.cache_ttl = Some(match val()?.as_str() {
                     t @ ("5m" | "1h") => t.to_string(),
@@ -275,6 +279,7 @@ fn main() -> Result<()> {
             live.cache_ttl = a.cache_ttl.clone();
             live.repo_map = a.repo_map;
             live.explorer = a.explorer.clone();
+            live.tester = a.tester.clone();
             live.permission_mode = a.mode.clone();
             let earlier = match &a.resume {
                 Some(id) => {
@@ -347,6 +352,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.cache_ttl = a.cache_ttl.clone();
     live.repo_map = a.repo_map;
     live.explorer = a.explorer.clone();
+    live.tester = a.tester.clone();
     if let Some(id) = &a.resume {
         let (sid, _) = previous_session(&labels::dir()?, &std::env::current_dir()?, id.as_deref()).context("no earlier tazuna session in this repo to continue")?;
         live.resume(&sid);

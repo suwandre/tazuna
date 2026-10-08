@@ -16,6 +16,30 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.26 (2026-10-08)
+
+**Headless runs no longer end while claude is about to wake up.** One run ended after 8 turns with no change ("Still
+waiting on the explorer…"): its last background explorer finished during a turn, the 5-second settle counted from that
+moment and had passed when the turn's result came, but claude started another turn 70 ms later. The settle now restarts at
+each result while a finished background task is pending.
+
+**`--tester <model>`** (opt-in): a second subagent runs tests, type checks, builds and linters and reports only the
+failures, so their output stays out of the main model's context. All 5 company tickets, 2 runs each, all 10 at once, Haiku
+explorer and Haiku tester against 0.0.24's Haiku explorer alone, one judge pool per ticket:
+
+| Ticket | Explorer: cost, judge | Explorer + tester: cost, judge |
+|---|---|---|
+| T-921 | $1.24, 6.75 | $1.09, 6.25 |
+| T-870 | $1.80, 6.50 | $1.61, 6.75 |
+| T-946 | $1.87, 4.00 | $1.41, 3.00 |
+| T-698 | $2.09, 7.50 | $1.86, 6.75 |
+| T-872 | $1.04, 5.00 | $0.97, 5.00 |
+| **Mean per ticket** | **$1.61, 5.95** | **$1.39 (−14%), 5.55 (−0.40)** |
+
+The run that ended early (T-946, judge 1.0) is left out. Cheaper on every ticket, but the saving sits at the noise line
+and the judge drop is larger than the explorer's (lower on 3 of 5 tickets): no clear gain in price to performance. Stays
+opt-in. Usage: 10 runs + judge ≈ 19% of the 5-hour window.
+
 ## 0.0.25 (2026-10-08)
 
 **Haiku explorer on by default** (repo profile; `--no-explorer` turns it off, `--explorer <model>` picks another model). The

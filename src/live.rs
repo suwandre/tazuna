@@ -35,14 +35,30 @@ const FINISH_RULES: &str = "Finish only when the task is fully done: every requi
 /// rate), so a cheaper subagent reads and answers in short; the main model reads a file only right before editing it.
 const EXPLORER_RULE: &str = "Do not explore the code yourself: no Read, cat, sed, head, tail, grep, rg or find to look around. Send every question about the code to the explorer subagent (Task tool, subagent_type explorer); it reads and searches the repo and answers with file paths, line ranges and the lines that matter. Ask several questions in parallel when they are independent. Read a file yourself only right before you edit it, and only the part you edit.";
 
-fn explorer_agent(model: &str) -> String {
-    json!({"explorer": {
-        "description": "Finds and reads code to answer a precise question about the repo; returns file paths, line ranges and the facts that matter, not whole files.",
-        "prompt": "You explore a codebase for another agent. Answer its question with file paths, line numbers and short quotes of the lines that matter: complete, but brief. Do not edit anything.",
-        "tools": ["Read", "Grep", "Glob", "Bash"],
-        "model": model,
-    }})
-    .to_string()
+/// `--tester`: test and type-check output is long and stays in the main model's context for every later turn; a cheaper
+/// subagent runs the checks and reports only what failed.
+const TESTER_RULE: &str = "Do not run tests, type checks, builds or linters yourself. Ask the tester subagent (Task tool, subagent_type tester) to run them, naming the command or the files to check; it reports only the failures, with the lines that explain them. Run independent checks in parallel.";
+
+/// The `--agents` JSON for the subagents that are on.
+fn subagents(explorer: Option<&str>, tester: Option<&str>) -> String {
+    let mut agents = serde_json::Map::new();
+    if let Some(model) = explorer {
+        agents.insert("explorer".into(), json!({
+            "description": "Finds and reads code to answer a precise question about the repo; returns file paths, line ranges and the facts that matter, not whole files.",
+            "prompt": "You explore a codebase for another agent. Answer its question with file paths, line numbers and short quotes of the lines that matter: complete, but brief. Do not edit anything.",
+            "tools": ["Read", "Grep", "Glob", "Bash"],
+            "model": model,
+        }));
+    }
+    if let Some(model) = tester {
+        agents.insert("tester".into(), json!({
+            "description": "Runs tests, type checks, builds or linters and reports only the failures.",
+            "prompt": "You run checks for another agent: the tests, type checks, builds or linters it names, using the repo's own commands. Report the command you ran, the pass and fail counts, and for each failure the test or file, the line, and the few error lines that explain it. Never paste full output. Do not edit anything.",
+            "tools": ["Bash", "Read", "Grep", "Glob"],
+            "model": model,
+        }));
+    }
+    serde_json::Value::Object(agents).to_string()
 }
 
 /// `--self-review`: sent once when claude first says it is done and the run changed files.
@@ -161,6 +177,8 @@ pub struct Live {
     mapped: bool,
     /// Model of the explorer subagent (`--explorer sonnet`), repo profile only.
     pub explorer: Option<String>,
+    /// Model of the tester subagent (`--tester haiku`), repo profile only.
+    pub tester: Option<String>,
     pub verify: verify::Mode,
     /// Passed to the tool server: shrink bash output above this many chars (0: off).
     pub bash_cap: usize,
@@ -250,6 +268,7 @@ impl Live {
             repo_map: false,
             mapped: false,
             explorer: None,
+            tester: None,
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
             diagnostics: false,
@@ -512,6 +531,10 @@ impl Live {
                         }
                         self.proc_cost = total;
                         self.last_result = Some(e.clone());
+                        // a background task that finished during this turn wakes claude after its result: settle from here
+                        if self.tasks_done.is_some() {
+                            self.tasks_done = Some(Instant::now());
+                        }
                     }
                     out.push(self.record(e));
                     if is_result {
@@ -686,7 +709,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -756,12 +779,15 @@ impl Live {
                 // Claude Code's own prompt and tools; it loads the repo's CLAUDE.md (nested files, @imports), settings,
                 // hooks and skills itself. Per-machine prompt sections move to the first message for cross-session caching.
                 cmd.arg("--exclude-dynamic-system-prompt-sections");
-                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), self.explorer.as_ref().map(|_| EXPLORER_RULE)].into_iter().flatten().collect();
+                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), self.explorer.as_ref().map(|_| EXPLORER_RULE), self.tester.as_ref().map(|_| TESTER_RULE)]
+                    .into_iter()
+                    .flatten()
+                    .collect();
                 if !append.is_empty() {
                     cmd.args(["--append-system-prompt", &append.join("\n")]);
                 }
-                if let Some(model) = &self.explorer {
-                    cmd.args(["--agents", &explorer_agent(model)]);
+                if self.explorer.is_some() || self.tester.is_some() {
+                    cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref())]);
                 }
             }
             Profile::RepoLean => {
@@ -926,6 +952,14 @@ mod tests {
         assert_eq!(c[1]["text"], "what is wrong in @shot.png ?");
         assert_eq!(user_content("no image here.png", &dir), json!("no image here.png"), "a path that is not a file stays text");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn subagents_only_the_ones_on() {
+        let both: Value = serde_json::from_str(&subagents(Some("haiku"), Some("sonnet"))).unwrap();
+        assert_eq!((both["explorer"]["model"].as_str(), both["tester"]["model"].as_str()), (Some("haiku"), Some("sonnet")));
+        let one: Value = serde_json::from_str(&subagents(None, Some("haiku"))).unwrap();
+        assert!(one.get("explorer").is_none() && one["tester"]["tools"][0] == "Bash");
     }
 
     #[test]
