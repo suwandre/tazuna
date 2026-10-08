@@ -62,7 +62,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Paragraph::new(vec![
             Line::from(vec![Span::styled(format!("{glyph} "), st(color)), Span::styled(label, st(color).add_modifier(Modifier::BOLD))]),
             Line::from(vec![kv("elapsed", &clock_str(v.clock_ms), th), Span::raw("  "), kv("turn", &s.turns.to_string(), th)]),
-            Line::from(vec![if v.live { kv("mode", &format!("live · {}", if s.profile.is_empty() { "lean" } else { &s.profile }), th) } else { kv("replay", &play, th) }]),
+            Line::from(vec![if v.live { kv("mode", &format!("live · {} · {}", if s.profile.is_empty() { "lean" } else { &s.profile }, s.mode), th) } else { kv("replay", &play, th) }]),
         ]),
         a,
     );

@@ -94,6 +94,10 @@ pub struct View {
     pub input: String,
     /// Byte index of the cursor in `input`.
     pub cursor: usize,
+    /// A permission question waiting for y/a/n: "Bash: npm test".
+    pub asking: Option<String>,
+    /// Permission mode (auto, ask, edits, plan).
+    pub mode: String,
 }
 
 /// Screen regions the effects target.
@@ -730,7 +734,7 @@ pub fn wrap(line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Vec<Li
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-const LIVE_KEYS: &str = "enter send · ctrl-j new line · ↑↓ history · /good /bad rate run · esc/ctrl-c stop · ctrl-y copy · ctrl-s select · ctrl-t design · ctrl-o expand";
+const LIVE_KEYS: &str = "enter send · shift-tab mode · ctrl-j new line · ↑↓ history · /good /bad rate run · esc/ctrl-c stop · ctrl-y copy · ctrl-s select · ctrl-t design · ctrl-o expand";
 
 /// The composer row: typed text with a cursor in live mode, a placeholder and key hints otherwise.
 pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Line<'static> {
@@ -746,6 +750,9 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
             spans.push(Span::styled("▍", st(th.accent)));
         }
         spans.push(Span::styled(placeholder.to_string(), st(th.faint)));
+        if v.live && v.mode != "auto" {
+            spans.push(Span::styled(format!("  [{}]", v.mode), st(th.warn)));
+        }
         spans.push(Span::styled(format!("   {}", if v.live { LIVE_KEYS } else { REPLAY_KEYS }), st(th.faint)));
     }
     Line::from(spans)
@@ -756,6 +763,14 @@ const COMPOSER_MAX_ROWS: usize = 6;
 
 /// The composer box: typed text on real lines (wrapped to `width`, the box's inside), or the one-line placeholder.
 pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Vec<Line<'static>> {
+    if let Some(q) = &v.asking {
+        let q: String = q.chars().take((width as usize).saturating_sub(40)).collect();
+        return vec![Line::from(vec![
+            Span::styled(" ? ", st(th.warn).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("allow {q}"), st(th.text).add_modifier(Modifier::BOLD)),
+            Span::styled("   y yes · a always · n no", st(th.faint)),
+        ])];
+    }
     if !(v.live && !v.input.is_empty()) {
         return vec![composer_line(v, th, glyph, placeholder, width)];
     }
@@ -845,7 +860,7 @@ mod tests {
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0 };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into() };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();

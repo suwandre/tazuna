@@ -8,6 +8,8 @@
 //!          [--no-diagnostics]  # do not tell claude about type/compile errors right after its edits
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
 //!          [-c | --continue | --resume <session-id>]   # pick up this repo's latest (or a given) session
+//!          [--mode auto|ask|edits|plan]   # permissions: never ask (default), ask before edits and commands, ask before
+//!                                         # commands only, or plan read-only first; shift-tab cycles them live
 //!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
 //!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
@@ -82,6 +84,8 @@ struct Args {
     review_model: Option<String>,
     /// `Some(None)`: this repo's latest session; `Some(Some(id))`: that session.
     resume: Option<Option<String>>,
+    /// Starting permission mode, in claude's names.
+    mode: String,
     review_effort: String,
     project_instructions: bool,
     profile: Option<route::Profile>,
@@ -112,6 +116,7 @@ fn args() -> Result<Args> {
         self_review: false,
         review_model: None,
         resume: None,
+        mode: "bypassPermissions".into(),
         review_effort: "medium".into(),
         project_instructions: true,
         profile: None,
@@ -143,6 +148,16 @@ fn args() -> Result<Args> {
             "--review-model" => a.review_model = Some(val()?),
             "-c" | "--continue" => a.resume = Some(None),
             "--resume" => a.resume = Some(Some(val()?)),
+            "--mode" => {
+                a.mode = match val()?.as_str() {
+                    "auto" => "bypassPermissions",
+                    "ask" => "default",
+                    "edits" => "acceptEdits",
+                    "plan" => "plan",
+                    m => bail!("--mode auto|ask|edits|plan, not {m}"),
+                }
+                .into()
+            }
             "--review-effort" => a.review_effort = val()?,
             "--no-project-instructions" => a.project_instructions = false,
             "--profile" => {
@@ -231,6 +246,7 @@ fn main() -> Result<()> {
             live.self_review = a.self_review;
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
             live.project_instructions = a.project_instructions;
+            live.permission_mode = a.mode.clone();
             let earlier = match &a.resume {
                 Some(id) => {
                     let (sid, rec) = previous_session(&base, &std::env::current_dir()?, id.as_deref())
@@ -379,7 +395,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0 }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into() }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -525,6 +541,7 @@ fn run_live(
     }
     s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     s.apply(&route.1, route.0);
+    s.mode = session::mode_name(&live.permission_mode).to_string();
     let mut v = view(a.design, true, 1.0);
     let mut fx = Fx::new();
     let mut quit_at: Option<Instant> = None;
@@ -534,6 +551,8 @@ fn run_live(
     let mut ed = editor::Editor::with_history(labels::dir()?.join("history.jsonl"));
     loop {
         (v.input, v.cursor) = (ed.text.clone(), ed.cursor);
+        v.asking = s.asking.first().map(|(tool, what)| format!("{tool}: {what}"));
+        v.mode = s.mode.clone();
         let dt = last.elapsed();
         last = Instant::now();
         for (t, e) in live.poll() {
@@ -565,7 +584,32 @@ fn run_live(
         };
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        // a permission question takes the next key: y(es), a(lways), n(o)
+        if !live.pending.is_empty() {
+            let answer = match key.code {
+                KeyCode::Char('y') | KeyCode::Enter => Some((true, false)),
+                KeyCode::Char('a') => Some((true, true)),
+                KeyCode::Char('n') | KeyCode::Esc => Some((false, false)),
+                _ => None,
+            };
+            if let Some((allow, always)) = answer {
+                if let Some((t, e)) = live.answer(allow, always) {
+                    s.apply(&e, t);
+                }
+                continue;
+            }
+        }
         match key.code {
+            KeyCode::BackTab => {
+                let next = match live.permission_mode.as_str() {
+                    "bypassPermissions" => "default",
+                    "default" => "acceptEdits",
+                    "acceptEdits" => "plan",
+                    _ => "bypassPermissions",
+                };
+                let (t, e) = live.set_mode(next);
+                s.apply(&e, t);
+            }
             // ctrl-c stops a run in progress; when idle it quits
             KeyCode::Char('c') if ctrl => match busy(&s).then(|| live.interrupt()).flatten() {
                 Some((t, e)) => s.apply(&e, t),

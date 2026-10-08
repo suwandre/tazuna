@@ -132,6 +132,10 @@ pub struct Session {
     pub results: usize,
     /// The profile the router chose (live mode).
     pub profile: String,
+    /// Permission mode in tazuna's words: auto, ask, edits, plan.
+    pub mode: String,
+    /// Permission questions waiting for an answer: (tool, what it wants to do).
+    pub asking: Vec<(String, String)>,
 }
 
 impl Session {
@@ -159,6 +163,8 @@ impl Session {
             finished_tools: 0,
             results: 0,
             profile: String::new(),
+            mode: "auto".into(),
+            asking: Vec::new(),
         }
     }
 
@@ -202,7 +208,12 @@ impl Session {
                 self.cwd = s(&e["cwd"]);
                 self.activity = Activity::Waiting;
             }
-            (Some("system"), Some("status")) => self.activity = Activity::Waiting,
+            (Some("system"), Some("status")) => {
+                if let Some(m) = e["permissionMode"].as_str() {
+                    self.mode = mode_name(m).to_string();
+                }
+                self.activity = Activity::Waiting;
+            }
             (Some("harness_user"), _) => {
                 self.push(Block::Prompt(s(&e["text"])));
                 self.activity = Activity::Waiting;
@@ -258,6 +269,36 @@ impl Session {
                 self.push(Block::Notice { text, error: false })
             }
             (Some("harness_review"), _) => self.push(Block::Notice { text: "self-review: checking the change against the task".into(), error: false }),
+            (Some("harness_permission"), _) => {
+                let i = &e["input"];
+                let what = ["command", "file_path", "path", "pattern", "url"].iter().find_map(|k| i[*k].as_str()).map(|x| x.lines().next().unwrap_or_default().to_string());
+                let what = match (s(&e["tool"]).as_str(), what) {
+                    ("ExitPlanMode", _) => "approve this plan and start editing".to_string(),
+                    (_, Some(w)) => w,
+                    _ => s(&e["description"]),
+                };
+                if e["tool"] == "ExitPlanMode" {
+                    self.push(Block::Text { text: format!("**Plan**\n\n{}", i["plan"].as_str().unwrap_or_default()), live: false });
+                }
+                self.asking.push((s(&e["tool"]), what));
+                self.activity = Activity::Waiting;
+            }
+            (Some("harness_permission_done"), _) => {
+                if !self.asking.is_empty() {
+                    self.asking.remove(0);
+                }
+                self.mode = mode_name(e["mode"].as_str().unwrap_or_default()).to_string();
+                let verb = match (e["allow"] == true, e["always"] == true) {
+                    (true, true) => "allowed for this session:",
+                    (true, false) => "allowed",
+                    _ => "declined",
+                };
+                self.push(Block::Notice { text: format!("{verb} {}", s(&e["tool"])), error: false });
+            }
+            (Some("harness_mode"), _) => {
+                self.mode = mode_name(e["mode"].as_str().unwrap_or_default()).to_string();
+                self.push(Block::Notice { text: format!("mode: {}", self.mode), error: false });
+            }
             (Some("harness_info"), _) => self.push(Block::Notice { text: s(&e["text"]), error: false }),
             (Some("harness_notice"), _) => {
                 self.stopping = false;
@@ -430,6 +471,17 @@ impl Session {
             Block::Tool(t) if t.id == id => Some(t),
             _ => None,
         })
+    }
+}
+
+/// claude's permission mode names in tazuna's words.
+pub fn mode_name(m: &str) -> &str {
+    match m {
+        "bypassPermissions" => "auto",
+        "default" => "ask",
+        "acceptEdits" => "edits",
+        "plan" => "plan",
+        other => other,
     }
 }
 

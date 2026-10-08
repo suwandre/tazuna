@@ -91,6 +91,14 @@ pub struct Live {
     pub diagnostics: bool,
     /// Finish rules in the prompt plus one self-review turn per run (`--self-review`).
     pub self_review: bool,
+    /// Permission mode as claude names it: bypassPermissions (tazuna's "auto"), default ("ask"), acceptEdits ("edits"),
+    /// plan. Every mode but auto routes claude's permission questions to tazuna (`--permission-prompt-tool stdio`).
+    pub permission_mode: String,
+    /// Questions waiting for the user's answer: claude's `can_use_tool` control requests.
+    pub pending: VecDeque<Value>,
+    /// Tools the user allowed for the rest of the session ("always").
+    allowed: std::collections::HashSet<String>,
+    requests_sent: u64,
     /// Commands claude started that have not finished: claude wakes up again for background ones, so the session is
     /// not idle until they are done.
     tasks: std::collections::HashSet<String>,
@@ -163,6 +171,10 @@ impl Live {
             self_review: false,
             review_model: None,
             tasks: Default::default(),
+            permission_mode: "bypassPermissions".into(),
+            pending: VecDeque::new(),
+            allowed: Default::default(),
+            requests_sent: 0,
             tasks_done: None,
             diag_dir: None,
             project_instructions: true,
@@ -253,7 +265,53 @@ impl Live {
     }
 
     /// Asks claude to stop the current run; the process stays up and keeps its cache.
+    /// The user's answer to the oldest permission question. `always`: allow this tool for the rest of the session.
+    pub fn answer(&mut self, allow: bool, always: bool) -> Option<(f64, Value)> {
+        let req = self.pending.pop_front()?;
+        let tool = req["request"]["tool_name"].as_str().unwrap_or_default().to_string();
+        if allow && always {
+            self.allowed.insert(tool.clone());
+        }
+        // an approved plan leaves plan mode: edits go ahead, commands still ask
+        let leave_plan = (allow && tool == "ExitPlanMode").then(|| json!([{"type": "setMode", "mode": "acceptEdits", "destination": "session"}]));
+        if leave_plan.is_some() {
+            self.permission_mode = "acceptEdits".into();
+        }
+        self.respond(&req, allow, leave_plan);
+        Some(self.record(json!({"type": "harness_permission_done", "tool": tool, "allow": allow, "always": always, "mode": self.permission_mode})))
+    }
+
+    fn respond(&mut self, req: &Value, allow: bool, permissions: Option<Value>) {
+        let mut answer = if allow {
+            json!({"behavior": "allow", "updatedInput": req["request"]["input"]})
+        } else {
+            json!({"behavior": "deny", "message": "The user declined this. Ask what they want instead, or try another way."})
+        };
+        if let Some(p) = permissions {
+            answer["updatedPermissions"] = p;
+        }
+        let line = json!({"type": "control_response", "response": {"subtype": "success", "request_id": req["request_id"], "response": answer}});
+        if let Some(stdin) = self.stdin.as_mut() {
+            let _ = writeln!(stdin, "{line}").and_then(|_| stdin.flush());
+        }
+    }
+
+    /// Switches the permission mode (also mid-run). Before the process starts it only sets the starting mode.
+    pub fn set_mode(&mut self, mode: &str) -> (f64, Value) {
+        self.permission_mode = mode.to_string();
+        if let Some(stdin) = self.stdin.as_mut() {
+            self.requests_sent += 1;
+            let req = json!({"type": "control_request", "request_id": format!("mode-{}", self.requests_sent), "request": {"subtype": "set_permission_mode", "mode": mode}});
+            let _ = writeln!(stdin, "{req}").and_then(|_| stdin.flush());
+        }
+        self.record(json!({"type": "harness_mode", "mode": mode}))
+    }
+
     pub fn interrupt(&mut self) -> Option<(f64, Value)> {
+        // a stop also answers open questions: no
+        while !self.pending.is_empty() {
+            self.answer(false, false);
+        }
         if self.verifying {
             // claude is idle while tests run: nothing to interrupt there, the run ends when the tests return
             self.runs.front_mut()?.interrupted();
@@ -298,6 +356,16 @@ impl Live {
                     if e["type"] == "system" && e["subtype"] == "init" {
                         self.session_id = e["session_id"].as_str().map(String::from);
                         self.claude_version = e["claude_code_version"].as_str().map(String::from);
+                    }
+                    if e["type"] == "control_request" && e["request"]["subtype"] == "can_use_tool" {
+                        let tool = e["request"]["tool_name"].as_str().unwrap_or_default().to_string();
+                        if self.allowed.contains(&tool) {
+                            self.respond(&e, true, None);
+                        } else {
+                            out.push(self.record(json!({"type": "harness_permission", "tool": tool, "input": e["request"]["input"], "description": e["request"]["description"]})));
+                            self.pending.push_back(e);
+                        }
+                        continue;
                     }
                     match (e["type"].as_str(), e["subtype"].as_str(), e["task_id"].as_str()) {
                         (Some("system"), Some("task_started"), Some(id)) => {
@@ -544,7 +612,9 @@ impl Live {
     fn spawn(&mut self) -> Result<()> {
         let mut cmd = Command::new("claude");
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
-            .args(["--model", &self.model, "--effort", &self.effort, "--dangerously-skip-permissions"])
+            .args(["--model", &self.model, "--effort", &self.effort])
+            // claude asks tazuna (stdio) instead of a terminal it does not have; "auto" never asks
+            .args(["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions", "--permission-mode", &self.permission_mode])
             .args(["--setting-sources", self.setting_sources()]);
         if self.profile != Profile::Lean && !self.user_settings {
             // MCP servers from the repo's .mcp.json only: without this, the user's claude.ai connectors (they come with the
@@ -589,7 +659,8 @@ impl Live {
                 // cc-mid: lean prompt and tools, no skills or other MCP servers
                 cmd.args(["--strict-mcp-config", "--disable-slash-commands"])
                     .args(["--system-prompt", &prompt, "--tools", "Grep,Glob", "--mcp-config", &mcp])
-                    .args(["--allowedTools", "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit"]);
+                    // pre-allowed only in auto: the other modes ask about the lean tools too
+                    .args(if self.permission_mode == "bypassPermissions" { &["--allowedTools", "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit"][..] } else { &[] });
             }
         }
         if self.diagnostics {

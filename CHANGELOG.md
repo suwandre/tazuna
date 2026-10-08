@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.18 (2026-10-08)
+
+Daily-driver features (no benchmark change: headless runs keep the "auto" mode and behave as before).
+
+- **Permission modes** (`--mode`, `shift-tab` cycles live): **auto** (never asks, the default), **ask** (before edits and
+  commands), **edits** (edits go ahead, commands ask), **plan** (read-only; the plan appears in the transcript and
+  approving it switches to edits). claude routes its questions to tazuna (`--permission-prompt-tool stdio`); the
+  composer shows "allow Write: b.txt   y yes · a always · n no". A stop answers open questions with no.
+- **Input editing:** cursor movement, `ctrl-a/e/u/k/w`, `alt-backspace`, and message history on `↑↓`, kept across
+  sessions. `esc` stops a run when nothing is typed. Expand moved from `ctrl-e` to `ctrl-o` (Claude Code's detail key).
+- **Resume:** `tazuna -c` continues this repo's latest session, `--resume <id>` a given one, with the earlier transcript
+  on screen.
+- **Subagents:** their messages stay under the call that started them ("12 steps · Read src/a.ts") instead of mixing into
+  the main transcript.
+
 ## 0.0.17 (2026-10-08)
 
 **repo-lean reads before it relies on a name.** Recorded runs showed why repo-lean scored lowest: with Claude Code's own

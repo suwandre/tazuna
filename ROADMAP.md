@@ -49,14 +49,18 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 
 ## Next
 
-1. **Daily-driver gaps** (the user's bar for real use: "not comfortable yet"): what Claude Code has that tazuna lacks for
-   everyday work, e.g. permission prompts or an ask-before-edit mode, plan mode, slash commands, image paste, a visible
-   subagent tree. List them, rank by need, close the top ones.
-2. **Own agent loop for other providers** (design first): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
+1. **Daily-driver gaps** (the user's bar for real use: "not comfortable yet"). Done in 0.0.18: permission modes and plan
+   mode, input editing and history, resume, subagents under their call. Left, by need: `@` file mentions, slash commands
+   (`/clear`, `/compact`, `/model`, the repo's commands and skills), image paste, the to-do list, `!` shell mode, switching
+   the model mid-session, then external editor, stash, vim mode, a background-task view, rewind.
+2. **Cheap `claude` levers** before the own loop: 5-minute prompt cache (`CLAUDE_CODE_PROMPT_CACHE_TTL=5m`; cache writes
+   are 30% of a run's cost at the 1-hour rate), a lower Bash output limit (`BASH_MAX_OUTPUT_LENGTH`), then earlier
+   compaction and a cheaper explorer subagent. Each an A/B against the default.
+3. **Own agent loop for other providers** (design first): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
    with an API key), runs its own tools and reuses the event format, so the UI, run log, diagnostics, verification and
    reviewer keep working. Unlocks cheap non-Anthropic implementers with a Claude reviewer and the footprint floor (no
    `claude` process). Claude on the subscription stays on the CLI path. Needs an API key and a spending limit.
-3. **Real use and labels** once 1 is good enough: rate runs (`/good`, `/bad`, `--label-git`); the Jev router needs ~100-200.
+4. **Real use and labels** once 1 is good enough: rate runs (`/good`, `/bad`, `--label-git`); the Jev router needs ~100-200.
 
 ## Parked (not tested yet)
 
