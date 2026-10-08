@@ -12,7 +12,8 @@ Goals, order of work and the ideas already tried or parked: [ROADMAP.md](ROADMAP
 Early. What works today:
 
 - **Live mode**: run `tazuna` in a git repo, type a task. One `claude` process per conversation (warm prompt cache),
-  clean interrupts (`ctrl-c`), follow-ups, multi-line input (`ctrl-j`, or shift/alt-enter where the terminal reports
+  clean interrupts (`esc` or `ctrl-c`), follow-ups, readline-style editing (`←→`, `ctrl-a/e/u/k/w`) and history (`↑↓`,
+  kept across sessions), `ctrl-o` to expand tool output, multi-line input (`ctrl-j`, or shift/alt-enter where the terminal reports
   it), copy last reply (`ctrl-y`), mouse scrolling (`ctrl-s` hands the mouse back to the terminal to select text).
 - **Profiles**: repos with agent config (`CLAUDE.md`, `AGENTS.md`, `.claude/`) run the **repo profile**: Claude Code's own
   prompt and tools with the repo's settings, hooks and skills (your personal `~/.claude` setup stays out unless

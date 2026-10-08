@@ -92,6 +92,8 @@ pub struct View {
     /// Live mode: the user drives a real claude process and the composer takes input.
     pub live: bool,
     pub input: String,
+    /// Byte index of the cursor in `input`.
+    pub cursor: usize,
 }
 
 /// Screen regions the effects target.
@@ -728,18 +730,17 @@ pub fn wrap(line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Vec<Li
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-const LIVE_KEYS: &str = "enter send · ctrl-j new line · /good /bad rate run · ctrl-c stop/quit · ctrl-y copy · ctrl-s select · ctrl-t design · ctrl-e expand";
+const LIVE_KEYS: &str = "enter send · ctrl-j new line · ↑↓ history · /good /bad rate run · esc/ctrl-c stop · ctrl-y copy · ctrl-s select · ctrl-t design · ctrl-o expand";
 
 /// The composer row: typed text with a cursor in live mode, a placeholder and key hints otherwise.
 pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Line<'static> {
     let mut spans = vec![Span::styled(format!(" {glyph} "), st(th.accent).add_modifier(Modifier::BOLD))];
     if v.live && !v.input.is_empty() {
         // one row (zen's footer): the end of what is being typed, newlines as ⏎
-        let text = v.input.replace('\n', " ⏎ ");
+        let text = with_cursor(v).replace('\n', " ⏎ ");
         let room = (width as usize).saturating_sub(6);
         let shown: String = text.chars().rev().take(room).collect::<Vec<_>>().into_iter().rev().collect();
         spans.push(Span::styled(shown, st(th.text)));
-        spans.push(Span::styled("▍", st(th.accent)));
     } else {
         if v.live {
             spans.push(Span::styled("▍", st(th.accent)));
@@ -759,8 +760,9 @@ pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
         return vec![composer_line(v, th, glyph, placeholder, width)];
     }
     let room = (width as usize).saturating_sub(4).max(1);
+    let shown = with_cursor(v);
     let mut rows: Vec<String> = Vec::new();
-    for line in v.input.split('\n') {
+    for line in shown.split('\n') {
         let mut row = String::new();
         let mut w = 0;
         for c in line.chars() {
@@ -774,20 +776,34 @@ pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
         }
         rows.push(row);
     }
-    let skip = rows.len().saturating_sub(COMPOSER_MAX_ROWS);
-    let last = rows.len() - 1;
+    // keep the cursor's row in view when the input is taller than the box
+    let at = rows.iter().position(|r| r.contains(CURSOR)).unwrap_or(rows.len() - 1);
+    let skip = (at + 1).saturating_sub(COMPOSER_MAX_ROWS);
     rows.into_iter()
         .enumerate()
         .skip(skip)
+        .take(COMPOSER_MAX_ROWS)
         .map(|(i, r)| {
             let lead = if i == 0 { format!(" {glyph} ") } else { "   ".to_string() };
-            let mut spans = vec![Span::styled(lead, st(th.accent).add_modifier(Modifier::BOLD)), Span::styled(r, st(th.text))];
-            if i == last {
-                spans.push(Span::styled("▍", st(th.accent)));
+            let mut spans = vec![Span::styled(lead, st(th.accent).add_modifier(Modifier::BOLD))];
+            let mut parts = r.split(CURSOR);
+            spans.push(Span::styled(parts.next().unwrap_or_default().to_string(), st(th.text)));
+            for rest in parts {
+                spans.push(Span::styled(CURSOR.to_string(), st(th.accent)));
+                spans.push(Span::styled(rest.to_string(), st(th.text)));
             }
             Line::from(spans)
         })
         .collect()
+}
+
+const CURSOR: char = '▍';
+
+/// The input with the cursor drawn in at its position.
+fn with_cursor(v: &View) -> String {
+    let at = v.cursor.min(v.input.len());
+    let at = if v.input.is_char_boundary(at) { at } else { v.input.len() };
+    format!("{}{CURSOR}{}", &v.input[..at], &v.input[at..])
 }
 
 /// Height of a bordered composer box for this input at this outer width.
@@ -796,7 +812,7 @@ pub fn composer_height(v: &View, outer_width: u16) -> u16 {
         return 3;
     }
     let room = (outer_width as usize).saturating_sub(2 + 4).max(1);
-    let rows: usize = v.input.split('\n').map(|l| l.width().div_ceil(room).max(1)).sum();
+    let rows: usize = with_cursor(v).split('\n').map(|l| l.width().div_ceil(room).max(1)).sum();
     rows.clamp(1, COMPOSER_MAX_ROWS) as u16 + 2
 }
 
@@ -829,22 +845,28 @@ mod tests {
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new() };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0 };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();
+        v.cursor = v.input.len();
         assert_eq!(composer_height(&v, 40), 4);
         let rows = composer_rows(&v, th, "›", "", 38);
         let text: Vec<String> = rows.iter().map(|r| r.spans.iter().map(|s| s.content.to_string()).collect()).collect();
         assert_eq!(text, vec![" › first", "   second▍"]);
-        v.input = "x".repeat(70); // wraps at 34 columns: 3 rows
+        v.input = "x".repeat(70);
+        v.cursor = v.input.len(); // wraps at 34 columns: 3 rows
         assert_eq!(composer_height(&v, 40), 5);
         assert_eq!(composer_rows(&v, th, "›", "", 38).len(), 3);
         v.input = (1..=10).map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        v.cursor = v.input.len();
         assert_eq!(composer_height(&v, 40), 8, "capped at 6 rows");
         let rows = composer_rows(&v, th, "›", "", 38);
         assert_eq!(rows.len(), 6);
         assert!(rows[5].spans.iter().any(|s| s.content == "10"), "the latest line stays visible");
+        v.cursor = 0;
+        let rows = composer_rows(&v, th, "›", "", 38);
+        assert!(rows[0].spans.iter().any(|s| s.content == "1"), "the cursor's row stays visible");
     }
 
     #[test]

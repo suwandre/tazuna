@@ -24,6 +24,7 @@
 //! ~/.local/share/tazuna/sessions/ and replay like any recording.
 
 mod diag;
+mod editor;
 mod labels;
 mod live;
 mod mcp;
@@ -359,7 +360,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new() }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0 }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -484,7 +485,9 @@ fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args
     let mut last = Instant::now();
     // mouse capture scrolls the transcript but keeps the terminal from selecting text; ctrl-s hands the mouse back
     let mut mouse = true;
+    let mut ed = editor::Editor::with_history(labels::dir()?.join("history.jsonl"));
     loop {
+        (v.input, v.cursor) = (ed.text.clone(), ed.cursor);
         let dt = last.elapsed();
         last = Instant::now();
         for (t, e) in live.poll() {
@@ -504,7 +507,7 @@ fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args
         }
         let key = match event::read()? {
             Event::Paste(text) => {
-                v.input.push_str(&text.replace("\r\n", "\n"));
+                ed.insert(&text.replace("\r\n", "\n"));
                 continue;
             }
             Event::Mouse(m) => {
@@ -515,6 +518,7 @@ fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args
             _ => continue,
         };
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
             // ctrl-c stops a run in progress; when idle it quits
             KeyCode::Char('c') if ctrl => match busy(&s).then(|| live.interrupt()).flatten() {
@@ -532,7 +536,8 @@ fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args
                 v.design = v.design.next();
                 fx.boot = true;
             }
-            KeyCode::Char('e') if ctrl => v.expand_all = !v.expand_all,
+            // ctrl-o like Claude Code's detail toggle; ctrl-e is end of line
+            KeyCode::Char('o') if ctrl => v.expand_all = !v.expand_all,
             KeyCode::Char('s') if ctrl => {
                 mouse = !mouse;
                 let text = if mouse {
@@ -551,13 +556,19 @@ fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args
                 };
                 s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
             }
-            KeyCode::Enter if key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) => v.input.push('\n'),
-            KeyCode::Char('j') if key.modifiers.contains(KeyModifiers::CONTROL) => v.input.push('\n'),
+            KeyCode::Enter if key.modifiers.intersects(KeyModifiers::ALT | KeyModifiers::SHIFT) => ed.insert("\n"),
+            KeyCode::Char('j') if ctrl => ed.insert("\n"),
+            KeyCode::Char('a') if ctrl => ed.home(),
+            KeyCode::Char('e') if ctrl => ed.end(),
+            KeyCode::Char('u') if ctrl => ed.kill_to_start(),
+            KeyCode::Char('k') if ctrl => ed.kill_to_end(),
+            KeyCode::Char('w') if ctrl => ed.kill_word(),
+            KeyCode::Backspace if alt => ed.kill_word(),
             KeyCode::Enter => {
-                let text = v.input.trim().to_string();
-                if text.is_empty() {
+                if ed.text.trim().is_empty() {
                     continue;
                 }
+                let text = ed.take().trim().to_string();
                 if let Some(rest) = text.strip_prefix("/good").or_else(|| text.strip_prefix("/bad")) {
                     // rate the last run locally; never sent to claude
                     let verdict = if text.starts_with("/good") { "good" } else { "bad" };
@@ -568,26 +579,34 @@ fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args
                         None => "no finished run to rate yet".into(),
                     };
                     s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
-                    v.input.clear();
                     continue;
                 }
                 match live.send(&text) {
                     Ok((t, e)) => s.apply(&e, t),
                     Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),
                 }
-                v.input.clear();
                 v.scroll = 0;
             }
-            KeyCode::Backspace => {
-                v.input.pop();
+            KeyCode::Backspace => ed.backspace(),
+            KeyCode::Delete => ed.delete(),
+            KeyCode::Left => ed.left(),
+            KeyCode::Right => ed.right(),
+            KeyCode::Home => ed.home(),
+            // end of line while typing; with an empty composer, back to the newest output
+            KeyCode::End if ed.text.is_empty() => v.scroll = 0,
+            KeyCode::End => ed.end(),
+            KeyCode::Up => ed.up(),
+            KeyCode::Down => ed.down(),
+            // esc: clear what is typed; with nothing typed, stop the run like ctrl-c
+            KeyCode::Esc if ed.text.is_empty() => {
+                if let Some((t, e)) = busy(&s).then(|| live.interrupt()).flatten() {
+                    s.apply(&e, t);
+                }
             }
-            KeyCode::Esc => v.input.clear(),
+            KeyCode::Esc => ed.clear(),
             KeyCode::PageUp => v.scroll += 15,
             KeyCode::PageDown => v.scroll = v.scroll.saturating_sub(15),
-            KeyCode::Up => v.scroll += 1,
-            KeyCode::Down => v.scroll = v.scroll.saturating_sub(1),
-            KeyCode::End => v.scroll = 0,
-            KeyCode::Char(c) if !ctrl => v.input.push(c),
+            KeyCode::Char(c) if !ctrl => ed.insert(c.encode_utf8(&mut [0; 4])),
             _ => {}
         }
     }
