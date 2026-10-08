@@ -11,3 +11,4 @@
 {"version": "0.0.11", "commit": "b0fe020", "binary_bytes": 2434544, "replay_render_ms": 6, "first_turn_input_tokens": 2977, "probe_cost_usd": 0.003127, "claude_version": "2.1.292"}
 {"version": "0.0.13", "commit": "13e2eef", "binary_bytes": 2518544, "replay_render_ms": 6, "first_turn_input_tokens": 2983, "probe_cost_usd": 0.003133, "claude_version": "2.1.292"}
 {"version": "0.0.15", "commit": "1142b47", "binary_bytes": 2556624, "replay_render_ms": 7, "startup_ms": 6.4, "ui_cpu_pct": 1.59, "ui_rss_mb": 7.1, "tool_server_rss_mb": 2.1, "first_turn_input_tokens": 2980, "probe_cost_usd": 0.00319, "claude_version": "2.1.294"}
+{"version": "0.0.16", "commit": "3b3acd9", "binary_bytes": 2594864, "replay_render_ms": 7, "startup_ms": 6.4, "ui_cpu_pct": 1.48, "ui_rss_mb": 7.1, "tool_server_rss_mb": 2.2, "first_turn_input_tokens": 2977, "probe_cost_usd": 0.003197, "claude_version": "2.1.294"}
