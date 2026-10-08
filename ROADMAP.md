@@ -37,10 +37,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    default 6.67 (1st of 8; OMP 6.54, stock 6.38 within noise) at $0.41: −5% vs stock ($0.43), −20-25% vs OMP and Hermes.
    Lean tazuna 6.04 at −28%.
 3. **Quality experiments**, one at a time, each against a same-day stock baseline:
-   1. ~~Compiler errors in edit results~~ (done 2026-10-08, v0.0.13, default on: same judge, −11% cost vs without).
-      Compiler errors in edit results (dirge, OMP): after an edit, return the new type errors at once. For Claude's own
-      tools, through a `PostToolUse` hook tazuna adds itself, so every profile gets it. It must also fire after `Bash`:
-      on the company tickets every arm made most edits with `python3`/`sed` through Bash, not with Edit/Write.
+   1. ~~Compiler errors in edit results~~ (dirge, OMP). Done 2026-10-08 in v0.0.13 as a `PostToolUse` hook that also
+      fires after Bash edits; default on: same judge, −11% cost vs without.
    2. An instruction against ending early, plus a self-review turn before "done" (diff vs acceptance criteria, unrelated
       changes).
    3. A verifier in a fresh context that tries to break the work (a worker and its checker never share a context).
