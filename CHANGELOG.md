@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.19 (2026-10-08)
+
+Daily-driver features, part 2 (headless runs unchanged).
+
+- **Slash commands** reach claude, which runs them in stream mode: built-ins (`/compact`, `/cost`, `/clear`, `/model`,
+  `/context`, `/init`) and the repo's own commands and skills. tazuna shows output that has no model turn (`/cost`),
+  marks `/clear` and `/compact` in the transcript, and completes commands with `tab` from the list claude reports.
+- **`@` file completion** from the repo's tracked files (`tab` cycles).
+- **Claude's to-do list** (TodoWrite) shows as a checklist (☐ ◐ ☑).
+- **Images:** a message that names an image file (`@shot.png`, a dragged-in path) sends it as an image; `ctrl-v` saves the
+  clipboard's image to a private temp folder and names it in the message.
+- **`!cmd`** runs a command in the repo, shows the output and hands it to claude.
+
 ## 0.0.18 (2026-10-08)
 
 Daily-driver features (no benchmark change: headless runs keep the "auto" mode and behave as before).

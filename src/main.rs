@@ -512,6 +512,26 @@ fn busy(s: &Session) -> bool {
     !matches!(s.activity, session::Activity::Ready | session::Activity::Done)
 }
 
+/// Saves the clipboard's image (macOS) as a PNG in a private temp folder.
+fn paste_image() -> Result<std::path::PathBuf> {
+    let dir = std::env::temp_dir().join(format!("tazuna-images-{}", std::process::id()));
+    std::os::unix::fs::DirBuilderExt::mode(&mut std::fs::DirBuilder::new(), 0o700).recursive(true).create(&dir)?;
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+    let path = dir.join(format!("paste-{nanos}.png"));
+    let script = format!(
+        "set f to (open for access POSIX file \"{}\" with write permission)\ntry\nwrite (the clipboard as «class PNGf») to f\nend try\nclose access f",
+        path.display()
+    );
+    std::process::Command::new("osascript").args(["-e", &script]).output()?;
+    match std::fs::metadata(&path) {
+        Ok(m) if m.len() > 0 => Ok(path),
+        _ => {
+            let _ = std::fs::remove_file(&path);
+            bail!("the clipboard holds no image")
+        }
+    }
+}
+
 /// "Write: /repo/b.txt  (always = this tool)": what a permission request asks, made safe to show.
 fn question(req: &serde_json::Value) -> String {
     let r = &req["request"];
@@ -680,6 +700,11 @@ fn run_live(
                 };
                 s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
             }
+            // ctrl-v: an image on the clipboard becomes a file the message names (sent as an image with it)
+            KeyCode::Char('v') if ctrl => match paste_image() {
+                Ok(path) => ed.insert(&format!("@{} ", path.display())),
+                Err(e) => s.apply(&json!({"type": "harness_info", "text": format!("no image to paste: {e:#}")}), live.elapsed_ms()),
+            },
             KeyCode::Char('y') if ctrl => {
                 let text = match copy_last_reply(&s) {
                     Ok(n) => format!("copied the last reply ({n} chars)"),
@@ -712,6 +737,18 @@ fn run_live(
                     s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
                     continue;
                 }
+                // `!cmd`: run it here, show the output, and hand both to claude (like Claude Code's shell mode)
+                let text = match text.strip_prefix('!') {
+                    Some(cmd) => {
+                        // ponytail: blocks the UI while it runs; fine for git status/ls, a thread when long commands matter
+                        let (code, out, _) = verify::run_raw(&std::env::current_dir()?, cmd.trim());
+                        let out: String = out.chars().take(8000).collect();
+                        let code = code.map_or("timeout".into(), |c| c.to_string());
+                        s.apply(&json!({"type": "harness_info", "text": format!("$ {} (exit {code})\n{out}", cmd.trim())}), live.elapsed_ms());
+                        format!("I ran `{}` myself (exit {code}). Output:\n```\n{out}\n```", cmd.trim())
+                    }
+                    None => text,
+                };
                 match live.send(&text) {
                     Ok((t, e)) => s.apply(&e, t),
                     Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),

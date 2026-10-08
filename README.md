@@ -17,7 +17,9 @@ Early. What works today:
   it), copy last reply (`ctrl-y`), mouse scrolling (`ctrl-s` hands the mouse back to the terminal to select text).
   `tazuna -c` continues this repo's latest session (`--resume <id>` a given one), with the earlier transcript on screen.
   Slash commands go to claude (built-ins like `/compact`, `/cost`, `/clear`, `/model`, and the repo's own commands and
-  skills); `tab` completes them and `@` file paths. Claude's to-do list shows as a checklist.
+  skills); `tab` completes them and `@` file paths. Claude's to-do list shows as a checklist. Images named in a message
+  (`@shot.png`, a dragged-in path, or `ctrl-v` for the clipboard) go along as images; `!cmd` runs a command and hands
+  its output to claude.
   Permission modes (`--mode auto|ask|edits|plan`, `shift-tab` cycles): never ask (default), ask before edits and commands,
   ask before commands only, or plan read-only first and approve the plan.
 - **Profiles**: repos with agent config (`CLAUDE.md`, `AGENTS.md`, `.claude/`) run the **repo profile**: Claude Code's own

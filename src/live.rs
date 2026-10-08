@@ -40,6 +40,47 @@ const REVIEW: &str = "Before you finish, review your own change:
 5. If you changed anything, run the relevant tests again.
 Then finish with a short summary of what changed.";
 
+/// Images a message names (a pasted or dragged-in path, `@shot.png`) go along as image blocks; plain text otherwise.
+fn user_content(text: &str, cwd: &Path) -> Value {
+    const MAX_IMAGE: u64 = 5 * 1024 * 1024; // the API's limit per image
+    let images: Vec<Value> = text
+        .split_whitespace()
+        .map(|w| w.trim_start_matches('@').trim_matches(|c| c == '\'' || c == '"'))
+        .filter_map(|w| {
+            let ext = w.rsplit('.').next()?.to_ascii_lowercase();
+            let media = match ext.as_str() {
+                "png" => "image/png",
+                "jpg" | "jpeg" => "image/jpeg",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                _ => return None,
+            };
+            let path = if Path::new(w).is_absolute() { PathBuf::from(w) } else { cwd.join(w) };
+            std::fs::metadata(&path).ok().filter(|m| m.is_file() && m.len() <= MAX_IMAGE)?;
+            let data = std::fs::read(&path).ok()?;
+            Some(json!({"type": "image", "source": {"type": "base64", "media_type": media, "data": base64(&data)}}))
+        })
+        .collect();
+    if images.is_empty() {
+        return json!(text);
+    }
+    let mut parts = images;
+    parts.push(json!({"type": "text", "text": text}));
+    Value::Array(parts)
+}
+
+fn base64(bytes: &[u8]) -> String {
+    const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+        for (i, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            out.push(if i <= c.len() { T[(n >> shift & 63) as usize] as char } else { '=' });
+        }
+    }
+    out
+}
+
 /// What "always" covers: one exact command for shells (a later command can be anything), the whole tool otherwise.
 fn always_key(req: &Value) -> String {
     let tool = req["request"]["tool_name"].as_str().unwrap_or_default();
@@ -248,7 +289,7 @@ impl Live {
         if self.child.is_none() {
             self.spawn()?;
         }
-        let line = json!({"type": "user", "message": {"role": "user", "content": text}});
+        let line = json!({"type": "user", "message": {"role": "user", "content": user_content(text, &self.cwd)}});
         let stdin = self.stdin.as_mut().context("claude stdin closed")?;
         writeln!(stdin, "{line}")?;
         stdin.flush()?;
@@ -806,6 +847,22 @@ pub fn in_git_repo() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn attaches_named_images() {
+        assert_eq!(base64(b"Man"), "TWFu");
+        assert_eq!(base64(b"Ma"), "TWE=");
+        assert_eq!(base64(b"M"), "TQ==");
+        let dir = std::env::temp_dir().join(format!("tazuna-img-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("shot.png"), b"\x89PNG").unwrap();
+        let c = user_content("what is wrong in @shot.png ?", &dir);
+        assert_eq!(c[0]["type"], "image");
+        assert_eq!(c[0]["source"]["data"], base64(b"\x89PNG"));
+        assert_eq!(c[1]["text"], "what is wrong in @shot.png ?");
+        assert_eq!(user_content("no image here.png", &dir), json!("no image here.png"), "a path that is not a file stays text");
+        std::fs::remove_dir_all(&dir).ok();
+    }
 
     #[test]
     fn spots_turns_claude_starts_itself() {

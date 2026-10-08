@@ -52,8 +52,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 1. **Daily-driver gaps** (the user's bar for real use: "not comfortable yet"). Done in 0.0.18: permission modes and plan
    mode, input editing and history, resume, subagents under their call. Done after 0.0.18: slash commands (claude runs
    them in stream mode; tazuna shows their output, marks /clear and /compact, completes them with tab), `@` file
-   completion, the to-do list as a checklist. Left, by need: image paste, `!` shell mode, then external editor, stash,
-   vim mode, a background-task view, rewind.
+   completion, the to-do list as a checklist, images (`@shot.png`, dragged paths, `ctrl-v`), `!` shell mode. Left (nice to
+   have): external editor, stash, vim mode, a background-task view, rewind.
 2. **Cheap `claude` levers** before the own loop: 5-minute prompt cache (`CLAUDE_CODE_PROMPT_CACHE_TTL=5m`; cache writes
    are 30% of a run's cost at the 1-hour rate), a lower Bash output limit (`BASH_MAX_OUTPUT_LENGTH`), then earlier
    compaction and a cheaper explorer subagent. Each an A/B against the default.
