@@ -33,7 +33,7 @@ const FINISH_RULES: &str = "Finish only when the task is fully done: every requi
 
 /// `--explorer`: reading code is most of a run's cost (each turn re-reads everything read so far at the main model's
 /// rate), so a cheaper subagent reads and answers in short; the main model reads a file only right before editing it.
-const EXPLORER_RULE: &str = "To find and understand code, ask the explorer subagent (Task tool) a precise question; it reads and searches the repo and answers with file paths, line ranges and the lines that matter. Read a whole file yourself only right before you edit it.";
+const EXPLORER_RULE: &str = "Do not explore the code yourself: no Read, cat, sed, head, tail, grep, rg or find to look around. Send every question about the code to the explorer subagent (Task tool, subagent_type explorer); it reads and searches the repo and answers with file paths, line ranges and the lines that matter. Ask several questions in parallel when they are independent. Read a file yourself only right before you edit it, and only the part you edit.";
 
 fn explorer_agent(model: &str) -> String {
     json!({"explorer": {
