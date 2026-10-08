@@ -394,6 +394,8 @@ impl Live {
     fn respond(&mut self, req: &Value, allow: bool, permissions: Option<Value>) {
         let mut answer = if allow {
             json!({"behavior": "allow", "updatedInput": req["request"]["input"]})
+        } else if self.mode == "headless" {
+            json!({"behavior": "deny", "message": "No user is present in this run, so nobody can answer or approve this. Decide with your best judgment and continue."})
         } else {
             json!({"behavior": "deny", "message": "The user declined this. Ask what they want instead, or try another way."})
         };
@@ -470,6 +472,9 @@ impl Live {
                     if e["type"] == "control_request" && e["request"]["subtype"] == "can_use_tool" {
                         if self.allowed.contains(&always_key(&e)) {
                             self.respond(&e, true, None);
+                        } else if self.mode == "headless" {
+                            // nobody is there to answer: a question (AskUserQuestion, or any tool in ask mode) would wait forever
+                            self.respond(&e, false, None);
                         } else {
                             let tool = e["request"]["tool_name"].as_str().unwrap_or_default().to_string();
                             out.push(self.record(json!({"type": "harness_permission", "tool": tool, "input": e["request"]["input"], "scope": always_scope(&tool)})));

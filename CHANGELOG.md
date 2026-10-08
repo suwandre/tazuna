@@ -16,6 +16,31 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.24 (2026-10-08)
+
+**Headless runs answer permission questions themselves.** A benchmark run hung for 25 minutes: Opus called
+`AskUserQuestion`, and with nobody to answer, tazuna waited forever. With `--run`, every `can_use_tool` request is now
+denied at once with "No user is present in this run … decide with your best judgment and continue." Live mode is unchanged.
+
+**Haiku 5.5 explorer** (`--explorer haiku`, opt-in): all 5 company tickets, Opus 5.5 medium, 5-minute cache, one judge pool
+per ticket. Default runs: 0.0.21 on T-921/870, 0.0.23 on the other three (the 0.0.12 runs there predate the 5-minute
+cache). 2 runs per arm and ticket; one Haiku run on T-946 hung on the bug above and is excluded.
+
+| Ticket | Default: cost, turns, judge | Haiku explorer: cost, turns, judge |
+|---|---|---|
+| T-921 | $1.38, 29, 5.75 | $1.24, 21, 6.50 |
+| T-870 | $2.20, 42, 6.75 | $1.80, 33, 6.25 |
+| T-946 | $3.54, 78, 4.25 | $1.87, 30, 3.50 |
+| T-698 | $2.75, 47, 7.25 | $2.09, 31, 7.50 |
+| T-872 | $1.33, 28, 5.75 | $1.04, 17, 4.75 |
+| **Mean per ticket** | **$2.24, 45, 5.95** | **$1.61 (−28%), 26 (−41%), 5.70** |
+
+Cost down well past noise on every ticket; judge −0.25, within noise, though lower on 3 of 5 tickets. No run added type
+errors or unit failures, and each pair passes the same PR tests (one test fewer in one T-872 Haiku run). Haiku answers
+cost a fraction of Opus reading the same files, unlike the Sonnet explorer (+12%). Stays opt-in until a third run per
+ticket shows whether the small judge drop is real.
+Usage for this batch: 12 runs + judge ≈ 28% of the 5-hour window.
+
 ## 0.0.23 (2026-10-08)
 
 **`--explorer` rule made firm.** With the first wording Opus called the explorer once in 4 runs and kept exploring with
