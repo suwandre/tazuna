@@ -4,7 +4,7 @@
 //! interrupt control request the official Agent SDK uses; if claude does not answer, the process is killed and the
 //! next message resumes the session with `--resume`.
 
-use crate::{diag, route::{Lane, Profile}, runlog::Run, verify};
+use crate::{diag, review, route::{Lane, Profile}, runlog::Run, verify};
 use anyhow::{Context, Result};
 use serde_json::{Value, json};
 use std::{
@@ -42,6 +42,8 @@ enum Msg {
     Exited(String),
     /// A verification finished.
     Verified(verify::Outcome),
+    /// The independent reviewer finished.
+    Reviewed(review::Review),
 }
 
 pub struct Live {
@@ -77,6 +79,8 @@ pub struct Live {
     pub diagnostics: bool,
     /// Finish rules in the prompt plus one self-review turn per run (`--self-review`).
     pub self_review: bool,
+    /// Independent reviewer: model and effort (`--review-model`, `--review-effort`).
+    pub review_model: Option<(String, String)>,
     diag_dir: Option<PathBuf>,
     /// Add the repo's CLAUDE.md / AGENTS.md to the system prompt (lean profile; the repo profile lets Claude Code load them).
     pub project_instructions: bool,
@@ -138,6 +142,7 @@ impl Live {
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
             diagnostics: false,
             self_review: false,
+            review_model: None,
             diag_dir: None,
             project_instructions: true,
             profile: Profile::Lean,
@@ -284,6 +289,7 @@ impl Live {
                     }
                 }
                 Msg::Verified(o) => out.extend(self.after_verify(o)),
+                Msg::Reviewed(r) => out.extend(self.after_review(r)),
                 Msg::Exited(stderr) => {
                     let code = self.child.take().and_then(|mut c| c.wait().ok()).and_then(|st| st.code());
                     self.stdin = None;
@@ -321,6 +327,17 @@ impl Live {
                 }
             };
         }
+        if let Some((model, effort)) = self.review_model.clone().filter(|_| !run.reviewed && !changed.is_empty()) {
+            // the reviewer gets the task and the diff in a fresh context; verification waits for its verdict
+            run.reviewed = true;
+            self.verifying = true;
+            let (tx, g, cwd, task) = (self.tx.clone(), self.generation, self.cwd.clone(), run.prompt().to_string());
+            let (m, e) = (model.clone(), effort.clone());
+            std::thread::spawn(move || {
+                let _ = tx.send((g, Msg::Reviewed(review::run(&cwd, &task, &m, &e))));
+            });
+            return vec![self.record(json!({"type": "harness_review_start", "model": model, "effort": effort}))];
+        }
         let Some(run) = self.runs.front_mut() else { return vec![] };
         let tests = verify::command(&self.verify, &self.cwd, &changed);
         // the baseline stays with the run, so fix rounds compare against the state before the run too
@@ -337,6 +354,28 @@ impl Live {
             let _ = tx.send((g, Msg::Verified(verify::check(&cwd, tests, types))));
         });
         vec![self.record(json!({"type": "harness_verify_start", "cmd": cmd, "round": round}))]
+    }
+
+    /// The reviewer is back: findings go to claude once; otherwise the run moves on to verification.
+    fn after_review(&mut self, r: review::Review) -> Vec<(f64, Value)> {
+        self.verifying = false;
+        let Some(run) = self.runs.front_mut() else { return vec![] };
+        run.add_cost(r.cost);
+        run.review = Some(json!({"ok": r.ok, "issues": r.issues.len(), "cost_usd": (r.cost * 1e6).round() / 1e6, "secs": (r.secs * 10.0).round() / 10.0, "error": r.error}));
+        let interrupted = run.is_interrupted();
+        let mut out = vec![self.record(json!({"type": "harness_review_done", "ok": r.ok, "issues": r.issues, "cost": r.cost, "secs": r.secs, "error": r.error}))];
+        if r.ok || interrupted {
+            out.extend(self.after_result());
+            return out;
+        }
+        match self.write_user(&review::feedback(&r)) {
+            Ok(()) => {}
+            Err(e) => {
+                out.push(self.record(json!({"type": "harness_notice", "text": format!("could not send the review: {e:#}"), "error": true})));
+                out.extend(self.finish_front());
+            }
+        }
+        out
     }
 
     /// Tests are back: pass ends the run; a failure goes back to claude while rounds remain.
@@ -409,7 +448,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "self_review": self.self_review,
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "self_review": self.self_review, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,

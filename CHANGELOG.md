@@ -15,6 +15,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.15 (2026-10-08)
+
+**`--review-model M [--review-effort E]`: an independent reviewer** (opt-in until benchmarked). When claude first says it is
+done and the run changed files, a separate `claude -p` on model M reads the task and the diff (new files in full) in a fresh
+context, with read-only tools, and answers `ok` or a list of concrete problems. Problems go back to the implementer once;
+then verification runs. The reviewer's cost is added to the run (`total_cost_usd` in `--run` output is now tazuna's own
+total for the run, every process included). Meant for a cheap implementer with a strong reviewer, e.g. Haiku 5.5 implements
+and Opus 5.5 reviews. Smoke test (Haiku 5.5 low + Opus 5.5 low, a two-function fix): review in 2-5 s for $0.006-0.027.
+
 ## 0.0.14 (2026-10-08)
 
 **`--self-review`** (opt-in until benchmarked): three sentences of finish rules in the system prompt (finish only when every

@@ -234,6 +234,18 @@ impl Session {
                 self.activity = Activity::Ready;
             }
             // UI-only message (not from the process): no effect on cost or tools
+            (Some("harness_review_start"), _) => {
+                self.push(Block::Notice { text: format!("review: {} is checking the change against the task", s(&e["model"])), error: false })
+            }
+            (Some("harness_review_done"), _) => {
+                let n = e["issues"].as_array().map_or(0, Vec::len);
+                let text = match (e["error"].as_str(), e["ok"] == true) {
+                    (Some(err), _) => format!("review skipped: {err}"),
+                    (None, true) => "review: no problems found".to_string(),
+                    (None, false) => format!("review: {n} problem{} sent back", if n == 1 { "" } else { "s" }),
+                };
+                self.push(Block::Notice { text, error: false })
+            }
             (Some("harness_review"), _) => self.push(Block::Notice { text: "self-review: checking the change against the task".into(), error: false }),
             (Some("harness_info"), _) => self.push(Block::Notice { text: s(&e["text"]), error: false }),
             (Some("harness_notice"), _) => {

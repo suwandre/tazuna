@@ -7,6 +7,7 @@
 //!          [--bash-cap N]   # shrink bash output longer than N chars (default 8000; 0 = off)
 //!          [--no-diagnostics]  # do not tell claude about type/compile errors right after its edits
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
+//!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
 //!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
 //!          [--trust] [--user-settings]   # trust the repo's hooks/skills without asking; also load your ~/.claude settings
@@ -28,6 +29,7 @@ mod live;
 mod mcp;
 mod outcap;
 mod replay;
+mod review;
 mod route;
 mod runlog;
 mod session;
@@ -74,6 +76,8 @@ struct Args {
     bash_cap: usize,
     diagnostics: bool,
     self_review: bool,
+    review_model: Option<String>,
+    review_effort: String,
     project_instructions: bool,
     profile: Option<route::Profile>,
     trust: bool,
@@ -101,6 +105,8 @@ fn args() -> Result<Args> {
         bash_cap: mcp::DEFAULT_BASH_CAP,
         diagnostics: true,
         self_review: false,
+        review_model: None,
+        review_effort: "medium".into(),
         project_instructions: true,
         profile: None,
         trust: false,
@@ -128,6 +134,8 @@ fn args() -> Result<Args> {
             "--diagnostics" => a.diagnostics = true,
             "--no-diagnostics" => a.diagnostics = false,
             "--self-review" => a.self_review = true,
+            "--review-model" => a.review_model = Some(val()?),
+            "--review-effort" => a.review_effort = val()?,
             "--no-project-instructions" => a.project_instructions = false,
             "--profile" => {
                 a.profile = Some(match val()?.as_str() {
@@ -213,6 +221,7 @@ fn main() -> Result<()> {
             live.bash_cap = a.bash_cap;
             live.diagnostics = a.diagnostics;
             live.self_review = a.self_review;
+            live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
             live.project_instructions = a.project_instructions;
             let mut term = ratatui::init();
             execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
@@ -263,6 +272,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.bash_cap = a.bash_cap;
     live.diagnostics = a.diagnostics;
     live.self_review = a.self_review;
+    live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
     live.project_instructions = a.project_instructions;
     live.send(&prompt)?;
     loop {
@@ -285,7 +295,9 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
         r["usage"]["cache_read_input_tokens"] = t["cache_read"].clone();
         r["usage"]["output_tokens"] = t["output"].clone();
         r["num_turns"] = log["turns"].clone();
-        r["tazuna"] = json!({"verify": log["verify"], "stop": log["stop"], "cost_usd": log["cost_usd"]});
+        r["tazuna"] = json!({"verify": log["verify"], "review": log["review"], "stop": log["stop"], "cost_usd": log["cost_usd"]});
+        // every round and process of the run, the reviewer included (claude's own figure covers one process)
+        r["total_cost_usd"] = log["cost_usd"].clone();
     }
     println!("{r}");
     Ok(())

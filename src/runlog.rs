@@ -29,8 +29,10 @@ pub struct Run {
     escalated: bool,
     /// The repo's type check output when the run started, so verification only fails on errors this run added.
     pub types_before: Option<Baseline>,
-    /// The self-review turn was sent (`--self-review`): once per run.
+    /// The self-review turn was sent, or the independent reviewer ran: once per run.
     pub reviewed: bool,
+    /// The independent reviewer's result (`--review-model`), for the run log.
+    pub review: Option<Value>,
 }
 
 /// Output of a command that started with the run: pending until the first verification needs it.
@@ -68,11 +70,16 @@ impl Run {
             escalated: false,
             types_before: None,
             reviewed: false,
+            review: None,
         }
     }
 
     pub fn escalated(&mut self) {
         self.escalated = true;
+    }
+
+    pub fn prompt(&self) -> &str {
+        &self.prompt
     }
 
     pub fn add_cost(&mut self, usd: f64) {
@@ -184,6 +191,7 @@ impl Run {
             "turns": self.turns.len(),
             "cost_usd": (self.cost * 1e6).round() / 1e6,
             "escalated": self.escalated,
+            "review": self.review,
             "verify": {
                 "status": verify,
                 "cmd": self.verify_cmd,
