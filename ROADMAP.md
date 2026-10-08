@@ -55,8 +55,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    completion, the to-do list as a checklist, images (`@shot.png`, dragged paths, `ctrl-v`), `!` shell mode. Left (nice to
    have): external editor, stash, vim mode, a background-task view, rewind.
 2. **Cheap `claude` levers** before the own loop: ~~5-minute prompt cache~~ (v0.0.20: −10%, same judge; headless default),
-   ~~a lower Bash output limit~~ (+30%: ruled out), ~~repo map~~ (v0.0.21: no gain, the agent reads as much), then
-   earlier compaction and a cheaper explorer subagent. Each an A/B against the default.
+   ~~a lower Bash output limit~~ (+30%: ruled out), ~~repo map~~ (v0.0.21: no gain, the agent reads as much),
+   ~~Sonnet explorer subagent~~ (v0.0.23: −35% turns but +12% cost), then a Haiku explorer and earlier compaction. Each an A/B against the default.
 3. **Own agent loop for other providers** (design: [docs/OWN_LOOP.md](docs/OWN_LOOP.md)): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
    with an API key), runs its own tools and reuses the event format, so the UI, run log, diagnostics, verification and
    reviewer keep working. Unlocks cheap non-Anthropic implementers with a Claude reviewer and the footprint floor (no
@@ -115,6 +115,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Hash-anchored edits | not built | old text in edits is 0.6% of output tokens, ~0.2% of cost |
 | Bash output capped at 8,000 chars | +30% cost | the agent re-runs commands to see what was cut |
 | Repo map in the first message | +3% cost, same judge | the agent still reads the files it changes in full |
+| Sonnet explorer subagent (`--explorer sonnet`) | +12% cost, −35% turns, same judge | the reading moves, it does not shrink |
 
 ## Decision log
 
@@ -139,3 +140,4 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   quality at stock cost (0.0.17). The default repo profile with diagnostics stays best in its pool (7.12 at stock cost).
 - 2026-10-08: 5-minute prompt cache for headless runs (−10%, same judge); Bash output cap ruled out (+30%).
 - 2026-10-08: repo map A/B: no gain (reads unchanged); stays opt-in.
+- 2026-10-08: Sonnet explorer A/B: fewer turns, +12% cost; stays opt-in. Next cheap try: a Haiku explorer.

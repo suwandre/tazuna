@@ -16,6 +16,25 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.23 (2026-10-08)
+
+**`--explorer` rule made firm.** With the first wording Opus called the explorer once in 4 runs and kept exploring with
+`cat`/`sed`/`grep`. Now: no exploring yourself, every code question goes to the explorer, read a file only right before
+editing it. Opus then delegated (its own shell commands dropped to 0-31 per segment; the explorers run in the background,
+so each return shows as a separate run in the run log).
+
+T-921 + T-870, 2 runs each, Opus 5.5 medium, Sonnet 5.5 explorer, 5-minute cache, one pool per ticket:
+
+| Arm | 921 | 870 | Judge avg | Cost (4 runs) | Turns |
+|---|---|---|---|---|---|
+| default (0.0.21) | 6.0, 6.0 | 7.0, 7.0 | 6.50 | $7.15 | 24-50 |
+| explorer, first wording (0.0.22) | 5.5, 6.5 | 7.0, 6.0 | 6.25 | $7.66 (+7%) | 29-45 |
+| **explorer, firm rule (0.0.23)** | 6.0, 7.0 | 6.0, 6.0 | **6.25** | **$8.03 (+12%)** | **19-31** |
+
+Fewer turns on the main model, but more money: the explorer reads the same code on Sonnet (only ~40% cheaper per token
+than Opus) and its answers come back into Opus's context. Quality within noise. Stays opt-in; a Haiku 5.5 explorer is the
+untested cheaper variant.
+
 ## 0.0.22 (2026-10-08)
 
 **`--explorer <model>`** (opt-in until benchmarked, repo profile): a custom subagent (`claude --agents`) on a cheaper model
