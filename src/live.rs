@@ -185,6 +185,11 @@ impl Live {
         self.t0.elapsed().as_secs_f64() * 1000.0
     }
 
+    /// Continue an earlier claude session (`--continue`, `--resume`): the first message resumes it instead of starting fresh.
+    pub fn resume(&mut self, session_id: &str) {
+        self.session_id = Some(session_id.to_string());
+    }
+
     /// Sends a user message, starting (or resuming) the claude process if needed. Returns the event to show.
     pub fn send(&mut self, text: &str) -> Result<(f64, Value)> {
         if self.verifying {

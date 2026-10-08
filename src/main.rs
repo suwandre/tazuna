@@ -7,6 +7,7 @@
 //!          [--bash-cap N]   # shrink bash output longer than N chars (default 8000; 0 = off)
 //!          [--no-diagnostics]  # do not tell claude about type/compile errors right after its edits
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
+//!          [-c | --continue | --resume <session-id>]   # pick up this repo's latest (or a given) session
 //!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
 //!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
@@ -79,6 +80,8 @@ struct Args {
     diagnostics: bool,
     self_review: bool,
     review_model: Option<String>,
+    /// `Some(None)`: this repo's latest session; `Some(Some(id))`: that session.
+    resume: Option<Option<String>>,
     review_effort: String,
     project_instructions: bool,
     profile: Option<route::Profile>,
@@ -108,6 +111,7 @@ fn args() -> Result<Args> {
         diagnostics: true,
         self_review: false,
         review_model: None,
+        resume: None,
         review_effort: "medium".into(),
         project_instructions: true,
         profile: None,
@@ -137,6 +141,8 @@ fn args() -> Result<Args> {
             "--no-diagnostics" => a.diagnostics = false,
             "--self-review" => a.self_review = true,
             "--review-model" => a.review_model = Some(val()?),
+            "-c" | "--continue" => a.resume = Some(None),
+            "--resume" => a.resume = Some(Some(val()?)),
             "--review-effort" => a.review_effort = val()?,
             "--no-project-instructions" => a.project_instructions = false,
             "--profile" => {
@@ -225,6 +231,15 @@ fn main() -> Result<()> {
             live.self_review = a.self_review;
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
             live.project_instructions = a.project_instructions;
+            let earlier = match &a.resume {
+                Some(id) => {
+                    let (sid, rec) = previous_session(&base, &std::env::current_dir()?, id.as_deref())
+                        .context("no earlier tazuna session in this repo to continue")?;
+                    live.resume(&sid);
+                    rec
+                }
+                None => None,
+            };
             let mut term = ratatui::init();
             execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
             // terminals with the kitty keyboard protocol report Shift-Enter apart from Enter; Ctrl-J works everywhere
@@ -232,7 +247,7 @@ fn main() -> Result<()> {
             if enhanced {
                 execute!(std::io::stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES))?;
             }
-            let r = run_live(&mut term, &mut live, &a, route);
+            let r = run_live(&mut term, &mut live, &a, route, earlier);
             if enhanced {
                 let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
             }
@@ -284,6 +299,10 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.self_review = a.self_review;
     live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
     live.project_instructions = a.project_instructions;
+    if let Some(id) = &a.resume {
+        let (sid, _) = previous_session(&labels::dir()?, &std::env::current_dir()?, id.as_deref()).context("no earlier tazuna session in this repo to continue")?;
+        live.resume(&sid);
+    }
     live.send(&prompt)?;
     loop {
         for (_, e) in live.poll() {
@@ -475,8 +494,35 @@ fn busy(s: &Session) -> bool {
     !matches!(s.activity, session::Activity::Ready | session::Activity::Done)
 }
 
-fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args, route: (f64, serde_json::Value)) -> Result<()> {
+/// The latest session this repo ran (or the one whose id starts with `id`): claude's session id and tazuna's recording.
+fn previous_session(base: &std::path::Path, cwd: &std::path::Path, id: Option<&str>) -> Option<(String, Option<std::path::PathBuf>)> {
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let log = std::fs::read_to_string(base.join("runs.jsonl")).ok()?;
+    log.lines().rev().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).find_map(|r| {
+        let m = &r["meta"];
+        let sid = m["session_id"].as_str()?;
+        let same_repo = m["cwd"].as_str().map(std::path::PathBuf::from).is_some_and(|c| c.canonicalize().unwrap_or(c) == cwd);
+        let wanted = id.map_or(same_repo, |id| sid.starts_with(id));
+        wanted.then(|| (sid.to_string(), m["recording"].as_str().map(std::path::PathBuf::from)))
+    })
+}
+
+fn run_live(
+    term: &mut ratatui::DefaultTerminal,
+    live: &mut live::Live,
+    a: &Args,
+    route: (f64, serde_json::Value),
+    earlier: Option<std::path::PathBuf>,
+) -> Result<()> {
     let mut s = Session::new("", &live.effort);
+    // a continued session shows what came before (claude has it; the screen should too)
+    if let Some(mut r) = earlier.and_then(|p| Replay::load(&p, false).ok()) {
+        for (t, e) in r.take(usize::MAX) {
+            s.apply(e, *t);
+        }
+        // a notice also closes the old process's cost: the resumed process reports from $0
+        s.apply(&json!({"type": "harness_notice", "text": "── continued from here ──", "error": false}), 0.0);
+    }
     s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     s.apply(&route.1, route.0);
     let mut v = view(a.design, true, 1.0);
@@ -609,5 +655,24 @@ fn run_live(term: &mut ratatui::DefaultTerminal, live: &mut live::Live, a: &Args
             KeyCode::Char(c) if !ctrl => ed.insert(c.encode_utf8(&mut [0; 4])),
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_the_session_to_continue() {
+        let base = std::env::temp_dir().join(format!("tazuna-resume-{}", std::process::id()));
+        let repo = base.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let line = |sid: &str, cwd: &std::path::Path| json!({"meta": {"session_id": sid, "cwd": cwd, "recording": format!("/r/{sid}.jsonl")}}).to_string();
+        let other = base.join("other");
+        std::fs::write(base.join("runs.jsonl"), [line("aaa-1", &repo), line("bbb-2", &other), line("ccc-3", &repo), line("ddd-4", &other)].join("\n")).unwrap();
+        assert_eq!(previous_session(&base, &repo, None).unwrap().0, "ccc-3", "this repo's latest");
+        assert_eq!(previous_session(&base, &repo, Some("aaa")).unwrap().0, "aaa-1", "by id prefix");
+        assert!(previous_session(&base, &base.join("none"), None).is_none());
+        std::fs::remove_dir_all(&base).ok();
     }
 }

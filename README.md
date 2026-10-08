@@ -15,6 +15,7 @@ Early. What works today:
   clean interrupts (`esc` or `ctrl-c`), follow-ups, readline-style editing (`←→`, `ctrl-a/e/u/k/w`) and history (`↑↓`,
   kept across sessions), `ctrl-o` to expand tool output, multi-line input (`ctrl-j`, or shift/alt-enter where the terminal reports
   it), copy last reply (`ctrl-y`), mouse scrolling (`ctrl-s` hands the mouse back to the terminal to select text).
+  `tazuna -c` continues this repo's latest session (`--resume <id>` a given one), with the earlier transcript on screen.
 - **Profiles**: repos with agent config (`CLAUDE.md`, `AGENTS.md`, `.claude/`) run the **repo profile**: Claude Code's own
   prompt and tools with the repo's settings, hooks and skills (your personal `~/.claude` setup stays out unless
   `--user-settings`; that includes claude.ai connectors). Repos whose config runs code ask once "Trust this repo?";
