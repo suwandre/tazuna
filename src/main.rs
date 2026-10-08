@@ -512,6 +512,20 @@ fn busy(s: &Session) -> bool {
     !matches!(s.activity, session::Activity::Ready | session::Activity::Done)
 }
 
+/// "Write: /repo/b.txt  (always = this tool)": what a permission request asks, made safe to show.
+fn question(req: &serde_json::Value) -> String {
+    let r = &req["request"];
+    let tool = session::shown(r["tool_name"].as_str().unwrap_or_default(), 60);
+    let i = &r["input"];
+    let what = match ["command", "file_path", "path", "pattern", "url"].iter().find_map(|k| i[*k].as_str()) {
+        _ if tool == "ExitPlanMode" => "approve this plan and start editing".to_string(),
+        Some(w) => session::shown(w, 400),
+        None => session::shown(&i.to_string(), 400),
+    };
+    let scope = if matches!(tool.as_str(), "Bash" | "mcp__lean__bash" | "PowerShell") { "this command" } else { "this tool" };
+    format!("{tool}: {what}  (always = {scope})")
+}
+
 /// The latest session this repo ran (or the one whose id starts with `id`): claude's session id and tazuna's recording.
 fn previous_session(base: &std::path::Path, cwd: &std::path::Path, id: Option<&str>) -> Option<(String, Option<std::path::PathBuf>)> {
     let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
@@ -560,7 +574,8 @@ fn run_live(
             asked_at = Some(Instant::now());
         }
         (v.input, v.cursor) = (ed.text.clone(), ed.cursor);
-        v.asking = s.asking.first().map(|(tool, what)| format!("{tool}: {what}"));
+        // the question on screen is the one an answer applies to: the front of live's queue
+        v.asking = live.pending.front().map(|req| question(req));
         v.mode = s.mode.clone();
         let dt = last.elapsed();
         last = Instant::now();
@@ -595,7 +610,9 @@ fn run_live(
         let alt = key.modifiers.contains(KeyModifiers::ALT);
         // an open permission question owns the keyboard: only y(es), a(lways), n(o)/esc answer it, every other key is
         // ignored, and keys in the first moment after it appears count for nothing (typing must not approve by accident)
-        if !live.pending.is_empty() {
+        // ctrl-c and ctrl-d still stop or quit: stopping answers every open question with no
+        let stop_key = ctrl && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'));
+        if !live.pending.is_empty() && !stop_key {
             let shown_for = asked_at.get_or_insert_with(Instant::now).elapsed();
             let answer = match key.code {
                 _ if shown_for < Duration::from_millis(ANSWER_DELAY_MS) => None,

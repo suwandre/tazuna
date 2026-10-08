@@ -28,7 +28,10 @@ Daily-driver features (no benchmark change: headless runs keep the "auto" mode a
   it appears, so typing cannot approve by accident, and Enter no longer means yes; the whole action is shown (every line
   of a command, control characters made visible, cuts marked) so a first line cannot hide the rest; "always" covers one
   exact command for shells and the tool otherwise, and the question says which; questions from a process that died are
-  dropped instead of being answered later.
+  dropped instead of being answered later. A second review pass: the question on screen is now drawn from the same queue
+  the answer applies to (a stop or a dead process can no longer leave a stale question showing), bidirectional overrides
+  and zero-width characters are made visible too (in the plan text as well), and ctrl-c/ctrl-d still stop or quit while a
+  question is open (the stop answers it with no).
 - **Input editing:** cursor movement, `ctrl-a/e/u/k/w`, `alt-backspace`, and message history on `↑↓`, kept across
   sessions. `esc` stops a run when nothing is typed. Expand moved from `ctrl-e` to `ctrl-o` (Claude Code's detail key).
 - **Resume:** `tazuna -c` continues this repo's latest session, `--resume <id>` a given one, with the earlier transcript

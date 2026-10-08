@@ -134,8 +134,6 @@ pub struct Session {
     pub profile: String,
     /// Permission mode in tazuna's words: auto, ask, edits, plan.
     pub mode: String,
-    /// Permission questions waiting for an answer: (tool, what it wants to do).
-    pub asking: Vec<(String, String)>,
 }
 
 impl Session {
@@ -164,7 +162,6 @@ impl Session {
             results: 0,
             profile: String::new(),
             mode: "auto".into(),
-            asking: Vec::new(),
         }
     }
 
@@ -270,29 +267,17 @@ impl Session {
             }
             (Some("harness_review"), _) => self.push(Block::Notice { text: "self-review: checking the change against the task".into(), error: false }),
             (Some("harness_permission"), _) => {
-                let i = &e["input"];
-                // the exact action, all of it: a first line alone could hide the rest of a command
-                let what = ["command", "file_path", "path", "pattern", "url"].iter().find_map(|k| i[*k].as_str()).map(|x| shown(x, 400));
-                let what = match (s(&e["tool"]).as_str(), what) {
-                    ("ExitPlanMode", _) => "approve this plan and start editing".to_string(),
-                    (_, Some(w)) => w,
-                    _ => shown(&i.to_string(), 400),
-                };
-                let what = format!("{what}  (always = {})", e["scope"].as_str().unwrap_or("this tool"));
+                // the question itself is drawn from live's queue; the transcript only gets the plan to approve
                 if e["tool"] == "ExitPlanMode" {
-                    self.push(Block::Text { text: format!("**Plan**\n\n{}", i["plan"].as_str().unwrap_or_default()), live: false });
+                    let plan: String = e["input"]["plan"].as_str().unwrap_or_default().chars().map(|c| if invisible(c) || (c.is_control() && c != '\n') { '�' } else { c }).collect();
+                    self.push(Block::Text { text: format!("**Plan**\n\n{plan}"), live: false });
                 }
-                self.asking.push((s(&e["tool"]), what));
                 self.activity = Activity::Waiting;
             }
             (Some("harness_permission_cleared"), _) => {
-                self.asking.clear();
                 self.push(Block::Notice { text: "open permission questions dropped: claude stopped".into(), error: false });
             }
             (Some("harness_permission_done"), _) => {
-                if !self.asking.is_empty() {
-                    self.asking.remove(0);
-                }
                 self.mode = mode_name(e["mode"].as_str().unwrap_or_default()).to_string();
                 let verb = match (e["allow"] == true, e["always"] == true) {
                     (true, true) => "allowed for this session:",
@@ -488,12 +473,18 @@ pub fn shown(text: &str, max: usize) -> String {
         .map(|c| match c {
             '\n' => '⏎',
             '\t' => ' ',
-            c if c.is_control() => '�',
+            c if c.is_control() || invisible(c) => '�',
             c => c,
         })
         .collect();
     let n = clean.chars().count();
     if n <= max { clean } else { format!("{}… (+{} chars)", clean.chars().take(max).collect::<String>(), n - max) }
+}
+
+/// Characters that change how text around them looks without showing themselves: bidirectional overrides (which can
+/// make "rm" read as "mr"), zero-width characters, line and paragraph separators.
+fn invisible(c: char) -> bool {
+    matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{2028}' | '\u{2029}' | '\u{FEFF}' | '\u{061C}' | '\u{180E}')
 }
 
 /// claude's permission mode names in tazuna's words.
@@ -516,6 +507,8 @@ mod tests {
         assert_eq!(shown("ls\nrm -rf ~", 100), "ls⏎rm -rf ~");
         assert_eq!(shown("ok\u{1b}[2K\rfake", 100), "ok�[2K�fake");
         assert_eq!(shown(&"x".repeat(10), 4), "xxxx… (+6 chars)");
+        assert_eq!(shown("echo hi\u{202E}fr- mr", 100), "echo hi�fr- mr", "a right-to-left override cannot reverse what is shown");
+        assert_eq!(shown("a\u{200B}b\u{2028}c", 100), "a�b�c");
     }
 
     #[test]

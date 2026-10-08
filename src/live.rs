@@ -108,8 +108,12 @@ pub struct Live {
     /// Permission mode as claude names it: bypassPermissions (tazuna's "auto"), default ("ask"), acceptEdits ("edits"),
     /// plan. Every mode but auto routes claude's permission questions to tazuna (`--permission-prompt-tool stdio`).
     pub permission_mode: String,
-    /// Questions waiting for the user's answer: claude's `can_use_tool` control requests.
+    /// Questions waiting for the user's answer: claude's `can_use_tool` control requests. The UI shows the front one
+    /// from here, so what is shown and what an answer applies to cannot drift apart.
     pub pending: VecDeque<Value>,
+    /// Events produced outside `poll` (an interrupt answering questions, a dead process dropping them), handed out by
+    /// the next `poll` so the screen hears about them.
+    outbox: Vec<(f64, Value)>,
     /// What the user allowed for the rest of the session ("always"): `always_key` of each answer.
     allowed: std::collections::HashSet<String>,
     requests_sent: u64,
@@ -187,6 +191,7 @@ impl Live {
             tasks: Default::default(),
             permission_mode: "bypassPermissions".into(),
             pending: VecDeque::new(),
+            outbox: Vec::new(),
             allowed: Default::default(),
             requests_sent: 0,
             tasks_done: None,
@@ -323,8 +328,8 @@ impl Live {
 
     pub fn interrupt(&mut self) -> Option<(f64, Value)> {
         // a stop also answers open questions: no
-        while !self.pending.is_empty() {
-            self.answer(false, false);
+        while let Some(e) = self.answer(false, false) {
+            self.outbox.push(e);
         }
         if self.verifying {
             // claude is idle while tests run: nothing to interrupt there, the run ends when the tests return
@@ -359,7 +364,7 @@ impl Live {
 
     /// Events that arrived since the last call, timestamped and recorded.
     pub fn poll(&mut self) -> Vec<(f64, Value)> {
-        let mut out = Vec::new();
+        let mut out = std::mem::take(&mut self.outbox);
         while let Ok((generation, msg)) = self.rx.try_recv() {
             if generation != self.generation {
                 continue;
@@ -569,7 +574,8 @@ impl Live {
         // questions from a process that is gone can no longer be answered
         if !self.pending.is_empty() {
             self.pending.clear();
-            self.record(json!({"type": "harness_permission_cleared"}));
+            let e = self.record(json!({"type": "harness_permission_cleared"}));
+            self.outbox.push(e);
         }
         // ponytail: a dead process reports no cost, so these runs log $0; the session's estimate is in the recording
         while let Some(run) = self.runs.pop_front() {
