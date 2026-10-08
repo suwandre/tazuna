@@ -44,8 +44,9 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    3. ~~A verifier in a fresh context~~ (v0.0.15 `--review-model`, opt-in). Gauge with Haiku 5.5 high implementing and
       Opus 5.5 medium reviewing: lower judge than Opus alone on both tasks, and the reviewer passed spec-divergent work.
       Not worth a full run as is; a stricter reviewer (high effort, acceptance criteria one by one) is the untested next try.
-4. **Cost experiments:** stuck detection (stop when two attempts give identical results; back to planning after 3 failed
-   fixes); hash-anchored edits in tazuna's own edit tool (OMP claims −61% output tokens).
+4. ~~Cost experiments~~: checked against 210 recorded runs (2026-10-08) and not built. Stuck detection: 0 runs repeated
+   a call with the same failure (13 identical repeats in 9 of 184 runs, none failing). Hash-anchored edits: old text
+   retyped through the edit tools is 0.6% of output tokens and ~0.2% of a run's cost; most edits go through Bash.
 5. **Footprint and UI:** ~~add RAM, CPU and startup time to Tier 0~~ (done 2026-10-08); ~~real multiline input~~ (done); ~~cache misses in the Cockpit sidebar~~ (done);
    ~~text selection under mouse capture~~ (done, ctrl-s); ~~thinking text~~ (not possible: the `claude` CLI streams only token estimates, even with thinking summaries on);
    ~~check the edit-diff view in a real run~~ (fixed: Claude Code's own Edit showed raw JSON); ~~README with the company
@@ -87,6 +88,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 | More verification work | neutral | Claude already tests its own work |
 | Bash output cap | neutral | rarely triggers |
 | Tool search, OmniRoute | skipped | no expected gain; dropped by the user |
+| Stuck detection | not built | 0 of 184 tazuna runs repeated a call with the same failure |
+| Hash-anchored edits | not built | old text in edits is 0.6% of output tokens, ~0.2% of cost |
 
 ## Decision log
 
