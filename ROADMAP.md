@@ -21,38 +21,42 @@ flags, system prompt, tools, MCP, settings, hooks. Other providers get tazuna's 
 **Limits to keep in mind.** On Claude, the `claude` CLI underneath (~200 MB, ~1 s start) sets the floor for footprint;
 tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint wins come with tazuna's own loop.
 
-## Where we stand (2026-10-07, v0.0.11)
+## Where we stand (2026-10-08, v0.0.17)
 
-- Five real company tickets (acme/app), 10 runs per arm, Opus 5.5 medium: tazuna lean 5.65 judge at −19% cost
-  vs stock Claude Code 5.55; repo profile 5.35 at −5% (it is stock Claude Code's prompt plus tazuna's extras). Quality is
-  tied across arms; cost is where tazuna wins.
-- The cross-harness table in the README is from v0.0.1 and has not been re-run since.
-- `repo-lean` (lean prompt + Claude's own tools + the repo's hooks, skills, CLAUDE.md) is built but not benchmarked.
+- **Quality: at or above stock Claude Code, never proven below.** Go tasks, all harnesses at current versions judged
+  together: tazuna default 6.67 (1st of 8; OMP 6.54, stock 6.38). Company tickets (5 tickets, Opus medium): tazuna lean 5.95,
+  repo profile 5.95, stock 6.00 (same day); in the latest two-ticket pool the default (repo + diagnostics) 7.12 vs stock
+  6.62. All within noise.
+- **Cost:** default −5% vs stock on Go tasks, −2% on the company tickets; lean −19% to −28% (no repo hooks or skills);
+  diagnostics −11% vs without. Cheaper than OMP and Hermes by 20-25%.
+- **Footprint:** UI 7 MB and 6 ms to first frame vs Claude Code's 190 MB and 0.45 s; the `claude` process underneath is
+  the same size as Claude Code's own, so the total only shrinks with tazuna's own loop.
+- **Shipped:** live UI (four designs, Cockpit default), headless `--run`, recordings and replay, run log and labels,
+  router (tiny repos to Sonnet), repo / repo-lean / lean profiles with trust, verification (tests + type check, new errors
+  only), diagnostics after each edit (default), `--self-review`, `--review-model`, background-command handling,
+  multi-line input, select mode, cache-miss display, Tier 0 footprint metrics.
 
-## Order of work
+## Done
 
-1. ~~Benchmark repo-lean~~ (done 2026-10-07: −12% cost, −0.90 judge vs same-day stock; stays opt-in, repo profile stays
-   the default).
-2. ~~Re-run the cross-harness table~~ (done 2026-10-07, all current versions, one judge pool per task; README): tazuna
-   default 6.67 (1st of 8; OMP 6.54, stock 6.38 within noise) at $0.41: −5% vs stock ($0.43), −20-25% vs OMP and Hermes.
-   Lean tazuna 6.04 at −28%.
-3. **Quality experiments**, one at a time, each against a same-day stock baseline:
-   1. ~~Compiler errors in edit results~~ (dirge, OMP). Done 2026-10-08 in v0.0.13 as a `PostToolUse` hook that also
-      fires after Bash edits; default on: same judge, −11% cost vs without.
-   2. ~~Finish rules plus a self-review turn~~ (v0.0.14 `--self-review`, opt-in): +0.38 judge for +31% cost on two
-      tickets; not worth the default. Possible follow-up: a cheaper review (Sonnet, or only the acceptance-criteria step).
-   3. ~~A verifier in a fresh context~~ (v0.0.15 `--review-model`, opt-in). Gauge with Haiku 5.5 high implementing and
-      Opus 5.5 medium reviewing: lower judge than Opus alone on both tasks, and the reviewer passed spec-divergent work.
-      Not worth a full run as is; a stricter reviewer (high effort, acceptance criteria one by one) is the untested next try.
-4. ~~Cost experiments~~: checked against 210 recorded runs (2026-10-08) and not built. Stuck detection: 0 runs repeated
-   a call with the same failure (13 identical repeats in 9 of 184 runs, none failing). Hash-anchored edits: old text
-   retyped through the edit tools is 0.6% of output tokens and ~0.2% of a run's cost; most edits go through Bash.
-5. **Footprint and UI:** ~~add RAM, CPU and startup time to Tier 0~~ (done 2026-10-08); ~~real multiline input~~ (done); ~~cache misses in the Cockpit sidebar~~ (done);
-   ~~text selection under mouse capture~~ (done, ctrl-s); ~~thinking text~~ (not possible: the `claude` CLI streams only token estimates, even with thinking summaries on);
-   ~~check the edit-diff view in a real run~~ (fixed: Claude Code's own Edit showed raw JSON); ~~README with the company
-   results~~ (summary line; tables in CHANGELOG 0.0.10-0.0.15).
-6. **Real use and labels:** use tazuna for real work and rate runs (`/good`, `/bad`, `--label-git`). The Jev router needs
-   ~100-200 labeled runs.
+1. ~~Benchmark repo-lean~~ (2026-10-07; v0.0.17 then lifted it to stock quality at stock cost: stays opt-in).
+2. ~~Re-run the cross-harness table~~ (2026-10-07, README).
+3. ~~Quality experiments~~: diagnostics after each edit (kept, default); self-review turn (+0.38 judge, +31% cost: opt-in);
+   fresh-context reviewer with Haiku 5.5 implementing (worse than Opus alone: opt-in).
+4. ~~Cost experiments~~: stuck detection and hash-anchored edits ruled out by 210 recorded runs (no loops; edits ~0.2% of
+   cost).
+5. ~~Footprint and UI~~: Tier 0 measures startup, UI CPU and memory; multi-line input; select mode (ctrl-s); cache misses in
+   the Cockpit; Claude Code's own edits shown as diffs. Thinking text: not possible (the CLI streams only token counts).
+
+## Next
+
+1. **Daily-driver gaps** (the user's bar for real use: "not comfortable yet"): what Claude Code has that tazuna lacks for
+   everyday work, e.g. permission prompts or an ask-before-edit mode, plan mode, slash commands, image paste, a visible
+   subagent tree. List them, rank by need, close the top ones.
+2. **Own agent loop for other providers** (design first): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
+   with an API key), runs its own tools and reuses the event format, so the UI, run log, diagnostics, verification and
+   reviewer keep working. Unlocks cheap non-Anthropic implementers with a Claude reviewer and the footprint floor (no
+   `claude` process). Claude on the subscription stays on the CLI path. Needs an API key and a spending limit.
+3. **Real use and labels** once 1 is good enough: rate runs (`/good`, `/bad`, `--label-git`); the Jev router needs ~100-200.
 
 ## Parked (not tested yet)
 
@@ -71,8 +75,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
   Haiku 5.5 high + Opus 5.5 medium reviewer has been tried (2026-10-08: worse than Opus alone); other pairs and a stricter
   reviewer are untested.
 - `--fallback-model`, `--advisor`; a cross-family judge; real sandboxing; git tags and a fixed scoreboard.
-- Smaller items: a verification shortcut, moving the benchmark kit into the repo. (Done 2026-10-08: claude waking up for a
-  background command is logged as its own run, and `--run` waits for it.)
+- A cheaper or stricter review (Sonnet, or acceptance criteria one by one at high effort).
+- Smaller items: a verification shortcut, moving the benchmark kit into the repo.
 
 ## Tried or ruled out (do not retry without a new reason)
 
