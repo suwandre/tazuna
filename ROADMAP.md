@@ -57,7 +57,7 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 2. **Cheap `claude` levers** before the own loop: 5-minute prompt cache (`CLAUDE_CODE_PROMPT_CACHE_TTL=5m`; cache writes
    are 30% of a run's cost at the 1-hour rate), a lower Bash output limit (`BASH_MAX_OUTPUT_LENGTH`), then earlier
    compaction and a cheaper explorer subagent. Each an A/B against the default.
-3. **Own agent loop for other providers** (design first): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
+3. **Own agent loop for other providers** (design: [docs/OWN_LOOP.md](docs/OWN_LOOP.md)): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
    with an API key), runs its own tools and reuses the event format, so the UI, run log, diagnostics, verification and
    reviewer keep working. Unlocks cheap non-Anthropic implementers with a Claude reviewer and the footprint floor (no
    `claude` process). Claude on the subscription stays on the CLI path. Needs an API key and a spending limit.
