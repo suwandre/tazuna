@@ -56,9 +56,7 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    have): external editor, stash, vim mode, a background-task view, rewind.
 2. **Cheap `claude` levers** before the own loop: ~~5-minute prompt cache~~ (v0.0.20: −10%, same judge; headless default),
    ~~a lower Bash output limit~~ (+30%: ruled out), ~~repo map~~ (v0.0.21: no gain, the agent reads as much), then
-   earlier compaction and a cheaper explorer subagent. Each an A/B against the default. Also a **repo map** (Aider, maki): a
-   compact outline of files and symbols up front, to cut the 150-200k chars of code each run reads (re-reading context is
-   52% of a run's cost); works on the `claude` path through the prompt or a hook.
+   earlier compaction and a cheaper explorer subagent. Each an A/B against the default.
 3. **Own agent loop for other providers** (design: [docs/OWN_LOOP.md](docs/OWN_LOOP.md)): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
    with an API key), runs its own tools and reuses the event format, so the UI, run log, diagnostics, verification and
    reviewer keep working. Unlocks cheap non-Anthropic implementers with a Claude reviewer and the footprint floor (no
@@ -77,7 +75,7 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    the one whose vendor defined the format.
 5. **Session replay** as a review tool.
 
-Worth borrowing besides the repo map: an OS sandbox for commands (Codex), checkpoints and rewind (parked).
+Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (parked).
 
 ## Parked (not tested yet)
 
