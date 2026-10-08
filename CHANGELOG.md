@@ -16,6 +16,28 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.17 (2026-10-08)
+
+**repo-lean reads before it relies on a name.** Recorded runs showed why repo-lean scored lowest: with Claude Code's own
+tools and the short prompt it read ~25% less code than Claude Code's own prompt (150k vs ~197k chars, median over 10
+company-ticket runs) and ran the type check less (2 vs 3); on T-921 it read 102k vs 118-167k and the judge flagged a
+guessed database column. Two lines now go into repo-lean's prompt (~60 tokens): read the code you change, its callers and
+the definition of every name you rely on; run the type check and the relevant tests before finishing.
+
+T-921 + T-870, 2 runs each, side pool of 12 per ticket judged together, Opus 5.5 medium:
+
+| Arm | 921 | 870 | Judge avg | Cost (2 tickets, medians) |
+|---|---|---|---|---|
+| tazuna repo profile + diagnostics (0.0.12, the default since 0.0.13) | 7.0, 7.0 | 6.5, 8.0 | **7.12** | $4.53 |
+| tazuna repo profile, no diagnostics (0.0.12) | 6.5, 7.0 | 7.5, 7.0 | 7.00 | $5.42 |
+| stock Claude Code | 6.0, 7.0 | 7.5, 6.0 | 6.62 | $4.63 |
+| **tazuna repo-lean 0.0.17** | 6.5, 5.5 | 7.0, 7.0 | **6.50** | $4.62 |
+| tazuna lean | 5.5, 6.0 | 6.5, 7.0 | 6.25 | $3.82 |
+| tazuna repo-lean 0.0.11 | 6.0, 6.0 | 6.0, 5.5 | 5.88 | $3.55 |
+
+The two lines lifted repo-lean by 0.62 to stock level, by reading more, and its cost rose to stock's. It no longer has an
+edge: the default (repo profile with diagnostics) scored higher at about the same cost. repo-lean stays opt-in.
+
 ## 0.0.16 (2026-10-08)
 
 **Background commands.** When claude starts a command in the background and ends its turn, it wakes up again once the

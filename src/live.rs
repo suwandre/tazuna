@@ -24,6 +24,10 @@ const MID_PROMPT: &str = "You are a coding agent working in {cwd}. Today is {dat
 - Never run destructive commands (rm -rf outside the working directory, git reset --hard, force push). Do not commit.
 - Finish with a short summary of what changed and how you verified it.";
 
+/// repo-lean only: with Claude Code's own tools the short prompt read ~25% less code and ran the type check less than
+/// Claude Code's own prompt did (company tickets, 2026-10-07), and the judge marked down guessed names.
+const CHECK_RULES: &str = "\n- Before changing code, read the code you change, its callers, and the definition of every name you rely on (database columns, fields, functions, APIs). Never assume one exists.\n- Before finishing, run the repo's type check and the relevant tests.";
+
 /// `--self-review`: appended to the system prompt, against ending early and against unchecked assumptions.
 const FINISH_RULES: &str = "Finish only when the task is fully done: every requirement and acceptance criterion in the request is met and checked. Do not stop to ask for confirmation or leave steps for the user. Before relying on a name you have not read (a database column, function, field, API), read where it is defined.";
 
@@ -558,6 +562,7 @@ impl Live {
             Profile::RepoLean => {
                 // Claude Code loads CLAUDE.md (and its @imports) itself, but not AGENTS.md: that one goes in the prompt
                 let mut prompt = self.mid_prompt();
+                prompt.push_str(CHECK_RULES);
                 let imported = ["CLAUDE.md", ".claude/CLAUDE.md"].iter().any(|f| std::fs::read_to_string(self.cwd.join(f)).is_ok_and(|t| t.contains("@AGENTS.md")));
                 if self.project_instructions && !imported {
                     let (text, bytes, sources) = project_instructions(&self.cwd, &["AGENTS.md"]);
