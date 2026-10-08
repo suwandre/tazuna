@@ -27,8 +27,9 @@ Early. What works today:
 - **Verified, not claimed**: when claude says it is done, tazuna runs the tests for what changed (and the repo's
   `typecheck` script, failing only on type errors the run added) and sends failures back
   (up to 2 rounds). `--verify "<cmd>"` overrides the detected command, `--no-verify` turns it off.
-- **Diagnostics after each edit** (`--diagnostics`, opt-in): type/compile errors the agent just added come back to it at
-  once (the repo's `typecheck` script, or `go vet`), not only at the end.
+- **Diagnostics after each edit**: type/compile errors the agent just added come back to it at once (the repo's
+  `typecheck` script, or `go vet`), not only at the end. Same quality, −11% cost on the company tickets.
+  `--no-diagnostics` turns it off.
 - **Router**: without `--model`/`--effort`, tiny repos (≤ 50 files) start on Sonnet 5.5 medium and escalate to Opus 5.5 high
   if their tests fail; everything else runs Opus 5.5 medium. On tiny-repo tasks: −67% cost, same hidden-test results.
 - **Project instructions**: the repo's `CLAUDE.md` / `AGENTS.md` go into the prompt (cached); nested ones are listed.

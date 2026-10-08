@@ -61,7 +61,7 @@ pub struct Live {
     pub verify: verify::Mode,
     /// Passed to the tool server: shrink bash output above this many chars (0: off).
     pub bash_cap: usize,
-    /// Type/compile errors after each edit (`--diagnostics`): the hook's state directory once started.
+    /// Type/compile errors after each edit (on by default, `--no-diagnostics`): the hook's state directory once started.
     pub diagnostics: bool,
     diag_dir: Option<PathBuf>,
     /// Add the repo's CLAUDE.md / AGENTS.md to the system prompt (lean profile; the repo profile lets Claude Code load them).

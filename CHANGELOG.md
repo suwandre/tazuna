@@ -15,6 +15,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.13 (2026-10-08)
+
+**Diagnostics after each edit are on by default** (`--no-diagnostics` turns them off), after this A/B on the five company
+tickets (acme/app, Opus 5.5 medium, repo profile, 2 runs per arm per ticket, both arms the same evening, every
+ticket's runs judged as one pool):
+
+| Arm | 872 | 921 | 946 | 870 | 698 | Judge avg | Total cost (median per ticket) | New type errors |
+|---|---|---|---|---|---|---|---|---|
+| **tazuna 0.0.12 `--diagnostics`** | 5.00 | 6.25 | 3.50 | 7.00 | 7.00 | **5.75** | **$12.66 (−11%)** | 0 / 10 |
+| tazuna 0.0.12 without | 5.00 | 6.25 | 3.50 | 7.00 | 7.00 | 5.75 | $14.18 | 0 / 10 |
+| stock Claude Code (previous afternoon) | 5.00 | 7.00 | 4.50 | 6.50 | 7.00 | 6.00 | $13.19 | 0 / 10 |
+
+Identical judge scores on every ticket; 11% cheaper and ~12% fewer turns, below the 15% cost threshold, so suggestive rather
+than proven, at no quality cost. No run broke the type check, so the gain is errors caught right after the edit instead of
+by the agent's own later type-check runs. The 20 runs and judging took the 5-hour window from 45% to 100%.
+
+Tier 0: binary 2.52 MB (+84 KB); input tokens per turn unchanged (2,983; the hook adds nothing to the prompt).
+
 ## 0.0.12 (2026-10-07)
 
 **`--diagnostics`: compiler errors right after an edit** (opt-in until benchmarked). tazuna adds a `PostToolUse` hook to

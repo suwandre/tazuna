@@ -5,7 +5,7 @@
 //!          fail; otherwise Opus medium)
 //!          [--verify "<cmd>" | --no-verify]   # after claude says done, tazuna runs the tests (auto-detected by default)
 //!          [--bash-cap N]   # shrink bash output longer than N chars (default 8000; 0 = off)
-//!          [--diagnostics]  # after each edit, tell claude about type/compile errors it added
+//!          [--no-diagnostics]  # do not tell claude about type/compile errors right after its edits
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
 //!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
 //!          [--trust] [--user-settings]   # trust the repo's hooks/skills without asking; also load your ~/.claude settings
@@ -97,7 +97,7 @@ fn args() -> Result<Args> {
         log: None,
         verify: verify::Mode::Auto,
         bash_cap: mcp::DEFAULT_BASH_CAP,
-        diagnostics: false,
+        diagnostics: true,
         project_instructions: true,
         profile: None,
         trust: false,
@@ -123,6 +123,7 @@ fn args() -> Result<Args> {
             "--no-verify" => a.verify = verify::Mode::Off,
             "--bash-cap" => a.bash_cap = val()?.parse()?,
             "--diagnostics" => a.diagnostics = true,
+            "--no-diagnostics" => a.diagnostics = false,
             "--no-project-instructions" => a.project_instructions = false,
             "--profile" => {
                 a.profile = Some(match val()?.as_str() {
