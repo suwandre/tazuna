@@ -93,11 +93,14 @@ itself matched that profile on the real-work tasks.)
 
 | | tazuna | stock Claude Code |
 |---|---|---|
-| Input tokens per turn before any work (system prompt + tools) | 2.9k | 21k |
-| App binary / memory / CPU while animating | 2.3 MB / ~7 MB / ~1% | — |
-| Tool server memory | 1.8 MB (built in) | built in |
+| Input tokens per turn before any work (system prompt + tools) | 3.0k (lean) / ~22k (repo profile) | 21k |
+| App binary | 2.6 MB | — |
+| UI memory / CPU (120x40 terminal) | 7 MB / 1.6% while animating | 190 MB / 2.2% idle (first 12 s) |
+| UI start to first frame | 6 ms | 0.45 s |
+| Tool server memory (lean profile) | 2.1 MB (built in) | built in |
 
-tazuna runs on top of the `claude` CLI (~200 MB, ~1 s to start).
+tazuna's UI runs on top of a headless `claude` process, which needs about as much memory as Claude Code's own UI: the win is
+the UI layer, not the total. Measured 2026-10-08 on an M5 Pro with `bench/footprint.py` (every version, in Tier 0).
 
 **How to read these numbers**: one run varies by about ±1.2 judge points and ±$0.40. Re-running the same setup a day later
 moved median cost by 24% (mean 9%), and two arms that behaved identically scored 0.67 apart. We treat judge differences

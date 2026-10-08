@@ -4,7 +4,8 @@ Every change that can affect the agent is measured before it stays. Each entry l
 that change no measurable metric (CPU, memory, binary size, tokens, cost, quality) get no metric table.
 
 **Tiers**
-- **Tier 0** (every change, free): tests, `bench/tier0.sh` (binary size, replay render time, input tokens per turn).
+- **Tier 0** (every change, free): tests, `bench/tier0.sh` (binary size, replay render time, input tokens per turn, and since
+  0.0.15 startup time, UI CPU and memory while animating, tool server memory).
 - **Tier 1** (changes to prompt, tools, routing or stop logic): 6 real-work Go tasks × 2 runs vs a same-day baseline. Judge
   score, hidden tests, cost, turns, time, cache hit rate.
 - **Tier 2** (releases): Tier 1 plus the cross-harness table in the README.
