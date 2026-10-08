@@ -31,6 +31,20 @@ const CHECK_RULES: &str = "\n- Before changing code, read the code you change, i
 /// `--self-review`: appended to the system prompt, against ending early and against unchecked assumptions.
 const FINISH_RULES: &str = "Finish only when the task is fully done: every requirement and acceptance criterion in the request is met and checked. Do not stop to ask for confirmation or leave steps for the user. Before relying on a name you have not read (a database column, function, field, API), read where it is defined.";
 
+/// `--explorer`: reading code is most of a run's cost (each turn re-reads everything read so far at the main model's
+/// rate), so a cheaper subagent reads and answers in short; the main model reads a file only right before editing it.
+const EXPLORER_RULE: &str = "To find and understand code, ask the explorer subagent (Task tool) a precise question; it reads and searches the repo and answers with file paths, line ranges and the lines that matter. Read a whole file yourself only right before you edit it.";
+
+fn explorer_agent(model: &str) -> String {
+    json!({"explorer": {
+        "description": "Finds and reads code to answer a precise question about the repo; returns file paths, line ranges and the facts that matter, not whole files.",
+        "prompt": "You explore a codebase for another agent. Answer its question with file paths, line numbers and short quotes of the lines that matter: complete, but brief. Do not edit anything.",
+        "tools": ["Read", "Grep", "Glob", "Bash"],
+        "model": model,
+    }})
+    .to_string()
+}
+
 /// `--self-review`: sent once when claude first says it is done and the run changed files.
 const REVIEW: &str = "Before you finish, review your own change:
 1. Run `git diff` and read all of it.
@@ -145,6 +159,8 @@ pub struct Live {
     /// Put a repo map in front of the session's first message (`--repo-map`); `mapped` once it went out.
     pub repo_map: bool,
     mapped: bool,
+    /// Model of the explorer subagent (`--explorer sonnet`), repo profile only.
+    pub explorer: Option<String>,
     pub verify: verify::Mode,
     /// Passed to the tool server: shrink bash output above this many chars (0: off).
     pub bash_cap: usize,
@@ -233,6 +249,7 @@ impl Live {
             cache_ttl: None,
             repo_map: false,
             mapped: false,
+            explorer: None,
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
             diagnostics: false,
@@ -664,7 +681,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -730,13 +747,17 @@ impl Live {
             }
         }
         match self.profile {
-            Profile::Repo if self.self_review => {
-                cmd.args(["--exclude-dynamic-system-prompt-sections", "--append-system-prompt", FINISH_RULES]);
-            }
             Profile::Repo => {
                 // Claude Code's own prompt and tools; it loads the repo's CLAUDE.md (nested files, @imports), settings,
                 // hooks and skills itself. Per-machine prompt sections move to the first message for cross-session caching.
                 cmd.arg("--exclude-dynamic-system-prompt-sections");
+                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), self.explorer.as_ref().map(|_| EXPLORER_RULE)].into_iter().flatten().collect();
+                if !append.is_empty() {
+                    cmd.args(["--append-system-prompt", &append.join("\n")]);
+                }
+                if let Some(model) = &self.explorer {
+                    cmd.args(["--agents", &explorer_agent(model)]);
+                }
             }
             Profile::RepoLean => {
                 // Claude Code loads CLAUDE.md (and its @imports) itself, but not AGENTS.md: that one goes in the prompt

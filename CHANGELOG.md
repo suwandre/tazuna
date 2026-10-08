@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.22 (2026-10-08)
+
+**`--explorer <model>`** (opt-in until benchmarked, repo profile): a custom subagent (`claude --agents`) on a cheaper model
+reads and searches the code and answers in short (paths, line ranges, the lines that matter); one appended rule tells the
+main model to ask it and to read a whole file itself only right before editing. Reading is most of a run's cost and the
+repo map did not reduce it; this moves the reading off the expensive model and out of its context.
+
 ## 0.0.21 (2026-10-08)
 
 **`--repo-map`** (opt-in until benchmarked): the session's first message starts with a map of the repo, the folders with
