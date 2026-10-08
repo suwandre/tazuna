@@ -36,6 +36,14 @@ const REVIEW: &str = "Before you finish, review your own change:
 5. If you changed anything, run the relevant tests again.
 Then finish with a short summary of what changed.";
 
+/// The run-log prompt of a run claude started on its own.
+const BACKGROUND_PROMPT: &str = "(claude continued on its own after a background command finished)";
+
+/// The first event of a model turn.
+fn starts_turn(e: &Value) -> bool {
+    (e["type"] == "stream_event" && e["event"]["type"] == "message_start") || e["type"] == "assistant"
+}
+
 enum Msg {
     Line(String),
     /// stderr closed: the process is exiting.
@@ -79,6 +87,11 @@ pub struct Live {
     pub diagnostics: bool,
     /// Finish rules in the prompt plus one self-review turn per run (`--self-review`).
     pub self_review: bool,
+    /// Commands claude started that have not finished: claude wakes up again for background ones, so the session is
+    /// not idle until they are done.
+    tasks: std::collections::HashSet<String>,
+    /// When the last of `tasks` finished.
+    tasks_done: Option<Instant>,
     /// Independent reviewer: model and effort (`--review-model`, `--review-effort`).
     pub review_model: Option<(String, String)>,
     diag_dir: Option<PathBuf>,
@@ -95,6 +108,8 @@ pub struct Live {
     /// claude's last result event and the last run-log line (headless mode reports them).
     pub last_result: Option<Value>,
     pub last_log: Option<Value>,
+    /// Every run logged this session (headless sums them: claude may continue on its own after the first).
+    pub logs: Vec<Value>,
     /// Router decision: lane name and why.
     lane: (String, String),
     /// Id of the last run written to the run log (what `/good` and `/bad` label).
@@ -143,6 +158,8 @@ impl Live {
             diagnostics: false,
             self_review: false,
             review_model: None,
+            tasks: Default::default(),
+            tasks_done: None,
             diag_dir: None,
             project_instructions: true,
             profile: Profile::Lean,
@@ -152,6 +169,7 @@ impl Live {
             held: VecDeque::new(),
             last_result: None,
             last_log: None,
+            logs: Vec::new(),
             lane: ("manual".into(), String::new()),
             last_run: None,
             escalate: None,
@@ -220,7 +238,9 @@ impl Live {
 
     /// Nothing in flight: every run has ended and no message is waiting.
     pub fn idle(&self) -> bool {
-        self.runs.is_empty() && !self.verifying && self.held.is_empty()
+        // after the last background command ends, claude takes a moment to start the turn it wakes up for
+        let settled = self.tasks_done.is_none_or(|t| t.elapsed().as_secs() >= 5);
+        self.runs.is_empty() && !self.verifying && self.held.is_empty() && self.tasks.is_empty() && settled
     }
 
     /// Asks claude to stop the current run; the process stays up and keeps its cache.
@@ -270,6 +290,24 @@ impl Live {
                         self.session_id = e["session_id"].as_str().map(String::from);
                         self.claude_version = e["claude_code_version"].as_str().map(String::from);
                     }
+                    match (e["type"].as_str(), e["subtype"].as_str(), e["task_id"].as_str()) {
+                        (Some("system"), Some("task_started"), Some(id)) => {
+                            self.tasks.insert(id.to_string());
+                        }
+                        (Some("system"), Some("task_notification"), Some(id)) => {
+                            if self.tasks.remove(id) && self.tasks.is_empty() {
+                                self.tasks_done = Some(Instant::now());
+                            }
+                        }
+                        _ => {}
+                    }
+                    if self.runs.is_empty() && !self.verifying && starts_turn(&e) {
+                        // claude woke up without a message from us (a background command it started has finished):
+                        // its turns and cost get a run of their own instead of going unlogged
+                        let run = Run::new(BACKGROUND_PROMPT, self.elapsed_ms(), &self.cwd);
+                        self.runs.push_back(run);
+                        self.tasks_done = None;
+                    }
                     if let Some(run) = self.runs.front_mut() {
                         run.observe(&e);
                     }
@@ -291,6 +329,8 @@ impl Live {
                 Msg::Verified(o) => out.extend(self.after_verify(o)),
                 Msg::Reviewed(r) => out.extend(self.after_review(r)),
                 Msg::Exited(stderr) => {
+                    // the process and its commands are gone
+                    self.tasks.clear();
                     let code = self.child.take().and_then(|mut c| c.wait().ok()).and_then(|st| st.code());
                     self.stdin = None;
                     self.end_runs();
@@ -459,6 +499,7 @@ impl Live {
     fn log(&mut self, line: Value) {
         self.last_run = line["id"].as_str().map(String::from);
         self.last_log = Some(line.clone());
+        self.logs.push(line.clone());
         // one write per line: parallel tazuna runs append to the same log without interleaving
         let appended = std::fs::OpenOptions::new().create(true).append(true).open(&self.runs_log).and_then(|mut f| f.write_all(format!("{line}\n").as_bytes()));
         if let Err(e) = appended {
@@ -659,6 +700,14 @@ pub fn in_git_repo() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spots_turns_claude_starts_itself() {
+        assert!(starts_turn(&json!({"type": "stream_event", "event": {"type": "message_start"}})));
+        assert!(starts_turn(&json!({"type": "assistant", "message": {}})));
+        assert!(!starts_turn(&json!({"type": "result"})));
+        assert!(!starts_turn(&json!({"type": "system", "subtype": "init"})));
+    }
 
     const ALL: &[&str] = &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"];
 

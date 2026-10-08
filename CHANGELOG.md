@@ -16,6 +16,22 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.16 (2026-10-08)
+
+**Background commands.** When claude starts a command in the background and ends its turn, it wakes up again once the
+command finishes. tazuna now tracks claude's running commands: the session is not idle (and `--run` does not exit) until
+they are done and claude has had 5 s to start the turn it wakes up for. That turn is logged as a run of its own (prompt
+"(claude continued on its own …)") with its cost, and `--run` output sums every run of the session (`tazuna.runs`).
+Before, `--run` exited at the first result, cutting claude off where `claude -p` would have continued; none of the 25
+tazuna runs in the cross-harness table used a background command, so those numbers stand.
+
+**UI.** Multi-line input (the composer grows to 6 rows; `ctrl-j` everywhere, shift-enter where the terminal reports it);
+`ctrl-s` hands the mouse to the terminal to select text; cache misses next to the Cockpit's cache gauge; Claude Code's own
+Edit/Write show as a diff like the lean tools (they showed raw JSON); the session panel shows the real profile.
+
+**Tier 0** now also measures startup to first frame (6.4 ms), UI CPU and memory while animating (1.6%, 7.1 MB) and the
+tool server's memory (2.1 MB); stock Claude Code's UI: 190 MB, 2.2% idle, 0.45 s to first output.
+
 ## 0.0.15 (2026-10-08)
 
 **`--review-model M [--review-effort E]`: an independent reviewer** (opt-in until benchmarked). When claude first says it is

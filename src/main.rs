@@ -295,18 +295,22 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
         }
         std::thread::sleep(Duration::from_millis(50));
     }
-    // claude's last result, with usage and turns summed over every round of the run
+    // claude's last result, with usage, turns and cost summed over every run of the session: the task's run, plus any run
+    // claude started on its own after a background command finished
     let mut r = live.last_result.clone().context("no result")?;
-    if let Some(log) = &live.last_log {
-        let t = &log["tokens"];
-        r["usage"]["input_tokens"] = t["input"].clone();
-        r["usage"]["cache_creation_input_tokens"] = t["cache_write"].clone();
-        r["usage"]["cache_read_input_tokens"] = t["cache_read"].clone();
-        r["usage"]["output_tokens"] = t["output"].clone();
-        r["num_turns"] = log["turns"].clone();
-        r["tazuna"] = json!({"verify": log["verify"], "review": log["review"], "stop": log["stop"], "cost_usd": log["cost_usd"]});
-        // every round and process of the run, the reviewer included (claude's own figure covers one process)
-        r["total_cost_usd"] = log["cost_usd"].clone();
+    if let Some(first) = live.logs.first() {
+        let sum = |path: &[&str]| live.logs.iter().map(|l| path.iter().fold(l, |v, k| &v[*k]).as_f64().unwrap_or(0.0)).sum::<f64>();
+        let tok = |k: &str| json!(sum(&["tokens", k]) as u64);
+        r["usage"]["input_tokens"] = tok("input");
+        r["usage"]["cache_creation_input_tokens"] = tok("cache_write");
+        r["usage"]["cache_read_input_tokens"] = tok("cache_read");
+        r["usage"]["output_tokens"] = tok("output");
+        r["num_turns"] = json!(sum(&["turns"]) as u64);
+        let cost = (sum(&["cost_usd"]) * 1e6).round() / 1e6;
+        let last = live.logs.last().unwrap_or(first);
+        r["tazuna"] = json!({"verify": first["verify"], "review": first["review"], "stop": last["stop"], "cost_usd": cost, "runs": live.logs.len()});
+        // every round, process and run, the reviewer included (claude's own figure covers one process)
+        r["total_cost_usd"] = json!(cost);
     }
     println!("{r}");
     Ok(())

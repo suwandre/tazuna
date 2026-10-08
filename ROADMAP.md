@@ -48,8 +48,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    fixes); hash-anchored edits in tazuna's own edit tool (OMP claims −61% output tokens).
 5. **Footprint and UI:** ~~add RAM, CPU and startup time to Tier 0~~ (done 2026-10-08); ~~real multiline input~~ (done); ~~cache misses in the Cockpit sidebar~~ (done);
    ~~text selection under mouse capture~~ (done, ctrl-s); ~~thinking text~~ (not possible: the `claude` CLI streams only token estimates, even with thinking summaries on);
-   ~~check the edit-diff view in a real run~~ (fixed: Claude Code's own Edit showed raw JSON); README with the company
-   results.
+   ~~check the edit-diff view in a real run~~ (fixed: Claude Code's own Edit showed raw JSON); ~~README with the company
+   results~~ (summary line; tables in CHANGELOG 0.0.10-0.0.15).
 6. **Real use and labels:** use tazuna for real work and rate runs (`/good`, `/bad`, `--label-git`). The Jev router needs
    ~100-200 labeled runs.
 
@@ -70,8 +70,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
   Haiku 5.5 high + Opus 5.5 medium reviewer has been tried (2026-10-08: worse than Opus alone); other pairs and a stricter
   reviewer are untested.
 - `--fallback-model`, `--advisor`; a cross-family judge; real sandboxing; git tags and a fixed scoreboard.
-- Smaller items: a verification shortcut, moving the benchmark kit into the repo; attribute result events that arrive
-  after a run ended (claude waking up for a background command) to that run in the run log.
+- Smaller items: a verification shortcut, moving the benchmark kit into the repo. (Done 2026-10-08: claude waking up for a
+  background command is logged as its own run, and `--run` waits for it.)
 
 ## Tried or ruled out (do not retry without a new reason)
 
