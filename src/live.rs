@@ -40,6 +40,20 @@ const REVIEW: &str = "Before you finish, review your own change:
 5. If you changed anything, run the relevant tests again.
 Then finish with a short summary of what changed.";
 
+/// What "always" covers: one exact command for shells (a later command can be anything), the whole tool otherwise.
+fn always_key(req: &Value) -> String {
+    let tool = req["request"]["tool_name"].as_str().unwrap_or_default();
+    match always_scope(tool) {
+        "this command" => format!("{tool}\u{0}{}", req["request"]["input"]["command"].as_str().unwrap_or_default()),
+        _ => tool.to_string(),
+    }
+}
+
+/// How far "always" reaches for a tool, as the question shows it.
+fn always_scope(tool: &str) -> &'static str {
+    if matches!(tool, "Bash" | "mcp__lean__bash" | "PowerShell") { "this command" } else { "this tool" }
+}
+
 /// The run-log prompt of a run claude started on its own.
 const BACKGROUND_PROMPT: &str = "(claude continued on its own after a background command finished)";
 
@@ -96,7 +110,7 @@ pub struct Live {
     pub permission_mode: String,
     /// Questions waiting for the user's answer: claude's `can_use_tool` control requests.
     pub pending: VecDeque<Value>,
-    /// Tools the user allowed for the rest of the session ("always").
+    /// What the user allowed for the rest of the session ("always"): `always_key` of each answer.
     allowed: std::collections::HashSet<String>,
     requests_sent: u64,
     /// Commands claude started that have not finished: claude wakes up again for background ones, so the session is
@@ -270,7 +284,7 @@ impl Live {
         let req = self.pending.pop_front()?;
         let tool = req["request"]["tool_name"].as_str().unwrap_or_default().to_string();
         if allow && always {
-            self.allowed.insert(tool.clone());
+            self.allowed.insert(always_key(&req));
         }
         // an approved plan leaves plan mode: edits go ahead, commands still ask
         let leave_plan = (allow && tool == "ExitPlanMode").then(|| json!([{"type": "setMode", "mode": "acceptEdits", "destination": "session"}]));
@@ -358,11 +372,11 @@ impl Live {
                         self.claude_version = e["claude_code_version"].as_str().map(String::from);
                     }
                     if e["type"] == "control_request" && e["request"]["subtype"] == "can_use_tool" {
-                        let tool = e["request"]["tool_name"].as_str().unwrap_or_default().to_string();
-                        if self.allowed.contains(&tool) {
+                        if self.allowed.contains(&always_key(&e)) {
                             self.respond(&e, true, None);
                         } else {
-                            out.push(self.record(json!({"type": "harness_permission", "tool": tool, "input": e["request"]["input"], "description": e["request"]["description"]})));
+                            let tool = e["request"]["tool_name"].as_str().unwrap_or_default().to_string();
+                            out.push(self.record(json!({"type": "harness_permission", "tool": tool, "input": e["request"]["input"], "scope": always_scope(&tool)})));
                             self.pending.push_back(e);
                         }
                         continue;
@@ -552,6 +566,11 @@ impl Live {
 
     /// The process is gone: runs without a result end here (stopped if the user asked, otherwise crashed).
     fn end_runs(&mut self) {
+        // questions from a process that is gone can no longer be answered
+        if !self.pending.is_empty() {
+            self.pending.clear();
+            self.record(json!({"type": "harness_permission_cleared"}));
+        }
         // ponytail: a dead process reports no cost, so these runs log $0; the session's estimate is in the recording
         while let Some(run) = self.runs.pop_front() {
             let line = run.finish(None, self.elapsed_ms(), &self.meta(), &self.cwd);

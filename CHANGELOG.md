@@ -23,7 +23,12 @@ Daily-driver features (no benchmark change: headless runs keep the "auto" mode a
 - **Permission modes** (`--mode`, `shift-tab` cycles live): **auto** (never asks, the default), **ask** (before edits and
   commands), **edits** (edits go ahead, commands ask), **plan** (read-only; the plan appears in the transcript and
   approving it switches to edits). claude routes its questions to tazuna (`--permission-prompt-tool stdio`); the
-  composer shows "allow Write: b.txt   y yes · a always · n no". A stop answers open questions with no.
+  composer shows "allow Write: b.txt  (always = this tool)   y yes · a always · n no". A stop answers open questions with no.
+  Hardened after a security review of the first version: the question owns the keyboard and ignores keys for 600 ms after
+  it appears, so typing cannot approve by accident, and Enter no longer means yes; the whole action is shown (every line
+  of a command, control characters made visible, cuts marked) so a first line cannot hide the rest; "always" covers one
+  exact command for shells and the tool otherwise, and the question says which; questions from a process that died are
+  dropped instead of being answered later.
 - **Input editing:** cursor movement, `ctrl-a/e/u/k/w`, `alt-backspace`, and message history on `↑↓`, kept across
   sessions. `esc` stops a run when nothing is typed. Expand moved from `ctrl-e` to `ctrl-o` (Claude Code's detail key).
 - **Resume:** `tazuna -c` continues this repo's latest session, `--resume <id>` a given one, with the earlier transcript

@@ -417,6 +417,8 @@ fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) ->
     Ok(())
 }
 
+/// A permission question ignores keys for this long after it appears.
+const ANSWER_DELAY_MS: u64 = 600;
 const QUIT_MS: u128 = 480;
 
 fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args) -> Result<()> {
@@ -549,7 +551,14 @@ fn run_live(
     // mouse capture scrolls the transcript but keeps the terminal from selecting text; ctrl-s hands the mouse back
     let mut mouse = true;
     let mut ed = editor::Editor::with_history(labels::dir()?.join("history.jsonl"));
+    // when the current permission question first got a key
+    let mut asked_at: Option<Instant> = None;
     loop {
+        if live.pending.is_empty() {
+            asked_at = None;
+        } else if asked_at.is_none() {
+            asked_at = Some(Instant::now());
+        }
         (v.input, v.cursor) = (ed.text.clone(), ed.cursor);
         v.asking = s.asking.first().map(|(tool, what)| format!("{tool}: {what}"));
         v.mode = s.mode.clone();
@@ -584,21 +593,26 @@ fn run_live(
         };
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
-        // a permission question takes the next key: y(es), a(lways), n(o)
+        // an open permission question owns the keyboard: only y(es), a(lways), n(o)/esc answer it, every other key is
+        // ignored, and keys in the first moment after it appears count for nothing (typing must not approve by accident)
         if !live.pending.is_empty() {
+            let shown_for = asked_at.get_or_insert_with(Instant::now).elapsed();
             let answer = match key.code {
-                KeyCode::Char('y') | KeyCode::Enter => Some((true, false)),
+                _ if shown_for < Duration::from_millis(ANSWER_DELAY_MS) => None,
+                KeyCode::Char('y') => Some((true, false)),
                 KeyCode::Char('a') => Some((true, true)),
                 KeyCode::Char('n') | KeyCode::Esc => Some((false, false)),
                 _ => None,
             };
             if let Some((allow, always)) = answer {
+                asked_at = None;
                 if let Some((t, e)) = live.answer(allow, always) {
                     s.apply(&e, t);
                 }
-                continue;
             }
+            continue;
         }
+        asked_at = None;
         match key.code {
             KeyCode::BackTab => {
                 let next = match live.permission_mode.as_str() {

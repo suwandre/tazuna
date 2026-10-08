@@ -271,17 +271,23 @@ impl Session {
             (Some("harness_review"), _) => self.push(Block::Notice { text: "self-review: checking the change against the task".into(), error: false }),
             (Some("harness_permission"), _) => {
                 let i = &e["input"];
-                let what = ["command", "file_path", "path", "pattern", "url"].iter().find_map(|k| i[*k].as_str()).map(|x| x.lines().next().unwrap_or_default().to_string());
+                // the exact action, all of it: a first line alone could hide the rest of a command
+                let what = ["command", "file_path", "path", "pattern", "url"].iter().find_map(|k| i[*k].as_str()).map(|x| shown(x, 400));
                 let what = match (s(&e["tool"]).as_str(), what) {
                     ("ExitPlanMode", _) => "approve this plan and start editing".to_string(),
                     (_, Some(w)) => w,
-                    _ => s(&e["description"]),
+                    _ => shown(&i.to_string(), 400),
                 };
+                let what = format!("{what}  (always = {})", e["scope"].as_str().unwrap_or("this tool"));
                 if e["tool"] == "ExitPlanMode" {
                     self.push(Block::Text { text: format!("**Plan**\n\n{}", i["plan"].as_str().unwrap_or_default()), live: false });
                 }
                 self.asking.push((s(&e["tool"]), what));
                 self.activity = Activity::Waiting;
+            }
+            (Some("harness_permission_cleared"), _) => {
+                self.asking.clear();
+                self.push(Block::Notice { text: "open permission questions dropped: claude stopped".into(), error: false });
             }
             (Some("harness_permission_done"), _) => {
                 if !self.asking.is_empty() {
@@ -474,6 +480,22 @@ impl Session {
     }
 }
 
+/// Text from the model made safe to show in a permission question: control characters (terminal escapes, carriage
+/// returns that could overwrite what is shown) become visible, line breaks become ⏎, and a cut says how much is hidden.
+pub fn shown(text: &str, max: usize) -> String {
+    let clean: String = text
+        .chars()
+        .map(|c| match c {
+            '\n' => '⏎',
+            '\t' => ' ',
+            c if c.is_control() => '�',
+            c => c,
+        })
+        .collect();
+    let n = clean.chars().count();
+    if n <= max { clean } else { format!("{}… (+{} chars)", clean.chars().take(max).collect::<String>(), n - max) }
+}
+
 /// claude's permission mode names in tazuna's words.
 pub fn mode_name(m: &str) -> &str {
     match m {
@@ -488,6 +510,13 @@ pub fn mode_name(m: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn permission_text_cannot_hide_anything() {
+        assert_eq!(shown("ls\nrm -rf ~", 100), "ls⏎rm -rf ~");
+        assert_eq!(shown("ok\u{1b}[2K\rfake", 100), "ok�[2K�fake");
+        assert_eq!(shown(&"x".repeat(10), 4), "xxxx… (+6 chars)");
+    }
 
     #[test]
     fn keeps_subagent_messages_under_their_call() {
