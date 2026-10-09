@@ -77,6 +77,9 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    - **Real use refines it:** labels (Next 4) adjust the per-role pick.
    First step: a hand-written role table and a weekly Artificial Analysis check that flags a whitelisted model beating the
    current pick; the flag starts the gauge. Scraping more sites waits until that loop proves useful (check their terms).
+6. **Stock Claude Code with popular efficiency plugins vs tazuna** (user idea, 2026-10-09): caveman, headroom (context
+   compression between Claude Code and the API), superpowers; ponytail + graphify + agent-skills already measured (−1.2
+   judge, 2× slower). Same Go tasks and company tickets, 2 runs each, Opus xhigh judge; one plugin per 5-hour window.
 
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
 
