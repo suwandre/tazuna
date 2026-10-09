@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.31 (2026-10-09)
+
+**Own loop: a model call that hangs is retried.** Two of 18 benchmark runs hung on a call that never answered (the engine
+waited 600 s, then gave up; the benchmark's 90-minute limit ended the run). Calls now time out after 300 s, and timeouts and
+dropped connections get the same three retries as rate limits and server errors (2, 8, 30 s apart).
+
 ## 0.0.30 (2026-10-09)
 
 **Six Go tasks, every run judged alone (Opus 5.5 xhigh, 2 passes).** Opus 5.5 medium is tazuna's default on claude; the

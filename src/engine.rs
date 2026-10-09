@@ -31,7 +31,8 @@ pub fn serve(args: &[String]) -> Result<()> {
     let http: ureq::Agent = ureq::Agent::config_builder()
         // the system's TLS (macOS Security framework): ~1 MB less binary than rustls
         .tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build())
-        .timeout_global(Some(Duration::from_secs(600))).http_status_as_error(false).build().into();
+        // a normal call answers in 15-60 s, a long reasoning one in a few minutes
+        .timeout_global(Some(Duration::from_secs(300))).http_status_as_error(false).build().into();
     let (price, responses) = price(&http, &url, &key, &model)?;
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -236,14 +237,23 @@ fn emit(e: &Value) {
     let _ = writeln!(out, "{e}").and_then(|_| out.flush());
 }
 
-/// One model call (Chat Completions, or Responses for a body with `input`). Rate limits and server errors get three more tries.
+/// One model call (Chat Completions, or Responses for a body with `input`). Rate limits, server errors, timeouts and dropped
+/// connections get three more tries: two of 18 benchmark runs hung on a call that never answered.
 fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value> {
     let path = if body.get("input").is_some() { "responses" } else { "chat/completions" };
     let body = body.to_string();
     for wait in [2, 8, 30, 0] {
-        let mut r = http.post(format!("{url}/{path}")).header("Authorization", format!("Bearer {key}")).header("Content-Type", "application/json").send(&body)?;
-        let status = r.status().as_u16();
-        let text = r.body_mut().with_config().limit(50 << 20).read_to_string()?;
+        let sent = http.post(format!("{url}/{path}")).header("Authorization", format!("Bearer {key}")).header("Content-Type", "application/json").send(&body)
+            .and_then(|mut r| Ok((r.status().as_u16(), r.body_mut().with_config().limit(50 << 20).read_to_string()?)));
+        let (status, text) = match sent {
+            Ok(st) => st,
+            Err(e) if wait > 0 => {
+                eprintln!("model call failed ({e}); retrying in {wait}s");
+                std::thread::sleep(Duration::from_secs(wait));
+                continue;
+            }
+            Err(e) => return Err(e.into()),
+        };
         if status == 200 {
             return serde_json::from_str(&text).context("provider reply is not JSON");
         }
