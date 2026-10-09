@@ -88,9 +88,10 @@ control, `providers.toml`, diagnostics after edits, hand-off instead of compacti
 0.60, GPT-6 Luna 0.065 / 0.006 / 0.325, MiMo V2.6 Pro 0.283 / 0.002 / 0.566. For scale: Opus 5.5 there 2.60 / 0.13 / 13.00.
 Start with DeepSeek V4.1 Flash, then GPT-6 Luna.
 
-**Check:** pick two cheap coding models from the candidates; one Go task as a smoke run (≤ $0.50); then the six Go tasks ×
-1 run per model at ≤ $0.50 per run (≤ $6), judged by Opus on the subscription against tazuna's default on Claude. Keep
-≥ $5 of the $15 in reserve. Company tickets stay off this provider (company code to a third party).
+**Check, one step at a time (each step waits for the user):** 1. DeepSeek V4.1 Flash on one Go task (smoke, ≤ $0.50),
+report the spend. 2. The same model on the six Go tasks × 1 run (≤ $0.50 per run), judged by Opus on the subscription
+against tazuna's default on Claude. 3. Only then a second model. Keep ≥ $5 of the $15 in reserve. Company tickets stay off
+this provider (company code to a third party).
 
 **Stop rule:** if the slice takes more than a day or grows past ~600 lines, stop and report instead of widening it.
 
