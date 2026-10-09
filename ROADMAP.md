@@ -119,6 +119,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Repo map in the first message | +3% cost, same judge | the agent still reads the files it changes in full |
 | Sonnet explorer subagent (`--explorer sonnet`) | +12% cost, −35% turns, same judge | the reading moves, it does not shrink |
 | Haiku tester subagent (`--tester haiku`) | −14% cost, judge −0.40 | inconclusive: both changes near noise, judge up on one ticket; opt-in, retest with another judge |
+| Fable 5.1 xhigh reviewer (`--review-model`) | 3.4× cost, same judge (1 ticket) | the review costs twice the run; it talked Opus out of the root-cause fix |
 | Haiku explorer subagent (`--explorer haiku`) | −28% cost, −41% turns, judge −0.25 | default since 0.0.25 (price to performance) |
 
 ## Decision log
@@ -152,3 +153,4 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   retest later with a second judge model. Fixed headless runs ending
   while claude was about to wake for a finished background explorer.
   Headless runs now deny permission questions (one run hung 25 min on AskUserQuestion).
+- 2026-10-09: Fable 5.1 xhigh reviewer gauge (T-872, 0.0.27): same judge at 3.4× cost; full run skipped, stays opt-in.

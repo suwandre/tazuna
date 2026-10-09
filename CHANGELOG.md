@@ -23,6 +23,10 @@ command (the Haiku explorer, so nearly every run) counted as a new run: the revi
 placeholder "(claude continued on its own…)" as its task instead of the user's message. The reviewer now gets the user's
 last message and runs once per message. First Fable 5.1 xhigh reviewer gauge (0.0.26, with this bug) is void.
 
+Fable 5.1 xhigh reviewer gauge (T-872, 1 run, same judge pool as the default's 2 runs): one review per run confirmed in
+the run log. Judge 5.00 vs 5.00, cost $3.56 vs $1.04 (3.4×; the review alone $2.15, 209 s), PR tests 58/86 both. The review
+made Opus revert its backend change, which the judge called the root cause. Full run skipped; `--review-model` stays opt-in.
+
 ## 0.0.26 (2026-10-08)
 
 **Headless runs no longer end while claude is about to wake up.** One run ended after 8 turns with no change ("Still
