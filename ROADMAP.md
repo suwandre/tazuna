@@ -170,6 +170,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-09: own loop (0.0.28) with DeepSeek V4.1 Flash on CheaperInference vs tazuna's default on Opus 5.5, six Go tasks
   × 1: judge 8.33 vs 7.17, hidden tests 94% vs 87%, cost $0.53 vs $4.26 (−88%), 4.5× the wall time (provider wait). Needs a
   second run before any default changes; the result mixes model and loop.
+- 2026-10-09: second run each: Opus 7.17 / 7.08, DeepSeek V4.1 Flash (own loop) 8.33 / 8.20 on finished runs, max effort 8.00,
+  GPT-6 Luna max 5.75. DeepSeek ≈ Opus or better on routine Go fixes at ~1/10 the cost; medium confidence (6 tasks, gap mostly
+  one task). Next: engine call timeout and retry (2 of 18 runs hung), then harder tasks.
 - 2026-10-09: model picker per role added as Next 5 (user idea): public benchmarks shortlist, our gauge decides, labels
   refine. Public scores alone would have chosen wrong on three of our levers.
 - 2026-10-09: Haiku tester rejudged by Fable 5.1 high (same diffs): tester lower on both judges (dimension mean −0.21 vs

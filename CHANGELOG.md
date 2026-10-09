@@ -18,6 +18,28 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
 ## 0.0.30 (2026-10-09)
 
+**Six Go tasks, every run judged alone (Opus 5.5 xhigh, 2 passes).** Opus 5.5 medium is tazuna's default on claude; the
+others run the own loop on CheaperInference. A run that hit the benchmark's 90-minute limit counts 0.
+
+| Task | Opus r0 | Opus r1 | DeepSeek V4.1 Flash r0 | DeepSeek r1 | DeepSeek max | GPT-6 Luna max (Responses) |
+|---|---|---|---|---|---|---|
+| caddy-quoted-braces | 9 | 8.5 | 10 | 9 | 7 | 9 |
+| hugo-section-slug | 9 | 8 | 9 | 9 | timeout | 7 |
+| hugo-template-return | 4.5 | 5 | 9 | 9 | 9.5 | 3 |
+| k6-run-once | 7 | 7 | 7.5 | timeout | 10 | 7 |
+| prometheus-duration-parens | 9 | 9 | 9.5 | 9 | 9.5 | 3.5 |
+| terraform-import-foreach | 4.5 | 5 | 5 | 5 | 4 | 5 |
+| **Judge (finished runs)** | **7.17** | **7.08** | **8.33** | **8.20** | **8.00** | **5.75** |
+| Hidden tests | 87% | 87% | 94% | 93% | 87% | 66% |
+| Cost (6 tasks) | $4.26 | $3.68 | $0.53 | $0.40 (5) | $0.39 (5) | $0.37 |
+
+Opus is consistent across its two runs. DeepSeek scores at or above Opus on every finished task at ~1/10 the cost; most of
+the gap is hugo-template-return, which no harness in this pool has fully solved before (cc, OMP, Hermes, pi: at most 88%
+of hidden tests) and DeepSeek solved in all three runs. Possible causes beyond the model: 4-8× the turns, the own loop,
+training-data overlap on public repos (unchecked). Max effort shows no clear gain over the default. Luna stays behind and
+breaks passing tests on two tasks. Two of 18 DeepSeek runs hung on a model call that never answered (the engine waits
+600 s and does not retry a timeout): fix before the next benchmark.
+
 **OpenAI models go through the Responses API.** Through Chat Completions with tools, GPT-6 Luna does not reason at all
 (0 reasoning tokens at `xhigh` and `max`, with or without `max_tokens`); through Responses it does (54-98 on the same
 prompt) and keeps `max` (Chat Completions on CheaperInference turns it into `xhigh`). Stateless (`store: false`): reasoning
