@@ -78,10 +78,6 @@ impl Run {
         self.escalated = true;
     }
 
-    pub fn prompt(&self) -> &str {
-        &self.prompt
-    }
-
     pub fn add_cost(&mut self, usd: f64) {
         self.cost += usd;
     }

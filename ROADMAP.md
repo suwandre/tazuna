@@ -57,7 +57,7 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 2. **Cheap `claude` levers** before the own loop: ~~5-minute prompt cache~~ (v0.0.20: −10%, same judge; headless default),
    ~~a lower Bash output limit~~ (+30%: ruled out), ~~repo map~~ (v0.0.21: no gain, the agent reads as much),
    ~~Sonnet explorer subagent~~ (v0.0.23: −35% turns but +12% cost), ~~Haiku explorer~~ (v0.0.24: −28% cost, judge −0.25;
-   default since 0.0.25), ~~Haiku test-runner worker~~ (v0.0.26: −14% cost, judge −0.40; opt-in),
+   default since 0.0.25), Haiku test-runner worker (v0.0.26: −14% cost, judge −0.40; inconclusive, retest with a second judge),
    then earlier compaction. Each an A/B against the default.
 3. **Own agent loop for other providers** (design: [docs/OWN_LOOP.md](docs/OWN_LOOP.md)): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
    with an API key), runs its own tools and reuses the event format, so the UI, run log, diagnostics, verification and
@@ -118,7 +118,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Bash output capped at 8,000 chars | +30% cost | the agent re-runs commands to see what was cut |
 | Repo map in the first message | +3% cost, same judge | the agent still reads the files it changes in full |
 | Sonnet explorer subagent (`--explorer sonnet`) | +12% cost, −35% turns, same judge | the reading moves, it does not shrink |
-| Haiku tester subagent (`--tester haiku`) | −14% cost, judge −0.40 | saving at the noise line, quality lower; opt-in |
+| Haiku tester subagent (`--tester haiku`) | −14% cost, judge −0.40 | inconclusive: both changes near noise, judge up on one ticket; opt-in, retest with another judge |
 | Haiku explorer subagent (`--explorer haiku`) | −28% cost, −41% turns, judge −0.25 | default since 0.0.25 (price to performance) |
 
 ## Decision log
@@ -148,6 +148,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-08: Haiku explorer on all 5 tickets: −28% cost, judge within noise but lower on 3 of 5; opt-in until a third run.
 - 2026-10-08: the measure is price to performance, not quality alone (user): a small judge drop for a clear saving is
   worth it, a strong reviewer can buy quality back. Haiku explorer made the default (0.0.25).
-- 2026-10-08: Haiku tester A/B: −14% cost, judge −0.40; no clear ratio gain, stays opt-in. Fixed headless runs ending
+- 2026-10-08: Haiku tester A/B: −14% cost, judge −0.40, not lower on every ticket: inconclusive (user), opt-in for now,
+  retest later with a second judge model. Fixed headless runs ending
   while claude was about to wake for a finished background explorer.
   Headless runs now deny permission questions (one run hung 25 min on AskUserQuestion).

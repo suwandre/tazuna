@@ -205,6 +205,9 @@ pub struct Live {
     tasks_done: Option<Instant>,
     /// Independent reviewer: model and effort (`--review-model`, `--review-effort`).
     pub review_model: Option<(String, String)>,
+    /// The user's last message and whether the reviewer has seen it: wake-up runs get no review of their own.
+    task: String,
+    task_reviewed: bool,
     diag_dir: Option<PathBuf>,
     /// Add the repo's CLAUDE.md / AGENTS.md to the system prompt (lean profile; the repo profile lets Claude Code load them).
     pub project_instructions: bool,
@@ -274,6 +277,8 @@ impl Live {
             diagnostics: false,
             self_review: false,
             review_model: None,
+            task: String::new(),
+            task_reviewed: false,
             tasks: Default::default(),
             permission_mode: "bypassPermissions".into(),
             pending: VecDeque::new(),
@@ -345,6 +350,7 @@ impl Live {
         self.write_content(if attach { user_content(sent, &self.cwd) } else { json!(sent) })?;
         let mut run = Run::new(text, self.elapsed_ms(), &self.cwd);
         run.types_before = types_before;
+        (self.task, self.task_reviewed) = (text.to_string(), false);
         self.runs.push_back(run);
         Ok(())
     }
@@ -582,11 +588,11 @@ impl Live {
                 }
             };
         }
-        if let Some((model, effort)) = self.review_model.clone().filter(|_| !run.reviewed && !changed.is_empty()) {
+        if let Some((model, effort)) = self.review_model.clone().filter(|_| !self.task_reviewed && !changed.is_empty()) {
             // the reviewer gets the task and the diff in a fresh context; verification waits for its verdict
-            run.reviewed = true;
+            self.task_reviewed = true;
             self.verifying = true;
-            let (tx, g, cwd, task) = (self.tx.clone(), self.generation, self.cwd.clone(), run.prompt().to_string());
+            let (tx, g, cwd, task) = (self.tx.clone(), self.generation, self.cwd.clone(), self.task.clone());
             let (m, e) = (model.clone(), effort.clone());
             std::thread::spawn(move || {
                 let _ = tx.send((g, Msg::Reviewed(review::run(&cwd, &task, &m, &e))));
