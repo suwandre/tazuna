@@ -75,7 +75,7 @@ a $15 prepaid test account.
 - **Config by flags:** `--provider-url`, `--provider-key-env`, `--model`. Prices come from the provider's `/v1/models`
   (CheaperInference lists input, cached input and output per million tokens for every model); cached tokens from
   `usage.prompt_tokens_details.cached_tokens`. A `--price` override and `providers.toml` wait for a provider without prices.
-- **Caps:** `--max-turns` (default 60) and `--max-usd` (default 0.50 per run) end the run with an error `result`.
+- **Caps:** $0.50 per run ends the run with an error `result`; 200 turns as a backstop against loops (cheap models need more turns, the dollar cap scales with price). Cost is the billed `usage.cost` when the provider reports it.
 - **Permission:** the `auto` mode only (headless). Interrupt: stop before the next model call.
 - **Dependency:** `ureq` with rustls.
 - **Test:** one offline test drives the loop with canned replies (a tool call, its result, a final answer) and checks the

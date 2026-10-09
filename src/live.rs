@@ -5,7 +5,7 @@
 //! next message resumes the session with `--resume`.
 
 use crate::{diag, review, route::{Lane, Profile}, runlog::Run, verify};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
@@ -438,6 +438,9 @@ impl Live {
 
     /// Switches the permission mode (also mid-run). Before the process starts it only sets the starting mode.
     pub fn set_mode(&mut self, mode: &str) -> (f64, Value) {
+        if self.provider.is_some() && mode != "bypassPermissions" {
+            return self.record(json!({"type": "harness_notice", "text": "the own loop (--provider) runs in the auto mode only for now", "error": true}));
+        }
         self.permission_mode = mode.to_string();
         if let Some(stdin) = self.stdin.as_mut() {
             self.requests_sent += 1;
@@ -764,6 +767,10 @@ impl Live {
 
     fn spawn(&mut self) -> Result<()> {
         if let Some((url, key_env)) = self.provider.clone() {
+            // the engine never asks before a tool runs: starting it in ask/edits/plan would skip the approvals the user chose
+            if self.permission_mode != "bypassPermissions" {
+                bail!("--provider runs in the auto mode only for now (no ask, edits or plan mode yet)");
+            }
             // the own loop: lean prompt and tools, the repo's instructions in the prompt
             let mut prompt = self.mid_prompt();
             if self.project_instructions {

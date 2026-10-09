@@ -21,7 +21,7 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 **Own agent loop, first slice (`--provider URL [--key-env VAR]`).** tazuna runs its own loop on an OpenAI-compatible API
 instead of `claude`: `tazuna engine` speaks claude's stream-json, so the run log, verification and the reviewer work
 unchanged. Chat Completions without streaming, the four lean tools in-process, prices from the provider's `/v1/models`,
-caps of 60 turns and $0.50 per run. The key is removed from the environment before any tool runs. Design and scope:
+a $0.50 cap per run (and 200 turns as a backstop). The key is removed from the environment before any tool runs. Design and scope:
 docs/OWN_LOOP.md.
 
 | Metric | 0.0.27 | 0.0.28 |
@@ -30,6 +30,12 @@ docs/OWN_LOOP.md.
 
 Smoke (DeepSeek V4.1 Flash on CheaperInference, two-bug Python fixture): fixed and verified in 6 turns, $0.0007, 75% of
 input tokens from cache.
+Go task smoke (hugo-section-slug, 1 run): hidden tests 2/2, $0.043, 57 turns, 28 min. tazuna on Opus 5.5 medium (0.0.15):
+2/2, $0.52-0.60, 16-22 turns. Not judged yet. CheaperInference adds 15-24 s before the first byte of every call (a 7-token
+prompt with a 2-token answer took 18 s), so its times say nothing about the model.
+
+Also: the own loop refuses the ask, edits and plan modes for now (it never asks before a tool runs; found by a security
+review); cost is the provider's billed `usage.cost` when reported.
 
 ## 0.0.27 (2026-10-09)
 

@@ -11,7 +11,8 @@ use std::{
     time::Duration,
 };
 
-const MAX_TURNS: usize = 60;
+/// A backstop against loops: the dollar cap is the real limit, so cheap models get proportionally more turns.
+const MAX_TURNS: usize = 200;
 const MAX_USD: f64 = 0.50;
 
 /// USD per token: input, cached input, output.
@@ -126,7 +127,8 @@ impl Loop {
             let u = &reply["usage"];
             let (prompt, out) = (u["prompt_tokens"].as_u64().unwrap_or(0), u["completion_tokens"].as_u64().unwrap_or(0));
             let cached = u["prompt_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0).min(prompt);
-            self.cost += (prompt - cached) as f64 * self.price.0 + cached as f64 * self.price.1 + out as f64 * self.price.2;
+            // the billed cost when the provider reports it (CheaperInference, OpenRouter), else the price list
+            self.cost += u["cost"].as_f64().unwrap_or((prompt - cached) as f64 * self.price.0 + cached as f64 * self.price.1 + out as f64 * self.price.2);
             for (sum, n) in usage.iter_mut().zip([prompt - cached, cached, out]) {
                 *sum += n;
             }
