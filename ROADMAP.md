@@ -63,8 +63,20 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 3. **Own agent loop for other providers** (design: [docs/OWN_LOOP.md](docs/OWN_LOOP.md)): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
    with an API key), runs its own tools and reuses the event format, so the UI, run log, diagnostics, verification and
    reviewer keep working. Unlocks cheap non-Anthropic implementers with a Claude reviewer and the footprint floor (no
-   `claude` process). Claude on the subscription stays on the CLI path. Needs an API key and a spending limit.
+   `claude` process). Claude on the subscription stays on the CLI path. Needs an API key and a spending limit: first tests on a $15 prepaid
+   CheaperInference test account (90+ models; the prepaid balance is the limit).
 4. **Real use and labels** once 1 is good enough: rate runs (`/good`, `/bad`, `--label-git`); the Jev router needs ~100-200.
+5. **Model picker per role** (after 3; the front end of the learning router, "Where tazuna can lead" 1). New models beat
+   old ones in one category every few weeks; re-benchmarking by hand does not keep up. Three layers:
+   - **Shortlist from public data:** models from a whitelist (or what a login exposes; OpenRouter lists 600+) ranked per
+     role from Artificial Analysis (has an API), vals.ai, Terminal-Bench, SWE-style and domain benchmarks. Implementer:
+     coding score, tokens per task, speed. Reviewer: strongest coding score. Explorer: cheapest with good long context.
+   - **Our gauge decides:** a model entering a shortlist gets a 1-ticket A/B against the current pick (same judge, usage
+     guard); it replaces the pick only if it wins on price to performance. Public scores alone would have picked wrong
+     here: Fable 5.1 xhigh as reviewer (3.4× cost, same judge), Sonnet explorer (+12% cost), Haiku + Opus reviewer.
+   - **Real use refines it:** labels (Next 4) adjust the per-role pick.
+   First step: a hand-written role table and a weekly Artificial Analysis check that flags a whitelisted model beating the
+   current pick; the flag starts the gauge. Scraping more sites waits until that loop proves useful (check their terms).
 
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
 
@@ -155,6 +167,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   retest later with a second judge model. Fixed headless runs ending
   while claude was about to wake for a finished background explorer.
   Headless runs now deny permission questions (one run hung 25 min on AskUserQuestion).
+- 2026-10-09: model picker per role added as Next 5 (user idea): public benchmarks shortlist, our gauge decides, labels
+  refine. Public scores alone would have chosen wrong on three of our levers.
 - 2026-10-09: Haiku tester rejudged by Fable 5.1 high (same diffs): tester lower on both judges (dimension mean −0.21 vs
   Opus −0.32 of 5), driven by T-946 (one tester run made no change); even on the other four. −14% cost is at the noise
   line, so it stays opt-in. Fable as judge leaves out "overall" on large prompts; compare dimension means.
