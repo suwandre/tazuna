@@ -57,7 +57,7 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
 2. **Cheap `claude` levers** before the own loop: ~~5-minute prompt cache~~ (v0.0.20: −10%, same judge; headless default),
    ~~a lower Bash output limit~~ (+30%: ruled out), ~~repo map~~ (v0.0.21: no gain, the agent reads as much),
    ~~Sonnet explorer subagent~~ (v0.0.23: −35% turns but +12% cost), ~~Haiku explorer~~ (v0.0.24: −28% cost, judge −0.25;
-   default since 0.0.25), Haiku test-runner worker (v0.0.26: −14% cost, judge −0.40; inconclusive, retest with a second judge),
+   default since 0.0.25), Haiku test-runner worker (v0.0.26: −14% cost, judge −0.40; a second judge agrees: opt-in),
    ~~earlier compaction~~ (ruled out from 313 recorded runs: at most ~9% of reads, see below). Each an A/B against the
    default.
 3. **Own agent loop for other providers** (design: [docs/OWN_LOOP.md](docs/OWN_LOOP.md)): tazuna calls provider APIs directly (OpenAI-compatible, Anthropic
@@ -119,7 +119,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Bash output capped at 8,000 chars | +30% cost | the agent re-runs commands to see what was cut |
 | Repo map in the first message | +3% cost, same judge | the agent still reads the files it changes in full |
 | Sonnet explorer subagent (`--explorer sonnet`) | +12% cost, −35% turns, same judge | the reading moves, it does not shrink |
-| Haiku tester subagent (`--tester haiku`) | −14% cost, judge −0.40 | inconclusive: both changes near noise, judge up on one ticket; opt-in, retest with another judge |
+| Haiku tester subagent (`--tester haiku`) | −14% cost, judge −0.40 | Fable judge agrees (lower, −0.21 of 5 vs Opus −0.32); the gap is one no-change run on T-946, even without it; saving at the noise line: opt-in |
 | Earlier compaction (at ~80k) | at most −9% reads, before the summary's cost | median run peaks at 58k; only 8.8% of read tokens sit above 80k (313 runs, no benchmark) |
 | Fable 5.1 xhigh reviewer (`--review-model`) | 3.4× cost, same judge (1 ticket) | the review costs twice the run; it talked Opus out of the root-cause fix |
 | Haiku explorer subagent (`--explorer haiku`) | −28% cost, −41% turns, judge −0.25 | default since 0.0.25 (price to performance) |
@@ -155,6 +155,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   retest later with a second judge model. Fixed headless runs ending
   while claude was about to wake for a finished background explorer.
   Headless runs now deny permission questions (one run hung 25 min on AskUserQuestion).
+- 2026-10-09: Haiku tester rejudged by Fable 5.1 high (same diffs): tester lower on both judges (dimension mean −0.21 vs
+  Opus −0.32 of 5), driven by T-946 (one tester run made no change); even on the other four. −14% cost is at the noise
+  line, so it stays opt-in. Fable as judge leaves out "overall" on large prompts; compare dimension means.
 - 2026-10-09: earlier compaction ruled out from the run log (313 runs): peak context p50 58k, p90 155k; 8.8% of read
   tokens above 80k, so ~3-5% net after the summary's cost, inside noise. Cheap `claude` levers (Next 2) done.
 - 2026-10-09: Fable 5.1 xhigh reviewer gauge (T-872, 0.0.27): same judge at 3.4× cost; full run skipped, stays opt-in.
