@@ -167,6 +167,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   retest later with a second judge model. Fixed headless runs ending
   while claude was about to wake for a finished background explorer.
   Headless runs now deny permission questions (one run hung 25 min on AskUserQuestion).
+- 2026-10-09: own loop (0.0.28) with DeepSeek V4.1 Flash on CheaperInference vs tazuna's default on Opus 5.5, six Go tasks
+  × 1: judge 8.33 vs 7.17, hidden tests 94% vs 87%, cost $0.53 vs $4.26 (−88%), 4.5× the wall time (provider wait). Needs a
+  second run before any default changes; the result mixes model and loop.
 - 2026-10-09: model picker per role added as Next 5 (user idea): public benchmarks shortlist, our gauge decides, labels
   refine. Public scores alone would have chosen wrong on three of our levers.
 - 2026-10-09: Haiku tester rejudged by Fable 5.1 high (same diffs): tester lower on both judges (dimension mean −0.21 vs

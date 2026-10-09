@@ -34,6 +34,22 @@ Go task smoke (hugo-section-slug, 1 run): hidden tests 2/2, $0.043, 57 turns, 28
 2/2, $0.52-0.60, 16-22 turns. Not judged yet. CheaperInference adds 15-24 s before the first byte of every call (a 7-token
 prompt with a 2-token answer took 18 s), so its times say nothing about the model.
 
+Six Go tasks × 1 run, each run judged alone (Opus 5.5 xhigh, 2 passes, same day):
+
+| Task | Opus 5.5 medium (claude, 0.0.28 default): hidden, cost, turns, judge | DeepSeek V4.1 Flash (own loop): hidden, cost, turns, judge |
+|---|---|---|
+| caddy-quoted-braces | 5/5, $0.43, 14, 9.0 | 5/5, $0.10, 108, 10.0 |
+| hugo-section-slug | 2/2, $0.53, 13, 9.0 | 2/2, $0.04, 57, 9.0 |
+| hugo-template-return | 7/8, $1.36, 40, 4.5 | 8/8, $0.08, 60, 9.0 |
+| k6-run-once | 5/5, $0.79, 23, 7.0 | 5/5, $0.12, 116, 7.5 |
+| prometheus-duration-parens | 1/1, $0.71, 19, 9.0 | 1/1, $0.08, 105, 9.5 |
+| terraform-import-foreach | 1/3, $0.44, 28, 4.5 | 2/3, $0.10, 124, 5.0 |
+| **Total** | 87% hidden, **$4.26**, judge **7.17**, 64 min | 94% hidden, **$0.53** (−88%), judge **8.33**, 287 min |
+
+One run per side, so within noise per task, but DeepSeek is equal or higher on all six. It takes 4-5× the turns; the time
+is mostly CheaperInference's 15-24 s wait per call. The comparison mixes model and loop (claude CLI with the Haiku explorer
+vs the own loop with four tools).
+
 Also: the own loop refuses the ask, edits and plan modes for now (it never asks before a tool runs; found by a security
 review); cost is the provider's billed `usage.cost` when reported.
 
