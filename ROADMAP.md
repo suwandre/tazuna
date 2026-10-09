@@ -77,6 +77,15 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    - **Real use refines it:** labels (Next 4) adjust the per-role pick.
    First step: a hand-written role table and a weekly Artificial Analysis check that flags a whitelisted model beating the
    current pick; the flag starts the gauge. Scraping more sites waits until that loop proves useful (check their terms).
+7. **Tiers instead of a swarm** (2026-10-09, after the own-loop benchmark: model choice is worth ~10×, splitting 10-30%).
+   Each tier is an A/B against Opus alone and DeepSeek alone on the Go tasks and the hard tasks:
+   - **Cascade:** the cheap model on the own loop first; tests, type check and diagnostics decide; on failure the task goes
+     to Opus with the cheap attempt (cross-engine escalation, reusing the router's `escalate`).
+   - **Planner → executor:** Opus plans in plan mode (files, exact changes, how to verify), a cheap model executes the plan
+     (DeepSeek on the own loop; Haiku for code that must stay on the subscription), Opus is called again only when
+     verification fails. Untested so far; differs from the failed Haiku + Opus *reviewer* run, which reviewed after the fact.
+   - **Cheap explorer for Claude:** an MCP tool backed by a DeepSeek sub-loop, so Opus on the claude CLI can hand off
+     reading to a non-Claude model.
 6. **Stock Claude Code with popular efficiency plugins vs tazuna** (user idea, 2026-10-09): caveman, headroom (context
    compression between Claude Code and the API), superpowers; ponytail + graphify + agent-skills already measured (−1.2
    judge, 2× slower). Same Go tasks and company tickets, 2 runs each, Opus xhigh judge; one plugin per 5-hour window.
