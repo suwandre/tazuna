@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.30 (2026-10-09)
+
+**OpenAI models go through the Responses API.** Through Chat Completions with tools, GPT-6 Luna does not reason at all
+(0 reasoning tokens at `xhigh` and `max`, with or without `max_tokens`); through Responses it does (54-98 on the same
+prompt) and keeps `max` (Chat Completions on CheaperInference turns it into `xhigh`). Stateless (`store: false`): reasoning
+comes back encrypted and goes out again with the history. Chosen by the model's owner in `/v1/models`. Every 0.0.28 and
+0.0.29 Luna result is void. Smoke: GPT-6 Luna max fixed the Python fixture in 7 turns, $0.0005.
+
 ## 0.0.29 (2026-10-09)
 
 **The own loop sends `--effort` as `reasoning_effort`.** 0.0.28 sent none, so every own-loop run used the provider's

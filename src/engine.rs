@@ -32,7 +32,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         // the system's TLS (macOS Security framework): ~1 MB less binary than rustls
         .tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build())
         .timeout_global(Some(Duration::from_secs(600))).http_status_as_error(false).build().into();
-    let price = price(&http, &url, &key, &model)?;
+    let (price, responses) = price(&http, &url, &key, &model)?;
 
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -51,11 +51,14 @@ pub fn serve(args: &[String]) -> Result<()> {
     emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": []}));
     let mut loop_ = Loop {
         call: Box::new(move |body: &Value| chat(&http, &url, &key, body)),
+        responses,
+        system: system.clone(),
         model,
         effort,
         price,
         tools: tools.as_array().into_iter().flatten().map(|t| json!({"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["inputSchema"]}})).collect(),
-        msgs: vec![json!({"role": "system", "content": system})],
+        // Responses keeps the system prompt in `instructions`
+        msgs: if responses { vec![] } else { vec![json!({"role": "system", "content": system})] },
         server: crate::mcp::Server::new(cwd),
         session,
         cost: 0.0,
@@ -79,6 +82,10 @@ pub fn serve(args: &[String]) -> Result<()> {
 
 struct Loop {
     call: Box<dyn FnMut(&Value) -> Result<Value>>,
+    /// OpenAI models use the Responses API: through Chat Completions with tools they do not reason at all (GPT-6 Luna:
+    /// 0 reasoning tokens at any effort; Responses: 54-98).
+    responses: bool,
+    system: String,
     model: String,
     /// `reasoning_effort` (low ... max); without it the provider's default, which can be far lower.
     effort: Option<String>,
@@ -122,18 +129,30 @@ impl Loop {
                 return end(self, "error_max_budget_usd", format!("[stopped: ${MAX_USD:.2} spent]"), turns, usage);
             }
             (self.out)(&json!({"type": "stream_event", "event": {"type": "message_start"}}));
-            let mut body = json!({"model": self.model, "messages": self.msgs, "tools": self.tools});
-            if let Some(e) = &self.effort {
-                body["reasoning_effort"] = json!(e);
-            }
+            let body = if self.responses {
+                // stateless (store: false): earlier reasoning comes back encrypted and is sent again with the history
+                let tools: Vec<Value> = self.tools.iter().map(|t| json!({"type": "function", "name": t["function"]["name"], "description": t["function"]["description"], "parameters": t["function"]["parameters"]})).collect();
+                let mut b = json!({"model": self.model, "instructions": self.system, "input": self.msgs, "tools": tools, "store": false, "include": ["reasoning.encrypted_content"]});
+                if let Some(e) = &self.effort {
+                    b["reasoning"] = json!({"effort": e});
+                }
+                b
+            } else {
+                let mut b = json!({"model": self.model, "messages": self.msgs, "tools": self.tools});
+                if let Some(e) = &self.effort {
+                    b["reasoning_effort"] = json!(e);
+                }
+                b
+            };
             let reply = match (self.call)(&body) {
                 Ok(r) => r,
                 Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
             };
             turns += 1;
             let u = &reply["usage"];
-            let (prompt, out) = (u["prompt_tokens"].as_u64().unwrap_or(0), u["completion_tokens"].as_u64().unwrap_or(0));
-            let cached = u["prompt_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0).min(prompt);
+            let n = |chat: &Value, resp: &Value| if self.responses { resp } else { chat }.as_u64().unwrap_or(0);
+            let (prompt, out) = (n(&u["prompt_tokens"], &u["input_tokens"]), n(&u["completion_tokens"], &u["output_tokens"]));
+            let cached = n(&u["prompt_tokens_details"]["cached_tokens"], &u["input_tokens_details"]["cached_tokens"]).min(prompt);
             // the billed cost when the provider reports it (CheaperInference, OpenRouter), else the price list
             self.cost += u["cost"].as_f64().unwrap_or((prompt - cached) as f64 * self.price.0 + cached as f64 * self.price.1 + out as f64 * self.price.2);
             for (sum, n) in usage.iter_mut().zip([prompt - cached, cached, out]) {
@@ -142,15 +161,27 @@ impl Loop {
             (self.out)(&json!({"type": "stream_event", "event": {"type": "message_delta",
                 "usage": {"input_tokens": prompt - cached, "cache_creation_input_tokens": 0, "cache_read_input_tokens": cached, "output_tokens": out}}}));
 
-            let m = &reply["choices"][0]["message"];
-            let text = m["content"].as_str().unwrap_or_default().to_string();
-            let calls: Vec<Value> = m["tool_calls"].as_array().cloned().unwrap_or_default();
-            // only what the next call needs; reasoning fields are not sent back (some providers reject them)
-            let mut keep = json!({"role": "assistant", "content": text});
-            if !calls.is_empty() {
-                keep["tool_calls"] = json!(calls);
-            }
-            self.msgs.push(keep);
+            // text and calls as (id, name, arguments), in Chat Completions' shape for both APIs
+            let (text, calls): (String, Vec<Value>) = if self.responses {
+                let items = reply["output"].as_array().cloned().unwrap_or_default();
+                let text = items.iter().filter(|i| i["type"] == "message").flat_map(|i| i["content"].as_array().cloned().unwrap_or_default())
+                    .filter_map(|c| c["text"].as_str().map(String::from)).collect::<Vec<_>>().join("\n");
+                let calls = items.iter().filter(|i| i["type"] == "function_call")
+                    .map(|i| json!({"id": i["call_id"], "function": {"name": i["name"], "arguments": i["arguments"]}})).collect();
+                self.msgs.extend(items); // reasoning, messages and calls go back as they came
+                (text, calls)
+            } else {
+                let m = &reply["choices"][0]["message"];
+                let text = m["content"].as_str().unwrap_or_default().to_string();
+                let calls: Vec<Value> = m["tool_calls"].as_array().cloned().unwrap_or_default();
+                // only what the next call needs; reasoning fields are not sent back (some providers reject them)
+                let mut keep = json!({"role": "assistant", "content": text});
+                if !calls.is_empty() {
+                    keep["tool_calls"] = json!(calls);
+                }
+                self.msgs.push(keep);
+                (text, calls)
+            };
             let mut blocks = vec![];
             if !text.is_empty() {
                 blocks.push(json!({"type": "text", "text": text}));
@@ -180,7 +211,11 @@ impl Loop {
                         Err((_, e)) => (e, true),
                     },
                 };
-                self.msgs.push(json!({"role": "tool", "tool_call_id": id, "content": text}));
+                self.msgs.push(if self.responses {
+                    json!({"type": "function_call_output", "call_id": id, "output": text})
+                } else {
+                    json!({"role": "tool", "tool_call_id": id, "content": text})
+                });
                 results.push(json!({"type": "tool_result", "tool_use_id": id, "content": text, "is_error": is_error}));
             }
             (self.out)(&json!({"type": "user", "message": {"role": "user", "content": results}}));
@@ -201,11 +236,12 @@ fn emit(e: &Value) {
     let _ = writeln!(out, "{e}").and_then(|_| out.flush());
 }
 
-/// One Chat Completions call. Rate limits and server errors get three more tries.
+/// One model call (Chat Completions, or Responses for a body with `input`). Rate limits and server errors get three more tries.
 fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value> {
+    let path = if body.get("input").is_some() { "responses" } else { "chat/completions" };
     let body = body.to_string();
     for wait in [2, 8, 30, 0] {
-        let mut r = http.post(format!("{url}/chat/completions")).header("Authorization", format!("Bearer {key}")).header("Content-Type", "application/json").send(&body)?;
+        let mut r = http.post(format!("{url}/{path}")).header("Authorization", format!("Bearer {key}")).header("Content-Type", "application/json").send(&body)?;
         let status = r.status().as_u16();
         let text = r.body_mut().with_config().limit(50 << 20).read_to_string()?;
         if status == 200 {
@@ -219,14 +255,16 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value>
     unreachable!()
 }
 
-/// The model's prices from the provider's model list (per million tokens there, per token here).
-fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<Price> {
+/// The model's prices from the provider's model list (per million tokens there, per token here), and whether it is an
+/// OpenAI model (Responses API).
+fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price, bool)> {
     let mut r = http.get(format!("{url}/models")).header("Authorization", format!("Bearer {key}")).call()?;
     let list: Value = serde_json::from_str(&r.body_mut().with_config().limit(50 << 20).read_to_string()?)?;
     let m = list["data"].as_array().into_iter().flatten().find(|m| m["id"] == model).with_context(|| format!("{model} is not in {url}/models"))?;
     let p = |k: &str| m["pricing"][k].as_str().and_then(|s| s.parse::<f64>().ok()).or(m["pricing"][k].as_f64());
     let input = p("input_per_million").with_context(|| format!("no input price for {model}: the dollar cap needs one"))?;
-    Ok((input / 1e6, p("cache_read_input_per_million").unwrap_or(input) / 1e6, p("output_per_million").context("no output price")? / 1e6))
+    let price = (input / 1e6, p("cache_read_input_per_million").unwrap_or(input) / 1e6, p("output_per_million").context("no output price")? / 1e6);
+    Ok((price, m["owned_by"] == "OpenAI" || m["provider"] == "OpenAI"))
 }
 
 #[cfg(test)]
@@ -252,6 +290,8 @@ mod tests {
                 s.borrow_mut().push(b.clone());
                 Ok(r.borrow_mut().pop_front().unwrap())
             }),
+            responses: false,
+            system: "sys".into(),
             model: "m".into(),
             effort: None,
             price: (1e-6, 1e-7, 4e-6),
