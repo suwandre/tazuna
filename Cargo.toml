@@ -1,6 +1,6 @@
 [package]
 name = "tazuna"
-version = "0.0.27"
+version = "0.0.28"
 edition = "2024"
 
 [dependencies]
@@ -10,3 +10,4 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1.0.151", features = ["preserve_order"] }
 tachyonfx = "0.25.2"
 unicode-width = "0.2.2"
+ureq = { version = "3.4.2", default-features = false, features = ["native-tls"] }

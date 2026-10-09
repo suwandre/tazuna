@@ -17,7 +17,7 @@ const CWD_MARK: &str = "\n__LEAN_CWD__";
 const BASH_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub fn serve() -> anyhow::Result<()> {
-    let mut server = Server { cwd: std::env::current_dir()?, max: max_output(), cap: bash_cap(), saved: 0, out_dir: None };
+    let mut server = Server::new(std::env::current_dir()?);
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();
     for line in stdin.lock().lines() {
@@ -47,7 +47,7 @@ fn bash_cap() -> usize {
     std::env::var("LEAN_BASH_CAP").ok().and_then(|v| v.parse().ok()).unwrap_or(DEFAULT_BASH_CAP)
 }
 
-struct Server {
+pub(crate) struct Server {
     /// Persists between bash calls (`cd` sticks); relative paths resolve against it.
     cwd: PathBuf,
     max: usize,
@@ -60,6 +60,10 @@ struct Server {
 }
 
 impl Server {
+    pub(crate) fn new(cwd: PathBuf) -> Self {
+        Server { cwd, max: max_output(), cap: bash_cap(), saved: 0, out_dir: None }
+    }
+
     /// One JSON-RPC message in, at most one reply out (notifications get none).
     fn handle(&mut self, line: &str) -> Option<String> {
         let msg: Value = serde_json::from_str(line).ok()?;
@@ -84,7 +88,7 @@ impl Server {
         }.to_string())
     }
 
-    fn call(&mut self, params: &Value) -> Result<Value, (i64, String)> {
+    pub(crate) fn call(&mut self, params: &Value) -> Result<Value, (i64, String)> {
         let name = params["name"].as_str().unwrap_or_default();
         let a = &params["arguments"];
         let path = a["path"].as_str().map(|p| self.resolve(p));
@@ -200,7 +204,7 @@ fn read_all(r: &mut impl Read) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-fn tools() -> Value {
+pub(crate) fn tools() -> Value {
     let (s, i) = (json!({"type": "string"}), json!({"type": "integer"}));
     json!([
         {"name": "bash", "description": "Run shell command. Working directory persists between calls.",

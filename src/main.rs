@@ -15,6 +15,8 @@
 //!          [--mode auto|ask|edits|plan]   # permissions: never ask (default), ask before edits and commands, ask before
 //!                                         # commands only, or plan read-only first; shift-tab cycles them live
 //!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once
+//!          [--provider URL [--key-env VAR]]   # tazuna's own loop on an OpenAI-compatible API instead of claude; --model
+//!                                             # is the provider's model id; key from VAR (default OPENAI_API_KEY)
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
 //!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
 //!          [--trust] [--user-settings]   # trust the repo's hooks/skills without asking; also load your ~/.claude settings
@@ -26,12 +28,14 @@
 //!   tazuna --verdict good|bad [--note "..."] [--id RUN]   # label a run (default: the latest); in the UI: /good, /bad
 //!   tazuna --label-git   # label older runs from git: kept (committed) or discarded
 //!   tazuna mcp   # the lean tool server (claude starts it; not for direct use)
+//!   tazuna engine   # tazuna's own agent loop (--provider starts it; not for direct use)
 //!
 //! Designs: 1 aurora · 2 cockpit (default) · 3 zen · 4 timeline. Live sessions are saved to
 //! ~/.local/share/tazuna/sessions/ and replay like any recording.
 
 mod diag;
 mod editor;
+mod engine;
 mod labels;
 mod live;
 mod mcp;
@@ -88,6 +92,8 @@ struct Args {
     diagnostics: bool,
     self_review: bool,
     review_model: Option<String>,
+    /// Own loop: base URL and the environment variable with the key.
+    provider: Option<(String, String)>,
     /// `Some(None)`: this repo's latest session; `Some(Some(id))`: that session.
     resume: Option<Option<String>>,
     /// Starting permission mode, in claude's names.
@@ -125,6 +131,7 @@ fn args() -> Result<Args> {
         diagnostics: true,
         self_review: false,
         review_model: None,
+        provider: None,
         resume: None,
         mode: "bypassPermissions".into(),
         cache_ttl: None,
@@ -160,6 +167,8 @@ fn args() -> Result<Args> {
             "--no-diagnostics" => a.diagnostics = false,
             "--self-review" => a.self_review = true,
             "--review-model" => a.review_model = Some(val()?),
+            "--provider" => a.provider = Some((val()?, a.provider.take().map_or("OPENAI_API_KEY".into(), |p| p.1))),
+            "--key-env" => a.provider = Some((a.provider.take().map_or(String::new(), |p| p.0), val()?)),
             "-c" | "--continue" => a.resume = Some(None),
             "--resume" => a.resume = Some(Some(val()?)),
             "--repo-map" => a.repo_map = true,
@@ -219,6 +228,9 @@ fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("mcp") {
         return mcp::serve();
     }
+    if std::env::args().nth(1).as_deref() == Some("engine") {
+        return engine::serve(&std::env::args().skip(2).collect::<Vec<_>>());
+    }
     if std::env::args().nth(1).as_deref() == Some("map") {
         // `tazuna map <task-file>`: the repo map --repo-map would send, for checking it by eye
         let task = std::fs::read_to_string(std::env::args().nth(2).context("tazuna map <task-file>")?)?;
@@ -275,6 +287,7 @@ fn main() -> Result<()> {
             live.diagnostics = a.diagnostics;
             live.self_review = a.self_review;
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
+            live.provider = a.provider.clone();
             live.project_instructions = a.project_instructions;
             live.cache_ttl = a.cache_ttl.clone();
             live.repo_map = a.repo_map;
@@ -348,6 +361,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.diagnostics = a.diagnostics;
     live.self_review = a.self_review;
     live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
+    live.provider = a.provider.clone();
     live.project_instructions = a.project_instructions;
     live.cache_ttl = a.cache_ttl.clone();
     live.repo_map = a.repo_map;

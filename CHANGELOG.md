@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.28 (2026-10-09)
+
+**Own agent loop, first slice (`--provider URL [--key-env VAR]`).** tazuna runs its own loop on an OpenAI-compatible API
+instead of `claude`: `tazuna engine` speaks claude's stream-json, so the run log, verification and the reviewer work
+unchanged. Chat Completions without streaming, the four lean tools in-process, prices from the provider's `/v1/models`,
+caps of 60 turns and $0.50 per run. The key is removed from the environment before any tool runs. Design and scope:
+docs/OWN_LOOP.md.
+
+| Metric | 0.0.27 | 0.0.28 |
+|---|---|---|
+| Binary | 2.77 MB | 3.80 MB (ureq with the system's TLS; rustls would be 5.17 MB) |
+
+Smoke (DeepSeek V4.1 Flash on CheaperInference, two-bug Python fixture): fixed and verified in 6 turns, $0.0007, 75% of
+input tokens from cache.
+
 ## 0.0.27 (2026-10-09)
 
 **`--review-model` reviews once per task, against the real task.** A run that claude starts on its own after a background

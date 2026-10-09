@@ -205,6 +205,8 @@ pub struct Live {
     tasks_done: Option<Instant>,
     /// Independent reviewer: model and effort (`--review-model`, `--review-effort`).
     pub review_model: Option<(String, String)>,
+    /// Own loop instead of claude (`--provider`): base URL and the environment variable with the key.
+    pub provider: Option<(String, String)>,
     /// The user's last message and whether the reviewer has seen it: wake-up runs get no review of their own.
     task: String,
     task_reviewed: bool,
@@ -277,6 +279,7 @@ impl Live {
             diagnostics: false,
             self_review: false,
             review_model: None,
+            provider: None,
             task: String::new(),
             task_reviewed: false,
             tasks: Default::default(),
@@ -760,6 +763,19 @@ impl Live {
     }
 
     fn spawn(&mut self) -> Result<()> {
+        if let Some((url, key_env)) = self.provider.clone() {
+            // the own loop: lean prompt and tools, the repo's instructions in the prompt
+            let mut prompt = self.mid_prompt();
+            if self.project_instructions {
+                let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
+                prompt.push_str(&text);
+                self.instructions_used = (bytes, sources);
+            }
+            let mut cmd = Command::new(std::env::current_exe().context("locating the tazuna binary")?);
+            cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--system-prompt", &prompt])
+                .env("LEAN_BASH_CAP", self.bash_cap.to_string());
+            return self.start(cmd);
+        }
         let mut cmd = Command::new("claude");
         // the user's own setting wins; otherwise the mode decides
         if std::env::var_os("CLAUDE_CODE_PROMPT_CACHE_TTL").is_none() {
@@ -835,6 +851,11 @@ impl Live {
         if let Some(id) = &self.session_id {
             cmd.args(["--resume", id]);
         }
+        self.start(cmd)
+    }
+
+    /// Starts the agent process and the threads that read its output.
+    fn start(&mut self, mut cmd: Command) -> Result<()> {
         let mut child = cmd
             .current_dir(&self.cwd)
             .stdin(Stdio::piped())

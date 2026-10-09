@@ -1,6 +1,6 @@
 # Design: tazuna's own agent loop
 
-Status: design; first slice planned (below), not built. Roadmap "Next" item 3.
+Status: first slice built (0.0.28); the rest is design. Roadmap "Next" item 3.
 
 ## Why
 
