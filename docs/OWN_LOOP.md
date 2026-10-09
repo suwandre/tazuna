@@ -72,8 +72,9 @@ a $15 prepaid test account.
   `total_cost_usd` and `num_turns`; `system/init` at start.
 - **Tools:** `mcp.rs`'s `Server` in-process (bash, read, write, edit; same descriptions and output caps). Grep and glob
   wait; bash covers them.
-- **Config by flags:** `--provider-url`, `--provider-key-env`, `--model`, `--price in,cached_in,out` (USD per million
-  tokens; cached tokens from `usage.prompt_tokens_details.cached_tokens`). `providers.toml` waits.
+- **Config by flags:** `--provider-url`, `--provider-key-env`, `--model`. Prices come from the provider's `/v1/models`
+  (CheaperInference lists input, cached input and output per million tokens for every model); cached tokens from
+  `usage.prompt_tokens_details.cached_tokens`. A `--price` override and `providers.toml` wait for a provider without prices.
 - **Caps:** `--max-turns` (default 60) and `--max-usd` (default 0.50 per run) end the run with an error `result`.
 - **Permission:** the `auto` mode only (headless). Interrupt: stop before the next model call.
 - **Dependency:** `ureq` with rustls.
@@ -83,7 +84,11 @@ a $15 prepaid test account.
 **Out (next slices):** streaming and live deltas in the UI, the other permission modes, the Anthropic adapter, prompt-cache
 control, `providers.toml`, diagnostics after edits, hand-off instead of compaction.
 
-**Check:** list `/v1/models`, pick two cheap coding models; one Go task as a smoke run (≤ $0.50); then the six Go tasks ×
+**Candidates** (CheaperInference, USD per million tokens, input / cached / output): DeepSeek V4.1 Flash 0.15 / 0.003 /
+0.60, GPT-6 Luna 0.065 / 0.006 / 0.325, MiMo V2.6 Pro 0.283 / 0.002 / 0.566. For scale: Opus 5.5 there 2.60 / 0.13 / 13.00.
+Start with DeepSeek V4.1 Flash, then GPT-6 Luna.
+
+**Check:** pick two cheap coding models from the candidates; one Go task as a smoke run (≤ $0.50); then the six Go tasks ×
 1 run per model at ≤ $0.50 per run (≤ $6), judged by Opus on the subscription against tazuna's default on Claude. Keep
 ≥ $5 of the $15 in reserve. Company tickets stay off this provider (company code to a third party).
 
