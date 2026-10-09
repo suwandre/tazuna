@@ -1,6 +1,6 @@
 # Design: tazuna's own agent loop
 
-Status: design, not built. Roadmap "Next" item 3.
+Status: design; first slice planned (below), not built. Roadmap "Next" item 3.
 
 ## Why
 
@@ -56,6 +56,39 @@ covering both engines.
    models with prices and context window. Keys are read from the environment only, never written to logs or recordings.
 7. **HTTP:** a small blocking client (`ureq` with rustls) and a hand-written SSE reader; expected +1 MB of binary.
 
+## First slice (2026-10-09)
+
+Goal: one cheap model finishes one Go task headless through tazuna, with its cost in the run log, under a dollar cap.
+Provider: CheaperInference (`https://api.cheaperinference.com/v1`, OpenAI-compatible, key in `CHEAPER_INFERENCE_API_KEY`),
+a $15 prepaid test account.
+
+**In:**
+- **Engine as a process, not a thread:** `tazuna --engine` reads and writes stream-json on stdin/stdout like `claude -p`.
+  `spawn()` starts it instead of `claude` when `--provider-url` is given. `Live`'s stdin/stdout plumbing, the run log,
+  verification and the reviewer stay unchanged (the same pattern as `mcp::serve`). A thread can come later if the extra
+  process (~7 MB) matters.
+- **Chat Completions without streaming:** no SSE reader and no partial tool-call JSON yet. Per turn the engine emits
+  `assistant` (text and `tool_use` blocks), then `user` (`tool_result`), and at the end `result` with usage,
+  `total_cost_usd` and `num_turns`; `system/init` at start.
+- **Tools:** `mcp.rs`'s `Server` in-process (bash, read, write, edit; same descriptions and output caps). Grep and glob
+  wait; bash covers them.
+- **Config by flags:** `--provider-url`, `--provider-key-env`, `--model`, `--price in,cached_in,out` (USD per million
+  tokens; cached tokens from `usage.prompt_tokens_details.cached_tokens`). `providers.toml` waits.
+- **Caps:** `--max-turns` (default 60) and `--max-usd` (default 0.50 per run) end the run with an error `result`.
+- **Permission:** the `auto` mode only (headless). Interrupt: stop before the next model call.
+- **Dependency:** `ureq` with rustls.
+- **Test:** one offline test drives the loop with canned replies (a tool call, its result, a final answer) and checks the
+  events and the cost. No mock server.
+
+**Out (next slices):** streaming and live deltas in the UI, the other permission modes, the Anthropic adapter, prompt-cache
+control, `providers.toml`, diagnostics after edits, hand-off instead of compaction.
+
+**Check:** list `/v1/models`, pick two cheap coding models; one Go task as a smoke run (≤ $0.50); then the six Go tasks ×
+1 run per model at ≤ $0.50 per run (≤ $6), judged by Opus on the subscription against tazuna's default on Claude. Keep
+≥ $5 of the $15 in reserve. Company tickets stay off this provider (company code to a third party).
+
+**Stop rule:** if the slice takes more than a day or grows past ~600 lines, stop and report instead of widening it.
+
 ## Later (after the minimum version)
 
 - Hand-off instead of compaction near the context limit: a summary turn, then a fresh conversation (parked idea).
@@ -82,5 +115,5 @@ covering both engines.
 
 ## Needed from the user
 
-1. Which provider first (OpenAI, OpenRouter, DeepSeek or MiMo), with an API key set as an environment variable.
-2. A spending limit for the benchmark (per run and in total).
+1. ~~Which provider first~~: CheaperInference (2026-10-09), key in `~/.ci-key`.
+2. ~~A spending limit~~: the $15 prepaid balance; ≤ $0.50 per run, $5 kept in reserve.
