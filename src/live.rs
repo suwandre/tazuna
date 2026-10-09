@@ -779,7 +779,7 @@ impl Live {
                 self.instructions_used = (bytes, sources);
             }
             let mut cmd = Command::new(std::env::current_exe().context("locating the tazuna binary")?);
-            cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--system-prompt", &prompt])
+            cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--system-prompt", &prompt])
                 .env("LEAN_BASH_CAP", self.bash_cap.to_string());
             return self.start(cmd);
         }

@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.29 (2026-10-09)
+
+**The own loop sends `--effort` as `reasoning_effort`.** 0.0.28 sent none, so every own-loop run used the provider's
+default. On a hard prompt DeepSeek V4.1 Flash reasoned 152 tokens without it, 130 at `low` and 2,439 at `max`: the 0.0.28
+DeepSeek results are near its lowest effort. GPT-6 Luna barely changes (109 / 53 / 93).
+
 ## 0.0.28 (2026-10-09)
 
 **Own agent loop, first slice (`--provider URL [--key-env VAR]`).** tazuna runs its own loop on an OpenAI-compatible API

@@ -23,6 +23,7 @@ pub fn serve(args: &[String]) -> Result<()> {
     let url = flag("--url").context("--url")?.trim_end_matches('/').to_string();
     let key_env = flag("--key-env").context("--key-env")?;
     let model = flag("--model").context("--model")?;
+    let effort = flag("--effort");
     let system = flag("--system-prompt").unwrap_or_default();
     let key = std::env::var(&key_env).with_context(|| format!("{key_env} not set"))?;
     // SAFETY: no other thread runs yet. The agent's commands inherit this environment and must not see the key.
@@ -51,6 +52,7 @@ pub fn serve(args: &[String]) -> Result<()> {
     let mut loop_ = Loop {
         call: Box::new(move |body: &Value| chat(&http, &url, &key, body)),
         model,
+        effort,
         price,
         tools: tools.as_array().into_iter().flatten().map(|t| json!({"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["inputSchema"]}})).collect(),
         msgs: vec![json!({"role": "system", "content": system})],
@@ -78,6 +80,8 @@ pub fn serve(args: &[String]) -> Result<()> {
 struct Loop {
     call: Box<dyn FnMut(&Value) -> Result<Value>>,
     model: String,
+    /// `reasoning_effort` (low ... max); without it the provider's default, which can be far lower.
+    effort: Option<String>,
     price: Price,
     tools: Vec<Value>,
     msgs: Vec<Value>,
@@ -118,7 +122,10 @@ impl Loop {
                 return end(self, "error_max_budget_usd", format!("[stopped: ${MAX_USD:.2} spent]"), turns, usage);
             }
             (self.out)(&json!({"type": "stream_event", "event": {"type": "message_start"}}));
-            let body = json!({"model": self.model, "messages": self.msgs, "tools": self.tools});
+            let mut body = json!({"model": self.model, "messages": self.msgs, "tools": self.tools});
+            if let Some(e) = &self.effort {
+                body["reasoning_effort"] = json!(e);
+            }
             let reply = match (self.call)(&body) {
                 Ok(r) => r,
                 Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
@@ -246,6 +253,7 @@ mod tests {
                 Ok(r.borrow_mut().pop_front().unwrap())
             }),
             model: "m".into(),
+            effort: None,
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
