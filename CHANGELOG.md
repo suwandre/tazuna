@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.32 (2026-10-10)
+
+**`--boss MODEL` (opt-in until benchmarked): the main model only directs.** Explorer, implementer and tester subagents on
+MODEL do all reading, editing and test runs; a PreToolUse hook (`tazuna boss-hook`) denies the main model every tool but
+delegation (subagent calls carry an `agent_id`, the main model's do not; `--tools`/`--disallowedTools` would block the
+subagents too). Implies the repo profile. Why: in the default, Opus still did ~27% of the reading, all test runs and every
+edit itself (T-872: Opus 19 reads, 11 runs; Haiku explorer 52 reads). Smoke (Python fixture, Opus medium + Haiku):
+Opus 2 delegations, Haiku 3 Bash, 1 Read, 2 Edit; verified, $0.13.
+
 ## 0.0.31 (2026-10-09)
 
 **Own loop: a model call that hangs is retried.** Two of 18 benchmark runs hung on a call that never answered (the engine

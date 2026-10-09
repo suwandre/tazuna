@@ -39,9 +39,43 @@ const EXPLORER_RULE: &str = "Do not explore the code yourself: no Read, cat, sed
 /// subagent runs the checks and reports only what failed.
 const TESTER_RULE: &str = "Do not run tests, type checks, builds or linters yourself. Ask the tester subagent (Task tool, subagent_type tester) to run them, naming the command or the files to check; it reports only the failures, with the lines that explain them. Run independent checks in parallel.";
 
-/// The `--agents` JSON for the subagents that are on.
-fn subagents(explorer: Option<&str>, tester: Option<&str>) -> String {
+/// `--boss`: the main model only directs. Reading, editing and running commands are blocked for it by a hook
+/// (`tazuna boss-hook`); subagents on a cheaper model do that work.
+const BOSS_RULE: &str = "You are the lead engineer. You do not touch the repository yourself: reading, searching, editing and running commands are blocked for you. Three subagents on a cheaper model do that work (Task tool):
+- explorer: answers precise questions about the code with file paths, line numbers and the lines that matter.
+- implementer: makes the code changes you specify. Give it exact instructions: files, functions, what to change and why, edge cases, tests to add or update.
+- tester: runs the tests, type checks or builds you name and reports only the failures.
+Work like this: ask the explorer until you understand the task and the code (independent questions in parallel); decide the change and hand it to the implementer with precise instructions (parallel implementers only for parts in different files); have the tester run the relevant checks; review the reports and delegate fixes until the task is done. Keep your own messages short.";
+
+/// `tazuna boss-hook`: denies the main agent every tool but delegation (subagent calls carry an `agent_id`).
+pub fn boss_hook() -> Result<()> {
+    let mut input = String::new();
+    std::io::stdin().read_to_string(&mut input)?;
+    let v: Value = serde_json::from_str(&input).unwrap_or(Value::Null);
+    if let Some(reason) = boss_denies(&v) {
+        println!("{}", json!({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny", "permissionDecisionReason": reason}}));
+    }
+    Ok(())
+}
+
+fn boss_denies(v: &Value) -> Option<&'static str> {
+    const LEAD: [&str; 8] = ["Agent", "Task", "TaskOutput", "TaskStop", "TodoWrite", "ToolSearch", "ScheduleWakeup", "ExitPlanMode"];
+    let tool = v["tool_name"].as_str().unwrap_or_default();
+    (v.get("agent_id").is_none() && !LEAD.contains(&tool))
+        .then_some("You are the lead: delegate this. Ask the explorer to read or search, the implementer to edit, the tester to run checks.")
+}
+
+/// The `--agents` JSON for the subagents that are on (`implementer` only in `--boss`).
+fn subagents(explorer: Option<&str>, tester: Option<&str>, implementer: Option<&str>) -> String {
     let mut agents = serde_json::Map::new();
+    if let Some(model) = implementer {
+        agents.insert("implementer".into(), json!({
+            "description": "Makes code changes exactly as the lead engineer specifies and reports what it did.",
+            "prompt": "You implement changes for a lead engineer. Follow the instructions exactly; read the code you change first. If an instruction is wrong in a concrete detail (a name, a path, a signature), adapt minimally and say so. Run any quick check it names. Report briefly: files changed, what you did, anything you could not do or are unsure about.",
+            "tools": ["Read", "Grep", "Glob", "Bash", "Edit", "Write"],
+            "model": model,
+        }));
+    }
     if let Some(model) = explorer {
         agents.insert("explorer".into(), json!({
             "description": "Finds and reads code to answer a precise question about the repo; returns file paths, line ranges and the facts that matter, not whole files.",
@@ -179,6 +213,8 @@ pub struct Live {
     pub explorer: Option<String>,
     /// Model of the tester subagent (`--tester haiku`), repo profile only.
     pub tester: Option<String>,
+    /// `--boss MODEL`: the main model only directs; explorer, implementer and tester subagents on MODEL do the work.
+    pub boss: Option<String>,
     pub verify: verify::Mode,
     /// Passed to the tool server: shrink bash output above this many chars (0: off).
     pub bash_cap: usize,
@@ -274,6 +310,7 @@ impl Live {
             mapped: false,
             explorer: None,
             tester: None,
+            boss: None,
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
             diagnostics: false,
@@ -808,15 +845,18 @@ impl Live {
                 // Claude Code's own prompt and tools; it loads the repo's CLAUDE.md (nested files, @imports), settings,
                 // hooks and skills itself. Per-machine prompt sections move to the first message for cross-session caching.
                 cmd.arg("--exclude-dynamic-system-prompt-sections");
-                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), self.explorer.as_ref().map(|_| EXPLORER_RULE), self.tester.as_ref().map(|_| TESTER_RULE)]
+                let boss = self.boss.is_some();
+                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), self.explorer.as_ref().filter(|_| !boss).map(|_| EXPLORER_RULE), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE)]
                     .into_iter()
                     .flatten()
                     .collect();
                 if !append.is_empty() {
                     cmd.args(["--append-system-prompt", &append.join("\n")]);
                 }
-                if self.explorer.is_some() || self.tester.is_some() {
-                    cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref())]);
+                if let Some(m) = self.boss.as_deref() {
+                    cmd.args(["--agents", &subagents(Some(m), Some(m), Some(m))]);
+                } else if self.explorer.is_some() || self.tester.is_some() {
+                    cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref(), None)]);
                 }
             }
             Profile::RepoLean => {
@@ -848,12 +888,21 @@ impl Live {
                     .args(if self.permission_mode == "bypassPermissions" { &["--allowedTools", "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit"][..] } else { &[] });
             }
         }
+        let mut settings = json!({});
         if self.diagnostics {
             if self.diag_dir.is_none() {
                 self.diag_dir = Some(diag::prepare(&self.cwd)?);
             }
             let exe = std::env::current_exe().context("locating the tazuna binary")?;
-            cmd.args(["--settings", &diag::settings(&exe, self.diag_dir.as_ref().expect("set above"))]);
+            settings = serde_json::from_str(&diag::settings(&exe, self.diag_dir.as_ref().expect("set above")))?;
+        }
+        if self.boss.is_some() && self.profile == Profile::Repo {
+            let exe = std::env::current_exe().context("locating the tazuna binary")?;
+            let q = format!("'{}'", exe.to_string_lossy().replace('\'', r"'\''"));
+            settings["hooks"]["PreToolUse"] = json!([{"matcher": "", "hooks": [{"type": "command", "command": format!("{q} boss-hook")}]}]);
+        }
+        if settings != json!({}) {
+            cmd.args(["--settings", &settings.to_string()]);
         }
         if let Some(id) = &self.session_id {
             cmd.args(["--resume", id]);
@@ -989,10 +1038,18 @@ mod tests {
     }
 
     #[test]
+    fn boss_hook_blocks_only_the_lead() {
+        assert!(boss_denies(&json!({"tool_name": "Read"})).is_some());
+        assert!(boss_denies(&json!({"tool_name": "Bash"})).is_some());
+        assert!(boss_denies(&json!({"tool_name": "Agent"})).is_none());
+        assert!(boss_denies(&json!({"tool_name": "Read", "agent_id": "a1", "agent_type": "explorer"})).is_none());
+    }
+
+    #[test]
     fn subagents_only_the_ones_on() {
-        let both: Value = serde_json::from_str(&subagents(Some("haiku"), Some("sonnet"))).unwrap();
+        let both: Value = serde_json::from_str(&subagents(Some("haiku"), Some("sonnet"), None)).unwrap();
         assert_eq!((both["explorer"]["model"].as_str(), both["tester"]["model"].as_str()), (Some("haiku"), Some("sonnet")));
-        let one: Value = serde_json::from_str(&subagents(None, Some("haiku"))).unwrap();
+        let one: Value = serde_json::from_str(&subagents(None, Some("haiku"), None)).unwrap();
         assert!(one.get("explorer").is_none() && one["tester"]["tools"][0] == "Bash");
     }
 

@@ -9,6 +9,8 @@
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
 //!          [-c | --continue | --resume <session-id>]   # pick up this repo's latest (or a given) session
 //!          [--explorer <model> | --no-explorer]   # a subagent on <model> (default haiku) reads and searches code for the main model
+//!          [--boss <model>]   # the main model only directs: explorer, implementer and tester subagents on <model> do
+//!                         # all reading, editing and test runs (a hook blocks those tools for the main model)
 //!          [--tester <model>]   # a subagent on <model> runs tests and type checks and reports only the failures
 //!          [--repo-map]   # a map of the files that match the task, in front of the first message
 //!          [--cache-ttl 5m|1h]   # prompt cache lifetime (default: 5m for --run, 1h live)
@@ -102,6 +104,7 @@ struct Args {
     repo_map: bool,
     explorer: Option<String>,
     tester: Option<String>,
+    boss: Option<String>,
     review_effort: String,
     project_instructions: bool,
     profile: Option<route::Profile>,
@@ -138,6 +141,7 @@ fn args() -> Result<Args> {
         repo_map: false,
         explorer: Some("haiku".into()),
         tester: None,
+        boss: None,
         review_effort: "medium".into(),
         project_instructions: true,
         profile: None,
@@ -175,6 +179,7 @@ fn args() -> Result<Args> {
             "--explorer" => a.explorer = Some(val()?),
             "--no-explorer" => a.explorer = None,
             "--tester" => a.tester = Some(val()?),
+            "--boss" => a.boss = Some(val()?),
             "--cache-ttl" => {
                 a.cache_ttl = Some(match val()?.as_str() {
                     t @ ("5m" | "1h") => t.to_string(),
@@ -227,6 +232,9 @@ fn args() -> Result<Args> {
 fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("mcp") {
         return mcp::serve();
+    }
+    if std::env::args().nth(1).as_deref() == Some("boss-hook") {
+        return live::boss_hook();
     }
     if std::env::args().nth(1).as_deref() == Some("engine") {
         return engine::serve(&std::env::args().skip(2).collect::<Vec<_>>());
@@ -293,6 +301,10 @@ fn main() -> Result<()> {
             live.repo_map = a.repo_map;
             live.explorer = a.explorer.clone();
             live.tester = a.tester.clone();
+            live.boss = a.boss.clone();
+            if live.boss.is_some() {
+                live.profile = route::Profile::Repo; // subagents and the blocking hook need Claude Code's own tools
+            }
             live.permission_mode = a.mode.clone();
             let earlier = match &a.resume {
                 Some(id) => {
@@ -367,6 +379,10 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.repo_map = a.repo_map;
     live.explorer = a.explorer.clone();
     live.tester = a.tester.clone();
+    live.boss = a.boss.clone();
+    if live.boss.is_some() {
+        live.profile = route::Profile::Repo; // subagents and the blocking hook need Claude Code's own tools
+    }
     if let Some(id) = &a.resume {
         let (sid, _) = previous_session(&labels::dir()?, &std::env::current_dir()?, id.as_deref()).context("no earlier tazuna session in this repo to continue")?;
         live.resume(&sid);
