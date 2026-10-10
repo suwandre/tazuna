@@ -185,6 +185,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-09: second run each: Opus 7.17 / 7.08, DeepSeek V4.1 Flash (own loop) 8.33 / 8.20 on finished runs, max effort 8.00,
   GPT-6 Luna max 5.75. DeepSeek ≈ Opus or better on routine Go fixes at ~1/10 the cost; medium confidence (6 tasks, gap mostly
   one task). Next: engine call timeout and retry (2 of 18 runs hung), then harder tasks.
+- 2026-10-10: `--boss haiku` (0.0.32, Opus only delegates, a hook blocks its file tools): Go −32% cost at the same judge,
+  tickets −45% for −0.30 judge (1 run). Best quality per dollar on the Claude path so far; opt-in until a second ticket run,
+  then a default candidate. Planner → executor dropped (1.6× the default's cost, lower judge). Explorer stays (off: +0.5
+  judge at 2.4× cost). tazuna default vs stock Claude Code: Go −27% same judge; tickets −18%, judge −0.25.
 - 2026-10-09: model picker per role added as Next 5 (user idea): public benchmarks shortlist, our gauge decides, labels
   refine. Public scores alone would have chosen wrong on three of our levers.
 - 2026-10-09: Haiku tester rejudged by Fable 5.1 high (same diffs): tester lower on both judges (dimension mean −0.21 vs

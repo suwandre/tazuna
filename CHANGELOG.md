@@ -25,6 +25,39 @@ subagents too). Implies the repo profile. Why: in the default, Opus still did ~2
 edit itself (T-872: Opus 19 reads, 11 runs; Haiku explorer 52 reads). Smoke (Python fixture, Opus medium + Haiku):
 Opus 2 delegations, Haiku 3 Bash, 1 Read, 2 Edit; verified, $0.13.
 
+**Benchmark (2026-10-09/10, Opus 5.5 medium everywhere, judge Opus 5.5 xhigh, 2 passes).**
+
+Go tasks, 2 runs each, every run judged alone:
+
+| | judge r0 / r1 | cost r0 / r1 (6 tasks) |
+|---|---|---|
+| stock Claude Code | 6.83 / 7.08 | $5.50 / $5.42 |
+| tazuna default (Haiku explorer) | 7.17 / 7.08 | $4.26 / $3.68 |
+| **tazuna `--boss haiku`** | **7.08 / 6.92** | **$2.36 / $3.04** |
+| Opus plan → Haiku executes → Opus checks | 5.92 | $6.53 |
+| DeepSeek V4.1 Flash, own loop (CheaperInference) | 8.33 / 8.20 | $0.53 / $0.40 |
+
+Company tickets, one judge pool per ticket (all setups side by side):
+
+| | judge | cost per run | runs |
+|---|---|---|---|
+| stock Claude Code | 5.75 | $2.67 | 10 |
+| tazuna default | 5.50 | $2.18 | 10 |
+| tazuna without the explorer | 6.00 | $5.34 | 4 (1 hit 90 min) |
+| **tazuna `--boss haiku`** | **5.20** | **$1.19** | 5 (5 more hit 90 min under load) |
+
+Boss mode: same quality on the Go tasks at −32% vs the default and −51% vs stock; on the company tickets −45% vs the
+default and −55% vs stock for −0.30 / −0.55 judge (one run per ticket; within noise but lower on 3 of 5). Opus needs 4-17
+turns instead of 12-40. The five first-batch ticket runs hit the 90-minute limit while 11 runs and their test suites shared
+the machine; the second batch, alone, took 19-26 min. Stays opt-in until a second ticket run.
+
+Also measured: without the explorer the tickets score +0.5 at 2.4× the cost (the explorer stays); Opus plan → cheap
+executor costs more than Opus alone (planning at high effort alone cost $0.47-1.21) and a wrong plan steers the executor
+wrong (caddy-tls: DeepSeek alone 1/1, DeepSeek following Opus's plan 0/1); hard tasks (merged after DeepSeek's release):
+DeepSeek solved caddy-tls (judge 10, $0.017) where every Opus setup failed, but timed out on the prometheus tasks
+(CheaperInference adds 15-24 s per call; the agents rerun a 10-minute suite).
+
+
 ## 0.0.31 (2026-10-09)
 
 **Own loop: a model call that hangs is retried.** Two of 18 benchmark runs hung on a call that never answered (the engine
