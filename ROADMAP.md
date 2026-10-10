@@ -90,7 +90,8 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    - **Cheap explorer for Claude:** an MCP tool backed by a DeepSeek sub-loop, so Opus on the claude CLI can hand off
      reading to a non-Claude model.
 6. **Stock Claude Code with popular efficiency plugins vs tazuna** (user idea, 2026-10-09): caveman, headroom (context
-   compression between Claude Code and the API), superpowers; ponytail + graphify + agent-skills already measured (−1.2
+   compression between Claude Code and the API), superpowers, ECC (affaan-m/ECC: discipline hooks, memory), GStack
+   (garrytan/gstack: role team, /review, /qa), graphify alone (only tested with ponytail and agent-skills); ponytail + graphify + agent-skills already measured (−1.2
    judge, 2× slower). Same Go tasks and company tickets, 2 runs each, Opus xhigh judge; one plugin per 5-hour window.
 
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
