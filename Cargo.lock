@@ -1613,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "tazuna"
-version = "0.0.33"
+version = "0.0.34"
 dependencies = [
  "anyhow",
  "ratatui",

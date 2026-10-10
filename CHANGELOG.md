@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.34 (2026-10-10)
+
+**Own loop: one hour per run.** A run still going after 60 minutes ends with an error `result`; with `--escalate` the
+task then moves to the stronger model on claude. DeepSeek on the prometheus hard tasks ran into the benchmark's 3-hour
+limit at 15-24 s of provider wait per call; the cascade could not take over.
+
 ## 0.0.33 (2026-10-10)
 
 **Cascade: `--escalate MODEL[:EFFORT]` with `--provider`.** The cheap model works on tazuna's own loop first; when its

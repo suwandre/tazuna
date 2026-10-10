@@ -14,6 +14,9 @@ use std::{
 /// A backstop against loops: the dollar cap is the real limit, so cheap models get proportionally more turns.
 const MAX_TURNS: usize = 200;
 const MAX_USD: f64 = 0.50;
+/// Time budget per run: a cheap model that is still going after an hour hands over (with `--escalate`) instead of
+/// running for hours (DeepSeek on the prometheus tasks: 3 h and more at 15-24 s provider wait per call).
+const MAX_RUN: Duration = Duration::from_secs(3600);
 
 /// USD per token: input, cached input, output.
 type Price = (f64, f64, f64);
@@ -106,7 +109,7 @@ impl Loop {
     /// One user message: model calls and tool runs until the model answers without tools, or a cap or interrupt ends it.
     fn run(&mut self, content: &Value, rx: &Receiver<Value>) {
         self.msgs.push(json!({"role": "user", "content": text_of(content)}));
-        let (start, mut turns, mut usage) = (self.cost, 0, [0u64; 3]);
+        let (start, mut turns, mut usage, began) = (self.cost, 0, [0u64; 3], std::time::Instant::now());
         let end = |s: &mut Self, subtype: &str, text: String, turns: usize, usage: [u64; 3]| {
             (s.out)(&json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "result": text,
                 "num_turns": turns, "total_cost_usd": s.cost, "session_id": s.session,
@@ -125,6 +128,9 @@ impl Loop {
             }
             if turns >= MAX_TURNS {
                 return end(self, "error_max_turns", format!("[stopped: {MAX_TURNS} turns]"), turns, usage);
+            }
+            if began.elapsed() >= MAX_RUN {
+                return end(self, "error_max_time", format!("[stopped: {} min]", MAX_RUN.as_secs() / 60), turns, usage);
             }
             if self.cost - start >= MAX_USD {
                 return end(self, "error_max_budget_usd", format!("[stopped: ${MAX_USD:.2} spent]"), turns, usage);
