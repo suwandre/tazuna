@@ -28,6 +28,8 @@ breaks a passing test, $0.17 in total; no task needed the escalation (DeepSeek's
 prometheus 1/1, terraform **3/3** (every Opus run 1/3), caddy 5/5, hugo-section 2/2, hugo-template-return 8/8. Hard
 (merged after DeepSeek's release): caddy-tls 1/1 (every Opus setup 0/1), hugo-eq 4/4. Prometheus hard tasks left out
 (DeepSeek runs out of time there; the cascade has no time budget yet).
+Judge (Opus 5.5 xhigh, each run alone): Go 10 / 10 / 9 / 10 / 9 / 8.5, **mean 9.42** (Opus default 7.12, stock 6.96,
+DeepSeek without effort 8.33 / 8.20); hard caddy-tls 10, hugo-eq 9.
 
 Also (0.0.32 follow-up, T-698 and T-870, all setups judged in one pool): `--boss haiku` 6.5 / 6.0 vs the default
 6.75 / 5.75 and stock 7.0 / 7.0, at $2.26 / $1.75 vs the default's $2.26 / $2.29 (two runs each; boss mode's cost varies
