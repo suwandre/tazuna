@@ -185,6 +185,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-09: second run each: Opus 7.17 / 7.08, DeepSeek V4.1 Flash (own loop) 8.33 / 8.20 on finished runs, max effort 8.00,
   GPT-6 Luna max 5.75. DeepSeek ≈ Opus or better on routine Go fixes at ~1/10 the cost; medium confidence (6 tasks, gap mostly
   one task). Next: engine call timeout and retry (2 of 18 runs hung), then harder tasks.
+- 2026-10-10: cascade (0.0.33, DeepSeek max first, Opus on failure): 8 of 8 tasks fully solved for $0.17, no escalation
+  needed; best quality per dollar measured so far for code that may leave the machine. Next: a time budget for the cheap
+  model (prometheus), a second run, then the cascade as the own-loop default.
+- 2026-10-10: `--boss` on two tickets, two runs: boss + Haiku about the default's quality at 0-24% less (Go: −32%);
+  boss + Sonnet no gain at higher cost (dropped). Boss + Haiku stays opt-in; quality holds, the saving on tickets is modest.
 - 2026-10-10: `--boss haiku` (0.0.32, Opus only delegates, a hook blocks its file tools): Go −32% cost at the same judge,
   tickets −45% for −0.30 judge (1 run). Best quality per dollar on the Claude path so far; opt-in until a second ticket run,
   then a default candidate. Planner → executor dropped (1.6× the default's cost, lower judge). Explorer stays (off: +0.5

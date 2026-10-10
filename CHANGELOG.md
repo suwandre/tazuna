@@ -23,6 +23,16 @@ tests still fail, or it stops with an error or changes nothing, the task moves t
 with the task, a note that a cheaper model's changes are in the working tree, and the test failures. Smoke: Gemma 3 4B
 changed nothing, Haiku 5.5 took over, fixed and verified.
 
+Benchmark (DeepSeek V4.1 Flash max first, Opus 5.5 medium on failure; 1 run): all 8 tasks pass every hidden test, none
+breaks a passing test, $0.17 in total; no task needed the escalation (DeepSeek's own tests passed each time). Go: k6 5/5,
+prometheus 1/1, terraform **3/3** (every Opus run 1/3), caddy 5/5, hugo-section 2/2, hugo-template-return 8/8. Hard
+(merged after DeepSeek's release): caddy-tls 1/1 (every Opus setup 0/1), hugo-eq 4/4. Prometheus hard tasks left out
+(DeepSeek runs out of time there; the cascade has no time budget yet).
+
+Also (0.0.32 follow-up, T-698 and T-870, all setups judged in one pool): `--boss haiku` 6.5 / 6.0 vs the default
+6.75 / 5.75 and stock 7.0 / 7.0, at $2.26 / $1.75 vs the default's $2.26 / $2.29 (two runs each; boss mode's cost varies
+run to run, the earlier −45% was partly one lucky run). `--boss sonnet`: 7 / 6 at $3.54 / $1.98, no gain: dropped.
+
 ## 0.0.32 (2026-10-10)
 
 **`--boss MODEL` (opt-in until benchmarked): the main model only directs.** Explorer, implementer and tester subagents on
