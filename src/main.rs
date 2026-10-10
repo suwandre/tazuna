@@ -17,6 +17,8 @@
 //!          [--mode auto|ask|edits|plan]   # permissions: never ask (default), ask before edits and commands, ask before
 //!                                         # commands only, or plan read-only first; shift-tab cycles them live
 //!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once
+//!          [--escalate MODEL[:EFFORT]]   # when tests still fail, the fix rounds run on MODEL (with --provider: the cheap
+//!                                       # model's work is handed to MODEL on claude)
 //!          [--provider URL [--key-env VAR]]   # tazuna's own loop on an OpenAI-compatible API instead of claude; --model
 //!                                             # is the provider's model id; key from VAR (default OPENAI_API_KEY)
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
@@ -105,6 +107,7 @@ struct Args {
     explorer: Option<String>,
     tester: Option<String>,
     boss: Option<String>,
+    escalate: Option<(String, String)>,
     review_effort: String,
     project_instructions: bool,
     profile: Option<route::Profile>,
@@ -142,6 +145,7 @@ fn args() -> Result<Args> {
         explorer: Some("haiku".into()),
         tester: None,
         boss: None,
+        escalate: None,
         review_effort: "medium".into(),
         project_instructions: true,
         profile: None,
@@ -180,6 +184,11 @@ fn args() -> Result<Args> {
             "--no-explorer" => a.explorer = None,
             "--tester" => a.tester = Some(val()?),
             "--boss" => a.boss = Some(val()?),
+            "--escalate" => {
+                let v = val()?;
+                let (m, e) = v.split_once(':').unwrap_or((&v, "medium"));
+                a.escalate = Some((m.to_string(), e.to_string()));
+            }
             "--cache-ttl" => {
                 a.cache_ttl = Some(match val()?.as_str() {
                     t @ ("5m" | "1h") => t.to_string(),
@@ -302,6 +311,9 @@ fn main() -> Result<()> {
             live.explorer = a.explorer.clone();
             live.tester = a.tester.clone();
             live.boss = a.boss.clone();
+            if let Some((m, e)) = a.escalate.clone() {
+                live.set_escalate(m, e);
+            }
             if live.boss.is_some() {
                 live.profile = route::Profile::Repo; // subagents and the blocking hook need Claude Code's own tools
             }
@@ -380,6 +392,9 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.explorer = a.explorer.clone();
     live.tester = a.tester.clone();
     live.boss = a.boss.clone();
+    if let Some((m, e)) = a.escalate.clone() {
+        live.set_escalate(m, e);
+    }
     if live.boss.is_some() {
         live.profile = route::Profile::Repo; // subagents and the blocking hook need Claude Code's own tools
     }

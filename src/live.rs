@@ -432,6 +432,11 @@ impl Live {
         (self.model, self.effort) = (model, effort);
     }
 
+    /// `--escalate MODEL[:EFFORT]`: fix rounds after failed tests run on MODEL (with `--provider`: on claude).
+    pub fn set_escalate(&mut self, model: String, effort: String) {
+        self.escalate = Some((model, effort));
+    }
+
     /// Nothing in flight: every run has ended and no message is waiting.
     pub fn idle(&self) -> bool {
         // after the last background command ends, claude takes a moment to start the turn it wakes up for
@@ -614,6 +619,26 @@ impl Live {
     /// claude says the front run is done: verify it, or end it.
     fn after_result(&mut self) -> Vec<(f64, Value)> {
         let success = self.last_result.as_ref().is_some_and(|r| r["subtype"] == "success" && r["is_error"] != true);
+        // cascade: the cheap model on the own loop stopped with an error or changed nothing, so there is nothing to test
+        if let (Some(_), Some((m, e)), false) = (&self.provider, self.escalate.clone(), self.escalated) {
+            let gave_up = self.runs.front().is_some_and(|r| !r.is_interrupted() && (!success || r.changed_files(&self.cwd).is_empty()));
+            if gave_up {
+                self.escalated = true;
+                if let Some(run) = self.runs.front_mut() {
+                    run.escalated();
+                }
+                let mut out = vec![self.record(json!({"type": "harness_escalate", "model": m, "effort": e}))];
+                self.respawn(m, e);
+                (self.provider, self.session_id) = (None, None);
+                let why = if success { "changed no files" } else { "stopped with an error" };
+                let msg = format!("{}\n\n---\nA cheaper model tried this task first and {why}; any changes it made are in the working tree (`git diff`). Do the task.", self.task);
+                if let Err(e) = self.write_user(&msg) {
+                    out.push(self.record(json!({"type": "harness_notice", "text": format!("could not hand the task over: {e:#}"), "error": true})));
+                    out.extend(self.finish_front());
+                }
+                return out;
+            }
+        }
         let Some(run) = self.runs.front_mut() else { return vec![] };
         if !success || run.is_interrupted() {
             return self.finish_front();
@@ -708,7 +733,18 @@ impl Live {
                 out.push(self.record(json!({"type": "harness_escalate", "model": m, "effort": e})));
                 self.respawn(m, e);
             }
-            match self.write_user(&verify::feedback(&o, round)) {
+            // own loop -> claude: a fresh claude session, which needs the task and what the cheap model left behind
+            let cross = self.escalated && self.provider.take().is_some();
+            if cross {
+                self.session_id = None;
+            }
+            let feedback = verify::feedback(&o, round);
+            let msg = if cross {
+                format!("{}\n\n---\nA cheaper model already worked on this task; its changes are in the working tree (`git diff` shows them). Its result does not pass yet. Continue from there: fix what is wrong, or redo it.\n\n{feedback}", self.task)
+            } else {
+                feedback
+            };
+            match self.write_user(&msg) {
                 Ok(()) => out.push(self.record(json!({"type": "harness_verify_feedback", "round": round, "max": verify::MAX_ROUNDS}))),
                 Err(e) => {
                     out.push(self.record(json!({"type": "harness_notice", "text": format!("could not send test failures: {e:#}"), "error": true})));

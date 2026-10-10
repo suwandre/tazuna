@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.33 (2026-10-10)
+
+**Cascade: `--escalate MODEL[:EFFORT]` with `--provider`.** The cheap model works on tazuna's own loop first; when its
+tests still fail, or it stops with an error or changes nothing, the task moves to MODEL on the claude CLI in a fresh session
+with the task, a note that a cheaper model's changes are in the working tree, and the test failures. Smoke: Gemma 3 4B
+changed nothing, Haiku 5.5 took over, fixed and verified.
+
 ## 0.0.32 (2026-10-10)
 
 **`--boss MODEL` (opt-in until benchmarked): the main model only directs.** Explorer, implementer and tester subagents on
