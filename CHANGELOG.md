@@ -22,6 +22,11 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 task then moves to the stronger model on claude. DeepSeek on the prometheus hard tasks ran into the benchmark's 3-hour
 limit at 15-24 s of provider wait per call; the cascade could not take over.
 
+Second cascade run (0.0.34): the same 8 tasks all pass every hidden test again, none breaks a passing test, $0.11 in total,
+no escalation. Judge (Opus 5.5 xhigh, each run alone): Go 10 / 10 / 10 / 9 / 10 / 9, **mean 9.67** (run 1: 9.42); hard
+caddy-tls 10, hugo-eq 9. Prometheus hard tasks: the hour ran out (replay-mmap) or the tests failed (wbl-checkpoint), and
+both moved to Opus as designed.
+
 ## 0.0.33 (2026-10-10)
 
 **Cascade: `--escalate MODEL[:EFFORT]` with `--provider`.** The cheap model works on tazuna's own loop first; when its
