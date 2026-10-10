@@ -13,6 +13,7 @@ use std::{
 
 /// A backstop against loops: the dollar cap is the real limit, so cheap models get proportionally more turns.
 const MAX_TURNS: usize = 200;
+/// Dollar cap per run; `TAZUNA_MAX_USD` overrides it (an expensive model on the own loop needs more).
 const MAX_USD: f64 = 0.50;
 /// Time budget per run: a cheap model that is still going after an hour hands over (with `--escalate`) instead of
 /// running for hours (DeepSeek on the prometheus tasks: 3 h and more at 15-24 s provider wait per call).
@@ -132,8 +133,9 @@ impl Loop {
             if began.elapsed() >= MAX_RUN {
                 return end(self, "error_max_time", format!("[stopped: {} min]", MAX_RUN.as_secs() / 60), turns, usage);
             }
-            if self.cost - start >= MAX_USD {
-                return end(self, "error_max_budget_usd", format!("[stopped: ${MAX_USD:.2} spent]"), turns, usage);
+            let cap = std::env::var("TAZUNA_MAX_USD").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(MAX_USD);
+            if self.cost - start >= cap {
+                return end(self, "error_max_budget_usd", format!("[stopped: ${cap:.2} spent]"), turns, usage);
             }
             (self.out)(&json!({"type": "stream_event", "event": {"type": "message_start"}}));
             let body = if self.responses {
