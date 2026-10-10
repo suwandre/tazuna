@@ -17,6 +17,7 @@ const MAX_TURNS: usize = 200;
 const MAX_USD: f64 = 0.50;
 /// Time budget per run: a cheap model that is still going after an hour hands over (with `--escalate`) instead of
 /// running for hours (DeepSeek on the prometheus tasks: 3 h and more at 15-24 s provider wait per call).
+/// `TAZUNA_MAX_MINUTES` overrides it.
 const MAX_RUN: Duration = Duration::from_secs(3600);
 
 /// USD per token: input, cached input, output.
@@ -130,8 +131,9 @@ impl Loop {
             if turns >= MAX_TURNS {
                 return end(self, "error_max_turns", format!("[stopped: {MAX_TURNS} turns]"), turns, usage);
             }
-            if began.elapsed() >= MAX_RUN {
-                return end(self, "error_max_time", format!("[stopped: {} min]", MAX_RUN.as_secs() / 60), turns, usage);
+            let budget = std::env::var("TAZUNA_MAX_MINUTES").ok().and_then(|v| v.parse::<u64>().ok()).map_or(MAX_RUN, |m| Duration::from_secs(m * 60));
+            if began.elapsed() >= budget {
+                return end(self, "error_max_time", format!("[stopped: {} min]", budget.as_secs() / 60), turns, usage);
             }
             let cap = std::env::var("TAZUNA_MAX_USD").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(MAX_USD);
             if self.cost - start >= cap {
