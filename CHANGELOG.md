@@ -43,6 +43,9 @@ differ in design (no reference: +0.3 to +0.8). The cascade's lead on the Go task
 (caddy-tls, hugo-eq; merged after DeepSeek's release), no reference: cascade 9.0 / 7.5, tazuna Opus 7.25 / 7.0. Also: Opus
 5.5 medium on the own loop (one agent, four tools, like DeepSeek) got terraform 1/3, like every Opus setup on claude: the
 loop is not what makes the difference.
+Effort is: tazuna default with Opus 5.5 at **max** solved terraform 3/3 (judge 9 with and without reference; 79 turns,
+50 min, $4.71), where Opus at medium gets 1/3 in every harness (judge 4-5). DeepSeek at max: 3/3 for $0.01. Opus max stays
+an opt-in profile (about 5× the cost of medium on this task).
 
 ## 0.0.33 (2026-10-10)
 
