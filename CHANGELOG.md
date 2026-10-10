@@ -27,6 +27,23 @@ no escalation. Judge (Opus 5.5 xhigh, each run alone): Go 10 / 10 / 10 / 9 / 10 
 caddy-tls 10, hugo-eq 9. Prometheus hard tasks: the hour ran out (replay-mmap) or the tests failed (wbl-checkpoint), and
 both moved to Opus as designed.
 
+**The judge anchors on the reference fix.** Same runs judged again without the merged PR's code (`JUDGE_NOREF=1`, task,
+diff and test facts only). Go task means, with → without reference:
+
+| | with | without |
+|---|---|---|
+| stock Claude Code r0 / r1 | 6.83 / 7.08 | 7.58 / 7.58 |
+| tazuna default r0 / r1 | 7.17 / 7.08 | 7.42 / 7.50 |
+| `--boss haiku` r0 / r1 | 7.08 / 6.92 | 7.33 / 7.33 |
+| DeepSeek, own loop, no effort r0 / r1 | 8.33 / 8.20 | 7.67 / 7.70 |
+| **cascade (DeepSeek max) r1 / r2** | **9.42 / 9.67** | **8.17 / 8.17** |
+
+DeepSeek's solutions resemble the merged fixes (reference: up, no reference: −0.5 to −1.5); the Opus setups' solutions
+differ in design (no reference: +0.3 to +0.8). The cascade's lead on the Go tasks shrinks from ~2.4 to ~0.7. Hard tasks
+(caddy-tls, hugo-eq; merged after DeepSeek's release), no reference: cascade 9.0 / 7.5, tazuna Opus 7.25 / 7.0. Also: Opus
+5.5 medium on the own loop (one agent, four tools, like DeepSeek) got terraform 1/3, like every Opus setup on claude: the
+loop is not what makes the difference.
+
 ## 0.0.33 (2026-10-10)
 
 **Cascade: `--escalate MODEL[:EFFORT]` with `--provider`.** The cheap model works on tazuna's own loop first; when its
