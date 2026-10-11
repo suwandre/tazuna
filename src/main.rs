@@ -19,6 +19,8 @@
 //!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once
 //!          [--escalate MODEL[:EFFORT]]   # when tests still fail, the fix rounds run on MODEL (with --provider: the cheap
 //!                                       # model's work is handed to MODEL on claude)
+//!          [--data trusted|any]   # trusted (default): --provider only for hosts in ~/.config/tazuna/trusted-providers;
+//!                                 # any: also providers that may store or use the code
 //!          [--provider URL [--key-env VAR]]   # tazuna's own loop on an OpenAI-compatible API instead of claude; --model
 //!                                             # is the provider's model id; key from VAR (default OPENAI_API_KEY)
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
@@ -108,6 +110,8 @@ struct Args {
     tester: Option<String>,
     boss: Option<String>,
     escalate: Option<(String, String)>,
+    /// `--data trusted|any`: with `trusted` (default) only providers on the trusted list may see the code.
+    data_any: bool,
     review_effort: String,
     project_instructions: bool,
     profile: Option<route::Profile>,
@@ -146,6 +150,7 @@ fn args() -> Result<Args> {
         tester: None,
         boss: None,
         escalate: None,
+        data_any: false,
         review_effort: "medium".into(),
         project_instructions: true,
         profile: None,
@@ -184,6 +189,13 @@ fn args() -> Result<Args> {
             "--no-explorer" => a.explorer = None,
             "--tester" => a.tester = Some(val()?),
             "--boss" => a.boss = Some(val()?),
+            "--data" => {
+                a.data_any = match val()?.as_str() {
+                    "any" => true,
+                    "trusted" => false,
+                    v => bail!("--data takes trusted or any, not {v}"),
+                }
+            }
             "--escalate" => {
                 let v = val()?;
                 let (m, e) = v.split_once(':').unwrap_or((&v, "medium"));
@@ -258,6 +270,9 @@ fn main() -> Result<()> {
         return diag::hook(std::path::Path::new(&std::env::args().nth(2).unwrap_or_default()));
     }
     let a = args()?;
+    if let Some((url, _)) = &a.provider {
+        check_data(url, a.data_any)?;
+    }
     let base = labels::dir()?;
     if let Some(v) = &a.verdict {
         let id = labels::verdict(&base, v, &a.note, a.run_id.as_deref())?;
@@ -374,6 +389,25 @@ fn lane(a: &Args, interactive: bool) -> Result<route::Lane> {
 }
 
 /// Runs one task without a UI and prints claude's result event, the same JSON `claude -p --output-format json` prints.
+/// Providers allowed under `--data trusted`, one host per line in ~/.config/tazuna/trusted-providers (Anthropic through
+/// the claude CLI is always allowed). Providers that may store or use the code need `--data any` or an entry there.
+fn check_data(url: &str, any: bool) -> Result<()> {
+    if any {
+        return Ok(());
+    }
+    let host = host_of(url);
+    let file = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config/tazuna/trusted-providers");
+    let listed = std::fs::read_to_string(&file).unwrap_or_default().lines().any(|l| l.trim() == host);
+    if !listed {
+        bail!("{host} is not on the trusted list ({}): it may store or use your code. Add it there, or run with --data any", file.display());
+    }
+    Ok(())
+}
+
+fn host_of(url: &str) -> String {
+    url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or_default().to_string()
+}
+
 fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     let prompt = std::fs::read_to_string(prompt_file).with_context(|| format!("reading {}", prompt_file.display()))?;
     let mut live = live::Live::new("", "")?;
@@ -923,6 +957,13 @@ fn run_live(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn provider_host_for_the_trusted_list() {
+        assert_eq!(super::host_of("https://api.cheaperinference.com/v1"), "api.cheaperinference.com");
+        assert_eq!(super::host_of("http://localhost:8080/v1"), "localhost");
+        assert_eq!(super::host_of("api.example.com"), "api.example.com");
+    }
+
     use super::*;
 
     #[test]

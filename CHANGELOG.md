@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.35 (2026-10-11)
+
+**`--data trusted|any` (default `trusted`).** With `trusted`, `--provider` only accepts hosts listed in
+`~/.config/tazuna/trusted-providers` (one per line); Anthropic through the claude CLI is always allowed. Providers that may
+store or use the code (for example DeepSeek routes) need `--data any` or an entry in the list. A strict zero-retention mode
+was considered and left out: none of CheaperInference's 97 models offers a ZDR route today, and the Claude subscription
+follows the account's own retention terms.
+
 ## 0.0.34 (2026-10-10)
 
 **Own loop: one hour per run.** A run still going after 60 minutes ends with an error `result`; with `--escalate` the
