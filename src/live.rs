@@ -390,7 +390,7 @@ impl Live {
             None
         };
         let sent = first.as_deref().unwrap_or(text);
-        self.write_content(if attach { user_content(sent, &self.cwd) } else { json!(sent) })?;
+        self.write_content(if attach { user_content(sent, &self.cwd) } else { json!(sent) }, false)?;
         let mut run = Run::new(text, self.elapsed_ms(), &self.cwd);
         run.types_before = types_before;
         (self.task, self.task_reviewed) = (text.to_string(), false);
@@ -400,14 +400,19 @@ impl Live {
 
     /// tazuna's own messages to claude (feedback, review): plain text, never attachments.
     fn write_user(&mut self, text: &str) -> Result<()> {
-        self.write_content(json!(text))
+        self.write_content(json!(text), true)
     }
 
-    fn write_content(&mut self, content: Value) -> Result<()> {
+    /// `followup`: tazuna's own message about the current task, which the own loop counts against the task's time and
+    /// dollar budget instead of starting a new one (claude never sees the field).
+    fn write_content(&mut self, content: Value, followup: bool) -> Result<()> {
         if self.child.is_none() {
             self.spawn()?;
         }
-        let line = json!({"type": "user", "message": {"role": "user", "content": content}});
+        let mut line = json!({"type": "user", "message": {"role": "user", "content": content}});
+        if followup && self.provider.is_some() {
+            line["tazuna_followup"] = json!(true);
+        }
         let stdin = self.stdin.as_mut().context("claude stdin closed")?;
         writeln!(stdin, "{line}")?;
         stdin.flush()?;

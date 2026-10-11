@@ -192,6 +192,12 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-11: plugins (ECC, superpowers, caveman, graphify, GStack, alone and all together): none beats stock Claude Code on
   quality or cost; plugin comparison (Next 6) answered for these five, headroom left. Sonnet 5.5 + Opus advisor: Opus-level
   judge at −45% cost (1 run) — a candidate claude-path default next to `--boss`, after a second run.
+- 2026-10-11: advisor second run: Go 7.08 mean (−0.4 vs Opus default, within noise) at −44% cost, but company tickets 5.10
+  vs 5.70 (Opus default) and 6.15 (stock) at $0.61 vs $2.18 per run. Stays opt-in, not the default: the drop shows on the
+  work that matters most. Boss stays the cheaper Opus-quality option.
+- 2026-10-11: own-loop ideas from arXiv 2609.20804 (eliding old tool outputs, a plan tool): no gain on DeepSeek, dropped.
+  Calls are bound by the provider's wait, not prompt size; plan 4/7 vs 4/7 solved. Fixed on the way: the own loop's budget
+  now counts per task (follow-ups had reset it) and network outages get ~4 minutes of retries.
 - 2026-10-11: clean benchmark (7 tasks merged after DeepSeek's release, 2 runs, judged without reference): cascade +0.7
   judge at ~1/8 the cost of tazuna on Opus. The earlier ~2.4-point lead on older tasks was mostly the judge's reference
   anchoring; the real lead is smaller but holds. Cascade stays the plan for code that may leave the machine (`--data any`).

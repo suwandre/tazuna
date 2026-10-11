@@ -16,6 +16,35 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.38 (2026-10-11)
+
+**Own loop: the time and dollar budget count per task.** tazuna's follow-ups (test failures, review) used to start a fresh
+hour and a fresh $0.50 each; one DeepSeek run passed the benchmark's 90-minute limit that way, and a cascade waited that
+much longer before handing over to Opus. **Model calls retry for about 4 minutes** (was 40 s): a short network outage
+ended a 38-minute run.
+
+**Two own-loop ideas from arXiv 2609.20804, measured and dropped** (DeepSeek V4.1 Flash max, own loop, 7 October tasks):
+- *Eliding old tool outputs* (stubs once outputs pass ~30k tokens). Prompts shrank to ~60k tokens per call from 100-118k,
+  but calls were not faster (23-29 s vs 15-27 s: the provider's wait dominates, not prompt size), and with 99% cache hits
+  it saves almost nothing. Eliding every old output made the model re-read one file 16 times; eliding only stale reads
+  and old bash output fixed that, still without a speed gain.
+- *A `plan` tool* (checklist the model writes and updates, plus one system-prompt line; without that line it was never
+  called). 1 run each:
+
+| task | own loop | own loop + plan |
+|---|---|---|
+| caddy-retry-match-expr | over 90 min (budget bug above) | 2/2 |
+| caddy-unix-socket-close | 7/7 | stopped at 60 min |
+| lazygit-mnemonic-prefix | stopped at 60 min | 3/3 |
+| gitea-actions-cancelling | 2/2 | 2/2 |
+| rclone-archive-symlinks | 3/3 | 3/3 |
+| telegraf-snmp-reconnect | 2/2 | 1/2 |
+| prometheus-exemplar-compaction | stopped at 60 min | stopped at 60 min |
+
+4 of 7 fully solved either way, cost $0.02-0.09 per run either way: no effect, so the code is gone. Most useful side
+result: DeepSeek alone runs out of its hour on 2-3 of these 7 tasks per run, which is the cascade's hand-over to Opus doing
+its job.
+
 ## 0.0.37 (2026-10-11)
 
 **`--advisor MODEL` (opt-in until benchmarked):** sets Claude Code's `advisorModel`, which gives the main model an
@@ -40,6 +69,20 @@ appears). Idea from a thread suggesting Opus as advisor with cheaper models doin
 No plugin, alone or all together, moves quality past noise or lowers cost (−5% to +16% vs stock). The advisor lifts Sonnet
 by +1.0 judge to about Opus's level (−0.1 vs tazuna's Opus default) at −45% cost: about `--boss haiku`'s quality and cost
 (7.33, $2.70). One run each; a second run decides.
+
+**Second run** (Go tasks again; company tickets 5 × 2 runs, judged in one pool with stock and tazuna on Opus):
+
+| | Go judge without ref | with ref | Go cost (6 tasks) | tickets judge | ticket cost per run |
+|---|---|---|---|---|---|
+| stock Claude Code, Opus 5.5 medium | 7.58 | 6.96 | $5.46 | 6.15 | $2.67 |
+| tazuna default, Opus 5.5 medium | 7.46 | 7.13 | $3.97 | 5.70 | $2.18 |
+| tazuna `--boss haiku` | 7.33 | | $2.70 | 5.79 (7 runs) | $1.56 |
+| tazuna Sonnet 5.5 + Opus advisor (2 runs) | 7.33 / 6.83 | 6.75 / 6.33 | $2.17 / $2.29 | 5.10 | $0.61 |
+
+On Go the advisor holds up (7.08 mean without reference, −0.4 vs the Opus default, within noise) at −44% cost. On the
+company tickets it falls 0.6 below the Opus default and 1.05 below stock, at −72% cost; no new type errors or unit failures,
+PR-test counts identical in both runs. It stays opt-in: cheap, but the tickets show a drop larger than noise relative to
+stock. `--boss haiku` keeps Opus-level quality on both sets.
 
 ## 0.0.36 (2026-10-11)
 

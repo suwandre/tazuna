@@ -13,10 +13,12 @@ use std::{
 
 /// A backstop against loops: the dollar cap is the real limit, so cheap models get proportionally more turns.
 const MAX_TURNS: usize = 200;
-/// Dollar cap per run; `TAZUNA_MAX_USD` overrides it (an expensive model on the own loop needs more).
+/// Dollar cap per task, tazuna's follow-ups included; `TAZUNA_MAX_USD` overrides it (an expensive model on the own loop
+/// needs more).
 const MAX_USD: f64 = 0.50;
-/// Time budget per run: a cheap model that is still going after an hour hands over (with `--escalate`) instead of
-/// running for hours (DeepSeek on the prometheus tasks: 3 h and more at 15-24 s provider wait per call).
+/// Time budget per task, tazuna's follow-ups included: a cheap model that is still going after an hour hands over (with
+/// `--escalate`) instead of running for hours (DeepSeek on the prometheus tasks: 3 h and more at 15-24 s provider wait per
+/// call).
 /// `TAZUNA_MAX_MINUTES` overrides it.
 const MAX_RUN: Duration = Duration::from_secs(3600);
 
@@ -68,6 +70,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         server: crate::mcp::Server::new(cwd),
         session,
         cost: 0.0,
+        task: (std::time::Instant::now(), 0.0),
         queued: VecDeque::new(),
         out: Box::new(|e: &Value| emit(e)),
     };
@@ -80,7 +83,7 @@ pub fn serve(args: &[String]) -> Result<()> {
             },
         };
         if msg["type"] == "user" {
-            loop_.run(&msg["message"]["content"], &rx);
+            loop_.run(&msg["message"]["content"], msg["tazuna_followup"] == true, &rx);
         }
         // control requests while idle (interrupt, permission mode): nothing to do; the auto mode never asks
     }
@@ -102,6 +105,9 @@ struct Loop {
     session: String,
     /// Spent by this process so far; `result` reports it like claude does.
     cost: f64,
+    /// When the current task began and what it had cost by then: tazuna's follow-ups (test failures, review) share the
+    /// task's budget. Before 0.0.38 each follow-up got a fresh hour, and one run passed the benchmark's 90-minute limit.
+    task: (std::time::Instant, f64),
     /// User messages that arrived during a run.
     queued: VecDeque<Value>,
     out: Box<dyn FnMut(&Value)>,
@@ -109,9 +115,12 @@ struct Loop {
 
 impl Loop {
     /// One user message: model calls and tool runs until the model answers without tools, or a cap or interrupt ends it.
-    fn run(&mut self, content: &Value, rx: &Receiver<Value>) {
+    fn run(&mut self, content: &Value, followup: bool, rx: &Receiver<Value>) {
         self.msgs.push(json!({"role": "user", "content": text_of(content)}));
-        let (start, mut turns, mut usage, began) = (self.cost, 0, [0u64; 3], std::time::Instant::now());
+        if !followup {
+            self.task = (std::time::Instant::now(), self.cost);
+        }
+        let ((began, start), mut turns, mut usage) = (self.task, 0, [0u64; 3]);
         let end = |s: &mut Self, subtype: &str, text: String, turns: usize, usage: [u64; 3]| {
             (s.out)(&json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "result": text,
                 "num_turns": turns, "total_cost_usd": s.cost, "session_id": s.session,
@@ -248,11 +257,12 @@ fn emit(e: &Value) {
 }
 
 /// One model call (Chat Completions, or Responses for a body with `input`). Rate limits, server errors, timeouts and dropped
-/// connections get three more tries: two of 18 benchmark runs hung on a call that never answered.
+/// connections get five more tries over about 4 minutes: two of 18 benchmark runs hung on a call that never answered, and
+/// a short network outage ended a 38-minute run ("Network is unreachable") when the tries spanned only 40 s.
 fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value> {
     let path = if body.get("input").is_some() { "responses" } else { "chat/completions" };
     let body = body.to_string();
-    for wait in [2, 8, 30, 0] {
+    for wait in [2, 8, 30, 60, 120, 0] {
         let sent = http.post(format!("{url}/{path}")).header("Authorization", format!("Bearer {key}")).header("Content-Type", "application/json").send(&body)
             .and_then(|mut r| Ok((r.status().as_u16(), r.body_mut().with_config().limit(50 << 20).read_to_string()?)));
         let (status, text) = match sent {
@@ -320,11 +330,12 @@ mod tests {
             server: crate::mcp::Server::new(dir.clone()),
             session: "s".into(),
             cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
-        l.run(&json!("what is in a.txt?"), &rx);
+        l.run(&json!("what is in a.txt?"), false, &rx);
         let events = events.borrow();
         let types: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
         assert_eq!(types, ["stream_event", "stream_event", "assistant", "user", "stream_event", "stream_event", "assistant", "result"]);
@@ -337,5 +348,36 @@ mod tests {
         // the second call carries the tool result
         assert_eq!(sent.borrow()[1]["messages"][3]["role"], "tool");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn follow_ups_share_the_tasks_budget() {
+        let calls = Rc::new(RefCell::new(0));
+        let c = calls.clone();
+        let mut l = Loop {
+            call: Box::new(move |_: &Value| {
+                *c.borrow_mut() += 1;
+                Ok(json!({"choices": [{"message": {"content": "done"}}], "usage": {"cost": 0.6}}))
+            }),
+            responses: false,
+            system: String::new(),
+            model: "m".into(),
+            effort: None,
+            price: (0.0, 0.0, 0.0),
+            tools: vec![],
+            msgs: vec![],
+            server: crate::mcp::Server::new(std::env::temp_dir()),
+            session: "s".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            out: Box::new(|_: &Value| {}),
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("task"), false, &rx); // spends $0.60, past the $0.50 cap
+        l.run(&json!("tests fail"), true, &rx); // a follow-up: the cap is used up, no call
+        assert_eq!(*calls.borrow(), 1);
+        l.run(&json!("next task"), false, &rx); // a new task: a fresh budget
+        assert_eq!(*calls.borrow(), 2);
     }
 }
