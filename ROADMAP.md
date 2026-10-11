@@ -77,7 +77,7 @@ tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint w
    - **Real use refines it:** labels (Next 4) adjust the per-role pick.
    First step: a hand-written role table and a weekly Artificial Analysis check that flags a whitelisted model beating the
    current pick; the flag starts the gauge. Scraping more sites waits until that loop proves useful (check their terms).
-8. **Profiles with a model and effort per role** (user, 2026-10-10): main model, explorer, implementer, tester and the
+8. ~~**Profiles with a model and effort per role**~~ (0.0.36 `--preset`; 0.0.35 `--data trusted|any`) (user, 2026-10-10): main model, explorer, implementer, tester and the
    cascade's cheap and strong model each set per profile (for example a cheap default, an expensive "max" profile with Opus
    at max effort, a ZDR-only profile), overridable by hand. The model picker (5) fills them later.
 7. **Tiers instead of a swarm** (2026-10-09, after the own-loop benchmark: model choice is worth ~10×, splitting 10-30%).

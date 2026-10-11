@@ -19,6 +19,8 @@
 //!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once
 //!          [--escalate MODEL[:EFFORT]]   # when tests still fail, the fix rounds run on MODEL (with --provider: the cheap
 //!                                       # model's work is handed to MODEL on claude)
+//!          [--preset default|boss|max|cascade|NAME]   # a bundle of model/effort per role; add your own in
+//!                                                     # ~/.config/tazuna/presets ("name: --flag value ...")
 //!          [--data trusted|any]   # trusted (default): --provider only for hosts in ~/.config/tazuna/trusted-providers;
 //!                                 # any: also providers that may store or use the code
 //!          [--provider URL [--key-env VAR]]   # tazuna's own loop on an OpenAI-compatible API instead of claude; --model
@@ -123,6 +125,33 @@ struct Args {
     label_git: bool,
 }
 
+/// Built-in presets: a model and effort per role, bundled. `~/.config/tazuna/presets` adds or overrides them, one per
+/// line as `name: --flag value ...`. Flags given on the command line win over the preset's.
+const PRESETS: [(&str, &str); 4] = [
+    ("default", ""),
+    ("boss", "--boss haiku"),
+    ("max", "--model claude-opus-5-5 --effort max"),
+    ("cascade", "--data any --provider https://api.cheaperinference.com/v1 --key-env CHEAPER_INFERENCE_API_KEY --model deepseek-v4.1-flash --effort max --escalate claude-opus-5-5:medium"),
+];
+
+/// Replaces `--preset NAME` with the preset's flags, placed first so the user's own flags override them.
+fn with_preset(args: Vec<String>) -> Result<Vec<String>> {
+    let Some(i) = args.iter().position(|a| a == "--preset") else { return Ok(args) };
+    let name = args.get(i + 1).context("--preset needs a name")?.clone();
+    let file = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config/tazuna/presets");
+    let user = std::fs::read_to_string(&file).unwrap_or_default();
+    let flags = user
+        .lines()
+        .filter_map(|l| l.split_once(':'))
+        .find(|(n, _)| n.trim() == name)
+        .map(|(_, f)| f.to_string())
+        .or_else(|| PRESETS.iter().find(|(n, _)| *n == name).map(|(_, f)| f.to_string()))
+        .with_context(|| format!("no preset {name} (built in: default, boss, max, cascade; yours: {})", file.display()))?;
+    let mut out: Vec<String> = flags.split_whitespace().map(String::from).collect();
+    out.extend(args.into_iter().enumerate().filter(|(j, _)| *j != i && *j != i + 1).map(|(_, a)| a));
+    Ok(out)
+}
+
 fn args() -> Result<Args> {
     let mut a = Args {
         path: None,
@@ -161,7 +190,7 @@ fn args() -> Result<Args> {
         run_id: None,
         label_git: false,
     };
-    let mut it = std::env::args().skip(1);
+    let mut it = with_preset(std::env::args().skip(1).collect())?.into_iter();
     while let Some(arg) = it.next() {
         let mut val = || it.next().context(format!("{arg} needs a value"));
         match arg.as_str() {
@@ -957,6 +986,15 @@ fn run_live(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn presets_expand_first_so_own_flags_win() {
+        let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let out = super::with_preset(v(&["--run", "t.txt", "--preset", "max", "--effort", "high"])).unwrap();
+        assert_eq!(out, v(&["--model", "claude-opus-5-5", "--effort", "max", "--run", "t.txt", "--effort", "high"]));
+        assert_eq!(super::with_preset(v(&["--run", "t.txt"])).unwrap(), v(&["--run", "t.txt"]));
+        assert!(super::with_preset(v(&["--preset", "nope"])).is_err());
+    }
+
     #[test]
     fn provider_host_for_the_trusted_list() {
         assert_eq!(super::host_of("https://api.cheaperinference.com/v1"), "api.cheaperinference.com");

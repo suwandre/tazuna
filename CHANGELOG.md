@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.36 (2026-10-11)
+
+**`--preset NAME`: a model and effort per role, bundled.** Built in: `default` (Opus 5.5 medium + Haiku explorer), `boss`
+(`--boss haiku`), `max` (Opus 5.5 at max effort, opt-in: terraform 3/3 at about 5× the cost of medium), `cascade`
+(DeepSeek V4.1 Flash max on CheaperInference with `--data any`, Opus 5.5 medium on failure). `~/.config/tazuna/presets`
+adds or overrides presets (`name: --flag value ...`); flags on the command line win over the preset's.
+
 ## 0.0.35 (2026-10-11)
 
 **`--data trusted|any` (default `trusted`).** With `trusted`, `--provider` only accepts hosts listed in
