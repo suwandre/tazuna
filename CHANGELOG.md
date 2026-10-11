@@ -47,6 +47,24 @@ Effort is: tazuna default with Opus 5.5 at **max** solved terraform 3/3 (judge 9
 50 min, $4.71), where Opus at medium gets 1/3 in every harness (judge 4-5). DeepSeek at max: 3/3 for $0.01. Opus max stays
 an opt-in profile (about 5× the cost of medium on this task).
 
+**Clean benchmark: 7 tasks merged 1-10 October 2026** (after DeepSeek's release; caddy ×2, gitea, lazygit, prometheus,
+rclone, telegraf), 2 runs each, judge Opus 5.5 xhigh with and without the reference fix:
+
+| | judge without ref r0 / r1 | judge with ref r0 / r1 | cost r0 / r1 (7 tasks) |
+|---|---|---|---|
+| **cascade** (DeepSeek V4.1 Flash max, Opus 5.5 medium on failure) | **6.86 / 8.07** | 7.29 / 8.64 | **$2.25 / $2.79** |
+| tazuna default (Opus 5.5 medium + Haiku explorer) | 7.21 / 6.36 | 7.21 / 6.64 | $20.31 / $18.59 |
+
+On average the cascade scores +0.7 (no reference) at about 1/8 of the cost; without the prometheus task (Opus there:
+$10-12.7 per run, 5-8.6 h, part of it while the Mac slept) the default costs $7.6 / $8.6 and the cascade $0.82 / $0.91.
+The cascade escalated on rclone, telegraf, gitea (once) and prometheus (twice). Opus failed caddy-unix-socket-close in both
+runs (0/7 hidden tests, a passing test broken; judge 4) where DeepSeek solved it alone (7/7, judge 9-10). Prometheus split
+both ways: cascade 2.5 / 8, default 8 / 3. Telegraf breaks a passing test in every run of both setups.
+
+Benchmark fixes found on the way: the diff was taken against HEAD, so an agent that commits left an empty diff (Opus on
+lazygit, two planner runs, one tester run were judged as empty); it is now taken against the base commit. The usage gate
+skipped jobs on a stale meter reading after a guard restart; a stale reading now waits.
+
 ## 0.0.33 (2026-10-10)
 
 **Cascade: `--escalate MODEL[:EFFORT]` with `--provider`.** The cheap model works on tazuna's own loop first; when its

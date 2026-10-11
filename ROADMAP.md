@@ -189,6 +189,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-09: second run each: Opus 7.17 / 7.08, DeepSeek V4.1 Flash (own loop) 8.33 / 8.20 on finished runs, max effort 8.00,
   GPT-6 Luna max 5.75. DeepSeek ≈ Opus or better on routine Go fixes at ~1/10 the cost; medium confidence (6 tasks, gap mostly
   one task). Next: engine call timeout and retry (2 of 18 runs hung), then harder tasks.
+- 2026-10-11: clean benchmark (7 tasks merged after DeepSeek's release, 2 runs, judged without reference): cascade +0.7
+  judge at ~1/8 the cost of tazuna on Opus. The earlier ~2.4-point lead on older tasks was mostly the judge's reference
+  anchoring; the real lead is smaller but holds. Cascade stays the plan for code that may leave the machine (`--data any`).
 - 2026-10-10: cascade (0.0.33, DeepSeek max first, Opus on failure): 8 of 8 tasks fully solved for $0.17, no escalation
   needed; best quality per dollar measured so far for code that may leave the machine. Next: a time budget for the cheap
   model (prometheus), a second run, then the cascade as the own-loop default.
