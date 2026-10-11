@@ -215,6 +215,8 @@ pub struct Live {
     pub tester: Option<String>,
     /// `--boss MODEL`: the main model only directs; explorer, implementer and tester subagents on MODEL do the work.
     pub boss: Option<String>,
+    /// `--advisor MODEL`: Claude Code's advisor tool; the main model can ask MODEL for advice when it is stuck.
+    pub advisor: Option<String>,
     pub verify: verify::Mode,
     /// Passed to the tool server: shrink bash output above this many chars (0: off).
     pub bash_cap: usize,
@@ -311,6 +313,7 @@ impl Live {
             explorer: None,
             tester: None,
             boss: None,
+            advisor: None,
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
             diagnostics: false,
@@ -936,6 +939,9 @@ impl Live {
             let exe = std::env::current_exe().context("locating the tazuna binary")?;
             let q = format!("'{}'", exe.to_string_lossy().replace('\'', r"'\''"));
             settings["hooks"]["PreToolUse"] = json!([{"matcher": "", "hooks": [{"type": "command", "command": format!("{q} boss-hook")}]}]);
+        }
+        if let Some(m) = &self.advisor {
+            settings["advisorModel"] = json!(m);
         }
         if settings != json!({}) {
             cmd.args(["--settings", &settings.to_string()]);

@@ -9,6 +9,7 @@
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
 //!          [-c | --continue | --resume <session-id>]   # pick up this repo's latest (or a given) session
 //!          [--explorer <model> | --no-explorer]   # a subagent on <model> (default haiku) reads and searches code for the main model
+//!          [--advisor <model>]   # Claude Code's advisor: the main model can consult <model> when stuck
 //!          [--boss <model>]   # the main model only directs: explorer, implementer and tester subagents on <model> do
 //!                         # all reading, editing and test runs (a hook blocks those tools for the main model)
 //!          [--tester <model>]   # a subagent on <model> runs tests and type checks and reports only the failures
@@ -111,6 +112,7 @@ struct Args {
     explorer: Option<String>,
     tester: Option<String>,
     boss: Option<String>,
+    advisor: Option<String>,
     escalate: Option<(String, String)>,
     /// `--data trusted|any`: with `trusted` (default) only providers on the trusted list may see the code.
     data_any: bool,
@@ -178,6 +180,7 @@ fn args() -> Result<Args> {
         explorer: Some("haiku".into()),
         tester: None,
         boss: None,
+        advisor: None,
         escalate: None,
         data_any: false,
         review_effort: "medium".into(),
@@ -218,6 +221,7 @@ fn args() -> Result<Args> {
             "--no-explorer" => a.explorer = None,
             "--tester" => a.tester = Some(val()?),
             "--boss" => a.boss = Some(val()?),
+            "--advisor" => a.advisor = Some(val()?),
             "--data" => {
                 a.data_any = match val()?.as_str() {
                     "any" => true,
@@ -355,6 +359,7 @@ fn main() -> Result<()> {
             live.explorer = a.explorer.clone();
             live.tester = a.tester.clone();
             live.boss = a.boss.clone();
+            live.advisor = a.advisor.clone();
             if let Some((m, e)) = a.escalate.clone() {
                 live.set_escalate(m, e);
             }
@@ -454,6 +459,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.repo_map = a.repo_map;
     live.explorer = a.explorer.clone();
     live.tester = a.tester.clone();
+    live.advisor = a.advisor.clone();
     live.boss = a.boss.clone();
     if let Some((m, e)) = a.escalate.clone() {
         live.set_escalate(m, e);

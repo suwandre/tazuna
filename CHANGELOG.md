@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.37 (2026-10-11)
+
+**`--advisor MODEL` (opt-in until benchmarked):** sets Claude Code's `advisorModel`, which gives the main model an
+`advisor` tool to consult MODEL when it is stuck (checked: with Sonnet 5.5 as main model and `opus` as advisor the tool
+appears). Idea from a thread suggesting Opus as advisor with cheaper models doing the work.
+
 ## 0.0.36 (2026-10-11)
 
 **`--preset NAME`: a model and effort per role, bundled.** Built in: `default` (Opus 5.5 medium + Haiku explorer), `boss`
