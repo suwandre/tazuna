@@ -22,6 +22,25 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 `advisor` tool to consult MODEL when it is stuck (checked: with Sonnet 5.5 as main model and `opus` as advisor the tool
 appears). Idea from a thread suggesting Opus as advisor with cheaper models doing the work.
 
+**Benchmark: popular plugins and the advisor** (6 Go tasks, 1 run each, Opus 5.5 xhigh judge, each run alone):
+
+| | judge without ref | with ref | cost (6 tasks) |
+|---|---|---|---|
+| stock Claude Code (Opus 5.5 medium, 2 runs, earlier) | 7.58 / 7.58 | 6.83 / 7.08 | $5.46 avg |
+| + ECC | 7.67 | 7.08 | $5.56 |
+| + superpowers | 7.50 | 6.83 | $5.18 |
+| + caveman | 7.75 | 7.17 | $6.35 |
+| + graphify alone | 7.58 | 6.92 | $5.24 |
+| + GStack (skills; browser binary not built) | 7.08 | 6.75 | $5.32 |
+| + all five together | 7.42 | 7.17 | $5.36 |
+| tazuna default (Opus 5.5 medium + Haiku explorer, earlier) | 7.42 / 7.50 | 7.17 / 7.08 | $3.97 avg |
+| tazuna, Sonnet 5.5 medium + Haiku explorer | 6.33 | 6.17 | **$1.35** |
+| **tazuna, Sonnet 5.5 + `--advisor claude-opus-5-5`** | **7.33** | 6.75 | **$2.17** |
+
+No plugin, alone or all together, moves quality past noise or lowers cost (−5% to +16% vs stock). The advisor lifts Sonnet
+by +1.0 judge to about Opus's level (−0.1 vs tazuna's Opus default) at −45% cost: about `--boss haiku`'s quality and cost
+(7.33, $2.70). One run each; a second run decides.
+
 ## 0.0.36 (2026-10-11)
 
 **`--preset NAME`: a model and effort per role, bundled.** Built in: `default` (Opus 5.5 medium + Haiku explorer), `boss`
