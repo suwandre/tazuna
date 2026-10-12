@@ -1,0 +1,19 @@
+I added `--once` to `k6 run`, `k6 cloud run` and `k6 archive`. The full `./internal/cmd/...` test run passes, and `golangci-lint` reports 0 issues. I didn't commit anything.
+
+I did not run `k6 cloud run` or `k6 archive` end to end with `--once`, and I didn't add archive tests. For the cloud path, I confirmed in the code that plain `cloud run` builds its config through the same consolidation function as `run`. The cloud test upload also sends the consolidated options.
+
+The flag is defined once in `internal/cmd/options.go`, so every command that uses the shared option flags gets it, including `k6 cloud upload`.
+
+The rewrite lives in the new `internal/cmd/once.go` and runs in `internal/cmd/test_load.go` after config consolidation, so it also applies to scenarios coming from the script, the config file or the environment.
+- **No scenarios:** the script runs `default()` once, with 1 VU and 1 iteration.
+- **One scenario:** the executor becomes `shared-iterations` with 1 VU and 1 iteration. `exec`, `env`, `tags` and `options` are kept. `startTime`, `gracefulStop` and the other executor fields are reset to defaults.
+- **Several scenarios:** it fails with "--once can run a single scenario only" and the invalid-config exit code.
+- **Combined with `--vus`, `--iterations`, `--duration` or `--stage`:** it fails with "--once cannot be combined with --<flag>". Only these command-line flags conflict. The same settings coming from the script or environment are discarded.
+
+An unset `exec` is stored as `"default"` in the rewritten scenario, so archives and cloud uploads will show it explicitly. This is harmless.
+
+I added unit tests in `internal/cmd/once_test.go` and an end-to-end `TestRunOnce` in `internal/cmd/tests/cmd_run_test.go`. The end-to-end test covers four cases:
+- **One scenario:** `setup`, the scenario function and `teardown` each run once, and the scenario's env is visible.
+- **No scenarios:** `default()` runs once.
+- **Several scenarios:** the run fails with the expected error.
+- **`--once` plus `--iterations`:** the run fails with the expected error.

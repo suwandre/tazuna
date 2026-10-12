@@ -1,0 +1,26 @@
+I added the `--once` flag. It works with `k6 run`, `k6 cloud run` (including `--local-execution`), `k6 archive` and `k6 cloud upload`. All tests in `./internal/cmd/...` pass, and `golangci-lint` reports 0 issues. Nothing is committed yet; the changes are in the working tree on `master`.
+
+**How it works**
+- **The flag:** it's defined in `optionFlagSet()` (`internal/cmd/options.go`), which every command above shares, so they all get it.
+- **The logic** is in a new file, `internal/cmd/once.go`:
+  - `isOnceEnabled` rejects `--once` combined with `--vus`, `--iterations`, `--duration` or `--stage`, e.g. "`--once cannot be combined with --iterations`".
+  - `applyOnce` changes the config:
+    - **No scenarios:** it creates a `default` scenario with 1 VU and 1 iteration.
+    - **One scenario:** it replaces the executor with `shared-iterations` at 1 VU and 1 iteration. It keeps the scenario name, `exec`, `env`, `tags` and `options` (browser), and drops everything else, such as `startTime` and `gracefulStop`.
+    - **More than one scenario:** it fails with "`--once can run a single scenario only`".
+    - In every case it clears the top-level `vus`, `iterations`, `duration` and `stages`.
+- **When it runs:** `consolidateDeriveAndValidateConfig` in `internal/cmd/test_load.go` calls `applyOnce` once all config layers have been merged, before scenarios are derived from shortcuts. So it acts on the final config, wherever the settings came from. Because the merged config is what gets written into archives and uploaded to the cloud, those carry the 1-VU, 1-iteration scenario too.
+- **Other changes:** `setup()` and `teardown()` still run normally. I added a `--once` example to the `k6 run` help text.
+
+**Behaviours to be aware of**
+- Only the command-line flags cause an error. Shortcut options set in the script, environment variables (e.g. `K6_ITERATIONS`) or the config file are silently dropped instead.
+- `k6 cloud upload` also gets the flag, because it uses the same flag set.
+
+**Tests**
+- `internal/cmd/once_test.go`: unit tests for the conflict checks and the config change in each case.
+- `internal/cmd/tests/cmd_run_once_test.go`: end-to-end `k6 run` tests:
+  - **No scenarios:** the script's `vus`/`duration` are overridden, and `setup` and `teardown` still run.
+  - **One scenario:** a constant-arrival-rate scenario runs its `exec` function with its env and tags under `shared-iterations`.
+  - **Errors:** multiple scenarios, and `--once` combined with `--iterations`.
+- `TestArchiveOnce` in `internal/cmd/archive_test.go` checks the scenario written into the archive's `metadata.json`.
+- `TestCloudRunOnce` in `internal/cmd/tests/cmd_cloud_run_test.go` checks the archive uploaded to a mock cloud server.

@@ -1,0 +1,26 @@
+Parentheses around a plain number or duration literal now survive `Expr.String()` in offset and range positions. The `promql`, `web`, and `cmd/promtool` tests pass with `go test`. I didn't run `make lint`.
+
+**The fix.** `*NumberLiteral` has no `Wrapped` field, and offset and range literals are reduced to a plain `time.Duration`, so the parentheses were gone before printing. A parenthesised number literal in a duration position is now represented as a `*DurationExpr` with `Wrapped: true`, the same shape as the multi-term case.
+
+**Printed output.** The round-trip for the cases in the issue:
+
+| Input | Now prints |
+|---|---|
+| `foo offset (5)` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[(5s)]` |
+| `foo offset +(5)` | `foo offset (5)` |
+
+The `+` is still dropped, as it already was for `+(5m + 1m)`. A bare `5` inside the parentheses prints as `(5)`, not `(5s)`, because the number isn't flagged as a duration literal. That is what the input said, so the round-trip is faithful.
+
+**Code changes.**
+- `parse.go` has new helpers `wrapDurationLiteral`, `parenDurationExpr` and `constantDuration`, and `applyUnaryOpToDurationExpr` uses them.
+- `generated_parser.y` now calls those helpers from `paren_duration_expr` and `positive_duration_expr`. I regenerated `generated_parser.y.go` with goyacc.
+- The `duration must be greater than 0` check for ranges used to look only at bare number literals. `foo[(0)]` and `foo[-(5)]` would have slipped through to evaluation time, so `constantDuration` keeps that check at parse time. I confirmed both still fail to parse.
+
+**Behaviour change.** The AST for `foo offset +(5)` and `foo offset -(5)` changes: they now set `OriginalOffsetExpr` instead of `OriginalOffset`. The evaluator already handles unary `DurationExpr`, so results are the same. I updated the two `parse_test.go` expectations that encoded the old AST.
+
+**Tests.** `printer_test.go` has new round-trip cases for `foo offset (5)`, `+(5)`, `-(5)`, `(5m)`, `foo[(5s)]`, `foo[(5)]` and `foo[(5):(1)]`.
+
+I haven't committed anything.

@@ -1,0 +1,26 @@
+Parentheses around a plain duration literal now survive `Expr.String()` round-trip. `go test` passes for `promql/parser`, `promql` and `cmd/promtool`. I didn't run `make lint`.
+
+**The fix:** `*NumberLiteral` has no `Wrapped` field, so the parenthesised form is now stored as a wrapped unary-plus `*DurationExpr` around the literal. `-(5)` becomes a `SUB` expression around that wrapped node. The engine's duration evaluation already handles unary plus, so evaluation needs no changes.
+
+**Changes:**
+- **Grammar:** `paren_duration_expr` in `generated_parser.y` now wraps a bare literal. I regenerated `generated_parser.y.go` with goyacc.
+- **`parse.go`:**
+  - New helper `wrapDurationLiteral`.
+  - `applyUnaryOpToDurationExpr` takes an extra `parenPos` argument so the wrapped node's start position is correct.
+
+**Round-trip results** (the output spells it `(5)`, not `(5s)`):
+
+| Input | `String()` |
+|---|---|
+| `foo offset (5)` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -(5)` |
+| `foo offset +(5)` | `foo offset (5)` |
+| `foo offset (5m)`, `foo[(5m)]`, `foo[(5) + 1]` | unchanged |
+
+`+(5)` loses the plus sign, the same way `+(5*2)` already prints as `(5 * 2)`.
+
+**AST change:** `foo offset (5)` and `foo offset ±(5)` now populate `OriginalOffsetExpr` rather than `OriginalOffset` at parse time, and `foo[(5s)]` sets `RangeExpr` rather than `Range`. The value is filled in later by the engine's duration visitor, as it already is for `5m + 1m`.
+
+One behaviour shift to be aware of: a parenthesised literal like `foo[(0)]` is no longer rejected at parse time, only at evaluation, the same as other duration expressions.
+
+**Tests:** I added round-trip cases to `TestExprString` in `printer_test.go`. I also updated the two `foo offset +(5)` and `foo offset -(5)` expectations in `parse_test.go` to the new AST shape.

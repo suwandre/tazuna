@@ -1,0 +1,23 @@
+`return` now works in any template, at any position, using the sentinel-error approach you proposed. The old template rewriting is removed. Tests in the packages I touched pass (`./check.sh ./tpl/...` is green, and `go test ./hugolib/` passes). The full `./check.sh` fails at staticcheck: it reports deprecations in `config/allconfig/allconfig.go` and an unused value in `hugolib/integrationtest_builder.go`, neither of which I changed. That stopped it before the tests, so I ran `go test ./...` separately. Only `internal/warpc` fails there (`TestGreet`, `TestGreetParallel`, `TestKatexParallel`), with a WASM dispatcher error ("dispatcher is shutting down") that has nothing to do with templates. I didn't check whether those three fail on a clean checkout too.
+
+**How it works**
+- **The function:** `templates.Return`, still callable as `return`, returns `nil, &ReturnError{Value, HasValue}`. It moved from the `partials` namespace to `templates`.
+- **Changes to the Go template fork**, all marked "Added for Hugo" and kept in `hugo_template.go`:
+  - `evalCall` re-panics a `*ReturnError` as-is instead of wrapping it in a normal error.
+  - `try` doesn't swallow it.
+  - `executeWithState` recovers it and returns it as the error.
+  - `walkTemplate` is now wrapped (the original is renamed `walkTemplateOld`), so a `return` inside a `{{ template }}` or `{{ block }}` only ends that template. In a `define "main"` with a baseof, the footer still renders. I added the rename to `scripts/fork_go_templates/main.go` so it survives a re-fork.
+- **Handling the result:** `TemplateStore.ExecuteWithContextAndKey` now returns `(*ReturnError, error)`. `ExecuteWithContext` discards the return value, so every non-partial caller just stops early. Partials use the value if one was given, and otherwise the output rendered so far.
+- **Removed:** the wrapper template, `contextWrapper`, `ParseInfo.HasReturn`, `collectReturnNode`, and the "keep" bool plumbing in `applyTransformations`.
+
+**Compatibility**
+- **Still a transform:** a small one (`wrapReturnArgs`) is needed because the old syntax treated `return` as a keyword. It rewrites `{{ return add . 42 }}` to `{{ return (add . 42) }}`; without it the existing `TestPartialWithReturn` broke.
+- **Pipes after `return`:** the same rewrite makes `{{ return X | f }}` mean `return (X | f)`. Before, this gave a confusing "wrong number of args" error. I updated `TestPartialReturnPanicIssue13600`, which asserted that old error message.
+- **Behaviour changes:**
+  - A bare `{{ return }}` in a partial now returns the output rendered so far; the docs said it returned an empty string.
+  - Multiple or conditional `return`s now behave as you'd expect; before, only the first one counted.
+  - Partials that return a value now render into a pooled buffer instead of `io.Discard`, which is a small cost.
+
+**Tests:** I added `TestReturnEarly`, `TestReturnEarlyInBlock` and `TestReturnTooManyArgs` in `tpl/partials/partials_integration_test.go`. They cover returns inside `if`/`range`, falsy and nil values, a bare return, `define`/`block`, `try`, the unparenthesized syntax with pipes, and an early return in a regular template.
+
+I also rewrote `docs/content/en/functions/go-template/return.md` to match.

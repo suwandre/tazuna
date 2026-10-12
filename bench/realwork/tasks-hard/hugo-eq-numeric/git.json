@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/hugo",
+  "base": "a374b865f7e99cccafcbe443dcdb47552b91af3c",
+  "fix": "4d628bbdc3441f3c44b1f6f4e6ad04f4df4728bf",
+  "pr": "https://github.com/gohugoio/hugo/pull/15325",
+  "issue": "https://github.com/gohugoio/hugo/issues/15322",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./tpl/compare ./tpl/collections -run '^(TestEqIntFloat|TestCompare|TestEqualExtend|TestCheckCondition)$'",
+  "suite_cmd": "go test -count=1 ./common/hreflect ./tpl/compare ./tpl/collections -skip '^(TestCompareNumbers|TestConvertIfPossible|TestConvertIfPossibleMisc)$'",
+  "suite_skip_note": "suite skips PR-specific tests excluded from hidden (pinned wording/helpers not in the ticket); it checks pre-existing behavior only"
+}

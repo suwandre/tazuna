@@ -1,0 +1,24 @@
+I added `--once`, and the new and existing tests pass: `./internal/cmd/`, `./internal/cmd/tests/` and `./lib/executor/`. I did not run `make lint`, and nothing is committed. I didn't test `k6 cloud run` or `--local-execution` end to end.
+
+**How it behaves**
+- **Where it applies:** the flag is registered in `internal/cmd/options.go` alongside the other option flags. That makes it available on `k6 run`, `k6 cloud run` (including `--local-execution`), `k6 archive` and `k6 cloud upload`. I also added an example to the `k6 run` help text.
+- **Transformation:** `executor.ApplyOnce` in `lib/executor/execution_config_shortcuts.go` runs after config consolidation, so it also drops `vus`, `iterations`, `duration` and `stages` coming from the script, env vars or the config file.
+  - **No scenarios:** you get a `default` shared-iterations scenario with 1 VU and 1 iteration.
+  - **One scenario:** it is replaced by a shared-iterations scenario with 1 VU and 1 iteration. The name, `exec`, `env`, `tags` and scenario `options` (e.g. browser) are kept, and executor type, `startTime` and `gracefulStop` are discarded.
+  - **More than one scenario:** error `--once can run a single scenario only`.
+- **Conflicts:** combining `--once` with `--vus`, `--iterations`, `--duration` or `--stage` errors with, for example, `--once cannot be combined with --iterations`. If several conflict, they are listed together. This check runs before the script is loaded.
+- **Exit code:** both errors exit with `InvalidConfig`.
+- **Cloud and archive:** the transformed scenarios go into the archive, because those paths reuse the consolidated options. `setup()` and `teardown()` run as usual.
+
+**Behaviours to know about**
+- A single scenario's `maxDuration` is reset to the executor's 10-minute default, so a run longer than that is cut off. That follows from "discards duration", but say if you'd rather preserve it.
+- A scenario that explicitly sets `exec: 'default'` ends up with `exec` unset in the archive. The behaviour is the same.
+- `k6 inspect` doesn't register the flag, so it's unaffected.
+
+**Tests**
+- **`lib/executor/execution_config_shortcuts_test.go`:** unit tests for `ApplyOnce`, covering no scenarios, one scenario with everything preserved, the default `exec`, and multiple scenarios.
+- **`internal/cmd/tests/cmd_run_once_test.go`:** CLI tests.
+  - `k6 run`: `setup`/`default`/`teardown` order, a single scenario keeping `exec`, env and tags, the multiple-scenario error, and each conflicting flag.
+  - `k6 archive`: the archived metadata contains the rewritten scenario.
+
+I didn't add a release note: `release notes/` has no `upcoming` directory.

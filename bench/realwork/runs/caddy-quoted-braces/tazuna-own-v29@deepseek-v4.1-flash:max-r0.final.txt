@@ -1,0 +1,32 @@
+All formatted correctly. Here's a summary of the changes.
+
+## Summary
+
+Quoted `"{"` and `"}"` tokens (including backtick-quoted) are now ignored as block open/close characters throughout Caddyfile parsing, so `respond "{"` works as expected.
+
+### Root cause
+
+The lexer correctly recorded that a token was quoted (`Token.wasQuoted`), and a few places already checked it (e.g. the `{`-on-same-line error), but the core block-structure logic compared token text to `"{"`/`"}"` without checking whether the token was quoted. This caused `respond "{"` to be interpreted as the opening of a block.
+
+### Changes
+
+**`caddyconfig/caddyfile/dispenser.go`**
+- `NextArg`: a quoted `"{"` is now treated as an argument instead of a block opener.
+- `NextBlock`: quoted braces no longer adjust nesting, no longer qualify as a block opening, and a quoted `"}"` no longer counts as an empty block `{}`.
+- `ArgErr`: only reports "unexpected token '{'" for unquoted braces.
+
+**`caddyconfig/caddyfile/parse.go`**
+- `addresses`: a quoted `"{"` no longer ends the address list.
+- `directives` / `directive`: quoted braces are skipped for nesting and the "unexpected `}`"/EOF checks.
+- `openCurlyBrace` / `closeCurlyBrace`: quoted braces are rejected as structural braces.
+- `blockTokens`: quoted braces no longer affect nesting when collecting snippet/named-route blocks.
+
+**Tests**
+- `caddyconfig/caddyfile/parse_test.go`: added cases covering a quoted `"{"`/`"}"` as a directive argument, quoted braces inside a block, and ensuring quoted braces neither swallow the rest of a block nor end it early.
+- `caddytest/integration/caddyfile_adapt/quoted_braces.caddyfiletest`: new end-to-end adapter test for the issue's exact scenario (`respond "{"`, `respond "}"`, and `respond "a { b } c"` across three sites).
+
+### Verification
+- `go test -short ./...` — passes (all packages)
+- `go test -race -short ./caddyconfig/... ./modules/caddyhttp/...` — passes
+- `go vet` on both changed packages — clean
+- Manually verified `caddy adapt` and `caddy fmt` on the issue's Caddyfile, plus nested `route`/`handle` blocks containing quoted braces.

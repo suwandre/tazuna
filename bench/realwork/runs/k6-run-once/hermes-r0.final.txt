@@ -1,0 +1,16 @@
+I added `--once` to `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. The new tests and the existing `internal/cmd/...` and `lib/...` suites pass. I did not run a real cloud run.
+
+How it behaves:
+- **No scenarios:** `default()` runs as a shared-iterations scenario named `default` with 1 VU and 1 iteration. Any `vus`, `iterations`, `duration` or `stages` from the script are dropped.
+- **One scenario:** it becomes shared-iterations with 1 VU and 1 iteration. It keeps its name, `exec`, `env`, `tags` and scenario `options` (e.g. browser). `startTime`, `gracefulStop` and executor-specific fields are discarded.
+- **Several scenarios:** the run fails with `--once can run a single scenario only`.
+- **With `--vus`, `--duration`, `--iterations` or `--stage`:** the run fails with `--once cannot be combined with --<flag>`.
+- **Exit code and setup/teardown:** both errors exit with the invalid-config code, and `setup()` and `teardown()` run normally.
+
+The transform is applied right after config consolidation. Because it works on the consolidated config, `k6 archive` and `k6 cloud run` pick it up automatically and the archive contains the transformed scenario. The code is in `ApplyOnce` in `lib/executor/execution_config_shortcuts.go` and `consolidateDeriveAndValidateConfig` in `internal/cmd/test_load.go`.
+
+- **Not covered:** `K6_ITERATIONS`-style env vars and script-level shortcuts are silently discarded under `--once` rather than rejected. The spec only names the CLI flags.
+- **`cloud upload`:** it doesn't get the flag, since the spec lists only run, cloud run and archive.
+- **Explicit `exec: "default"`:** it is stored as unset.
+
+Tests are in `lib/executor/execution_config_shortcuts_test.go` and `internal/cmd/tests/cmd_run_once_test.go`. They cover each case above, plus the archive contents.

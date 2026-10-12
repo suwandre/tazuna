@@ -1,0 +1,13 @@
+`eq` and `ne` now compare numbers by value, so they agree with `lt`, `le`, `gt` and `ge`. `eq 1 1.0` is now true, and exactly one of `lt`/`eq`/`gt` holds for any int/float pair. `./check.sh` passes, and the new tests fail on the old code.
+
+**What changed**
+- **New helper:** `hreflect.CompareNumbers` in `common/hreflect/compare.go` compares any mix of signed ints, unsigned ints and floats exactly. Nothing is rounded through `float64` and nothing overflows: `int64(9007199254740993)` is greater than `float64(9007199254740992)`, and `uint64` max is greater than `-1`. If either value is NaN it returns "not ok", so NaN keeps its old behaviour: never equal, never ordered.
+- **`tpl/compare/compare.go`:** `Eq` and `compareGetWithCollator` (behind `lt`/`le`/`gt`/`ge`) use the helper first, which made the old `compareTwoUints` special cases unnecessary. That also fixes two older bugs:
+  - A negative int compared with a `uint` wrapped around, so `-1` and `uint64` max came out equal.
+  - A `uint64` compared with anything that wasn't a `uint` was treated as `0`.
+- **`tpl/collections/where.go`:** `checkCondition` uses the same helper for `eq`/`ne`/`<`/`<=`/`>`/`>=` on numbers. It used to convert mixed types to `float64`, and it cast same-kind uints to `int64`, which overflowed above `MaxInt64`.
+
+**Tests**
+- A unit test for `CompareNumbers`.
+- New mixed int/uint/float rows in `doTestCompare`, covering precision, overflow and ±Inf cases.
+- `TestCompareIntWithEqualFloat`, an end-to-end test of the issue's template plus `where` with mixed int/float values.

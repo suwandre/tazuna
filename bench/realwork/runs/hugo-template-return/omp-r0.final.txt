@@ -1,0 +1,24 @@
+`return` now ends template execution early in any template, not just partials, and it no longer has to be the last command. The `tpl/...` and `hugolib/...` suites pass, including the new return tests.
+
+`go test ./internal/...` fails in `internal/warpc` (`TestGreet`, `TestGreetParallel`, `TestKatexParallel`). I didn't investigate it or run it without my changes, but it doesn't touch template execution.
+
+**How it works**
+- `return` is now a real template function, `partials.Return`. It returns a sentinel `*texttemplate.ReturnErr{Value}` (`hugo_template.go`).
+- `evalCall` panics with that sentinel and `errRecover` in `exec.go` traps it. That is two small hooks in the forked package. `try` re-panics it rather than turning it into an error.
+- `TemplateStore.ExecuteWithContext` treats an early return as success, so page templates, shortcodes and hooks just stop rendering.
+- `ExecuteWithContextAndKey` hands the `ReturnErr` back, and `partials.doInclude` uses its value as the partial's result. A partial that finishes without returning still yields its output.
+- I removed the old machinery: the template rewriting, `contextWrapper`, `ParseInfo.HasReturn` and the `$_hugo_dot` / `$ := .Arg` shifting.
+
+**Behaviour changes**
+- `return` is tied to the whole execution, not to a `{{ define }}`. A `return` inside a `{{ template }}` or `{{ block }}` ends the entire page render. I kept the fork patch minimal rather than add scoping in `walkTemplate`.
+- `{{ return }}` with no value gives `nil` in a partial. The old docs said an empty `template.HTML`.
+- I kept `return add . 42` and `return X | f` working. A small transform, `wrapReturnArgs`, rewrites them to `return (add . 42)` and `return (X | f)`. Without it `add` would be evaluated as a no-argument call, and existing partials like `complex.tpl` would break. Previously `return X | f` produced an error (issue 13600); it now returns `f(X)`.
+- `partials.Return a b` (two arguments) is an error. The plain `return` form can't reach that case, because the rewrite always wraps its arguments.
+
+**Tests and docs**
+- New in `tpl/partials/partials_integration_test.go`: `TestReturnEarly`, `TestReturnPipeline` and `TestReturnTooManyArgs`.
+- `TestReturnEarly` covers returns inside `if` and `range`, `with` and falsy results, `partialCached`, a `return` with no value, an early exit from a page template, and a partial that falls through.
+- I replaced `TestPartialReturnPanicIssue13600` with `TestPartialReturnPipeline`, because the old test asserted the buggy error.
+- I updated `return.md`, `Include.md` and `IncludeCached.md` to drop the "only one return, at the end" rule.
+
+I did not run `./check.sh`.

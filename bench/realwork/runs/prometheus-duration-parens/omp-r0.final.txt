@@ -1,0 +1,24 @@
+Parentheses around a plain duration literal now survive `Expr.String()` in offset and range positions. `go test` passes for `./promql/...`, `./web/...` and `./rules/...`.
+
+**Approach:** `*NumberLiteral` has no `Wrapped` field, and `OriginalOffset` and `Range` are `time.Duration`, so the parentheses had nowhere to live. The grammar rule for `paren_duration_expr` now wraps a bare literal in a unary-plus `DurationExpr{Op: ADD, RHS: lit, Wrapped: true}`, which already prints as `(…)`. The `unary_op ( literal )` offset rule does the same, then applies the sign on top.
+
+**Results:**
+
+| Input | Before | After |
+|---|---|---|
+| `foo offset (5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -5s` | `foo offset -(5)` |
+| `foo offset +(5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset (5m)` | `foo offset 5m` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[5s]` | `foo[(5s)]` |
+
+- **Unary `+`:** it is still dropped, as it already was for `+(5*2)`. So `foo offset +(5)` prints as `foo offset (5)`.
+- **Changed AST:** `foo offset (5)` and `foo[(5s)]` now store `OriginalOffsetExpr` or `RangeExpr` instead of `OriginalOffset` or `Range`. The engine's duration visitor already evaluates unary `+` and unary `-` with a nil LHS, so evaluation is unchanged.
+- **Checks kept at parse time:** `foo[(0)]` still gives "duration must be greater than 0", and `x / (0)` still gives "division by zero". These checks used to look only for a bare `*NumberLiteral`, so I added `constantDurationValue` in `parse.go`, which sees through the new wrappers and unary operators.
+
+I regenerated `generated_parser.y.go` with goyacc v0.6.0, the version the Makefile pins.
+
+**Tests:**
+- **`parse_test.go`:** updated the `foo offset +(5)` and `foo offset -(5)` AST expectations. Added error cases `foo offset (4d/(0))` and `foo[(0)]`.
+- **`printer_test.go`:** added round-trips for `foo offset (5)`, `-(5)`, `+(5)`, `(5m)`, `(5) + 1`, `foo[(5s)]` and `foo[(5s):(1m)]`.
+- **`duration_expression.test`:** added engine evals for `offset (102)` and `offset -(98)`.

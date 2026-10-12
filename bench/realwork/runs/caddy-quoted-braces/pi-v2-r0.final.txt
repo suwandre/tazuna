@@ -1,0 +1,20 @@
+Quoted `{` and `}` are now treated as ordinary values, so `respond "{"` parses and adapts correctly. The `caddyfile` and `httpcaddyfile` tests pass, as do `go vet` and the Caddyfile adapt tests in `caddytest/integration`. I didn't run the full test suite.
+
+**Changes**
+- `caddyconfig/caddyfile/dispenser.go`: I added `isOpenCurly()` and `isCloseCurly()` helpers that only match unquoted braces. `NextArg`, `NextBlock` and `ArgErr` now use them.
+- `caddyconfig/caddyfile/parse.go`: the parser applies the same check everywhere it tracks nesting. That covers:
+  - detecting the end of the site addresses
+  - the "address ends with a brace" error
+  - directive and block nesting
+  - `blockTokens`
+  - snippet and import nesting
+  - anonymous-block detection in `import` mappings
+
+**Tests**
+- `TestParseQuotedBraces` and `TestParseQuotedBraceAsSnippetAndImport` in `parse_test.go`.
+- `TestDispenser_QuotedBracesAreArgs` in `dispenser_test.go`.
+- `TestQuotedBracesInRespond` in `httpcaddyfile/httptype_test.go`. It checks the example from the issue end to end and confirms the response body is a literal `{`.
+
+I didn't check the Caddyfile formatter (`caddy fmt`), so it may still treat quoted braces as block delimiters.
+
+Per the project's AI-contribution rules, mention in any PR that this was AI-assisted. Please also review the diff yourself before submitting.

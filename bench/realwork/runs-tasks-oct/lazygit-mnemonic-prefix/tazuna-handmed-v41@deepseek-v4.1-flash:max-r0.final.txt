@@ -1,0 +1,19 @@
+Staging, unstaging and discarding from the focused diff now work with `diff.mnemonicPrefix = true`. Unit tests pass, and a new integration test that stages a line with the setting on passes too; it failed the same way as the report before the fix. In the full integration suite, only the three `misc/direnv_*` tests fail, and they fail the same way on the base commit, so they're unrelated.
+
+**About the earlier attempt:** I didn't build on it. It told git to drop the path prefixes on every diff that is only displayed, but the parser needs those prefixes to work out which file a row belongs to, so the two changes worked against each other. It also left two tests not compiling. I set it aside in `git stash` (`stash@{0}`) rather than deleting it.
+
+**What changed**, as five commits:
+
+1. **`b4bc6e4`** moves the existing `-c diff.noprefix=false` into one helper, `DiffPathPrefixes()`, with no change in behaviour.
+2. **`2be96f4`** makes that helper also set `diff.srcPrefix=a/` and `diff.dstPrefix=b/`. It's now used for the working-tree and stash diffs as well, which previously had no override at all, so `diff.noprefix` could break them. I checked with git 2.55 that `diff.mnemonicPrefix` still takes precedence over these settings. So users who set it keep seeing `i/`/`w/` in their diffs, and every prefix is a single folder name the parser can strip.
+3. **`c9361b3`** splits decoding a header path (handling quotes and tabs) from stripping its prefix. It's a pure refactor.
+4. **`4fac138`** adds tests that show the bug, in the EXPECTED/ACTUAL style, plus the integration test `main_view/stage_diff_lines_with_mnemonic_prefix`.
+5. **`0147b14`** is the fix in `diff_line_parser.go`:
+   - Any single-component prefix is stripped (`a/`, `w/`, `c/`, …), including in quoted paths.
+   - `/dev/null` is left as it is.
+   - A path with no prefix resolves to nothing rather than a guess.
+   - Sections with no `---`/`+++` lines take their path from `rename to` / `copy to` if present.
+   - Otherwise the path comes from the `diff --git` line, split at the space where both halves name the same path. If no split matches, it resolves to nothing.
+   - This also fixes an older bug: a path containing ` b/` used to be split in the wrong place.
+
+`just` isn't installed here, so I ran the commands it would run instead: gofumpt, golangci-lint (clean), `go test ./... -short`, the integration client, and `go generate` for the test list.

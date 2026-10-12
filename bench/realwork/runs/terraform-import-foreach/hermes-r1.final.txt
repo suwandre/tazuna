@@ -1,0 +1,16 @@
+Fixed: multiple `import` blocks that target different instances of the same resource are now all honored, so your example plans as 2 to import, 0 to add.
+
+**Cause:** `refactoring.FindImportStatements` (`internal/refactoring/import_statement.go`) keyed its results by config resource, ignoring instance keys. Every block after the first one for `terraform_data.t` was dropped silently, which is why the first-declared block won.
+
+**Fix:**
+- `FindImportStatements` now returns a slice in declaration order. Blocks from the same module are all kept.
+- Parent-over-child precedence still works. A block in a child module is skipped when a parent module already has a block for the same resource.
+- The only caller, `findImportTargets` in `internal/terraform/context_plan.go`, now ranges over the slice.
+
+**Tests:**
+- `TestContext2Plan_importMultipleBlocksSameResource` in `context_plan_import_test.go` reproduces your case. Without the fix it fails with `a["second"] is not being imported (action Create)`.
+- `TestFindImportStatements` in `internal/refactoring/import_statement_test.go`, with fixtures in `testdata/import-statements/`, covers multiple blocks per resource and parent overriding child.
+- `go test` passes for `internal/refactoring/...` and `internal/terraform/...`.
+- `internal/command` has one failing test, `TestInit_providerLockFileReadonly`, which is a provider checksum error during init. I didn't confirm it also fails without my change, because the stash comparison I ran was inconclusive.
+
+I also saw that `node_resource_plan.go:354` passes `n.importTargets[0].Config` as the import config for every instance. That config is only used for config generation, which doesn't support `for_each`, so I left it alone.

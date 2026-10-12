@@ -1,0 +1,24 @@
+`return` is now a real call that unwinds template execution. It works in any template, anywhere in it, and the AST rewriting is gone. `./check.sh ./tpl/...` passes, and `go test` on `tpl/...`, `hugolib` and `resources/...` passes except for one test I had to change (below).
+
+## How it works
+- **Sentinel error:** `ReturnError{Value any}` is new in `texttemplate/hugo_template.go`. The `return` function returns `("", &ReturnError{...})`: bare `return` has a nil value, one argument is the value, and more than one is an error.
+- **Fork changes (3 spots):**
+  - `evalCall` turns a `*ReturnError` from a function into a panic.
+  - `errRecover` in `exec.go` converts that panic back into the returned error at the top level of the template.
+  - `try` re-panics it instead of swallowing it as a `TryValue`.
+- **Partials:** `doInclude` uses the `ReturnError` value as the partial's result. A partial that contains `return` still discards its output, and if it finishes without hitting a `return` it yields `nil`, as before. A partial with no `return` still renders to a string or `template.HTML`.
+- **Everything else:** `TemplateStore.ExecuteWithContext` (pages, shortcodes, baseof and so on) treats a return as a clean early stop. Only the partial path sees the error, through `ExecuteWithContextAndKey`.
+- **Removed:** the return wrapper template, `collectReturnNode`, `contextWrapper` and the `$`/dot juggling. `templatetransform.go` now only sets `ParseInfo.HasReturn` when it sees a `return` command in a partial.
+
+## Behaviour to know about
+- **Inline `define`s:** a `return` inside a `{{ define }}` template called with `{{ template }}` exits the whole top-level template, not just that call.
+- **`return` in a branch that isn't hit:** it is no longer hoisted and evaluated at the end of the partial. A partial that returns only inside a `{{ if }}` now yields `nil` when the condition is false.
+- **Changed test:** `TestPartialReturnPanicIssue13600` expected `wrong number of args for string`, which came from the old rewrite. It now expects the genuine `error calling delimit: can't iterate over …`. It still checks that there is no panic.
+
+## New tests
+All are in `tpl/partials/partials_integration_test.go`:
+- `TestReturnEarly` covers return inside `range` and `if`, a pipeline return, bare return, `return nil`, return through `{{ template }}`, a partial that never returns, and dot/`$` handling.
+- `TestReturnEarlyNonPartial` covers early return in a home and page template.
+- `TestReturnTooManyArgs` covers the argument-count error.
+
+I didn't add a docs change for the new behaviour.

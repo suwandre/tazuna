@@ -1,0 +1,14 @@
+Quoted `{` and `}` are now treated as ordinary arguments, so `respond "{"` parses. The `caddyconfig/...` tests and `caddytest/integration` pass. I didn't run the golangci-lint or the full `go test -race -short ./...` gates.
+
+**Cause:** the parser and dispenser compared token text to `"{"` and `"}"` without checking whether the token was quoted. A quoted brace therefore opened or closed a block, and `respond "{"` left the block unclosed.
+
+**Fix (in `caddyconfig/caddyfile`):**
+- `lexer.go`: added `Token.isOpenCurly()` and `Token.isCloseCurly()`, which match only unquoted braces. Backtick and heredoc tokens count as quoted too.
+- `dispenser.go`: `NextArg`, `NextBlock` and `ArgErr` use the new helpers, so a quoted brace is returned as an argument.
+- `parse.go`: every place that tracks nesting uses the helpers. That covers the site-address check, `directives`, `directive`, `blockTokens`, `openCurlyBrace`, `closeCurlyBrace`, the nesting counter in `doImport`, and the check that rejects anonymous blocks in an import's block arguments. I removed two `wasQuoted == 0` checks that the helpers made redundant.
+
+**Tests:**
+- `parse_test.go`: new `TestParseOneAndImport` cases cover quoted `{` and `}`, both together, backtick quoting, and a real block left unclosed after a quoted `}`.
+- `dispenser_test.go`: new `TestDispenser_QuotedBraces` checks that `NextArg` and `NextBlock` treat quoted braces as arguments and leave the nesting level alone.
+
+The disclosure rule in AGENTS.md applies to this change: the code and tests were written with Claude (Sonnet 5.5), so you'll want to say so in the PR and be able to explain each line.

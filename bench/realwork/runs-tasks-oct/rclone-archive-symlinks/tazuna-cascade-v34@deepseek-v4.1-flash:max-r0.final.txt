@@ -1,0 +1,16 @@
+The zip and squashfs archive backends now handle symlinks the way the maintainer notes asked, matching what the local backend does. The earlier attempt had already written almost all of this and its changes were sound, so I kept them and added one test. `go test ./backend/archive/...` passes, and `go vet` and `golangci-lint` report no issues.
+
+**How it behaves now (zip and squashfs):**
+- **Without `-l/--links`:** symlinks are skipped, and a notice says how many were skipped and names the flag (`Skipped N symlinks ... - use -l/--links to translate them`). `NewObject` can't find them under either name.
+- **With `--links`:** a symlink is listed as `name.rclonelink`. Its size is the length of the target, and opening it reads back the target path, with seek and range options applied. Seeking past the end gives an empty read rather than an error.
+- **Lookup matches listing:** `NewObject` finds exactly the names `List` shows, and the plain name of a symlink (without the suffix) is not found.
+- **Real `.rclonelink` files:** a regular archive member whose name ends in `.rclonelink` stays a regular file.
+- **Hostile zip:** members "inside" a symlink, or with the same name as one, are dropped whatever order they appear in. A notice says how many.
+- **Hostile squashfs:** the squashfs reader doesn't follow a symlink to a directory, so nothing "inside" a symlink can be listed or looked up.
+- **Copy to local:** `rclone copy --links` from an archive recreates the symlink, and a copy through a hostile archive writes nothing outside the destination. Both are covered by tests in `backend/archive/archive_internal_test.go`.
+
+**What I added:** `TestSquashfsSymlinkDirNotFollowed`, which checks that `sublink/file.txt` can't be reached through a symlink `sublink -> sub`, both with and without `--links`. In that case `List("sublink")` fails with the squashfs library's own "not a directory" error rather than rclone's `ErrorDirNotFound`. That's the same error any non-directory path already gets, so the test only checks that it fails.
+
+**Not handled:** a zip holding both a symlink `a` and a regular file `a.rclonelink` would list `a.rclonelink` twice. The local backend has the same ambiguity, so I left it.
+
+Nothing is committed yet.

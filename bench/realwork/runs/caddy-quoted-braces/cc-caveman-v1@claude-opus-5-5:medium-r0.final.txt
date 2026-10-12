@@ -1,0 +1,21 @@
+The Caddyfile from the issue now parses. `caddy adapt` turns it into a handler with `"body":"{"`.
+
+**Cause:** the parser and dispenser decided whether a token opened or closed a block by checking only its text (`== "{"` / `== "}"`). They ignored whether the token had been quoted. So `respond "{"` opened a nested block that never closed, and `respond "}"` closed the site block too early.
+
+**Fix** (all in `caddyconfig/caddyfile`):
+- **`lexer.go`:** added `Token.isOpenCurlyBrace()` and `Token.isCloseCurlyBrace()`. They return true only for a brace with no quoting, so a brace in double quotes, backticks or a heredoc is never treated as a block delimiter.
+- **`dispenser.go`:** `NextArg`, `NextBlock` and `ArgErr` now use these helpers.
+- **`parse.go`:** all the brace checks now use them too: the address list, the end of a server block in `directives`, `directive`, `openCurlyBrace`/`closeCurlyBrace`, `blockTokens`, and both brace checks in `doImport` (the anonymous-block check and snippet nesting). The `directive` function already had a partial `wasQuoted == 0` workaround, which is no longer needed, so I removed it.
+
+**Tests:**
+- `TestQuotedBracesAreNotBlockDelimiters` in `parse_test.go` covers quoted `{` and `}`, backtick quoting, quoted braces inside a nested `handle` block and inside an imported snippet, and checks that a bare `}` with no matching `{` is still an error.
+- `TestDispenser_QuotedBraces` in `dispenser_test.go` checks that `NextArg` and `NextBlock` treat quoted braces as arguments.
+- Both tests fail without the fix and pass with it.
+- `go test -race -short ./caddyconfig/... ./caddytest/... ./modules/caddyhttp/...` passes. I didn't run the full `./...` suite or `golangci-lint`.
+- `caddy fmt` leaves `respond "{"` / `respond "}"` unchanged.
+
+**Behaviour change:** a quoted `"{"` used to work as a block opener. It's now just a text value. That seems unlikely to be relied on, but it's worth mentioning in the PR.
+
+**Unrelated issue:** while writing tests I saw that a site block missing its final `}` at the end of the file doesn't produce an error. That happens on master too. I left it alone because it's out of scope.
+
+Nothing is committed. Since this was AI-assisted, the PR description should say so (Claude Opus 5.5), as CONTRIBUTING.md requires.

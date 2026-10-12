@@ -1,0 +1,9 @@
+`go test ./plugins/common/snmp/ ./plugins/inputs/snmp/ ./plugins/processors/snmp_lookup/` now passes, with and without `-race`, and `processors/ifname` passes too. The fix is test-only; the reconnect fix itself is unchanged.
+
+**Cause:** the failure came from this checkout's directory name, not the reconnect change. The repo path contains a colon (`...@claude-opus-5-5:medium-...`). The MIB library gosmi (v0.4.4) keeps its MIB search path as one colon-separated string, so it split the testdata directory's absolute path in two and no MIB file could be found. `TestSnmpInitGosmi` then crashed instead of failing cleanly, because it never set the plugin's `Log`. The "couldn't load module" warning went through that nil logger. The test fails the same way without my changes.
+
+**Fix (in `plugins/inputs/snmp/snmp_test.go`, `TestSnmpInitGosmi` only):**
+- It now passes the relative testdata path `../../common/snmp/testdata/gosmi` instead of `filepath.Abs(...)`. The relative path has no colon and points to the same directory, and the other gosmi tests already use it.
+- It sets `Log: testutil.Logger{}`, so a MIB that fails to load produces a warning instead of a crash.
+
+Telegraf itself still can't load MIBs from a directory whose path contains a colon. That's a gosmi limitation, so I didn't change product code for it.

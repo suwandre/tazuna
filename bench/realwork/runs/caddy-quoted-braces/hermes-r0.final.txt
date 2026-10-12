@@ -1,0 +1,13 @@
+Quoted `{` and `}` (double-quoted, backtick, or heredoc) are now treated as plain text. They no longer open or close blocks, so `respond "{"` inside a site block parses and adapts correctly. `go test ./caddyconfig/...` and the `TestCaddyfileAdaptToJSON` integration test pass. I didn't run the full `./...` suite, `golangci-lint`, or `-race`.
+
+Before the change, the parser compared token text only, so a quoted `"{"` looked identical to a real brace. I added `isOpenCurly()` and `isCloseCurly()` to `Token` in `lexer.go`. They only match when the token wasn't quoted. I then switched every structural brace check in `parse.go` and `dispenser.go` to use them: server-block, directive and import-block parsing, snippet nesting, `NextArg`, `NextBlock` and `ArgErr`.
+
+In `directive()` I also dropped two `wasQuoted == 0` conditions that the new check makes redundant. The `"{}"` check keeps its own.
+
+I left `formatter.go` alone, so `caddy fmt` may still handle quoted braces differently from the parser. I haven't tested that.
+
+Tests added:
+- **`parse_test.go`:** `TestQuotedBracesDoNotAffectBlockParsing` covers quoted `{` and `}`, backticks, nested blocks, a site block without braces, and an unterminated block that must still error. `TestQuotedBracesInSnippetsAndImportBlocks` covers snippets and import blocks. Four of the table cases fail without the fix.
+- **`caddyfile_adapt/respond_quoted_braces.caddyfiletest`:** an end-to-end adapt test using the exact Caddyfile from the issue.
+
+Per AGENTS.md, this change was AI-assisted (Claude), so disclose that in the PR. You'll also need to be able to explain every line of it.

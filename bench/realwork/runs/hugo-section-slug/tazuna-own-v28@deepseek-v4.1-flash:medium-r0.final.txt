@@ -1,0 +1,19 @@
+Done. Implemented slug support for section, taxonomy, and term pages by porting the upstream fix for issue #14352.
+
+## What changed
+
+**`resources/page/page_paths.go`**
+- Replaced `TargetPathDescriptor.Section *paths.Path` with `Dir string` — the directory part of the target path with any ancestor branch slugs applied.
+- `CreateTargetPaths` now uses `d.Dir` instead of `d.Section.Base()` for branch pages, and `d.Dir` instead of `d.Path.ContainerDir()` for regular pages.
+
+**`hugolib/page__paths.go`**
+- Added `targetPathDir`, `writeBranchDir`, and `pathBase` helpers that walk the page's branch ancestors and substitute each branch page's `Slug()` when set, so a slug on a section/taxonomy/term cascades into that page's URL and all descendants.
+- `createTargetPathDescriptor` now populates `Dir: targetPathDir(p)` (honoring `disablePathToLower` via unnormalized paths) and drops the now-unused `Section` field; updated a debug log accordingly.
+
+**`hugolib/page_permalink_test.go`**
+- Added `TestSlugInBranchPagesCascadesToDescendants` (multilingual section/taxonomy/term slugs, including nested sections and pages under a slugged ancestor), `TestSlugInBranchPagesDisablePathToLowerUglyURLs`, and `BenchmarkTargetPathDir`. Adjusted the RSS assertion to the repo's default `baseURL` (`https://example.org/...`).
+
+## Verification
+- `go test ./hugolib/`, `./resources/...`, `./commands/...`, `./config/...`, `./tpl/...`, `./output/...`, `./publisher/...`, `./common/...` — all pass.
+- `./check.sh ./hugolib/... ./resources/page/...` — gofmt, staticcheck, and tests all pass.
+- Benchmarked `targetPathDir` (~600ns/op) to confirm the new walk has negligible cost.

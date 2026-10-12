@@ -1,0 +1,230 @@
+diff --git a/models/actions/run_job.go b/models/actions/run_job.go
+index 23c5333..79d53dd 100644
+--- a/models/actions/run_job.go
++++ b/models/actions/run_job.go
+@@ -594,7 +594,11 @@ func RefreshReusableCallerStatus(ctx context.Context, caller *ActionRunJob) erro
+ 	if err != nil {
+ 		return err
+ 	}
++	return refreshReusableCallerStatus(ctx, caller, children)
++}
+ 
++// refreshReusableCallerStatus persists the caller status aggregated from the given children.
++func refreshReusableCallerStatus(ctx context.Context, caller *ActionRunJob, children ActionJobList) error {
+ 	newStatus := AggregateJobStatus(children)
+ 	cols := make([]string, 0, 3)
+ 	if caller.Status != newStatus {
+@@ -615,7 +619,7 @@ func RefreshReusableCallerStatus(ctx context.Context, caller *ActionRunJob) erro
+ 	if len(cols) == 0 {
+ 		return nil
+ 	}
+-	_, err = UpdateRunJob(ctx, caller, nil, cols...)
++	_, err := UpdateRunJob(ctx, caller, nil, cols...)
+ 	return err
+ }
+ 
+@@ -817,7 +821,22 @@ func cancelOneJob(ctx context.Context, job *ActionRunJob, force bool) (*ActionRu
+ 	if job.Status.IsDone() {
+ 		return nil, nil //nolint:nilnil // signal "nothing to cancel; not an error"
+ 	}
+-	// No associated task: mark Cancelled directly. This includes reusable callers and jobs that never reached PickTask.
++	// A caller has no task of its own: its status is aggregated from its children. Writing it Cancelled
++	// while a child is still Cancelling would leave the run stuck there, because the child's
++	// acknowledgement no longer changes the caller and so never refreshes the run.
++	if job.IsReusableCaller {
++		children, err := GetDirectChildJobsByParent(ctx, job)
++		if err != nil {
++			return nil, fmt.Errorf("get children of caller %d: %w", job.ID, err)
++		}
++		if len(children) > 0 {
++			if err := refreshReusableCallerStatus(ctx, job, children); err != nil {
++				return nil, err
++			}
++			return job, nil
++		}
++	}
++	// No associated task: mark Cancelled directly. This includes callers that were never expanded and jobs that never reached PickTask.
+ 	if job.TaskID == 0 {
+ 		job.Status = StatusCancelled
+ 		job.Stopped = timeutil.TimeStampNow()
+@@ -852,8 +871,8 @@ func cancelReusableCaller(ctx context.Context, caller *ActionRunJob, force bool)
+ 		return cancelledJobs, err
+ 	}
+ 
+-	// Cancel descendants deepest-first, then the caller: a caller's status is aggregated from its children,
+-	// so each child must reach its final state before its parent caller is re-aggregated.
++	// Cancel descendants deepest-first, then the caller: a caller's status is aggregated from its
++	// children, so each child is cancelled before its parent caller is re-aggregated.
+ 	// A child's ID always exceeds its parent's, so descending ID is a valid deepest-first order.
+ 	descendants := CollectAllDescendantJobs(caller, attemptJobs)
+ 	slices.SortFunc(descendants, func(a, b *ActionRunJob) int { return cmp.Compare(b.ID, a.ID) })
+diff --git a/models/actions/run_job_test.go b/models/actions/run_job_test.go
+index 4b428c6..9e8cf65 100644
+--- a/models/actions/run_job_test.go
++++ b/models/actions/run_job_test.go
+@@ -7,6 +7,7 @@ import (
+ 	"fmt"
+ 	"testing"
+ 
++	runnerv1 "gitea.dev/actionslib/runner/v1"
+ 	"gitea.dev/models/db"
+ 	"gitea.dev/models/unittest"
+ 	"gitea.dev/modules/timeutil"
+@@ -288,6 +289,61 @@ func TestSettleRunAfterCancel(t *testing.T) {
+ 	}
+ }
+ 
++// Cancelling a reusable caller whose child has a task must leave the caller (at any nesting depth) and
++// the run cancelling until the runner acknowledges. Regression: the caller used to be written Cancelled
++// right away, so the acknowledgement no longer changed it and the run stayed Cancelling forever,
++// blocking the runs waiting behind it in the same concurrency group.
++func TestCancelJobs_ReusableCallerWaitsForDescendantAck(t *testing.T) {
++	require.NoError(t, unittest.PrepareTestDatabase())
++	ctx := t.Context()
++
++	task, child := newRunningTaskForCancelling(t, "wait-for-ack-child", true)
++
++	newCaller := func(name string, parentID int64) *ActionRunJob {
++		caller := &ActionRunJob{
++			RunID:            child.RunID,
++			RunAttemptID:     child.RunAttemptID,
++			RepoID:           child.RepoID,
++			OwnerID:          child.OwnerID,
++			CommitSHA:        child.CommitSHA,
++			Name:             name,
++			JobID:            name,
++			Attempt:          1,
++			Status:           StatusRunning,
++			IsReusableCaller: true,
++			IsExpanded:       true,
++			ParentJobID:      parentID,
++		}
++		require.NoError(t, db.Insert(ctx, caller))
++		return caller
++	}
++	outer := newCaller("wait-for-ack-outer", 0)
++	inner := newCaller("wait-for-ack-inner", outer.ID)
++	child.ParentJobID = inner.ID
++	_, err := UpdateRunJob(ctx, child, nil, "parent_job_id")
++	require.NoError(t, err)
++
++	cancelled, err := CancelJobs(ctx, []*ActionRunJob{outer}, false)
++	require.NoError(t, err)
++	assert.Len(t, cancelled, 3, "the child and both callers moved out of Running")
++
++	for _, caller := range []*ActionRunJob{outer, inner} {
++		assert.Equal(t, StatusCancelling, unittest.AssertExistsAndLoadBean(t, &ActionRunJob{ID: caller.ID}).Status, "caller %q must wait for its descendants", caller.JobID)
++	}
++	assert.Equal(t, StatusCancelling, unittest.AssertExistsAndLoadBean(t, &ActionRunJob{ID: child.ID}).Status)
++	assert.Equal(t, StatusCancelling, unittest.AssertExistsAndLoadBean(t, &ActionRun{ID: child.RunID}).Status)
++
++	// The runner acknowledges the cancellation, finishing its cleanup phase.
++	_, err = UpdateTaskByState(ctx, task.RunnerID, &runnerv1.TaskState{Id: task.ID, Result: runnerv1.Result_RESULT_CANCELLED})
++	require.NoError(t, err)
++
++	for _, caller := range []*ActionRunJob{outer, inner} {
++		assert.Equal(t, StatusCancelled, unittest.AssertExistsAndLoadBean(t, &ActionRunJob{ID: caller.ID}).Status, "caller %q follows its cancelled children", caller.JobID)
++	}
++	assert.Equal(t, StatusCancelled, unittest.AssertExistsAndLoadBean(t, &ActionRunJob{ID: child.ID}).Status)
++	assert.Equal(t, StatusCancelled, unittest.AssertExistsAndLoadBean(t, &ActionRun{ID: child.RunID}).Status)
++}
++
+ func TestParseJobDeferredMatrixPlaceholder(t *testing.T) {
+ 	// A placeholder is persisted with the raw matrix and without its needs, so routing its payload
+ 	// through jobparser.Parse re-expands that matrix. The job emitter reads `if:` (and so ParseJob)
+diff --git a/services/actions/cancel.go b/services/actions/cancel.go
+index 83b56bd..f795fa4 100644
+--- a/services/actions/cancel.go
++++ b/services/actions/cancel.go
+@@ -11,6 +11,7 @@ import (
+ 	actions_model "gitea.dev/models/actions"
+ 	"gitea.dev/models/db"
+ 	"gitea.dev/modules/actions/jobparser"
++	"gitea.dev/modules/log"
+ )
+ 
+ // CancelRun cancels a run's cancellable jobs and returns the run's post-cancellation state.
+@@ -52,6 +53,13 @@ func cancelRun(ctx context.Context, run *actions_model.ActionRun, jobs []*action
+ 	if len(updatedJobs) > 0 || reloaded.Status != run.Status {
+ 		NotifyWorkflowRunStatusUpdate(ctx, reloaded)
+ 	}
++	if len(updatedJobs) == 0 {
++		// Settling the run updated no job, so nothing else checks its concurrency group: without this,
++		// the runs blocked behind it would wait forever even though the group is now free.
++		if err := EmitJobsIfReadyByRun(run.ID); err != nil {
++			log.Error("emit settled run %d: %v", run.ID, err)
++		}
++	}
+ 	return reloaded, nil
+ }
+ 
+diff --git a/services/actions/cancel_test.go b/services/actions/cancel_test.go
+new file mode 100644
+index 0000000..79f017e
+--- /dev/null
++++ b/services/actions/cancel_test.go
+@@ -0,0 +1,64 @@
++// Copyright 2026 The Gitea Authors. All rights reserved.
++// SPDX-License-Identifier: MIT
++
++package actions
++
++import (
++	"testing"
++
++	actions_model "gitea.dev/models/actions"
++	"gitea.dev/models/db"
++	"gitea.dev/models/unittest"
++	"gitea.dev/modules/test"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++)
++
++// A run can be left non-final with all its jobs done (e.g. a reusable caller cancelled before its child
++// acknowledged, on an older version). Force-cancelling such a run must settle it and wake the runs
++// blocked on its concurrency group, which nothing else does because no job update is written.
++func TestForceCancelRun_SettledRunWakesConcurrencyWaiter(t *testing.T) {
++	require.NoError(t, unittest.PrepareTestDatabase())
++	ctx := t.Context()
++
++	var emittedRunIDs []int64
++	defer test.MockVariableValue(&EmitJobsIfReadyByRun, func(runID int64) error {
++		emittedRunIDs = append(emittedRunIDs, runID)
++		return nil
++	})()
++
++	const group = "force-cancel-settles-cg"
++	stuckRun, stuckAttempt := createRunAttempt(t, 99601, group, actions_model.StatusCancelling)
++	stuckRun.LatestAttemptID = stuckAttempt.ID
++	require.NoError(t, actions_model.UpdateRun(ctx, stuckRun, "latest_attempt_id"))
++
++	caller := &actions_model.ActionRunJob{
++		RunID: stuckRun.ID, RunAttemptID: stuckAttempt.ID, AttemptJobID: 1,
++		RepoID: stuckRun.RepoID, OwnerID: stuckRun.OwnerID,
++		Name: "caller", JobID: "caller", Status: actions_model.StatusCancelled,
++		IsReusableCaller: true, IsExpanded: true,
++	}
++	require.NoError(t, db.Insert(ctx, caller))
++	child := &actions_model.ActionRunJob{
++		RunID: stuckRun.ID, RunAttemptID: stuckAttempt.ID, AttemptJobID: 2,
++		RepoID: stuckRun.RepoID, OwnerID: stuckRun.OwnerID,
++		Name: "child", JobID: "child", Status: actions_model.StatusCancelled,
++		ParentJobID: caller.ID,
++	}
++	require.NoError(t, db.Insert(ctx, child))
++
++	// A run blocked behind the stuck one in the same group.
++	waiterRun, _ := createRunAttempt(t, 99602, group, actions_model.StatusBlocked)
++
++	jobs, err := actions_model.GetRunJobsByRunAndAttemptID(ctx, stuckRun.ID, stuckAttempt.ID)
++	require.NoError(t, err)
++	reloaded, err := ForceCancelRun(ctx, stuckRun, jobs)
++	require.NoError(t, err)
++	assert.Equal(t, actions_model.StatusCancelled, reloaded.Status)
++	assert.Equal(t, []int64{stuckRun.ID}, emittedRunIDs, "the settled run must be emitted so its concurrency group is re-checked")
++
++	result, err := checkRunConcurrency(ctx, reloaded)
++	require.NoError(t, err)
++	assert.Equal(t, []int64{waiterRun.ID}, result.RunIDsToReEmit, "the blocked run is woken once the group is free")
++}

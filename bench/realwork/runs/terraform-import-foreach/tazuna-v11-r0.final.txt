@@ -1,0 +1,14 @@
+Terraform now honors every `import` block that targets a `for_each` resource, so the `a`/`b` configuration from the report plans as 2 to import, 0 to add.
+
+**Root cause:** `refactoring.FindImportStatements` stored import blocks in a map keyed by the target config resource (`terraform_data.t`). The second block for the same resource was skipped, with no error or warning. I think the check meant to let a parent module's block override a child's, but it also matched blocks from the same module. That is also why the first-declared block won, not the lowest key. Single-instance resources were unaffected because they only have one block.
+
+**Fix:**
+- `FindImportStatements` in `internal/refactoring/import_statement.go` now returns a slice. It keeps every block from the same module. A block from a parent module still overrides a child module's block for the same resource.
+- `findImportTargets` in `internal/terraform/context_plan.go` now iterates that slice.
+
+**Tests:**
+- `TestContext2Plan_importMultipleBlocksForEachResource` in `internal/terraform/context_plan_import_test.go` reproduces the issue. Without the fix it fails with `test_object.a["second"] is not being imported`, and it passes with the fix.
+- `TestFindImportStatements` in `internal/refactoring/import_statement_test.go` checks that both same-module blocks are kept and that a parent block overrides a child's. Its fixture is `testdata/import-statements`.
+- I ran `go test` for `internal/refactoring` and for the import tests in `internal/terraform` (`-run 'Import|import'`). All pass. I did not run the full `internal/terraform` suite, and I did not build or run the real CLI against your configuration.
+
+**Not fixed:** in `concreteResource` (`node_resource_plan.go`), `importConfig` is always taken from `n.importTargets[0].Config`, even when a different block produced the import ID. The import IDs are now correct. I didn't touch this, but it may deserve a look. I also haven't tested `count`.

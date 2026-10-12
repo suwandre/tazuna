@@ -1,0 +1,14 @@
+All import blocks for a `for_each` (or `count`) resource are honored again. The fix is in `internal/refactoring/import_statement.go`.
+
+**Root cause:** `FindImportStatements`, added with module-level import support in 1.16.0, collected import blocks into a map keyed by the resource they target, with the instance key dropped. So both `terraform_data.t["a"]` and `terraform_data.t["b"]` landed under the same key, `terraform_data.t`. When it reached the second block it found an entry already there and skipped the block without any message. That matches what you saw: the block declared first wins, single-instance resources aren't affected, and it happens without modules.
+
+**The fix:**
+- `FindImportStatements` now returns a list of all import blocks instead of a map.
+- A separate record tracks which module first claimed each resource. That keeps the intended rule that a parent module's import block overrides a child module's block for the same resource. Several blocks from the same module are all kept.
+- The one caller, `findImportTargets` in `internal/terraform/context_plan.go`, now loops over the list instead of the map's values.
+
+**Test:** I added `TestContextApply_import_multipleBlocksSameResource` in `internal/terraform/context_apply_import_test.go`. It uses two import blocks each on a root `for_each` resource, a root `count` resource and a child-module `for_each` resource. It checks that the plan creates nothing and that every instance ends up in state with its own ID. Without the fix it fails: the `["b"]` and `[1]` instances are planned as creates, as in your report. That also confirms `count` was affected.
+
+**Results:** `go test ./internal/terraform/ ./internal/refactoring/` passes, including the existing parent-overrides-child test `TestContextApply_import_duplication`. The import tests in `./internal/command/` (`-run Import`) also pass.
+
+When several import blocks target one resource, the planned instances still take their import settings, apart from the ID, from the first block. Those settings are only used to generate config, which doesn't support `for_each` resources anyway, so I left it as it was.

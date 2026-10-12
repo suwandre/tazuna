@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/prometheus",
+  "base": "63691b23f2cbf56b4f2855554a4513c6a1c6bb29",
+  "fix": "8c8c997d46cce44b84271273b7ab80d37c0d86de",
+  "pr": "https://github.com/prometheus/prometheus/pull/19940",
+  "issue": "",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./tsdb -run '^(TestExemplarAfterLastSampleSurvivesCompaction|TestExemplarBeforeLastSampleSurvivesSeriesCompaction|TestSeriesCompactionReclaimsChunksWithExemplars)$'",
+  "suite_cmd": "go test -count=1 -timeout 10m ./tsdb -run '^(TestStaleSeriesCompaction.*|TestCompactStaleHead_.*|TestCompactSelectedSeries.*|TestHead_Truncate|TestGCChunkAccess|TestGCSeriesAccess|TestHeadExemplars|TestStripeSeries.*|TestMemSeries_truncateChunks.*|TestHeadAppenderV2_AppendExemplars|TestHeadAppenderV2_ExemplarAppenderV2|TestHeadAppenderV2_CanGCSeriesCreatedWithoutSamples|TestSelectExemplar.*|TestWALSampleAndExemplarOrder_AppenderV2)$'",
+  "suite_skip_note": "suite skips the hidden tests (and PR-specific tests excluded from hidden); it checks pre-existing behavior only"
+}

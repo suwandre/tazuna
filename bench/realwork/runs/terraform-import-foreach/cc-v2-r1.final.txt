@@ -1,0 +1,17 @@
+I fixed the bug: every import block for a `for_each` resource is now honored. The new tests pass, along with the existing `refactoring`, `terraform` and `configs` tests.
+
+**Cause:** `FindImportStatements` in `internal/refactoring/import_statement.go` collected import blocks into a map keyed by the config resource address, `terraform_data.t`. That key ignores the instance, so `["a"]` and `["b"]` landed on the same key and only the first block survived. The `if ok` check also compared the address to the key it was found under, so it was always true. The first-declared block therefore won, which is the swap behaviour you saw. Single-instance resources only ever have one block, so they were unaffected.
+
+**Fix:**
+- `FindImportStatements` now returns a slice instead of that map.
+- A block is skipped only when a different module (a parent) already has import blocks targeting the same config resource. That keeps the existing "parent overrides child" rule.
+- The caller in `internal/terraform/context_plan.go` ranges over the slice.
+- Duplicate blocks for the same instance in one module are still rejected at load time by the check in `configs/module.go`.
+- I also capped the capacity of `cfg.Path` before the `append`, so appending can't write into the path's backing array.
+
+**Tests:**
+- `TestContext2Plan_importForEachSeparateBlocks` is a plan-level test with three separate import blocks for one `for_each` resource. Without the fix it fails: only `["first"]` is imported and the other two are planned for create. It passes with the fix.
+- `TestFindImportStatements` in `refactoring/import_statement_test.go`, with a fixture under `testdata/import-statements/`. It checks that all blocks in a module are kept and that a root block overrides a child module's blocks.
+- `TestInit_providerLockFileReadonly` in `internal/command` fails, a lock-file checksum error. It fails the same way with my changes stashed, so my change didn't cause it. I only ran that one test on the stashed tree, so I haven't confirmed the other `command` tests are clean.
+
+I haven't committed anything.

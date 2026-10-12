@@ -1,0 +1,16 @@
+## Summary
+
+Fixed the inconsistency between the comparison template functions for numeric values, making `eq`/`ne` numeric and exact across all int/uint/float mixes.
+
+### Changes
+
+- **`common/hreflect/compare.go` (new)**: `CompareNumbers(a, b reflect.Value) (int, bool)` — exact three-way comparison without rounding through `float64`. Handles int/int, uint/uint, int/uint, and each against float via exact truncation/fraction checks; returns `ok=false` for NaN or non-numbers. Also adds edge-case guards (`math.MaxInt64` vs `2^63`, `uint64` max vs `-1`, ±Inf, signed zero).
+- **`tpl/compare/compare.go`**: `Eq` now compares numbers via `hreflect.CompareNumbers` (so `eq 1 1.0` is true), keeping `Eqer`/string/DeepEqual behavior. `compareGetWithCollator` delegates numeric pairs to `CompareNumbers` and drops the old lossy `float64` conversion paths; added `toLeftRight` helper (and removed `compareTwoUints`).
+- **`tpl/collections/where.go`**: `checkCondition` funnels all numeric pairs through `hreflect.CompareNumbers`, so `Where` with `eq`/`ne`/`<`/`>`/`<=`/`>=` uses the same exact rules as the template funcs.
+- **`common/hreflect/convert.go` / `tpl/collections/reflect_helpers.go`**: `ConvertIfPossible` is now lossless for float conversions (and no longer dereferences pointers); `convertNumber` explicitly allows expected float narrowing.
+- **Tests**: new `TestCompareNumbers`, conversion precision cases, compare table cases (`int64(1<<53+1)` vs `float64(1<<53)`, uint64 max vs `-1`, …), where-condition cases, and a new end-to-end `TestEqIntFloat` rendering the issue's template (asserts `eq`=true, `ne`=false, `lt`=false, `le`=true, `gt`=false, `ge`=true for `1` vs `1.0`).
+
+### Verification
+
+- `go test ./common/... ./tpl/...` — passed.
+- Full `./check.sh` (gofmt, staticcheck, `go test ./...`) — passed, exit 0.

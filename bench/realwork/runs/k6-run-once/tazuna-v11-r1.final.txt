@@ -1,0 +1,17 @@
+I added `--once` to `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. The new tests and the `internal/cmd/...` and `lib/executor/...` suites pass. `TestVUHandleStartStopRace` in `lib/executor` failed on two earlier runs, then passed in an isolated rerun and in the full-package rerun, all with my changes in place. It's a timing-based test in code I didn't touch, so I treat it as flaky under load. I didn't run the full `./...` suite or `make lint`, and I didn't try a real `k6 cloud run`.
+
+**How it works**
+- **Flag:** `--once` is registered in `optionFlagSet()`, so `k6 cloud upload` also accepts it. You didn't list that command, but it reads the same consolidated config.
+- **Where the transform runs:** it runs right after config consolidation, before deriving scenarios from shortcut options like `--iterations`. This is also what makes `k6 archive` and the remote `k6 cloud run` work. Both serialise the consolidated options and never use the derived ones.
+- **No scenarios, or an empty `scenarios` map:** runs `default()` as a 1 VU, 1 iteration `shared-iterations` scenario.
+- **Single scenario:** keeps its name, `exec`, `env`, `tags` and `options` (browser options included), and replaces the executor with 1 VU, 1 iteration `shared-iterations`. It discards `startTime`, `gracefulStop` and all executor-specific fields. It also clears `vus`, `iterations`, `duration` and `stages` from the top-level options. `setup()` and `teardown()` run as usual.
+- **Multiple scenarios:** fails with `--once can run a single scenario only`.
+- **Conflicting CLI flags:** `--vus`, `--iterations`, `--duration` or `--stage` together with `--once` fails with `--once cannot be combined with --<flag>`. Only flags passed on the command line are checked. A `K6_ITERATIONS` env var or `options.iterations` in the script is silently discarded instead.
+- **Exit code:** both errors exit with `InvalidConfig`.
+
+**Code and tests**
+- **Transform:** `ApplyOnce` is in `lib/executor/once.go`, with a unit test in `once_test.go`. The flag handling is in `internal/cmd/config.go` and `internal/cmd/test_load.go`.
+- **CLI tests:** `internal/cmd/tests/cmd_run_once_test.go` covers `run` with no scenarios, a single scenario (checking `exec`, `env`, `setup` and `teardown`), multiple scenarios, each conflicting flag, and `archive` (checking the scenario written into the archive).
+
+**Not tested**
+- `cloud run` and `cloud run --local-execution` have no tests of their own.

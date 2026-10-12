@@ -1,0 +1,16 @@
+I fixed it: every import block that targets a different instance of the same `for_each` or `count` resource is now honored. The new tests pass, and so do the `terraform`, `refactoring`, `configs` and `backend/local` packages. One test in `internal/command` fails (`TestInit_providerLockFileReadonly`), but it fails the same way without my changes. It's a lock-file checksum mismatch that has nothing to do with imports.
+
+**Cause.** Since 1.16.0, `refactoring.FindImportStatements` (`internal/refactoring/import_statement.go`) collected import blocks into a map keyed by the resource address without the instance key. So `terraform_data.t["a"]` and `terraform_data.t["b"]` landed on the same entry, and the second block was silently skipped. That's why the first-declared block always won, single-instance resources worked, and `count` was affected too.
+
+That skip was meant only for the module support added in #38352: an import block in a parent module overrides blocks in a child module that target the same resource. Its comment assumed two blocks in one module for the same resource could never happen, but they can when they target different instances.
+
+**Fix.**
+- `FindImportStatements` now returns a list of all blocks in declaration order, parents before children.
+- A block is only skipped when an **ancestor** module already declared an import for the same resource. Blocks from the same module are all kept. Exact duplicate targets within a module are still rejected when the config is loaded.
+- The one caller, `findImportTargets` in `internal/terraform/context_plan.go`, is updated for the new return type.
+
+**Tests.**
+- `TestContext2Plan_importMultipleBlocksSameResource` in `internal/terraform/context_plan_import_test.go`: a single-instance resource, a `for_each` resource with three instances declared out of order, a `count` resource, and a child module with two blocks for one `for_each` resource. It checks that all eight instances are imported with the right IDs. Before the fix it failed in the way the issue describes (the extra instances were planned as Create); now it passes.
+- `TestFindImportStatements` in `internal/refactoring/import_statement_test.go`, with fixtures in `testdata/import-statements/`: checks that multiple blocks per resource are kept and that the parent-overrides-child rule still applies.
+
+**One behaviour to know about:** the parent-overrides-child rule still works per resource, as it did in 1.16.0, not per instance. If the root module imports `module.child.x["a"]`, every import block for `x` inside the child is ignored, including one for `["b"]`. Doing this per instance would mean resolving dynamic `to` keys across module instances, which I left out of this fix.

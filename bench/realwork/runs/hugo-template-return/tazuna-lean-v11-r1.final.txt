@@ -1,0 +1,20 @@
+`return` is now an early exit that works in any template, not just partials, and it no longer has to be the last command. Tests for `./tpl/...`, `./hugolib` and `./resources/...` pass, and `./check.sh ./tpl/... ./hugolib/...` passes. I did not run `./check.sh` over the whole repo, or the `./markup/...` run's failures if any (its output was only partly checked).
+
+**How it works**
+- **The error:** `return` is now a template function that returns a sentinel error, `*texttemplate.ReturnError{Value}`, defined in the forked `texttemplate/hugo_template.go`. `{{ return }}` gives a nil value, one argument gives that value, and more than one is an error.
+- **Fork changes:** the patch to Go's template package is small:
+  - `evalCall` panics with the sentinel instead of wrapping it as an "error calling" failure.
+  - `errRecover` turns that panic back into a returned error.
+  - `try` re-panics it, so `try` can't swallow a return.
+- **Partials:** `doInclude` always renders to a buffer. If the sentinel comes back, its value becomes the partial's result. Otherwise the buffer is returned, as before.
+- **Other templates:** `ExecuteWithContext` swallows the sentinel, so a `return` in a page or shortcode template stops execution and keeps the output rendered so far.
+- **Removed:** the old transformation machinery is gone: the `$_hugo_dot` / `range` wrapper, `contextWrapper`, `returnNode` collection, and `ParseInfo.HasReturn`.
+
+**One piece I had to keep:** `{{ return add . 42 }}` and `{{ return math.ModBool . 2 }}`, which the docs and an existing test use, only worked because the old transform stripped `return` and left a function call. To keep that working I added a small rewrite that turns it into `{{ return (add . 42) }}`. It needs a new helper, `CommandNode.WrapArgsInPipe`, in `parse/hugo_node.go`, because the parse tree's `tr` field is unexported. This is the only part that touches the parse package.
+
+**Tests and docs**
+- Added `TestReturnEarly` in `hugolib/template_test.go`. It covers early return inside `if` and `range`, a bare `return`, a `return` in a shortcode and a page template, and a falsy return value used with `with`.
+- I changed the assertion in `TestPartialReturnPanicIssue13600`. The old transform produced "wrong number of args for string", but `delimit` now fails first with the clearer "can't iterate over" error.
+- Updated `docs/content/en/functions/go-template/return.md` to drop the "must be last / only one" restrictions.
+
+A `return` inside a `with partial` decorator block now returns from that inner block's own execution, not the outer template. I didn't test that case.

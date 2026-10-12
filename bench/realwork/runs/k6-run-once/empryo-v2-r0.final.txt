@@ -1,0 +1,10 @@
+`--once` is added and the tests in `internal/cmd/...` and `lib/executor` pass. I only ran the `k6 run` path end to end. `cloud run`, `cloud run --local-execution` and `archive` pick the flag up from the shared flag set and the shared load path, but I didn't run them.
+
+- **Flag and conflicts:** `--once` is defined in `internal/cmd/options.go`, so every command that uses `optionFlagSet()` gets it. `internal/cmd/once.go` rejects combining it with `--vus`, `--iterations`, `--duration` or `--stage` ("--once cannot be combined with --iterations", etc.).
+- **When it applies:** `internal/cmd/test_load.go` applies it after config consolidation. The consolidated `vus`, `iterations`, `duration` and `stages` are cleared, so values from the script, env or config file no longer matter.
+- **Transform:** `lib/executor/once.go` does the scenario rewrite.
+  - **No scenarios:** a default `shared-iterations` scenario with 1 VU and 1 iteration.
+  - **One scenario:** the scenario keeps its name, `exec`, `env`, `tags` and `options`. The executor is replaced with `shared-iterations` at 1/1.
+  - **Several scenarios:** error "--once can run a single scenario only".
+- **Discarded fields:** on a single scenario, `startTime` and `gracefulStop` are dropped along with the executor-specific fields, since you listed only `exec`, `options`, `env` and `tags` as preserved.
+- **Tests:** new tests are in `lib/executor/once_test.go`, `internal/cmd/once_test.go` and `internal/cmd/tests/cmd_run_once_test.go`. The last one covers `k6 run` with a default export, a single scenario with `exec` and `env`, multiple scenarios, and the `--iterations` conflict.

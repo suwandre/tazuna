@@ -1,0 +1,154 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a992a..cd567e27f 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -97,6 +97,52 @@ func newPagePaths(ps *pageState) (pagePaths, error) {
+ 	}, nil
+ }
+ 
++// targetPathDir returns the directory part of p's target path, with any
++// slug set in the section, taxonomy or term pages above it applied.
++func targetPathDir(p *pageState) string {
++	unnormalized := p.s.Conf.DisablePathToLower()
++	pi := p.PathInfo()
++	if unnormalized {
++		pi = pi.Unnormalized()
++	}
++
++	var sb strings.Builder
++	sb.Grow(len(pi.Base()))
++
++	if p.IsBranch() {
++		writeBranchDir(&sb, p, unnormalized)
++	} else {
++		section := p.CurrentSection()
++		writeBranchDir(&sb, section, unnormalized)
++		sb.WriteString(strings.TrimPrefix(pi.ContainerDir(), pathBase(section, unnormalized)))
++	}
++
++	return sb.String()
++}
++
++func writeBranchDir(sb *strings.Builder, p page.Page, unnormalized bool) {
++	if p.IsHome() {
++		return
++	}
++	parent := p.Parent()
++	writeBranchDir(sb, parent, unnormalized)
++	rel := strings.TrimPrefix(pathBase(p, unnormalized), pathBase(parent, unnormalized))
++	if slug := p.Slug(); slug != "" {
++		sb.WriteString(rel[:strings.LastIndexByte(rel, '/')+1])
++		sb.WriteString(slug)
++		return
++	}
++	sb.WriteString(rel)
++}
++
++func pathBase(p page.Page, unnormalized bool) string {
++	pi := p.PathInfo()
++	if unnormalized {
++		pi = pi.Unnormalized()
++	}
++	return pi.Base()
++}
++
+ type pagePaths struct {
+ 	outputFormats     page.OutputFormats
+ 	firstOutputFormat page.OutputFormat
+@@ -115,18 +161,15 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 	pm := p.m
+ 	alwaysInSubDir := p.Kind() == kinds.KindSitemap
+ 	pageInfoPage := p.PathInfo()
+-
+-	pageInfoCurrentSection := p.CurrentSection().PathInfo()
+ 	if p.s.Conf.DisablePathToLower() {
+ 		pageInfoPage = pageInfoPage.Unnormalized()
+-		pageInfoCurrentSection = pageInfoCurrentSection.Unnormalized()
+ 	}
+ 
+ 	desc := page.TargetPathDescriptor{
+ 		PathSpec:    d.PathSpec,
+ 		Kind:        p.Kind(),
+ 		Path:        pageInfoPage,
+-		Section:     pageInfoCurrentSection,
++		Dir:         targetPathDir(p),
+ 		UglyURLs:    s.h.Conf.IsUglyURLs(p.Section()),
+ 		ForcePrefix: s.h.Conf.IsMultihost() || alwaysInSubDir,
+ 		URL:         pm.pageConfig.URL,
+@@ -201,7 +244,7 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		if p.File() != nil {
+ 			s.Log.Debugf("Set expanded permalink path for %s %s to %#v", p.Kind(), p.File().Path(), opath)
+ 		} else {
+-			s.Log.Debugf("Set expanded permalink path for %s in %v to %#v", p.Kind(), desc.Section.Path(), opath)
++			s.Log.Debugf("Set expanded permalink path for %s %s to %#v", p.Kind(), p.Path(), opath)
+ 		}
+ 	}
+ 
+diff --git a/hugolib/sitesmatrix/dimensions.go b/hugolib/sitesmatrix/dimensions.go
+index aefa6f5e0..ea07284ef 100644
+--- a/hugolib/sitesmatrix/dimensions.go
++++ b/hugolib/sitesmatrix/dimensions.go
+@@ -202,7 +202,7 @@ type VectorProvider interface {
+ 	VectorIterator
+ 	// HasVector returns true if the given vector is contained in the provider.
+ 	// Used for membership testing of files, resources and pages.
+-	HasVector(HasAnyVectorv Vector) bool
++	HasVector(v Vector) bool
+ 
+ 	// HasAnyVector returns true if any of the vectors in the provider matches any of the vectors in v.
+ 	HasAnyVector(v VectorProvider) bool
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488c3..2a0dbfa06 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -42,8 +42,10 @@ type TargetPathDescriptor struct {
+ 	Type output.Format
+ 	Kind string
+ 
+-	Path    *paths.Path
+-	Section *paths.Path
++	Path *paths.Path
++
++	// The directory part of the target path with any section slugs applied.
++	Dir string
+ 
+ 	// For regular content pages this is either
+ 	// 1) the Slug, if set,
+@@ -162,11 +164,11 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 
+ 	if d.Type == output.HTTPStatus404HTMLFormat || d.Type == output.SitemapFormat || d.Type == output.RobotsTxtFormat {
+ 		pb.noSubResources = true
+-	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
++	} else if d.Kind != kinds.KindPage && d.URL == "" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			pb.Add(d.Section.Base())
++			pb.Add(d.Dir)
+ 		}
+ 		needsBase = false
+ 	}
+@@ -206,9 +208,7 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			if dir := d.Path.ContainerDir(); dir != "" {
+-				pb.Add(dir)
+-			}
++			pb.Add(d.Dir)
+ 			if d.BaseName != "" {
+ 				pb.Add(d.BaseName)
+ 			} else {
+diff --git a/resources/page/pagemeta/page_frontmatter.go b/resources/page/pagemeta/page_frontmatter.go
+index d2f3d2793..6077fcc3c 100644
+--- a/resources/page/pagemeta/page_frontmatter.go
++++ b/resources/page/pagemeta/page_frontmatter.go
+@@ -191,7 +191,7 @@ type SitesMatrixAndComplements struct {
+ 
+ // MatchSiteVector checks whether the site vector matches the sites matrix.
+ func (p *SitesMatrixAndComplements) MatchSiteVector(siteVector sitesmatrix.Vector) bool {
+-	return p.SitesMatrix.HasAnyVector(siteVector)
++	return p.SitesMatrix.HasVector(siteVector)
+ }
+ 
+ // MatchLanguageCoarse checks whether the language dimension matches either

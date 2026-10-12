@@ -1,0 +1,13 @@
+I added `--once` to the shared `k6 run`/`k6 archive`/`k6 cloud` option flags, so it's available on `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. `go test ./internal/cmd` passes and `go test ./internal/cmd/tests -run TestRun` passes. I didn't run the whole `./internal/cmd/tests` package.
+
+- **Where it applies:** the transform runs after config consolidation and before deriving scenarios from shortcuts (`internal/cmd/test_load.go`). It changes the consolidated config, so `k6 archive` and cloud uploads carry the 1 VU / 1 iteration scenario too.
+- **No scenarios:** you get a `default` scenario, `shared-iterations` with 1 VU and 1 iteration. Any `vus`, `iterations`, `duration` or `stages` options from the script are cleared.
+- **One scenario:** it becomes `shared-iterations` with 1/1. It keeps its name, `exec`, `env`, `tags` and `options` (browser options included). Its other fields, such as `startTime` and `gracefulStop`, are dropped.
+- **Multiple scenarios:** it fails with `--once can run a single scenario only…`, exit code `InvalidConfig`.
+- **Combined with `--vus`, `--iterations`, `--duration` or `--stage`:** it fails with `--once cannot be combined with --<flag>`.
+- **Not covered:** the conflict check only looks at CLI flags, so `K6_ITERATIONS` and similar env vars don't trigger it. `--once` just overrides them.
+- **Extra commands:** `k6 cloud upload` gets the flag too, since it shares the same option set.
+
+I added unit tests for the transform and the flag conflicts in `internal/cmd/once_test.go`. In `archive_test.go` there is an archive test for a scenario with `exec` and `tags`, and one for the `--iterations` conflict. I didn't add an end-to-end `k6 run --once` test or a release-notes entry.
+
+The main logic is in `internal/cmd/once.go`.

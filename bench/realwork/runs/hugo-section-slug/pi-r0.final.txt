@@ -1,0 +1,8 @@
+`slug` in a section, taxonomy or term page now replaces that directory name in its URL and in the URLs of everything below it. The `hugolib` and `resources/...` tests pass. I didn't run `./check.sh`.
+
+With your example, the Spanish pages come out as `/es/ayuda/` and `/es/ayuda/como-frobear/`. The English pages stay at `/help/` and `/help/how-to-frob/`.
+
+- **Where:** `hugolib/page__paths.go` has a new `sectionDirWithSlugs` helper. It builds the section path using each ancestor's slug where set and the directory name otherwise. It returns an empty string when no section has a slug, so sites without section slugs get exactly the paths they had before. The result is passed to `page.CreateTargetPaths` through a new `SectionDir` field in `resources/page/page_paths.go`.
+- **Implicit sections:** A directory with no `_index` of its own keeps its directory name, so `help/other/page.es.md` becomes `/es/ayuda/other/page/`.
+- **Explicit `url`:** `url` and configured `permalinks` still take precedence over a slug.
+- **Test:** `hugolib/section_slug_test.go` has `TestSectionTaxonomyTermSlug`. It covers nested sections, a section slug combined with a page slug, an implicit directory, and a taxonomy and term slug (`/es/etiquetas/aa/`).

@@ -1,0 +1,29 @@
+The work is complete and the tree is green. Here's a summary of what changed and how it was verified.
+
+## Root cause
+
+`diff.mnemonicPrefix` makes git name diff sides `i/` (index), `w/` (working tree), `c/` (commit), etc. instead of `a/`/`b/`. lazygit's diff parser only understood `a/`/`b/`, so it resolved hunk paths to nonsense, and staging/unstaging/discarding silently applied a patch that matched nothing.
+
+## Changes
+
+**Parser (`pkg/gui/controllers/helpers/diff_line_parser.go`)**
+- `stripDiffPathPrefix` now strips whatever single-component prefix is in front of a header path (`a/`, `b/`, `i/`, `w/`, `c/`, custom), keeps `/dev/null` as-is, and resolves a path with no `/` at all to `""` rather than guessing.
+- `pathFromDiffHeader` now also reads the `rename to` / `copy to` line, so a pure rename/copy without `+++`/`---` lines resolves via the path git states, independent of prefix.
+- `pathFromDiffGitLine` no longer keys off `b/`: it finds the split at which both halves name the same path once prefixes are stripped, trying the last plausible split first so paths containing spaces (or something reading like ` w/`) still resolve; halves that never agree resolve to nothing.
+- Quoting (C-quoted, tab-terminated) is decoded first, then the prefix stripped, so `"w/caf\303\251.go"` → `café.go` and `b/dir/file.go` → `dir/file.go`.
+
+**Commands (`pkg/commands/git_commands/`)**
+- New `GitCommandBuilder.EnsureDiffPrefixes()` forces `diff.noprefix=false`, `diff.mnemonicPrefix=false`, `diff.srcPrefix=a/`, `diff.dstPrefix=b/` on the diffs lazygit itself parses, and `AddCommonDiffArgs` now includes it — so the diffs we ask git for always carry a strippable prefix even under `diff.noprefix`/custom prefixes. Applied to the remaining diff commands (`GetDiff`, `DiffIndexCmdObj`, `GetFilesInDiff`, `diffHeadAgainstCommit`, and the `stash show -p | apply -R` pipe used by the pre-2.35 staged-stash fallback).
+- Custom-patch diffs keep `--no-prefix` (command-line wins over `-c`), as they rely on the `a`/`b` tree names.
+
+**Tests**
+- Unit: prefix-agnostic header-path cases (mnemonic, custom, no-prefix, quoted, subdirectory, `/dev/null`), `pathFromDiffGitLine` split agreement cases, rename/copy sections, mode-change/binary sections without `+++`/`---`.
+- Integration: `main_view/stage_diff_lines_with_mnemonic_prefix` (stage then unstage under `diff.mnemonicPrefix`; fails on the pre-fix parser, passes after) and `stash/stash_staged_with_no_prefix` (git < 2.35 only, where the patch-reading fallback runs; verified it fails without the pipe fix).
+- Command-arg unit tests updated for the new `-c` flags.
+
+## Verification
+- `go test ./... -short -count=1` — green; `gofumpt`/`golangci-lint` — clean.
+- Integration suites for `main_view`, `stash`, `diff`, `patch_building`, `file`, `commit`, `submodule`, `worktree`, `interactive_rebase`, `reflog`, `undo`, `ui` — green (the only failures seen were environment-related: missing `direnv` and cross-checkout contention from a concurrent run in another directory, both reproduced on the base commit).
+- New integration test confirmed failing before the parser fix and passing after; stash test confirmed failing without the pipe fix and passing with it.
+
+No commit was made, per the harness instruction.

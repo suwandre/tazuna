@@ -1,0 +1,34 @@
+Parentheses around a plain number or duration literal now survive `Expr.String()` in offset, range and step positions. `go test ./promql/...` passes and `go vet` is clean. I haven't run `make lint` (golangci-lint isn't installed here) and nothing is committed.
+
+**The fix:** when the parser sees a single literal inside parentheses, it now keeps it inside a duration-expression node marked as parenthesised, the same way multi-term expressions already work. It's stored as a unary `+` node, which prints and evaluates as just the literal. The same wrapping applies to the `-(…)` and `+(…)` forms.
+
+**Results:**
+
+| Input | Before | Now |
+|---|---|---|
+| `foo offset (5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -5s` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset 5m` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[5s]` | `foo[(5s)]` |
+
+- `+(…)` drops the `+` and keeps the parens, matching how `foo offset +(5*2)` already prints as `foo offset (5 * 2)`.
+- The multi-term cases from the issue still round-trip, and `foo[(5m):(1m)] offset (5m)` now does too.
+- Evaluated offsets, ranges and steps are unchanged.
+
+**Validation:** the existing parse-time errors still fire: `foo[(0s)]`, `foo[-(5s)]`, zero subquery steps such as `foo[5s:(0s)]`, and out-of-range durations. The only difference is that the error position now points at the opening `(`.
+
+**Other output changes:** these all keep their parens now, with the same values:
+- `foo offset (0)` used to print as `foo`.
+- `foo offset (5)^2` now prints as `foo offset (5) ^ 2`.
+- `foo[+(5s)]` now prints as `foo[(5s)]`.
+
+**Where the changes are (all in `promql/parser` unless noted):**
+- **Grammar and parser:** `generated_parser.y` (with `generated_parser.y.go` regenerated using goyacc v0.6.0 from the Makefile) and `parse.go`, which has the new wrapping helper.
+- **Printing and positions:** `ast.go` makes a wrapped literal's position range include the closing `)`, and `prettier.go` prints the unary `+` node as just the literal.
+- **Tests:**
+  - New cases in `TestExprString`.
+  - Updated and new AST cases in `parse_test.go`, including a `foo[(0s)]` error case.
+  - Evaluation cases in `promql/promqltest/testdata/duration_expression.test`.
+
+If you want a PR, a possible title is `promql/parser: preserve parentheses around duration literals`, with release note `[BUGFIX] PromQL: Preserve parentheses around a plain number or duration literal in offset and range duration expressions when printing.`

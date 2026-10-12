@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/rclone",
+  "base": "b63e80251cfe753843f2d51aeb2cb45821434819",
+  "fix": "c5112be66b953e6620984dcb985ec3d0ade0a360",
+  "pr": "https://github.com/rclone/rclone/pull/9997",
+  "issue": "https://github.com/rclone/rclone/issues/9569",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./backend/archive ./backend/archive/zip -run '^(TestReadZipSymlink|TestArchiveSquashfsSymlink|TestArchiveZipSymlinkEscape)$'",
+  "suite_cmd": "go test -count=1 -timeout 10m ./backend/archive/... -skip '^(TestReadZipSymlink|TestArchiveSquashfsSymlink|TestArchiveZipSymlinkEscape)$'",
+  "suite_skip_note": "suite skips the hidden tests (and PR-specific tests excluded from hidden); it checks pre-existing behavior only"
+}

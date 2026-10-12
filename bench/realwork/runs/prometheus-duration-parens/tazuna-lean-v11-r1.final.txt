@@ -1,0 +1,15 @@
+Parentheses around a plain number or duration literal now survive `Expr.String()` in offset and range positions. All five failing cases from the issue now round-trip. The `promql/parser`, `promql` and `promql/promqltest` tests pass.
+
+**Cause:** a parenthesised `*NumberLiteral` in a duration position was returned bare, and `*NumberLiteral` has no `Wrapped` field.
+
+**Fix:** a parenthesised literal is now wrapped in a unary-plus `*DurationExpr` with `Wrapped: true`. The printer and the evaluator in `promql/durations.go` already handle that node, so evaluation is unchanged.
+
+- **Printing:** `foo offset (5)` stays `foo offset (5)`, and `foo offset +(5)` prints as `foo offset (5)`, which is how `+(5m+1m)` already behaves. The others (`foo offset -(5)`, `foo offset (5m)`, `foo[(5s)]`) print unchanged.
+- **Parser:** the change is in `paren_duration_expr` and `applyUnaryOpToDurationExpr`, with helpers in `parse.go`. `foo[(0)]` and `foo[-(5)]` still fail at parse time with "duration must be greater than 0", because `positive_duration_expr` now unwraps these literals before checking.
+- **Prettifier:** `DurationExpr.Pretty` in `prettier.go` printed unary plus as `+5`, so I made it skip the `+` like `String()` does.
+- **Generated parser:** `goyacc` isn't installed here, so I edited `generated_parser.y` and applied the same two action-code changes by hand to `generated_parser.y.go`. Please run `make parser` to confirm it regenerates identically.
+- **Tests:** I added round-trip cases to `printer_test.go`, including `foo[(5s):(1s)]` and `foo offset ((5m) + 1m)`. I updated the expected ASTs for `foo offset +(5)` and `foo offset -(5)` in `parse_test.go`.
+
+The AST for `foo offset (5)` and similar queries changes. It now sets `OriginalOffsetExpr` instead of `OriginalOffset`, and the engine fills in `OriginalOffset` at evaluation time, as it already does for other duration expressions. Anything reading the offset straight from a freshly parsed AST will see 0 for these forms.
+
+I didn't run `make lint`.

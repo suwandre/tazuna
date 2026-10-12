@@ -1,0 +1,14 @@
+Parentheses around a plain duration literal now survive `Expr.String()`. `foo offset (5)`, `foo offset +(5)`, `foo offset -(5)`, `foo offset (5m)` and `foo[(5s)]` all print with their parens. The `promql/parser`, `promql` and `promql/promqltest` tests pass.
+
+- **Fix:** `(N)` in a duration position, where `N` reduces to a single `*NumberLiteral`, is now wrapped in `DurationExpr{Op: ADD, RHS: nl, Wrapped: true}`. That is a unary plus, which already prints as just its operand and evaluates to the operand's value in `promql/durations.go`.
+- **Helper:** `wrapNumberLiteralInParens` in `parse.go` does the wrapping. The `paren_duration_expr` rule and `applyUnaryOpToDurationExpr` (the `-(5)` / `+(5)` path) both call it.
+- **Prettier:** `DurationExpr.Pretty` now prints a unary plus as its operand, so the wrapped literal doesn't render as `(+5)`.
+- **Behaviour change:** `foo offset (5)` and `foo[(5s)]` now carry their value in `OriginalOffsetExpr` / `RangeExpr`, which the duration visitor evaluates later. `OriginalOffset` / `Range` are no longer filled in at parse time, which is how multi-term expressions like `(5m + 1m)` already worked. These forms already required the experimental duration-expression flag, so non-experimental parsing is unaffected.
+- **`foo[(0)]`:** it still fails at parse time with "duration must be greater than 0", because I added a check for it in `positive_duration_expr`. The error points at the literal, as before.
+- **Generated parser:** goyacc isn't installed here, so I made the same edits by hand in `generated_parser.y` and `generated_parser.y.go`. Only action code changed, not the grammar rules. Please run `make parser` to confirm the generated file matches.
+- **Tests:**
+  - The AST expectations for `foo offset +(5)` and `foo offset -(5)` in `parse_test.go` now expect `OriginalOffsetExpr` rather than `OriginalOffset`.
+  - I added a parse-error test for `foo[(0)]`.
+  - I added printer round-trip cases in `printer_test.go`.
+
+I also ran `foo[(5s)]`, `foo offset -(-5)` and `(5) + 1` through the parser and printer by hand, and they print correctly.

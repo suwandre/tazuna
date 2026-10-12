@@ -1,0 +1,17 @@
+Quoted `{` and `}` no longer count as block delimiters, so the Caddyfile from the issue now adapts correctly. `caddy adapt` on it outputs a `static_response` with body `{`. The `caddyconfig/...` tests pass.
+
+**Cause:** the parser and dispenser compared token text to `"{"` and `"}"` without checking whether the token was quoted. A quoted `"{"` raised the parser's nesting count and nothing lowered it again, which gave an EOF error. `NextArg()` also refused it as an argument, because it treated it as a block opener.
+
+**Fix:** a brace only counts when its token is unquoted. `lexer.go` gets `Token.isOpenBrace()` and `isCloseBrace()`. `dispenser.go` gets `atOpenBrace()` and `atCloseBrace()`.
+
+Every brace comparison now goes through these:
+- **`dispenser.go`:** `NextArg`, `NextBlock` and `ArgErr`.
+- **`parse.go`:** the address parser, `directives`, `directive`, `blockTokens`, `openCurlyBrace`, `closeCurlyBrace`, and the import and snippet nesting scan.
+
+In `directive()` I also removed the `wasQuoted == 0` check on the `{` branch, since quoted braces can no longer reach it.
+
+**Tests:**
+- **`parse_test.go`:** cases for `respond "{"`, `"}"`, backtick-quoted `{`, nested blocks, and a block-less single site.
+- **`dispenser_test.go`:** `TestDispenser_QuotedBraces`, covering quoted braces as arguments, inside blocks, and nesting returning to 0.
+
+The integration suite in `caddytest/integration` failed intermittently here. With my change stashed, two ACME tests failed; with it applied, a first run showed `TestAutoHTTPtoHTTPSRedirects*` failures and a second run had none. I take these to be environmental, but I did not investigate the cause.

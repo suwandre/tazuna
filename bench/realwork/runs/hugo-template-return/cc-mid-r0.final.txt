@@ -1,0 +1,24 @@
+`return` now ends template execution early in any template, not just partials, and it can sit anywhere in the template. The tests under `tpl`, `hugolib`, `resources` and `commands` pass. I did not run the whole repo, and the new `return` tests are the only coverage of the new behaviour.
+
+**How it works**
+- The partials namespace has a `Return(args ...any) (any, error)` function, registered with the `return` alias. It returns a `*texttemplate.ReturnError` carrying the optional value (`HasValue` tells "no value" from `return nil`). More than one argument is an error.
+- The forked `texttemplate` package has two small changes:
+  - `evalCall` turns that error into a panic, as `break` and `continue` already do, and `try` doesn't swallow it.
+  - `executeWithState` traps it, and `errRecover` ignores it, so plain `Execute` stays safe.
+- `Executer` and `TemplateStore` get new `...AndReturn` variants that hand the `ReturnError` back. The existing `ExecuteWithContext` signatures are unchanged, so no other callers needed edits.
+- Partials always render into a buffer now. If `return` carried a value, the partial yields that value. Otherwise it yields the rendered output, as a string or `template.HTML`.
+- I removed the old return-wrapper rewrite, `returnNode`, `collectReturnNode` and `ParseInfo.HasReturn` from `templatetransform.go`, along with `contextWrapper` in `partials.go`.
+- The transformer keeps one small rewrite so the old form `{{ return add . 42 }}` still works. It becomes `{{ return (add . 42) }}`, and only when the first argument is callable (an identifier, field, variable or chain).
+
+**Behaviour you might not expect**
+- A `return` inside an invoked `template` or `block` ends only that sub-template, and its value is ignored.
+- `{{ return X | string }}` no longer pipes into `string`, because `return` stops execution first. The old transform silently dropped the command instead. `TestPartialReturnPanicIssue13600` now expects `error calling delimit: can't iterate over`, since `delimit` fails first.
+- In a partial-decorator `with` block, `return` supplies the value for `inner`, as `TestDecoratorReturn` already expected. If the partial never calls `inner`, the body runs inline, and a `return` there ends the enclosing template.
+- `{{ return }}` without a value in a partial returns the output so far. Before, it did nothing.
+
+**Tests and docs**
+- I added `TestTemplateExecutorReturn` in the `texttemplate` package, covering a plain return, no value, inside `range`, a nested `template`, `try`, and plain `Execute`.
+- I added `TestReturnEarly` and `TestReturnTooManyArgs` in `tpl/partials`.
+- I updated the `return` and `partials.Include` doc pages, which previously said return must be the last statement.
+
+I did not regenerate `docs/data/docs.yaml`.

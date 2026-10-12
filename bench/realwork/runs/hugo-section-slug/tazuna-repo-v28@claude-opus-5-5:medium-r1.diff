@@ -1,0 +1,168 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..6f92a87 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -130,6 +130,7 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		UglyURLs:    s.h.Conf.IsUglyURLs(p.Section()),
+ 		ForcePrefix: s.h.Conf.IsMultihost() || alwaysInSubDir,
+ 		URL:         pm.pageConfig.URL,
++		SectionDir:  sectionDirWithSlugs(p.CurrentSection(), p.s.Conf.DisablePathToLower()),
+ 	}
+ 
+ 	if pm.Slug() != "" {
+@@ -207,3 +208,36 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 
+ 	return desc, nil
+ }
++
++// sectionDirWithSlugs returns the dir of section s with any section slugs applied,
++// or an empty string if none of the sections in the tree has a slug.
++func sectionDirWithSlugs(s page.Page, unnormalized bool) string {
++	base := func(p page.Page) string {
++		pi := p.PathInfo()
++		if unnormalized {
++			pi = pi.Unnormalized()
++		}
++		return strings.TrimSuffix(pi.Base(), "/")
++	}
++
++	var dir string
++	var hasSlug bool
++	for s != nil && !s.IsHome() {
++		parent := s.Parent()
++		if parent == nil {
++			return ""
++		}
++		rel := strings.TrimPrefix(base(s), base(parent))
++		if slug := s.Slug(); slug != "" {
++			rel = path.Join(path.Dir(rel), slug)
++			hasSlug = true
++		}
++		dir = rel + dir
++		s = parent
++	}
++
++	if !hasSlug {
++		return ""
++	}
++	return dir
++}
+diff --git a/hugolib/page_test.go b/hugolib/page_test.go
+index 88a6b22..80d0b30 100644
+--- a/hugolib/page_test.go
++++ b/hugolib/page_test.go
+@@ -2542,3 +2542,75 @@ isCJKLanguage: true
+ 	b.AssertFileContent("public/p500/index.html", "500|500|1")
+ 	b.AssertFileContent("public/p501/index.html", "501|600|2")
+ }
++
++func TestSlugInSectionTaxonomyAndTerm(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++disableKinds = ["rss", "sitemap", "robotsTXT", "404"]
++defaultContentLanguage = "en"
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: How to frob
++tags: [foo]
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Como frobear
++slug: como-frobear
++tags: [foo]
++---
++-- content/help/plain.es.md --
++---
++title: Plain
++---
++-- content/help/sub/deep/_index.es.md --
++---
++title: Deep
++slug: profundo
++---
++-- content/help/sub/deep/p1.es.md --
++---
++title: P1
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/foo/_index.es.md --
++---
++title: Foo
++slug: fu
++---
++-- layouts/all.html --
++{{ .Title }}|{{ .RelPermalink }}|
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "Help|/help/|")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "How to frob|/help/how-to-frob/|")
++	b.AssertFileContent("public/tags/foo/index.html", "|/tags/foo/|")
++	b.AssertFileContent("public/es/ayuda/index.html", "Ayuda|/es/ayuda/|")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "Como frobear|/es/ayuda/como-frobear/|")
++	b.AssertFileContent("public/es/ayuda/plain/index.html", "Plain|/es/ayuda/plain/|")
++	b.AssertFileContent("public/es/ayuda/sub/profundo/index.html", "Deep|/es/ayuda/sub/profundo/|")
++	b.AssertFileContent("public/es/ayuda/sub/profundo/p1/index.html", "P1|/es/ayuda/sub/profundo/p1/|")
++	b.AssertFileContent("public/es/etiquetas/index.html", "Etiquetas|/es/etiquetas/|")
++	b.AssertFileContent("public/es/etiquetas/fu/index.html", "Foo|/es/etiquetas/fu/|")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..eb0a910 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -45,6 +45,10 @@ type TargetPathDescriptor struct {
+ 	Path    *paths.Path
+ 	Section *paths.Path
+ 
++	// SectionDir is Section.Base() with any section slugs applied.
++	// Only set if at least one section in the tree has a slug.
++	SectionDir string
++
+ 	// For regular content pages this is either
+ 	// 1) the Slug, if set,
+ 	// 2) the file base name (TranslationBaseName).
+@@ -165,6 +169,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.SectionDir != "" {
++			pb.Add(d.SectionDir)
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}
+@@ -206,7 +212,13 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			if dir := d.Path.ContainerDir(); dir != "" {
++			dir := d.Path.ContainerDir()
++			if d.SectionDir != "" {
++				if rest, ok := strings.CutPrefix(dir, d.Section.Base()); ok {
++					dir = d.SectionDir + rest
++				}
++			}
++			if dir != "" {
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {

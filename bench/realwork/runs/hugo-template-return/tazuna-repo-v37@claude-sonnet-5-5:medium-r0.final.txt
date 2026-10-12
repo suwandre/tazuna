@@ -1,0 +1,21 @@
+`return` now works in any template, anywhere in it, and no longer has to be the last command. `./check.sh ./tpl/... ./hugolib/...` passes, and `go test ./tpl/... ./hugolib/... ./commands/...` passed before I added the `return` doc page edit.
+
+**How it works**
+- `return` is now a real template function (`tpl/partials/partials.go`) that returns a sentinel `*texttemplate.ReturnError` carrying an optional value.
+- The forked exec package (`hugo_template.go` and `exec.go`) is changed in two places. `evalCall` re-panics that error instead of wrapping it as "error calling return". `errRecover` turns it into a normal return from `execute`. This is about 10 lines in the fork, using the same panic-and-trap approach as `break` and `continue`.
+- `TemplateStore.ExecuteWithReturn` (`tpl/tplimpl/templatestore.go`) traps the sentinel. Normal callers treat an early return as success. Partials read its value.
+- A partial now yields the returned value if it returned, and its rendered output otherwise.
+- I removed the old rewrite of the partial's parse tree: the return wrapper template, `collectReturnNode`, `ParseInfo.HasReturn` and `contextWrapper`.
+
+**Behaviour changes**
+- `{{ return add . 42 }}` still works. A small rewrite turns it into `return (add . 42)`, because `return` is now a normal function and its arguments are evaluated as such.
+- Several `return` statements are now allowed, and the first one reached wins. Previously the first one in the file was used, wherever it sat.
+- A bare `{{ return }}` in a partial gives `nil`. The docs used to say an empty `template.HTML` string, and I updated them.
+- `TestPartialReturnPanicIssue13600` asserted a quirk of the old rewrite: the error text "wrong number of args for string". `delimit` now fails first, so I changed the assertion to "error calling delimit".
+
+**Tests and docs**
+- I added `TestReturnEarly` for a bare return in a regular template. It checks that output after the return is cut off.
+- I also added `TestReturnEarlyPartialValues`. It covers returning from inside a `range`, a trailing `return`, a partial with no `return`, and `{{ . | return }}`.
+- I updated `docs/content/en/functions/go-template/return.md`.
+
+I haven't committed anything.

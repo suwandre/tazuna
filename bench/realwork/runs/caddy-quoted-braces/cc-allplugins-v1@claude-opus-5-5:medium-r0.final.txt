@@ -1,0 +1,15 @@
+Fixed: quoted `"{"`, `"}"` and `` `{` `` are now treated as plain arguments instead of block delimiters. The Caddyfile from the issue now adapts to `{"body":"{","handler":"static_response"}`. Before the change it failed with `wrong argument count or unexpected line ending after 'respond'`.
+
+**The cause:** The lexer already records whether each token was quoted, but the parser and `Dispenser` only checked the token's text (`Val() == "{"`). So a quoted `"{"` was treated as the start of a block. One spot in `directive()` checked for quoting, but only for an error message; it still counted the quoted brace as opening a block.
+
+**The fix** (all in `caddyconfig/caddyfile/`):
+- **`lexer.go`:** added two private helpers, `Token.isOpenBrace()` and `Token.isCloseBrace()`, which match only when the brace is not quoted.
+- **`dispenser.go`:** added matching helpers on `Dispenser` and used them in `NextArg`, `NextBlock` and `ArgErr`. This matters because directive parsers work through these, so a quoted brace now comes back as an ordinary argument.
+- **`parse.go`:** every brace check now uses the helpers. That covers server blocks, directive blocks, snippet/`blockTokens` capture, import block arguments and snippet detection during import. The old quoted-brace special case in `directive()` is no longer needed, so I removed it.
+
+**Tests:**
+- **`parse_test.go`:** new `TestParseOneAndImport` cases: `respond "{"`, `respond "}"`, a backtick `` `{` `` argument, quoted braces both as a directive argument and inside its block, and `respond "{" }`. That last one is now correctly rejected; before the fix the quoted brace silently balanced it.
+- **`dispenser_test.go`:** new `TestDispenser_QuotedBraces` checks that `NextArg` and `NextBlock` return quoted braces as arguments while unquoted ones still open and close blocks.
+- With the fix taken out, the new tests fail; with it, they pass. `go test -race -short ./caddyconfig/... ./modules/caddyhttp/... ./caddytest/...` and `go vet ./caddyconfig/...` both pass. `caddy fmt` leaves quoted braces alone.
+
+I didn't run `golangci-lint` or the full `./...` test suite. Since the issue says AI was involved, remember to disclose in the PR that this patch was written with Claude Opus 5.5.

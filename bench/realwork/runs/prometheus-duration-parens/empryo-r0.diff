@@ -1,0 +1,123 @@
+diff --git a/promql/parser/generated_parser.y b/promql/parser/generated_parser.y
+index da9bc93..dc00c85 100644
+--- a/promql/parser/generated_parser.y
++++ b/promql/parser/generated_parser.y
+@@ -1402,6 +1402,10 @@ paren_duration_expr : LEFT_PAREN duration_expr RIGHT_PAREN
+                                 $$ = durationExpr
+                                 break
+                             }
++                            if nl, ok := $2.(*NumberLiteral); ok {
++                                $$ = wrapNumberLiteral(nl)
++                                break
++                            }
+                             $$ = $2
+                         }
+                 ;
+diff --git a/promql/parser/generated_parser.y.go b/promql/parser/generated_parser.y.go
+index 846d830..16361bd 100644
+--- a/promql/parser/generated_parser.y.go
++++ b/promql/parser/generated_parser.y.go
+@@ -2546,6 +2546,10 @@ yydefault:
+ 				yyVAL.node = durationExpr
+ 				break
+ 			}
++			if nl, ok := yyDollar[2].node.(*NumberLiteral); ok {
++				yyVAL.node = wrapNumberLiteral(nl)
++				break
++			}
+ 			yyVAL.node = yyDollar[2].node
+ 		}
+ 	}
+diff --git a/promql/parser/parse.go b/promql/parser/parse.go
+index a56f16a..f5dc946 100644
+--- a/promql/parser/parse.go
++++ b/promql/parser/parse.go
+@@ -1214,10 +1214,26 @@ func (p *parser) experimentalDurationExpr(e Expr) {
+ 	}
+ }
+ 
++// wrapNumberLiteral wraps a parenthesised number literal in a unary-plus
++// *DurationExpr so that the parentheses survive a String() round-trip, as
++// *NumberLiteral has no Wrapped field.
++func wrapNumberLiteral(nl *NumberLiteral) *DurationExpr {
++	return &DurationExpr{
++		Op:       ADD,
++		RHS:      nl,
++		Wrapped:  true,
++		StartPos: nl.PosRange.Start,
++	}
++}
++
+ // applyUnaryOpToDurationExpr applies a unary operator to a duration expression
+ // node, which may be a *DurationExpr or a *NumberLiteral. When wrapped is true
+-// (parenthesised form), the Wrapped flag is set on *DurationExpr nodes.
++// (parenthesised form), the Wrapped flag is set on *DurationExpr nodes and
++// *NumberLiteral nodes are wrapped in a *DurationExpr so the parentheses survive.
+ func (p *parser) applyUnaryOpToDurationExpr(op Item, expr Node, wrapped bool) Node {
++	if nl, ok := expr.(*NumberLiteral); ok && wrapped {
++		expr = wrapNumberLiteral(nl)
++	}
+ 	switch e := expr.(type) {
+ 	case *DurationExpr:
+ 		if wrapped {
+diff --git a/promql/parser/parse_test.go b/promql/parser/parse_test.go
+index b1912e1..5a82bd4 100644
+--- a/promql/parser/parse_test.go
++++ b/promql/parser/parse_test.go
+@@ -1716,8 +1716,13 @@ var testExpr = []struct {
+ 	{
+ 		input: "foo offset +(5)",
+ 		expected: &VectorSelector{
+-			Name:           "foo",
+-			OriginalOffset: 5 * time.Second,
++			Name: "foo",
++			OriginalOffsetExpr: &DurationExpr{
++				Op:       ADD,
++				RHS:      &NumberLiteral{Val: 5, PosRange: posrange.PositionRange{Start: 13, End: 14}},
++				Wrapped:  true,
++				StartPos: 13,
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+@@ -1727,8 +1732,17 @@ var testExpr = []struct {
+ 	{
+ 		input: "foo offset -(5)",
+ 		expected: &VectorSelector{
+-			Name:           "foo",
+-			OriginalOffset: -5 * time.Second,
++			Name: "foo",
++			OriginalOffsetExpr: &DurationExpr{
++				Op: SUB,
++				RHS: &DurationExpr{
++					Op:       ADD,
++					RHS:      &NumberLiteral{Val: 5, PosRange: posrange.PositionRange{Start: 13, End: 14}},
++					Wrapped:  true,
++					StartPos: 13,
++				},
++				StartPos: 11,
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+diff --git a/promql/parser/printer_test.go b/promql/parser/printer_test.go
+index 8be35d9..a64bd19 100644
+--- a/promql/parser/printer_test.go
++++ b/promql/parser/printer_test.go
+@@ -33,6 +33,16 @@ func TestExprString(t *testing.T) {
+ 	inputs := []struct {
+ 		in, out string
+ 	}{
++		{in: `foo offset (5)`},
++		{in: `foo offset +(5)`, out: `foo offset (5)`},
++		{in: `foo offset -(5)`},
++		{in: `foo offset (5m)`},
++		{in: `foo[(5s)]`},
++		{in: `foo offset (5m + 1m)`},
++		{in: `foo offset -(5m + 1m)`},
++		{in: `foo[(5s + 1s)]`},
++		{in: `foo[(5s) + 1s]`},
++		{in: `(5) + 1`},
+ 		{
+ 			in:  `sum by() (task:errors:rate10s{job="s"})`,
+ 			out: `sum(task:errors:rate10s{job="s"})`,

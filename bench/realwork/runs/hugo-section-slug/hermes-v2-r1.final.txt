@@ -1,0 +1,13 @@
+`slug` in front matter now works for section, taxonomy and term pages, and it carries through to every descendant URL. Tests pass in `./hugolib/...` and `./resources/page/...`. I didn't run `./check.sh`.
+
+Your example now gives `/help/`, `/help/how-to-frob/`, `/es/ayuda/` and `/es/ayuda/como-frobear/`. Nested sections and pages under a slugged section follow the same rule, so `help/sub/` with slug `sub-es` becomes `/es/ayuda/sub-es/`. Taxonomies and terms work the same way, e.g. `/es/etiquetas/uno/`.
+
+How it works: `createTargetPathDescriptor` in `hugolib/page__paths.go` collects the slugs of the page (if it's a section, taxonomy or term) and its ancestors. It rewrites the matching path segments in the section path and in the page's container dir. `resources/page/page_paths.go` uses those rewritten values when they're set.
+
+Cases it doesn't cover:
+- If a page has an explicit `url`, or the section matches a `[permalinks]` rule, the rewrite isn't used. The existing `:sectionslugs` and `:sectionslug` permalink tokens already handle that case.
+- Only the slug is changed. The language prefix and the rest of the path behave as before.
+
+I added `TestSectionTaxonomyTermSlug` to `hugolib/page_permalink_test.go`. It covers the English and Spanish layout from your example, a nested section, and a taxonomy with its term. It also checks that the unslugged English paths are unchanged and that no `es/help/` output is written.
+
+I didn't touch the docs.

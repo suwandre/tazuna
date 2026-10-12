@@ -1,0 +1,25 @@
+`return` now works in any template, can appear anywhere in it, and the partial return-wrapper rewrite is gone. `./check.sh ./tpl/...` passes. I also ran `go test` on `./hugolib/...`, `./resources/...` and `./commands/...`, and none failed.
+
+**How it works**
+- `templates.Return` (alias `return`) returns a `*texttemplate.ReturnError{Value, HasValue}`. It sits in the `templates` namespace, not `partials`. `evalCall` in `hugo_template.go` turns that error into a panic, the same way `break` and `continue` work.
+- `errRecover` hands it back from `ExecuteWithContext`. `walkTemplate` traps it, so a `return` inside a `define` or `block` only ends that template. That keeps `baseof` rendering after an early return in `main`.
+- `try` re-panics it instead of capturing it as a `TryError`.
+- Fork footprint in Go's package: one case in `errRecover`, one deferred recover in `walkTemplate`, one `errors.As` in `evalCall`, plus the new type in `hugo_template.go`.
+- `TemplateStore.ExecuteWithContext` swallows it, so in pages, shortcodes and layouts `return` just stops the template and keeps the output so far.
+- `ExecuteWithContextAndKey` returns it as-is, and `partials.doInclude` turns it into the partial's result.
+- Removed: `partialReturnWrapper`, `contextWrapper`, `ParseInfo.HasReturn`, `collectReturnNode`, and the `Cmds` deletion hack in the `PipeNode` case.
+- Kept: `return add 1 2` still works, because the transform rewrites it to `return (add 1 2)` (`wrapReturnArgs`). Plain `return $x` is untouched.
+
+**Behaviour changes**
+- A bare `return` in a partial now returns the output rendered so far. The docs previously said it returns an empty string, though in practice it returned the full output.
+- `return` is now conditional, as it is in other languages. Before, the first `return` was hoisted and always applied.
+- `{{ return (x) | string }}` used to fail with "wrong number of args for string". It now fails with the real error from `x`. I changed the assertion in `TestPartialReturnPanicIssue13600` to match.
+
+**Tests**
+- I added `TestReturnEarlyInPage`, `TestReturnInTemplateCall` and `TestReturnInPartial` in `tpl/templates/templates_integration_test.go`.
+- They cover a `return` inside `range`, in a `block` under `baseof`, and in a `define` called with `template`.
+- They also cover partials with a conditional return, `return add 1 2`, a falsy value, bare `return` in text and HTML partials, and `try`.
+
+I rewrote the docs page `docs/content/en/functions/go-template/return.md` and removed the "only one return, at the end" sentence from `Include.md`.
+
+`docs/content/en/templates/types.md` and the examples in `IncludeCached.md` still use the old single-return style. They remain valid.

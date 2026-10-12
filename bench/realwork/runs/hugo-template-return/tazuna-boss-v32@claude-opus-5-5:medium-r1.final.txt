@@ -1,0 +1,23 @@
+`return` now works anywhere in any template. It's a runtime sentinel error caught by our fork of Go's template package, which replaces the old wrapper transform. The fork patch is small: a few lines in `hugo_template.go` and one line in `exec.go`. Build, `go vet` and the `tpl`, `hugolib` and `resources` tests pass. Three tests in `internal/warpc` fail (`TestGreet`, `TestGreetParallel`, `TestKatexParallel`), all with "dispatcher is shutting down". That package is the WASM dispatcher, not template code, but I haven't checked whether they also fail without this change.
+
+**How it works**
+- `templates.Return`, with the alias `return`, returns a `*texttemplate.ReturnError` holding an optional value.
+- In the fork, `evalCall` re-panics that error unwrapped instead of turning it into an `ExecError`. `executeWithState` catches it and returns it as the error.
+- `walkTemplate` also catches it. So a `return` inside `{{ template }}` or `{{ block }}` only ends that block: `{{ define "main" }}…{{ return }}…{{ end }}` still renders the rest of `baseof`.
+- In the template store, `ExecuteWithContext` (used by everything except partials) ignores the error. `ExecuteWithContextAndKey` passes it on so partials can read the value.
+- `partials.doInclude`: if `return` is called with a value, that value is the result. `{{ return }}` with no value gives the output rendered so far. A partial that never reaches `return` gives its rendered output.
+- Removed: `contextWrapper`, `ParseInfo.HasReturn`, the wrapper template, `collectReturnNode`, and the old no-op `return` mapping. `TemplateVersion` goes up to 3.
+
+**Kept for existing templates**
+One small parse-time rewrite stays: `{{ return add . 42 }}` and `{{ return . | upper }}` become `return (add . 42)` and `return (. | upper)`. Without it, `return` would run before the rest of the pipeline and those templates would break or return the wrong value. As a side effect, the old #13600 case `{{ return ( delimit . ", " ) | string }}` now returns the joined string instead of an error, and its test asserts that.
+
+**Two behaviour changes**
+- Previously the return expression always ran at the end of the partial, wherever it was written. Now `{{ if .x }}{{ return 1 }}{{ end }}` only returns when `.x` is true.
+- Through the `return` alias, the "at most one argument" check can't be reached, because of the rewrite above. `{{ return 1 2 }}` fails with Go's "can't give argument to non-function" error instead.
+
+`{{ try (return) }}` would have its return caught by `try`; I left that alone.
+
+**Tests and docs**
+New tests in `tpl/templates/templates_integration_test.go` cover early return from inside `range` and `with`, `return` in regular templates and in `baseof` blocks, return without a value, and the unparenthesised pipeline forms. The #13600 test is renamed to `TestPartialReturnAppliesWholePipeline`. `docs/content/en/functions/go-template/return.md` is updated.
+
+`./check.sh ./tpl/...` passes. `./check.sh ./hugolib/...` stops at a staticcheck warning (SA4006) in `hugolib/integrationtest_builder.go:1193`, a file this change doesn't touch. Nothing is committed.

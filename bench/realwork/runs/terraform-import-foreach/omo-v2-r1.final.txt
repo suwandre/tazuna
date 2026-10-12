@@ -1,0 +1,6 @@
+Handoff: Ask: fix the bug where only the first import block per `for_each` resource is honored. Wanted: both blocks honored, with a test. For you: I found the root cause and made the fix, but tests haven't finished yet, so nothing is verified. Now: waiting on `go build` and `go test` (bash_9). Next: read the results, then run the full `internal/terraform` and `internal/refactoring` tests.
+
+- **Cause:** `refactoring.FindImportStatements` in `internal/refactoring/import_statement.go` deduplicated import blocks by config resource (`terraform_data.t`). That dropped every block after the first for the same resource, whatever its instance key.
+- **Fix:** it now returns a slice and keeps every block declared in the same module. The existing rule that a parent module's import overrides a child module's import for the same resource is kept.
+- **Caller:** I updated the one caller, `findImportTargets` in `internal/terraform/context_plan.go`.
+- **Test:** I added `TestContext2Plan_importForEachSeparateBlocks` in `context_plan_import_test.go`. It uses two separate import blocks for a `for_each` resource and checks both are imported.

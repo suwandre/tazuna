@@ -1,0 +1,11 @@
+`slug` in a section, taxonomy or term page now changes the URL of that page and of everything below it. The new test passes, `go test ./hugolib/... ./resources/...` passes, and `./check.sh ./hugolib/...` passes. I did not run `./check.sh` over the whole repo, and I haven't committed anything.
+
+The change is in `hugolib/page__paths.go`. A new helper, `sectionSlugsPath`, rebuilds the path from the section chain. Each section that has a `slug` uses it in place of its directory name, and the remaining segments are kept.
+
+With your example, the `es` pages come out as `/es/ayuda/` and `/es/ayuda/como-frobear/`, while the `en` pages stay at `/help/` and `/help/how-to-frob/`.
+
+- **Taxonomies and terms:** a taxonomy slug moves its terms too. A term slug only changes that term's own segment.
+- **No effect on existing sites:** the slug logic only applies when no ancestor has a slug, no `url` is set and no `[permalinks]` entry matches. Sites that don't use section slugs build exactly as before.
+- **`url` and permalinks win:** if a page has `url` set, or a `[permalinks]` entry matches it, that takes precedence over any section slugs.
+
+I added `TestSectionTaxonomyTermSlug` to `hugolib/site_sections_test.go`. It covers the en/es example, a nested section with a slug, pages with and without their own slug, and a taxonomy and term. It fails without the fix.

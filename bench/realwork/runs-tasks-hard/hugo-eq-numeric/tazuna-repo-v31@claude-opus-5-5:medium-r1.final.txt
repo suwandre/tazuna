@@ -1,0 +1,20 @@
+`eq` and `ne` now compare numbers by value, the same way `lt`/`le`/`gt`/`ge` do, so `eq 1 1.0` is true. The comparison is exact for any mix of signed ints, unsigned ints and floats. `collections.Where` follows the same rules. `./check.sh` passes on the full repo.
+
+**What changed**
+- **New helper:** `hreflect.CompareNumbers` in `common/hreflect/compare.go` returns -1, 0 or +1 for two numbers. It never rounds through `float64`: a float is split into its whole and fractional parts and each is compared separately. It also handles out-of-range values directly, so `int64(9007199254740993)` is greater than `float64(9007199254740992)` and `uint64` max is greater than `-1`.
+- **`tpl/compare/compare.go`:**
+  - `Eq` (and so `Ne`, which calls it) uses the new helper whenever both values are numbers.
+  - `compareGetWithCollator` uses it first, which replaces the old `compareTwoUints` special cases.
+  - Two older bugs went away with this: a negative int against a `uint64` was cast to `uint64` and wrapped, and a `uint64` compared with a non-number was treated as 0.
+- **`tpl/collections/where.go`:** `checkCondition` uses the helper for `eq`/`ne`/`<`/`<=`/`>`/`>=` and their symbol forms. This also fixes an old bug where `uint64` values above `MaxInt64` wrapped when cast to `int64`.
+
+NaN is still never equal to anything and never ordered: the helper declines it and the old float comparison handles it.
+
+**Tests**
+- I added int/uint/float cases to the `doTestCompare` table, covering the cases from the issue, the 2^53 precision case, and the `uint64` max, `MinInt64` and ±Inf edges.
+- I added mixed-type and NaN cases to `TestCheckCondition`.
+- The new integration test `TestCompareIntWithEqualFloat` in `tpl/compare/compare_integration_test.go` renders the six template functions and a `where` call.
+
+The first full `./check.sh` run failed in `TestCommands/mod`, a `hugo mod` test that downloads modules. It passed on its own and on a second full run, so the failure looks unrelated to this change.
+
+Nothing is committed yet.

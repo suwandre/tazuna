@@ -1,0 +1,7 @@
+{
+  "kind": "feature",
+  "difficulty_note": "New Caddyfile global option `tls_automate_names` that manages certificates for names without serving them. Must feed the tls app's automate loader and also create automation policies so global ACME options (email etc.) apply, route non-public names to the internal issuer, keep an existing site-block policy, and append on repetition. Hidden tests are 5 Caddyfile->JSON adapt fixtures run by TestCaddyfileAdaptToJSON (exact JSON output, all-or-nothing).",
+  "merged_at": "2026-09-30T10:49:47Z",
+  "files_changed": 2,
+  "lines_changed": 103
+}

@@ -1,0 +1,18 @@
+Parentheses around a plain duration literal now survive `Expr.String()` round-trips in offset and range/step positions. Tests pass in `promql/...`, `web/...`, `rules/...` and `cmd/promtool/...`. `go vet ./promql/...` fails on `Seek` signature warnings in `histogram_stats_iterator.go` and `value.go`, which this change doesn't touch.
+
+All the issue's failing cases now print as written, with one exception: `foo offset +(5)` prints `foo offset (5)`, the same way `+(5m + 1m)` already drops its `+`.
+
+**How it works**
+- A parenthesised literal now parses to a `DurationExpr` that has `Wrapped` set. It is a unary plus around the literal, so the printer, prettier and engine handle it without changes.
+- The changes are in `generated_parser.y`, `parse.go` and `printer.go`. I regenerated `generated_parser.y.go` with the repo's goyacc command.
+- A wrapped literal is still a constant. The parser sets `OriginalOffset`, `Range` and `Step` right away, as it does for bare literals, and `foo[(0)]` still gives "duration must be greater than 0" at parse time.
+
+**Related fix:** `SubqueryExpr` printing preferred `Step` over `StepExpr`, which would have hidden the parens in `foo[(5s):(1s)]`. It now prefers `StepExpr`, as range and offset already did.
+
+**Behaviour change:** `foo offset -(5)` and `foo[-(5)]` now need `ExperimentalDurationExpr`. Before, they parsed without the flag. This matches `foo offset (5)`, which already required it.
+
+**Tests**
+- I added the issue's cases to `TestExprString` in `printer_test.go`, plus subquery and `(5) + 1` variants.
+- The `foo offset +(5)` and `foo offset -(5)` expectations in `parse_test.go` now include `OriginalOffsetExpr`.
+
+I haven't committed anything.

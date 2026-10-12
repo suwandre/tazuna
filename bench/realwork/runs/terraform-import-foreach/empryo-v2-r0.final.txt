@@ -1,0 +1,16 @@
+FindImportStatements uses `.Values()` — likely a keyed map. Check it.Found it: dedup is per ConfigResource. Read the whole file and its users.Use shell to append the test to the file end, plus a refactoring unit test.`internal/refactoring/import_statement.go` — `findImportStatements` deduplicated import blocks by target `ConfigResource`. Every `for_each` instance maps to the same one, so only the first block per resource survived. The "already claimed" check compared `existing.AbsToResource` with `toAddr`, which are the same value for the same key. It was always true, so same-module blocks were dropped, not just child-module ones.
+
+**Fix:**
+- `FindImportStatements` now returns `[]ImportStatement`, in config order.
+- It tracks which module owns each `ConfigResource`.
+- It skips a block only when a different module (a parent) already claimed that resource. All blocks from the same module are kept, and the parent-overrides-child rule still holds.
+- `internal/terraform/context_plan.go` `findImportTargets` ranges over the slice.
+
+**Tests:**
+- Added `TestContext2Plan_importMultipleBlocksSameResource` in `internal/terraform/context_plan_import_test.go`. It uses two import blocks for `for_each` instances of one resource, and expects both imports with the right IDs.
+- `go test ./internal/terraform/ -run "Import|import"` passes.
+- I did not confirm the new test fails without the fix. The stash needed for that was denied.
+- I did not add a unit test for the parent-overrides-child behaviour. The existing module import tests were in the `-run "Import|import"` pass above.
+- `go test ./internal/refactoring/ ./internal/command/` timed out at 120s. The one `ok` line it printed was for `internal/terraform`, so the other two packages are unverified.
+
+`.gitignore` shows a modified `.empryo` entry that I didn't make. I left it as is.

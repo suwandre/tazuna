@@ -1,0 +1,16 @@
+`--once` now works on `k6 run`, `k6 archive` and both `k6 cloud run` modes. It runs the script with 1 VU and 1 iteration and keeps the scenario config. The new tests and the full `./internal/cmd/...` suite pass. I didn't run `k6 cloud run` against the cloud API or a local-execution mock, so those paths are covered only by the shared config code that `run` and `archive` use.
+
+- **Where it lives:** the flag is defined in `optionFlagSet()` in `options.go`. The logic is in a new `internal/cmd/once.go` and is called from `consolidateDeriveAndValidateConfig` in `test_load.go`.
+- **Cloud and archive:** it runs after config consolidation and before the shortcut derivation, so `k6 archive` and `k6 cloud run` write the rewritten scenario into the archive.
+- **No scenarios:** it creates a `default` shared-iterations scenario with 1 VU and 1 iteration.
+- **One scenario:** it keeps the name, `exec`, `env`, `tags` and scenario `options` (so browser options survive). The executor is replaced with shared-iterations at 1/1. `startTime`, `gracefulStop`, `duration`, `stages` and the other executor fields are dropped, and `vus`, `iterations`, `duration` and `stages` are cleared from the options.
+- **Several scenarios:** it fails with `--once can run a single scenario only` and exit code `InvalidConfig`.
+- **Flag conflicts:** `--once` with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>`. The check is on the flags, not the values. So `K6_ITERATIONS` or `options.iterations` in the script are discarded silently rather than erroring.
+- **`cloud upload`:** since it shares `optionFlagSet()`, it also gets `--once`. The issue didn't list it. Say if you want it removed there.
+
+Tests are in `internal/cmd/once_test.go`:
+- `TestApplyOnce`: unit cases.
+- `TestRunOnce`: runs `k6 run` for the default function and a single scenario, and checks that setup and teardown run once and that exec, env and tags are kept. It also covers the multi-scenario error and the four flag conflicts.
+- `TestArchiveOnce`: reads the archived `metadata.json` and checks the rewritten scenario.
+
+I didn't add release notes: there is no unreleased release-notes file, and `v2.2.0.md` looks already released.

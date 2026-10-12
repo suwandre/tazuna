@@ -1,0 +1,9 @@
+Behavior is right; fix assertion text and gofmt.`--once` is added to `k6 run`, `k6 cloud run` and `k6 archive`. The new tests pass: `TestApplyOnce` in `lib/executor` and `TestRunOnce` in `internal/cmd/tests`. `go test ./internal/cmd` also passes. I did not run the full suite, so the wider packages are untested.
+
+- **Transform:** `lib/executor/once.go` adds `ApplyOnce`. It swaps the executor for `shared-iterations` with 1 VU and 1 iteration. It keeps the scenario name, `exec`, `env`, `tags` and scenario `options`, and drops everything else, including `startTime` and `gracefulStop`. With no scenarios it creates a `default` scenario. With more than one it errors with `--once can run a single scenario only`.
+- **Timing:** it runs in `consolidateDeriveAndValidateConfig` (`internal/cmd/test_load.go`) after config consolidation, so script, env and file `vus`/`duration`/`stages` are discarded rather than conflicting.
+- **Flag conflicts:** combining `--once` with `--vus`, `--iterations`, `--duration` or `--stage` errors, e.g. `--once cannot be combined with --iterations`.
+- **Where it's registered:** `onceFlagSet()` is in `internal/cmd/options.go`, added to the `run`, `cloud run` and `archive` flag sets.
+
+- **`k6 cloud upload` unchanged:** it doesn't get `--once`, since you listed only `run`, `cloud run` and `archive`.
+- **No `--local-execution` test:** I didn't exercise it separately, but it goes through the same config path.

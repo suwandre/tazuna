@@ -1,0 +1,48 @@
+Feature request: Caddyfile syntax to automate certificate without adding corresponding HTTPS route
+
+It'd be a small quality of life improvement if the Caddyfile syntax allowed certificate automation to be configured without adding an HTTPS site. Two use cases:
+
+1. As of Caddy 2.10, wildcard certs are optimistically used for non-wildcard site blocks by default, which is awesome. But there's still a question of how to provision the wildcard cert in the first place. It seems to require a "dummy" site like so:
+
+   ```
+   *.example.com {
+   }
+
+   foo.example.com {
+      respond "Real site"
+   }
+   ```
+
+   This means that Caddy will _also_ serve empty-but-valid HTTP responses when domain names without corresponding site blocks (e.g., `bar.example.com`) are pointed at the Caddy host. It's conflating two concepts that, when it comes to wildcard certs, should really be separate.
+
+2. When caddy-l4 terminates SNI-matched TLS, it uses Caddy's standard cert-selection logic. But actually provisioning the certificate in the Caddyfile syntax seems to require an empty site block (and thus an HTTPS server) even if the Caddy instance is only used for non-HTTP traffic (mail server, XMPP, layer4 proxies, ...).
+
+The underlying JSON syntax completely decouples cert automation from servers (`tls.certificates.automate`), so it would be nice to have a Caddyfile option to enable automation for additional certificates.
+
+---
+
+Maintainers agreed on a global option:
+
+```
+{
+	email nobody@example.com
+	tls_automate_names *.example.com
+}
+
+foo.example.com {
+	respond "Real site"
+}
+```
+
+Expected behavior:
+
+- `tls_automate_names <names...>` takes one or more names. Repeating the option appends to the list, so a long list can be split over several lines.
+- The names are managed by the tls app (automate loader) but get no route in the http app.
+- It must work with no site blocks at all (only the tls app is produced then).
+- Global TLS/ACME options (e.g. `email`) must apply to these names exactly as if they had a site block: with the example above the `tls` app's automation policies should come out the same as with the dummy `*.example.com {}` site block, only the extra route disappears.
+- Names that can't get a publicly-trusted certificate (e.g. `localhost`, IP addresses) get the internal issuer, the same treatment a site block gives them.
+- If a listed name also has a site block, keep it listed for automation (a site served only over `http://` would otherwise not get a certificate), and the site block's own TLS settings (its automation policy) win; don't produce a second, conflicting policy for it.
+- With `auto_https off` the names are still listed for automation.
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

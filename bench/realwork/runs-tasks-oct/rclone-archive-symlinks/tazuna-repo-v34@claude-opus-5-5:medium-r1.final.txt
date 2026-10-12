@@ -1,0 +1,24 @@
+The zip and squashfs archive backends now handle symlinks the same way the local backend does. Tests pass for `backend/archive/...` and `backend/local`, and golangci-lint reports no issues. Nothing is committed yet.
+
+I also ran your example end to end with a freshly built `rclone` on a real `zip -y` archive:
+- **Without `--links`:** `lsl` shows only `src/file.txt` and logs `Skipped 1 symlinks in zip file: use -l/--links to include them`.
+- **With `--links`:** `lsl` shows `src/link.txt.rclonelink` with size 8, `cat` returns `file.txt`, and `copy --links` recreates `link.txt -> file.txt` in the destination.
+
+**What changed, against the maintainer notes:**
+- **Skipped without `--links`:** symlinks are left out of both listings and `NewObject`. The zip backend logs one notice per archive; squashfs logs one per directory listing, since it reads directories one at a time.
+- **With `--links`:** a symlink is listed as `<name>.rclonelink`. Its size is the length of the target, and opening it returns the target, with range and seek options honoured. On zip, targets longer than 4096 bytes are skipped with a log message.
+- **Listing and `NewObject` agree:** in squashfs, `NewObject` used to return symlinks by their plain name with size 0, and reading them gave the content of the file they point to. Now only the names that appear in the listing resolve.
+- **Real `.rclonelink` files win:** a regular member named `x.rclonelink` stays a regular file, and a symlink `x` that would collide with it is dropped with a log message.
+- **Hostile archives:** in zip, a symlink is dropped if any other entry sits inside it or shares its name. That covers `evil -> ../../..` plus `evil/pwned.txt`, nested symlinks, and duplicate entries. Squashfs is a real directory tree, so a symlink can't also contain members; the name-collision rule still applies there.
+
+**Tests:**
+- **Zip:** test archives are built in Go and cover:
+  - skipping symlinks without the flag
+  - names, sizes, contents and range/seek reads with it
+  - a root pointing at a symlink
+  - all the clash cases
+  - a real copy to local, which checks the hostile member stays inside the destination and the symlink is recreated
+- **Squashfs:** the library can build images with symlinks, so these tests don't need `mksquashfs`. Two quirks: the library resolves link targets relative to the current directory, so the helper changes into its work folder, and the targets must exist when the image is built.
+- **Windows:** both symlink copy tests are skipped there, because creating symlinks needs extra privileges.
+
+Squashfs symlinks have no hash, the same as other squashfs files. Zip symlinks report the CRC32 stored in the archive, which is the CRC of the target text.

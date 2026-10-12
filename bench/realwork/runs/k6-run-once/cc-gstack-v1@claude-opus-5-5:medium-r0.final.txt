@@ -1,0 +1,26 @@
+I added a `--once` flag. It works with `k6 run`, `k6 cloud run` (with or without `--local-execution`), `k6 archive` and `k6 cloud upload`. All `internal/cmd` tests and the new tests pass, and `golangci-lint` reports no issues. I haven't committed anything.
+
+**How it works**
+- **The flag:** `--once` is defined alongside the other run options in `internal/cmd/options.go`, which is why every command above picks it up.
+- **When it's applied:** the change to the scenario config happens right after all config sources are merged and before shortcut options become scenarios. It's applied to the merged config itself, so archives and cloud uploads contain the 1 VU / 1 iteration scenario and don't run long when replayed.
+- **What it does:**
+  - **No scenarios:** you get a `default` shared-iterations scenario with 1 VU and 1 iteration. Script-level `vus`, `duration`, `iterations` and `stages` are dropped.
+  - **One scenario:** the name, `exec`, `env`, `tags` and `options` (e.g. browser) are kept. The executor becomes `shared-iterations` with 1 VU and 1 iteration. Everything else is discarded, including `startTime`, `gracefulStop`, `duration` and `stages`.
+  - **More than one scenario:** error `--once can run a single scenario only`, exit code `InvalidConfig`.
+  - **Combined with `--vus`, `--iterations`, `--duration` or `--stage`:** error `--once cannot be combined with --<flag>`.
+  - `setup()` and `teardown()` still run.
+
+**Tests**
+- `internal/cmd/once_test.go`: unit tests for the change itself, including that the later shortcut-to-scenario step leaves the result alone, and for each flag conflict.
+- `internal/cmd/tests/cmd_run_once_test.go`: end-to-end tests of the actual commands:
+  - `k6 run` with no scenarios, checking setup, default and teardown each run once.
+  - `k6 run` with a single scenario, checking `exec`, `env` and tags are kept and the executor is shared-iterations.
+  - The multiple-scenarios error and each conflicting-flag error.
+  - `k6 archive --once`: checks the archive's metadata, then runs the archive.
+  - `k6 cloud run --once`: checks the archive sent to a mock cloud server.
+
+**Decisions for you**
+- Only CLI flags conflict with `--once`. If `vus`, `iterations` or similar come from the script, environment variables or the config file, they're dropped without an error. I read the "combined with shortcut flags" rule as applying to CLI flags only.
+- `--once` only exists as a CLI flag; there's no `K6_ONCE` environment variable.
+
+**Unrelated failure:** `TestVUHandleStartStopRace` in `lib/executor` fails with a "returning took too long" panic. It fails the same way with my changes stashed, so it was already failing. The rest of `lib/executor` passes when that test is skipped.

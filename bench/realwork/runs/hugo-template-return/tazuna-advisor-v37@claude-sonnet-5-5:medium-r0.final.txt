@@ -1,0 +1,14 @@
+`return` now works in any template, not just partials, and it no longer has to be the last command. The `./tpl/...` and `./hugolib/...` tests pass, and `./check.sh` on those two package trees is clean. A plain `./check.sh` fails in staticcheck on `config/allconfig/allconfig.go` (deprecation warnings) and `hugolib/integrationtest_builder.go:1193` (unused value). I didn't touch either file, so I assume these were already failing, but I didn't confirm that against a clean checkout.
+
+**How it works**
+- **Sentinel error:** `return` is now a normal template func that returns a `*ReturnError`, which carries an optional value. It is defined in the forked `texttemplate` package, and the func is registered in the `templates` namespace.
+- **Fork changes:** the patch to Go's template exec package is small: `evalCall` re-panics the error, and `errRecover` and `walkTemplate` trap it. `try` doesn't swallow it, and `{{ template "x" }}` only exits the template it's called from.
+- **Partials:** `doInclude` gets the return value from the error. A bare `{{ return }}`, or reaching the end of the partial, gives the rendered output instead. Other callers swallow the sentinel in `ExecuteWithContext`, so an early return in `home.html` or `page.html` just ends rendering, keeping the output so far.
+- **Removed:** the AST wrapper machinery in `templatetransform.go`, `contextWrapper`, and `HasReturn`.
+- **Kept for compatibility:** a small rewrite turns `{{ return add . 42 }}` into `{{ return (add . 42) }}`, so existing partials keep working.
+
+**One behaviour change**
+`return X | string` no longer pipes `X` through `string`. The old code dropped that pipe and produced a misleading arity error. `TestPartialReturnPanicIssue13600` now expects the underlying `error calling delimit` message instead.
+
+**Tests**
+I added `TestReturnEarly` in `hugolib/template_test.go`. It covers an early return in `home.html`, and in partials inside `if`, `range` and `with`, plus `return nil`, a falsy return, `partialCached`, `try`, and `define`/`template`.

@@ -1,0 +1,14 @@
+Quoted `{` and `}` no longer count as block delimiters, so `respond "{"` inside a site block now parses. `go test ./caddyconfig/... ./modules/caddyhttp/...` passes, including the new tests. I didn't run your exact Caddyfile through `caddy adapt`.
+
+The parser and dispenser compared token text to `"{"` / `"}"` without checking whether the token was quoted. I added a `!Token().Quoted()` check at each of those comparisons in `caddyconfig/caddyfile/parse.go` and `caddyconfig/caddyfile/dispenser.go`:
+- `parse.go`: address end, server-block end, `import` snippet nesting, `directive()`, `openCurlyBrace`, `closeCurlyBrace`, `blockTokens`.
+- `dispenser.go`: `NextArg` and `NextBlock`.
+- Backtick-quoted braces are covered too.
+
+In `directive()` I also dropped the old `wasQuoted == 0` special case on the token after `{`. It was only there to tolerate a quoted `{` on the same line, which the new check makes unnecessary.
+
+I added `TestQuotedBracesDoNotAffectBlockParsing` and `TestDispenserQuotedBraces` to `caddyconfig/caddyfile/parse_test.go`.
+
+I left two other brace checks alone: the `currentMappingKey == "{"` check at `parse.go:387` (anonymous import blocks) and the `HasSuffix(value, "{")` site-address error at `parse.go:246`.
+
+`.gitignore` also shows a `.empryo` line in `git status`. I didn't make that change.

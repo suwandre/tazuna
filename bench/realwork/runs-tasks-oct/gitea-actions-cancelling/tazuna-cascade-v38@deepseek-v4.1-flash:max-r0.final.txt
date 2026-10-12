@@ -1,0 +1,16 @@
+Both the issue's expected behaviors are now covered and verified. Here's a summary:
+
+## Changes
+
+**`models/actions/run_job.go` — caller stays `cancelling` while descendants do**
+- Added `reusableCallerStatusAfterCancel`: a reusable caller with no task gets `cancelling` while any direct child is still unfinished, and `cancelled` only once all children settled. Nested callers keep this invariant for their own subtrees, so depth is handled by the existing cascade.
+- `cancelOneJob` now uses that status for reusable callers instead of writing `cancelled` immediately. Because the caller is still `cancelling`, the runner's acknowledgement changes its status via `RefreshReusableCallerStatus`, which in turn refreshes the attempt and run to `cancelled`. `stopped` is only written once the caller is actually done.
+
+**`services/actions/cancel.go` — settle paths release concurrency waiters**
+- When cancelling a run updates no job (all jobs already finished, e.g. the stuck state from the issue), `SettleRunAfterCancel` finishes the run but nothing re-checked the concurrency groups it held. That path now calls `EmitJobsIfReadyByRun(run.ID)` so the emitter re-evaluates the group and wakes the runs blocked behind it. The job-update path is unchanged.
+
+## Tests
+- `models/actions/run_job_test.go`: `TestCancelJobs_ReusableCallerStaysCancellingUntilDescendantsSettle` builds a two-level caller tree with a task-bearing leaf, cancels the outer caller, asserts every level (leaf, both callers, attempt, run) is `cancelling`, then simulates the runner acknowledgement and asserts everything settles to `cancelled` with `stopped` set. Verified it fails without the model fix.
+- `services/actions/cancel_test.go` (new): `TestCancelRun_SettledRunWakesConcurrencyWaiters` sets up a stuck `cancelling` run with finished jobs, a blocked waiter on the same group, force-cancels, and asserts the run is emitted and the waiter is found startable. Verified it fails without the service fix.
+
+Verification: `go test ./models/actions/ ./services/actions/ ./routers/api/actions/... -count=1`, `go build ./...`, integration test package compiles (`go test -run '^$' ./tests/integration/`), and `golangci-lint run ./models/actions/... ./services/actions/...` reports 0 issues. `make fmt` was unavailable (golangci-lint install timed out), but the changed files are clean under `gofmt`/`golangci-lint fmt`.

@@ -1,0 +1,25 @@
+Parentheses around a plain duration literal now survive the `Expr.String()` round trip. Tests in `promql/...`, `web/api/...`, `rules` and `cmd/promtool` pass. I haven't run `make lint`.
+
+**Fix.** `*NumberLiteral` has no `Wrapped` field, and `OriginalOffsetExpr` and `RangeExpr` are typed `*DurationExpr`. Adding a field wouldn't have been enough, so a parenthesised literal is now stored as a wrapped unary-plus `*DurationExpr`. The evaluator already treats unary plus as the identity, so evaluation is unchanged.
+
+The change is in `promql/parser/parse.go`: a new `wrapParenthesisedDuration` helper, plus `applyUnaryOpToDurationExpr`. The `paren_duration_expr` action in `generated_parser.y` now calls the helper, and I regenerated `generated_parser.y.go` with `goyacc`.
+
+**Output now.** A bare number prints without a unit, so the issue's `foo offset (5)` gives `(5)`, not `(5s)`. `foo offset (5m)` and `foo[(5s)]` come back unchanged.
+
+| Input | `Expr.String()` |
+|---|---|
+| `foo offset (5)` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset (5m)` |
+| `foo[(5)]` | `foo[(5)]` |
+
+**Tests.**
+- `printer_test.go`: I added round-trip cases for offsets, ranges and subqueries (e.g. `foo[(5m):(1m)]`).
+- `parse_test.go`: I updated the expected ASTs for `foo offset +(5)` and `-(5)`, which asserted the old paren-dropping form, and added `foo offset (5)`.
+
+**Behaviour change.** A parenthesised literal in a range or subquery position, such as `foo[(0s)]`, used to be rejected at parse time as "duration must be greater than 0". It is now rejected at evaluation, with the same message. The existing tests don't cover it, and I didn't add a parse-time check to `positive_duration_expr`.
+
+`go vet` reports `Seek` signature warnings in `promql/histogram_stats_iterator.go` and `promql/value.go`. I didn't touch those files.
+
+I haven't committed anything.

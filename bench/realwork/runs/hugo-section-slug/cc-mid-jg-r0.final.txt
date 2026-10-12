@@ -1,0 +1,13 @@
+`slug` in the frontmatter of a section, taxonomy or term page now replaces that directory name in the URL. It applies to the page itself and to all its descendants. Your example now gives `es/ayuda/` and `es/ayuda/como-frobear/`, and the English pages stay at `help/` and `help/how-to-frob/`.
+
+**What changed**
+- `resources/page/page_paths.go`: `TargetPathDescriptor` has two new optional fields, `SectionBase` and `ContainerDir`. When they are set, path building uses them instead of `Section.Base()` and `Path.ContainerDir()`.
+- `hugolib/page__paths.go`: a new helper, `sectionSlugPaths`, walks the page and its ancestors. Wherever a section has a slug, it swaps that slug in for the matching path segment. Pages with no slugs in their hierarchy behave exactly as before.
+
+`url` and `[[cascade]]` still take precedence, as before. Slugs are sanitized like other generated paths, and a slug on the home page is ignored.
+
+**Test**
+- I added `TestSectionSlug` in `hugolib/site_sections_test.go`. It covers the `help` example, a nested section with a slug, and a taxonomy with a term, all in an English and Spanish site.
+- `go test ./hugolib/... ./resources/... ./common/paths/...` passes.
+
+I didn't update any docs.

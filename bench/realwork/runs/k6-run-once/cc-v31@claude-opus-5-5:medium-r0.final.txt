@@ -1,0 +1,26 @@
+I added `--once` to `k6 run`, `k6 cloud run` (with or without `--local-execution`) and `k6 archive`. It runs the script with 1 VU and 1 iteration and keeps the scenario's `exec`, `env`, `tags` and `options`. The new and existing tests in `./internal/cmd/...` pass with `-race`, and `golangci-lint` reports 0 issues. `./lib/executor` failed once with a timeout panic in `TestVUHandleStartStopRace`; I didn't change that package, and it passed when I re-ran it 3 times. Nothing is committed yet.
+
+**How it works**
+- **The flag** is defined in `internal/cmd/options.go` next to the other shared options. That puts it on every command using that option set, which also includes `k6 cloud upload`.
+- **Clashing flags:** `--once` with `--vus`, `--iterations`, `--duration` or `--stage` on the command line fails with an invalid-config exit code, e.g. `--once cannot be combined with --iterations`.
+- **The rewrite** happens in `applyOnce` (`internal/cmd/config.go`), right after the config sources are merged:
+  - More than one scenario is an error: `--once can run a single scenario only, but the script has 2`.
+  - One scenario is replaced by a `shared-iterations` scenario with 1 VU and 1 iteration, under the same name and with the same `exec`, `env`, `tags` and `options`.
+  - No scenarios gives a `default` scenario with 1 VU and 1 iteration.
+  - Top-level `vus`, `iterations`, `duration` and `stages` are cleared, so `options = { vus: 10, duration: '1h' }` still runs once.
+- **Archives and cloud runs:** the rewrite is applied to the config that gets written into archives and uploaded. So `k6 archive --once` produces an archive that runs once later without the flag, and `k6 cloud run --once` uploads the rewritten scenario. `setup()` and `teardown()` run normally.
+
+**Behaviour you might not expect**
+- **Fields dropped:** besides the run-length fields, the scenario's `startTime` and `gracefulStop` are also discarded, and `maxDuration` falls back to the `shared-iterations` default of 10 minutes.
+- **`K6_ITERATIONS`, `K6_DURATION` or `K6_STAGES` in the environment** still wipe the script's scenarios before `--once` sees them, as they do today without `--once`. So `K6_ITERATIONS=10 k6 run --once` runs `default()` once, not the script's scenario. `K6_VUS` on its own doesn't wipe them, and `--once` overrides it.
+
+**Tests**
+- Unit tests for `applyOnce` and `getOnce` are in `internal/cmd/config_test.go`.
+- End-to-end tests are in the new `internal/cmd/tests/cmd_run_once_test.go`. They cover:
+  - a single scenario keeping its exec, env and tags;
+  - a script with no scenarios;
+  - env-var shortcuts;
+  - the multiple-scenario error;
+  - each clashing flag;
+  - `k6 archive --once`, including running the resulting archive;
+  - the archive that `k6 cloud run --once` uploads to a mock cloud server.

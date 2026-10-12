@@ -1,0 +1,20 @@
+The fix is in and tested. Import blocks that each target a different instance of one `for_each` resource are now all honored. I didn't add a `.changes` entry because the changelog format needs an issue number and the report didn't give one.
+
+**Cause:** `refactoring.FindImportStatements` deduplicated import blocks by config resource (`test_resource.foo`), with no instance key. Its check, `existing.AbsToResource.Equal(toAddr)`, was always true. So the first block for a resource was kept and every later one was silently dropped. That matches the swap-order behavior in the report. Single-instance resources only ever have one block, so they were unaffected.
+
+**Fix** (`internal/refactoring/import_statement.go`):
+- Blocks in the same module are never deduplicated. The config loader already rejects duplicate static targets there.
+- A block is dropped only if an earlier block from a different module targets the same resource and could hit the same instance. Parent-overrides-child still holds for the same instance.
+- A parent block for `x["a"]` no longer hides a child block for `x["b"]`.
+- If either block's instance key can't be determined statically, such as a dynamic `for_each` target, it is treated as overlapping, which is the previous behavior.
+- `FindImportStatements` now returns `[]ImportStatement` instead of an `addrs.Map`. The only caller was `findImportTargets` in `context_plan.go`.
+
+**Tests added:**
+- **`TestContext2Plan_importMultipleBlocksForEachResource`** (`internal/terraform/context_plan_import_test.go`): three separate import blocks on a `for_each` resource. On the original code it fails with `second` and `third` planned as Create. It passes now.
+- **`TestFindImportStatements`** (new, `internal/refactoring/import_statement_test.go` with a `testdata/import-statements` fixture): covers same-module instances, a parent overriding the same child instance, and a parent not overriding a different child instance.
+
+`go test` passes for `internal/refactoring`, `internal/terraform` and `internal/configs`. `internal/command` has one failing test, a `TestInit` provider lock-file checksum test. It fails the same way with my change stashed, so it's unrelated.
+
+**Not changed:** `node_resource_plan.go:354` sets `importConfig: n.importTargets[0].Config` for every instance. It's only read for config generation, which doesn't apply to `for_each` resources yet. It would be wrong if that ever changes.
+
+I did not test `count`, but the fix doesn't depend on the key type.

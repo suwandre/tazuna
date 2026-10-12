@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "Closing a reusable Unix listener/packet conn after a reload leaves the socket listening until GC (leaked dup'd fd from File()) and never unlinks the socket file (File().Name() is not the path). Fix must take the path from the address, close the dup'd fd in the reuse path, unlink only when the last reference closes, make double Close idempotent so it cannot release another holder's reference, keep close/unlink/map removal atomic against a concurrent re-listen on the same path, and never unlink for Linux abstract sockets. Hidden tests: the PR's new listen_unix_test.go (immediate close + unlink for unix/unixgram, refcount, double close, concurrent close/relisten; the abstract-socket test skips on macOS).",
+  "merged_at": "2026-10-03T01:45:47Z",
+  "files_changed": 1,
+  "lines_changed": 84
+}

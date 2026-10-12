@@ -1,0 +1,3 @@
+Implemented early `return` in templates using a sentinel error, removing the parse-tree wrapper transformation. Partials can still return values, and regular templates can now terminate early. Updated documentation and the partial integration test.
+
+Verified with `go test ./tpl/partials ./tpl/tplimpl ./tpl/internal/go_templates/texttemplate` and `git diff --check`.

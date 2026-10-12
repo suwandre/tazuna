@@ -1,0 +1,20 @@
+The timeouts didn't come from a hang or a bug in the exemplar fix. This machine's disk is slow enough that the **unmodified base code** takes 1132s (about 19 minutes) for `go test ./tsdb/`, which is already over Go's default 10-minute timeout. The new tests then added roughly two more minutes of time during which other tests couldn't run.
+
+**What I checked:**
+- `TestOOOCompaction` (the round-1 timeout) passes. It took 99–113s on the base code and 32–317s on the modified tree, running at 2–14% CPU, so it's waiting on disk, not looping. It writes no exemplars, so the new code doesn't run in it.
+- The production changes in `tsdb/head.go`, `head_append*.go`, `head_wal.go` and `db.go` add no loops, extra disk writes or waits that could stall a compaction.
+- The cost came from the new tests. `TestSeriesCompactionReclaimsChunksWithExemplars` (the round-2 timeout) ran 48 subtests one after another, about 78s. The other two new tests ran their subtests one at a time too.
+
+**What I changed (only in `tsdb/db_test.go`):**
+- **Parallel subtests:** `TestExemplarAfterLastSampleSurvivesCompaction` and `TestExemplarBeforeLastSampleSurvivesSeriesCompaction` now run their subtests in parallel.
+- **Smaller matrix:** in `TestSeriesCompactionReclaimsChunksWithExemplars`, the concurrent-append cases now run only with float samples. The appended samples are always floats, so the histogram variants added no coverage.
+- **Parallel where safe:** the remaining cases in that test run in parallel. The concurrent-append cases stay sequential because they set a shared package-level hook (`compactHeadViewBeforeEvictTestingCallback`).
+- **Same checks:** every assertion is unchanged.
+
+**Results:**
+- The new tests went from 119s to 46s, even with the race detector on, and their non-parallel part dropped from about 78s to about 3s. No data races were reported.
+- The full `go test ./tsdb/ -count=1 -timeout 30m` passes in 616s.
+- That is still just over the default 10 minutes, so a plain `go test ./tsdb/` on this machine will keep timing out. The base code times out there too, so the fix is a longer `-timeout` or faster disk. No change to this patch will get it under 10 minutes.
+- `go vet ./tsdb/` reports `Seek` method-signature warnings in `head_read.go`, `querier.go` and `querier_test.go`. Those files aren't part of this change.
+
+I removed the temporary worktree I made for the base-code timings.

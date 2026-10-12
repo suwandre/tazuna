@@ -1,0 +1,29 @@
+All done. Here's a summary of the work:
+
+## Root cause
+
+In `listen_unix.go`, `unixListener.Close()`/`unixConn.Close()` used `.File()` to obtain the socket's path via `file.Name()`. This duplicated the listening fd, and the duplicate was **never closed**:
+
+- A dup of a listening socket keeps it in `LISTEN` state until every duplicate fd is closed, so the "closed" server still accepted TCP handshakes (nothing served them → clients hung) until the `*os.File` finalizer ran at the next GC (the 124–130 s / GOGC=off behavior in the report).
+- `file.Name()` is not a filesystem path (it's e.g. `unix:/path`), so the `syscall.Unlink` silently failed and the socket file was never removed.
+
+Additionally, `reuseUnixSocket` leaked its intermediate `socket.File()` dup on every reuse, double-`Close` decremented the shared refcount twice, refcount changes weren't serialized against reuse (so a racing new listen could lose its socket file), and abstract sockets (`@name`) could have a same-named filesystem file unlinked.
+
+## Fix (`listen_unix.go`)
+
+- `Close` no longer calls `File()`; it reads the path from `Addr()`/`LocalAddr()`, closes the underlying listener/conn immediately, and unlinks the socket only when the shared refcount reaches 0 and the address is not a Linux abstract socket.
+- Added a per-wrapper `closed atomic.Bool`: a second `Close` returns `net.ErrClosed` without releasing another reference.
+- `Close` holds `unixSocketsMu`, the same lock used around reuse in `NetworkAddress.Listen`, so a close racing a new listen either leaves refcount ≥ 1 (file and socket stay live) or lets the new listen rebind cleanly.
+- `defer socketFile.Close()` in the reuse path closes the intermediate dup.
+- `isAbstractUnixSocket()` guards both the pre-bind unlink and the close-time unlink.
+
+## Tests (`listen_unix_test.go`, new)
+
+Double-close doesn't release another reference (stream + datagram), immediate close/unlink, reuse unlinks only at zero refs, concurrent close/relisten for both types, and abstract sockets never remove a same-named filesystem file.
+
+## Verification
+
+- `go test -race -short ./...` — all packages pass; concurrency tests also pass at `-count=10`.
+- `go vet .`, `golangci-lint run --timeout 10m ./...` — clean.
+- Cross-compiles for `linux/amd64`, `freebsd/amd64`, `windows/amd64`.
+- Manual end-to-end repro of the issue (admin unix→TCP and site `bind unix/…`→TCP): after reload the old path fails instantly with connection refused and the file is gone; an unchanged unix socket across reload keeps exactly one listening fd.

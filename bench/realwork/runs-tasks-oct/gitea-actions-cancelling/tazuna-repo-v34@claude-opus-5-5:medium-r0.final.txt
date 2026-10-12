@@ -1,0 +1,17 @@
+I fixed both problems from the issue. The tests pass on sqlite only: I didn't run a MariaDB reproduction or the integration tests.
+
+**Run stuck in "Cancelling"** (`models/actions/run_job.go:820`)
+Your reading was right. When a caller is cancelled, its child job with a task goes to `cancelling`, and that already moves the caller and the run to `cancelling`. Then `cancelOneJob` works from an outdated copy of the caller and writes it as `cancelled` straight away. When the runner later acknowledges the cancel, the caller's computed status is already `cancelled`, so nothing gets written. The run status is only refreshed from a top-level caller's change, so it stays `cancelling` forever.
+
+Now, if any direct child of a caller is still `cancelling`, the caller's status is worked out from its children (so it stays `cancelling`) instead of being forced to `cancelled`. Callers are processed deepest first, so this works at any nesting depth. When the runner acknowledges, the last child becomes `cancelled`, which updates each caller up the chain and then the run.
+
+**Force-cancel doesn't release the waiting run** (`services/actions/cancel.go:56`)
+When a cancel changes no job (every job was already finished) and only settles the run's own status, nothing checked the concurrency group afterwards. Now, if no job was updated and the run ends up finished, `cancelRun` triggers the check for that run, which starts the runs waiting behind it. With this, force-cancelling a run that is already stuck, like the ones on your production instance, also lets the waiting run start.
+
+**Tests**
+- `TestCancellingReusableCallerFinalizesOnAck` in `models/actions/task_test.go`: an outer caller, a nested inner caller and a child with a task. It cancels, checks that all three jobs and the run are `cancelling`, then simulates the runner's acknowledgement and checks that they are all `cancelled`.
+- `TestForceCancelStuckRunWakesConcurrencyWaiter` in the new `services/actions/cancel_test.go`: builds the stuck state from the issue (run `cancelling`, all jobs `cancelled`, another run `blocked` on the same group). It force-cancels and checks that the run becomes `cancelled`, the concurrency check is triggered, and the waiting run is chosen to start.
+
+Both new tests fail without their fix. The first fails with exactly the rows from the issue: outer caller `cancelled`, run still `cancelling`. With the fixes, `go test ./models/actions/ ./services/actions/` passes, and `make fmt` and `make lint-go` report no issues.
+
+The changes are not committed.

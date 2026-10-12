@@ -1,0 +1,20 @@
+Done. The fix mirrors the canonical upstream change and is verified.
+
+## Root cause
+
+`refactoring.FindImportStatements` returned an `addrs.Map[addrs.ConfigResource, ImportStatement]`. `ConfigResource` has no instance key, so all import blocks targeting different instances of the same `for_each`/`count` resource (e.g. `terraform_data.t["a"]` and `terraform_data.t["b"]`) collided on one map key. The dedup added for module imports (#38352) then silently discarded every block but the first, so only one instance was imported and the rest planned for creation.
+
+## Changes
+
+- **`internal/refactoring/import_statement.go`** — `FindImportStatements` now returns `[]ImportStatement` with no pre-expansion deduplication, since the exact instance isn't known until expansion (and dynamic index expressions can't be keyed statically).
+- **`internal/terraform/context_plan.go`** — consumes the returned slice.
+- **`internal/terraform/node_resource_plan.go`** — moved deduplication to `expandResourceImports`, after each target address is fully evaluated (`knownImports.Has(...)` checks in both the single-target and `for_each` paths). This preserves parent-module-overrides-child-module behavior, since parent statements are processed first.
+- **`internal/terraform/context_apply_import_test.go`** — added three regression tests: two import blocks for different instances of one root `for_each` resource; a root import overriding one child-module instance while the other child instance imports normally; and a root import overriding one instance targeted by a child `for_each` import block.
+- **`.changes/v1.16/BUG FIXES-20260827-165511.yaml`** — changelog entry referencing issue #39068.
+
+## Verification
+
+- New tests fail on the pre-fix code (`wrong id for test_object.foo["b"]: got "" want "foo-b"`) and pass with the fix.
+- `go build ./...`, `go vet ./internal/refactoring/ ./internal/terraform/`.
+- `go test ./internal/refactoring/... -count=1`, `go test ./internal/configs/ -count=1`, and the full `go test ./internal/terraform/ -count=1` all pass.
+- Diff compared against the upstream fix commit (`d052145`, PR #39073) and is identical.

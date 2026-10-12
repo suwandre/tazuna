@@ -1,0 +1,23 @@
+Parentheses around a plain number in a duration position now survive `Expr.String()`. The `promql/...`, `rules` and `web` tests pass. `go vet ./promql/...` reports "should have signature" warnings on the `Seek` methods in `histogram_stats_iterator.go` and `value.go`, files this change doesn't touch.
+
+**The fix:** `(N)` that reduces to a single number is now parsed into a wrapped unary-plus `*DurationExpr`. That type already has the `Wrapped` field, so its printer and evaluator handle it with no changes. The code is in `parse.go`, in a new `wrapDurationExpr` helper that `applyUnaryOpToDurationExpr` also calls.
+
+**Generated parser:** `goyacc` isn't installed here, so I edited `generated_parser.y.go` by hand, only in the two action bodies. The grammar rules and tables are unchanged. Please regenerate with `make parser` to confirm it matches.
+
+**Printed output:**
+
+| Input | Output |
+|---|---|
+| `foo offset (5)` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[(5s)]` |
+
+- **No `s` suffix:** the number prints as written, so `(5)` stays `(5)`, not `(5s)`. That matches how `(5 * 2)` already prints.
+- **Unary plus is dropped:** `+(5)` prints as `(5)`, the same as `+(5m + 1m)` does today.
+- **AST shape changed:** a parenthesised number in an offset or range now sets `OriginalOffsetExpr` or `RangeExpr`, with `OriginalOffset` or `Range` left at 0 until the engine's duration visitor fills them in. Previously the parser set the numeric field directly. Anything that reads those fields straight from the parser output, without going through the engine, will see 0 for these cases. These cases only parse with `ExperimentalDurationExpr` enabled.
+
+**Tests:**
+- I updated the `foo offset +(5)` and `foo offset -(5)` AST expectations in `parse_test.go`.
+- I added round-trip cases to `printer_test.go` for `(5)`, `+(5)`, `-(5)`, `(5m)`, `foo[(5s)]`, `foo[(5)]`, `foo[(5):(1)]` and `foo offset (5m + 1m)`.

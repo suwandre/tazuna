@@ -1,0 +1,17 @@
+`slug` in the front matter of a section, taxonomy or term page now sets that page's URL element. Descendant pages inherit it, as if the directory had been renamed. `go test ./hugolib/ ./resources/...` passes.
+
+In your example, `es/ayuda/` and `es/ayuda/como-frobear/` now come out as you described, and the English pages are unchanged.
+
+**Change** (`hugolib/page__paths.go`): `createTargetPathDescriptor` calls a new helper, `pathWithSectionSlugs`. It runs when no `[permalinks]` rule matches and the page has no `url`. The helper looks at the page's own slug (branch pages only) and its ancestors' slugs. It swaps each slugged section's path element for its slug and returns the rebuilt path. If nothing is swapped it returns nothing, so sites without section slugs behave as before.
+
+**Precedence:**
+- A matching `[permalinks]` rule still wins, so you can use `:sectionslugs` there.
+- A `url` in front matter also still wins.
+
+**Test:** I added `TestSectionSlug` to `hugolib/page_permalink_test.go`. It uses a two-language site and checks these paths:
+- Leaf-bundle pages and regular pages under a slugged section.
+- Nested slugged sections.
+- A slugged taxonomy and a slugged term.
+- That the English pages and an unslugged term keep their URLs.
+
+I did not test sites with `disablePathToLower` enabled, though the helper has a branch for it. The `[permalinks]` and `url` precedence above comes from reading the code, not from a test.

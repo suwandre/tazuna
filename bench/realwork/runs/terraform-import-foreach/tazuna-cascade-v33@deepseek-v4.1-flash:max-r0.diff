@@ -1,0 +1,359 @@
+diff --git a/.changes/v1.16/BUG FIXES-20260827-165511.yaml b/.changes/v1.16/BUG FIXES-20260827-165511.yaml
+new file mode 100644
+index 0000000..0a470dd
+--- /dev/null
++++ b/.changes/v1.16/BUG FIXES-20260827-165511.yaml	
+@@ -0,0 +1,6 @@
++kind: BUG FIXES
++body: 'import: Fixed a bug where import blocks would be ignored when multiple imports targeted different instances of a 
++    resource config using `for_each` or `count`.'
++time: 2026-08-27T16:55:11.038482-04:00
++custom:
++    Issue: "39068"
+diff --git a/internal/refactoring/import_statement.go b/internal/refactoring/import_statement.go
+index ac2cafd..10b3c53 100644
+--- a/internal/refactoring/import_statement.go
++++ b/internal/refactoring/import_statement.go
+@@ -16,17 +16,14 @@ type ImportStatement struct {
+ }
+ 
+ // FindImportStatements recurses through the modules of the given configuration
+-// and returns a set of all "import" blocks defined within after deduplication
+-// on the To address.
+-//
+-// An "import" block in a parent module overrides an import block in a child
+-// module when both target the same configuration object.
+-func FindImportStatements(rootCfg *configs.Config) addrs.Map[addrs.ConfigResource, ImportStatement] {
+-	imports := findImportStatements(rootCfg, addrs.MakeMap[addrs.ConfigResource, ImportStatement]())
++// and returns a set of all "import" blocks. These import targets are not deduplicated
++// as we must wait until expansion occurs since we don't know the exact resource instance yet.
++func FindImportStatements(rootCfg *configs.Config) []ImportStatement {
++	imports := findImportStatements(rootCfg, make([]ImportStatement, 0))
+ 	return imports
+ }
+ 
+-func findImportStatements(cfg *configs.Config, into addrs.Map[addrs.ConfigResource, ImportStatement]) addrs.Map[addrs.ConfigResource, ImportStatement] {
++func findImportStatements(cfg *configs.Config, into []ImportStatement) []ImportStatement {
+ 	for _, mi := range cfg.Module.Import {
+ 		// First, stitch together the module path and the RelSubject to form
+ 		// the absolute address of the config resource being removed.
+@@ -36,19 +33,7 @@ func findImportStatements(cfg *configs.Config, into addrs.Map[addrs.ConfigResour
+ 			Resource: res.Resource,
+ 		}
+ 
+-		// If we already have an import statement for this ConfigResource, it
+-		// must have come from a parent module, because duplicate import
+-		// blocks in the same module result in an error.
+-		// The import block in the parent module overrides the block in the
+-		// child module.
+-		existingResource, ok := into.GetOk(toAddr)
+-		if ok {
+-			if existingResource.AbsToResource.Equal(toAddr) {
+-				continue
+-			}
+-		}
+-
+-		into.Put(toAddr, ImportStatement{
++		into = append(into, ImportStatement{
+ 			AbsToResource:    toAddr,
+ 			ContainingModule: cfg.Path,
+ 			Import:           mi,
+diff --git a/internal/terraform/context_apply_import_test.go b/internal/terraform/context_apply_import_test.go
+index 0f5b087..027c47d 100644
+--- a/internal/terraform/context_apply_import_test.go
++++ b/internal/terraform/context_apply_import_test.go
+@@ -514,6 +514,245 @@ func assertImportedId(t *testing.T, state *states.State, resourceAddr, expectedI
+ 	}
+ }
+ 
++// This test ensures that the import targets found prior to graph building are not deduplicated
++// until expansion occurs, see: https://github.com/hashicorp/terraform/issues/39068
++func TestContextApply_import_to_instance(t *testing.T) {
++	m := testModuleInline(t, map[string]string{
++		"main.tf": `
++resource "test_object" "foo" {
++  for_each = toset(["a", "b"])
++}
++
++import {
++  to = test_object.foo["a"]
++  id = "foo-a"
++}
++
++import {
++  to = test_object.foo["b"]
++  id = "foo-b"
++}
++		`,
++	})
++
++	p := mockProviderWithResourceTypeSchema("test_object", &configschema.Block{
++		Attributes: map[string]*configschema.Attribute{
++			"id":          {Type: cty.String, Computed: true},
++			"test_string": {Type: cty.String, Optional: true},
++		},
++	})
++	p.ImportResourceStateFn = func(req providers.ImportResourceStateRequest) providers.ImportResourceStateResponse {
++		return providers.ImportResourceStateResponse{
++			ImportedResources: []providers.ImportedResource{
++				{
++					TypeName: "test_object",
++					State: cty.ObjectVal(map[string]cty.Value{
++						"test_string": cty.StringVal("importable"),
++						"id":          cty.StringVal(req.ID),
++					}),
++				},
++			},
++		}
++	}
++	p.ReadResourceFn = func(r providers.ReadResourceRequest) providers.ReadResourceResponse {
++		id := r.PriorState.GetAttr("id")
++		return providers.ReadResourceResponse{
++			NewState: cty.ObjectVal(map[string]cty.Value{
++				"test_string": cty.StringVal("importable"),
++				"id":          id,
++			}),
++		}
++	}
++
++	ctx := testContext2(t, &ContextOpts{
++		Providers: map[addrs.Provider]providers.Factory{
++			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
++		},
++	})
++
++	diags := ctx.Validate(m, nil)
++	tfdiags.AssertNoErrors(t, diags)
++
++	plan, diags := ctx.Plan(m, states.NewState(), &PlanOpts{
++		Mode: plans.NormalMode,
++	})
++	tfdiags.AssertNoErrors(t, diags)
++
++	state, diags := ctx.Apply(plan, m, nil)
++	tfdiags.AssertNoErrors(t, diags)
++
++	if !p.ImportResourceStateCalled {
++		t.Fatal("resource not imported")
++	}
++
++	assertImportedId(t, state, "test_object.foo[\"a\"]", "foo-a")
++	assertImportedId(t, state, "test_object.foo[\"b\"]", "foo-b")
++}
++
++func TestContextApply_import_to_instance_in_child(t *testing.T) {
++	m := testModuleInline(t, map[string]string{
++		"main.tf": `
++module "child" {
++  source = "./child"
++}
++
++import {
++  to = module.child.test_object.foo["a"]
++  id = "root-foo-a"
++}
++
++		`,
++		"child/main.tf": `
++resource "test_object" "foo" {
++  for_each = toset(["a", "b"])
++}
++
++import {
++  to = test_object.foo["a"]
++  id = "child-foo-a"
++}
++
++import {
++  to = test_object.foo["b"]
++  id = "child-foo-b"
++}
++		`,
++	})
++
++	p := mockProviderWithResourceTypeSchema("test_object", &configschema.Block{
++		Attributes: map[string]*configschema.Attribute{
++			"id":          {Type: cty.String, Computed: true},
++			"test_string": {Type: cty.String, Optional: true},
++		},
++	})
++	p.ImportResourceStateFn = func(req providers.ImportResourceStateRequest) providers.ImportResourceStateResponse {
++		return providers.ImportResourceStateResponse{
++			ImportedResources: []providers.ImportedResource{
++				{
++					TypeName: "test_object",
++					State: cty.ObjectVal(map[string]cty.Value{
++						"test_string": cty.StringVal("importable"),
++						"id":          cty.StringVal(req.ID),
++					}),
++				},
++			},
++		}
++	}
++	p.ReadResourceFn = func(r providers.ReadResourceRequest) providers.ReadResourceResponse {
++		id := r.PriorState.GetAttr("id")
++		return providers.ReadResourceResponse{
++			NewState: cty.ObjectVal(map[string]cty.Value{
++				"test_string": cty.StringVal("importable"),
++				"id":          id,
++			}),
++		}
++	}
++
++	ctx := testContext2(t, &ContextOpts{
++		Providers: map[addrs.Provider]providers.Factory{
++			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
++		},
++	})
++
++	diags := ctx.Validate(m, nil)
++	tfdiags.AssertNoErrors(t, diags)
++
++	plan, diags := ctx.Plan(m, states.NewState(), &PlanOpts{
++		Mode: plans.NormalMode,
++	})
++	tfdiags.AssertNoErrors(t, diags)
++
++	state, diags := ctx.Apply(plan, m, nil)
++	tfdiags.AssertNoErrors(t, diags)
++
++	if !p.ImportResourceStateCalled {
++		t.Fatal("resource not imported")
++	}
++
++	assertImportedId(t, state, "module.child.test_object.foo[\"a\"]", "root-foo-a")
++	assertImportedId(t, state, "module.child.test_object.foo[\"b\"]", "child-foo-b")
++}
++
++func TestContextApply_import_for_each_to_instance_in_child(t *testing.T) {
++	m := testModuleInline(t, map[string]string{
++		"main.tf": `
++module "child" {
++  source = "./child"
++}
++
++import {
++  to = module.child.test_object.foo["a"]
++  id = "root-foo-a"
++}
++
++		`,
++		"child/main.tf": `
++resource "test_object" "foo" {
++  for_each = toset(["a", "b"])
++}
++
++import {
++  for_each = toset(["a", "b"])
++  to = test_object.foo[each.value]
++  id = "child-foo-${each.value}"
++}
++		`,
++	})
++
++	p := mockProviderWithResourceTypeSchema("test_object", &configschema.Block{
++		Attributes: map[string]*configschema.Attribute{
++			"id":          {Type: cty.String, Computed: true},
++			"test_string": {Type: cty.String, Optional: true},
++		},
++	})
++	p.ImportResourceStateFn = func(req providers.ImportResourceStateRequest) providers.ImportResourceStateResponse {
++		return providers.ImportResourceStateResponse{
++			ImportedResources: []providers.ImportedResource{
++				{
++					TypeName: "test_object",
++					State: cty.ObjectVal(map[string]cty.Value{
++						"test_string": cty.StringVal("importable"),
++						"id":          cty.StringVal(req.ID),
++					}),
++				},
++			},
++		}
++	}
++	p.ReadResourceFn = func(r providers.ReadResourceRequest) providers.ReadResourceResponse {
++		id := r.PriorState.GetAttr("id")
++		return providers.ReadResourceResponse{
++			NewState: cty.ObjectVal(map[string]cty.Value{
++				"test_string": cty.StringVal("importable"),
++				"id":          id,
++			}),
++		}
++	}
++
++	ctx := testContext2(t, &ContextOpts{
++		Providers: map[addrs.Provider]providers.Factory{
++			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
++		},
++	})
++
++	diags := ctx.Validate(m, nil)
++	tfdiags.AssertNoErrors(t, diags)
++
++	plan, diags := ctx.Plan(m, states.NewState(), &PlanOpts{
++		Mode: plans.NormalMode,
++	})
++	tfdiags.AssertNoErrors(t, diags)
++
++	state, diags := ctx.Apply(plan, m, nil)
++	tfdiags.AssertNoErrors(t, diags)
++
++	if !p.ImportResourceStateCalled {
++		t.Fatal("resource not imported")
++	}
++
++	assertImportedId(t, state, "module.child.test_object.foo[\"a\"]", "root-foo-a")
++	assertImportedId(t, state, "module.child.test_object.foo[\"b\"]", "child-foo-b")
++}
++
+ func childModuleImportTestProvider() *testing_provider.MockProvider {
+ 	p := &testing_provider.MockProvider{
+ 		GetProviderSchemaResponse: &providers.GetProviderSchemaResponse{
+diff --git a/internal/terraform/context_plan.go b/internal/terraform/context_plan.go
+index d779025..b77dad9 100644
+--- a/internal/terraform/context_plan.go
++++ b/internal/terraform/context_plan.go
+@@ -750,7 +750,7 @@ func (c *Context) postPlanValidateMoves(config *configs.Config, stmts []refactor
+ func (c *Context) findImportTargets(config *configs.Config) []*ImportTarget {
+ 	var importTargets []*ImportTarget
+ 	importStatements := refactoring.FindImportStatements(config)
+-	for _, ic := range importStatements.Values() {
++	for _, ic := range importStatements {
+ 		importTargets = append(importTargets, &ImportTarget{
+ 			Config:              ic.Import,
+ 			RelModule:           ic.ContainingModule,
+diff --git a/internal/terraform/node_resource_plan.go b/internal/terraform/node_resource_plan.go
+index d9dea66..8d521a8 100644
+--- a/internal/terraform/node_resource_plan.go
++++ b/internal/terraform/node_resource_plan.go
+@@ -201,6 +201,15 @@ func (n *nodeExpandPlannableResource) expandResourceImports(ctx EvalContext, all
+ 					return knownImports, unknownImports, diags
+ 				}
+ 
++				// If we already have an import statement for this resource instance, it
++				// must have come from a parent module, because duplicate import blocks in
++				// the same module result in an error.
++				//
++				// The import block in the parent module overrides the block in the child module.
++				if knownImports.Has(to) {
++					continue
++				}
++
+ 				knownImports.Put(to, importID)
+ 
+ 				log.Printf("[TRACE] expandResourceImports: found single import target %s", to)
+@@ -279,6 +288,15 @@ func (n *nodeExpandPlannableResource) expandResourceImports(ctx EvalContext, all
+ 					return knownImports, unknownImports, diags
+ 				}
+ 
++				// If we already have an import statement for this resource instance, it
++				// must have come from a parent module, because duplicate import blocks in
++				// the same module result in an error.
++				//
++				// The import block in the parent module overrides the block in the child module.
++				if knownImports.Has(res) {
++					continue
++				}
++
+ 				knownImports.Put(res, importID)
+ 				log.Printf("[TRACE] expandResourceImports: expanded import target %s", res)
+ 			}

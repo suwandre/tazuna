@@ -1,0 +1,20 @@
+## Summary
+
+The verification failure was not caused by the SNMP reconnect changes — `TestSnmpInitGosmi` was failing (and panicking) because of how MIB paths are registered with gosmi, triggered by this sandbox's working directory containing a `:` character.
+
+### Root cause
+`GosmiMibLoader.appendPath()` called `gosmi.AppendPath(path)`, which internally does `filepath.SplitList(":" + path)`. On Unix a `:` inside the path (e.g. `.../rw-telegraf-...-flash:max-pq9skcov/...`) is treated as a path-list separator, so every fragment fails to resolve and **no MIB path is registered**. All MIB modules then fail to load, and `TestSnmpInitGosmi` (whose `Log` is nil) panicked on the first failed-module warning (`log.Warnf` on a nil interface) inside `LoadMibsFromPath`.
+
+### Fixes in `plugins/common/snmp/mib_loader.go`
+1. **Register MIB directories via a filesystem instead of a path-list string**: `GosmiMibLoader.appendPath()` now uses `gosmi.AppendFS(gosmi.NamedFS(path, os.DirFS(path)))` (with fallback to `AppendPath` if the FS doesn't support `ReadDir`). This avoids path-list splitting entirely and works for any path.
+2. **No nil-logger panic**: all `log.Warnf` calls in `LoadMibsFromPath`/`walkPaths` now go through a small `warnf()` helper that no-ops when no logger is configured.
+3. Added `TestGosmiMibLoaderAppendPathWithSeparator` (skipped on Windows), which registers a directory whose name contains `:` and asserts it appears in `gosmi.GetPath()`; it fails with the old `AppendPath` implementation and passes with the fix.
+
+The SNMPv3 reconnect fix from before is unchanged: `GosnmpWrapper.Reconnect()` resets discovered engine parameters on reconnect, `Get`/`Walk` reconnect closed connections, and `inputs.snmp` closes an agent's connection when a gather fails so the next gather re-discovers the engine ID.
+
+### Verification
+- `go test ./plugins/common/snmp/ ./plugins/inputs/snmp/ ./plugins/processors/snmp_lookup/` — all pass (this was the failing command).
+- `go test ./plugins/inputs/snmp_trap/ ./plugins/processors/ifname/` — pass.
+- `go test -race ./plugins/common/snmp/ ./plugins/inputs/snmp/` — pass.
+- `golangci-lint run` and `go vet` on the touched packages — clean.
+- Confirmed the new MIB regression test fails against the old `appendPath` implementation and passes with the fix.

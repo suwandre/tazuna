@@ -1,0 +1,31 @@
+`return` now works in any template and at any position, using the sentinel-error approach you suggested. The old wrapper template and the code that moved the return node to the end are gone. All tests pass except `internal/warpc`, which fails the same way without my changes. I haven't committed anything.
+
+**How it works**
+- **The function:** `templates.Return` (alias `return`) returns `nil, &texttemplate.ReturnError{Value: v}`. It takes at most one argument.
+- **Changes to the Go template fork** (`hugo_template.go`):
+  - `evalCall` re-panics a `*ReturnError` as-is instead of wrapping it in an `ExecError`.
+  - `errRecover` passes it through as the error.
+  - `walkTemplate` recovers it, so a `return` inside a template called with `{{ template }}` or `{{ block }}` stops only that template. A `return` in `define "main"` therefore skips the rest of `main`, and `baseof` still renders its footer.
+  - `try` re-panics it rather than turning it into a `TryError`.
+- **Keeping the fork easy to sync:** I followed the fork's existing pattern. `errRecover` and `walkTemplate` are renamed to `*Old` by `scripts/fork_go_templates`, and the new versions live in `hugo_template.go`. `exec.go` only changes through that script.
+- **Template store:** `TemplateStore.ExecuteWithContextAndKey` now returns `(any, error)` and turns a `ReturnError` into its value. Partials use that value, and the `contextWrapper` type is removed.
+- **Value-returning partials** are still detected when the template is parsed (`HasReturn`): any `return X` or `X | return` in a partial marks it. Those partials discard their output as before. They return `nil` if no `return` runs.
+- **Bare `{{ return }}` in a partial** with no value-returning `return` stops early and returns whatever was rendered up to that point.
+
+**Two small parse-time rewrites, to keep existing templates working**
+- `{{ return add . 42 }}` becomes `{{ return (add . 42) }}`.
+- `{{ return X | f }}` becomes `{{ X | f | return }}`. Without this, `| f` would be silently skipped.
+
+**Behaviour changes**
+- `TestPartialReturnPanicIssue13600` expected an error from `{{ return (delimit . ", ") | string }}`. With the pipe rewrite this now evaluates, so I changed the test to check the returned values.
+- If a partial calls `{{ template "x" }}` and `x` contains `return 42`, the 42 used to become the partial's return value. Now it only stops `x`, and the value is dropped. This seems rare, but it is a change.
+
+**Tests:** I added `TestReturnEarly` and `TestReturnTooManyArgs` in `tpl/templates/templates_integration_test.go`. They cover:
+- early return in `baseof`/`define`, `template` calls, `range` and regular layouts;
+- several returns in one partial, and returns placed before the end;
+- the piped form;
+- partials whose `return` never runs;
+- bare return in a partial;
+- `partialCached`.
+
+`./check.sh` stops at staticcheck because of existing warnings in `config/allconfig` and `hugolib/integrationtest_builder.go`, which I didn't touch. Staticcheck on `./tpl/...` and `./scripts/...` reports nothing, and `go test ./...` passes apart from `internal/warpc`.

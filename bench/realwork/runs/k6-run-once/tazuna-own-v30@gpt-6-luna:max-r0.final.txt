@@ -1,0 +1,5 @@
+Implemented `--once` for `k6 run`, `k6 cloud run` (including `--local-execution`), and `k6 archive`. After config consolidation, it creates a single shared-iterations scenario, preserving the scenario’s `exec`, `env`, `tags`, and browser options while setting VUs and iterations to 1. It rejects multiple scenarios and combinations with `--vus`, `--iterations`, `--duration`, or `--stage`.
+
+Added tests for default and scenario-based runs, setup/teardown, flag conflicts, archive metadata, and cloud execution.
+
+Verified with `go test ./internal/cmd ./internal/cmd/tests -count=1` and `git diff --check`.

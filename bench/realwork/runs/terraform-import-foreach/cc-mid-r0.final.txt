@@ -1,0 +1,13 @@
+Every `import` block is now honored for a `for_each` resource, not just the first one. I haven't run the full `./internal/terraform` suite, because my first attempt timed out.
+
+**Root cause:** `refactoring.FindImportStatements` stored import blocks in a map keyed by the config resource (`terraform_data.t`), not by instance. All blocks targeting `t["a"]` and `t["b"]` shared one key, and the dedupe check skipped every block after the first. That is why the first block declared won, with no error. The check was meant to let a parent module's block override a child's, but it also dropped sibling blocks in the same module.
+
+**Fix:**
+- **`internal/refactoring/import_statement.go`:** the map now holds a list of statements per config resource. Blocks from the same module are all kept. Blocks from a child module are still skipped when a parent module already targets that resource.
+- **`internal/terraform/context_plan.go`:** `findImportTargets` now builds an `ImportTarget` for every statement in each list.
+
+**Verification:**
+- I added `TestContext2Plan_importMultipleBlocksForEachResource`, which has two import blocks on one `for_each` resource. Without the fix, `["second"]` is planned as Create with no import. With the fix, both instances import as NoOp.
+- `go test ./internal/refactoring` passes. In `./internal/terraform` I ran only the tests matching `Import|importForEach|MultipleBlocks`, and they pass.
+
+**Not done:** `count` is untested, but it uses the same path. `nodeExpandPlannableResource.concreteResource` still reads `importTargets[0].Config`, but that only matters for config generation, which doesn't support `for_each` resources, so I left it.

@@ -1,0 +1,13 @@
+Parentheses around a plain duration literal now survive `Expr.String()`. All five cases from the issue now round-trip: `foo offset (5)`, `+(5)` (prints `(5)`), `-(5)`, `(5m)` and `foo[(5s)]`. `go test` passes for `./promql/...`, `./web/...` and `./cmd/promtool/...`. I didn't run `make lint` or `make test`.
+
+- **Representation:** `NumberLiteral` has a new `Wrapped` field, set when the literal is parenthesised inside a duration expression. It prints with its parentheses, so `(5) + 1` inside a duration also round-trips.
+- **Unary minus:** `-(5)` becomes a unary-minus `*DurationExpr` over the wrapped literal. That keeps the parentheses instead of folding to `-5`.
+- **Offset and range:** a wrapped literal in an offset or range position is stored in `OriginalOffsetExpr` or `RangeExpr` as a unary-plus `*DurationExpr` around the literal. The numeric `OriginalOffset` and `Range` are still set, so parser-only callers see the same values as before.
+- **`+(5)`:** it prints as `(5)`, not `+(5)`. This matches how `+(5m + 1m)` already behaves.
+- **Subquery step:** `printer.go` now prefers `StepExpr` over `Step`. Without that, `foo[5s:(1s)]` lost its parentheses.
+- **Regression guards:** `-(5)` is no longer a bare literal, so `foo[-(5)]` and `1/-(0)` would otherwise have slipped through to the engine. I kept the parse errors "duration must be greater than 0" and "division by zero" for those cases.
+- **Grammar:** `generated_parser.y.go` is regenerated with goyacc v0.6.0 and the conflict count is unchanged (96 s/r, 345 r/r).
+- **AST change:** the AST for `foo offset +(5)` and `foo offset -(5)` now includes `OriginalOffsetExpr`, so I updated those two parser tests.
+- **New cases:** the new printer round-trip cases are in `printer_test.go`; the two new error cases are in `parse_test.go`.
+
+I made no commits.

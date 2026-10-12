@@ -1,0 +1,19 @@
+I added `--once` to `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. The `go test` runs for `internal/cmd/...`, `lib/executor/...` and `lib` pass. I didn't run `make lint` or `go test -race`, and I didn't commit anything.
+
+**How it works**
+- **Transform:** it lives in `lib/executor/execution_config_shortcuts.go`. It replaces the scenarios with a single `shared-iterations` scenario of 1 VU and 1 iteration, and clears `vus`, `iterations`, `duration` and `stages`.
+  - **No scenarios:** it uses the `default` scenario.
+  - **One scenario:** it keeps the scenario's name, `exec`, `env`, `tags` and `options` (including browser options). Everything else, such as `startTime` and the executor-specific fields, is dropped.
+  - **More than one scenario:** it returns `--once can run a single scenario only, but the script defines N scenarios`.
+- **Where it runs:** `consolidateDeriveAndValidateConfig` in `internal/cmd/test_load.go` applies it right after config consolidation, so script, env and config-file options can't conflict with it. `k6 archive` and `k6 cloud run` use the same path, so the archive contains the 1/1 scenario.
+- **Conflicting flags:** `--once` combined with `--vus`, `--duration`, `--iterations` or `--stage` fails with `--once cannot be combined with --iterations` (or the flag used). That check only looks at CLI flags.
+- **Other commands:** `--once` is a separate flag set in `internal/cmd/options.go` and is not in `optionFlagSet()`. So `cloud upload` and `inspect` don't get it. Both errors exit with the invalid-config code.
+
+**Tests**
+- `lib/executor/execution_config_shortcuts_test.go`: unit tests for the transform.
+- `internal/cmd/tests/cmd_run_once_test.go`: CLI tests for the default function with `setup()` and `teardown()`, a single scenario keeping `exec`, `env` and `tags`, the multiple-scenario error, the four flag conflicts, and `k6 archive --once` (checks the scenario stored in the archive).
+- There is no test that runs `k6 cloud run --once` itself. It shares the same code path, and I only checked that `--once` appears in its `--help`.
+
+If the script's own options (not CLI flags) set `iterations` or `vus`, `--once` quietly overrides them, as the issue describes.
+
+I didn't add a release-notes entry.

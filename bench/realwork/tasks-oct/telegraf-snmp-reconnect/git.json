@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/telegraf",
+  "base": "69361142d14e81ccf819b18bc1dcee5947cbc29b",
+  "fix": "fe74196f18662d769e2effb23e0c7da16c3979f9",
+  "pr": "https://github.com/influxdata/telegraf/pull/19855",
+  "issue": "https://github.com/influxdata/telegraf/issues/19816",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./plugins/common/snmp ./plugins/inputs/snmp -run '^(TestReconnectResetsEngineID|TestGatherClosesConnectionOnError)$'",
+  "suite_cmd": "go test -count=1 -timeout 10m ./plugins/common/snmp ./plugins/inputs/snmp ./plugins/processors/snmp_lookup -skip '^(TestReconnectResetsEngineID|TestGatherClosesConnectionOnError)$'",
+  "suite_skip_note": "suite skips the hidden tests (and PR-specific tests excluded from hidden); it checks pre-existing behavior only"
+}

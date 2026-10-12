@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "Multiple import blocks targeting different instances of one for_each resource get deduplicated before expansion, so only the first is honored. Fix sits in the plan-time import target collection / dedup logic (internal/refactoring, internal/terraform). Hidden tests are context plan/apply tests.",
+  "files_changed": 3,
+  "lines_changed": 47,
+  "merged_at": "2026-08-28T18:29:59Z"
+}

@@ -1,0 +1,24 @@
+`return` now exits a template early from anywhere, in regular templates as well as partials, and the template-rewriting machinery is gone. The only failures in the full run (`hugolib`, `resources`, `commands`, `internal`, `tpl`) are three tests in `internal/warpc`, which uses the WASM runtime rather than templates. They fail with "dispatcher is shutting down", and I didn't look into them or run them without my changes.
+
+**How it works**
+- **Sentinel:** `return` is now `partials.Namespace.Return(args ...any)`. It takes an optional value and returns a `*texttemplate.ReturnError` carrying it. Since it's a method on the partials namespace, it is also reachable as `partials.Return`.
+- **Fork changes:** the changes to the Go template fork are small and marked `Added for Hugo`. `ReturnError` is defined in `hugo_template.go`. `evalCall` panics with it instead of wrapping it as "error calling…". `errRecover` in `exec.go` hands it back as the execution error. `try` re-panics it, so it can't be swallowed.
+- **Callers:** `TemplateStore.ExecuteWithContext` treats it as a normal finish, so a bare `{{ return }}` in a page or shortcode template just stops rendering. `ExecuteWithContextAndKey` passes it through, and `partials.doInclude` uses its value as the partial's result.
+- **Removed:** the return-wrapper template, `contextWrapper`, `returnNode` and `wrapInPartialReturnWrapper` are deleted from `templatetransform.go`. A partial no longer has dot and `$` rewritten, and `return` can sit anywhere in it.
+- **Kept:** `HasReturn` is still set when a partial uses `return`. A partial that has `return` but doesn't reach it still gives a nil result and no output, as before.
+- **Old syntax:** `{{ return add . 42 }}` still works. The transform wraps the extra arguments as `(add . 42)`.
+
+**Behaviour changes**
+- A `return` inside `{{ template "x" }}` ends the whole enclosing partial or template, not just `x`.
+- `TestPartialReturnPanicIssue13600` expected an error from the old wrapper (`wrong number of args for string`). The same template now fails with a different error, `error calling delimit`, so I changed the assertion to that.
+
+**Tests**
+- I added `TestReturnEarly` in `tpl/partials`, covering these cases:
+  - early return from partials
+  - a bare `return`
+  - `return` inside `range`
+  - `return` through `{{ template }}`
+  - a `return` that is never reached
+  - an early return from a page template
+- I added `TestReturnError` in the `texttemplate` package, including the `try` case.
+- The `tpl/...` packages and `hugolib` pass, including the existing `TestPartialWithReturn`.

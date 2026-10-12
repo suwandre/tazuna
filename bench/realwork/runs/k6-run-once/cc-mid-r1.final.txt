@@ -1,0 +1,10 @@
+I added `--once` to `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. The new tests and the existing `lib/executor` and `internal/cmd` tests pass. In `internal/cmd/tests` I only ran `TestRunOnce`, `TestArchive` and `TestCloud`, not the full package. I didn't test `--once` with `k6 cloud run` or `k6 archive`, and the `lib/executor` test run was `TestApplyOnce` only.
+
+- **Scenarios:**
+  - **None:** with no scenarios, a default shared-iterations scenario runs once with 1 VU and 1 iteration. Script-level `vus`, `iterations`, `duration` and `stages` are cleared.
+  - **One:** a single scenario keeps its name, `exec`, `env`, `tags` and browser `options`. It becomes shared-iterations with 1 VU and 1 iteration, and `startTime` and the other fields are dropped.
+  - **Several:** more than one scenario fails with `--once can run a single scenario only`.
+- **Where it applies:** the transform is `ApplyOnce` in `lib/executor/execution_config_shortcuts.go`. It runs in `internal/cmd/test_load.go` right after config consolidation. Because of that, `k6 archive` and `k6 cloud run` get the transformed scenarios as well.
+- **Conflicts:** combining `--once` with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>`. Both errors exit with the invalid-config code.
+- **Flag placement:** I defined `--once` in `optionFlagSet()`, so it is also accepted by `k6 cloud upload`, which you didn't list.
+- **Tests:** unit tests for `ApplyOnce` are in `lib/executor/execution_config_shortcuts_once_test.go`. `internal/cmd/tests/cmd_run_once_test.go` has end-to-end cases for the no-scenario, single-scenario, multi-scenario and conflicting-flag paths.

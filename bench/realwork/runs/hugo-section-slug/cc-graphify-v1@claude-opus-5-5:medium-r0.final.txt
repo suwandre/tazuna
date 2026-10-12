@@ -1,0 +1,1 @@
+The background run of `./check.sh ./hugolib/...` has finished, and gofmt, staticcheck and the tests all passed. That covers the staticcheck gap I mentioned earlier for `hugolib`. I haven't run `./check.sh` on the whole repo.

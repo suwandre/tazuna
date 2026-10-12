@@ -1,0 +1,7 @@
+{
+  "kind": "refactor",
+  "difficulty_note": "Restructure Hugo's template `return` support: drop the partial-only AST transformation and trap a sentinel return in the forked text/template executor so `return` works early and outside partials. Touches the Go template fork, partials and tplimpl. Hidden tests are template-level integration tests; two PR tests that pin new error-message wording were left out of hidden_cmd.",
+  "files_changed": 7,
+  "lines_changed": 241,
+  "merged_at": "2026-08-19T14:21:11Z"
+}

@@ -1,0 +1,32 @@
+I fixed the bug, and parentheses around a single duration literal now survive `Expr.String()`. `go test ./promql/... ./web/api/v1/...` passes, golangci-lint has no findings, and the regenerated parser matches the checked-in file except for its header comment. Nothing is committed.
+
+| Input | Before | After |
+|---|---|---|
+| `foo offset (5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -5s` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset 5m` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[5s]` | `foo[(5s)]` |
+
+The `+` in `+(5)` is still dropped. That matches the existing `+(5*2)` → `(5 * 2)` behaviour.
+
+**What changed**
+- **Wrapping the number:** a bare number in parentheses is now stored as a unary-plus duration expression with `Wrapped: true`, so the printer adds the parentheses back. Evaluation already treated unary plus as "return the operand", so query results don't change.
+- **Second path for `-(5)` and `+(5)`:** these go through a separate grammar rule in `promql/parser/generated_parser.y`, which now wraps the number the same way. `applyUnaryOpToDurationExpr` in `promql/parser/parse.go` no longer needs its `wrapped` argument.
+- **Parse-time checks:** the "duration must be greater than 0", "division by zero" and "modulo by zero" checks used to look only at a bare number. A new helper, `constantDurationValue`, lets them see through parentheses and signs. So `foo[(0s)]`, `foo[-(5)]` and `foo[5m:(0)]` still fail when parsed, not later during evaluation.
+- **Parser regeneration:** `make parser` skips itself here because `goyacc` isn't on your PATH. I ran goyacc directly with the Makefile's flags.
+
+**Tests added or updated**
+- `printer_test.go`: the five cases from the issue.
+- `parse_test.go`: updated the expected trees for `+(5)` and `-(5)`, and added a case for `foo offset (5m)`.
+- `promqltest/testdata/duration_expression.test`: checks that offsets and ranges give the same results with and without parentheses.
+
+**Small visible differences**
+- For `foo[(0s)]`, the error now points at the opening parenthesis (column 5) instead of the number (column 6). The message is unchanged.
+- `foo offset (0)` now prints as `foo offset (0)`; before, the offset vanished and it printed as `foo`.
+
+For the PR, I'd suggest the title `promql/parser: preserve parentheses around plain duration literals` and this release note:
+
+```release-notes
+[BUGFIX] PromQL: Preserve parentheses around a single duration literal (e.g. `foo offset (5m)`) when formatting expressions.
+```

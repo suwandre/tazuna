@@ -1,0 +1,28 @@
+`return` now stops execution of any template, not just the last command in a partial. Tests pass in `./tpl/...`, `./hugolib/...`, `./resources/...` and `./markup/...`. `./check.sh` is clean on gofmt, but staticcheck reports deprecation warnings in `config/allconfig` and an unused value in `hugolib/integrationtest_builder.go`. I didn't touch either file.
+
+**How it works**
+- **Sentinel error:** `texttemplate.ReturnError{Value any}` is defined in `hugo_template.go`. Go's `errors.As` finds it in `evalCall`, which then panics with it. `errRecover` in `exec.go` hands it back to the caller unwrapped. Those are about 15 lines in the forked package, so the fork stays easy to maintain.
+- **`try`:** `try` re-panics a `ReturnError` instead of swallowing it.
+- **The `return` function:** `partials.Namespace.Return(args ...any) (any, error)` returns `*ReturnError`. It takes at most one argument. It returns an error rather than the plain value in your sketch, because Go templates only treat a second return value as an error.
+- **Template store:** `TemplateStore.ExecuteWithContext` swallows `ReturnError`, so pages, shortcodes and other callers just stop early. `ExecuteWithContextAndKey` passes it through without adding file context.
+- **Partials:** `doInclude` always renders to a buffer. If it gets a `ReturnError`, the returned value becomes the partial's result and the buffered output is discarded.
+
+**Removed**
+- The `partialReturnWrapper` template rewrite.
+- `collectReturnNode`.
+- `contextWrapper`.
+- `ParseInfo.HasReturn`.
+
+**Behaviour to know about**
+- **Nested templates:** `return` stops the whole current execution, including `{{ template }}` and `block` calls inside it. A partial is its own execution, so it only ends that partial. I chose this over returning from just the nested template. Say if you'd prefer the other.
+- **Old call syntax:** I kept `{{ return add . 42 }}` working by adding a small step in the transformer. It wraps `return`'s arguments in parentheses when there are more than two. That's the only transformation left for `return`, and it is only needed to keep existing templates working.
+- **Error text:** `TestPartialReturnPanicIssue13600` now fails with `can't iterate over` instead of `wrong number of args for string`. Arguments are evaluated before `return` runs, so the `delimit` error comes first. I updated the assertion.
+- **Decorator blocks:** A `return` inside a `{{ with partial ... }}` decorator block was not tested. The block is compiled into its own internal partial, so `return` there probably ends only that block.
+
+I added `TestReturnEarly` in `hugolib/template_test.go`. It covers:
+- an early return from a regular template;
+- an early return from inside a `range` in a partial;
+- a bare `{{ return }}`, which gives a nil result;
+- a partial with no `return`;
+- a `return` inside a nested `{{ template }}`;
+- `partialCached` and `try` with `return`.

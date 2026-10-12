@@ -1,0 +1,7 @@
+`slug` now works in section, taxonomy and term pages. It replaces that page's path segment in its own URL and in the URL of every descendant. All tests in `hugolib`, `resources/...` and `commands/...` pass. I didn't run `./check.sh`.
+
+- **What changed:** `createTargetPathDescriptor` in `hugolib/page__paths.go` collects the slugs from the page (if it's a section, taxonomy or term) and its ancestors. `resources/page/page_paths.go` swaps each matching segment for its slug when building the path.
+- **When it applies:** it's skipped when the page has `url` set or a `permalinks` pattern applies, since those already control the whole path.
+- **Test:** `TestSectionTaxonomyTermSlug` in `hugolib/page_permalink_test.go` uses your help/frob example in English and Spanish and adds a section nested under the slugged one and a taxonomy with a term. The English URLs stay unchanged, and the Spanish ones come out as `/es/ayuda/`, `/es/ayuda/como-frobear/`, `/es/ayuda/sub/p1/`, `/es/etiquetas/` and `/es/etiquetas/e1/`. I confirmed it fails without the change.
+
+I haven't updated the docs. `docs/content/en/content-management/front-matter.md` still describes `slug` only for regular pages.

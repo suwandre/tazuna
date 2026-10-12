@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/hugo",
+  "base": "bf05832d14f9916c8c8268b20fc0fa40f61c9f9f",
+  "fix": "8405b802cf647b88e3de872d6fb01323107aaf9b",
+  "pr": "https://github.com/gohugoio/hugo/pull/15215",
+  "issue": "https://github.com/gohugoio/hugo/issues/15212",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./hugolib ./tpl/partials -run '^(TestTemplateReturnEarly|TestTemplateReturnEarlyFromBlock|TestTemplateReturnEarlyFromTemplateInclude|TestPartialReturnConditional|TestPartialReturnFromRange|TestPartialReturnBareStopsEarly|TestPartialReturnNil|TestPartialReturnValueFromTemplateInclude)$'",
+  "suite_cmd": "go test -count=1 ./tpl/internal/go_templates/texttemplate/... ./tpl/partials ./tpl/tplimpl ./tpl/templates -skip '^(TestTemplateReturnWithValueOutsidePartialFails|TestPartialReturnPanicIssue13600)$'",
+  "suite_skip_note": "suite skips PR-specific tests excluded from hidden (pinned wording/helpers not in the ticket); it checks pre-existing behavior only"
+}

@@ -1,0 +1,12 @@
+`--once` is added to `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. Tests pass in `lib/executor`, `internal/cmd` and `internal/cmd/tests`, and `go vet` is clean. I did not test `k6 cloud run` against a mock cloud, so that path is untested. It does use the same shared config-loading path as `run` and `archive`.
+
+- **Where it applies:** The transform runs after config consolidation and before the shortcut derivation, so the cloud and archive paths pick it up. `k6 cloud upload` shares the flag set and gets `--once` too, which you didn't ask for. `k6 inspect` has no `--once` flag and is unaffected.
+- **Scenario handling:**
+  - With no scenarios, you get a `default` scenario of `shared-iterations`, 1 VU and 1 iteration.
+  - With one scenario, its name, `exec`, `env`, `tags` and browser options are kept. `startTime`, `gracefulStop` and the other executor fields are dropped.
+  - Script-level `vus`, `iterations`, `duration` and `stages` are cleared.
+- **Errors:** More than one scenario exits with "--once can run a single scenario only". Combining `--once` with `--vus`, `--iterations`, `--duration` or `--stage` exits with "--once cannot be combined with --<flag>". Both use the invalid-config exit code.
+- **Not covered:** Only the CLI shortcut flags are rejected. If `K6_ITERATIONS` or similar is set in the environment, it is silently discarded.
+- **Possible surprise:** The scenario keeps the `shared-iterations` default `maxDuration` of 10 minutes. A single iteration that runs longer than that, such as a long browser test, will be cut off.
+
+The transform is in `lib/executor/once.go`, with the flag and the compatibility check in `internal/cmd/options.go` and the hook in `internal/cmd/test_load.go`. Tests are `lib/executor/once_test.go` and `internal/cmd/tests/cmd_run_once_test.go`. I did not add a release-notes entry.

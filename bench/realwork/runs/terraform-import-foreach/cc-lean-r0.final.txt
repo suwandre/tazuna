@@ -1,0 +1,16 @@
+Plans now honor every import block, including several blocks that target different instances of the same `for_each` resource. Your repro should now give `2 to import, 0 to add`; I didn't run `terraform plan` on it. I ran the `refactoring` tests, the `internal/terraform` suite and its import tests. All pass. The `internal/command` run timed out, so I didn't check it.
+
+**Cause:** `refactoring.FindImportStatements` collected import blocks in a map keyed by the config resource (`terraform_data.t`, without the instance key). The second import block for the same resource was treated as a duplicate and dropped without any error. The first one declared survived, which matches what you saw. Single-instance resources were unaffected because they only have one block each.
+
+**Fix** (in `internal/refactoring/import_statement.go`):
+- `FindImportStatements` now returns a slice in declaration order instead of a map.
+- Only a block from a different module is skipped: a parent module's import block still overrides a child's block for the same resource.
+- Several blocks in the same module are all kept. Statically identical targets in one module are already rejected when the configuration loads.
+- I also fixed an `append(cfg.Path, …)` call that could share a backing array between modules.
+- I updated the one caller, `findImportTargets` in `context_plan.go`.
+
+**Tests:**
+- `TestContext2Plan_importMultipleBlocksForEachResource` plans your scenario. It fails without the fix (`a["second"]` is planned as a create) and passes with it.
+- `TestFindImportStatements` in the `refactoring` package uses a new `testdata/import-statements` fixture. It checks that several blocks for one resource are kept in the same module and that the parent still overrides the child.
+
+I didn't test `count`, and I didn't change the config-generation path. That path still takes its config from the first import block (`n.importTargets[0].Config`), but it isn't supported for `for_each` anyway.

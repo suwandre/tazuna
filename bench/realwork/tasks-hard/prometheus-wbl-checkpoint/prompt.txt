@@ -1,0 +1,50 @@
+TSDB: a WAL checkpoint can drop a series record that the out-of-order WAL (WBL) still needs
+
+### What did you do?
+
+Prometheus writes out-of-order samples to a separate write-behind log, the WBL.
+Each WBL record points to a series through a series reference.
+This sequence makes the WAL lose the record that resolves one of those references:
+
+1. Start Prometheus with an out-of-order time window above zero.
+2. Write samples for a series.
+3. Let head compaction write the series into a block. The head drops the series.
+4. Write a new in-order sample for the same series. The head creates the series
+   again under a new series reference.
+5. Write an out-of-order sample for the same series. Prometheus logs it to the WBL
+   under the new reference.
+6. Restart Prometheus. WAL replay finds two series records with the same labels. It
+   puts them onto one in-memory series and records the mapping in `multiRef`.
+   Prometheus keeps that mapping only in memory.
+7. Let an in-order head compaction run. It writes a WAL checkpoint.
+8. Stop Prometheus before out-of-order compaction writes the WBL into a block.
+9. Start Prometheus again.
+
+### What did you expect to see?
+
+The out-of-order sample from step `5` is still in the database after step `9`.
+Prometheus acknowledged that sample to the writer.
+
+### What did you see instead? Under which circumstances?
+
+The sample is gone.
+
+The checkpoint in step `7` removes the series record for the new reference. The head
+no longer holds that reference, and its WAL expiry is below the `mint` of the
+checkpoint. The WBL still addresses the samples through that reference, so WBL
+replay cannot resolve it. Prometheus counts the reference in
+`prometheus_tsdb_wbl_replay_unknown_refs_total{type="series"}` and drops the samples.
+
+The `walExpiries` map cannot prevent this. It keeps a record until a given
+timestamp. An out-of-order sample has a timestamp below the in-order data that the
+checkpoint truncates, so the record looks expired while it is still needed.
+The window between the checkpoint and out-of-order compaction is short, but both run
+inside the same `DB.Compact` call, in that order. A restart in that window loses the
+samples.
+
+A test for the sequence above returns two samples instead of three.
+
+The data must also survive later restarts after out-of-order compaction has run, and records kept for this reason should not be retained forever.
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

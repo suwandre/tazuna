@@ -1,0 +1,21 @@
+Parentheses around a plain duration now survive `Expr.String()`. All five cases from the issue round-trip, and `go test ./promql/...` passes. I haven't committed anything.
+
+**Root cause:** `*NumberLiteral` has no `Wrapped` field, so `(5)` and `(5m)` in a duration position came back from the parser as a bare literal.
+
+**Fix:**
+- **Representation:** a parenthesised literal now becomes `&DurationExpr{Op: ADD, RHS: lit, Wrapped: true}`, a unary plus the printer already shows as just its operand. This is in `promql/parser/parse.go` and the `paren_duration_expr` rule, and I regenerated `generated_parser.y.go` with goyacc.
+- **Unary forms:** `+(5)` prints as `(5)`, matching the existing `+(5*2)` case. `-(5)` is a negation wrapped around that.
+- **Unchanged:** `-5m` without parentheses still folds into the literal.
+- **Positive-duration check:** a new `constantDurationValue` helper keeps `foo[(0)]`, `foo[-(5s)]` and `foo[5m:(0)]` failing at parse time with "duration must be greater than 0".
+- **Evaluation:** the engine already handled unary `ADD` and `SUB`, so no change was needed there.
+
+**Behaviour changes to know about:**
+- **Offset storage:** `foo offset (5)` and `foo offset +(5)` now fill `OriginalOffsetExpr` instead of `OriginalOffset`. Likewise a parenthesised range or step now fills `RangeExpr` or `StepExpr`. I updated the existing parse tests for `foo offset +(5)` and `foo offset -(5)` to the new AST shape.
+- **`Pretty` output:** `DurationExpr.Pretty` in `prettier.go` printed a unary plus as `+5`, unlike `String()`. I made it omit the `+`. This changes pretty output for existing unary-plus duration expressions too, so say if you'd rather split it out.
+
+**Tests added:**
+- Round-trip cases in `printer_test.go`: `(5)`, `+(5)`, `-(5)`, `(5m)`, `foo[(5s)]`, and a subquery `foo[(5s):(1m)]`.
+- Two parse-error cases in `parse_test.go`: `foo[(0)]` and `foo[-(5s)]`.
+- Two eval cases in `duration_expression.test`, `offset (4)` and `offset -(4)`, which return the same values as the existing `offset (2 * 2)` and `offset -4` cases.
+
+I didn't run `make lint`.

@@ -1,0 +1,17 @@
+`(N)` around a plain number or duration literal now survives `Expr.String()` in offset and range positions. `go test` passes for `promql/...`, `web/api/v1`, `cmd/promtool` and `model/rulefmt`.
+
+**Cause:** `*NumberLiteral` has no `Wrapped` field, so the parser threw the parentheses away. Both grammar paths did this: `paren_duration_expr` returned the bare literal, and so did `applyUnaryOpToDurationExpr` for `-(5)` and `+(5)`.
+
+**Fix:**
+- **`parse.go`:** I added `wrapNumberLiteral`, which turns a parenthesised literal into a `*DurationExpr` with `Wrapped: true`. It is a unary `ADD` over the literal, which the printer already prints without a sign. `applyUnaryOpToDurationExpr` uses it for `-(5)` and `+(5)`, with `-(5)` becoming a `SUB` node around it.
+- **`generated_parser.y` and the regenerated `generated_parser.y.go`:** `paren_duration_expr` calls `wrapNumberLiteral`. I added an `unwrapNumberLiteral` helper so the parse-time checks still see through the wrapper. Those checks are "duration must be greater than 0" and division or modulo by zero.
+- **`prettier.go`:** `Pretty` no longer prints a leading `+` for a unary `ADD` duration expression, so it matches `String()`.
+
+**Behaviour changes:**
+- **AST shape:** `foo offset (5)`, `foo[(5s)]` and similar now set `OriginalOffsetExpr` or `RangeExpr` instead of `OriginalOffset` or `Range`. Parse-only consumers see 0 for those fields until the engine's duration visitor resolves them, the same as for `(5m + 1m)` today.
+- **`+(5)`:** it prints as `(5)`, not `+(5)`, so the unary plus is still dropped, as for `+(5*2)` today.
+- **`-(5)`:** an out-of-range `-(5)` in a range position like `foo[-(5)]` is now rejected when the engine evaluates it, not at parse time.
+
+**Tests:**
+- **`printer_test.go`:** added round-trip cases for `(5)`, `+(5)`, `-(5)`, `(5m)`, `foo[(5s)]`, `foo[(5s):(1s)]` and `(5m + (1m))`.
+- **`parse_test.go`:** updated the expected AST for `foo offset +(5)` and `foo offset -(5)`.

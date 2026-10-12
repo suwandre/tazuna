@@ -1,0 +1,19 @@
+The example from the issue now works. `respond "{"` (and `"}"`, in double quotes, backticks or heredocs) is treated as a normal argument instead of opening or closing a block. `caddy adapt` turns it into `{"body":"{","handler":"static_response"}`, and `caddy fmt` leaves it alone.
+
+**The cause:** the parser and dispenser decided where blocks start and end just by checking whether a token's text was `{` or `}`. They ignored whether it had been quoted. Only the parser's check for text after a `{` on the same line looked at quoting.
+
+**The fix** (all in `caddyconfig/caddyfile`):
+- `lexer.go`: added `Token.isOpenCurlyBrace()` / `isCloseCurlyBrace()`, which only match braces that weren't quoted.
+- `dispenser.go`: added the same helpers for the current token. `NextArg`, `NextBlock` and `ArgErr` now use them, so plugins that parse their own Caddyfile syntax get the new behaviour without changes.
+- `parse.go`: all the brace checks now use the helpers. That covers site addresses, server-block end, directives, block reading and the `{`/`}` counting during imports and snippets. One import-related check had been comparing raw text, and the same-line check had its own separate quote test; both now use the helpers too.
+
+No code outside this package compared token text to braces.
+
+**Tests:**
+- `parse_test.go`: added cases for `respond "{"`, `respond "}"`, quoted braces inside a real block, and a quoted `"{"` … `"}"` spread over several lines. That last one is now parsed as three separate directives, where it used to be one block.
+- `dispenser_test.go`: new `TestDispenser_QuotedCurlyBraces`, which checks that quoted braces come back as arguments, both on the directive line and inside a block.
+- The new tests fail without the fix and pass with it. `go test -race -short` passes for `./caddyconfig/...`, `./modules/caddyhttp/...` and `./modules/caddytls/...`, and `go vet` is clean. The integration run (filtered with `-run Caddyfile`) reported `ok`, but the filter may not have matched any tests, so treat that as unconfirmed. I didn't run `golangci-lint` or the full `./...` suite.
+
+**Behaviour change:** a Caddyfile that used quoted braces as block delimiters, like `dir "{"` … `"}"` across lines, used to parse as a block and now doesn't. That is the behaviour the issue asks for. The existing one-line "workaround" test (`dir1 "{" a b "}"`) still passes with the same result.
+
+Nothing is committed. If this goes upstream, Caddy's contribution rules mean you'll need to say in the PR that it was AI-assisted (Claude Opus 5.5), and you'll need to be able to explain the change yourself.

@@ -1,0 +1,3 @@
+Fixed import discovery to retain multiple import blocks targeting instances of the same resource. Parent-module imports still take precedence over imports in child modules.
+
+Added a regression test for multiple imports to one resource. Verified with `go test ./internal/refactoring ./internal/terraform` and `git diff --check`.

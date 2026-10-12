@@ -1,0 +1,42 @@
+tpl/compare: eq, le and ge disagree when comparing an int with an equal float
+
+### What did you expect to see?
+
+`eq`, `ne`, `lt`, `le`, `gt` and `ge` agreeing with each other. Whatever the rule for comparing an `int` against a `float`, exactly one of `lt`/`eq`/`gt` should hold for a given pair, `le` should mean `lt or eq`, and `ge` should mean `gt or eq`.
+
+### What did you see instead?
+
+For `1` against `1.0`, the six functions contradict each other. `le` and `ge` are both true while `lt`, `gt` and `eq` are all false, so the value is reported as neither less than, nor greater than, nor equal to itself.
+
+`layouts/index.html`:
+
+```go-html-template
+eq  1 1.0 = {{ eq 1 1.0 }}
+ne  1 1.0 = {{ ne 1 1.0 }}
+lt  1 1.0 = {{ lt 1 1.0 }}
+le  1 1.0 = {{ le 1 1.0 }}
+gt  1 1.0 = {{ gt 1 1.0 }}
+ge  1 1.0 = {{ ge 1 1.0 }}
+```
+
+Rendered output:
+
+```
+eq  1 1.0 = false
+ne  1 1.0 = true
+lt  1 1.0 = false
+le  1 1.0 = true
+gt  1 1.0 = false
+ge  1 1.0 = true
+```
+
+`eq` normalises an `int` to `int64` and a `float` to `float64` and then compares them as `any`, so they are never equal. `lt`/`le`/`gt`/`ge` go through `compareGet`, which converts both to `float64`, so they compare numerically. The two halves of the API use different rules.
+
+Same result for `0` vs `0.0`, `-1` vs `-1.0`, `int64(3)` vs `float64(3)` and `uint(4)` vs `4.0`. Mixed values where the numbers genuinely differ (`1` vs `2.0`) are consistent, so this only shows up when the two are numerically equal.
+
+---
+
+Maintainer decision: make `eq`/`ne` compare numbers numerically, consistent with `lt`/`le`/`gt`/`ge` (so `eq 1 1.0` is true). The comparison must be exact for every mix of signed ints, unsigned ints and floats: no rounding through `float64` (e.g. `int64(9007199254740993)` is greater than `float64(9007199254740992)`, not equal), and no overflow surprises (`uint64` max is greater than `-1`). `collections.Where` (and its `eq`/`ne`/`<`/`>` operators) should follow the same numeric rules.
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

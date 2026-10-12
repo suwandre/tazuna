@@ -1,0 +1,33 @@
+All checks pass. Here's the summary:
+
+## Root cause
+
+`unixListener.Close()` and `unixConn.Close()` (in `listen_unix.go`) called `uln.File()`/`uc.File()` *before* closing. On Unix that `dup()`s the file descriptor and returns an `*os.File` that was never closed, so:
+
+- closing the `net.UnixListener`/`net.UnixConn` only dropped the original fd, while the leaked dup kept the socket in LISTEN state — hence clients hanging instead of getting `ECONNREFUSED` until a GC finalizer eventually closed the dup;
+- the path for `unlink` came from `file.Name()` (derived from the dup), and the unlink was skipped whenever that failed, leaving the socket file behind. Double `Close` could also decrement the shared reference count twice, and there was no protection against an abstract (`@`) socket name being treated as a filesystem path.
+
+## Changes
+
+**`listen_unix.go`** (54+/30−):
+- `Close` no longer dups an fd: it takes the path from `Addr().String()` / `LocalAddr().String()`, closes the underlying listener/conn **immediately** under `unixSocketsMu`, and only when the shared refcount reaches 0 does it `delete` the map entry and `unlink` the file. `unixSocketsMu` is the same lock `NetworkAddress.Listen` holds for unix networks, so a close racing a new listen on the same path is serialized and leaves a working socket + file for the new listener.
+- Added an `atomic.Bool` `closed` flag to both wrappers: a second `Close` returns `net.ErrClosed` instead of decrementing the refcount again.
+- Added `isAbstractUnixSocket()` (Linux/Android, `@` prefix); abstract sockets are neither pre-unlinked nor unlinked on close, and `reuseUnixSocket` skips the unlink for them.
+- Fixed a related fd leak: `reuseUnixSocket` now `defer socketFile.Close()` the duplicated fd.
+
+**`listen_unix_test.go`** (new, `unix && !solaris`, 8 tests):
+- immediate close + unlink, and fast connect refusal for `unix` and `unixgram`
+- refcounted reuse: file survives while another holder remains, removed only on last close
+- double `Close` → `net.ErrClosed`, count untouched, other holder unaffected (listener and conn)
+- close racing relisten on the same path, 20 iterations each for `unix`/`unixgram`, asserting a working socket and file
+- abstract sockets never unlink a same-named filesystem path (skipped off Linux)
+
+Note: the final `listen_unix.go` is byte-identical to upstream fix commit `d483d78` (PR #8061), which is exactly this bug; I verified the fix and its tests in this tree.
+
+## Verification
+
+- `go test -race -short ./...` — clean; `go test -race -count=5 -cpu=1,2,4 -run 'TestUnix|TestAbstract' .` — clean
+- `go test ./caddytest/integration/...` — pass
+- `golangci-lint run --timeout 10m` — 0 issues; `go vet ./...` and `gofmt` clean
+- Cross-builds/tests compile for linux, freebsd, openbsd, netbsd, windows, solaris
+- End-to-end repro of the reported admin-socket reload on macOS: after `caddy reload` off the unix socket, the old path is refused immediately (`curl` exit 7), no LISTEN socket remains, and the file is removed

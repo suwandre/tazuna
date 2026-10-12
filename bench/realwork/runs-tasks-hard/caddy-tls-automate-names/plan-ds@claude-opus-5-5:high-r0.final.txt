@@ -1,0 +1,17 @@
+The implementation matches the plan line for line, and it meets every requirement in the task, so I changed nothing.
+
+I re-ran the checks in this repo and all passed:
+- `gofmt -l caddyconfig/httpcaddyfile/` printed nothing.
+- `go build ./...` succeeded.
+- `go test -race -short ./caddyconfig/httpcaddyfile/ ./modules/caddytls/` passed, including the two new tests.
+- `go test ./caddytest/integration/ -run TestCaddyfileAdaptToJSON` passed, so existing adapt outputs are unchanged.
+
+How each requirement is met:
+- **Repeating the option:** each `tls_automate_names` line adds to the list. Names are lowercased and duplicates removed.
+- **Certificates without routes:** the names go into `certificates.automate` and never get a route. With no site blocks, only the `tls` app is produced.
+- **Global options like `email`:** for the issue's example, the automation policies are byte-for-byte the same as with the dummy `*.example.com {}` site block. Only the extra route is gone.
+- **`localhost` and IP addresses:** they get an explicit `internal` issuer policy. This has to be explicit because there may be no HTTP app to assign that issuer at runtime.
+- **Names that also have a site block:** they stay in the automate list, and only the site block's policy is used, so there's no second, conflicting one. A name whose site block is `http://`-only gets its own policy, so it still gets a certificate.
+- **`auto_https off`:** the names are still listed for automation.
+
+The changes are uncommitted in `caddyconfig/httpcaddyfile/` (`options.go`, `tlsapp.go`, `tlsapp_test.go`). Before you submit, Caddy's CONTRIBUTING.md requires you to tell reviewers this was written by an AI agent (Claude Opus 5.5), and you need to be able to explain every line yourself.

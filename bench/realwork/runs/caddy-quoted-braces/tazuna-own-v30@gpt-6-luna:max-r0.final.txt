@@ -1,0 +1,8 @@
+Updated Caddyfile block parsing to treat quoted braces as ordinary tokens across parsing, imports, and dispenser traversal. Added regression tests for quoted `{`, `}`, and `{}` in parsing and HTTP adaptation.
+
+Verified with:
+- `go test ./caddyconfig/caddyfile ./caddyconfig/httpcaddyfile`
+- `go test -race ./caddyconfig/caddyfile ./caddyconfig/httpcaddyfile`
+- `git diff --check`
+
+AI assistance disclosure: GPT-6 Luna assisted with implementation and tests; the issue was originally noticed while working on another feature.

@@ -1,0 +1,3 @@
+Updated Caddyfile block parsing to ignore quoted braces when opening, nesting, or closing blocks. Added a regression test covering quoted `{` and `}` inside a block.
+
+Verified with `go test ./caddyconfig/caddyfile` and `git diff --check`; both passed.

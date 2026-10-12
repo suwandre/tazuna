@@ -1,0 +1,27 @@
+The fix is applied and verified. This matches the upstream fix for the issue (caddyserver/caddy#8168), which I found in a local clone of the repository; the working-tree diff is identical to that commit.
+
+## What changed
+
+**`modules/caddyhttp/celmatcher.go`**
+- `MatchExpression` now records the placeholder names referenced by its checked CEL expression during `Provision()`.
+- New `celPlaceholderNames()` walks the compiled AST and collects the argument of every `ph(req, ...)` call — this catches both `{placeholder}` shorthand (which `Provision` rewrites to `ph()` calls) and direct `ph(req, "...")` calls. A non-string-literal argument (name only known at evaluation time) is recorded as `""`.
+- New exported `MatchExpression.Placeholders()` returns a defensive copy. Escaped placeholder text (`\{...}`) stays a string literal and is correctly ignored.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`. After a successful round trip, a matcher set is only evaluated as a response condition if one of its expression matchers references response data:
+  - exact: `http.reverse_proxy.status_code`, `http.reverse_proxy.status_text`, `http.reverse_proxy.upstream.latency`, `http.reverse_proxy.upstream.latency_ms`
+  - prefix: `http.reverse_proxy.header.`
+  - or a dynamic placeholder name (`""`), conservatively treated as possibly response-related.
+- Request-only expressions (`{http.request.method}`, `{http.reverse_proxy.upstream.host}`, look-alikes like `...status_codes`, escaped placeholder strings) are request conditions again, evaluated only in `tryAgain` for transport errors — restoring pre-v2.11.3 behavior.
+
+**`modules/caddyhttp/reverseproxy/retries_test.go`**
+- `TestResponseRetryStatusCode` now also covers a direct `ph(req, "...")` call.
+- New `TestRequestOnlyExpressionDoesNotRetryResponses` verifies that a successful 200 response is returned once (no retries, body intact) for request-only expressions, upstream-selection placeholders, escaped response placeholders in string literals, and prefix-look-alike placeholder names.
+
+## Verification
+
+- `go build ./...` — clean
+- `go test -race -short ./...` — all packages pass
+- `golangci-lint run --timeout 10m ./modules/caddyhttp/...` — 0 issues
+- `gofmt -l` and `go vet` on changed packages — clean
+- New/updated retry tests run individually and pass, including the `ExpressionMatcher` direct-call and escaped-placeholder cases.

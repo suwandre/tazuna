@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "Head GC drops a series once its samples are persisted even if it still has a recent exemplar; exemplars are not stored in blocks, so after the WAL checkpoint drops the series record the exemplar cannot be replayed on restart. Fix must track the latest exemplar timestamp per series (on append for both appender APIs, and on WAL/snapshot replay), keep the series identity through ordinary, selected and stale head compaction until the exemplar is older than the replay cutoff, while still freeing the persisted sample chunks. Hidden tests: the PR's three end-to-end DB tests (restart after compaction, selected/stale compaction, chunk reclaim); the PR's head_test.go / head_append_v2_test.go cases were excluded (they read new internal fields/helpers).",
+  "merged_at": "2026-10-07T13:19:27Z",
+  "files_changed": 5,
+  "lines_changed": 80
+}

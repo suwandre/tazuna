@@ -1,0 +1,40 @@
+promql/parser: parentheses around a plain duration literal are lost on round-trip
+
+Note: I've generated this issue with Claude Opus 4.7 after using it to verify the issue.
+
+While reviewing #18768 I noticed that `(N)` inside a duration-expression position (offset, range bracket) is dropped on `Expr.String()` round-trip when N reduces to a single `*NumberLiteral`. Wrapping a multi-term `*DurationExpr` survives because `*DurationExpr` has a `Wrapped` field; `*NumberLiteral` has no such field.
+
+### Reproduction
+
+With `ExperimentalDurationExpr: true`:
+
+#### Cases that lose parentheses
+
+| Input                  | `Expr.String()`  |
+|------------------------|------------------|
+| `foo offset (5)`       | `foo offset 5s`  |
+| `foo offset +(5)`      | `foo offset 5s`  |
+| `foo offset -(5)`      | `foo offset -5s` |
+| `foo offset (5m)`      | `foo offset 5m`  |
+| `foo[(5s)]`            | `foo[5s]`        |
+
+#### Cases that round-trip correctly (for reference)
+
+| Input                    | `Expr.String()`          |
+|--------------------------|--------------------------|
+| `(5)`                    | `(5)`                    |
+| `-(5)`                   | `-(5)`                   |
+| `+(5)`                   | `+(5)`                   |
+| `(5) + 1`                | `(5) + 1`                |
+| `foo offset (5m + 1m)`   | `foo offset (5m + 1m)`   |
+| `foo offset -(5m + 1m)`  | `foo offset -(5m + 1m)`  |
+| `foo[(5s + 1s)]`         | `foo[(5s + 1s)]`         |
+
+Pure-scalar contexts use `*ParenExpr`, which prints its own parens. Duration-expression contexts with a `*DurationExpr` payload preserve parens via the `Wrapped` field. The mismatch is only when the payload is a single `*NumberLiteral`.
+
+### Notes
+
+This pre-dates #18768. That PR fixes a panic on `foo offset -(5)` but inherits this round-trip limitation, which is why I'm filing it separately.
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

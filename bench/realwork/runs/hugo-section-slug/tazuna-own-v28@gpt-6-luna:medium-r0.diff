@@ -1,0 +1,49 @@
+diff --git a/hugolib/site_sections_test.go b/hugolib/site_sections_test.go
+index 779c380..15d150b 100644
+--- a/hugolib/site_sections_test.go
++++ b/hugolib/site_sections_test.go
+@@ -151,6 +151,44 @@ All: {{ .Title }}|{{ .Kind }}|
+ }
+ 
+ // See issue 15046.
++func TestLocalizedSectionSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++defaultContentLanguage = 'en'
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: How to frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Cómo frobear
++slug: como-frobear
++---
++-- layouts/list.html --
++{{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileExists("public/help/index.html", true)
++	b.AssertFileExists("public/es/help/index.html", true)
++}
++
+ func TestSectionAndSiblingPageURLs(t *testing.T) {
+ 	t.Parallel()
+ 

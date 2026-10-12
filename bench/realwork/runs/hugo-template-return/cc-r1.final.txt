@@ -1,0 +1,25 @@
+`return` now works in any template, anywhere in the body, as an early exit. `./check.sh ./tpl/... ./hugolib/...` passes (gofmt, staticcheck, tests). A final `go test` over `./tpl/... ./hugolib/... ./resources/... ./commands/...` printed no failures.
+
+**How it works**
+- **Sentinel error:** `return` is now a real function that returns a `*texttemplate.ReturnError`, carrying an optional value. It takes 0 or 1 argument (`tpl/partials/init.go`).
+- **Execution fork:** in `hugo_template.go`, `evalCall` turns that error into a panic, and `executeWithState` recovers it. This adds about 30 lines to the fork, plus one `defer` in `walkTemplate` in `exec.go`. `try` re-panics it so it can't swallow a `return`.
+- **Scope:** inside `{{ template }}` or `{{ block }}`, `return` exits only that template, so a `return` in a `define "main"` doesn't cut off `baseof.html`. In page templates and shortcodes it ends the template and keeps the output so far. In a partial it ends the partial and sets the value `partial` returns.
+- **Removed:** the `contextWrapper`, the `range (slice .Arg)` wrapper template and the logic that moved the first `return` to the end of the template.
+- **Kept:** `{{ return add . 42 }}` still works. A small rewrite in `templatetransform.go` turns `return a b c` into `return (a b c)`. The transform also still flags partials that contain `return` (`HasReturn`).
+
+**Behaviour changes**
+- A partial that contains `return` but doesn't reach one now returns `nil` and discards its output. That keeps `{{ with partial "x" }}` from seeing whitespace as truthy.
+- A bare `{{ return }}` now returns `nil` and exits the template. Before, it was a no-op.
+- A `return` nested in a `{{ template }}` call no longer marks the calling partial as having a `return`.
+- I changed one assertion in `TestPartialReturnPanicIssue13600`. `{{ return (delimit . ", ") | string }}` now fails at `delimit` instead of at `string`.
+- `{{ return 1 2 }}` is a parse-time "can't give argument to non-function" error. The "at most 1 argument" error only shows up through a pipe such as `{{ 1 | return 2 }}`.
+
+**Decorator bodies**
+- I did not trace what a `return` inside the body of `{{ with partial "decorator" }}` does. That body is compiled into an internal partial, so it probably returns from that partial. No test covers it.
+
+**Tests and docs**
+- New tests in `tpl/partials/partials_integration_test.go`:
+  - `TestReturnEarlyInPartial` covers early return in `if` and `range`, a bare `return`, `| return`, and fall-through.
+  - `TestReturnInTemplate` covers `block`, `template` and `try`.
+  - `TestReturnTooManyArgs` covers the argument-count error.
+- I rewrote `return.md` and removed the "only one `return`, at the end" notes from `Include.md` and `IncludeCached.md`.

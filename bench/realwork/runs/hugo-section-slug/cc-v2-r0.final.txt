@@ -1,0 +1,18 @@
+`slug` in front matter now works on section, taxonomy and term pages. It replaces that path segment in the page's own URL and in the URLs of all its descendants. The new test passes, the `hugolib`, `resources` and `commands` tests pass, and `./check.sh ./hugolib/... ./resources/page/...` passes.
+
+Your `help/` example now produces:
+
+| Page | Path |
+|---|---|
+| English help section | `help/` |
+| English how-to-frob page | `help/how-to-frob/` |
+| Spanish help section | `es/ayuda/` |
+| Spanish how-to-frob page | `es/ayuda/como-frobear/` |
+
+- **Code:** `dirWithSectionSlugs` in `hugolib/page__paths.go` walks the page's ancestors, plus the page itself for sections, taxonomies and terms. It swaps each path segment for the slug of the page at that path, if there is one. The result goes into a new `Dir` field on `TargetPathDescriptor` in `resources/page/page_paths.go`. `CreateTargetPaths` uses `Dir` instead of the directory it would otherwise derive.
+- **Test:** `TestSectionTaxonomyTermSlug` in `hugolib/page_permalink_test.go` covers the multilingual example, a nested section, a taxonomy and a term.
+- **Docs:** `docs/content/en/content-management/urls.md` said `slug` didn't apply to these kinds. It now says it does, and only the home page is excluded.
+- **`url` and permalinks:** a `url` in front matter, or a matching `[permalinks]` rule, still takes precedence. A rule that uses `:slug` or `:sectionslugs` already handled slugs itself.
+- **Home page:** a slug on the home page is ignored.
+
+I didn't commit anything.

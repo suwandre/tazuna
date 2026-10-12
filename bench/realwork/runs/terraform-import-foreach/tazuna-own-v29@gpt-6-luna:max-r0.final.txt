@@ -1,0 +1,5 @@
+Fixed import-block collection so multiple blocks targeting distinct instances of the same resource are retained. Parent-module imports continue to take precedence over imports in child modules. Also isolated module evaluation context between import blocks.
+
+Added a regression test covering two import blocks for a `for_each` resource.
+
+Verified with `go test ./internal/refactoring ./internal/terraform -count=1` and `git diff --check`.

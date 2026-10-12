@@ -1,0 +1,3 @@
+Updated import statement discovery to retain multiple blocks targeting different instances of the same resource, while preserving parent-module override behavior. Added regression coverage for both cases.
+
+Verified with `go test ./internal/refactoring ./internal/terraform -count=1`.

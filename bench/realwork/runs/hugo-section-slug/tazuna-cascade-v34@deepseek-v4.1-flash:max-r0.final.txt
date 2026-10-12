@@ -1,0 +1,25 @@
+## Summary
+
+Added slug support for branch pages (sections, taxonomies, terms), so a `slug` in e.g. `_index.es.md` renames that URL segment and cascades to all descendant pages.
+
+### Changes
+
+- **`hugolib/page__paths.go`**
+  - New `targetPathDir(p)` walks the branch-page ancestry and builds the target directory, substituting each ancestor's `slug` when set. For regular pages it appends the part of the container dir not covered by the current section (so nested virtual dirs and bundles still work).
+  - `createTargetPathDescriptor` now sets `Dir: targetPathDir(p)` instead of the old `Section` path info.
+- **`resources/page/page_paths.go`**
+  - Replaced `TargetPathDescriptor.Section` with `Dir` (directory with section slugs applied). `CreateTargetPaths` uses `d.Dir` for both branch pages (sections/taxonomies/terms) and regular pages, so descendants inherit ancestor slugs.
+- **`hugolib/sitesmatrix/dimensions.go`, `resources/page/pagemeta/page_frontmatter.go`**
+  - Fixed the `VectorProvider.HasVector` parameter (was mistakenly `HasAnyVectorv`) and route `MatchSiteVector` through `HasVector`, avoiding an interface-unboxing allocation on the new `Parent()` calls.
+- **`hugolib/page_permalink_test.go`**
+  - `TestSlugInBranchPagesCascadesToDescendants`: multilingual site with slugs on sections, a thrown-in bundle page, nested virtual dirs, taxonomy and term pages; asserts both `public/help/...` and `public/es/ayuda/...` outputs.
+  - `TestSlugInBranchPagesDisablePathToLowerUglyURLs`: `disablePathToLower` + `uglyURLs`.
+  - `BenchmarkTargetPathDir` for the new path computation.
+
+### Verification
+
+- `go test ./hugolib/ -run 'TestSlugInBranchPages' -count=1` — pass.
+- `./check.sh ./hugolib/...` and `./check.sh ./resources/page/...` — gofmt, staticcheck, tests pass.
+- Full `./check.sh` (all packages) — gofmt OK, staticcheck OK, tests OK.
+
+The implementation matches the upstream Hugo fix for issue #14352 (PR #15383), including the follow-up test expectation update from Hugo master.

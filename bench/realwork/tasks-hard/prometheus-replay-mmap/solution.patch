@@ -1,0 +1,131 @@
+diff --git a/tsdb/head.go b/tsdb/head.go
+index 91b23ed7d..6fef1657a 100644
+--- a/tsdb/head.go
++++ b/tsdb/head.go
+@@ -897,7 +897,7 @@ func (h *Head) Init(minValidTime int64) error {
+ 
+ 		// A corrupted checkpoint is a hard error for now and requires user
+ 		// intervention. There's likely little data that can be recovered anyway.
+-		if err := h.loadWAL(wlog.NewReader(sr), syms, multiRef, mmappedChunks, oooMmappedChunks); err != nil {
++		if err := h.loadWAL(wlog.NewReader(sr), syms, multiRef, mmappedChunks, oooMmappedChunks, lastMmapRef); err != nil {
+ 			return fmt.Errorf("backfill checkpoint: %w", err)
+ 		}
+ 		h.updateWALReplayStatusRead(startFrom)
+@@ -931,7 +931,7 @@ func (h *Head) Init(minValidTime int64) error {
+ 		if err != nil {
+ 			return fmt.Errorf("segment reader (offset=%d): %w", offset, err)
+ 		}
+-		err = h.loadWAL(wlog.NewReader(sr), syms, multiRef, mmappedChunks, oooMmappedChunks)
++		err = h.loadWAL(wlog.NewReader(sr), syms, multiRef, mmappedChunks, oooMmappedChunks, lastMmapRef)
+ 		if err := sr.Close(); err != nil {
+ 			h.logger.Warn("Error while closing the wal segments reader", "err", err)
+ 		}
+@@ -2474,8 +2474,9 @@ func (s *stripeSeries) gc(mint int64, minOOOMmapRef chunks.ChunkDiskMapperRef) (
+ 			s.decMmapReady(series.ref)
+ 		}
+ 
+-		if len(series.mmappedChunks) > 0 {
+-			seq, _ := series.mmappedChunks[0].ref.Unpack()
++		// Replay merges in-order chunks by timestamp, which need not match disk file order.
++		for _, ch := range series.mmappedChunks {
++			seq, _ := ch.ref.Unpack()
+ 			if seq < minMmapFile {
+ 				minMmapFile = seq
+ 			}
+diff --git a/tsdb/head_wal.go b/tsdb/head_wal.go
+index ae33a3dce..13fbe5cdd 100644
+--- a/tsdb/head_wal.go
++++ b/tsdb/head_wal.go
+@@ -78,7 +78,7 @@ func counterAddNonZero(v *prometheus.CounterVec, value float64, lvs ...string) {
+ 	}
+ }
+ 
+-func (h *Head) loadWAL(r *wlog.Reader, syms *labels.SymbolTable, multiRef map[chunks.HeadSeriesRef]chunks.HeadSeriesRef, mmappedChunks, oooMmappedChunks map[chunks.HeadSeriesRef][]*mmappedChunk) (err error) {
++func (h *Head) loadWAL(r *wlog.Reader, syms *labels.SymbolTable, multiRef map[chunks.HeadSeriesRef]chunks.HeadSeriesRef, mmappedChunks, oooMmappedChunks map[chunks.HeadSeriesRef][]*mmappedChunk, lastMmapRef chunks.ChunkDiskMapperRef) (err error) {
+ 	// Track number of missing series records that were referenced by other records.
+ 	unknownSeriesRefs := &seriesRefSet{refs: make(map[chunks.HeadSeriesRef]struct{}), mtx: sync.Mutex{}}
+ 	// Track number of different records that referenced a series we don't know about
+@@ -122,7 +122,7 @@ func (h *Head) loadWAL(r *wlog.Reader, syms *labels.SymbolTable, multiRef map[ch
+ 		processors[i].setup()
+ 
+ 		go func(wp *walSubsetProcessor) {
+-			missingSeries, unknownSamples, unknownHistograms, overlapping := wp.processWALSamples(h, mmappedChunks, oooMmappedChunks)
++			missingSeries, unknownSamples, unknownHistograms, overlapping := wp.processWALSamples(h, mmappedChunks, oooMmappedChunks, lastMmapRef)
+ 			unknownSeriesRefs.merge(missingSeries)
+ 			unknownSampleRefs.Add(unknownSamples)
+ 			mmapOverlappingChunks.Add(overlapping)
+@@ -526,7 +526,7 @@ Outer:
+ }
+ 
+ // resetSeriesWithMMappedChunks is only used during the WAL replay.
+-func (h *Head) resetSeriesWithMMappedChunks(mSeries *memSeries, mmc, oooMmc []*mmappedChunk, walSeriesRef chunks.HeadSeriesRef) (overlapped bool) {
++func (h *Head) resetSeriesWithMMappedChunks(mSeries *memSeries, mmc, oooMmc []*mmappedChunk, walSeriesRef chunks.HeadSeriesRef, lastMmapRef chunks.ChunkDiskMapperRef) (overlapped bool) {
+ 	if mSeries.ref != walSeriesRef {
+ 		// Checking if the new m-mapped chunks overlap with the already existing ones.
+ 		if len(mSeries.mmappedChunks) > 0 && len(mmc) > 0 {
+@@ -551,6 +551,14 @@ func (h *Head) resetSeriesWithMMappedChunks(mSeries *memSeries, mmc, oooMmc []*m
+ 		}
+ 	}
+ 
++	// Preserve chunks that were already on disk at startup, including those
++	// attached through another WAL reference. Chunks written during this replay
++	// belong to the obsolete generation and must still be discarded.
++	mmc = mergeReplayMmappedChunks(mSeries.mmappedChunks, mmc, lastMmapRef, false)
++	if mSeries.ooo != nil {
++		oooMmc = mergeReplayMmappedChunks(mSeries.ooo.oooMmappedChunks, oooMmc, lastMmapRef, true)
++	}
++
+ 	h.metrics.chunksCreated.Add(float64(len(mmc) + len(oooMmc)))
+ 	h.metrics.chunksRemoved.Add(float64(len(mSeries.mmappedChunks)))
+ 	h.metrics.chunks.Add(float64(len(mmc) + len(oooMmc) - len(mSeries.mmappedChunks)))
+@@ -600,6 +608,32 @@ func (h *Head) resetSeriesWithMMappedChunks(mSeries *memSeries, mmc, oooMmc []*m
+ 	return overlapped
+ }
+ 
++// mergeReplayMmappedChunks merges persisted chunks without modifying the replay
++// inventories. In-order chunks are sorted by time; OOO chunks by disk reference,
++// which is the order expected by OOO truncation.
++func mergeReplayMmappedChunks(existing, incoming []*mmappedChunk, lastMmapRef chunks.ChunkDiskMapperRef, ooo bool) []*mmappedChunk {
++	if len(existing) == 0 {
++		return incoming
++	}
++	merged := make([]*mmappedChunk, 0, len(existing)+len(incoming))
++	for _, c := range existing {
++		if c.ref.GreaterThan(lastMmapRef) {
++			continue
++		}
++		for len(incoming) > 0 && (ooo && incoming[0].ref < c.ref || !ooo && incoming[0].maxTime < c.minTime) {
++			merged = append(merged, incoming[0])
++			incoming = incoming[1:]
++		}
++		if len(incoming) > 0 && (c.ref == incoming[0].ref || !ooo && c.maxTime >= incoming[0].minTime) {
++			// Deduplicate disk references. For different in-order chunks with
++			// overlapping ranges, retain the preference for the later WAL definition.
++			continue
++		}
++		merged = append(merged, c)
++	}
++	return append(merged, incoming...)
++}
++
+ type walSubsetProcessor struct {
+ 	input            chan walSubsetProcessorInputItem
+ 	output           chan []record.RefSample
+@@ -773,7 +807,7 @@ func (h *Head) appendWALHistogram(ms *memSeries, st, t int64, hist *histogram.Hi
+ // processWALSamples adds the samples it receives to the head and passes
+ // the buffer received to an output channel for reuse.
+ // Samples before the minValidTime timestamp are discarded.
+-func (wp *walSubsetProcessor) processWALSamples(h *Head, mmappedChunks, oooMmappedChunks map[chunks.HeadSeriesRef][]*mmappedChunk) (map[chunks.HeadSeriesRef]struct{}, uint64, uint64, uint64) {
++func (wp *walSubsetProcessor) processWALSamples(h *Head, mmappedChunks, oooMmappedChunks map[chunks.HeadSeriesRef][]*mmappedChunk, lastMmapRef chunks.ChunkDiskMapperRef) (map[chunks.HeadSeriesRef]struct{}, uint64, uint64, uint64) {
+ 	defer close(wp.output)
+ 	defer close(wp.histogramsOutput)
+ 
+@@ -799,7 +833,7 @@ func (wp *walSubsetProcessor) processWALSamples(h *Head, mmappedChunks, oooMmapp
+ 		if in.existingSeries != nil {
+ 			mmc := mmappedChunks[in.walSeriesRef]
+ 			oooMmc := oooMmappedChunks[in.walSeriesRef]
+-			if h.resetSeriesWithMMappedChunks(in.existingSeries, mmc, oooMmc, in.walSeriesRef) {
++			if h.resetSeriesWithMMappedChunks(in.existingSeries, mmc, oooMmc, in.walSeriesRef, lastMmapRef) {
+ 				mmapOverlappingChunks++
+ 			}
+ 			continue

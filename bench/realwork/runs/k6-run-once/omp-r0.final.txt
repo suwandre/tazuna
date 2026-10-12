@@ -1,0 +1,22 @@
+`--once` now works on `k6 run`, `k6 cloud run`, `k6 cloud run --local-execution` and `k6 archive`. The new unit and integration tests pass, `internal/cmd` and `lib/executor` pass, and `go vet` is clean.
+
+I smoke-tested it with a built binary on a single-scenario script (`constant-vus`, 5 VUs, `exec: f`, `env`):
+- **`k6 run --once`:** ran 1 iteration of `f` as `shared-iterations`, 1 VU.
+- **`k6 archive --once`:** `metadata.json` holds the transformed scenario, with `exec` and `env` kept. `vus`, `iterations` and `duration` are null.
+- **`k6 run --once --vus 3`:** fails with `--once cannot be combined with --vus`.
+
+I did not exercise `k6 cloud run` against a real cloud, only the shared code path via archive.
+
+- **Flag:** `--once` is defined in `optionFlagSet`, so every command that uses that flag set gets it, including `k6 cloud upload`.
+- **Placement:** the transform runs in `consolidateDeriveAndValidateConfig`, right after config consolidation and before derivation. It replaces the consolidated scenarios, so archive and cloud upload send the transformed config.
+- **Transform:** `ApplyOnce` in `lib/executor/execution_config_shortcuts.go` does the work.
+  - It replaces the single scenario (or creates a `default` one) with `shared-iterations`, 1 VU, 1 iteration.
+  - It keeps name, `exec`, `env`, `tags` and scenario `options`.
+  - It drops `startTime`, `gracefulStop` and the executor-specific fields, and clears `vus`, `iterations`, `duration` and `stages`.
+- **Errors:**
+  - More than one scenario fails with `--once can run a single scenario only`.
+  - Combining `--once` with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>`.
+  - Both errors exit with the invalid-config exit code.
+- **Conflict check scope:** the combination error only looks at CLI flags. A script's own `options.iterations` or `options.vus` are discarded silently, since that is what the spec says `--once` should do.
+- **Tests:** `lib/executor/execution_config_once_test.go` covers `ApplyOnce`, and `internal/cmd/tests/cmd_run_once_test.go` covers `k6 run` end to end (no scenarios, a single scenario with `exec`/`env`/`tags`, multiple scenarios, and the four flag conflicts).
+- **Docs:** I did not update docs or the changelog.

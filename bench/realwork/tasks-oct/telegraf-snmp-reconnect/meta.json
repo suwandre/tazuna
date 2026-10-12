@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "inputs.snmp caches one connection per agent forever and Reconnect only connects when the socket is gone, so an SNMPv3 agent that restarts with a new engine ID is never rediscovered (gosnmp rejects the unauthenticated usmStatsUnknownEngineIDs report) and every gather fails until restart. Fix must close the agent connection after a failed gather (top-level fields and tables) while keeping the cached wrapper, make Reconnect reset the USM engine ID/boots/time before reconnecting a closed connection, and make Get/Walk reconnect a closed connection first. Hidden tests: wrapper unit test (open connection keeps engine ID; Close+Reconnect resets it and reconnects) and Gather test with a failing mock connection (must be closed, cache entry kept). The PR's snmp_lookup mock update ships with hidden so its package still compiles if Close joins the Connection interface.",
+  "merged_at": "2026-10-08T11:31:35Z",
+  "files_changed": 2,
+  "lines_changed": 34
+}

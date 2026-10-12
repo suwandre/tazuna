@@ -1,0 +1,25 @@
+I added `--once` to `k6 run`, `k6 cloud run` (with or without `--local-execution`), `k6 cloud upload` and `k6 archive`. The new tests pass, and `golangci-lint` reports no issues on `./internal/cmd/...`. Nothing is committed yet.
+
+**How it works**
+- **Where it hooks in:** the change is in `consolidateDeriveAndValidateConfig` (`internal/cmd/test_load.go`). It runs after all the config layers (file, script, env, CLI) are merged, and before thresholds are checked and scenarios are derived. No later layer can override it, which avoids the #883/#2529 class of problems.
+- **Archives:** the change is made to `consolidatedConfig`, so the archive that `archive` and `cloud` build, and send to the cloud, already contains the single 1 VU / 1 iteration scenario.
+- **The transform itself:** `applyOnceMode` is in `internal/cmd/config.go`.
+  - No scenarios, or an empty `{}`: you get a `default` scenario using `shared-iterations` with 1 VU and 1 iteration.
+  - One scenario: its name, `exec`, `env`, `tags` and `options` (browser) are kept, and the executor becomes `shared-iterations` with 1/1. Everything else is dropped, including `startTime`, `gracefulStop` and settings like `rate`.
+  - In both cases the top-level `vus`, `iterations`, `duration` and `stages` are cleared, so `options = { vus: 10, duration: '1m' }` doesn't trigger a conflict or a warning.
+  - More than one scenario fails with exit code `InvalidConfig`: `--once can run a single scenario only, but 2 were configured: first, second`.
+- **Conflicting flags:** `--once` with `--vus`, `--iterations`, `--duration` or `--stage` on the command line fails with `--once cannot be combined with --iterations` (or whichever flag it was).
+- **`setup()` and `teardown()`** still run normally; a test checks this.
+
+**Tests**
+- **Unit tests** in `internal/cmd/config_test.go` cover the transform and the conflicting-flag check.
+- **`TestArchiveOnce`** in `internal/cmd/archive_test.go` checks the scenarios written into the archive's `metadata.json`.
+- **New file `internal/cmd/tests/cmd_run_once_test.go`** runs the CLI end to end: no scenarios, one scenario (checking exec, env, tags and the executor type at runtime), multiple scenarios, each conflicting flag, and `k6 cloud run --once`, which checks the uploaded archive against the mock cloud server.
+
+**Unrelated test failures**
+- `internal/cmd/tests` failed once, in `TestEventSystemError`: a gRPC log line got mixed into the expected output. It passed on both reruns, with and without my changes.
+- `lib/executor` fails with `TestVUHandleStartStopRace` ("returning took too long") on a clean `master` too, so it isn't caused by this change.
+
+**Choices you may want to change**
+- Only command-line shortcut flags are rejected alongside `--once`. Shortcuts set through environment variables (e.g. `K6_ITERATIONS`) or in the script are silently dropped instead.
+- `k6 inspect` doesn't have the flag.

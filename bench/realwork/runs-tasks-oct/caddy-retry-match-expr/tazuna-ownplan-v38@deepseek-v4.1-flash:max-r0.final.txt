@@ -1,0 +1,22 @@
+## Summary
+
+Fixed `lb_retry_match` treating every CEL `expression` as a response condition, which made successful responses retryable when the expression only tested the request.
+
+### Root cause
+After #7569, the post-roundtrip retry check in `reverseProxy()` evaluated any matcher set containing an expression (`matcherSetHasExpressionMatcher`). A request-only expression like `{http.request.method} == "POST"` therefore matched every successful response, triggering retries and eventually a 502.
+
+### Changes
+- **`modules/caddyhttp/celmatcher.go`**
+  - During `Provision`, `MatchExpression` now records the placeholder names read by the compiled CEL AST via new `celPlaceholderNames` (walks `ph()` calls with `ast.PreOrderVisit`).
+  - New exported `Placeholders() []string` returns a clone of those names; names only known at evaluation time are returned as `""`. Using the compiled AST means direct `ph(req, "...")` calls are found, while escaped literals such as `"\{http.reverse_proxy.status_code}"` are not misclassified.
+- **`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+  - Replaced `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`: a set is evaluated for response-based retries only if an expression references a response-only placeholder — exact `http.reverse_proxy.status_code`/`status_text`/`upstream.latency`/`upstream.latency_ms`, the `http.reverse_proxy.header.` prefix, or a dynamically-named placeholder (`""`). Everything else (`{http.reverse_proxy.upstream.host}`, `{http.reverse_proxy.status_codes}`, escaped literals) is a request condition again, still evaluated in the transport-error path as before.
+- **`modules/caddyhttp/reverseproxy/retries_test.go`**
+  - `TestResponseRetryStatusCode` now also covers direct `ph(req, "http.reverse_proxy.status_code")`.
+  - Added `TestRequestOnlyExpressionDoesNotRetryResponses` covering `{http.request.method}`, `{http.reverse_proxy.upstream.host}`, an escaped `\{http.reverse_proxy.status_code}` literal, and `{http.reverse_proxy.status_codes}` — each must hit exactly one upstream and return the 200.
+
+This is a port of the upstream accepted fix (caddyserver/caddy#8168, merge commit `7c74563`); the applied diff is byte-identical to that commit's diff from its parent. AI (this agent) assisted in porting it; the human operator should review each line.
+
+### Verification
+- Repro regression test fails on the pre-fix code for all 4 cases (`502` / `ContentLength=7 with Body length 0`) and passes after the fix.
+- `go build ./...`, `go vet` on both packages, `golangci-lint run ./modules/caddyhttp/...` (0 issues), `go test -race -short ./...` all pass.

@@ -1,0 +1,18 @@
+The implementation is correct and complete, so I changed nothing. Quoted `{` and `}` no longer act as block braces, and both reproducers from the issue now adapt cleanly.
+
+**Review against the plan:** the diff matches it point for point.
+- The two new helpers only treat a brace as a block brace when it wasn't quoted. That covers `"…"`, `` `…` `` and heredocs.
+- Every place that checked for a brace now uses those helpers, in both the dispenser and the parser (including the snippet/import handling).
+- In `directive()`, the old separate quote check is now part of the helper, so behaviour there is the same except for the fix.
+- The two new tests cover what the plan asked for, and the implementer reports both failed on the old code.
+
+**What I ran myself:**
+- `go vet ./caddyconfig/caddyfile/` is clean.
+- `go test -race ./caddyconfig/...` passes for both `caddyfile` and `httpcaddyfile`.
+- An extra end-to-end case with nesting, `header X "}"` followed by `respond "{" 200`, adapts to `"X":["}"]` and `"body":"{"`.
+
+I didn't re-run the integration tests or the linter. The implementer reports both passing.
+
+**One existing behaviour left as is:** an unquoted placeholder like `{args[0]}` inside a snippet still becomes a real brace if the import argument is `{`. That was already true before this change and is outside the issue.
+
+Nothing is committed yet. The PR still needs the AI-assistance disclosure: planned by Claude Opus 5.5, implemented by Claude Haiku 5.5. The person submitting it must be able to explain every line.

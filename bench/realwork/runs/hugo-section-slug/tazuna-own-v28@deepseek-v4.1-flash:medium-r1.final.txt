@@ -1,0 +1,30 @@
+All tests pass. Here's a summary of the change:
+
+## Summary
+
+Added `slug` support for section, taxonomy, and term (branch) pages. A slug on a branch page now replaces the last path segment of that page's URL and cascades to all descendant pages, while `.Path` remains the logical path.
+
+### Changes
+
+- **`hugolib/page__paths.go`**
+  - Added `targetPathDir`, which computes the target directory for a page by walking the branch ancestor chain, substituting each branch page's `slug` where set. For regular pages it appends the page's container dir relative to its current section.
+  - Added `writeBranchDir` (recursive root-first walk with slug substitution) and `pathBase` helpers.
+  - Replaced the `Section` field in `TargetPathDescriptor` with `Dir: targetPathDir(p)`.
+
+- **`resources/page/page_paths.go`**
+  - `TargetPathDescriptor.Section *paths.Path` → `Dir string`.
+  - `CreateTargetPaths` now uses `d.Dir` for both non-page kinds and regular pages, removing the special-cased `d.Section.Base() != "/"` check (empty `Dir` is filtered by `Add`).
+
+- **`hugolib/page_permalink_test.go`**
+  - Added `TestSlugInBranchPagesCascadesToDescendants` (multilingual sections/taxonomy/terms, mixed slugged and non-slugged descendants) — see issue 14352.
+  - Added `TestSlugInBranchPagesDisablePathToLowerUglyURLs`.
+  - Added `BenchmarkTargetPathDir`.
+
+- **`docs/content/en/content-management/urls.md`**
+  - Corrected the note that said `slug` is not applicable to section/taxonomy/term pages (only `home` is excluded now).
+
+### Verification
+
+- `./check.sh ./hugolib/...` — gofmt, staticcheck, tests all pass.
+- `./check.sh ./resources/page/... ./common/paths/...` — all pass.
+- `go test ./hugolib/... ./resources/...` — clean, including the new tests and benchmark.

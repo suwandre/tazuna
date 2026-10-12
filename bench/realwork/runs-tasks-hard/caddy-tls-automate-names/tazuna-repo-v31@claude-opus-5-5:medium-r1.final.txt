@@ -1,0 +1,30 @@
+I added the `tls_automate_names` global option. Tests pass for `./caddyconfig/...` and `./caddytest/integration/`, and `golangci-lint` reports no issues in the changed package.
+
+```
+{
+	email nobody@example.com
+	tls_automate_names *.example.com
+}
+
+foo.example.com {
+	respond "Real site"
+}
+```
+
+**How it behaves:**
+- **Syntax:** it takes one or more names, and repeating the option appends to the list. Giving no names is an error. Names are lowercased and duplicates removed.
+- **Automation without a route:** the names go into the `tls` app's `automate` loader but get no route in the http app. With only the global options block, the output contains just the `tls` app.
+- **Same policy as a dummy site block:** the policy is built the same way as for a site block, so global TLS/ACME options apply to it. I checked your example against the `*.example.com {}` version and the `tls` automation policies come out identical; the only route is the one for `foo.example.com`.
+- **Internal issuer:** names like `localhost` or IP addresses get the internal issuer, unless an issuer is set globally (e.g. `local_certs` or `cert_issuer`). For these names it has to be set explicitly in the policy: for site blocks, auto-HTTPS adds it later, but auto-HTTPS never sees these names.
+- **Names that also have a site block:** they stay in the `automate` list. If the site block already has a policy, that policy is used and no second one is created. If the site is served only over `http://` it has no policy, so one is created and it gets a certificate.
+- **`auto_https off`:** the names are still listed for automation.
+
+**Where the changes are:**
+- `caddyconfig/httpcaddyfile/options.go`: registers the option and adds `parseOptTLSAutomateNames`.
+- `caddyconfig/httpcaddyfile/tlsapp.go`: adds `buildTLSAutomateNamesPolicies`, which `buildTLSApp` uses to add the policies and fill the `automate` loader.
+
+**Tests:**
+- `TestGlobalTLSAutomateNamesOption` in `options_test.go` adapts each config alongside an equivalent site-block config and checks that the automation policies match. It covers your example, appending across repeated lines, a name served only over `http://`, a site block whose own `tls` settings win, and the no-arguments error.
+- Three new adapt fixtures in `caddytest/integration/caddyfile_adapt/`: `global_options_tls_automate_names*.caddyfiletest`, covering the basic case, `auto_https off` with mixed public/internal names, and no site blocks. I generated their expected JSON with `caddy adapt` and then checked it by hand, so please look over those outputs too.
+
+Per the project's CONTRIBUTING rules, if you submit this you'll need to disclose that it was written with AI help (Claude Code, Claude Opus 5.5), and be able to explain every line yourself.

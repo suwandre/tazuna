@@ -1,0 +1,12 @@
+Parentheses around a single number in a duration position now survive `Expr.String()`. `go test` passes for `promql/parser`, `promql` and `web/...`. The `promql` and `web` runs were from before I edited the tests, which only touch `promql/parser`.
+
+Before the change, `(5)` collapsed to a bare `*NumberLiteral` with no place to record the parentheses. A parenthesised number is now stored as a `*DurationExpr` with `Wrapped: true`, the same node type the multi-term case already uses. The printer and the duration evaluator already handle that node, so I didn't touch them.
+
+- **Output:** `foo offset (5)`, `foo offset +(5)` and `foo[(5s)]` print with their parentheses. `foo offset -(5)` also keeps them. `+(5)` prints as `(5)`, so the unary plus is dropped, as it already is for `+(5m + 1m)`.
+- **Number formatting:** the inner number keeps its original text, so `(5)` stays `(5)`. It is not rewritten as `(5s)`.
+- **Zero or negative ranges:** `foo[(0)]` and `foo[(-5)]` still give "duration must be greater than 0". The new wrapped form would otherwise have skipped that check, so I added it to `positive_duration_expr`.
+- **Feature flag:** `-(5)` in an offset now also errors when `ExperimentalDurationExpr` is off, as `(5)` already did.
+- **Source of the change:** the grammar changes are in `generated_parser.y`, with a small helper in `parse.go`. I regenerated `generated_parser.y.go` with goyacc; the diff is small.
+- **Tests:** I added round-trip cases to `printer_test.go` for the issue's examples, `foo[(5):(1)]`, and the multi-term cases as controls. I updated the expected AST for `foo offset +(5)` and `foo offset -(5)` in `parse_test.go`, since they now carry an `OriginalOffsetExpr` instead of a plain offset.
+
+The web API's `translateDurationExpr` already exposes `wrapped` on duration expressions, so these now come through there as a `durationExpr` node instead of a plain `numberLiteral`.

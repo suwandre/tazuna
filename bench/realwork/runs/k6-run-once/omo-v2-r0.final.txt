@@ -1,0 +1,19 @@
+Ask: add `--once` to `k6 run`, `k6 cloud run` and `k6 archive`. It should run 1 VU and 1 iteration while keeping the scenario config. For you: `--once` works on `k6 run` and `k6 archive`, and the tests pass. I did not run `k6 cloud run` end to end: the flag is registered and goes through the same code, but no test covers it.
+
+I ran `go test` on `./internal/cmd/...` and `./lib/executor/`. They pass and gofmt is clean. All 9 new tests pass, including the 5 end-to-end ones that run the real `k6 run` and `k6 archive` commands. `gopls` isn't installed, so I had no LSP diagnostics. `go vet` and `go test` compiled everything cleanly.
+
+**Behavior**
+- **No scenarios:** the VU, iteration, duration and stage settings are replaced with 1 VU and 1 iteration. The usual default scenario then runs once.
+- **Single scenario:** it becomes a `shared-iterations` scenario with 1 VU and 1 iteration. It keeps `exec`, `env`, `tags` and `options` (including browser options). Everything else is dropped, including `startTime`, `gracefulStop` and the shortcut options.
+- **Multiple scenarios:** error `--once can run a single scenario only, but the script defines N scenarios`.
+- **With `--vus`, `--iterations`, `--duration` or `--stage`:** error `--once cannot be combined with --<flag>`. Both errors exit with the invalid-config code.
+- **Where it applies:** the change runs after config consolidation in `consolidateDeriveAndValidateConfig` (`test_load.go`), so it overrides script options and env vars. `k6 archive` and remote `k6 cloud run` embed the transformed config. `k6 cloud run --local-execution` takes the same path as `k6 run`.
+- **Where the flag is registered:** only on `run`, `archive` and `cloud run`. The legacy `k6 cloud` and `cloud upload` don't get it.
+
+**Code changes**
+- **Changes:** `internal/cmd/config.go` holds the flag set, the conflict check and `applyOnce`. The flag is wired in `run.go`, `archive.go` and `cloud_run.go`.
+- **Tests:** `internal/cmd/once_test.go` covers the flag check and the transformation. `internal/cmd/tests/cmd_run_once_test.go` covers the `run` and `archive` behavior.
+- **Not committed:** I didn't commit anything.
+
+**Follow-up (not done)**
+- `applyOnce` always sets `exec` explicitly, so a scenario without `exec` shows `"exec":"default"` in an archive made with `--once`. It's harmless but slightly noisy.

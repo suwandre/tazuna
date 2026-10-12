@@ -1,0 +1,13 @@
+`--once` is in as a flag on `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. New tests in `lib/executor` and `internal/cmd/tests` pass, along with the existing `internal/cmd/...` suite. The tests run through `k6 run`; I didn't run `cloud run` or `archive` with the flag, but they use the same code path.
+
+- **How it works:** the transform runs on the consolidated config, before shortcut derivation, in `consolidateDeriveAndValidateConfig` (`internal/cmd/test_load.go`). The scenario logic is `ApplyOnce` in the new `lib/executor/once.go`. Because it runs on the consolidated config, local run, cloud upload and archive all see the same result.
+- **No scenarios:** a `default` scenario is created with 1 VU and 1 iteration. `vus`, `iterations`, `duration` and `stages` from the script, env or config file are discarded.
+- **Single scenario:** the executor is replaced with `shared-iterations` at 1/1. The scenario name, `exec`, `env`, `tags` and `options` are kept; `startTime`, `gracefulStop` and other fields are dropped, as the spec says.
+- **Multiple scenarios:** fails with `--once can run a single scenario only`.
+- **Conflicts:** `--once` combined with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>`. Both errors use exit code `InvalidConfig`.
+- **Not covered:** the conflict check only looks at those four CLI flags. Setting `K6_ITERATIONS` or similar in the environment alongside `--once` is silently discarded rather than rejected.
+- **Where the flag is defined:** it's in `optionFlagSet`, so `k6 cloud upload` and the legacy `k6 cloud` command get it too, not only the commands you listed.
+- **Tests:**
+  - `lib/executor/once_test.go` covers `ApplyOnce` directly.
+  - `internal/cmd/tests/cmd_run_once_test.go` runs the real command: setup and teardown still run, the `exec` function, env and tags carry through, and the error cases fail as above.
+- **Release notes:** I didn't add one; there's no `upcoming` file in `release notes/`.

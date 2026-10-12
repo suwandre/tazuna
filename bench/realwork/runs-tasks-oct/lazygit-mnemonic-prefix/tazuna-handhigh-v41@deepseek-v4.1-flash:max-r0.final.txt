@@ -1,0 +1,28 @@
+## Summary
+
+Fixed hunk/line staging under `diff.mnemonicPrefix` (and hardened the related prefix handling). The working tree now matches upstream's fix (lazygit commit `47e7a13`, "Fix staging diff hunks when the diff.mnemonic git config is true (#6099)").
+
+### Changes
+
+**`pkg/commands/git_commands/git_command_builder.go`**
+- New `ParseableDiffPrefixes()` that overrides the user's `diff.noprefix`, `diff.srcPrefix` and `diff.dstPrefix` so every diff lazygit asks for carries a prefix it can strip. `diff.mnemonicPrefix` is deliberately left alone: its prefixes (`i/`, `w/`, …) are single path components and are handled by the parser, so the user still sees them.
+
+**Diff-producing commands** now call `ParseableDiffPrefixes()` instead of just `Config("diff.noprefix=false")`, and the working-tree/stash diff commands (which lacked it entirely) gained it: `commit.go`, `commit_file_loader.go`, `diff.go` (×3), `patch.go`, `stash.go`, `working_tree.go` (×2).
+
+**`pkg/gui/controllers/helpers/diff_line_parser.go`**
+- `stripDiffPathPrefix` now strips whatever single first path component git put in front (`a/`, `b/`, `i/`, `w/`, `c/`, …), leaving `/dev/null` alone and resolving a path with no `/` to `""` rather than guessing.
+- `pathFromDiffHeader` takes the path from `rename to`/`copy to` lines for sections without `---`/`+++` (mode changes, binary files, pure renames/copies). New `unquoteDiffPath` decodes those (git writes them without a prefix).
+- `pathFromDiffGitLine` no longer hardcodes `b/`: it splits the line at the space where both halves resolve to the same path after prefix stripping, so paths with spaces or ` w/` in them work.
+
+### Tests
+- New unit tests: `TestPathFromDiffGitLine`, `TestParseDiffLineFromBufferMnemonicPrefixes`, plus mnemonic/no-prefix/subdirectory cases in `TestPathFromDiffHeaderField`.
+- Four new integration tests: `stage_diff_lines_with_mnemonic_prefixes`, `stage_diff_lines_with_no_prefixes`, `stage_diff_lines_with_custom_prefixes`, `jump_to_a_file_of_a_stash_with_no_prefixes`.
+- Updated command-argv expectations in `commit_test.go`, `stash_test.go`, `working_tree_test.go`; `test_list.go` regenerated.
+
+### Verification
+- `go test ./... -short` — pass.
+- `go test` on `pkg/gui/controllers/helpers`, `pkg/commands/git_commands`, `pkg/commands/patch` — pass.
+- `go build ./...`, gofumpt check, `golangci-lint run` — clean; `go generate ./...` produces no extra diff.
+- The four new integration tests plus the `stage_*`, `filter_by_path/*`, `diff/*` and rename-related subsets pass. (The full e2e suite exceeds the tool's 120s per-command cap, so it wasn't run end-to-end.)
+
+I left the changes uncommitted, per the session instruction not to commit.

@@ -1,0 +1,31 @@
+All quality gates pass. Here's a summary of the change.
+
+## What changed
+
+Implemented the `tls_automate_names` Caddyfile global option, which decouples certificate automation from serving a name.
+
+**`caddyconfig/httpcaddyfile/options.go`**
+- Registered `tls_automate_names` and added `parseOptAutomateNames`. It requires at least one argument and appends to any previously parsed value, so repeating the option accumulates names across lines.
+
+**`caddyconfig/httpcaddyfile/tlsapp.go`**
+- In `buildTLSApp`, names from the option are appended to the `automate` certificate loader (deduplicated against loader names already collected from hostless-key blocks and `force_automate`), independent of `auto_https` state.
+- Public names get an automation policy built from the global options (`newBaseAutomationPolicy`), so global ACME/TLS options like `email` apply identically to a site block; internal-only names (`localhost`, IPs) are added to the internal-issuer policy, matching site-block treatment.
+- New helper `automationPolicyExistsForSubject` makes a listed name that already has a site-block policy keep that policy (its loader entry is retained, the site policy wins), avoiding the adapter's "hostname appears in more than one automation policy" error.
+- Extracted `hasGlobalACMEDefaults(options)` from the existing inline check so the new policy is created whenever global ACME defaults would later need to be filled in.
+- No route is added to the http app, and a config with only global options now adapts to a tls app alone.
+
+**Tests** — five new adaptation fixtures in `caddytest/integration/caddyfile_adapt/`:
+- `tls_automate_names.caddyfiletest` — global `email` produces the same TLS automation policy as a dummy `*.example.com {}` block, with no extra route
+- `tls_automate_names_without_site_block.caddyfiletest` — tls-app-only config
+- `tls_automate_names_internal.caddyfiletest` — internal issuer for `localhost`/IPs, repeated option appends
+- `tls_automate_names_existing_policy.caddyfiletest` — site block's own TLS policy wins, no duplicate/conflicting policy
+- `tls_automate_names_auto_https_off.caddyfiletest` — names still automated with `auto_https off`
+
+## Verification
+
+- `go build ./...`, `gofmt -l`, `go vet ./caddyconfig/httpcaddyfile/` — clean
+- `go test ./caddyconfig/...`, `go test ./caddytest/integration/` — pass
+- `go test -race -short ./...` — full suite passes
+- Manually adapted configs confirming: tls app output with `tls_automate_names *.example.com` is byte-identical to the dummy-site-block form (minus the route), the no-site-block form yields only a `tls` app, and an `http://`-only site still gets its listed name automated.
+
+Note: this is the upstream implementation of caddyserver/caddy#8015 (fetched as a patch from the merged commit), applied and re-verified here — AI-assisted, as that PR was.

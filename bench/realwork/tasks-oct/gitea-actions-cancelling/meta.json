@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "Cancelling a reusable-workflow caller writes the caller job cancelled while its child job is still cancelling (waiting for the runner), so the runner's acknowledgement never changes the caller and the run stays cancelling; force-cancelling a run whose jobs are all done settles the run but does not wake runs blocked on its concurrency group. Fix must let nested callers take their status only from their children during cancel (deepest-first) and emit the run's waiting jobs when a cancel only settles the run. Hidden tests: the PR's model test (nested caller/caller/child cancel then runner ack) and service test (force-cancel of a settled run triggers the job emitter).",
+  "merged_at": "2026-10-10T07:46:58Z",
+  "files_changed": 2,
+  "lines_changed": 38
+}

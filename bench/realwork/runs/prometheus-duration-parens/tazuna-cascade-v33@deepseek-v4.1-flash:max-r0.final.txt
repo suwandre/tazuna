@@ -1,0 +1,22 @@
+The fix is complete and verified. Summary:
+
+## What changed
+
+`promql/parser`: parentheses around a plain duration literal are now preserved on `Expr.String()` round-trip. A bare `*NumberLiteral` has no `Wrapped` flag, so parenthesised literals in duration-expression positions are lifted into a unary-plus `*DurationExpr` with `Wrapped: true` (unary plus is not printed, so it renders exactly as `(5)`).
+
+Files touched (6, +116/−30):
+
+- **`generated_parser.y` / `generated_parser.y.go`** — `paren_duration_expr` now delegates to a new `wrapParenDurationExpr` helper instead of only setting `Wrapped` when the payload is already a `*DurationExpr`. Regenerated with `goyacc -l`; output byte-identical to the hand-edited generated file.
+- **`parse.go`** — added `wrapParenDurationExpr(expr, start, end)`: sets `Wrapped` on a `*DurationExpr` payload, otherwise wraps the `*NumberLiteral` in a unary-plus `*DurationExpr` carrying the paren positions. `applyUnaryOpToDurationExpr` now routes the `wrapped` case through the same helper, so `foo offset -(5)` / `foo offset +(5)` become `-(5)` / `(5)` instead of folding the sign into the literal.
+- **`prettier.go`** — `DurationExpr.Pretty` no longer prints the unary `+` for the new unary-plus wrapper, matching `String()`.
+- **`parse_test.go` / `printer_test.go`** — updated AST expectations for `foo offset +(5)`, `foo offset -(5)` and added `foo offset (5)`, `foo[(5s)]`, plus round-trip cases `foo offset (5m)`, `foo[(5m):(1m)]`.
+
+All issue cases now round-trip: `foo offset (5)`, `foo offset +(5)` (canonicalises to `foo offset (5)`), `foo offset -(5)`, `foo offset (5m)`, `foo[(5s)]`.
+
+## Verification
+
+- `go test ./promql/... ./web/api/v1/... -count=1` — all pass.
+- `go test ./rules/...` — pass.
+- `go test ./util/fuzzing/... -fuzz FuzzParseExpr -fuzztime 15s` — pass (90k execs, no panics).
+- `gofmt -l`, `go vet`, and `golangci-lint run ./promql/parser/...` — clean.
+- Confirmed the generated parser reproduces identically via `make`-style `goyacc` invocation, and `git diff --check` is clean.

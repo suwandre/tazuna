@@ -1,0 +1,26 @@
+I added the `--once` flag. It's available on `k6 run`, `k6 cloud run` (with or without `--local-execution`) and `k6 archive`. The new tests and the full `internal/cmd` test suites pass, and `golangci-lint` reports no issues.
+
+**How it works**
+- **No scenarios:** the script runs `default()` with 1 VU and 1 iteration. Any `vus`, `iterations`, `duration` or `stages` from the script, config file or environment are dropped.
+- **One scenario:** the scenario keeps its name, `exec`, `env`, `tags` and `options` (including browser options). Its executor becomes `shared-iterations` with 1 VU and 1 iteration, and every other field is dropped, including `startTime` and `gracefulStop`.
+- **More than one scenario:** it stops with `--once can run a single scenario only, but N scenarios were configured` and the invalid-config exit code.
+- **With `--vus`, `--iterations`, `--duration` or `--stage`:** it stops with, for example, `--once cannot be combined with --iterations`.
+- `setup()` and `teardown()` still run.
+
+The change is applied right after the config layers are merged, before the shortcut options are turned into scenarios. That means `k6 archive` and `k6 cloud run` save and upload the single-run version of the config, not the original one.
+
+**Changes**
+- `internal/cmd/options.go`: the flag is defined in the option flags shared by run, cloud, cloud run, archive and cloud upload. So `k6 cloud upload` and the older `k6 cloud` command also accept it, which the proposal didn't list.
+- `internal/cmd/config.go`: two new functions, `getOnceFlag` (reads the flag and rejects the shortcut flags) and `applyOnce` (rewrites the scenarios).
+- `internal/cmd/test_load.go`: calls these after the configs are merged.
+
+**Tests**
+- `config_test.go`: unit tests for `TestApplyOnce` and `TestGetOnceFlag`.
+- `tests/cmd_run_test.go`: `TestRunOnce` runs the script end to end. It checks the default-function case (including that setup and teardown run), a single `constant-arrival-rate` scenario keeping its exec, env and tags, the multiple-scenario error, and the shortcut-flag error.
+- `archive_test.go`: `TestArchiveOnce` checks that the archive's saved options contain the rewritten scenario.
+
+**Notes**
+- The shortcut-flag check only looks at command-line flags. If `K6_ITERATIONS` is set in the environment, or `iterations` is in the script, it is dropped without an error.
+- `go test -race ./lib/executor/` fails in `TestVUHandleStartStopRace` ("returning took too long"). It fails the same way with my changes removed, so it's an existing problem, not caused by this work.
+
+I haven't created a branch or committed anything.

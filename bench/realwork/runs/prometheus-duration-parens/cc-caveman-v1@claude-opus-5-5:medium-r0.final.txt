@@ -1,0 +1,32 @@
+Parentheses around a plain duration literal now survive `Expr.String()` when `ExperimentalDurationExpr` is enabled. The `promql`, `promql/parser`, `promql/promqltest` and `web/api/v1` tests pass. I haven't committed anything.
+
+| Input | Before | After |
+|---|---|---|
+| `foo offset (5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -5s` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset 5m` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[5s]` | `foo[(5s)]` |
+
+`+(5)` prints as `(5)` because the printer already drops a unary `+` (it does the same for `+(5*2)`).
+
+**The fix:** a number literal has no `Wrapped` field, so in a duration position the parser now wraps a parenthesised literal in a unary-plus `DurationExpr` that has `Wrapped` set. The rest of the printer and the evaluator handle it like any other duration expression.
+
+**Behaviour changes to be aware of:**
+- **AST shape (flag on only):** for `foo offset (5)` or `foo[(5s)]`, the value is now stored as `OriginalOffsetExpr` / `RangeExpr`. It's no longer filled in as `OriginalOffset` / `Range`; the engine computes those at query time, as it already does for `(5m + 1m)`. I updated the two existing parse tests for `foo offset ±(5)` to match.
+- **Flag off: nothing changes.** `foo offset ±(5)` is accepted without the experimental flag, so in that case the literal is not wrapped and the offset is stored as a plain value. This avoids changing the AST for anyone not using duration expressions.
+- **Parse-time errors still fire:** "duration must be greater than 0" and division/modulo by zero now look through the wrapper. So `foo[(0)]`, `foo[-(5s)]` and `foo offset (4d/(0))` are still rejected when parsing, not at evaluation.
+- **Pretty-printer:** it used to print a unary `+` as `+5`, which would have turned `(5)` into `(+5)`. It now drops the `+` the same way `String()` does.
+
+**Changes:**
+- `promql/parser/parse.go`: two new helpers, `wrapDurationExpr` and `durationLiteralValue`, used by `applyUnaryOpToDurationExpr`.
+- `promql/parser/generated_parser.y`: updated rules, and I regenerated `generated_parser.y.go` with `make parser`.
+- `promql/parser/prettier.go`: the unary `+` fix.
+
+**Tests added:**
+- `printer_test.go`: round-trip cases for offsets, ranges, subquery steps, nested parens, and `(5m) + 1m`.
+- `parse_test.go`: the expected AST for `foo[(5s)]`, plus the error cases listed above.
+- `prettier_test.go`: one case.
+- `promqltest/testdata/duration_expression.test`: offsets `(4)`, `+(4s)` and `-(4)`, to check the evaluated results.
+
+`golangci-lint` reports 4 issues in `promql/`, the same count as before my change, and none of them are in the files I touched.

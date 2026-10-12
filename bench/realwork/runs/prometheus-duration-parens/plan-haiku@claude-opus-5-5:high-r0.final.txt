@@ -1,0 +1,17 @@
+I checked the work and changed nothing; the implementation is correct. (The diff attached to the implementer's summary came through empty, so I reviewed commit `7d12b07` directly.)
+
+**Checked:**
+- **Code:** the changes to `parse.go` and `generated_parser.y` match the plan exactly.
+- **Generated parser:** running goyacc v0.6.0 on the committed `.y` produces exactly the committed `generated_parser.y.go`.
+- **Tests:** both test files match the plan, and `go test ./promql/parser/` passes. The working tree is clean.
+- **Issue cases:** every case in the issue now prints its parentheses. `foo offset (5)` stays `(5)`, `foo offset -(5)` stays `-(5)`, `foo[(5s)]` stays `(5s)`, and the unary `+` is dropped, as it already was for `+(5*2)`. The cases that already round-tripped are unchanged.
+
+**Behaviour changes you should know about:**
+- **Non-literal results:** when the experimental flag is on, a parenthesised literal such as `foo offset (5m)` or `foo[(5s)]` no longer gives a plain offset or range at parse time. It's stored as an expression and turned into a number at query time, the same as `(5m + 1m)` already is.
+- **Negated ranges:** `foo[-(5)]` used to fail at parse time; now it fails when the query runs, as `foo[-(5s + 1s)]` already did. Parse-time errors are kept for `foo[(0)]` and for division or modulo by `(0)`.
+- **Flag off:** `foo offset +(5)` and `foo offset -(5)` still parse into a plain offset and print as `5s` and `-5s`, so the output still parses without the flag.
+
+**Left for you:**
+- **PR not opened:** it needs the issue number for the `Fixes #…` line and your go-ahead to push.
+- **Commit trailers:** the commit says "Co-Authored-By: Claude Haiku 5.5" (the model that wrote it). The sign-off is `Suwandre <suwandre@Mac.vodafone.ultrahub>`, a local machine address; you may want to amend it to your real email for the DCO check.
+- **Slow test suite:** the full `./promql/` tests need `-timeout 60m` because they take about 10 minutes, longer than Go's default limit. This was already the case before the change.

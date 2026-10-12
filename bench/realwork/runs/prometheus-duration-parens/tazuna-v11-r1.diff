@@ -1,0 +1,195 @@
+diff --git a/promql/parser/generated_parser.y b/promql/parser/generated_parser.y
+index da9bc93..165554c 100644
+--- a/promql/parser/generated_parser.y
++++ b/promql/parser/generated_parser.y
+@@ -1397,12 +1397,7 @@ duration_expr   : number_duration_literal
+ paren_duration_expr : LEFT_PAREN duration_expr RIGHT_PAREN
+                         {
+                             yylex.(*parser).experimentalDurationExpr($2.(Expr))
+-                            if durationExpr, ok := $2.(*DurationExpr); ok {
+-                                durationExpr.Wrapped = true
+-                                $$ = durationExpr
+-                                break
+-                            }
+-                            $$ = $2
++                            $$ = wrapParenthesisedDuration($2, $1, $3)
+                         }
+                 ;
+ 
+diff --git a/promql/parser/generated_parser.y.go b/promql/parser/generated_parser.y.go
+index 846d830..055f426 100644
+--- a/promql/parser/generated_parser.y.go
++++ b/promql/parser/generated_parser.y.go
+@@ -2541,12 +2541,7 @@ yydefault:
+ 		yyDollar = yyS[yypt-3 : yypt+1]
+ 		{
+ 			yylex.(*parser).experimentalDurationExpr(yyDollar[2].node.(Expr))
+-			if durationExpr, ok := yyDollar[2].node.(*DurationExpr); ok {
+-				durationExpr.Wrapped = true
+-				yyVAL.node = durationExpr
+-				break
+-			}
+-			yyVAL.node = yyDollar[2].node
++			yyVAL.node = wrapParenthesisedDuration(yyDollar[2].node, yyDollar[1].item, yyDollar[3].item)
+ 		}
+ 	}
+ 	goto yystack /* stack new state and value */
+diff --git a/promql/parser/parse.go b/promql/parser/parse.go
+index a56f16a..cc13bf1 100644
+--- a/promql/parser/parse.go
++++ b/promql/parser/parse.go
+@@ -1214,9 +1214,34 @@ func (p *parser) experimentalDurationExpr(e Expr) {
+ 	}
+ }
+ 
++// wrapParenthesisedDuration marks a parenthesised duration expression so that
++// the parentheses survive a round trip through Expr.String(). A
++// *NumberLiteral has no Wrapped field, so it is represented as a wrapped unary
++// plus *DurationExpr, which evaluates to the same value. Any other node is
++// returned as is, with Wrapped set for *DurationExpr nodes.
++func wrapParenthesisedDuration(expr Node, open, closing Item) Node {
++	switch e := expr.(type) {
++	case *DurationExpr:
++		e.Wrapped = true
++		return e
++	case *NumberLiteral:
++		return &DurationExpr{
++			Op:       ADD,
++			RHS:      e,
++			Wrapped:  true,
++			StartPos: open.Pos,
++			EndPos:   closing.PositionRange().End,
++		}
++	default:
++		return expr
++	}
++}
++
+ // applyUnaryOpToDurationExpr applies a unary operator to a duration expression
+ // node, which may be a *DurationExpr or a *NumberLiteral. When wrapped is true
+-// (parenthesised form), the Wrapped flag is set on *DurationExpr nodes.
++// (parenthesised form), the Wrapped flag is set on *DurationExpr nodes, and
++// *NumberLiteral nodes are converted to a wrapped *DurationExpr so that the
++// parentheses are preserved.
+ func (p *parser) applyUnaryOpToDurationExpr(op Item, expr Node, wrapped bool) Node {
+ 	switch e := expr.(type) {
+ 	case *DurationExpr:
+@@ -1232,6 +1257,22 @@ func (p *parser) applyUnaryOpToDurationExpr(op Item, expr Node, wrapped bool) No
+ 		}
+ 		return e
+ 	case *NumberLiteral:
++		if wrapped {
++			inner := &DurationExpr{
++				Op:       ADD,
++				RHS:      e,
++				Wrapped:  true,
++				StartPos: e.PosRange.Start,
++			}
++			if op.Typ == SUB {
++				return &DurationExpr{
++					Op:       SUB,
++					RHS:      inner,
++					StartPos: op.Pos,
++				}
++			}
++			return inner
++		}
+ 		if op.Typ == SUB {
+ 			e.Val *= -1
+ 		}
+diff --git a/promql/parser/parse_test.go b/promql/parser/parse_test.go
+index b1912e1..a1e242b 100644
+--- a/promql/parser/parse_test.go
++++ b/promql/parser/parse_test.go
+@@ -1713,11 +1713,33 @@ var testExpr = []struct {
+ 			PosRange: posrange.PositionRange{Start: 0, End: 14},
+ 		},
+ 	},
++	{
++		input: "foo offset (5)",
++		expected: &VectorSelector{
++			Name: "foo",
++			OriginalOffsetExpr: &DurationExpr{
++				Op:       ADD,
++				RHS:      &NumberLiteral{Val: 5, PosRange: posrange.PositionRange{Start: 12, End: 13}},
++				Wrapped:  true,
++				StartPos: 11,
++				EndPos:   14,
++			},
++			LabelMatchers: []*labels.Matcher{
++				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
++			},
++			PosRange: posrange.PositionRange{Start: 0, End: 14},
++		},
++	},
+ 	{
+ 		input: "foo offset +(5)",
+ 		expected: &VectorSelector{
+-			Name:           "foo",
+-			OriginalOffset: 5 * time.Second,
++			Name: "foo",
++			OriginalOffsetExpr: &DurationExpr{
++				Op:       ADD,
++				RHS:      &NumberLiteral{Val: 5, PosRange: posrange.PositionRange{Start: 13, End: 14}},
++				Wrapped:  true,
++				StartPos: 13,
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+@@ -1727,8 +1749,17 @@ var testExpr = []struct {
+ 	{
+ 		input: "foo offset -(5)",
+ 		expected: &VectorSelector{
+-			Name:           "foo",
+-			OriginalOffset: -5 * time.Second,
++			Name: "foo",
++			OriginalOffsetExpr: &DurationExpr{
++				Op: SUB,
++				RHS: &DurationExpr{
++					Op:       ADD,
++					RHS:      &NumberLiteral{Val: 5, PosRange: posrange.PositionRange{Start: 13, End: 14}},
++					Wrapped:  true,
++					StartPos: 13,
++				},
++				StartPos: 11,
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+diff --git a/promql/parser/printer_test.go b/promql/parser/printer_test.go
+index 8be35d9..6c17817 100644
+--- a/promql/parser/printer_test.go
++++ b/promql/parser/printer_test.go
+@@ -269,6 +269,31 @@ func TestExprString(t *testing.T) {
+ 		{
+ 			in: "foo offset -(step())",
+ 		},
++		{
++			in: "foo offset (5)",
++		},
++		{
++			in:  "foo offset +(5)",
++			out: "foo offset (5)",
++		},
++		{
++			in: "foo offset -(5)",
++		},
++		{
++			in: "foo offset (5m)",
++		},
++		{
++			in: "foo offset -(5m)",
++		},
++		{
++			in: "foo[(5)]",
++		},
++		{
++			in: "foo[(5s)]",
++		},
++		{
++			in: "foo[(5m):(1m)]",
++		},
+ 		{
+ 			in:  "foo offset +(5*2)",
+ 			out: "foo offset (5 * 2)",

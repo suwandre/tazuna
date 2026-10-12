@@ -1,0 +1,341 @@
+diff --git a/promql/parser/generated_parser.y b/promql/parser/generated_parser.y
+index da9bc93..28841cf 100644
+--- a/promql/parser/generated_parser.y
++++ b/promql/parser/generated_parser.y
+@@ -579,7 +579,7 @@ paren_expr      : LEFT_PAREN expr RIGHT_PAREN
+ 
+ positive_duration_expr : duration_expr
+                         {
+-                            if numLit, ok := $1.(*NumberLiteral); ok {
++                            if numLit, ok := durationLiteral($1); ok {
+                                 if numLit.Val <= 0 {
+                                     yylex.(*parser).addParseErrf(numLit.PositionRange(), "duration must be greater than 0")
+                                     $$ = &NumberLiteral{Val: 0} // Return 0 on error.
+@@ -1337,7 +1337,7 @@ duration_expr   : number_duration_literal
+                 | duration_expr DIV duration_expr
+                         {
+                         yylex.(*parser).experimentalDurationExpr($1.(Expr))
+-                        if nl, ok := $3.(*NumberLiteral); ok && nl.Val == 0 {
++                        if nl, ok := durationLiteral($3); ok && nl.Val == 0 {
+                                 yylex.(*parser).addParseErrf($2.PositionRange(), "division by zero")
+                                 $$ = &NumberLiteral{Val: 0}
+                                 break
+@@ -1347,7 +1347,7 @@ duration_expr   : number_duration_literal
+                 | duration_expr MOD duration_expr
+                         {
+                         yylex.(*parser).experimentalDurationExpr($1.(Expr))
+-                        if nl, ok := $3.(*NumberLiteral); ok && nl.Val == 0 {
++                        if nl, ok := durationLiteral($3); ok && nl.Val == 0 {
+                             yylex.(*parser).addParseErrf($2.PositionRange(), "modulo by zero")
+                             $$ = &NumberLiteral{Val: 0}
+                             break
+@@ -1397,12 +1397,7 @@ duration_expr   : number_duration_literal
+ paren_duration_expr : LEFT_PAREN duration_expr RIGHT_PAREN
+                         {
+                             yylex.(*parser).experimentalDurationExpr($2.(Expr))
+-                            if durationExpr, ok := $2.(*DurationExpr); ok {
+-                                durationExpr.Wrapped = true
+-                                $$ = durationExpr
+-                                break
+-                            }
+-                            $$ = $2
++                            $$ = wrapDurationExpr($2.(Node))
+                         }
+                 ;
+ 
+diff --git a/promql/parser/generated_parser.y.go b/promql/parser/generated_parser.y.go
+index 846d830..a33a2d6 100644
+--- a/promql/parser/generated_parser.y.go
++++ b/promql/parser/generated_parser.y.go
+@@ -1648,7 +1648,7 @@ yydefault:
+ 	case 85:
+ 		yyDollar = yyS[yypt-1 : yypt+1]
+ 		{
+-			if numLit, ok := yyDollar[1].node.(*NumberLiteral); ok {
++			if numLit, ok := durationLiteral(yyDollar[1].node); ok {
+ 				if numLit.Val <= 0 {
+ 					yylex.(*parser).addParseErrf(numLit.PositionRange(), "duration must be greater than 0")
+ 					yyVAL.node = &NumberLiteral{Val: 0} // Return 0 on error.
+@@ -2478,7 +2478,7 @@ yydefault:
+ 		yyDollar = yyS[yypt-3 : yypt+1]
+ 		{
+ 			yylex.(*parser).experimentalDurationExpr(yyDollar[1].node.(Expr))
+-			if nl, ok := yyDollar[3].node.(*NumberLiteral); ok && nl.Val == 0 {
++			if nl, ok := durationLiteral(yyDollar[3].node); ok && nl.Val == 0 {
+ 				yylex.(*parser).addParseErrf(yyDollar[2].item.PositionRange(), "division by zero")
+ 				yyVAL.node = &NumberLiteral{Val: 0}
+ 				break
+@@ -2489,7 +2489,7 @@ yydefault:
+ 		yyDollar = yyS[yypt-3 : yypt+1]
+ 		{
+ 			yylex.(*parser).experimentalDurationExpr(yyDollar[1].node.(Expr))
+-			if nl, ok := yyDollar[3].node.(*NumberLiteral); ok && nl.Val == 0 {
++			if nl, ok := durationLiteral(yyDollar[3].node); ok && nl.Val == 0 {
+ 				yylex.(*parser).addParseErrf(yyDollar[2].item.PositionRange(), "modulo by zero")
+ 				yyVAL.node = &NumberLiteral{Val: 0}
+ 				break
+@@ -2541,12 +2541,7 @@ yydefault:
+ 		yyDollar = yyS[yypt-3 : yypt+1]
+ 		{
+ 			yylex.(*parser).experimentalDurationExpr(yyDollar[2].node.(Expr))
+-			if durationExpr, ok := yyDollar[2].node.(*DurationExpr); ok {
+-				durationExpr.Wrapped = true
+-				yyVAL.node = durationExpr
+-				break
+-			}
+-			yyVAL.node = yyDollar[2].node
++			yyVAL.node = wrapDurationExpr(yyDollar[2].node.(Node))
+ 		}
+ 	}
+ 	goto yystack /* stack new state and value */
+diff --git a/promql/parser/parse.go b/promql/parser/parse.go
+index a56f16a..b1438cd 100644
+--- a/promql/parser/parse.go
++++ b/promql/parser/parse.go
+@@ -1214,15 +1214,51 @@ func (p *parser) experimentalDurationExpr(e Expr) {
+ 	}
+ }
+ 
++// wrapDurationExpr marks a parenthesised duration expression as wrapped so
++// that its parentheses are preserved when printed. A *NumberLiteral has no
++// Wrapped field, so it is wrapped in a unary ADD *DurationExpr instead.
++func wrapDurationExpr(expr Node) Node {
++	switch e := expr.(type) {
++	case *DurationExpr:
++		e.Wrapped = true
++		return e
++	case *NumberLiteral:
++		return &DurationExpr{
++			Op:       ADD,
++			RHS:      e,
++			Wrapped:  true,
++			StartPos: e.PosRange.Start,
++		}
++	default:
++		return expr
++	}
++}
++
++// durationLiteral returns the number literal of a duration expression node
++// that is either a *NumberLiteral or a parenthesised *NumberLiteral as
++// produced by wrapDurationExpr.
++func durationLiteral(expr Node) (*NumberLiteral, bool) {
++	switch e := expr.(type) {
++	case *NumberLiteral:
++		return e, true
++	case *DurationExpr:
++		if e.Wrapped && e.Op == ADD && e.LHS == nil {
++			return durationLiteral(e.RHS)
++		}
++	}
++	return nil, false
++}
++
+ // applyUnaryOpToDurationExpr applies a unary operator to a duration expression
+ // node, which may be a *DurationExpr or a *NumberLiteral. When wrapped is true
+-// (parenthesised form), the Wrapped flag is set on *DurationExpr nodes.
++// (parenthesised form), the expression is wrapped via wrapDurationExpr so its
++// parentheses are preserved.
+ func (p *parser) applyUnaryOpToDurationExpr(op Item, expr Node, wrapped bool) Node {
++	if wrapped {
++		expr = wrapDurationExpr(expr)
++	}
+ 	switch e := expr.(type) {
+ 	case *DurationExpr:
+-		if wrapped {
+-			e.Wrapped = true
+-		}
+ 		if op.Typ == SUB {
+ 			return &DurationExpr{
+ 				Op:       SUB,
+diff --git a/promql/parser/parse_test.go b/promql/parser/parse_test.go
+index b1912e1..9bb15b7 100644
+--- a/promql/parser/parse_test.go
++++ b/promql/parser/parse_test.go
+@@ -1716,8 +1716,16 @@ var testExpr = []struct {
+ 	{
+ 		input: "foo offset +(5)",
+ 		expected: &VectorSelector{
+-			Name:           "foo",
+-			OriginalOffset: 5 * time.Second,
++			Name: "foo",
++			OriginalOffsetExpr: &DurationExpr{
++				Op: ADD,
++				RHS: &NumberLiteral{
++					Val:      5,
++					PosRange: posrange.PositionRange{Start: 13, End: 14},
++				},
++				Wrapped:  true,
++				StartPos: 13,
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+@@ -1727,8 +1735,20 @@ var testExpr = []struct {
+ 	{
+ 		input: "foo offset -(5)",
+ 		expected: &VectorSelector{
+-			Name:           "foo",
+-			OriginalOffset: -5 * time.Second,
++			Name: "foo",
++			OriginalOffsetExpr: &DurationExpr{
++				Op:       SUB,
++				StartPos: 11,
++				RHS: &DurationExpr{
++					Op: ADD,
++					RHS: &NumberLiteral{
++						Val:      5,
++						PosRange: posrange.PositionRange{Start: 13, End: 14},
++					},
++					Wrapped:  true,
++					StartPos: 13,
++				},
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+@@ -5167,6 +5187,72 @@ var testExpr = []struct {
+ 			},
+ 		},
+ 	},
++	{
++		input: `foo[(5s)]`,
++		expected: &MatrixSelector{
++			VectorSelector: &VectorSelector{
++				Name: "foo",
++				LabelMatchers: []*labels.Matcher{
++					MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
++				},
++				PosRange: posrange.PositionRange{Start: 0, End: 3},
++			},
++			RangeExpr: &DurationExpr{
++				Op: ADD,
++				RHS: &NumberLiteral{
++					Val:      5,
++					Duration: true,
++					PosRange: posrange.PositionRange{Start: 5, End: 7},
++				},
++				Wrapped:  true,
++				StartPos: 5,
++			},
++			EndPos: 9,
++		},
++	},
++	{
++		input: `foo[(0)]`,
++		fail:  true,
++		errors: ParseErrors{
++			ParseErr{
++				PositionRange: posrange.PositionRange{Start: 5, End: 6},
++				Err:           errors.New(`duration must be greater than 0`),
++				Query:         `foo[(0)]`,
++			},
++		},
++	},
++	{
++		input: `foo[1m/(0)]`,
++		fail:  true,
++		errors: ParseErrors{
++			ParseErr{
++				PositionRange: posrange.PositionRange{Start: 6, End: 7},
++				Err:           errors.New(`division by zero`),
++				Query:         `foo[1m/(0)]`,
++			},
++			ParseErr{
++				PositionRange: posrange.PositionRange{Start: 0, End: 0}, // FIXME: this position looks wrong.
++				Err:           errors.New(`duration must be greater than 0`),
++				Query:         `foo[1m/(0)]`,
++			},
++		},
++	},
++	{
++		input: `foo[1m%(0)]`,
++		fail:  true,
++		errors: ParseErrors{
++			ParseErr{
++				PositionRange: posrange.PositionRange{Start: 6, End: 7},
++				Err:           errors.New(`modulo by zero`),
++				Query:         `foo[1m%(0)]`,
++			},
++			ParseErr{
++				PositionRange: posrange.PositionRange{Start: 0, End: 0}, // FIXME: this position looks wrong.
++				Err:           errors.New(`duration must be greater than 0`),
++				Query:         `foo[1m%(0)]`,
++			},
++		},
++	},
+ 	{
+ 		input: `foo[5s%0d]`,
+ 		fail:  true,
+diff --git a/promql/parser/printer_test.go b/promql/parser/printer_test.go
+index 8be35d9..e6c0194 100644
+--- a/promql/parser/printer_test.go
++++ b/promql/parser/printer_test.go
+@@ -269,6 +269,37 @@ func TestExprString(t *testing.T) {
+ 		{
+ 			in: "foo offset -(step())",
+ 		},
++		{
++			in: "foo offset (5)",
++		},
++		{
++			in:  "foo offset +(5)",
++			out: "foo offset (5)",
++		},
++		{
++			in: "foo offset -(5)",
++		},
++		{
++			in: "foo offset (5m)",
++		},
++		{
++			in: "foo offset -(5m)",
++		},
++		{
++			in: "foo[(5s)]",
++		},
++		{
++			in: "foo[-(5s)]",
++		},
++		{
++			in: "foo[(5s) + 1s]",
++		},
++		{
++			in: "foo[1m:(10s)]",
++		},
++		{
++			in: "foo[(5m)] offset (1m)",
++		},
+ 		{
+ 			in:  "foo offset +(5*2)",
+ 			out: "foo offset (5 * 2)",
+diff --git a/promql/promqltest/testdata/duration_expression.test b/promql/promqltest/testdata/duration_expression.test
+index d135d62..3d70ced 100644
+--- a/promql/promqltest/testdata/duration_expression.test
++++ b/promql/promqltest/testdata/duration_expression.test
+@@ -13,6 +13,12 @@ eval instant at 50m changes(http_requests[30m])
+ 	{path="/bar"} 4
+ 	{path="/biz"} 0
+ 
++# Test parenthesised duration literal: [(30m)]
++eval instant at 50m changes(http_requests[(30m)])
++	{path="/foo"} 3
++	{path="/bar"} 4
++	{path="/biz"} 0
++
+ # Test addition in duration: [26m+4m]
+ eval instant at 50m changes(http_requests[26m+4m])
+ 	{path="/foo"} 3
+@@ -144,6 +150,12 @@ eval instant at 1000s metric1_total offset (-2 * 2)
+ eval instant at 1000s metric1_total offset -4
+   metric1_total{} 100
+ 
++eval instant at 1000s metric1_total offset (4)
++  metric1_total{} 99
++
++eval instant at 1000s metric1_total offset -(4)
++  metric1_total{} 100
++
+ eval instant at 1000s metric1_total offset (-2 ^ 2)
+   metric1_total{} 100
+ 

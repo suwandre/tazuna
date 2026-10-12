@@ -1,0 +1,10 @@
+Setting `slug` on a section, taxonomy or term page now changes that page's URL and the URLs of everything under it, so you no longer need `url` plus `[[cascade]]`. The Go tests for `./hugolib/...` and `./resources/...` pass, and `./check.sh` passes on those packages. I didn't run the full `./check.sh` across the whole repo, and I haven't committed anything.
+
+**How it works:**
+- `hugolib/page__paths.go`: a new helper, `sectionBaseWithSlugs`, works out a section's path by going up through its parent sections. At each level where a slug is set, the slug replaces that directory name. Directories without an `_index` file are kept as they are, and slugs are looked up separately for each language.
+- `resources/page/page_paths.go`: `TargetPathDescriptor` has a new field, `Dir`. When a slug applies, `Dir` is used instead of the usual directory, both for section-type pages and for the folder part of regular pages' paths.
+- If a section has a pattern in the `[permalinks]` config, that pattern still takes priority over the slug.
+
+**Test:** `TestSlugInSectionTaxonomyAndTerm` in `hugolib/page_permalink_test.go` covers the example from the issue. Without slugs you get `/help/` and `/help/how-to-frob/`; with them, `/es/ayuda/` and `/es/ayuda/como-frobear/`. It also checks regular pages, folders without an `_index`, nested sections, and a taxonomy with a slugged term (`/es/etiquetas/fu/`).
+
+**Not handled:** the `:section` and `:sections` tokens in `[permalinks]` patterns still use the original directory names, not the slugs. I'd do that as a follow-up if you want it.

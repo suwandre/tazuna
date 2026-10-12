@@ -1,0 +1,17 @@
+Setting `slug` in a section, taxonomy or term `_index.md` now works like renaming that directory. It changes the URL of the section itself and of every page below it. Your example gives `/help/`, `/help/how-to-frob/`, `/es/ayuda/` and `/es/ayuda/como-frobear/`. The new test passes, and so does the full `./check.sh` (gofmt, staticcheck and all tests).
+
+**How it works:**
+- `resources/page/page_paths.go`: `TargetPathDescriptor` has a new `Dir` field. When it's set, it is used in place of the directory taken from the file path.
+- `hugolib/page__paths.go`: a new `sectionDirWithSlugs` walks up from the page's current section through its parents and puts each section's slug in place of its directory name. `Dir` is only set when at least one section in that chain has a slug, so sites that don't use section slugs get exactly the same URLs as before.
+- A `url` in front matter or a permalink config still takes precedence over the slug.
+
+**Test:** `TestSlugInSectionTaxonomyAndTermPages` in `hugolib/page_permalink_test.go` covers:
+- your example;
+- pages directly in a slugged section;
+- pages in a plain folder under a slugged section that has no `_index.md`;
+- nested sections, with and without their own slug;
+- taxonomy and term slugs.
+
+A bundle resource with no language in its file name (e.g. `data.txt`) is still published under the first language's path (`/help/how-to-frob/data.txt`), not under the slugged Spanish path. A page `slug` already behaves this way today, so I didn't change it. A language-specific resource such as `data.es.txt` does go under `/es/ayuda/como-frobear/`.
+
+Nothing is committed.

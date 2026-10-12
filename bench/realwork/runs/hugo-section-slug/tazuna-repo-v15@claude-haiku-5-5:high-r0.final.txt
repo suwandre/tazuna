@@ -1,0 +1,15 @@
+The full `./check.sh` is still running in the background, and the monitor will report when the log gets its exit marker. Nothing else is left to do until it finishes.
+
+Status so far:
+
+- **Fix:** section, taxonomy, and term `slug` now change the output path of the page and all its descendants, per language. The change is in `hugolib/page__paths.go`. When no ancestor has a slug, the path is untouched and nothing is re-parsed.
+- **Tests:** new `hugolib/slug_integration_test.go` with three integration tests: localized section/page/taxonomy/term, nested sections, and `disablePathToLower` with a mixed-case slug. All pass. The test for the new behavior failed before the fix.
+- **Package tests:** `go test` passes for `./hugolib/...`, `./resources/page/...`, and `./common/paths/...`. `./check.sh ./hugolib/...` passes, including gofmt and staticcheck.
+- **Docs:** `urls.md`, `front-matter.md`, and `multilingual.md` no longer say `slug` is inapplicable to section, taxonomy, and term pages.
+
+Two things to report:
+
+- A page-level `slug: ".."` already produces `/help/../` on the unchanged code. Section slugs now behave the same way. I did not change this; it's a separate validation question.
+- Sites that already set `slug` in a section, taxonomy, or term front matter will see those URLs change after this lands, since that field was previously ignored there.
+
+I'll report the full check result when the monitor fires.

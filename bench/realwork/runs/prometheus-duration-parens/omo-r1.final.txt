@@ -1,0 +1,22 @@
+Ask: fix `(N)` being dropped on `Expr.String()` round-trip in offset and range positions, with tests. Wanted: parentheses around a plain duration literal survive. For you: fixed, and `go test ./promql/parser/ ./promql/` both pass.
+
+Ask: parentheses lost around a plain duration literal on round-trip. Wanted: they survive `String()`, with tests. For you: done, and every case from the issue table now round-trips (`foo offset +(5)` prints as `foo offset (5)`, since the existing `+(5m+1m)` handling also drops the plus). Now: nothing open. Next: nothing.
+
+**What changed (all in `promql/parser/`)**
+- **Root cause:** `(5)` in a duration position collapsed to a bare `*NumberLiteral`. The offset and range rules then turned it into a plain `time.Duration`, so the parens were gone before printing.
+- **`NumberLiteral`:** it now has a `Wrapped` field, and `String()` prints the parens when it is set.
+- **Grammar:** `generated_parser.y` sets `Wrapped` on a parenthesised literal. Where a rule needs a `*DurationExpr` (offset, range, subquery), a wrapped literal gets a unary-plus `DurationExpr` around it.
+- **`parse.go`:** `applyUnaryOpToDurationExpr` keeps the parens for `-(5)`, giving `DurationExpr{SUB, RHS: (5)}` so it prints as `-(5)`.
+- **`generated_parser.y.go`:** regenerated with goyacc. The conflict count matches the baseline (96 shift/reduce, 345 reduce/reduce).
+
+**Side effect:** `foo[5s * (2)]` had the same bug, and it is fixed too.
+
+**Changed AST:** `foo offset (5)` now sets `OriginalOffsetExpr` instead of `OriginalOffset`. I updated the existing `foo offset +(5)` and `foo offset -(5)` parse tests to expect that, and added a `foo offset (5)` case.
+
+**Tests:** I added printer round-trip cases for `foo offset (5)`, `+(5)`, `-(5)`, `(5m)`, `foo[(5s)]`, `foo[(5s):(1s)]` and `foo[5s * (2)]`. `gofmt` and `go vet` are clean.
+
+**Behaviour change:** `foo[-(5)]` still errors, but only at evaluation time (`duration must be greater than 0`), where before it errored at parse time. `-(5m+1m)` already behaved this way.
+
+The `index out of range` panic text in the parser test output comes from `TestRecoverParserRuntime`, which triggers that panic on purpose, and the test passes.
+
+I did not commit anything. A commit needs `-s`, and the PR description needs the `release-notes` block, for example `[BUGFIX] PromQL: Preserve parentheses around plain duration literals in offset and range expressions.`

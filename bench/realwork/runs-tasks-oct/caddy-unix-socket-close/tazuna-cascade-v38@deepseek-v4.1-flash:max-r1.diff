@@ -1,0 +1,430 @@
+diff --git a/listen_unix.go b/listen_unix.go
+index d60f69f..5194066 100644
+--- a/listen_unix.go
++++ b/listen_unix.go
+@@ -27,8 +27,10 @@ import (
+ 	"io/fs"
+ 	"net"
+ 	"os"
++	"runtime"
+ 	"slices"
+ 	"strconv"
++	"strings"
+ 	"sync"
+ 	"sync/atomic"
+ 	"syscall"
+@@ -50,6 +52,7 @@ func reuseUnixSocket(network, addr string) (any, error) {
+ 		if err != nil {
+ 			return nil, err
+ 		}
++		defer socketFile.Close()
+ 
+ 		// use copied fd to make new Listener or PacketConn, then replace
+ 		// it in the map so that future copies always come from the most
+@@ -64,7 +67,11 @@ func reuseUnixSocket(network, addr string) (any, error) {
+ 				return nil, err
+ 			}
+ 			unixSocket.count.Add(1)
+-			unixSockets[socketKey] = &unixListener{ln.(*net.UnixListener), socketKey, unixSocket.count}
++			unixSockets[socketKey] = &unixListener{
++				UnixListener: ln.(*net.UnixListener),
++				mapKey:       socketKey,
++				count:        unixSocket.count,
++			}
+ 
+ 		case *unixConn:
+ 			pc, err := net.FilePacketConn(socketFile)
+@@ -72,11 +79,18 @@ func reuseUnixSocket(network, addr string) (any, error) {
+ 				return nil, err
+ 			}
+ 			unixSocket.count.Add(1)
+-			unixSockets[socketKey] = &unixConn{pc.(*net.UnixConn), socketKey, unixSocket.count}
++			unixSockets[socketKey] = &unixConn{
++				UnixConn: pc.(*net.UnixConn),
++				mapKey:   socketKey,
++				count:    unixSocket.count,
++			}
+ 		}
+ 
+ 		return unixSockets[socketKey], nil
+ 	}
++	if isAbstractUnixSocket(addr) {
++		return nil, nil
++	}
+ 
+ 	// from what I can tell after some quick research, it's quite common for programs to
+ 	// leave their socket file behind after they close, so the typical pattern is to
+@@ -167,7 +181,7 @@ func listenReusable(ctx context.Context, lnKey string, network, address string,
+ 			if unix, ok := ln.(*net.UnixConn); ok {
+ 				cnt := new(atomic.Int32)
+ 				cnt.Store(1)
+-				ln = &unixConn{unix, lnKey, cnt}
++				ln = &unixConn{UnixConn: unix, mapKey: lnKey, count: cnt}
+ 				unixSockets[lnKey] = ln.(*unixConn)
+ 			}
+ 		}
+@@ -184,7 +198,7 @@ func listenReusable(ctx context.Context, lnKey string, network, address string,
+ 				unix.SetUnlinkOnClose(false)
+ 				cnt := new(atomic.Int32)
+ 				cnt.Store(1)
+-				ln = &unixListener{unix, lnKey, cnt}
++				ln = &unixListener{UnixListener: unix, mapKey: lnKey, count: cnt}
+ 				unixSockets[lnKey] = ln.(*unixListener)
+ 			}
+ 		}
+@@ -219,52 +233,62 @@ type unixListener struct {
+ 	*net.UnixListener
+ 	mapKey string
+ 	count  *atomic.Int32
++	closed atomic.Bool
+ }
+ 
+ func (uln *unixListener) Close() error {
++	if !uln.closed.CompareAndSwap(false, true) {
++		return net.ErrClosed
++	}
++	unixSocketsMu.Lock()
++	defer unixSocketsMu.Unlock()
++
++	var name string
++	if addr := uln.Addr(); addr != nil {
++		name = addr.String()
++	}
+ 	newCount := uln.count.Add(-1)
++	err := uln.UnixListener.Close()
+ 	if newCount == 0 {
+-		file, err := uln.File()
+-		var name string
+-		if err == nil {
+-			name = file.Name()
++		delete(unixSockets, uln.mapKey)
++		if name != "" && !isAbstractUnixSocket(name) {
++			_ = syscall.Unlink(name)
+ 		}
+-		defer func() {
+-			unixSocketsMu.Lock()
+-			delete(unixSockets, uln.mapKey)
+-			unixSocketsMu.Unlock()
+-			if err == nil {
+-				_ = syscall.Unlink(name)
+-			}
+-		}()
+ 	}
+-	return uln.UnixListener.Close()
++	return err
+ }
+ 
+ type unixConn struct {
+ 	*net.UnixConn
+ 	mapKey string
+ 	count  *atomic.Int32
++	closed atomic.Bool
+ }
+ 
+ func (uc *unixConn) Close() error {
++	if !uc.closed.CompareAndSwap(false, true) {
++		return net.ErrClosed
++	}
++	unixSocketsMu.Lock()
++	defer unixSocketsMu.Unlock()
++
++	var name string
++	if addr := uc.LocalAddr(); addr != nil {
++		name = addr.String()
++	}
+ 	newCount := uc.count.Add(-1)
++	err := uc.UnixConn.Close()
+ 	if newCount == 0 {
+-		file, err := uc.File()
+-		var name string
+-		if err == nil {
+-			name = file.Name()
++		delete(unixSockets, uc.mapKey)
++		if name != "" && !isAbstractUnixSocket(name) {
++			_ = syscall.Unlink(name)
+ 		}
+-		defer func() {
+-			unixSocketsMu.Lock()
+-			delete(unixSockets, uc.mapKey)
+-			unixSocketsMu.Unlock()
+-			if err == nil {
+-				_ = syscall.Unlink(name)
+-			}
+-		}()
+ 	}
+-	return uc.UnixConn.Close()
++	return err
++}
++
++func isAbstractUnixSocket(name string) bool {
++	return (runtime.GOOS == "linux" || runtime.GOOS == "android") && strings.HasPrefix(name, "@")
+ }
+ 
+ func (uc *unixConn) Unwrap() net.PacketConn {
+diff --git a/listen_unix_close_test.go b/listen_unix_close_test.go
+new file mode 100644
+index 0000000..e2938bc
+--- /dev/null
++++ b/listen_unix_close_test.go
+@@ -0,0 +1,261 @@
++// Copyright 2015 Matthew Holt and The Caddy Authors
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++//
++//     http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++//go:build unix && !solaris
++
++package caddy
++
++import (
++	"context"
++	"errors"
++	"io"
++	"net"
++	"os"
++	"path/filepath"
++	"runtime"
++	"sync"
++	"testing"
++	"time"
++)
++
++// newTempUnixSocketPath returns a short path suitable for a unix socket.
++// The path of t.TempDir() can exceed the sun_path size limit on some systems.
++func newTempUnixSocketPath(t *testing.T) string {
++	t.Helper()
++	f, err := os.CreateTemp("", "caddy-sock-*")
++	if err != nil {
++		t.Fatal(err)
++	}
++	path := f.Name()
++	if err := f.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if err := os.Remove(path); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = os.Remove(path) })
++	return path
++}
++
++// TestUnixSocketUnlinksOnlyAfterLastHolderCloses verifies that closing one of
++// several holders of a reusable unix socket keeps the socket and its file
++// alive, and that the file is only unlinked when the last holder closes.
++func TestUnixSocketUnlinksOnlyAfterLastHolderCloses(t *testing.T) {
++	for _, network := range []string{"unix", "unixgram"} {
++		t.Run(network, func(t *testing.T) {
++			socketPath := newTempUnixSocketPath(t)
++			na := NetworkAddress{Network: network, Host: socketPath}
++
++			first, err := na.Listen(context.Background(), 0, net.ListenConfig{})
++			if err != nil {
++				t.Fatalf("first listen: %v", err)
++			}
++			second, err := na.Listen(context.Background(), 0, net.ListenConfig{})
++			if err != nil {
++				_ = first.(io.Closer).Close()
++				t.Fatalf("second listen: %v", err)
++			}
++
++			// Closing the first holder must not remove the file while the
++			// second holder is still using the socket.
++			if err := first.(io.Closer).Close(); err != nil {
++				t.Fatalf("closing first holder: %v", err)
++			}
++			if _, err := os.Stat(socketPath); err != nil {
++				t.Fatalf("socket file removed while second holder was open: %v", err)
++			}
++
++			// Closing the last holder must unlink the file immediately.
++			if err := second.(io.Closer).Close(); err != nil {
++				t.Fatalf("closing second holder: %v", err)
++			}
++			if _, err := os.Stat(socketPath); !errors.Is(err, os.ErrNotExist) {
++				t.Fatalf("socket file not unlinked after last holder closed: %v", err)
++			}
++
++			// Dialing the path must now fail instead of hanging.
++			client, err := net.DialTimeout(network, socketPath, 500*time.Millisecond)
++			if err == nil {
++				_ = client.Close()
++				t.Fatal("dialing a closed socket succeeded")
++			}
++		})
++	}
++}
++
++// TestUnixSocketDoubleCloseDoesNotReleaseSibling verifies that a second Close
++// of the same listener or conn reports net.ErrClosed and does not decrement
++// the reference count again, which would strand the sibling's reference.
++func TestUnixSocketDoubleCloseDoesNotReleaseSibling(t *testing.T) {
++	t.Run("unix", func(t *testing.T) {
++		socketPath := newTempUnixSocketPath(t)
++		na := NetworkAddress{Network: "unix", Host: socketPath}
++
++		firstAny, err := na.Listen(context.Background(), 0, net.ListenConfig{})
++		if err != nil {
++			t.Fatal(err)
++		}
++		first := firstAny.(deleteListener).Listener.(*unixListener)
++		secondAny, err := na.Listen(context.Background(), 0, net.ListenConfig{})
++		if err != nil {
++			t.Fatal(err)
++		}
++		second := secondAny.(*unixListener)
++		t.Cleanup(func() {
++			_ = first.Close()
++			_ = second.Close()
++		})
++
++		if err := first.Close(); err != nil {
++			t.Fatalf("first Close: %v", err)
++		}
++		if err := first.Close(); !errors.Is(err, net.ErrClosed) {
++			t.Fatalf("second Close error = %v; want net.ErrClosed", err)
++		}
++		if got := first.count.Load(); got != 1 {
++			t.Fatalf("reference count = %d; want 1", got)
++		}
++		if _, err := os.Stat(socketPath); err != nil {
++			t.Fatalf("socket file removed while second reference was open: %v", err)
++		}
++		if err := second.Close(); err != nil {
++			t.Fatalf("closing second reference: %v", err)
++		}
++	})
++
++	t.Run("unixgram", func(t *testing.T) {
++		socketPath := newTempUnixSocketPath(t)
++		na := NetworkAddress{Network: "unixgram", Host: socketPath}
++
++		firstAny, err := na.Listen(context.Background(), 0, net.ListenConfig{})
++		if err != nil {
++			t.Fatal(err)
++		}
++		first := firstAny.(deletePacketConn).PacketConn.(*unixConn)
++		secondAny, err := na.Listen(context.Background(), 0, net.ListenConfig{})
++		if err != nil {
++			t.Fatal(err)
++		}
++		second := secondAny.(*unixConn)
++		t.Cleanup(func() {
++			_ = first.Close()
++			_ = second.Close()
++		})
++
++		if err := first.Close(); err != nil {
++			t.Fatalf("first Close: %v", err)
++		}
++		if err := first.Close(); !errors.Is(err, net.ErrClosed) {
++			t.Fatalf("second Close error = %v; want net.ErrClosed", err)
++		}
++		if got := first.count.Load(); got != 1 {
++			t.Fatalf("reference count = %d; want 1", got)
++		}
++		if _, err := os.Stat(socketPath); err != nil {
++			t.Fatalf("socket file removed while second reference was open: %v", err)
++		}
++		if err := second.Close(); err != nil {
++			t.Fatalf("closing second reference: %v", err)
++		}
++	})
++}
++
++// TestUnixSocketCloseRaceWithRelisten mimics a config reload: a new listener is
++// created on the same path while the old one is closing. The socket must be
++// left working with its file in place for the new listener.
++func TestUnixSocketCloseRaceWithRelisten(t *testing.T) {
++	for _, network := range []string{"unix", "unixgram"} {
++		t.Run(network, func(t *testing.T) {
++			socketPath := newTempUnixSocketPath(t)
++			na := NetworkAddress{Network: network, Host: socketPath}
++
++			for i := 0; i < 20; i++ {
++				oldLn, err := na.Listen(context.Background(), 0, net.ListenConfig{})
++				if err != nil {
++					t.Fatalf("iteration %d: initial listen: %v", i, err)
++				}
++
++				var (
++					wg        sync.WaitGroup
++					newLn     any
++					listenErr error
++				)
++				wg.Add(2)
++				go func() {
++					defer wg.Done()
++					_ = oldLn.(io.Closer).Close()
++				}()
++				go func() {
++					defer wg.Done()
++					newLn, listenErr = na.Listen(context.Background(), 0, net.ListenConfig{})
++				}()
++				wg.Wait()
++
++				if listenErr != nil {
++					t.Fatalf("iteration %d: relisten: %v", i, listenErr)
++				}
++				if _, err := os.Stat(socketPath); err != nil {
++					t.Fatalf("iteration %d: socket file missing after relisten: %v", i, err)
++				}
++				if network == "unix" {
++					client, err := net.DialTimeout("unix", socketPath, time.Second)
++					if err != nil {
++						t.Fatalf("iteration %d: dialing relistened socket: %v", i, err)
++					}
++					_ = client.Close()
++				}
++				if err := newLn.(io.Closer).Close(); err != nil {
++					t.Fatalf("iteration %d: closing new listener: %v", i, err)
++				}
++			}
++		})
++	}
++}
++
++// TestUnixSocketAbstractDoesNotUnlinkPath verifies that closing an abstract
++// socket (Linux only) never unlinks a filesystem path of the same name.
++func TestUnixSocketAbstractDoesNotUnlinkPath(t *testing.T) {
++	if runtime.GOOS != "linux" {
++		t.Skip("abstract unix sockets are Linux-specific")
++	}
++
++	for _, network := range []string{"unix", "unixgram"} {
++		t.Run(network, func(t *testing.T) {
++			f, err := os.CreateTemp(".", "@caddy-abstract-*")
++			if err != nil {
++				t.Fatal(err)
++			}
++			name := filepath.Base(f.Name())
++			if err := f.Close(); err != nil {
++				t.Fatal(err)
++			}
++			t.Cleanup(func() { _ = os.Remove(name) })
++
++			ln, err := (NetworkAddress{Network: network, Host: name}).Listen(
++				context.Background(), 0, net.ListenConfig{})
++			if err != nil {
++				t.Fatal(err)
++			}
++			if _, err := os.Stat(name); err != nil {
++				t.Fatalf("abstract listen removed filesystem path: %v", err)
++			}
++			if err := ln.(io.Closer).Close(); err != nil {
++				t.Fatalf("closing abstract socket: %v", err)
++			}
++			if _, err := os.Stat(name); err != nil {
++				t.Fatalf("abstract close removed filesystem path: %v", err)
++			}
++		})
++	}
++}

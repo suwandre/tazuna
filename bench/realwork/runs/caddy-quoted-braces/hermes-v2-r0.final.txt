@@ -1,0 +1,12 @@
+Quoted `"{"` and `"}"` no longer count as block delimiters. The Caddyfile from the issue now adapts, with `"body": "{"`.
+
+I ran `go test ./caddyconfig/...` and the Caddyfile adapt integration test (`go test ./caddytest/integration -run TestCaddyfileAdaptToJSON`). Both pass. I didn't run the full `./...` suite, `golangci-lint`, or `-race`. The new dispenser test fails with the parse/dispenser fix stashed, so it does exercise the bug.
+
+The lexer already recorded whether a token was quoted, but the parser and dispenser compared only the token text. I added `Token.isOpenBrace()` and `Token.isCloseBrace()` in `caddyconfig/caddyfile/lexer.go`. They match only unquoted braces. I switched every brace comparison in `parse.go` and `dispenser.go` to use them. That covers argument reading, `NextBlock`, snippet and named-route block capture, import block capture, and nesting tracking in `doImport`. I also dropped a `wasQuoted == 0` check in `directive()` that the helper now makes redundant.
+
+Tests I added:
+- **`parse_test.go`:** cases for quoted braces as arguments at top level, inside a site block, and inside a nested block.
+- **`dispenser_test.go`:** `TestDispenser_QuotedBracesAreNotBlocks`.
+- **`caddytest/integration/caddyfile_adapt/quoted_braces.caddyfiletest`:** an adapt test for the issue's case. I generated its expected JSON from actual `caddy adapt` output, then confirmed it matches.
+
+I left alone the address check that rejects site addresses ending in `{`, and the `{}` handling.

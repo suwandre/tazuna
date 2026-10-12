@@ -1,0 +1,13 @@
+`k6 run --once` now runs the script with 1 VU and 1 iteration and keeps a single scenario's config. The new tests and the existing `internal/cmd` and `internal/cmd/tests` suites pass. I did not run it against the cloud service, and I did not add a test for `k6 archive` or `k6 cloud run`.
+
+- **How it works:** the flag is registered in `optionFlagSet()` in `options.go`. `k6 run`, `cloud run` (including `--local-execution`), `cloud upload` and `archive` all register that flag set, so all of them get `--once`. The transform runs in `consolidateDeriveAndValidateConfig` (`test_load.go`), right after config consolidation. That way archives and cloud uploads carry the same scenario, and the script's own options can't override it.
+- **No scenarios:** you get a `default` scenario with 1 VU and 1 iteration. Any top-level `vus`, `iterations`, `duration` or `stages` are cleared.
+- **One scenario:** the scenario keeps its name, `exec`, `env`, `tags` and scenario options (such as browser options). The executor becomes `shared-iterations` with 1 VU and 1 iteration, and other fields like `startTime` are dropped.
+- **Several scenarios:** it fails with `--once can run a single scenario only`.
+- **Combined with `--vus`, `--duration`, `--iterations` or `--stage`:** it fails with `--once cannot be combined with --<flag>`.
+- **Exit code:** both errors exit with the invalid-config code.
+- **Code:** the logic is in the new `internal/cmd/once.go`.
+- **Help text:** I added a `--once` example to the `k6 run` help.
+- **Tests:** `once_test.go` covers the transform directly (no scenarios, one scenario, several scenarios). `tests/cmd_run_once_test.go` runs `k6 run --once` end to end. It checks that `setup`, `default` and `teardown` each run once, and that `exec`, `env` and `tags` survive. It also checks the two error cases.
+
+If the script sets `exec: 'default'` explicitly on a scenario, the transformed scenario no longer carries it. That's equivalent, because `default` is the fallback.

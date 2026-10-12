@@ -1,0 +1,14 @@
+I added `--once` to `k6 run`, `k6 archive` and `k6 cloud run`, including `--local-execution`. The `internal/cmd` tests pass. I haven't run the flag against a real script or `k6 cloud run`, and I didn't add cases to the config-consolidation tests that drive each command.
+
+- **No scenarios:** the script runs `default()` as a shared-iterations scenario with 1 VU and 1 iteration. Any script-level `vus`, `duration` or `stages` are dropped.
+- **Single scenario:** the scenario keeps its name, `exec`, `env`, `tags` and options. Its executor becomes shared-iterations with 1 VU and 1 iteration. Start time and graceful stop are dropped.
+- **Multiple scenarios:** it fails with `--once can run a single scenario only`, followed by the scenario names.
+- **Combined with `--vus`, `--iterations`, `--duration` or `--stage`:** it fails with `--once cannot be combined with --<flag>`.
+
+Both errors exit with the invalid-config code.
+
+The change runs right after config consolidation and before the shortcut-derivation step, so `archive` and the cloud commands see the transformed scenarios. `setup()` and `teardown()` are untouched.
+
+The logic is in `internal/cmd/once.go`, with unit tests in `internal/cmd/once_test.go`. The flag is registered in `internal/cmd/options.go`, and the hook is in `internal/cmd/test_load.go`.
+
+One gap against your proposal: for a script with no scenarios, the top-level `Options` has no `exec` field, so there was nothing to carry over there.

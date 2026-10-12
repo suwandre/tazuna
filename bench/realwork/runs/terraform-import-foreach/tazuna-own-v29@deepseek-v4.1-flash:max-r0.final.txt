@@ -1,0 +1,21 @@
+All stable. Final summary of the change:
+
+## Summary
+
+**Root cause:** `refactoring.FindImportStatements` returned an `addrs.Map` keyed by `addrs.ConfigResource` — the *config-level* address, which has no instance key. For a `for_each`/`count` resource, all of its import blocks map to the same key, so `Map.Put` silently overwrote every block after the first. The surviving block was whichever was visited first (declaration order), exactly as reported.
+
+**Fix** (`internal/refactoring/import_statement.go`):
+- Changed `FindImportStatements` to return `[]ImportStatement` instead of a map, so multiple import blocks targeting different instances of the same config object all survive.
+- Kept the documented cross-module override semantic: a parent module's import block still takes precedence over a child module's block for the same config object, now implemented by filtering out child statements whose target is already claimed by a parent.
+- Updated the single caller in `internal/terraform/context_plan.go`.
+
+**Follow-on fix** (`internal/terraform/transform_config.go`): with multiple targets now reaching the config-generation path for an unclaimed resource, the transformer added one graph node per target, causing a `panic: expansion already registered` (verified by reverting the guard). Nodes are now grouped by config resource and receive all of the corresponding targets — this also removes the now-obsolete `TODO` about duplicate nodes.
+
+**Tests:**
+- `internal/refactoring/import_statement_test.go` + `testdata/import-statements/`: unit test asserting both `for_each` instance imports survive and parent-override still holds.
+- `TestContextApply_import_multiple_blocks_for_each` in `context_apply_import_test.go`: end-to-end plan+apply of the reported config (extended to cover `count`), verifying all 4 resources are imported with the right IDs. Confirmed it fails on the old code (`got 1 ([aaa]), want 2`).
+- `TestContext2Plan_importMultipleBlocksConfigGeneration` in `context_plan_import_test.go`: confirms the config-generation path reports diagnostics instead of panicking.
+
+**Changelog:** added `.changes/v1.17/BUG FIXES-20261009-000000.yaml` referencing issue 39010.
+
+**Verification:** `go test ./internal/refactoring/ ./internal/configs/... ./internal/terraform/` all pass; `go vet` clean; new tests pass repeatedly (`-count=5`/`-count=10`). The one failure in `./internal/command/` (`TestInit_providerLockFileReadonly`) is a pre-existing registry-checksum/network issue that also fails on a clean checkout.

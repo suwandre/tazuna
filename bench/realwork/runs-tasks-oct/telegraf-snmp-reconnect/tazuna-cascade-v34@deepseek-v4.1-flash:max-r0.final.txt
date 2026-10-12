@@ -1,0 +1,15 @@
+The three test packages now pass: `go test ./plugins/common/snmp/ ./plugins/inputs/snmp/ ./plugins/processors/snmp_lookup/ -count=1` is all ok, and `go vet ./plugins/inputs/snmp/` is clean.
+
+**Why it failed:** the reconnect change wasn't the cause. `TestSnmpInitGosmi` fails the same way with all changes stashed. It breaks because of where this checkout lives: the directory name contains a colon (`...deepseek-v4.1-flash:max-...`). gosmi splits MIB search paths on `:`, so the test's absolute path was cut in two and no MIB modules loaded. The test also didn't set a logger, so the first "couldn't load module" warning crashed on a nil logger instead of failing cleanly. The common package's tests escape this only because an earlier test loads the relative path `testdata` first and the result is cached.
+
+**Fix:** in `TestSnmpInitGosmi` (`plugins/inputs/snmp/snmp_test.go`), I switched to a relative path, as the common package's tests do, and added `Log: testutil.Logger{}`. No non-test code changed in this round. Outside of tests, a MIB path containing a colon still won't load; that limit comes from gosmi and I left it alone.
+
+**A slip on my side:** while debugging I ran `git checkout` on `snmp_test.go`, which also wiped the earlier model's test additions in that file. I restored them by re-applying that file's diff from the saved `git diff` output, and checked that it applied cleanly and those tests pass again.
+
+**The earlier model's fix, which I reviewed and kept:**
+- **Connection interface:** `snmp.Connection` now has a `Close()` method.
+- **Wrapper (`plugins/common/snmp/wrapper.go`):** closing a connection clears the discovered SNMPv3 engine ID, boots, time and derived keys, so the next connect starts a fresh engine discovery. `Get` and `Walk` reconnect first if the connection is closed, while an open connection keeps what it discovered.
+- **`inputs.snmp`:** if gathering the top-level fields or any table fails, that agent's connection is closed so the next gather reconnects. This also happens when `stop_on_error` is set.
+- **Tests:** they cover closing on error and leaving the connection alone on success, plus the test connection types in `inputs.snmp` and `snmp_lookup` gained a `Close()` method.
+
+Nothing was tested against a real SNMPv3 agent that changes its engine ID on reboot; the coverage is unit tests with mocked connections.

@@ -1,0 +1,532 @@
+diff --git a/hugolib/template_test.go b/hugolib/template_test.go
+index bb2f9da..6fefb82 100644
+--- a/hugolib/template_test.go
++++ b/hugolib/template_test.go
+@@ -586,3 +586,60 @@ page.html.d
+ 
+ 	b.AssertFileContent("public/p1/index.b", "page.html.b")
+ }
++
++func TestReturnEarly(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "http://example.com/"
++-- layouts/_partials/early.html --
++{{ if . }}{{ return "early" }}{{ end }}
++{{ return "late" }}
++-- layouts/_partials/nested.html --
++{{ range seq 5 }}{{ if eq . 3 }}{{ return . }}{{ end }}{{ end }}
++{{ return "none" }}
++-- layouts/_partials/novalue.html --
++Before.{{ if . }}{{ return }}{{ end }}After.
++-- layouts/_partials/nil.html --
++Output.{{ return nil }}
++-- layouts/_partials/falsy.html --
++{{ return false }}
++-- layouts/_partials/deferred.html --
++{{ return "x" }}Not rendered.
++-- layouts/home.html --
++early: {{ partial "early.html" true }}|{{ partial "early.html" false }}
++nested: {{ partial "nested.html" . }}
++novalue: {{ partial "novalue.html" true }}|{{ partial "novalue.html" false }}
++nil: {{ partial "nil.html" . }}|
++falsy: {{ partial "falsy.html" . }}
++deferred: {{ partial "deferred.html" . }}
++{{ if true }}Before return.{{ return }}{{ end }}
++After return.
++-- layouts/single.html --
++Single before.
++{{ with .Title }}{{ return }}{{ end }}
++Single after.
++-- content/p1.md --
++---
++title: P1
++---
++-- content/p2.md --
++---
++title: ""
++---
++`
++	b := Test(t, files)
++
++	b.AssertFileContent("public/index.html",
++		"early: early|late",
++		"nested: 3",
++		"novalue: Before.|Before.After.",
++		"nil: |",
++		"falsy: false",
++		"deferred: x",
++		"Before return.",
++		"! After return.",
++	)
++	b.AssertFileContent("public/p1/index.html", "Single before.", "! Single after.")
++}
+diff --git a/tpl/internal/go_templates/texttemplate/exec.go b/tpl/internal/go_templates/texttemplate/exec.go
+index eb67f04..737ee61 100644
+--- a/tpl/internal/go_templates/texttemplate/exec.go
++++ b/tpl/internal/go_templates/texttemplate/exec.go
+@@ -172,6 +172,8 @@ func errRecover(errp *error) {
+ 			*errp = err.Err // Strip the wrapper.
+ 		case ExecError:
+ 			*errp = err // Keep the wrapper.
++		case *ReturnError: // Added for Hugo.
++			*errp = err
+ 		default:
+ 			panic(e)
+ 		}
+diff --git a/tpl/internal/go_templates/texttemplate/hugo_template.go b/tpl/internal/go_templates/texttemplate/hugo_template.go
+index 37cd234..4483dca 100644
+--- a/tpl/internal/go_templates/texttemplate/hugo_template.go
++++ b/tpl/internal/go_templates/texttemplate/hugo_template.go
+@@ -15,6 +15,7 @@ package template
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"fmt"
+ 	"io"
+ 	"iter"
+@@ -93,6 +94,20 @@ func (t *executer) ExecuteWithContext(ctx context.Context, p Preparer, wr io.Wri
+ 	return tmpl.executeWithState(state, value)
+ }
+ 
++// ReturnError is a sentinel error used to return early from a template.
++// It's created by the "return" template function and trapped by the executer,
++// which then returns it to the caller of ExecuteWithContext.
++type ReturnError struct {
++	// Value is the optional value passed to return.
++	Value any
++	// HasValue reports whether a value was passed to return.
++	HasValue bool
++}
++
++func (e *ReturnError) Error() string {
++	return "return called outside of a template execution"
++}
++
+ // Prepare returns a template ready for execution.
+ func (t *Template) Prepare() (*Template, error) {
+ 	return t, nil
+@@ -296,6 +311,10 @@ func (s *state) evalCall(dot, fun reflect.Value, isBuiltin bool, node parse.Node
+ 	if name == "try" {
+ 		defer func() {
+ 			if r := recover(); r != nil {
++				// An early return is not an error.
++				if _, ok := r.(*ReturnError); ok {
++					panic(r)
++				}
+ 				// Cause: herrors.Cause(err)
+ 				if err, ok := r.(error); ok {
+ 					val = reflect.ValueOf(TryValue{Value: nil, Err: newErrorWithCause(err)})
+@@ -413,6 +432,11 @@ func (s *state) evalCall(dot, fun reflect.Value, isBuiltin bool, node parse.Node
+ 	// If we have an error that is not nil, stop execution and return that
+ 	// error to the caller.
+ 	if err != nil {
++		// Added for Hugo. Unwind the execution for an early return.
++		var returnErr *ReturnError
++		if errors.As(err, &returnErr) {
++			panic(returnErr)
++		}
+ 		s.at(node)
+ 		s.errorf("error calling %s: %w", name, err)
+ 	}
+diff --git a/tpl/internal/go_templates/texttemplate/hugo_template_test.go b/tpl/internal/go_templates/texttemplate/hugo_template_test.go
+index 920d96f..13ca462 100644
+--- a/tpl/internal/go_templates/texttemplate/hugo_template_test.go
++++ b/tpl/internal/go_templates/texttemplate/hugo_template_test.go
+@@ -93,3 +93,44 @@ Method: {{ .Hello1 "v1" }}
+ 	c.Assert(got, qt.Contains, "Map: av")
+ 	c.Assert(got, qt.Contains, "Method: v2 v1")
+ }
++
++func TestReturnError(t *testing.T) {
++	c := qt.New(t)
++
++	funcs := FuncMap{
++		"try": func(v any) any { return v },
++		"return": func(args ...any) (any, error) {
++			r := &ReturnError{}
++			if len(args) > 0 {
++				r.Value = args[0]
++				r.HasValue = true
++			}
++			return nil, r
++		},
++	}
++
++	execute := func(tmpl string) (string, error) {
++		templ, err := New("").Funcs(funcs).Parse(tmpl)
++		c.Assert(err, qt.IsNil)
++		var b bytes.Buffer
++		err = templ.Execute(&b, []int{1, 2, 3})
++		return b.String(), err
++	}
++
++	var returnErr *ReturnError
++
++	s, err := execute(`a{{ range . }}{{ if eq . 2 }}{{ return . }}{{ end }}{{ . }}{{ end }}b`)
++	c.Assert(err, qt.ErrorAs, &returnErr)
++	c.Assert(returnErr.Value, qt.Equals, 2)
++	c.Assert(returnErr.HasValue, qt.IsTrue)
++	c.Assert(s, qt.Equals, "a1")
++
++	s, err = execute(`a{{ return }}b`)
++	c.Assert(err, qt.ErrorAs, &returnErr)
++	c.Assert(returnErr.HasValue, qt.IsFalse)
++	c.Assert(s, qt.Equals, "a")
++
++	// try must not swallow an early return.
++	_, err = execute(`{{ with try (return 1) }}{{ end }}b`)
++	c.Assert(err, qt.ErrorAs, &returnErr)
++}
+diff --git a/tpl/partials/init.go b/tpl/partials/init.go
+index 7d45f0e..ffe28cd 100644
+--- a/tpl/partials/init.go
++++ b/tpl/partials/init.go
+@@ -43,9 +43,7 @@ func init() {
+ 			[][2]string{},
+ 		)
+ 
+-		// TODO(bep) we need the return to be a valid identifiers, but
+-		// should consider another way of adding it.
+-		ns.AddMethodMapping(func() string { return "" },
++		ns.AddMethodMapping(ctx.Return,
+ 			[]string{"return"},
+ 			[][2]string{},
+ 		)
+diff --git a/tpl/partials/partials.go b/tpl/partials/partials.go
+index be552ee..b114e00 100644
+--- a/tpl/partials/partials.go
++++ b/tpl/partials/partials.go
+@@ -19,7 +19,6 @@ import (
+ 	"context"
+ 	"fmt"
+ 	"html/template"
+-	"io"
+ 	"strings"
+ 	"time"
+ 
+@@ -91,16 +90,17 @@ type Namespace struct {
+ 	cachedPartials *partialCache
+ }
+ 
+-// contextWrapper makes room for a return value in a partial invocation.
+-type contextWrapper struct {
+-	Arg    any
+-	Result any
+-}
+-
+-// Set sets the return value and returns an empty string.
+-func (c *contextWrapper) Set(in any) string {
+-	c.Result = in
+-	return ""
++// Return stops the execution of the current template.
++// In a partial, the optional value is what the partial returns;
++// without a value, the output rendered so far is returned.
++// It works by returning a sentinel error that is trapped by the template executor.
++func (ns *Namespace) Return(args ...any) (any, error) {
++	ret := &texttemplate.ReturnError{}
++	if len(args) > 0 {
++		ret.Value = args[0]
++		ret.HasValue = true
++	}
++	return nil, ret
+ }
+ 
+ // Include executes the named partial.
+@@ -159,39 +159,22 @@ func (ns *Namespace) doInclude(ctx context.Context, key string, templ *tplimpl.T
+ 		data = dataList[0]
+ 	}
+ 
+-	info := templ.ParseInfo
+-
+-	var w io.Writer
+-
+-	if info.HasReturn {
+-
+-		// Wrap the context sent to the template to capture the return value.
+-		// Note that the template is rewritten to make sure that the dot (".")
+-		// and the $ variable points to Arg.
+-		data = &contextWrapper{
+-			Arg: data,
+-		}
++	b := bp.GetBuffer()
++	defer bp.PutBuffer(b)
+ 
+-		// We don't care about any template output.
+-		w = io.Discard
+-	} else {
+-		b := bp.GetBuffer()
+-		defer bp.PutBuffer(b)
+-		w = b
+-	}
+-
+-	if err := ns.deps.GetTemplateStore().ExecuteWithContextAndKey(ctx, key, templ, w, data); err != nil {
++	ret, err := ns.deps.GetTemplateStore().ExecuteWithContextAndKeyReturn(ctx, key, templ, b, data)
++	if err != nil {
+ 		return includeResult{err: err}
+ 	}
+ 
+ 	var result any
+ 
+-	if ctx, ok := data.(*contextWrapper); ok {
+-		result = ctx.Result
++	if ret != nil && ret.HasValue {
++		result = ret.Value
+ 	} else if _, ok := templ.Template.(*texttemplate.Template); ok {
+-		result = w.(fmt.Stringer).String()
++		result = b.String()
+ 	} else {
+-		result = template.HTML(w.(fmt.Stringer).String())
++		result = template.HTML(b.String())
+ 	}
+ 
+ 	return includeResult{
+diff --git a/tpl/templates/templates_integration_test.go b/tpl/templates/templates_integration_test.go
+index 479103d..8550046 100644
+--- a/tpl/templates/templates_integration_test.go
++++ b/tpl/templates/templates_integration_test.go
+@@ -277,7 +277,7 @@ P1.
+ 
+ 	b, err := hugolib.TestE(t, files)
+ 	b.Assert(err, qt.IsNotNil)
+-	b.Assert(err.Error(), qt.Contains, "wrong number of args for string: want 1 got 0")
++	b.Assert(err.Error(), qt.Contains, "error calling delimit: can't iterate over")
+ }
+ 
+ func TestPartialWithoutSuffixIssue13601(t *testing.T) {
+diff --git a/tpl/tplimpl/template_info.go b/tpl/tplimpl/template_info.go
+index 1696cc4..b0ae5e5 100644
+--- a/tpl/tplimpl/template_info.go
++++ b/tpl/tplimpl/template_info.go
+@@ -24,9 +24,6 @@ type ParseInfo struct {
+ 	// Set for partial templates with any {{ inner }} or {{ templates.Inner }}
+ 	HasPartialInner bool
+ 
+-	// Set for partials with a return statement.
+-	HasReturn bool
+-
+ 	// Config extracted from template.
+ 	Config ParseConfig
+ }
+diff --git a/tpl/tplimpl/templatestore.go b/tpl/tplimpl/templatestore.go
+index 4721c1f..efa4906 100644
+--- a/tpl/tplimpl/templatestore.go
++++ b/tpl/tplimpl/templatestore.go
+@@ -513,6 +513,14 @@ func (t *TemplateStore) ExecuteWithContext(ctx context.Context, ti *TemplInfo, w
+ }
+ 
+ func (t *TemplateStore) ExecuteWithContextAndKey(ctx context.Context, key string, ti *TemplInfo, wr io.Writer, data any) error {
++	// An early return is not an error here.
++	_, err := t.ExecuteWithContextAndKeyReturn(ctx, key, ti, wr, data)
++	return err
++}
++
++// ExecuteWithContextAndKeyReturn is like ExecuteWithContextAndKey, but also returns
++// the sentinel set if the template was left early with the return function.
++func (t *TemplateStore) ExecuteWithContextAndKeyReturn(ctx context.Context, key string, ti *TemplInfo, wr io.Writer, data any) (*texttemplate.ReturnError, error) {
+ 	defer func() {
+ 		ti.executionCounter.Add(1)
+ 		if ti.base != nil {
+@@ -538,7 +546,7 @@ func (t *TemplateStore) ExecuteWithContextAndKey(ctx context.Context, key string
+ 
+ 	const levelThreshold = 999
+ 	if level > levelThreshold {
+-		return fmt.Errorf("maximum template call stack size exceeded in %q", ti.Filename())
++		return nil, fmt.Errorf("maximum template call stack size exceeded in %q", ti.Filename())
+ 	}
+ 
+ 	if t.opts.Metrics != nil {
+@@ -547,9 +555,13 @@ func (t *TemplateStore) ExecuteWithContextAndKey(ctx context.Context, key string
+ 
+ 	execErr := t.storeSite.executer.ExecuteWithContext(ctx, ti, wr, data)
+ 	if execErr != nil {
+-		return t.addFileContext(ti, "execute of template failed", execErr)
++		var returnErr *texttemplate.ReturnError
++		if errors.As(execErr, &returnErr) {
++			return returnErr, nil
++		}
++		return nil, t.addFileContext(ti, "execute of template failed", execErr)
+ 	}
+-	return nil
++	return nil, nil
+ }
+ 
+ func (t *TemplateStore) GetFunc(name string) (reflect.Value, bool) {
+diff --git a/tpl/tplimpl/templatetransform.go b/tpl/tplimpl/templatetransform.go
+index bab71fe..f9e5840 100644
+--- a/tpl/tplimpl/templatetransform.go
++++ b/tpl/tplimpl/templatetransform.go
+@@ -32,9 +32,6 @@ type templateTransformContext struct {
+ 	configChecked bool
+ 
+ 	t *TemplInfo
+-
+-	// Store away the return node in partials.
+-	returnNode *parse.CommandNode
+ }
+ 
+ func (c templateTransformContext) getIfNotVisited(name string) *TemplInfo {
+@@ -84,7 +81,7 @@ func applyTemplateTransformers(
+ 		panic(fmt.Errorf("template %s not parsed", t))
+ 	}
+ 
+-	if err := c.applyTransformationsAndSetReturnWrapper(tree); err != nil {
++	if _, err := c.applyTransformations(tree.Root); err != nil {
+ 		return c, fmt.Errorf("failed to transform template %q: %w", t.Name(), err)
+ 	}
+ 
+@@ -99,12 +96,6 @@ func getParseTree(templ tpl.Template) *parse.Tree {
+ }
+ 
+ const (
+-	// We parse this template and modify the nodes in order to assign
+-	// the return value of a partial to a contextWrapper via Set. We use
+-	// "range" over a one-element slice so we can shift dot to the
+-	// partial's argument, Arg, while allowing Arg to be falsy.
+-	partialReturnWrapperTempl = `{{ $_hugo_dot := $ }}{{ $ := .Arg }}{{ range (slice .Arg) }}{{ $_hugo_dot.Set ("PLACEHOLDER") }}{{ end }}`
+-
+ 	doDeferTempl = `{{ doDefer ("PLACEHOLDER1") ("PLACEHOLDER2") }}`
+ 
+ 	// _pushPartialDecorator is always falsy.
+@@ -117,7 +108,6 @@ const (
+ )
+ 
+ var (
+-	partialReturnWrapper    *parse.ListNode
+ 	doDefer                 *parse.ListNode
+ 	popPartialDecorator     *parse.ListNode
+ 	pushPartialDecorator    *parse.ListNode
+@@ -125,13 +115,7 @@ var (
+ )
+ 
+ func init() {
+-	templ, err := texttemplate.New("").Parse(partialReturnWrapperTempl)
+-	if err != nil {
+-		panic(err)
+-	}
+-	partialReturnWrapper = templ.Tree.Root
+-
+-	templ, err = texttemplate.New("").Funcs(texttemplate.FuncMap{"doDefer": func(string, string) string { return "" }}).Parse(doDeferTempl)
++	templ, err := texttemplate.New("").Funcs(texttemplate.FuncMap{"doDefer": func(string, string) string { return "" }}).Parse(doDeferTempl)
+ 	if err != nil {
+ 		panic(err)
+ 	}
+@@ -156,37 +140,8 @@ func init() {
+ 	popPartialDecoratorElse = templ.Tree.Root
+ }
+ 
+-// wrapInPartialReturnWrapper copies and modifies the parsed nodes of a
+-// predefined partial return wrapper to insert those of a user-defined partial.
+-func (c *templateTransformContext) wrapInPartialReturnWrapper(n *parse.ListNode) *parse.ListNode {
+-	wrapper := partialReturnWrapper.CopyList()
+-	rangeNode := wrapper.Nodes[2].(*parse.RangeNode)
+-	retn := rangeNode.List.Nodes[0]
+-	setCmd := retn.(*parse.ActionNode).Pipe.Cmds[0]
+-	setPipe := setCmd.Args[1].(*parse.PipeNode)
+-	// Replace PLACEHOLDER with the real return value.
+-	// Note that this is a PipeNode, so it will be wrapped in parens.
+-	setPipe.Cmds = []*parse.CommandNode{c.returnNode}
+-	rangeNode.List.Nodes = append(n.Nodes, retn)
+-
+-	return wrapper
+-}
+-
+-func (c *templateTransformContext) applyTransformationsAndSetReturnWrapper(tree *parse.Tree) error {
+-	_, err := c.applyTransformations(tree.Root)
+-	if err != nil {
+-		return err
+-	}
+-	if c.returnNode != nil {
+-		// This is a partial with a return statement.
+-		c.t.ParseInfo.HasReturn = true
+-		tree.Root = c.wrapInPartialReturnWrapper(tree.Root)
+-	}
+-	return nil
+-}
+-
+ // applyTransformations does 2 things:
+-// 1) Parses partial return statement.
++// 1) Normalizes return statements.
+ // 2) Tracks template (partial) dependencies and some other info.
+ func (c *templateTransformContext) applyTransformations(n parse.Node) (bool, error) {
+ 	switch x := n.(type) {
+@@ -210,11 +165,8 @@ func (c *templateTransformContext) applyTransformations(n parse.Node) (bool, err
+ 		}
+ 	case *parse.PipeNode:
+ 		c.collectConfig(x)
+-		for i, cmd := range x.Cmds {
+-			keep, _ := c.applyTransformations(cmd)
+-			if !keep {
+-				x.Cmds = slices.Delete(x.Cmds, i, i+1)
+-			}
++		for _, cmd := range x.Cmds {
++			c.applyTransformations(cmd)
+ 		}
+ 
+ 	case *parse.CommandNode:
+@@ -223,7 +175,7 @@ func (c *templateTransformContext) applyTransformations(n parse.Node) (bool, err
+ 		}
+ 		c.collectInnerInShortcode(x)
+ 		c.collectInnerInPartial(x)
+-		keep := c.collectReturnNode(x)
++		c.normalizeReturn(x)
+ 
+ 		for _, elem := range x.Args {
+ 			switch an := elem.(type) {
+@@ -231,7 +183,6 @@ func (c *templateTransformContext) applyTransformations(n parse.Node) (bool, err
+ 				c.applyTransformations(an)
+ 			}
+ 		}
+-		return keep, c.err
+ 	}
+ 
+ 	return true, c.err
+@@ -355,7 +306,7 @@ func (c *templateTransformContext) handleWithPartial(withNode *parse.WithNode) {
+ 			return
+ 		}
+ 
+-		if err := cc.applyTransformationsAndSetReturnWrapper(tree); err != nil {
++		if _, err := cc.applyTransformations(tree.Root); err != nil {
+ 			c.err = fmt.Errorf("failed to transform internal partial decorator template %q: %w", internalPartialName, err)
+ 			return
+ 		}
+@@ -566,23 +517,25 @@ func (c *templateTransformContext) collectInnerInPartial(n *parse.CommandNode) {
+ 	}
+ }
+ 
+-func (c *templateTransformContext) collectReturnNode(n *parse.CommandNode) bool {
+-	if c.t.category != CategoryPartial || c.returnNode != nil {
+-		return true
+-	}
+-
++// normalizeReturn makes "return a b c" work as "return (a b c)",
++// i.e. what follows the return keyword is evaluated as one pipeline.
++func (c *templateTransformContext) normalizeReturn(n *parse.CommandNode) {
+ 	if len(n.Args) < 2 {
+-		return true
++		return
+ 	}
+ 
+ 	ident, ok := n.Args[0].(*parse.IdentifierNode)
+ 	if !ok || ident.Ident != "return" {
+-		return true
++		return
+ 	}
+ 
+-	c.returnNode = n
+-	// Remove the "return" identifiers
+-	c.returnNode.Args = c.returnNode.Args[1:]
++	if len(n.Args) == 2 {
++		// A single argument only needs wrapping if it's a function call, e.g. "return now".
++		if _, ok := n.Args[1].(*parse.IdentifierNode); !ok {
++			return
++		}
++	}
+ 
+-	return false
++	cmd := &parse.CommandNode{NodeType: parse.NodeCommand, Pos: n.Pos, Args: n.Args[1:]}
++	n.Args = []parse.Node{ident, &parse.PipeNode{NodeType: parse.NodePipe, Pos: n.Pos, Cmds: []*parse.CommandNode{cmd}}}
+ }

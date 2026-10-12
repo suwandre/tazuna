@@ -1,0 +1,9 @@
+Quoted `{` and `}` no longer count as block delimiters, so `respond "{"` inside `:8080 { … }` should now parse. I didn't run the exact Caddyfile from the issue end to end. The new `TestParseOneAndImport` cases cover the same shape, and `go test ./caddyconfig/... ./modules/caddyhttp/...` passes.
+
+**The fix:** the parser and dispenser compared token text only, so a quoted `"{"` looked the same as a real brace. I added a `!Token().Quoted()` check at each brace comparison.
+- **`caddyconfig/caddyfile/parse.go`:** the brace checks in `addresses`, `directives`, `directive`, `blockTokens`, `openCurlyBrace`, `closeCurlyBrace` and the nesting count in `doImport`.
+- **`caddyconfig/caddyfile/dispenser.go`:** `NextArg`, `NextBlock` and `ArgErr`.
+
+**Tests:** four new cases in `caddyconfig/caddyfile/parse_test.go`. They cover quoted `"{"`, quoted `"}"`, both together on one line, and a quoted `"}"` inside a nested `handle { … }`.
+
+`.gitignore` shows an added `.empryo` line that I didn't write. It looks like it came from the tooling, and I left it alone. A `git checkout` to revert it was denied. Remove that line before committing if you don't want it.

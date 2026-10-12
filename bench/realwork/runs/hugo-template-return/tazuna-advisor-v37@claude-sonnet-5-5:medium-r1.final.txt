@@ -1,0 +1,11 @@
+`return` now works as an early exit from any template, not just as the last statement of a partial. The tests in `tpl/...`, `hugolib/...`, `resources/...` and `commands/...` pass, and `./check.sh ./tpl/...` is clean. I did not run the full `./check.sh`.
+
+- **How it works:** `return` is a real template function that returns a sentinel error carrying an optional value. The forked Go template package traps it and ends execution, so the old template rewriting is gone. The patch to the fork is small: a few lines in `hugo_template.go` and one `case` in `errRecover` in `exec.go`.
+- **Partials:** a partial's result is the returned value, or the rendered output if it never calls `return`. Any output written before the `return` is discarded.
+- **Other templates:** `return` just stops rendering.
+- **Cleanup:** `contextWrapper`, `HasReturn` and the transform wrapper are removed. A small rewrite stays so `{{ return add . 42 }}` and `{{ return x | f }}` still work: it turns them into `add . 42 | return` and `x | f | return`.
+- **Behaviour change:** the old docs said the first `return` ran wherever it was. Now the first one reached ends execution, so several `return`s in `if`/`else` branches work.
+- **Test changes:** I added `TestReturnEarly` in `tpl/partials/return_integration_test.go`. I also changed the expected error in `TestPartialReturnPanicIssue13600`: the same template now fails at `delimit` instead of at `string`, and the test only checks that it errors.
+- **Docs:** I updated `docs/content/en/functions/go-template/return.md` to drop the old restrictions.
+
+**Known limitation:** `return` inside a `{{ template "x" }}` action ends the whole enclosing execution, not just that sub-template. I left it that way for simplicity.

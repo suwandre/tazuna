@@ -1,0 +1,25 @@
+Fixed. `diff.mnemonicPrefix` (and `diff.noprefix` / custom `diff.srcPrefix`/`diff.dstPrefix`) no longer break hunk/line staging, discarding, or jump-to-file.
+
+## What changed
+
+**Path parsing** (`pkg/gui/controllers/helpers/diff_line_parser.go`)
+- `pathFromDiffHeaderField` now unquotes first (`unquoteDiffPath`, extracted from the old inline logic) and then strips the path's first component, whatever it is (`a/`, `b/`, `i/`, `w/`, `c/`, ...) instead of only `a/`/`b/`. `/dev/null` is passed through, and a path with no `/` resolves to empty rather than a guess.
+- `pathFromDiffHeader` now also reads the `rename to` / `copy to` line for sections without `---`/`+++` lines (pure renames/copies); mode-change and binary sections still fall back to the `diff --git` line.
+- `pathFromDiffGitLine` no longer searches for `" b/"`: it splits the line at the space where both halves name the same path once their prefixes are stripped (like `git apply`), so paths containing spaces — or even ` w/` — work, quoted halves included. Differing halves (a rename) resolve to nothing and come from the rename/copy line instead.
+
+**Command prefixes** (`pkg/commands/git_commands/git_command_builder.go` and call sites)
+- New `GitCommandBuilder.ParseableDiffPrefixes()` forces `diff.noprefix=false`, `diff.srcPrefix=a/`, `diff.dstPrefix=b/` while deliberately leaving `diff.mnemonicPrefix` alone (its prefixes are single components too, so the user still sees `i/`/`w/`).
+- Used everywhere lazygit asks git for a diff/`show`/`stash show` that it parses back (`diff.go`, `working_tree.go`, `commit.go`, `commit_file_loader.go`, `patch.go`, `stash.go`).
+
+## Tests
+
+- Unit tests: `TestPathFromDiffHeaderField` (directories, mnemonic prefixes, no prefix), new `TestPathFromDiffGitLine`, new `TestParseDiffLineFromBufferMnemonicPrefixes` (mnemonic header, mode change, copy-to), plus updated command-argument expectations in `commit_test.go`, `stash_test.go`, `working_tree_test.go`.
+- Integration tests added: `main_view/stage_diff_lines_with_mnemonic_prefixes`, `..._with_no_prefixes`, `..._with_custom_prefixes`, and `jump_to_a_file_of_a_stash_with_no_prefixes`, with `test_list.go` regenerated via `go generate ./...`.
+
+## Verification
+
+- Temporarily reverted the source fix and confirmed all four new integration tests fail; restored it and they pass.
+- `go build ./...`, `go test ./... -short`, `./scripts/gofumpt-check.sh`, and `./scripts/golangci-lint-shim.sh run` (0 issues) all pass.
+- Ran the full `main_view` integration suite (133 tests) plus `diff`/`stash`/`filter_by_path`/`patch_building` and `commit`/`file` suites — all pass.
+
+Changes are left uncommitted, per this session's instruction not to commit.

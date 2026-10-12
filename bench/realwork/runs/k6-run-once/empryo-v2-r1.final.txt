@@ -1,0 +1,13 @@
+Builds. Now tests: a unit test for ApplyOnce and an end-to-end test in cmd.`--once` is added to `k6 run`, `k6 cloud run` and `k6 archive`, and `go test ./lib/executor ./internal/cmd` passes. I didn't run `k6 run --once` against a real script, and I didn't run the other packages' tests.
+
+- **Flag:** `internal/cmd/options.go` registers `--once` in `optionFlagSet()`, so every command that shares those option flags gets it.
+- **Flag conflicts:** `onceRequested` in `internal/cmd/test_load.go` returns an `InvalidConfig` error such as `--once cannot be combined with --iterations`. It does this for `--vus`, `--iterations`, `--duration` and `--stage`.
+- **Where it applies:** the transform runs on the consolidated config in `consolidateDeriveAndValidateConfig`, before deriving and validating. That makes it apply to run, cloud and archive alike, and it covers `--local-execution` as far as I can tell from the shared path.
+- **Transform:** `executor.ApplyOnce` is in the new `lib/executor/once.go`.
+  - **No scenarios:** it creates a `default` shared-iterations scenario with 1 VU and 1 iteration.
+  - **One scenario:** it swaps in a shared-iterations executor with 1 VU and 1 iteration. It keeps `exec`, `env`, `tags` and the browser `options`.
+  - **Two or more scenarios:** it returns `--once can run a single scenario only, but the script defines N: a, b`.
+
+Two things the brief didn't spell out. In the no-scenarios case, `vus`, `iterations`, `duration` and `stages` coming from script or env options are cleared. A single scenario's `startTime` is dropped along with its other executor fields, so it starts immediately. `gracefulStop` goes back to the default rather than the scenario's value.
+
+Tests are `lib/executor/once_test.go` for the three scenario cases and `TestOnceRequested` in `internal/cmd/test_load_test.go` for the flag conflicts.

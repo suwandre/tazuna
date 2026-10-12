@@ -1,0 +1,24 @@
+`return` now works in any template, anywhere in the template, and it stops that template when it runs. Tests for `./tpl/...`, `./hugolib/...`, `./resources/...` and `./internal/js/...` pass, and `./check.sh ./tpl/...` is clean. I didn't re-run `./check.sh` on `hugolib` or `resources` after the last test edit.
+
+**How it works**
+- **The function:** `return` is now `partials.Namespace.Return(args ...any) (any, error)`. It returns a sentinel `*texttemplate.ReturnError{Value}`. It has to return `(any, error)` rather than a bare error type, because Go templates only treat the second return value as an error. Passing more than one argument is an error.
+- **Trapping it:** the forked `evalCall` in `hugo_template.go` panics with the sentinel instead of wrapping it as "error calling return". That adds a few lines to `evalCall`, plus two small edits in `exec.go`:
+  - `errRecover` catches the panic at the top level.
+  - `walkTemplate` catches it for `{{ template }}` and `{{ block }}`.
+- **Scope:** a `return` inside `{{ template "x" }}` or `{{ block }}` ends only that sub-template, not the caller. I chose that, so say if you'd rather it propagate.
+- **Callers:** `TemplateStore.ExecuteWithContext` swallows the sentinel, so pages, shortcodes and the other callers just stop early. `ExecuteWithContextAndKey` passes it through, and `doInclude` in partials uses that to take the value.
+- **Removed:** the AST wrapper template, `returnNode`, `wrapInPartialReturnWrapper` and `contextWrapper`. `applyTransformations` no longer deletes nodes. `ParseInfo.HasReturn` is still set by a simple scan.
+
+**Behavior to know about**
+- **Output discarded:** a partial that contains `return` anywhere still discards its output. If no `return` runs, the result is `nil`, as before.
+- **No-argument `return`:** `{{ return }}` now ends the template, and a partial that does this returns `nil`.
+- **Multi-token arguments:** `{{ return add . 42 }}` still works. As a normal function call it would receive `add . 42` as three arguments, so the transformer wraps multi-token arguments into one pipeline (`return (add . 42)`). That is the one remaining AST edit, and it's much smaller than the old rewrite.
+
+**Tests**
+- Added `TestReturnEarly` in `hugolib/template_test.go`. It covers:
+  - early return in a top-level template;
+  - conditional, `with` and `range` returns in partials;
+  - a no-value return;
+  - `return` inside a `define`d sub-template;
+  - nested partials.
+- I changed one assertion in `TestPartialReturnPanicIssue13600`. It had matched an error that only existed because of the old rewrite. The template is still invalid, and it now fails with `error calling delimit`, so the test still checks for a clean error and not a panic.

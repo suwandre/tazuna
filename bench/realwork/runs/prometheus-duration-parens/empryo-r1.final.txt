@@ -1,0 +1,11 @@
+Now the printer test table.Parentheses around a plain duration literal now survive `Expr.String()` round-trips in duration positions. Tests pass for `./promql/...` and `./web/api/...`.
+
+- **Root cause:** a paren-wrapped `*NumberLiteral` reached the selector as a bare literal, because only `*DurationExpr` has `Wrapped`.
+- **Fix:** the grammar rule `paren_duration_expr` (`generated_parser.y`) and the `unary_op ( duration_expr )` path (`applyUnaryOpToDurationExpr` in `parse.go`) now wrap a literal in a `*DurationExpr` with `Wrapped: true`. This goes through a new `wrapDurationLiteral` helper (`parse.go`).
+- **Generated parser:** I edited `generated_parser.y.go` by hand to match the `.y` change, not by regenerating it. Please regenerate it if you want to be sure the two agree.
+- **Evaluation:** `promql/durations.go` already handles a unary `ADD` over a literal, so evaluation is unchanged.
+- **AST shape:** those literals now land in `OriginalOffsetExpr` or `RangeExpr` instead of `OriginalOffset` or `Range`. I updated the two `parse_test.go` cases (`foo offset +(5)` and `foo offset -(5)`) that expected the old shape.
+- **Round-trips:** `foo offset (5)`, `foo offset -(5)`, `foo offset (5m)`, `foo[(5s)]` and `foo[(5s):(1m)]` now print back unchanged. `foo offset +(5)` prints as `foo offset (5)`, so the plus is dropped, as it already is for `+(5m + 1m)`.
+- **Tests:** I added the round-trip cases to `printer_test.go`.
+- **Behaviour change:** `foo[(0)]` and other non-positive wrapped literals are no longer rejected at parse time. They now fail at evaluation with "duration must be greater than 0". No existing test covered this; I didn't check it.
+- **Unrelated file:** `.gitignore` shows a `.empryo` line I didn't write, so it isn't part of this change.

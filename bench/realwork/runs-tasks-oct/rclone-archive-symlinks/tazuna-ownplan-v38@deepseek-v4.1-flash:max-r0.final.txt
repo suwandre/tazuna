@@ -1,0 +1,21 @@
+Done. Summary of changes:
+
+**`backend/archive/zip/zip.go`**
+- Added a `links` field set from `fs.GetConfig(ctx).Links` in `New`.
+- In `readZip`, entries whose mode has `os.ModeSymlink` are now:
+  - skipped (with a count) unless `-l/--links` is set — then a notice naming `-l/--links` is logged;
+  - with `--links`, exposed under their name plus `fs.LinkSuffix` (`.rclonelink`). Their content is the link target, so `Size()` (uncompressed size) and `Open` (including range/seek handling) already read back the target path.
+- Regular entries ending in `.rclonelink` are unaffected since classification is by mode.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Same `links` field/flag handling. Symlink entries previously dropped in `List` are now skipped with a notice, or, with `--links`, turned into `Object`s via `objectFromLink` which stores the target read with `readlink` (using go-diskfs `StatT.LinkTarget`), size = target length.
+- `newObjectNative` names entries exactly as `List` does (suffix for symlinks, skipping them when `--links` is off), so lookup and listing agree.
+- `Open` on a link object returns the target, honouring offset/limit with clamping.
+
+**Tests**
+- `backend/archive/zip/zip_internal_test.go`: symlink zip fixture helper and `TestReadZipSymlink` (skipped without `--links`; listed/opened as `.rclonelink` with target length/size with it).
+- `backend/archive/archive_internal_test.go`: `TestArchiveSquashfsSymlink` (mksquashfs, verifies skip/notice, suffixed listing, target read, and that a regular `note.rclonelink` member stays regular) and `TestArchiveZipSymlinkEscape` (hostile `a -> ../outside` plus `a/pwned.txt` must fail and write nothing outside the destination).
+
+**Docs**: added a "Symlinks" section to `docs/content/archive.md` documenting the `-l/--links` + `.rclonelink` convention, matching local.
+
+Verification: `gofmt -l backend/archive/` clean, `go vet ./backend/archive/...` clean, `go build ./backend/archive/...`, and `RCLONE_CONFIG=/notfound go test ./backend/archive/... -count=1` all pass (including `TestLocal`/`TestMemory` fstests and the new symlink/escape tests; the new tests were also exercised with seek/range via temporary tests, now removed).

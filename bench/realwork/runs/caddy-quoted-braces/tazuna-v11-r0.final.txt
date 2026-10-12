@@ -1,0 +1,16 @@
+Quoted `{` and `}` are now treated as plain values, so the Caddyfile from the issue parses and adapts to a `static_response` with body `{`. The `go test` runs I did pass, with and without `-race`, on `caddyconfig/...` and the Caddyfile-adapt integration test. I didn't run the full `go test -race -short ./...` or `golangci-lint`.
+
+**Cause:** `Dispenser` and the parser decided where blocks open and close by comparing token text to `"{"` and `"}"`. They ignored whether the token was quoted. A quoted `"{"` therefore opened a block and a quoted `"}"` closed one early. `respond "{"` failed with "wrong argument count", and `respond "}"` failed with "Unexpected '}' because no matching opening brace".
+
+**Fix** (all in `caddyconfig/caddyfile/`):
+- `lexer.go`: added `Token.isOpenBrace()` and `Token.isCloseBrace()`, which only match unquoted braces. Double-quoted, backtick and heredoc tokens are all covered.
+- `dispenser.go`: `NextArg`, `NextBlock` and `ArgErr` use the helpers.
+- `parse.go`: server-block address parsing, directive and block-token collection, snippet and import handling, and the brace assertions all use the helpers.
+- I removed a now-redundant `wasQuoted == 0` check in `directive()`, since a quoted `{` no longer reaches that branch.
+
+**Tests added:**
+- `parse_test.go`: quoted braces in a server block, in backticks, in snippets via `import`, and mixed with real braces.
+- `dispenser_test.go`: quoted braces as arguments and inside a real block.
+- `caddytest/integration/caddyfile_adapt/quoted_braces.caddyfiletest`: an end-to-end adapt test.
+
+The new unit tests fail without the fix. Per the contribution guidelines, this was AI-assisted (Claude Sonnet 5.5), so disclose that in the PR. Please review each changed line so you can explain it. I haven't committed anything.

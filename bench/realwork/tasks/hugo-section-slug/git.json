@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/hugo",
+  "base": "bc68654147cda08f5667a1dde5be0a52b1702dec",
+  "fix": "83ab7999a89de94225ec008d4b1911874ccf58ca",
+  "pr": "https://github.com/gohugoio/hugo/pull/15383",
+  "issue": "https://github.com/gohugoio/hugo/issues/14352",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./hugolib -run '^TestSlugInBranchPages'",
+  "suite_cmd": "go test -count=1 ./hugolib/sitesmatrix ./resources/page/... ./hugolib -skip '^(TestSlugInBranchPagesCascadesToDescendants|TestSlugInBranchPagesDisablePathToLowerUglyURLs)$'",
+  "suite_skip_note": "suite skips PR-specific tests excluded from hidden (pinned wording/helpers not in the ticket); it checks pre-existing behavior only"
+}

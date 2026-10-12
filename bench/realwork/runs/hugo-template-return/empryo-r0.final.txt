@@ -1,0 +1,29 @@
+`return` now works as a sentinel error trapped in template execution. It works in any template, not only partials. `go test` on `./tpl/...`, `./hugolib/...`, `./commands/...` and `./resources/...` shows no failures.
+
+**How it works**
+- **Sentinel:** `texttemplate.ReturnError{Value, HasValue}` is defined in `texttemplate/hugo_template.go`.
+- **`partials.Namespace.Return`:** returns it with the optional value. It's registered with the `return` alias in `tpl/partials/init.go`.
+- **Raising:** `evalCall` turns that error into a panic.
+- **Trapping:** it's caught at the top of `executeWithState` (via `errRecover`) and in `walkTemplate`. A `return` inside an invoked `{{ template }}` therefore ends only that template.
+- **`try`:** `try` re-panics a return instead of swallowing it as an error.
+- **Non-partials:** `TemplateStore.ExecuteWithContext` swallows the sentinel, so `return` in a page, shortcode or similar template just stops rendering.
+- **Partials:** `doInclude` picks up `Value` when one was passed. With a bare `{{ return }}` it keeps the output rendered so far instead.
+
+**Removed**
+- The wrapper template rewrite and `returnNode` in `templatetransform.go`.
+- `ParseInfo.HasReturn` and `contextWrapper`.
+- Partials now run with `.` and `$` as the real argument, with no rewriting.
+- Partials that return a value now render into a pooled buffer instead of `io.Discard`, since an early bare return needs the output.
+
+**Backward compatibility**
+- `{{ return add . 42 }}` still works. `normalizeReturn` rewrites `return a b c` to `return (a b c)` when there are more than two args.
+- `TestPartialReturnPanicIssue13600` now expects "error calling delimit" instead of "wrong number of args for string". `delimit` runs before `return` in that pipeline, so it fails first.
+
+**New tests** in `tpl/partials/partials_integration_test.go`:
+- `TestReturnEarlyRegularTemplate`
+- `TestReturnEarlyInPartial`
+- `TestReturnInvalidArgs`
+
+The first covers early return in a home template and from inside a `range` in a page template. The second covers `if`, `range`, `with`, `$`, `partialCached`, a bare return, a falsy value and `{{ template }}`.
+
+A bare `{{ return }}` in a partial returns the rendered output rather than nil. That was my call, since the issue only specifies the value case, so say if you'd rather it return nil.

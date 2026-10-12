@@ -1,0 +1,30 @@
+`return` now works the way you described: it's a template func that returns a sentinel `*texttemplate.ReturnError`, and the forked exec traps it. It works in any template, any number of times, anywhere in the template, and the partial wrapper rewrite is gone. The `tpl/...`, `hugolib/...` and `commands/...` tests pass. `./check.sh` didn't complete; see the end.
+
+**Changes to the fork** (small, all marked "Added for Hugo"):
+- **`hugo_template.go`:** adds the `ReturnError{Value, HasValue}` type. In `evalCall`, a `*ReturnError` from a func is re-panicked as-is instead of being wrapped by `errorf`. `try` doesn't swallow it.
+- **`exec.go`:** `errRecover` passes a `*ReturnError` through as the error. `walkTemplate` recovers it, so `return` inside a template run by `{{ template }}` or `{{ block }}` stops only that template, and the caller (e.g. `baseof`) keeps rendering.
+
+**Hugo side:**
+- **`partials.Return(args ...any)`** is now the real `return` func. It errors if given more than one argument.
+- **`TemplateStore.ExecuteWithContext`** treats a return as success. **`ExecuteWithContextAndKey`** passes it on unwrapped, and only partials use that one.
+- **`doInclude`** always renders into a buffer:
+  - `return VALUE` gives VALUE.
+  - Bare `return`, or no return at all, gives the output rendered so far.
+- **Removed:** `HasReturn`, `contextWrapper`, `collectReturnNode`, the wrapper template and `applyTransformationsAndSetReturnWrapper`.
+- **One small AST rewrite remains:** `{{ return add . 42 | string }}` becomes `{{ add . 42 | string | return }}`. Without it, `return` would run before the rest of the pipeline. A plain `{{ return $x }}` is left alone.
+
+**Behaviour changes to be aware of:**
+- Code after `return` no longer runs. Before, the first `return` was moved to the end of the partial.
+- A bare `{{ return }}` used to do nothing. Now it stops the template.
+- In `TestPartialReturnPanicIssue13600`, the error is now the real one from `delimit` ("can't iterate over…"). I updated the expected message.
+
+**Tests and docs:**
+- Added `TestReturnEarly` and `TestReturnTooManyArgs` in `tpl/templates/templates_integration_test.go`. They cover early return in a page, a `block`, a `range`, a `template` call, `partialCached` and `try`, plus conditional, nil, piped and bare returns in partials.
+- Rewrote the usage section of `docs/content/en/functions/go-template/return.md` to drop the old limitations.
+
+**Why `./check.sh` didn't finish:**
+- Its staticcheck step stops on warnings in files I didn't touch (`config/allconfig`, `resources/page`, …).
+- `internal/warpc` tests fail without my changes too.
+- The disk was full: about 2 GiB free, with a 209 GB Go build cache at `/Users/suwandre/bench-gocache`. That broke the first `go test ./...` run. I re-ran those packages one at a time and they pass. I didn't delete the cache; that's your call.
+
+Nothing is committed.

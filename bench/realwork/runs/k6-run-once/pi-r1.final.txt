@@ -1,0 +1,13 @@
+`--once` now works on `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. The tests in `internal/cmd/...` and `lib/...` pass.
+
+- **Flag:** I defined it in `optionFlagSet()` in `internal/cmd/options.go`. `k6 cloud upload` shares that flag set, so it gets `--once` too.
+- **When it applies:** `consolidateDeriveAndValidateConfig` in `internal/cmd/test_load.go` applies it right after config consolidation and before thresholds and shortcut derivation. That is why the archive and the cloud upload also carry the transformed scenario.
+- **Conflicts:** `--once` combined with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --X`. The exit code is `InvalidConfig`.
+- **Transform:** it lives in `DeriveOnceScenarios` in the new `lib/executor/once.go`.
+  - **No scenarios:** it creates a `default` shared-iterations scenario with 1 VU and 1 iteration.
+  - **One scenario:** it replaces the executor with `shared-iterations` at 1 VU and 1 iteration. It keeps the scenario's name, `exec`, `env`, `tags` and `options` (including browser options), and drops everything else, including `startTime` and `gracefulStop`.
+  - **Several scenarios:** it fails with `--once can run a single scenario only`.
+  - **Shortcut options:** `vus`, `iterations`, `duration` and `stages` coming from the script or environment are cleared, so they don't conflict with the generated scenario.
+  - **Setup/teardown:** `setup()` and `teardown()` run as normal.
+
+I added tests in `lib/executor/once_test.go`, `TestRunOnce` in `internal/cmd/tests/cmd_run_test.go` and `TestArchiveOnce` in `internal/cmd/archive_test.go`. I didn't add a cloud-specific test. `k6 cloud run` and `k6 cloud upload` go through the same consolidation code that `k6 run` and `k6 archive` do, but no test sends a request through them.

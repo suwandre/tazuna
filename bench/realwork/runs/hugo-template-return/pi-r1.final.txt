@@ -1,0 +1,21 @@
+`return` is now a real template function that stops execution of the current template. It works in any template, not just partials, and it no longer has to be the last command. `./check.sh ./tpl/...` passes, as do the tests in `hugolib`, `resources`, `commands` and `markup`.
+
+**How it works**
+- `{{ return }}` and `{{ return x }}` stop execution at that point. More than one argument is an error.
+- **Sentinel error:** the `return` function (`Return` in `tpl/partials/partials.go`) returns a `*texttemplate.ReturnError` carrying the optional value. The fork's `evalCall` turns it into a panic, so nothing else sees it as an error.
+- **Where it is caught:** it is recovered in `walkTemplate` (so `{{ template }}` and `{{ block }}` calls return like a function call) and in `errRecover` at the top level.
+- **Partials:** `TemplateStore.ExecuteWithReturn` hands back the value, and `doInclude` uses it as the partial's result.
+- **`try`:** `try` re-panics a return instead of swallowing it.
+- The change to the Go template fork is small: about 30 lines in `hugo_template.go` and 3 in `exec.go`.
+
+**What I removed**
+- The partial return-wrapper template, the `contextWrapper` type and the removal of the `return` command from the parse tree are all gone. The partial's dot and `$` are now just the argument.
+
+**Things that behave differently or that I kept for compatibility**
+- **`HasReturn`:** it is still set when a partial contains `return`. I kept it so that a partial which never reaches its `return` still yields nil with its output discarded, as before. A partial with no `return` still yields its rendered output.
+- **`return add . 42`:** a small parse-time rewrite keeps the old form working, turning it into `return (add . 42)`. It only applies when the first argument is a function, field, variable or chain.
+- **Changed error test:** `TestPartialReturnPanicIssue13600` expected "wrong number of args for string". That came from the old command-stripping, so I changed the expectation to the underlying `delimit` error.
+
+**Tests added in `tpl/partials/partials_integration_test.go`:**
+- `TestReturnEarly` covers early return in a regular layout, in a `{{ template }}` call, and in partials (with a value, with no value, inside a conditional or `range`, and falling through).
+- `TestReturnTooManyArgs` covers the argument-count error.

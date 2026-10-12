@@ -1,0 +1,12 @@
+{
+  "repo": "/Users/suwandre/bench-repos/prometheus",
+  "base": "7c741e2879db6b58b8d152f566a8112f0d642bb1",
+  "fix": "7d180b0c7e40f60672b49a0888326278bd872a8e",
+  "pr": "https://github.com/prometheus/prometheus/pull/19737",
+  "issue": "https://github.com/prometheus/prometheus/issues/19744",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./tsdb -run '^TestOOOSampleLossOnWALCheckpointBeforeOOOCompaction$'",
+  "suite_cmd": "go test -count=1 -timeout 18m ./tsdb",
+  "suite_skip_note": "suite skips PR-specific tests excluded from hidden (pinned wording/helpers not in the ticket); it checks pre-existing behavior only",
+  "suite_note": "tsdb takes ~10 min under load; go test's default 10m timeout cut it off at the fix commit"
+}

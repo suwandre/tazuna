@@ -1,0 +1,25 @@
+Parentheses around a plain number or duration in an offset or range bracket now survive `Expr.String()`. The tests pass for `./promql/...`, `./web/api/v1/...` and `./cmd/promtool/...`.
+
+| Input | Before | After |
+|---|---|---|
+| `foo offset (5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -5s` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset 5m` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[5s]` | `foo[(5s)]` |
+| `foo offset ((5) + 1m)` | `foo offset (5 + 1m)` | `foo offset ((5) + 1m)` |
+
+`+(5)` prints as `(5)`, which matches how `+(5*2)` already prints as `(5 * 2)`.
+
+**The fix** (in `promql/parser/parse.go` and `generated_parser.y`): when a duration in parentheses is just a number, the parser now wraps it in a `*DurationExpr` that does nothing to the value and has `Wrapped: true`. `*NumberLiteral` has no `Wrapped` field, so this is how the parentheses are remembered. Duration expressions already work this way, so the printer, the engine's `durationVisitor` and the API's AST translation handle the new case with no changes. I regenerated `generated_parser.y.go` with goyacc v0.6.0, the version the Makefile pins. Before editing, I checked that this version reproduces the checked-in file exactly.
+
+**Parse-time errors are unchanged.** "duration must be greater than 0", "division by zero" and "modulo by zero" used to check for a bare `*NumberLiteral`, so the wrapper would have hidden them. A new helper, `durationLiteralValue`, looks through the wrapper and any leading `+`/`-`, so `foo[(0)]`, `foo[-(5s)]` and `foo[5s/(0)]` still fail at parse time.
+
+**One behaviour change for code that only parses:** `foo offset (5)` and `foo offset -(5)` now set `OriginalOffsetExpr` and leave `OriginalOffset` at 0 until the engine evaluates the query. `foo offset (5m + 1m)` already works this way, and the query engine handles it. Anything that parses a query and reads `OriginalOffset` directly would now see 0 for these two forms. All of this needs `ExperimentalDurationExpr` turned on.
+
+**Tests added:**
+- `printer_test.go`: round-trip cases added to the existing table in `TestExprString`.
+- `parse_test.go`: updated the expected trees for `foo offset ±(5)`, and added error cases for `foo[5s/(0)]` and `foo[-(5s)]`.
+- `duration_expression.test`: end-to-end evaluation of `offset (4)`, `-(4)` and `+(4)`, to confirm the engine computes the right offset.
+
+Nothing is committed yet.

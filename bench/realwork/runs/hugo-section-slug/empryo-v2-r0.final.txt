@@ -1,0 +1,10 @@
+The helper wasn't inserted. Adding it now.The two CreateTargetPaths edits didn't land (they silently no-op'd in the earlier script). Applying them now.`slug` in a section, taxonomy or term page's front matter now replaces that directory segment in the URL for the page and everything under it. Your `help`/`ayuda` example gives `es/ayuda/` and `es/ayuda/como-frobear/`. Tests pass for `./hugolib/...`, `./resources/...`, `./tpl/...` and `./commands/...`, including the new test.
+
+- **Descriptor:** `resources/page/page_paths.go` has a new `Dir` field on `TargetPathDescriptor`. When set, it replaces the section base for branch pages and the container dir for regular pages.
+- **Slug lookup:** `hugolib/page__paths.go` has a new `sectionDirWithSlugs` helper. It collects the slugs of the page's ancestors, plus the page itself if it's a branch page, and swaps the matching path segments.
+- **Skipped cases:** the swap does nothing when the page has a front-matter `url` or a configured permalink pattern. Permalink users keep using `:sectionslugs`.
+- **Test:** `hugolib/section_slug_test.go` (`TestSectionSlug`) covers your example, a nested section without a slug under a slugged parent, and a slugged taxonomy and term.
+
+**Leftover stub:** `hugolib/dbg_test.go` is a debug file I created and emptied to a bare `package hugolib` line. The shell refused to delete it, so please `rm hugolib/dbg_test.go`.
+
+`.gitignore` also shows as modified in `git status`. I didn't intentionally touch it; check it before committing.

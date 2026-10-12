@@ -1,0 +1,17 @@
+`slug` in front matter now works for sections, taxonomies and terms. It replaces that section's path element in its own URL and in every descendant's URL.
+
+The new tests pass, and so does the wider suite across `hugolib`, `resources`, `tpl` and `commands`. I didn't run `./check.sh`.
+
+The two new tests are in `hugolib/site_sections_test.go`. `TestSectionSlug` covers your `help/` example, nested sections and a bundle under a slugged section. `TestTaxonomyAndTermSlug` covers a taxonomy slug and a term slug.
+
+**What changed:**
+- **`resources/page/page_paths.go`:** `TargetPathDescriptor` gets a `Dir` field. When set, it replaces the section directory for list pages and the container directory for regular pages.
+- **`hugolib/page__paths.go`:** a new `dirWithSectionSlugs` walks from the page's current section up to the home page and swaps in each section's slug. It replaces only the last path element of each section, so a section at `a/b` with a slug becomes `a/<slug>`. If no section in the chain has a slug, `Dir` stays empty and nothing changes.
+
+**What still wins over a section slug:**
+- A `url` set in front matter.
+- A `[permalinks]` pattern, which still builds its own path. The `:sections` token is unchanged and doesn't use slugs. Use `:sectionslugs` for that.
+
+**Other behaviour:** a slug on the home page is ignored.
+
+I didn't touch any docs, since Hugo's docs aren't in this repo.

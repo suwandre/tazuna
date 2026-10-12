@@ -1,0 +1,192 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..38f2c57 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -109,6 +109,22 @@ func (l pagePaths) OutputFormats() page.OutputFormats {
+ 	return l.outputFormats
+ }
+ 
++// sectionsWithSlug returns p, if it's a branch, and its ancestor branches that
++// have a slug set, excluding the home page.
++func sectionsWithSlug(p *pageState) page.Pages {
++	var sections page.Pages
++	add := func(pp page.Page) {
++		if kinds.IsBranch(pp.Kind()) && !pp.IsHome() && pp.Slug() != "" {
++			sections = append(sections, pp)
++		}
++	}
++	add(p)
++	for _, a := range p.Ancestors() {
++		add(a)
++	}
++	return sections
++}
++
+ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error) {
+ 	s := p.s
+ 	d := s.Deps
+@@ -132,6 +148,17 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		URL:         pm.pageConfig.URL,
+ 	}
+ 
++	for _, sp := range sectionsWithSlug(p) {
++		sectionPath := sp.PathInfo()
++		if p.s.Conf.DisablePathToLower() {
++			sectionPath = sectionPath.Unnormalized()
++		}
++		if desc.SectionSlugs == nil {
++			desc.SectionSlugs = make(map[string]string)
++		}
++		desc.SectionSlugs[sectionPath.Base()] = sp.Slug()
++	}
++
+ 	if pm.Slug() != "" {
+ 		desc.BaseName = pm.Slug()
+ 	} else if pm.isStandalone() && pm.standaloneOutputFormat.BaseName != "" {
+diff --git a/hugolib/page_permalink_test.go b/hugolib/page_permalink_test.go
+index d5ae693..7af56fa 100644
+--- a/hugolib/page_permalink_test.go
++++ b/hugolib/page_permalink_test.go
+@@ -201,3 +201,85 @@ path = '/books/**'
+ 
+ 	b.AssertFileContent("public/shelf/my-book/index.html", "RelPermalink: /shelf/my-book/")
+ }
++
++func TestSectionTaxonomyTermSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++disableKinds = ['rss','sitemap']
++[taxonomies]
++tag = 'tags'
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: Frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Frobear
++slug: como-frobear
++---
++-- content/help/other.es.md --
++---
++title: Otro
++---
++-- content/help/sub/_index.es.md --
++---
++title: Sub
++slug: sub-es
++---
++-- content/help/sub/p1.es.md --
++---
++title: P1
++tags: [a]
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/a/_index.es.md --
++---
++title: A
++slug: aaa
++---
++-- layouts/all.html --
++{{ .Kind }}|{{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	for _, f := range []string{
++		"public/help/index.html",
++		"public/help/how-to-frob/index.html",
++		"public/es/ayuda/index.html",
++		"public/es/ayuda/como-frobear/index.html",
++		"public/es/ayuda/other/index.html",
++		"public/es/ayuda/sub-es/index.html",
++		"public/es/ayuda/sub-es/p1/index.html",
++		"public/es/etiquetas/index.html",
++		"public/es/etiquetas/aaa/index.html",
++	} {
++		b.AssertFileExists(f, true)
++	}
++	b.AssertFileExists("public/es/help/index.html", false)
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "page|/es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/sub-es/index.html", "section|/es/ayuda/sub-es/")
++	b.AssertFileContent("public/es/etiquetas/aaa/index.html", "term|/es/etiquetas/aaa/")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..a939d54 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -74,6 +74,10 @@ type TargetPathDescriptor struct {
+ 	// Used to create paginator links.
+ 	Addends string
+ 
++	// SectionSlugs maps the path of a section (e.g. /help) to the slug that
++	// should replace its last path element in the paths of its descendants.
++	SectionSlugs map[string]string
++
+ 	// The expanded permalink if defined for the section, ready to use.
+ 	ExpandedPermalink string
+ 
+@@ -115,6 +119,23 @@ func (p TargetPaths) PermalinkForOutputFormat(s *helpers.PathSpec, f output.Form
+ 	return s.PermalinkForBaseURL(p.Link, baseURLstr)
+ }
+ 
++// withSectionSlugs replaces the elements of the slash separated path p
++// that have a slug set in d.SectionSlugs.
++func (d TargetPathDescriptor) withSectionSlugs(p string) string {
++	if len(d.SectionSlugs) == 0 {
++		return p
++	}
++	els := strings.Split(p, "/")
++	out := make([]string, len(els))
++	for i, el := range els {
++		out[i] = el
++		if slug, ok := d.SectionSlugs[strings.Join(els[:i+1], "/")]; ok {
++			out[i] = slug
++		}
++	}
++	return strings.Join(out, "/")
++}
++
+ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	// Normalize all file Windows paths to simplify what's next.
+ 	if helpers.FilePathSeparator != "/" {
+@@ -166,7 +187,7 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			pb.Add(d.Section.Base())
++			pb.Add(d.withSectionSlugs(d.Section.Base()))
+ 		}
+ 		needsBase = false
+ 	}
+@@ -207,7 +228,7 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+ 			if dir := d.Path.ContainerDir(); dir != "" {
+-				pb.Add(dir)
++				pb.Add(d.withSectionSlugs(dir))
+ 			}
+ 			if d.BaseName != "" {
+ 				pb.Add(d.BaseName)

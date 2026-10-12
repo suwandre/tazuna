@@ -1,0 +1,22 @@
+I added the `--once` flag to `k6 run`. It runs the script with 1 VU and 1 iteration and keeps the scenario's config. The work is on branch `add-run-once-flag` and isn't committed. The build passes, and the `lib/executor` and `internal/cmd` packages pass `go test -race`. So do the new `--once` command tests (I only ran those from `internal/cmd/tests`, not the whole package). The cloud run paths, remote and `--local-execution`, go through the same code but have no test of their own.
+
+**How it works:**
+- **No scenarios:** you get one `default` scenario that runs once.
+- **One scenario:** it is turned into a `shared-iterations` scenario with the same name, set to 1 VU and 1 iteration. It keeps its `exec`, `env`, `tags` and browser `options`; every other field (`startTime`, `gracefulStop`, etc.) is dropped.
+- **More than one scenario:** error, `--once can run a single scenario only`, listing the scenario names.
+- **With `--vus`, `--iterations`, `--duration` or `--stage`:** error, `--once cannot be combined with --<name>`. This check only looks at command-line flags; `vus`, `iterations` etc. set in the script or in environment variables are silently dropped.
+- **When it applies:** after the config layers are merged, so `k6 archive` and `k6 cloud run` both use the reduced scenario. `setup()` and `teardown()` still run.
+
+**Changes:**
+- `internal/cmd/options.go`: adds the `--once` flag. It's registered with the other run options, so `k6 cloud upload` also gets it.
+- `internal/cmd/test_load.go`: new `applyOnceFlag`, called from `consolidateDeriveAndValidateConfig`.
+- `lib/executor/once.go`: new `ApplyOnce(opts lib.Options)`, which does the scenario change.
+
+**Tests added:**
+- `lib/executor/once_test.go`: covers the cases above and checks the result passes k6's normal config validation.
+- `internal/cmd/tests/cmd_run_once_test.go`:
+  - script options of 5 VUs and 20 iterations still run once;
+  - a single scenario runs once with its `exec` and `env`, and with `setup`/`teardown`;
+  - two scenarios give an error;
+  - each of the four shortcut flags gives an error;
+  - an archive made with `--once` then runs once.

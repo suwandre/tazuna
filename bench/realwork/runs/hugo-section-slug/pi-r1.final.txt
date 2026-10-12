@@ -1,0 +1,9 @@
+`slug` in front matter now works for section, taxonomy and term pages. It replaces that page's directory name in the URL and carries through to all descendant pages. Your example gives `/es/ayuda/` and `/es/ayuda/como-frobear/`, while the English URLs stay `/help/` and `/help/how-to-frob/`. All tests in `./hugolib/...` and `./resources/...` pass. I did not run `./check.sh`.
+
+- **How it works:** a new `sectionSlugPath` helper in `hugolib/page__paths.go` rebuilds the section path with slugs swapped in. It only returns a value when some page in the hierarchy actually sets a slug, so sites without slugs build exactly the same URLs as before.
+- **Where it's used:** it feeds a new `SlugPath` field on `TargetPathDescriptor` in `resources/page/page_paths.go`. `CreateTargetPaths` uses that field for section, taxonomy and term pages and for regular pages. The paginator picks it up automatically.
+- **Test:** `TestSectionTaxonomyTermSlug` in `hugolib/section_slug_test.go` covers your example and nested sections. It also covers a taxonomy slug (`/es/etiquetas/`), a term slug (`/es/etiquetas/bar/`), and a term with no slug that still moves under the slugged taxonomy.
+- **Not covered:**
+  - A slug on the home page is ignored.
+  - If a section config sets an explicit `[permalinks]` pattern, that pattern still takes precedence, as before.
+  - I didn't add a paginator test.

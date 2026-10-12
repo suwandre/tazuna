@@ -1,0 +1,16 @@
+I fixed the bug: when several `import` blocks target different instances of the same resource, all of them are now honored again, not just the first. The new tests pass, and so do the full `internal/terraform` and `internal/refactoring` suites.
+
+**Cause:** The 1.16 change that added `import` blocks inside modules (#38352) changed `refactoring.FindImportStatements` (`internal/refactoring/import_statement.go`) to store import blocks in a map keyed by resource address, without the instance key. `terraform_data.t["a"]` and `terraform_data.t["b"]` both became `terraform_data.t`, so only the first block declared was kept and the rest were dropped without any warning. It was meant to let an import block in a parent module override one in a child module, but it also collapsed blocks within the same module. That's why single-instance resources worked and only one instance of each `for_each` resource was imported. It affects `count` the same way.
+
+**Fix:**
+- `FindImportStatements` now returns a list of every block instead of a map. It still remembers which module first targeted each resource, so the parent-overrides-child rule still applies. But all blocks from the same module are kept.
+- `findImportTargets` in `internal/terraform/context_plan.go` now reads that list. A side benefit: blocks within a module now come back in the order they're declared, where the map gave no fixed order.
+
+**Tests:**
+- `TestContext2Plan_importMultipleBlocksSameResource` in `internal/terraform/context_plan_import_test.go` covers two blocks against a `for_each` resource and two against a `count` resource. Before the fix it failed exactly as in the report (`["second"]` and `[1]` were planned as Create); now all four are imported.
+- `TestFindImportStatements` (new `internal/refactoring/import_statement_test.go`, with fixtures in `testdata/import-statements/`) checks both that every block in a module is kept and that a root-module block still overrides a child module's blocks for the same resource.
+- `internal/backend/local` passes. In `internal/command`, `TestInit_providerLockFileReadonly` fails, but it fails the same way without my change: the test provider's checksum doesn't match the lock file in this environment.
+
+I also added a changelog entry, `.changes/v1.16/BUG FIXES-20261009-120000.yaml`, pointing to issue 39010 from the report's references. Change the number if this bug gets its own issue.
+
+One limitation I left alone: when several blocks target one resource, the planner still passes only the first block's settings to config generation (`importTargets[0].Config` in `node_resource_plan.go`). That only matters for config generation, which works only for single-instance resources, so it doesn't affect this bug.

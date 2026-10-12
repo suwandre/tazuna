@@ -1,0 +1,11 @@
+Every `import` block is now honored again. Before the fix, the plan imported only the first block for a `for_each` resource and planned the other instance for creation. The new regression test fails without the change and passes with it, and the full `internal/terraform` package passes. I did not run your `terraform_data` config through the CLI, and I didn't get a result from `internal/command` or `internal/configs`: my first combined run of those packages timed out, so I only ran the `internal/terraform` and `internal/refactoring` tests afterward.
+
+**Cause:** `refactoring.FindImportStatements` stored import blocks in a map keyed by the config resource (`terraform_data.t`). Blocks for `t["a"]` and `t["b"]` share that key, so only the first one declared was kept. The rest were dropped with no error.
+
+**Fix:**
+- `FindImportStatements` in `internal/refactoring/import_statement.go` now returns a slice, so every block in a module is kept. A parent module's import for a resource still overrides a child module's import for the same resource, as before.
+- `findImportTargets` in `internal/terraform/context_plan.go` now iterates over that slice. It was the only caller.
+
+**Test:** `TestContext2Plan_importMultipleBlocksForEachResource` in `internal/terraform/context_plan_import_test.go` uses two `import` blocks for one `for_each` resource. It checks that both instances are imported.
+
+I didn't test `count`, but it goes through the same code path.

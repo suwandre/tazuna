@@ -1,0 +1,27 @@
+Ask: add `--once` to `k6 run`, `k6 cloud run` and `k6 archive`, with tests. Wanted: a 1 VU, 1 iteration run that keeps scenario config.
+For you: `--once` is implemented for `run` and `archive` and passes its tests. `cloud run` gets the flag and shares the same code path, but no test exercises it. Nothing was committed.
+Now: done.
+Next: nothing open.
+
+**Behavior**
+- **No scenarios:** the script runs `default()` as a single shared-iterations scenario with 1 VU and 1 iteration.
+- **Single scenario:** it becomes shared-iterations with 1 VU and 1 iteration. Name, `exec`, `env`, `tags` and browser/scenario `options` are kept. `startTime`, `gracefulStop` and the old executor's fields are dropped.
+- **Cleared options:** script-level `vus`, `iterations`, `duration` and `stages` are cleared, so shortcut derivation can't conflict with the new scenario.
+- **Multiple scenarios:** error `--once can run a single scenario only`.
+- **Shortcut flags:** combining `--once` with `--vus`, `--iterations`, `--duration` or `--stage` gives `--once cannot be combined with --<flag>`. Both errors exit with the invalid-config code.
+- **`setup()` and `teardown()`:** they run normally.
+
+**Changes**
+- New `internal/cmd/once.go` holds the flag definition, the flag-conflict check and the transform.
+- `internal/cmd/test_load.go` applies the transform right after `getConsolidatedConfig`, so it overrides every config layer. `archive` and `cloud` use the consolidated options, which is why it goes there.
+- The flag is registered in `run.go`, `archive.go` and `cloud.go` (`cloudCmdFlagSet`, which `cloud run --local-execution` also uses).
+
+**Verification**
+- I added `internal/cmd/once_test.go` (unit tests) and `internal/cmd/tests/cmd_run_once_test.go` (end to end). Together they cover:
+  - the no-scenario and single-scenario cases;
+  - `setup()` and `teardown()` running once;
+  - every error case;
+  - an archive created with `--once` containing a shared-iterations scenario that keeps `exec`, `env` and `tags`.
+- `go test -count=1 ./internal/cmd/... ./lib/executor/...` passes, and the new tests also pass under `-race`. `gofmt` and `go vet` printed nothing.
+
+I didn't run `make lint`, and gopls isn't installed, so there were no LSP diagnostics. I also didn't add `--once` to `k6 cloud upload` or update any docs, since neither was requested.

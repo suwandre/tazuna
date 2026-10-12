@@ -1,0 +1,19 @@
+`return` now works in any template, not just partials, and it no longer has to be the last command. All tests pass in `tpl/...`, `hugolib` and `resources`, and `go vet` is clean on the packages I changed.
+
+**How it works**
+- **Sentinel error:** the `return` function (`partials.Namespace.Return`, still aliased as `return`) returns a `*texttemplate.ReturnError` carrying an optional value. `ReturnError` and `AsReturnError` live in the forked package's `hugo_template.go`. More than one argument is an error.
+- **Trapping:** `walkTemplate` in `exec.go` traps it, so `return` inside `{{ template "x" }}` only exits that template. The only change to the vendored package's own code is the small recover wrapper around `newState.walk`.
+- **Partials and normal templates:** the new `TemplateStore.ExecuteWithContextAndKeyReturn` hands the sentinel back to `partial` as its result and discards any output. Normal template execution treats it as a clean early exit.
+- **Removed:** the return-wrapper template rewriting, `contextWrapper`, `ParseInfo.HasReturn` and `collectReturnNode`. A partial that doesn't call `return` still returns its output as before.
+
+**Backward compatibility**
+A small `normalizeReturn` step in `tplimpl/templatetransform.go` keeps the old syntax working:
+- `return add . 42` is rewritten to `return (add . 42)`.
+- `return A | B` is rewritten to `A | B | return`.
+
+**Tests**
+- `TestPartialReturnPanicIssue13600` now expects `error calling delimit`. The old "wrong number of args for string" error came from the old rewrite deleting the `return` command from the pipeline. The pipeline now evaluates properly, so `delimit` fails first on a page value.
+- Added `TestReturnEarly`. It covers a conditional return in a partial, a bare `return`, a return inside `range`, the pipeline form, `return` inside `{{ template }}`, and an early return in a normal template.
+- Added `TestReturnTooManyArgs`.
+
+I didn't touch any docs.

@@ -1,0 +1,17 @@
+The Caddyfile from the issue now parses: a `{` or `}` in quotes, backticks or a heredoc is treated as a plain argument, not as the start or end of a block. Running `caddy adapt` on the example produces a static response whose body is `{`. Tests pass for `./caddyconfig/...` and `./caddytest/...` with `-race`, `go build ./...` succeeds, and `golangci-lint` reports no issues.
+
+**Change** (in `caddyconfig/caddyfile/`)
+- **`lexer.go`:** adds two token helpers, `isBlockOpen()` and `isBlockClose()`. They return true only for an unquoted `{` or `}`.
+- **`parse.go` and `dispenser.go`:** every place that decided block structure by comparing token text to `{`, `}` or `{}` now uses those helpers. That includes `NextArg`, `NextBlock`, the import nesting count and the address parsing.
+- **Formatter:** no code change was needed, because it already leaves quoted braces alone. I added two test cases to keep it that way.
+
+**Tests added**
+- **`TestParseQuotedBraces`:** covers quoted, backtick and heredoc braces, `"{}"`, quoted braces inside nested blocks and snippets, and blocks left unclosed. It also checks that unquoted `respond {}`, a stray `}` and `localhost{` still give errors.
+- **`TestDispenser_QuotedBraces`:** covers `NextArg`, `NextBlock` and `RemainingArgs`.
+- The new parse and dispenser tests fail on the old code.
+
+**Decision for you:** the "address cannot end with a curly brace" error now only applies when the address is unquoted. So `localhost{` still fails, but `"localhost{" {` is accepted. I made this choice for consistency; tell me if you'd rather keep that error for quoted addresses too.
+
+**Untested:** the import nesting change isn't covered by a new test that imports a real file; only the existing import tests cover it.
+
+Nothing is committed. If this goes into a PR, the project's contribution rules require saying it was AI-assisted (Claude Opus 5.5).

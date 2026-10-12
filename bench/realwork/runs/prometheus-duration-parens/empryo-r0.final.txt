@@ -1,0 +1,18 @@
+Edits likely landed; verify state and run tests.`(N)` around a plain literal in an offset or range position now survives `String()`. `go test ./promql/... ./web/api/...` passes.
+
+**Root cause:** the grammar returned the bare `*NumberLiteral` for `(5)`. `VectorSelector`, `MatrixSelector` and `SubqueryExpr` fold plain literals into `OriginalOffset`/`Range`, so no expression node was left to print the parens.
+
+**Fix:** a parenthesised literal now becomes a unary-plus `*DurationExpr` with `Wrapped: true`, so the selector keeps an `OriginalOffsetExpr`/`RangeExpr` and prints the parens. The change is in `paren_duration_expr` (`promql/parser/generated_parser.y` and `generated_parser.y.go`, edited by hand rather than regenerated) and in `applyUnaryOpToDurationExpr` and a new `wrapNumberLiteral` helper in `promql/parser/parse.go`.
+
+New output:
+- `foo offset (5)` → `foo offset (5)`
+- `foo offset +(5)` → `foo offset (5)` (the `+` is still dropped, as with multi-term durations)
+- `foo offset -(5)` → `foo offset -(5)`
+- `foo[(5s)]` → `foo[(5s)]`
+- `foo offset (5m)` → `foo offset (5m)`
+
+**Behaviour change:** `foo offset +(5)` and `foo offset -(5)` now parse to an `OriginalOffsetExpr` instead of a resolved `OriginalOffset`. The engine's `durationVisitor` evaluates that to the same value (+5s / -5s), and I updated the `-(5)` and `+(5)` parse tests to match. A wrapped non-positive range such as `foo[(0)]` is now rejected at evaluation rather than at parse time. I didn't add a test for that.
+
+**Tests:** I added round-trip cases to `TestExprString` for the issue's table, including `foo[(5s) + 1s]`.
+
+The `.gitignore` diff (`.empryo` added) comes from the environment, not from this change.

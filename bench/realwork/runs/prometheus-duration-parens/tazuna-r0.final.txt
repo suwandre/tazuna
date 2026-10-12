@@ -1,0 +1,24 @@
+Parentheses around a plain duration literal now survive `Expr.String()` in offset and range positions. The `promql/...` packages pass. I did not run `web/api` or `rules`: the combined test run timed out and I didn't retry them.
+
+**Fix**
+- `NumberLiteral` has a new `Wrapped` field, and its `String()` prints the parentheses when it's set (`ast.go`, `printer.go`).
+- In the grammar, `paren_duration_expr` marks a parenthesised literal as `Wrapped`. A wrapped literal keeps its value, so the existing zero-division and out-of-range checks still see it.
+- A negated wrapped literal, as in `-(5)`, becomes a `DurationExpr` with `Op: SUB` around the wrapped literal. A plain `+(5)` stays a wrapped literal and prints as `(5)`. This is in `applyUnaryOpToDurationExpr` in `parse.go`.
+- The offset, matrix selector and subquery rules used to convert a plain literal into a numeric field. A wrapped literal now goes into `OriginalOffsetExpr`, `RangeExpr` or `StepExpr` through a new `asDurationExpr` helper, since only those fields can carry the parentheses. The evaluator already evaluates these, so behaviour is unchanged.
+- I regenerated `generated_parser.y.go` with goyacc.
+
+**Behaviour changes**
+- For a wrapped literal such as `foo offset (5)`, `OriginalOffset` is now 0 and the value sits in `OriginalOffsetExpr`. This is the same as for any other duration expression.
+- `foo[-(5)]` and `foo[(0)]` used to fail at parse time with "duration must be greater than 0". I think they now fail only when the query is evaluated, because those values sit in the expression fields and the positive-duration check runs on plain literals. I didn't run any test for this, so I haven't confirmed the new error path.
+
+**Tests**
+- I updated the expected ASTs for `foo offset +(5)` and `foo offset -(5)` in `parse_test.go`.
+- I added round-trip cases to `printer_test.go`:
+  - `foo offset (5)`
+  - `foo offset +(5)` (prints as `foo offset (5)`)
+  - `foo offset -(5)`
+  - `foo offset (5m)`
+  - `foo[(5s)]`
+  - `foo[-(5s)]`
+  - `foo[(5s):(1s)]`
+  - `foo offset (5m + 1m)`

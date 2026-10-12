@@ -1,0 +1,30 @@
+`return` now works in any template, anywhere in it, and no longer has to be the last command. The `hugolib` and `tpl/...` tests pass. In `internal/warpc`, `TestGreet`, `TestGreetParallel` and `TestKatexParallel` fail, and I didn't investigate them. They don't touch templates, and I didn't rerun them without my changes to confirm that. A few other packages (`resources`, `markup`) were still running when I stopped waiting, with no failures reported so far.
+
+**How it works**
+- `texttemplate/hugo_template.go` has a new `ReturnError{Value any}`. When `evalCall` gets one back from a function, it panics with it instead of wrapping it as "error calling …".
+- `texttemplate/exec.go` traps that panic in two places. `walkTemplate` catches it so a `return` inside `{{ template "x" }}` leaves only that template. `errRecover` catches it at the top level and hands it to the caller.
+- `partials.Return(args ...any) (any, error)` is the `return` func. I made it return the sentinel as an error rather than a `ReturnErr` value as you sketched, so `evalCall` only has to check the existing error path.
+- `TemplateStore.ExecuteWithContextAndKey` now returns `(value, returned, err)`, and the partial executor uses that. Other callers go through `ExecuteWithContext`, which treats an early return as a normal finish.
+
+**What I removed**
+- `partialReturnWrapper`, `wrapInPartialReturnWrapper`, `collectReturnNode`, `contextWrapper` and `ParseInfo.HasReturn`.
+- The `$`/dot rebinding to `.Arg`, so partials now receive their argument directly.
+
+**Behaviour changes**
+- A partial that never executes `return` now yields its rendered output instead of nil.
+- A bare `{{ return }}` in a partial returns `nil`. The old docs said it returned an empty `template.HTML`.
+- Early exit works in page, shortcode and other templates too. The output rendered so far is kept.
+
+**Compatibility**
+- I kept `{{ return add . 42 }}` working. One small transform, `wrapReturnArgs`, rewrites it to `return (add . 42)`, which `TestPartialWithReturn` covers.
+- `{{ return ( delimit . ", " ) | string }}` now pipes the return value into `string` rather than the old rewrite, so `TestPartialReturnPanicIssue13600` fails earlier, inside `delimit`. I updated its expected message.
+
+**Tests and docs**
+- I added `TestReturnEarly` in `tpl/partials`. It covers a conditional early return, a bare return, fall-through output, `. | upper | return`, a return from inside `range`, and early exit in a page and in a `{{ template }}` block.
+- I rewrote `docs/content/en/functions/go-template/return.md` to match the new behaviour.
+
+**Checks**
+- `./check.sh ./tpl/...` (gofmt, staticcheck, tests) passes. `go test ./hugolib/` also passes.
+
+**Known edge case**
+- `try (return …)` would be caught by `try`'s recover. I left that alone since nobody writes it.

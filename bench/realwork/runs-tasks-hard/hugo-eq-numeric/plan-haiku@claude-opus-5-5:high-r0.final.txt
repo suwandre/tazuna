@@ -1,0 +1,10 @@
+The implementation is correct and complete against the task and the plan, so I changed nothing. The relevant tests pass, and the new tests fail without the fix.
+
+- **Diff vs. plan:** every planned change is in, and the changes follow it closely:
+  - `CompareNumbers` compares ints, uints and floats exactly, never rounding through `float64`.
+  - `eq`/`ne` now use it, and so do `lt`/`le`/`gt`/`ge`. The old uint special case is gone; it treated `-1` as equal to `uint64` max.
+  - `where` uses it for `eq`/`ne`/`<`/`<=`/`>`/`>=`. The uint branch that overflowed when cast to `int64` is gone.
+- **Tests pass:** `go vet` is clean, `gofmt` reports nothing, and these pass: `go test ./common/hreflect/... ./tpl/compare/... ./tpl/collections/...` and `go test ./hugolib/ -run 'Sort|Where|Compare'`.
+- **The new tests catch the bug:** with only the three source files reverted, `TestCompare`, `TestCompareIntWithEqualFloat`, `TestCheckCondition` and `TestWhereNumericIntFloat` all fail. With the fix restored they pass.
+- **Staging:** my checks briefly unstaged the files, so I ran `git add -A common tpl` to put the working tree back as the implementer left it (all eight files staged).
+- **Not run by me:** the full `./check.sh`. I also didn't re-check the `TestCommands/mod` failure. The implementer says it fails the same way on a clean `HEAD`, and that test downloads modules (`hugo mod get`/`vendor`), which none of these changes touch.

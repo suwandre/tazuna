@@ -1,0 +1,10 @@
+Quoted `"{"` and `"}"` no longer count as block delimiters in Caddyfile parsing. The Caddyfile from the issue now adapts, with `respond "{"` producing a `static_response` whose body is `{`. Tests in `caddyconfig/...` and the Caddyfile/adapt tests in `caddytest/integration` pass.
+
+I did not run the full `go test -race -short ./...` suite or the linter.
+
+- **Cause:** the lexer already marks quoted tokens, but the parser and `Dispenser` compared only the token text against `"{"` and `"}"`. So `"{"` was counted as a block opener.
+- **Change:** a brace now counts only if it is unquoted. This goes through new `isOpenBrace()` and `isCloseBrace()` helpers on `Token` (in `lexer.go`) and on `Dispenser`. They replace every raw brace comparison in `dispenser.go` and `parse.go`.
+- **Removed workaround:** the old quoted-`{` special case in `directive()` is gone, since quoted braces no longer reach that branch.
+- **Tests:**
+  - Parser cases for unbalanced `"{"` and `"}"`, including a backtick-quoted `{`, in `parse_test.go`.
+  - A new `TestDispenser_NextBlock_QuotedBraces` in `dispenser_test.go`.

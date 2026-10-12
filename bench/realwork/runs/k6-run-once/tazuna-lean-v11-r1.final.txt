@@ -1,0 +1,23 @@
+I added a `--once` flag that runs a script with 1 VU and 1 iteration while keeping the scenario config. `go test ./internal/cmd/...` passes. I didn't run the full test suite or the linter, and I didn't test `k6 cloud run`, `--local-execution` or `k6 archive` directly.
+
+**What it does**
+- **No scenarios:** it runs `default` with 1 VU and 1 iteration.
+- **One scenario:** it swaps the executor for `shared-iterations` with 1 VU and 1 iteration. It keeps the scenario's name, `exec`, `env`, `tags` and `options`, including browser options. It drops `startTime`, `gracefulStop` and the executor-specific fields.
+- **Multiple scenarios:** it fails with `--once can run a single scenario only`.
+- **With `--vus`, `--iterations`, `--duration` or `--stage`:** it fails with `--once cannot be combined with --<flag>`.
+- Both errors use the `InvalidConfig` exit code.
+- `vus`, `iterations`, `duration` and `stages` are cleared. This applies to values that come from the script or the config file as well as the CLI.
+- `setup()` and `teardown()` run as normal.
+
+**Where the change is**
+- `internal/cmd/options.go` registers the flag in `optionFlagSet`, so `k6 run`, `k6 cloud run`, `k6 archive` and `k6 cloud upload` all get it.
+- `internal/cmd/config.go` adds `isOnceEnabled`, which checks the flag and the conflicts, and `applyOnce`, which rewrites the scenarios.
+- `internal/cmd/test_load.go` applies `applyOnce` right after the config layers are merged, which avoids #883 and #2529.
+- `k6 archive` and the cloud upload paths use that same merged config. They should therefore pick up `--once` too.
+- `k6 inspect` has no `--once` flag and is unaffected.
+
+**Tests**
+- `config_test.go` has new unit tests for `applyOnce` and `isOnceEnabled`.
+- `tests/cmd_run_test.go` has end-to-end `TestRunOnce` cases. They cover the default function with `setup()` and `teardown()`, a single scenario with `exec`, multiple scenarios, and `--once` combined with `--iterations`.
+
+I didn't add a release note.

@@ -1,0 +1,157 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..720ef49 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -205,5 +205,53 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		}
+ 	}
+ 
++	if desc.ExpandedPermalink == "" && desc.URL == "" {
++		switch p.Kind() {
++		case kinds.KindPage, kinds.KindSection, kinds.KindTaxonomy, kinds.KindTerm:
++			if sections := p.sectionsPathWithSlugs(); sections != "" {
++				if kinds.IsBranch(p.Kind()) {
++					desc.ExpandedPermalink = sections
++				} else {
++					desc.ExpandedPermalink = path.Join(sections, desc.BaseName)
++				}
++			}
++		}
++	}
++
+ 	return desc, nil
+ }
++
++// sectionsPathWithSlugs returns the path of the current section where every
++// section with a slug has its path element(s) replaced by that slug.
++// It returns an empty string if no section has a slug.
++func (p *pageState) sectionsPathWithSlugs() string {
++	current := p.CurrentSection()
++	sections := append(current.Ancestors().Reverse(), current)
++
++	var (
++		elems   []string
++		parent  string
++		hasSlug bool
++	)
++	for _, s := range sections {
++		if s.IsHome() {
++			continue
++		}
++		pi := s.PathInfo()
++		if p.s.Conf.DisablePathToLower() {
++			pi = pi.Unnormalized()
++		}
++		elem := strings.Trim(strings.TrimPrefix(pi.Base(), parent), "/")
++		parent = pi.Base()
++		if slug := s.Slug(); slug != "" {
++			elem = slug
++			hasSlug = true
++		}
++		elems = append(elems, elem)
++	}
++
++	if !hasSlug {
++		return ""
++	}
++	return path.Join(elems...)
++}
+diff --git a/hugolib/section_slug_integration_test.go b/hugolib/section_slug_integration_test.go
+new file mode 100644
+index 0000000..a862785
+--- /dev/null
++++ b/hugolib/section_slug_integration_test.go
+@@ -0,0 +1,93 @@
++// Copyright 2026 The Hugo Authors. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package hugolib
++
++import "testing"
++
++func TestSlugInSectionTaxonomyAndTermPages(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++defaultContentLanguage = "en"
++disableKinds = ["rss", "sitemap"]
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++[taxonomies]
++tag = "tags"
++-- layouts/all.html --
++{{ .Kind }}|{{ .RelPermalink }}
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: How to frob
++tags: [frob]
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Como frobear
++slug: como-frobear
++tags: [frob]
++---
++-- content/help/faq.es.md --
++---
++title: FAQ
++---
++-- content/help/sub/_index.es.md --
++---
++title: Sub
++---
++-- content/help/sub/p1.es.md --
++---
++title: P1
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/frob/_index.es.md --
++---
++title: Frob
++slug: frobear
++---
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "section|/help/")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "page|/help/how-to-frob/")
++	b.AssertFileContent("public/tags/index.html", "taxonomy|/tags/")
++	b.AssertFileContent("public/tags/frob/index.html", "term|/tags/frob/")
++
++	b.AssertFileContent("public/es/ayuda/index.html", "section|/es/ayuda/")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "page|/es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/faq/index.html", "page|/es/ayuda/faq/")
++	b.AssertFileContent("public/es/ayuda/sub/index.html", "section|/es/ayuda/sub/")
++	b.AssertFileContent("public/es/ayuda/sub/p1/index.html", "page|/es/ayuda/sub/p1/")
++	b.AssertFileContent("public/es/etiquetas/index.html", "taxonomy|/es/etiquetas/")
++	b.AssertFileContent("public/es/etiquetas/frobear/index.html", "term|/es/etiquetas/frobear/")
++	b.AssertFileExists("public/es/help/index.html", false)
++}

@@ -1,0 +1,11 @@
+`slug` now works in section, taxonomy and term front matter. The slug replaces that path element for the page itself and for every descendant section, page and term.
+
+- **Result:** with your example, the Spanish pages come out at `/es/ayuda/` and `/es/ayuda/como-frobear/`, and the English ones stay at `/help/` and `/help/how-to-frob/`.
+- **Tests:** the new test `TestSlugInSectionTaxonomyAndTermPages` passes. `go test ./hugolib/... ./resources/... ./commands/... ./tpl/...` printed nothing but passes. I did not run `./check.sh`.
+- **Precedence:** explicit `url` front matter and `[permalinks]` patterns still take precedence over a section slug, as they do for page slugs.
+- **Behaviour change:** an existing `_index.md` that already sets `slug` will now change that section's URL and its descendants' URLs. Previously the slug was ignored for sections.
+- **Mechanism:**
+  - New `Dir` field on `TargetPathDescriptor` (`resources/page/page_paths.go`). When set, it replaces the section path for branch pages and the container dir for regular pages.
+  - `dirWithSectionSlugs` in `hugolib/page__paths.go` fills `Dir`. It substitutes the slug at each section's depth, skipping home.
+- **Test coverage:** the test covers your example plus a nested section without a slug, a taxonomy slug, a term slug, and a term with no slug under a slugged taxonomy.
+- **Docs:** I updated `front-matter.md` and `urls.md`, which previously said slug was not applicable to these page kinds.

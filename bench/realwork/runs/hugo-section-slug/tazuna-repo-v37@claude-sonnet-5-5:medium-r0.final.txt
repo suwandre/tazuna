@@ -1,0 +1,9 @@
+Section pages now honour `slug` in front matter. The new test and the existing `hugolib` and `resources/...` tests pass. I did not run `./check.sh`.
+
+A section's slug replaces its directory name in the URL of the section and everything under it. Your example now gives `/help/`, `/help/how-to-frob/`, `/es/ayuda/` and `/es/ayuda/como-frobear/`. Nested sections work the same way, and pages that aren't bundles also move under the slugged section.
+
+- **`hugolib/page__paths.go`**: new `sectionBaseWithSlugs` builds the section path from the current section and its ancestors, using each one's slug where set. The result goes into `desc.SectionBase`.
+- **`resources/page/page_paths.go`**: new `SectionBase` field on `TargetPathDescriptor`. Section pages and regular pages use it in place of the plain directory path.
+- **`hugolib/section_slug_test.go`**: `TestSectionSlug` is an end-to-end test of your en/es example. It also covers a non-bundle page and a nested section under the slugged one.
+
+I did not add a test for taxonomy or term pages. The code path is generic, but I didn't confirm that a slug on those pages behaves as you'd expect.

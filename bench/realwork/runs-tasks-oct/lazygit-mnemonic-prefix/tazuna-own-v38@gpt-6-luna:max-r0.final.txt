@@ -1,0 +1,6 @@
+The focused integration run is blocked by a pre-existing test-list mismatch: the integration harness panics because `pkg/integration/tests/test_list.go` lists more tests than it finds in the test directory. I only modified an existing integration test, so this is unrelated to adding/removing a test.
+
+I recommend leaving the generated list untouched for this fix and relying on the relevant Go package tests. The alternative is to regenerate the integration list, which may create unrelated changes. Let me know if you want me to repair that harness issue before I continue.
+I’ve implemented the parser and diff-prefix changes, and the focused helper and Git-command package tests pass.
+
+I paused before final verification because the headless integration harness panics: `test_list.go` contains more entries than the test directory has files. This appears unrelated to my change, which modifies an existing integration test. I recommend leaving the generated list untouched for this fix. Would you like me to regenerate and repair it before continuing, or proceed without the integration run?

@@ -1,0 +1,32 @@
+The implementation matches the upstream fix for this issue exactly and all tests pass. Here's a summary of the work:
+
+## Summary
+
+Implemented symlink support for the `archive` backend (zip and squashfs), following the convention used by the local backend and other backends, matching rclone upstream fix for #9569.
+
+### Changes
+
+**`backend/archive/zip/zip.go`**
+- Added a `links bool` field set from `fs.GetConfig(ctx).Links` at `New` time.
+- In `readZip`, entries whose mode has `os.ModeSymlink` are:
+  - skipped (and counted) when `--links` is not in use, with a single NOTICE per archive naming `-l/--links`;
+  - exposed under their name plus `fs.LinkSuffix` (`.rclonelink`) when it is, so `Open` reads back the member body (the link target) and `Size` is the target length. Range/seek options already work since it is just a small regular member.
+- A regular member whose name already ends in `.rclonelink` is untouched — it stays a regular file.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Added the same `links` field and skip/notice behaviour; symlinks were previously dropped entirely.
+- Added `objectFromLink` and a `readlink` helper reading the target from `squashfs.StatT` (the mode, not the target, decides what is a symlink, so an empty target still works).
+- `newObjectNative` now names entries exactly as `List` does (skipping symlinks without `--links`, appending the suffix with it) so listing and single-object lookup agree on which names exist.
+- `Object.Open` serves the link target honouring offset/limit with clamping to avoid panics on offsets past the end.
+
+**Tests**
+- `zip/zip_internal_test.go`: `TestReadZipSymlink` covering skipped-by-default, listed/readable with `--links`, size and target contents.
+- `archive_internal_test.go`: `TestArchiveSquashfsSymlink` (built with `mksquashfs`, also checks a regular `.rclonelink` member), and `TestArchiveZipSymlinkEscape`, an end-to-end hostile-archive check that a symlink pointing above the root cannot make `sync.CopyDir` write outside the destination.
+
+**`docs/content/archive.md`**: new "Symlinks" section documenting the flag and the `.rclonelink` convention with the example from the issue.
+
+### Verification
+- `go test -count=1 -race ./backend/archive/...` — all pass (including the mksquashfs/zip external-binary integration tests with `rclone` on PATH).
+- `go test ./fs/sync/... ./fs/operations/... ./backend/local/...` and `go test -short ./fs/... ./vfs/...` — all pass.
+- `go build`, `go vet`, `gofmt`, and `golangci-lint run ./backend/archive/...` — clean.
+- Manual end-to-end against a real rclone build: `rclone lsl --links :archive:test.zip` shows `src/link.txt.rclonelink` with size 8 and target `file.txt`; `rclone copy --links :archive:test.zip out` recreates a working symlink; without `--links` the symlink is skipped with a NOTICE naming the flag; a hostile zip (`a` → `../outside` plus `a/pwned.txt`) is refused and writes nothing outside the destination. Same checks pass for squashfs (which previously lost symlinks entirely).

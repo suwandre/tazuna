@@ -1,0 +1,5 @@
+Fixed exemplar loss by retaining series identities through GC while they have exemplars at or after the WAL replay cutoff. Selected and stale compactions now release persisted chunks and appenders without deleting those identities; memory snapshots also avoid restoring discarded mmap chunks.
+
+Added coverage for all three compaction paths, both appender APIs, zero and negative timestamps, WAL checkpoint/restart, memory snapshots, and chunk metrics. Consolidated the selected/stale restart tests to reduce redundant setup.
+
+**Verification:** `go test ./tsdb/ -count=1` passed (381.573s); focused race tests and `golangci-lint run --timeout 4m ./tsdb` passed.

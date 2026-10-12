@@ -1,0 +1,20 @@
+`return` now works in any template, anywhere in it, and is trapped with a sentinel error instead of the old tree rewrite. `./check.sh ./tpl/...` passes (gofmt, staticcheck, tests), and `go test` over `./hugolib/... ./resources/... ./commands/...` shows no failures.
+
+**How it works**
+- `ReturnError{Value, HasValue}` is a sentinel error in the forked `texttemplate/hugo_template.go`. `partials.Namespace.Return` returns it, keeping the `return` alias. Zero or one argument is allowed; more is an error.
+- `evalCall` turns that error into a panic. It is caught in `executeWithState` and returned as a plain error. `try` re-panics it, so `try` can't swallow a return.
+- `walkTemplate` is overridden in `hugo_template.go`, following the existing `*Old` rename pattern (the fork script has the new replacer). A `return` inside a `{{ define }}` or `{{ block }}` leaves only that template, like a function return. This is the only fork change beyond `hugo_template.go`.
+- `TemplateStore.ExecuteWithContext` swallows the sentinel for page, shortcode and other top-level templates. `ExecuteWithContextAndKey` passes it through so `doInclude` can read the value.
+- Removed: the `$_hugo_dot` / `contextWrapper` rewrite, `returnNode`, `collectReturnNode`, `ParseInfo.HasReturn`, and the "must be last" restriction.
+
+**Behaviour you might not expect**
+- `{{ return add . 42 }}` is still supported. Because `return` is now a real function, the transformer rewrites a multi-word return to `return (add . 42)`. Without that, an existing test (`TestPartialWithReturn`) failed.
+- A bare `{{ return }}` in a partial returns the output rendered so far. The old code didn't treat a bare `return` as a return at all, so this is the same result. It avoids printing `<nil>` for guard-style early exits.
+- `return X | f` no longer drops `f` and no longer panics. `X` is returned and `f` is never reached.
+- I changed `TestPartialReturnPanicIssue13600` in `tpl/templates`, since its input is no longer an error. It now asserts a clean result.
+
+**Tests and docs**
+- New tests in `tpl/partials/partials_integration_test.go`: `TestReturn` (early return, return in `range`, `$` and `.`, text and html partials, `partialCached`, nesting, `try`, command form, bare return), `TestReturnInRegularTemplate` (page template and `block`), and `TestReturnTooManyArgs`.
+- Rewrote the usage section of `docs/content/en/functions/go-template/return.md` for the new semantics.
+
+**Not covered:** `return` inside a `with partial` decorator body, which gets compiled into an internal partial. I didn't test it.

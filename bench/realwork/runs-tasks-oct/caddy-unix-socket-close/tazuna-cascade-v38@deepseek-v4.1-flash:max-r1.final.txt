@@ -1,0 +1,27 @@
+All checks pass. Here's a summary of the work:
+
+## Root cause
+
+In `listen_unix.go`, both `unixListener.Close()` and `unixConn.Close()` called `File()` on the underlying socket merely to learn its path, then dropped the returned `*os.File` without closing it. That dup'ed fd keeps the listening socket alive (nobody accepts on it, so clients hang) until Go's finalizer closes it at the next GC — exactly the observed 2-minute/GC-only behavior. Additionally, on current Go `UnixListener.File().Name()` returns a synthetic `"unix:/path->"` description, not the socket path, so `syscall.Unlink` never removed the file. `reuseUnixSocket` leaked the same kind of dup on every reuse.
+
+## Changes
+
+**`listen_unix.go`** (applies the upstream fix from caddyserver/caddy#8061):
+- `Close()` now takes the path from `Addr()`/`LocalAddr()`, decrements the shared refcount, closes the underlying socket immediately, and only unlinks the file when the last holder closes (under `unixSocketsMu`, which also serializes against a concurrent relisten).
+- Added an atomic `closed` flag: a second `Close()` returns `net.ErrClosed` without decrementing the refcount again.
+- Abstract sockets (Linux/Android `@...`) are never unlinked; `reuseUnixSocket` also skips the pre-bind unlink for them.
+- `reuseUnixSocket` now `defer socketFile.Close()`s the dup'ed file.
+
+**`listen_unix_close_test.go`** (new, `unix && !solaris`):
+- file survives until the last of multiple holders closes, then is unlinked and dialing fails fast;
+- double `Close` returns `net.ErrClosed`, keeps the refcount, and doesn't strand a sibling reference (for both `unix` and `unixgram`);
+- concurrent close + relisten race leaves a working socket and file (20 iterations, both networks);
+- abstract sockets don't unlink a same-named filesystem path (Linux-only).
+
+## Verification
+
+- `go test -race -short -count=1 ./...` — all packages pass.
+- Ran the upstream PR's full test suite alongside the new tests: all 8 pass (abstract tests skip on darwin).
+- `go vet .`, `golangci-lint run .` — 0 issues, and cross-builds for linux/windows succeed.
+
+Note: the production fix mirrors upstream commit d483d781 ("listeners: close unix socket immediately and unlink file on reload", #8061); this change is AI-assisted.

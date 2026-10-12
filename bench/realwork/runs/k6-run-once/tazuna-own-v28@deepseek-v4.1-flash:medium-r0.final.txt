@@ -1,0 +1,30 @@
+All tests pass. Here's a summary of the changes.
+
+## Summary
+
+Added a `--once` flag to k6 that runs a test with 1 VU and 1 iteration while preserving the selected scenario's configuration.
+
+### Implementation
+
+**`internal/cmd/options.go`** — Registered the bare `--once` boolean flag in the shared `optionFlagSet()` (used by `run`, `archive`, and `cloud run`) and added `checkOnceConflicts()` at the top of `getOptions()`. The latter rejects CLI combinations of `--once` with `--vus`, `--duration`, `--iterations`, `--stage`, `--execution-segment`, and `--execution-segment-sequence`, naming the conflicting flag and returning an `InvalidConfig` exit code.
+
+**`internal/cmd/once.go` (new)** — Core logic:
+- `checkOnceConflicts` — CLI shortcut conflict detection.
+- `dropOnceShortcuts` — clears `vus`/`duration`/`iterations`/`stages`/execution-segment fields from lower config layers (config file, script, environment) *before* they're merged, so a shortcut there can't silently drop the scenario. Warns about what it overrode.
+- `rejectAmbiguousOnce` — errors when more than one effective scenario exists.
+- `applyOnce` / `onceScenario` — replaces the scenario(s) with a fresh `shared-iterations` config at `vus: 1`, `iterations: 1`, preserving the scenario name, `exec`, `env`, `tags`, and the full `options` block (e.g. `options.browser`). If no scenario exists, it creates a `default` one. It reads `exec` through JSON to distinguish unset vs. explicit `"default"`.
+
+**`internal/cmd/config.go`** — Added an unexported `once bool` to `Config` (kept out of JSON/envconfig) and invoked `dropOnceShortcuts` during consolidation when set.
+
+**`internal/cmd/test_load.go`** — Propagated `--once` from the CLI layer and applied `rejectAmbiguousOnce` + `applyOnce` *after* consolidation/defaulting but *before* derivation and validation (avoiding issues #883/#2529). This ensures cloud archives and provisioning requests also get the transformed scenario.
+
+### Tests added
+- `internal/cmd/once_test.go` — unit tests for name/exec/env/tags/options preservation, multi-scenario rejection, layer shortcut dropping/warnings, and CLI conflict errors.
+- `internal/cmd/tests/cmd_once_test.go` — end-to-end tests for `k6 run --once` (thresholds, output), multi-scenario rejection, cloud remote archive rewrite, local-execution, archive rewriting, and running a rewritten archive.
+
+### Verification
+- `go build ./...`, `go vet ./internal/cmd/...`, `gofmt -l` all clean.
+- `go test ./internal/cmd/... ./lib/executor/` and `go test -race ./internal/cmd/` pass.
+- Manually verified: single scenario preserves `exec`/`env`/`tags` and runs 1/1; multiple scenarios error; `--once --iterations` errors; no-scenario script runs `default` once; archive contains the rewritten `shared-iterations` scenario with null top-level load fields and no `once` key.
+
+I also added the `openspec/changes/once/` spec documents describing the capability.

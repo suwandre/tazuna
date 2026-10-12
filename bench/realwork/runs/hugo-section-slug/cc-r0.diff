@@ -1,0 +1,167 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..f9dcc97 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -192,6 +192,10 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		return desc, err
+ 	}
+ 
++	if opath == "" && desc.URL == "" {
++		opath = sectionSlugsPath(p, desc.BaseName)
++	}
++
+ 	if opath != "" {
+ 		opath, _ = url.QueryUnescape(opath)
+ 		opath = path.Clean(opath)
+@@ -207,3 +211,67 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 
+ 	return desc, nil
+ }
++
++// sectionSlugsPath returns the path of p with the slug of any branch
++// ancestor (or p itself) replacing its path segment(s).
++// It returns "" if no slug is involved.
++func sectionSlugsPath(p *pageState, baseName string) string {
++	isBranch := kinds.IsBranch(p.Kind())
++	if !isBranch && p.Kind() != kinds.KindPage {
++		return ""
++	}
++
++	unnormalized := p.s.Conf.DisablePathToLower()
++	basePath := func(pp page.Page) string {
++		pi := pp.PathInfo()
++		if unnormalized {
++			pi = pi.Unnormalized()
++		}
++		return pi.Base()
++	}
++
++	chain := p.Ancestors().Reverse()
++	if isBranch {
++		chain = append(chain, p)
++	}
++
++	var (
++		hasSlug bool
++		prev    string
++		b       strings.Builder
++	)
++	add := func(s string) {
++		if s = strings.Trim(s, "/"); s != "" {
++			b.WriteString("/")
++			b.WriteString(s)
++		}
++	}
++	for _, n := range chain {
++		if n.IsHome() {
++			continue
++		}
++		base := basePath(n)
++		if slug := n.Slug(); slug != "" {
++			hasSlug = true
++			add(slug)
++		} else {
++			add(strings.TrimPrefix(base, prev))
++		}
++		prev = base
++	}
++
++	if !hasSlug {
++		return ""
++	}
++
++	if !isBranch {
++		pi := p.PathInfo()
++		if unnormalized {
++			pi = pi.Unnormalized()
++		}
++		add(strings.TrimPrefix(pi.ContainerDir(), prev))
++		add(baseName)
++	}
++
++	return b.String()
++}
+diff --git a/hugolib/site_sections_test.go b/hugolib/site_sections_test.go
+index 779c380..6302232 100644
+--- a/hugolib/site_sections_test.go
++++ b/hugolib/site_sections_test.go
+@@ -182,3 +182,79 @@ title: content/s1.md
+ 	b.AssertFileContent("public/s1.html", "content/s1.md")
+ 	b.AssertFileContent("public/s1/p1.html", "content/s1/p1.md")
+ }
++
++// See issue: support slug in section, taxonomy and term pages.
++func TestSectionTaxonomyTermSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++disableKinds = ["rss", "sitemap"]
++[languages.en]
++[languages.es]
++[taxonomies]
++tag = "tags"
++-- layouts/all.html --
++{{ .Kind }}|{{ .RelPermalink }}|
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: Frob
++tags: [t1]
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Frobear
++slug: como-frobear
++tags: [t1]
++---
++-- content/help/sub/_index.es.md --
++---
++title: Sub
++slug: sub-es
++---
++-- content/help/sub/p1.es.md --
++---
++title: P1
++---
++-- content/help/sub/p2.es.md --
++---
++title: P2
++slug: p2-es
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/t1/_index.es.md --
++---
++title: T1
++slug: e1
++---
++`
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "section|/help/|")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "page|/help/how-to-frob/|")
++	b.AssertFileContent("public/es/ayuda/index.html", "section|/es/ayuda/|")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "page|/es/ayuda/como-frobear/|")
++	b.AssertFileContent("public/es/ayuda/sub-es/index.html", "section|/es/ayuda/sub-es/|")
++	b.AssertFileContent("public/es/ayuda/sub-es/p1/index.html", "page|/es/ayuda/sub-es/p1/|")
++	b.AssertFileContent("public/es/ayuda/sub-es/p2-es/index.html", "page|/es/ayuda/sub-es/p2-es/|")
++	b.AssertFileContent("public/es/etiquetas/index.html", "taxonomy|/es/etiquetas/|")
++	b.AssertFileContent("public/es/etiquetas/e1/index.html", "term|/es/etiquetas/e1/|")
++	b.AssertFileContent("public/tags/t1/index.html", "term|/tags/t1/|")
++	b.AssertFileExists("public/es/help/index.html", false)
++}

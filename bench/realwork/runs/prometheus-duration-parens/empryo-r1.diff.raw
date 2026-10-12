@@ -1,0 +1,156 @@
+diff --git a/.gitignore b/.gitignore
+index cc4cf38..29c172b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -33,3 +33,4 @@ npm_licenses.tar.bz2
+ 
+ # Ignore parser debug
+ y.output
++.empryo
+diff --git a/promql/parser/generated_parser.y b/promql/parser/generated_parser.y
+index da9bc93..bebddab 100644
+--- a/promql/parser/generated_parser.y
++++ b/promql/parser/generated_parser.y
+@@ -1402,6 +1402,10 @@ paren_duration_expr : LEFT_PAREN duration_expr RIGHT_PAREN
+                                 $$ = durationExpr
+                                 break
+                             }
++                            if nl, ok := $2.(*NumberLiteral); ok {
++                                $$ = wrapDurationLiteral(nl)
++                                break
++                            }
+                             $$ = $2
+                         }
+                 ;
+diff --git a/promql/parser/generated_parser.y.go b/promql/parser/generated_parser.y.go
+index 846d830..e9b8281 100644
+--- a/promql/parser/generated_parser.y.go
++++ b/promql/parser/generated_parser.y.go
+@@ -2546,6 +2546,10 @@ yydefault:
+ 				yyVAL.node = durationExpr
+ 				break
+ 			}
++			if nl, ok := yyDollar[2].node.(*NumberLiteral); ok {
++				yyVAL.node = wrapDurationLiteral(nl)
++				break
++			}
+ 			yyVAL.node = yyDollar[2].node
+ 		}
+ 	}
+diff --git a/promql/parser/parse.go b/promql/parser/parse.go
+index a56f16a..2a92fbf 100644
+--- a/promql/parser/parse.go
++++ b/promql/parser/parse.go
+@@ -1232,6 +1232,24 @@ func (p *parser) applyUnaryOpToDurationExpr(op Item, expr Node, wrapped bool) No
+ 		}
+ 		return e
+ 	case *NumberLiteral:
++		if wrapped {
++			// A NumberLiteral cannot carry parentheses, so represent the
++			// wrapped literal as a *DurationExpr to keep them on round-trip.
++			if durationLiteralOutOfRange(e.Val) {
++				p.addParseErrf(op.PositionRange(), "duration out of range")
++				return &NumberLiteral{Val: 0}
++			}
++			de := wrapDurationLiteral(e)
++			if op.Typ == SUB {
++				return &DurationExpr{
++					Op:       SUB,
++					RHS:      de,
++					StartPos: op.Pos,
++				}
++			}
++			de.StartPos = op.Pos
++			return de
++		}
+ 		if op.Typ == SUB {
+ 			e.Val *= -1
+ 		}
+@@ -1247,6 +1265,17 @@ func (p *parser) applyUnaryOpToDurationExpr(op Item, expr Node, wrapped bool) No
+ 	}
+ }
+ 
++// wrapDurationLiteral represents a parenthesised duration literal as a
++// wrapped unary-plus *DurationExpr, since *NumberLiteral has no Wrapped field.
++func wrapDurationLiteral(nl *NumberLiteral) *DurationExpr {
++	return &DurationExpr{
++		Op:       ADD,
++		RHS:      nl,
++		Wrapped:  true,
++		StartPos: nl.PosRange.Start,
++	}
++}
++
+ func MustLabelMatcher(mt labels.MatchType, name, val string) *labels.Matcher {
+ 	m, err := labels.NewMatcher(mt, name, val)
+ 	if err != nil {
+diff --git a/promql/parser/parse_test.go b/promql/parser/parse_test.go
+index b1912e1..3a19a75 100644
+--- a/promql/parser/parse_test.go
++++ b/promql/parser/parse_test.go
+@@ -1716,8 +1716,13 @@ var testExpr = []struct {
+ 	{
+ 		input: "foo offset +(5)",
+ 		expected: &VectorSelector{
+-			Name:           "foo",
+-			OriginalOffset: 5 * time.Second,
++			Name: "foo",
++			OriginalOffsetExpr: &DurationExpr{
++				Op:       ADD,
++				RHS:      &NumberLiteral{Val: 5, PosRange: posrange.PositionRange{Start: 13, End: 14}},
++				Wrapped:  true,
++				StartPos: 11,
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+@@ -1727,8 +1732,17 @@ var testExpr = []struct {
+ 	{
+ 		input: "foo offset -(5)",
+ 		expected: &VectorSelector{
+-			Name:           "foo",
+-			OriginalOffset: -5 * time.Second,
++			Name: "foo",
++			OriginalOffsetExpr: &DurationExpr{
++				Op: SUB,
++				RHS: &DurationExpr{
++					Op:       ADD,
++					RHS:      &NumberLiteral{Val: 5, PosRange: posrange.PositionRange{Start: 13, End: 14}},
++					Wrapped:  true,
++					StartPos: 13,
++				},
++				StartPos: 11,
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+diff --git a/promql/parser/printer_test.go b/promql/parser/printer_test.go
+index 8be35d9..47e10cb 100644
+--- a/promql/parser/printer_test.go
++++ b/promql/parser/printer_test.go
+@@ -269,6 +269,25 @@ func TestExprString(t *testing.T) {
+ 		{
+ 			in: "foo offset -(step())",
+ 		},
++		{
++			in: "foo offset (5)",
++		},
++		{
++			in:  "foo offset +(5)",
++			out: "foo offset (5)",
++		},
++		{
++			in: "foo offset -(5)",
++		},
++		{
++			in: "foo offset (5m)",
++		},
++		{
++			in: "foo[(5s)]",
++		},
++		{
++			in: "foo[(5s):(1m)]",
++		},
+ 		{
+ 			in:  "foo offset +(5*2)",
+ 			out: "foo offset (5 * 2)",

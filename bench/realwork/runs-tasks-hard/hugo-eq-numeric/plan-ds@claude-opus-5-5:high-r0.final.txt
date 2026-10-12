@@ -1,0 +1,10 @@
+The change does what the task and the maintainer asked for, and I didn't change anything. I re-ran the tests for the three changed packages and they pass; `gofmt` and `go vet` are clean. The implementer reports that `./check.sh`, which runs the full test suite, also passed. I didn't re-run that myself.
+
+- **Shared rule:** a new helper, `hreflect.CompareNumbers`, compares any mix of signed ints, unsigned ints and floats exactly. `eq`/`ne`, `lt`/`le`/`gt`/`ge` and `where`'s comparison operators all use it now, so `eq 1 1.0` is true and the six functions agree.
+- **No rounding:** `int64(9007199254740993)` compares greater than `float64(9007199254740992)`, not equal.
+- **No overflow:** `uint64` max compares greater than `-1`. The old code got some of these mixes wrong: `lt`/`gt` treated `-1` as a huge unsigned number, and `where` turned large unsigned values negative.
+- **Side fix:** comparing a `uint64` with a string used to treat the number as 0; that's fixed too.
+- **Not a number (NaN):** this behaves as before, so every comparison with it except `ne` is false.
+- **Tests:** a unit test for the helper (16 cases); extra rows in the existing `compare` and `where` tests; and an end-to-end test, `TestCompareIntFloat`, which renders the issue's template plus `where` matching ints against floats.
+
+`where`'s `in`/`not in` operators still use the old conversions. The task didn't ask for them to change.

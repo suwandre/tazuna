@@ -1,0 +1,1248 @@
+diff --git a/common/hreflect/compare.go b/common/hreflect/compare.go
+new file mode 100644
+index 0000000..3cdfcf6
+--- /dev/null
++++ b/common/hreflect/compare.go
+@@ -0,0 +1,99 @@
++// Copyright 2026 The Hugo Authors. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package hreflect
++
++import (
++	"cmp"
++	"math"
++	"reflect"
++)
++
++// CompareNumbers compares a and b exactly, without first converting integers to float64.
++// It returns -1, 0 or 1. ok is false if a or b is not a number or is NaN.
++func CompareNumbers(a, b reflect.Value) (c int, ok bool) {
++	ak, bk := a.Kind(), b.Kind()
++	switch {
++	case IsInt(ak):
++		switch {
++		case IsInt(bk):
++			return cmp.Compare(a.Int(), b.Int()), true
++		case IsUint(bk):
++			return compareIntUint(a.Int(), b.Uint()), true
++		case IsFloat(bk):
++			return compareIntFloat(a.Int(), b.Float())
++		}
++	case IsUint(ak):
++		switch {
++		case IsInt(bk):
++			return -compareIntUint(b.Int(), a.Uint()), true
++		case IsUint(bk):
++			return cmp.Compare(a.Uint(), b.Uint()), true
++		case IsFloat(bk):
++			return compareUintFloat(a.Uint(), b.Float())
++		}
++	case IsFloat(ak):
++		switch {
++		case IsInt(bk):
++			c, ok := compareIntFloat(b.Int(), a.Float())
++			return -c, ok
++		case IsUint(bk):
++			c, ok := compareUintFloat(b.Uint(), a.Float())
++			return -c, ok
++		case IsFloat(bk):
++			af, bf := a.Float(), b.Float()
++			if math.IsNaN(af) || math.IsNaN(bf) {
++				return 0, false
++			}
++			return cmp.Compare(af, bf), true
++		}
++	}
++	return 0, false
++}
++
++func compareIntUint(i int64, u uint64) int {
++	if i < 0 {
++		return -1
++	}
++	return cmp.Compare(uint64(i), u)
++}
++
++func compareIntFloat(i int64, f float64) (int, bool) {
++	switch {
++	case math.IsNaN(f):
++		return 0, false
++	case f >= 1<<63:
++		return -1, true
++	case f < -(1 << 63):
++		return 1, true
++	}
++	if c := cmp.Compare(i, int64(f)); c != 0 {
++		return c, true
++	}
++	return cmp.Compare(0, f-math.Trunc(f)), true
++}
++
++func compareUintFloat(u uint64, f float64) (int, bool) {
++	switch {
++	case math.IsNaN(f):
++		return 0, false
++	case f >= 1<<64:
++		return -1, true
++	case f < 0:
++		return 1, true
++	}
++	if c := cmp.Compare(u, uint64(f)); c != 0 {
++		return c, true
++	}
++	return cmp.Compare(0, f-math.Trunc(f)), true
++}
+diff --git a/common/hreflect/compare_test.go b/common/hreflect/compare_test.go
+new file mode 100644
+index 0000000..f146e98
+--- /dev/null
++++ b/common/hreflect/compare_test.go
+@@ -0,0 +1,81 @@
++// Copyright 2026 The Hugo Authors. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package hreflect
++
++import (
++	"math"
++	"reflect"
++	"testing"
++
++	qt "github.com/frankban/quicktest"
++)
++
++func TestCompareNumbers(t *testing.T) {
++	t.Parallel()
++	c := qt.New(t)
++
++	for _, test := range []struct {
++		a, b   any
++		expect int
++	}{
++		{1, 1, 0},
++		{1, 2, -1},
++		{int8(-1), int64(-2), 1},
++		{uint8(1), uint64(1), 0},
++		{uint64(math.MaxUint64), uint8(1), 1},
++		{-1, uint64(math.MaxUint64), -1},
++		{uint64(math.MaxUint64), -1, 1},
++		{int64(math.MaxInt64), uint64(math.MaxInt64), 0},
++		{int64(math.MaxInt64), uint64(1 << 63), -1},
++		{1, 1.0, 0},
++		{1.0, 1, 0},
++		{1, 1.5, -1},
++		{2, 1.5, 1},
++		{-1, -1.5, 1},
++		{-2, -1.5, -1},
++		{1.5, 1, 1},
++		{-1.5, -1, -1},
++		{int64(1<<53 + 1), float64(1 << 53), 1},
++		{float64(1 << 53), int64(1<<53 + 1), -1},
++		{int64(1 << 53), float64(1 << 53), 0},
++		{int64(math.MaxInt64), float64(1 << 63), -1},
++		{int64(math.MinInt64), float64(-(1 << 63)), 0},
++		{int64(math.MinInt64), -1e300, 1},
++		{uint64(math.MaxUint64), float64(1 << 64), -1},
++		{uint64(0), -0.5, 1},
++		{uint64(0), math.Copysign(0, -1), 0},
++		{uint64(1<<53 + 1), float64(1 << 53), 1},
++		{float32(1.5), 1.5, 0},
++		{float32(1.1), 1.1, 1},
++		{math.Inf(1), int64(math.MaxInt64), 1},
++		{math.Inf(-1), uint64(0), -1},
++	} {
++		got, ok := CompareNumbers(reflect.ValueOf(test.a), reflect.ValueOf(test.b))
++		c.Assert(ok, qt.IsTrue, qt.Commentf("%v vs %v", test.a, test.b))
++		c.Assert(got, qt.Equals, test.expect, qt.Commentf("%v vs %v", test.a, test.b))
++	}
++
++	for _, test := range [][2]any{
++		{math.NaN(), 1},
++		{1, math.NaN()},
++		{math.NaN(), math.NaN()},
++		{"1", 1},
++		{1, "1"},
++		{true, 1},
++		{nil, 1},
++	} {
++		_, ok := CompareNumbers(reflect.ValueOf(test[0]), reflect.ValueOf(test[1]))
++		c.Assert(ok, qt.IsFalse, qt.Commentf("%v vs %v", test[0], test[1]))
++	}
++}
+diff --git a/htesting/test_helpers.go b/htesting/test_helpers.go
+index 46f6bd9..a3a39d5 100644
+--- a/htesting/test_helpers.go
++++ b/htesting/test_helpers.go
+@@ -167,6 +167,11 @@ func IsWindows() bool {
+ 	return runtime.GOOS == "windows"
+ }
+ 
++// Is32Bit reports whether int is 32 bits wide, e.g. GOARCH=386.
++func Is32Bit() bool {
++	return strconv.IntSize == 32
++}
++
+ var goMinorVersionRe = regexp.MustCompile(`go1.(\d*)`)
+ 
+ func extractMinorVersionFromGoTag(tag string) int {
+diff --git a/tpl/collections/collections.go b/tpl/collections/collections.go
+index a44603b..7ce28e3 100644
+--- a/tpl/collections/collections.go
++++ b/tpl/collections/collections.go
+@@ -609,24 +609,25 @@ func (i *intersector) appendIfNotSeen(v reflect.Value) {
+ }
+ 
+ func (i *intersector) handleValuePair(l1vv, l2vv reflect.Value) {
+-	switch kind := l1vv.Kind(); {
++	v1, isNil1 := hreflect.Indirect(l1vv)
++	v2, isNil2 := hreflect.Indirect(l2vv)
++	if isNil1 || isNil2 {
++		return
++	}
++
++	var eq bool
++	switch kind := v1.Kind(); {
+ 	case kind == reflect.String:
+-		l2t, err := hreflect.ToStringE(l2vv)
+-		if err == nil && l1vv.String() == l2t {
+-			i.appendIfNotSeen(l1vv)
+-		}
++		eq = v2.Kind() == reflect.String && v1.String() == v2.String()
+ 	case hreflect.IsNumber(kind):
+-		f1, err1 := hreflect.ToFloat64E(l1vv)
+-		f2, err2 := hreflect.ToFloat64E(l2vv)
+-		if err1 == nil && err2 == nil && f1 == f2 {
+-			i.appendIfNotSeen(l1vv)
+-		}
++		c, ok := hreflect.CompareNumbers(v1, v2)
++		eq = ok && c == 0
+ 	case kind == reflect.Pointer, kind == reflect.Struct:
+-		if types.Unwrapv(l1vv.Interface()) == types.Unwrapv(l2vv.Interface()) {
+-			i.appendIfNotSeen(l1vv)
+-		}
+-	case kind == reflect.Interface:
+-		i.handleValuePair(reflect.ValueOf(l1vv.Interface()), l2vv)
++		eq = types.Unwrapv(v1.Interface()) == types.Unwrapv(v2.Interface())
++	}
++
++	if eq {
++		i.appendIfNotSeen(l1vv)
+ 	}
+ }
+ 
+@@ -657,16 +658,16 @@ func (ns *Namespace) Union(l1, l2 any) (any, error) {
+ 			if l1v.Type() != l2v.Type() &&
+ 				l1v.Type().Elem().Kind() != reflect.Interface &&
+ 				l2v.Type().Elem().Kind() != reflect.Interface {
+-				return ins.r.Interface(), nil
++				// Numeric element types unify through the conversion below,
++				// mirroring how intersect matches numbers across types.
++				if !hreflect.IsNumber(l1v.Type().Elem().Kind()) ||
++					!hreflect.IsNumber(l2v.Type().Elem().Kind()) {
++					return ins.r.Interface(), nil
++				}
+ 			}
+ 
+-			var (
+-				l1vv  reflect.Value
+-				isNil bool
+-			)
+-
+ 			for i := range l1v.Len() {
+-				l1vv, isNil = hreflect.Indirect(l1v.Index(i))
++				l1vv, isNil := hreflect.Indirect(l1v.Index(i))
+ 
+ 				if !l1vv.Type().Comparable() {
+ 					return []any{}, errors.New("union does not support slices or arrays of uncomparable types")
+@@ -677,34 +678,23 @@ func (ns *Namespace) Union(l1, l2 any) (any, error) {
+ 				}
+ 			}
+ 
+-			if !l1vv.IsValid() {
+-				// The first slice may be empty. Pick the first value of the second
+-				// to use as a prototype.
+-				if l2v.Len() > 0 {
+-					l1vv = l2v.Index(0)
+-				}
+-			}
+-
++			elemType := l1v.Type().Elem()
+ 			for j := range l2v.Len() {
+ 				l2vv := l2v.Index(j)
+-				typ := l1vv.Type()
+-
+-				switch kind := l1vv.Kind(); {
+-				case kind == reflect.String:
+-					l2t, err := hreflect.ToStringE(l2vv)
+-					if err == nil {
+-						ins.appendIfNotSeen(reflect.ValueOf(l2t))
++				if l2vv.Kind() == reflect.Interface {
++					if l2vv.IsNil() {
++						continue
+ 					}
+-				case hreflect.IsNumber(kind):
++					l2vv = l2vv.Elem()
++				}
++				if !l2vv.Type().AssignableTo(elemType) {
+ 					var err error
+-					l2vv, err = convertNumber(l2vv, typ)
+-					if err == nil {
+-						ins.appendIfNotSeen(l2vv)
++					// Values that cannot be represented in l1's element type are skipped.
++					if l2vv, err = convertValue(l2vv, elemType); err != nil {
++						continue
+ 					}
+-				case kind == reflect.Interface, kind == reflect.Struct, kind == reflect.Pointer:
+-					ins.appendIfNotSeen(l2vv)
+-
+ 				}
++				ins.appendIfNotSeen(l2vv)
+ 			}
+ 
+ 			return ins.r.Interface(), nil
+diff --git a/tpl/collections/collections_integration_test.go b/tpl/collections/collections_integration_test.go
+index 52939f3..9062d42 100644
+--- a/tpl/collections/collections_integration_test.go
++++ b/tpl/collections/collections_integration_test.go
+@@ -19,6 +19,7 @@ import (
+ 	"strings"
+ 	"testing"
+ 
++	"github.com/gohugoio/hugo/htesting"
+ 	"github.com/gohugoio/hugo/hugolib"
+ 	"github.com/gohugoio/hugo/resources/page"
+ 	"github.com/gohugoio/hugo/tpl/collections"
+@@ -653,3 +654,49 @@ All.
+ 		}
+ 	})
+ }
++
++// Front matter integers decode to int64 (TOML), uint64 (YAML) or float64 (JSON),
++// and must all match the []int produced by slice.
++func TestWhereInNumericParams(t *testing.T) {
++	t.Parallel()
++
++	if htesting.Is32Bit() {
++		t.Skip("big int literals overflow int on 32-bit")
++	}
++
++	files := `
++-- hugo.toml --
++disableKinds = ["section", "rss", "sitemap", "taxonomy", "term"]
++-- content/a.md --
+++++
++title = "a"
++n = 1
+++++
++-- content/b.md --
++---
++title: b
++n: 2
++---
++-- content/c.md --
++{ "title": "c", "n": 3 }
++-- layouts/page.html --
++-- layouts/home.html --
++in: {{ range where site.RegularPages "Params.n" "in" (slice 1 2) }}{{ .Title }}{{ end }}|
++in float: {{ range where site.RegularPages "Params.n" "in" (slice 2.0 3.0) }}{{ .Title }}{{ end }}|
++in mixed: {{ range where site.RegularPages "Params.n" "in" (slice 1 2.5 3.0) }}{{ .Title }}{{ end }}|
++not in: {{ range where site.RegularPages "Params.n" "not in" (slice 1 2) }}{{ .Title }}{{ end }}|
++not in strings: {{ range where site.RegularPages "Params.n" "not in" (slice "1" "2") }}{{ .Title }}{{ end }}|
++intersect: {{ intersect (slice 9007199254740993) (slice 9007199254740993 9007199254740992.0) }}|
++uniq: {{ uniq (slice 9007199254740993 9007199254740992 9007199254740992.0) }}|
++`
++
++	hugolib.Test(t, files).AssertFileContent("public/index.html",
++		"in: ab|",
++		"in float: bc|",
++		"in mixed: ac|",
++		"not in: c|",
++		"not in strings: abc|",
++		"intersect: [9007199254740993]|",
++		"uniq: [9007199254740993 9007199254740992]|",
++	)
++}
+diff --git a/tpl/collections/collections_test.go b/tpl/collections/collections_test.go
+index 5562a80..032bfc4 100644
+--- a/tpl/collections/collections_test.go
++++ b/tpl/collections/collections_test.go
+@@ -18,6 +18,7 @@ import (
+ 	"errors"
+ 	"fmt"
+ 	"html/template"
++	"math"
+ 	"math/rand"
+ 	"reflect"
+ 	"testing"
+@@ -25,6 +26,7 @@ import (
+ 
+ 	"github.com/gohugoio/hugo/common/hmaps"
+ 	"github.com/gohugoio/hugo/config/testconfig"
++	"github.com/gohugoio/hugo/htesting"
+ 
+ 	qt "github.com/frankban/quicktest"
+ )
+@@ -667,6 +669,15 @@ func TestUnion(t *testing.T) {
+ 		{[]string{"1", "2"}, []int{3}, []string{}, false},
+ 		{[]int{1, 2}, []string{"1", "2"}, []int{}, false},
+ 
++		// numeric []A ∪ []B unify. See issue 15323.
++		{[]int{1}, []float64{1.0}, []int{1}, false},
++		{[]int{1, 2}, []float64{2.0, 3.0}, []int{1, 2, 3}, false},
++		{[]float64{1.0}, []int{1, 2}, []float64{1.0, 2.0}, false},
++		{[]int{}, []float64{1.0}, []int{1}, false},
++		// Values not representable in l1's element type are skipped.
++		{[]int8{1}, []int64{300}, []int8{1}, false},
++		{[]int{1}, []float64{1.5}, []int{1}, false},
++
+ 		// []T ∪ []T
+ 		{[]string{"a", "b", "c", "c"}, []string{"a", "b", "b"}, []string{"a", "b", "c"}, false},
+ 		{[]string{"a", "b"}, []string{"a", "b", "c"}, []string{"a", "b", "c"}, false},
+@@ -696,7 +707,7 @@ func TestUnion(t *testing.T) {
+ 		{[]any{"a", "b", "c", "c"}, []string{"a", "b", "d"}, []any{"a", "b", "c", "d"}, false},
+ 		{[]any{}, []string{}, []any{}, false},
+ 		{[]any{1, 2}, []int{2, 3}, []any{1, 2, 3}, false},
+-		{[]any{1, 2}, []int8{2, 3}, []any{1, 2, 3}, false}, // 28
++		{[]any{1, 2}, []int8{2, 3}, []any{1, 2, int8(3)}, false},
+ 		{[]any{uint(1), uint(2)}, []uint{2, 3}, []any{uint(1), uint(2), uint(3)}, false},
+ 		{[]any{1.1, 2.2}, []float64{2.2, 3.3}, []any{1.1, 2.2, 3.3}, false},
+ 
+@@ -949,3 +960,72 @@ func ToTstXIs(slice any) []TstXI {
+ func newNs() *Namespace {
+ 	return New(testconfig.GetTestDeps(nil, nil))
+ }
++
++// Numbers are compared by exact value across int, uint and float types in
++// all set operations.
++// See issue 15358.
++func TestSetOperationsExactNumbers(t *testing.T) {
++	t.Parallel()
++	c := qt.New(t)
++	ns := newNs()
++
++	a := int64(1<<53 + 1)
++	b := int64(1 << 53)
++	bf := float64(b)
++	u := uint64(math.MaxUint64)
++	im := int64(math.MaxInt64)
++	um := uint64(math.MaxInt64)
++
++	type testCase struct {
++		fn     func() (any, error)
++		expect any
++	}
++
++	tests := []testCase{
++		{func() (any, error) { return ns.In([]any{a}, b) }, false},
++		{func() (any, error) { return ns.In([]any{a}, bf) }, false},
++		{func() (any, error) { return ns.In([]any{b}, bf) }, true},
++		{func() (any, error) { return ns.In([]any{um}, im) }, true},
++		{func() (any, error) { return ns.In([]any{u}, float64(u)) }, false},
++		{func() (any, error) { return ns.In([]any{-1}, u) }, false},
++
++		{func() (any, error) { return ns.Intersect([]any{a}, []any{a}) }, []any{a}},
++		{func() (any, error) { return ns.Intersect([]any{a}, []any{b}) }, []any{}},
++		{func() (any, error) { return ns.Intersect([]any{a, b}, []any{b, a}) }, []any{a, b}},
++		{func() (any, error) { return ns.Intersect([]any{b}, []any{bf}) }, []any{b}},
++		{func() (any, error) { return ns.Intersect([]uint64{u}, []uint64{u}) }, []uint64{u}},
++		{func() (any, error) { return ns.Intersect([]any{um}, []any{im}) }, []any{um}},
++		{func() (any, error) { return ns.Intersect([]any{-1}, []any{u}) }, []any{}},
++
++		{func() (any, error) { return ns.Union([]any{a}, []any{b}) }, []any{a, b}},
++		{func() (any, error) { return ns.Union([]any{b}, []any{bf}) }, []any{b}},
++		{func() (any, error) { return ns.Union([]any{um}, []any{im}) }, []any{um}},
++		{func() (any, error) { return ns.Union([]int64{a}, []float64{bf}) }, []int64{a, b}},
++		{func() (any, error) { return ns.Union([]any{}, []any{1, 1.0}) }, []any{1}},
++
++		{func() (any, error) { return ns.Uniq([]any{um, im, float64(1 << 63), uint64(1 << 63)}) }, []any{um, float64(1 << 63)}},
++
++		{func() (any, error) { return ns.SymDiff([]any{a}, []any{b}) }, []any{b, a}},
++		{func() (any, error) { return ns.SymDiff([]any{um}, []any{im}) }, []any{}},
++
++		{func() (any, error) { return ns.Complement([]any{bf}, []any{a, b}) }, []any{a}},
++		{func() (any, error) { return ns.Complement([]any{im}, []any{um}) }, []any{}},
++	}
++
++	if !htesting.Is32Bit() {
++		tests = append(tests, []testCase{
++			{func() (any, error) { return ns.In([]int64{a}, int(a)) }, true},
++			{func() (any, error) { return ns.Intersect([]int64{a}, []int{int(a)}) }, []int64{a}},
++			{func() (any, error) { return ns.Union([]any{a}, []any{int(a)}) }, []any{a}},
++			{func() (any, error) { return ns.Uniq([]any{a, b, a, int(a), bf}) }, []any{a, b}},
++			{func() (any, error) { return ns.SymDiff([]any{a}, []any{int(a)}) }, []any{}},
++			{func() (any, error) { return ns.Complement([]any{int(a)}, []any{a, b}) }, []any{b}},
++		}...)
++	}
++
++	for i, test := range tests {
++		result, err := test.fn()
++		c.Assert(err, qt.IsNil, qt.Commentf("[%d]", i))
++		c.Assert(result, qt.DeepEquals, test.expect, qt.Commentf("[%d]", i))
++	}
++}
+diff --git a/tpl/collections/reflect_helpers.go b/tpl/collections/reflect_helpers.go
+index 56634fd..045eeb2 100644
+--- a/tpl/collections/reflect_helpers.go
++++ b/tpl/collections/reflect_helpers.go
+@@ -16,6 +16,7 @@ package collections
+ import (
+ 	"errors"
+ 	"fmt"
++	"math"
+ 	"reflect"
+ 
+ 	"github.com/gohugoio/hugo/common/hashing"
+@@ -33,15 +34,18 @@ var (
+ // or get the hash values if not Comparable (such as map or struct)
+ // to make them comparable
+ func normalize(v reflect.Value) any {
++	if v.Kind() == reflect.Interface {
++		if v.IsNil() {
++			return nil
++		}
++		v = v.Elem()
++	}
+ 	k := v.Kind()
+ 	switch {
+ 	case !v.Type().Comparable():
+ 		return hashing.HashUint64(v.Interface())
+ 	case hreflect.IsNumber(k):
+-		f, err := hreflect.ToFloat64E(v)
+-		if err == nil {
+-			return f
+-		}
++		return numericKey(v)
+ 	}
+ 
+ 	vv := types.Unwrapv(v.Interface())
+@@ -52,6 +56,32 @@ func normalize(v reflect.Value) any {
+ 	return vv
+ }
+ 
++// numericKey returns a key that is equal for numerically equal values
++// regardless of their Go type, without losing precision.
++func numericKey(v reflect.Value) any {
++	switch k := v.Kind(); {
++	case hreflect.IsInt(k):
++		return v.Int()
++	case hreflect.IsUint(k):
++		u := v.Uint()
++		if u > math.MaxInt64 {
++			return u
++		}
++		return int64(u)
++	default:
++		f := v.Float()
++		if f == math.Trunc(f) {
++			if f >= -(1<<63) && f < 1<<63 {
++				return int64(f)
++			}
++			if f >= 1<<63 && f < 1<<64 {
++				return uint64(f)
++			}
++		}
++		return f
++	}
++}
++
+ // collects identities from the slices in seqs into a set. Numeric values are normalized,
+ // pointers unwrapped.
+ func collectIdentities(seqs ...any) (map[any]bool, error) {
+@@ -94,8 +124,15 @@ func convertValue(v reflect.Value, to reflect.Type) (reflect.Value, error) {
+ }
+ 
+ func convertNumber(v reflect.Value, typ reflect.Type) (reflect.Value, error) {
+-	if v, ok := hreflect.ConvertIfPossible(v, typ); ok {
+-		return v, nil
++	if cv, ok := hreflect.ConvertIfPossible(v, typ); ok {
++		return cv, nil
++	}
++	if v.Kind() == reflect.Interface {
++		v = v.Elem()
++	}
++	if hreflect.IsFloat(v.Kind()) && hreflect.IsFloat(typ.Kind()) {
++		// Narrowing float64 to float32 loses precision, but that is expected.
++		return v.Convert(typ), nil
+ 	}
+ 	return reflect.Value{}, fmt.Errorf("unable to convert value of type %q to %q", v.Type().String(), typ.String())
+ }
+diff --git a/tpl/collections/where.go b/tpl/collections/where.go
+index 7a813fd..20e4852 100644
+--- a/tpl/collections/where.go
++++ b/tpl/collections/where.go
+@@ -97,35 +97,23 @@ func (ns *Namespace) checkCondition(v, mv reflect.Value, op string) (bool, error
+ 	}
+ 
+ 	var ivp, imvp *int64
+-	var fvp, fmvp *float64
+ 	var svp, smvp *string
+ 	var slv, slmv any
++	var nv, nmv any
+ 	var ima []int64
+-	var fma []float64
+ 	var sma []string
+ 
+-	if mv.Kind() == v.Kind() {
++	if c, ok := hreflect.CompareNumbers(v, mv); ok {
++		// Feed the result through the int64 comparisons below.
++		iv, imv := int64(c), int64(0)
++		ivp, imvp = &iv, &imv
++	} else if mv.Kind() == v.Kind() {
+ 		switch v.Kind() {
+-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+-			iv := v.Int()
+-			ivp = &iv
+-			imv := mv.Int()
+-			imvp = &imv
+-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+-			iv := int64(v.Uint())
+-			ivp = &iv
+-			imv := int64(mv.Uint())
+-			imvp = &imv
+ 		case reflect.String:
+ 			sv := v.String()
+ 			svp = &sv
+ 			smv := mv.String()
+ 			smvp = &smv
+-		case reflect.Float64:
+-			fv := v.Float()
+-			fvp = &fv
+-			fmv := mv.Float()
+-			fmvp = &fmv
+ 		case reflect.Struct:
+ 			if hreflect.IsTime(v.Type()) {
+ 				iv := ns.toTimeUnix(v)
+@@ -137,17 +125,6 @@ func (ns *Namespace) checkCondition(v, mv reflect.Value, op string) (bool, error
+ 			slv = v.Interface()
+ 			slmv = mv.Interface()
+ 		}
+-	} else if hreflect.IsNumber(v.Kind()) && hreflect.IsNumber(mv.Kind()) {
+-		fv, err := hreflect.ToFloat64E(v)
+-		if err != nil {
+-			return false, err
+-		}
+-		fvp = &fv
+-		fmv, err := hreflect.ToFloat64E(mv)
+-		if err != nil {
+-			return false, err
+-		}
+-		fmvp = &fmv
+ 	} else {
+ 		if mv.Kind() != reflect.Array && mv.Kind() != reflect.Slice {
+ 			return false, nil
+@@ -160,19 +137,11 @@ func (ns *Namespace) checkCondition(v, mv reflect.Value, op string) (bool, error
+ 			return false, nil
+ 		}
+ 
+-		if v.Kind() != reflect.Interface && mv.Type().Elem().Kind() != reflect.Interface && mv.Type().Elem() != v.Type() && v.Kind() != reflect.Array && v.Kind() != reflect.Slice {
+-			return false, nil
+-		}
+-		switch v.Kind() {
+-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+-			iv := v.Int()
+-			ivp = &iv
+-			for i := range mv.Len() {
+-				if anInt, err := hreflect.ToInt64E(mv.Index(i)); err == nil {
+-					ima = append(ima, anInt)
+-				}
+-			}
+-		case reflect.String:
++		switch {
++		case hreflect.IsNumber(v.Kind()):
++			nv = v.Interface()
++			nmv = mv.Interface()
++		case v.Kind() == reflect.String:
+ 			sv := v.String()
+ 			svp = &sv
+ 			for i := range mv.Len() {
+@@ -180,23 +149,15 @@ func (ns *Namespace) checkCondition(v, mv reflect.Value, op string) (bool, error
+ 					sma = append(sma, aString)
+ 				}
+ 			}
+-		case reflect.Float64:
+-			fv := v.Float()
+-			fvp = &fv
++		case hreflect.IsTime(v.Type()):
++			iv := ns.toTimeUnix(v)
++			ivp = &iv
+ 			for i := range mv.Len() {
+-				if aFloat, err := hreflect.ToFloat64E(mv.Index(i)); err == nil {
+-					fma = append(fma, aFloat)
+-				}
+-			}
+-		case reflect.Struct:
+-			if hreflect.IsTime(v.Type()) {
+-				iv := ns.toTimeUnix(v)
+-				ivp = &iv
+-				for i := range mv.Len() {
+-					ima = append(ima, ns.toTimeUnix(mv.Index(i)))
++				if t, ok := hreflect.AsTime(mv.Index(i), ns.loc); ok {
++					ima = append(ima, t.Unix())
+ 				}
+ 			}
+-		case reflect.Array, reflect.Slice:
++		case v.Kind() == reflect.Array, v.Kind() == reflect.Slice:
+ 			slv = v.Interface()
+ 			slmv = mv.Interface()
+ 		}
+@@ -209,8 +170,6 @@ func (ns *Namespace) checkCondition(v, mv reflect.Value, op string) (bool, error
+ 			return *ivp == *imvp, nil
+ 		case svp != nil && smvp != nil:
+ 			return *svp == *smvp, nil
+-		case fvp != nil && fmvp != nil:
+-			return *fvp == *fmvp, nil
+ 		}
+ 	case "!=", "<>", "ne":
+ 		switch {
+@@ -218,8 +177,6 @@ func (ns *Namespace) checkCondition(v, mv reflect.Value, op string) (bool, error
+ 			return *ivp != *imvp, nil
+ 		case svp != nil && smvp != nil:
+ 			return *svp != *smvp, nil
+-		case fvp != nil && fmvp != nil:
+-			return *fvp != *fmvp, nil
+ 		}
+ 	case ">=", "ge":
+ 		switch {
+@@ -227,8 +184,6 @@ func (ns *Namespace) checkCondition(v, mv reflect.Value, op string) (bool, error
+ 			return *ivp >= *imvp, nil
+ 		case svp != nil && smvp != nil:
+ 			return *svp >= *smvp, nil
+-		case fvp != nil && fmvp != nil:
+-			return *fvp >= *fmvp, nil
+ 		}
+ 	case ">", "gt":
+ 		switch {
+@@ -236,8 +191,6 @@ func (ns *Namespace) checkCondition(v, mv reflect.Value, op string) (bool, error
+ 			return *ivp > *imvp, nil
+ 		case svp != nil && smvp != nil:
+ 			return *svp > *smvp, nil
+-		case fvp != nil && fmvp != nil:
+-			return *fvp > *fmvp, nil
+ 		}
+ 	case "<=", "le":
+ 		switch {
+@@ -245,8 +198,6 @@ func (ns *Namespace) checkCondition(v, mv reflect.Value, op string) (bool, error
+ 			return *ivp <= *imvp, nil
+ 		case svp != nil && smvp != nil:
+ 			return *svp <= *smvp, nil
+-		case fvp != nil && fmvp != nil:
+-			return *fvp <= *fmvp, nil
+ 		}
+ 	case "<", "lt":
+ 		switch {
+@@ -254,16 +205,14 @@ func (ns *Namespace) checkCondition(v, mv reflect.Value, op string) (bool, error
+ 			return *ivp < *imvp, nil
+ 		case svp != nil && smvp != nil:
+ 			return *svp < *smvp, nil
+-		case fvp != nil && fmvp != nil:
+-			return *fvp < *fmvp, nil
+ 		}
+ 	case "in", "not in":
+ 		var r bool
+ 		switch {
++		case nv != nil:
++			r, _ = ns.In(nmv, nv)
+ 		case ivp != nil && len(ima) > 0:
+ 			r, _ = ns.In(ima, *ivp)
+-		case fvp != nil && len(fma) > 0:
+-			r, _ = ns.In(fma, *fvp)
+ 		case svp != nil:
+ 			if len(sma) > 0 {
+ 				r, _ = ns.In(sma, *svp)
+diff --git a/tpl/collections/where_test.go b/tpl/collections/where_test.go
+index b4fd6e6..c88a806 100644
+--- a/tpl/collections/where_test.go
++++ b/tpl/collections/where_test.go
+@@ -17,6 +17,7 @@ import (
+ 	"context"
+ 	"fmt"
+ 	"html/template"
++	"math"
+ 	"math/rand"
+ 	"reflect"
+ 	"strings"
+@@ -697,6 +698,14 @@ func TestCheckCondition(t *testing.T) {
+ 		expect
+ 	}{
+ 		{reflect.ValueOf(123), reflect.ValueOf(123), "", expect{true, false}},
++		{reflect.ValueOf(int64(1<<53 + 1)), reflect.ValueOf(int(1<<53 + 1)), "", expect{true, false}},
++		{reflect.ValueOf(int64(1<<53 + 1)), reflect.ValueOf(int(1 << 53)), ">", expect{true, false}},
++		{reflect.ValueOf(uint64(1<<53 + 1)), reflect.ValueOf(uint8(1)), ">", expect{true, false}},
++		{reflect.ValueOf(int64(1<<53 + 1)), reflect.ValueOf(float64(1 << 53)), "", expect{false, false}},
++		{reflect.ValueOf(int64(1<<53 + 1)), reflect.ValueOf(float64(1 << 53)), ">", expect{true, false}},
++		{reflect.ValueOf(int64(1<<53 + 1)), reflect.ValueOf(uint64(1<<53 + 1)), "", expect{true, false}},
++		{reflect.ValueOf(-1), reflect.ValueOf(uint64(math.MaxUint64)), "<", expect{true, false}},
++		{reflect.ValueOf(uint64(math.MaxUint64)), reflect.ValueOf(uint8(1)), ">", expect{true, false}},
+ 		{reflect.ValueOf("foo"), reflect.ValueOf("foo"), "", expect{true, false}},
+ 		{
+ 			reflect.ValueOf(time.Date(2015, time.May, 26, 19, 18, 56, 12345, time.UTC)),
+diff --git a/tpl/compare/compare.go b/tpl/compare/compare.go
+index efac289..2a4c0af 100644
+--- a/tpl/compare/compare.go
++++ b/tpl/compare/compare.go
+@@ -19,6 +19,7 @@ import (
+ 	"math"
+ 	"reflect"
+ 	"strconv"
++	"strings"
+ 	"time"
+ 
+ 	"github.com/gohugoio/hugo/compare"
+@@ -96,6 +97,7 @@ func (*Namespace) Default(defaultv any, givenv ...any) (any, error) {
+ }
+ 
+ // Eq returns the boolean truth of arg1 == arg2 || arg1 == arg3 || arg1 == arg4.
++// Numbers are compared by value regardless of type, so e.g. 1 and 1.0 are considered equal.
+ func (n *Namespace) Eq(first any, others ...any) bool {
+ 	if n.caseInsensitive {
+ 		panic("caseInsensitive not implemented for Eq")
+@@ -105,32 +107,14 @@ func (n *Namespace) Eq(first any, others ...any) bool {
+ 		if types.IsNil(v) {
+ 			return nil
+ 		}
+-
+ 		if at, ok := v.(htime.AsTimeProvider); ok {
+ 			return at.AsTime(n.loc)
+ 		}
+-
+-		vv := reflect.ValueOf(v)
+-		switch vv.Kind() {
+-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+-			return vv.Int()
+-		case reflect.Float32, reflect.Float64:
+-			return vv.Float()
+-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+-			i := vv.Uint()
+-			// If it can fit in an int, convert it.
+-			if i <= math.MaxInt64 {
+-				return int64(i)
+-			}
+-			return i
+-		case reflect.String:
+-			return vv.String()
+-		default:
+-			return v
+-		}
++		return v
+ 	}
+ 
+ 	normFirst := normalize(first)
++	fv := reflect.ValueOf(normFirst)
+ 	for _, other := range others {
+ 		if e, ok := first.(compare.Eqer); ok {
+ 			if e.Eq(other) {
+@@ -147,6 +131,29 @@ func (n *Namespace) Eq(first any, others ...any) bool {
+ 		}
+ 
+ 		other = normalize(other)
++		if normFirst == nil || other == nil {
++			if normFirst == other {
++				return true
++			}
++			continue
++		}
++
++		ov := reflect.ValueOf(other)
++
++		if fv.Kind() == reflect.String && ov.Kind() == reflect.String {
++			if fv.String() == ov.String() {
++				return true
++			}
++			continue
++		}
++
++		if c, ok := hreflect.CompareNumbers(fv, ov); ok {
++			if c == 0 {
++				return true
++			}
++			continue
++		}
++
+ 		if reflect.DeepEqual(normFirst, other) {
+ 			return true
+ 		}
+@@ -242,37 +249,25 @@ func (ns *Namespace) compareGet(a any, b any) (float64, float64) {
+ 	return ns.compareGetWithCollator(nil, a, b)
+ }
+ 
+-func (ns *Namespace) compareTwoUints(a uint64, b uint64) (float64, float64) {
+-	if a < b {
++// toLeftRight maps a three-way comparison result to the (left, right)
++// pair convention used by compareGet.
++func toLeftRight(c int) (float64, float64) {
++	switch {
++	case c < 0:
+ 		return 0, 1
+-	} else if a == b {
+-		return 0, 0
+-	} else {
++	case c > 0:
+ 		return 1, 0
+ 	}
++	return 0, 0
+ }
+ 
+ func (ns *Namespace) compareGetWithCollator(collator *langs.Collator, a any, b any) (float64, float64) {
+ 	if ac, ok := a.(compare.Comparer); ok {
+-		c := ac.Compare(b)
+-		if c < 0 {
+-			return 1, 0
+-		} else if c == 0 {
+-			return 0, 0
+-		} else {
+-			return 0, 1
+-		}
++		return toLeftRight(-ac.Compare(b))
+ 	}
+ 
+ 	if bc, ok := b.(compare.Comparer); ok {
+-		c := bc.Compare(a)
+-		if c < 0 {
+-			return 0, 1
+-		} else if c == 0 {
+-			return 0, 0
+-		} else {
+-			return 1, 0
+-		}
++		return toLeftRight(bc.Compare(a))
+ 	}
+ 
+ 	// Fast path: both values are plain strings.
+@@ -282,25 +277,23 @@ func (ns *Namespace) compareGetWithCollator(collator *langs.Collator, a any, b a
+ 		}
+ 	}
+ 
+-	var left, right float64
+-	var leftStr, rightStr *string
+ 	av := reflect.ValueOf(a)
+ 	bv := reflect.ValueOf(b)
+ 
++	if c, ok := hreflect.CompareNumbers(av, bv); ok {
++		return toLeftRight(c)
++	}
++
++	var left, right float64
++	var leftStr, rightStr *string
++
+ 	switch av.Kind() {
+ 	case reflect.Array, reflect.Chan, reflect.Map, reflect.Slice:
+ 		left = float64(av.Len())
+ 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+-		if hreflect.IsUint(bv.Kind()) {
+-			return ns.compareTwoUints(uint64(av.Int()), bv.Uint())
+-		}
+ 		left = float64(av.Int())
+-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
++	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+ 		left = float64(av.Uint())
+-	case reflect.Uint64:
+-		if hreflect.IsUint(bv.Kind()) {
+-			return ns.compareTwoUints(av.Uint(), bv.Uint())
+-		}
+ 	case reflect.Float32, reflect.Float64:
+ 		left = av.Float()
+ 	case reflect.String:
+@@ -326,16 +319,9 @@ func (ns *Namespace) compareGetWithCollator(collator *langs.Collator, a any, b a
+ 	case reflect.Array, reflect.Chan, reflect.Map, reflect.Slice:
+ 		right = float64(bv.Len())
+ 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+-		if hreflect.IsUint(av.Kind()) {
+-			return ns.compareTwoUints(av.Uint(), uint64(bv.Int()))
+-		}
+ 		right = float64(bv.Int())
+-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
++	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+ 		right = float64(bv.Uint())
+-	case reflect.Uint64:
+-		if hreflect.IsUint(av.Kind()) {
+-			return ns.compareTwoUints(av.Uint(), bv.Uint())
+-		}
+ 	case reflect.Float32, reflect.Float64:
+ 		right = bv.Float()
+ 	case reflect.String:
+@@ -372,19 +358,9 @@ func (ns *Namespace) compareTwoStrings(collator *langs.Collator, a, b string) (f
+ 		} else {
+ 			c = compare.Strings(a, b)
+ 		}
+-		if c < 0 {
+-			return 0, 1
+-		} else if c > 0 {
+-			return 1, 0
+-		}
+-		return 0, 0
++		return toLeftRight(c)
+ 	}
+-	if a < b {
+-		return 0, 1
+-	} else if a > b {
+-		return 1, 0
+-	}
+-	return 0, 0
++	return toLeftRight(strings.Compare(a, b))
+ }
+ 
+ func (ns *Namespace) toTimeUnix(v reflect.Value) int64 {
+diff --git a/tpl/compare/compare_integration_test.go b/tpl/compare/compare_integration_test.go
+new file mode 100644
+index 0000000..5f57171
+--- /dev/null
++++ b/tpl/compare/compare_integration_test.go
+@@ -0,0 +1,168 @@
++// Copyright 2026 The Hugo Authors. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package compare_test
++
++import (
++	"testing"
++
++	"github.com/gohugoio/hugo/hugolib"
++	"github.com/gohugoio/hugo/tpl/compare"
++)
++
++// See issue 15322.
++func TestEqIntFloat(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++-- layouts/home.html --
++eq: {{ eq 1 1.0 }}|{{ eq 1.0 1 }}|{{ eq 1 1.5 }}|{{ eq 1 2 1.0 }}
++ne: {{ ne 1 1.0 }}|{{ ne 1 1.5 }}
++lt: {{ lt 1 1.0 }}|{{ lt 1 1.5 }}
++le: {{ le 1 1.0 }}|{{ le 1 0.5 }}
++gt: {{ gt 1 1.0 }}|{{ gt 1 0.5 }}
++ge: {{ ge 1 1.0 }}|{{ ge 1 1.5 }}
++`
++	b := hugolib.Test(t, files)
++
++	b.AssertFileContent(
++		"public/index.html",
++		"eq: true|true|false|true",
++		"ne: false|true",
++		"lt: false|true",
++		"le: true|false",
++		"gt: false|true",
++		"ge: true|false",
++	)
++}
++
++func BenchmarkCompare(b *testing.B) {
++	files := `
++-- hugo.toml --
++`
++	bb := hugolib.Test(b, files)
++
++	ns := bb.H.TemplateStore.GetTemplateFuncsNamespace("compare").(*compare.Namespace)
++
++	b.ResetTimer()
++
++	run := func(name string, fn func(v1, v2 any)) {
++		b.Run(name, func(b *testing.B) {
++			b.Run("mixed int and float", func(b *testing.B) {
++				for b.Loop() {
++					fn(42, 42.0)
++				}
++			})
++			b.Run("mixed float and int", func(b *testing.B) {
++				for b.Loop() {
++					fn(42.0, 42)
++				}
++			})
++			b.Run("mixed string and int", func(b *testing.B) {
++				for b.Loop() {
++					fn("42", 42)
++				}
++			})
++			b.Run("mixed string and float", func(b *testing.B) {
++				for b.Loop() {
++					fn("42", 42.0)
++				}
++			})
++			b.Run("mixed float and string", func(b *testing.B) {
++				for b.Loop() {
++					fn(42.0, "42")
++				}
++			})
++			// End of mixed type benchmark
++			// start of same type benchmark
++			b.Run("same int", func(b *testing.B) {
++				for b.Loop() {
++					fn(42, 42)
++				}
++			})
++			b.Run("same float", func(b *testing.B) {
++				for b.Loop() {
++					fn(42.0, 42.0)
++				}
++			})
++			b.Run("same string", func(b *testing.B) {
++				for b.Loop() {
++					fn("foo", "foo")
++				}
++			})
++			b.Run("same bool", func(b *testing.B) {
++				for b.Loop() {
++					fn(true, true)
++				}
++			})
++			b.Run("same nil", func(b *testing.B) {
++				for b.Loop() {
++					fn(nil, nil)
++				}
++			})
++			b.Run("same complex", func(b *testing.B) {
++				for b.Loop() {
++					fn(complex(1, 2), complex(1, 2))
++				}
++			})
++			// End of same type benchmark
++			// start of edge case benchmark
++			b.Run("empty slice", func(b *testing.B) {
++				for b.Loop() {
++					fn([]int{}, []int{})
++				}
++			})
++			b.Run("empty map", func(b *testing.B) {
++				for b.Loop() {
++					fn(map[string]int{}, map[string]int{})
++				}
++			})
++			// End of edge case benchmark
++			// start of nil benchmark
++			b.Run("nil and non-nil", func(b *testing.B) {
++				for b.Loop() {
++					fn(nil, 42)
++				}
++			})
++			b.Run("non-nil and nil", func(b *testing.B) {
++				for b.Loop() {
++					fn(42, nil)
++				}
++			})
++			// End of nil benchmark
++			// start of large number benchmark
++			b.Run("large numbers", func(b *testing.B) {
++				for b.Loop() {
++					fn(1e18, 1e18)
++				}
++			})
++			// End of large number benchmark
++			// start of small number benchmark
++			b.Run("small numbers", func(b *testing.B) {
++				for b.Loop() {
++					fn(1e-18, 1e-18)
++				}
++			})
++			// End of small number benchmark
++		})
++	}
++
++	run("Eq", func(v1, v2 any) {
++		ns.Eq(v1, v2)
++	})
++
++	run("Gt", func(v1, v2 any) {
++		ns.Gt(v1, v2)
++	})
++}
+diff --git a/tpl/compare/compare_test.go b/tpl/compare/compare_test.go
+index a94ac5d..d2ae9ef 100644
+--- a/tpl/compare/compare_test.go
++++ b/tpl/compare/compare_test.go
+@@ -214,6 +214,23 @@ func doTestCompare(t *testing.T, tp tstCompareType, funcUnderTest func(a, b any)
+ 		{uint64(5), uint64(5), 0},
+ 		{uint64(math.MaxUint32), uint32(math.MaxUint32), 0},
+ 		{uint64(math.MaxUint16), int(math.MaxUint16), 0},
++		{1, 1.0, 0},
++		{1.0, 1, 0},
++		{0, 0.0, 0},
++		{-1, -1.0, 0},
++		{int64(3), float64(3), 0},
++		{uint(4), 4.0, 0},
++		{1, float32(1.0), 0},
++		{float32(1.0), 1, 0},
++		{1, 1.5, -1},
++		{1.5, 1, 1},
++		{2, 1.5, 1},
++		{int64(1<<53 + 1), float64(1 << 53), 1},
++		{float64(1 << 53), int64(1<<53 + 1), -1},
++		{int64(1<<53 + 1), uint64(1<<53 + 1), 0},
++		{-1, uint64(math.MaxUint64), -1},
++		{uint64(math.MaxUint64), -1, 1},
++		{uint64(math.MaxUint64), uint8(1), 1},
+ 		{int16(4), int(5), -1},
+ 		{uint(15), uint64(15), 0},
+ 		{-2, 1, -1},
+@@ -288,6 +305,8 @@ func TestEqualExtend(t *testing.T) {
+ 
+ 	ns := New(time.UTC, false)
+ 
++	one := 1
++
+ 	for _, test := range []struct {
+ 		first  any
+ 		others []any
+@@ -296,6 +315,31 @@ func TestEqualExtend(t *testing.T) {
+ 		{1, []any{1, 2}, true},
+ 		{1, []any{2, 1}, true},
+ 		{1, []any{2, 3}, false},
++		{1, []any{2, 1.0}, true},
++		{1.0, []any{2, 1}, true},
++		{1, []any{1.5}, false},
++		{uint64(math.MaxUint64), []any{-1}, false},
++		{-1, []any{uint64(math.MaxUint64)}, false},
++		{float64(9007199254740992), []any{int64(9007199254740993)}, false},
++		{int64(9007199254740993), []any{float64(9007199254740992)}, false},
++		{float64(9007199254740992), []any{int64(9007199254740992)}, true},
++		{int64(9007199254740992), []any{float64(9007199254740992)}, true},
++		{float32(16777216), []any{int64(16777217)}, false},
++		{int64(16777217), []any{float32(16777216)}, false},
++		{float64(3.14), []any{float32(3.14)}, false},
++		{float32(3.14), []any{float64(3.14)}, false},
++		{float64(0.5), []any{float32(0.5)}, true},
++		{float32(0.5), []any{float64(0.5)}, true},
++		{stringType("a"), []any{"b", "a"}, true},
++		{[]int{1, 2}, []any{[]int{1, 2}}, true},
++		{[]int{1, 2}, []any{[]int{2, 1}}, false},
++		{map[string]any{"a": []int{1}}, []any{map[string]any{"a": []int{1}}}, true},
++		{struct{ V any }{[]int{1}}, []any{struct{ V any }{[]int{1}}}, true},
++		{&T{}, []any{&T{}}, true},
++		{T{}, []any{&T{}}, false},
++		{&T{}, []any{T{}}, false},
++		{1, []any{&one}, false},
++		{&one, []any{1}, false},
+ 		{tstEqerType1("a"), []any{tstEqerType1("a"), tstEqerType1("b")}, true},
+ 		{tstEqerType1("a"), []any{tstEqerType1("b"), tstEqerType1("a")}, true},
+ 		{tstEqerType1("a"), []any{tstEqerType1("b"), tstEqerType1("c")}, false},

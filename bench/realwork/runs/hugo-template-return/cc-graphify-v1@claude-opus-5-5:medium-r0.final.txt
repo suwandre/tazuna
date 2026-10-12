@@ -1,0 +1,37 @@
+`return` now works in any template, anywhere in the template, using the sentinel-error approach you proposed. The old partial-only rewrite (the wrapper template, `contextWrapper` and `ParseInfo.HasReturn`) is gone. Tests for the changed packages pass. The full `go test ./...` run had failures, all in code this change doesn't touch (details at the end).
+
+**How it works**
+- **Template func:** `return` (`partials.Return`) gives back a `*texttemplate.ReturnError` holding an optional value.
+- **Changes to the Go template fork** (all marked "Added for Hugo"):
+  - `evalCall` panics with the return error directly instead of wrapping it as an execution error.
+  - Top-level execution catches it and hands it back as the error value.
+  - `walkTemplate` catches it too, so a `return` inside `{{ template }}` or `{{ block }}` stops only that template. For example, returning inside `main` leaves the rest of `baseof` rendering.
+  - `try` passes it through instead of swallowing it.
+- **Template store:** `TemplateStore.ExecuteWithContextAndKey` now also returns the `*ReturnError`; partials is the only caller. `ExecuteWithContext` treats a return as success, so normal page templates, shortcodes and so on need no changes.
+- **Partials:** a partial now always renders into a buffer. `{{ return $v }}` makes `$v` the result. A bare `{{ return }}` stops early and the result is whatever was rendered so far.
+
+**Backward compatibility:** the old keyword swallowed the whole rest of the expression, as in `{{ return add . 42 }}` or `{{ return $x | string }}`. As a function, that would change meaning silently. So I kept a small parse-time rewrite (`wrapReturnPipe`) that turns it into `{{ return (add . 42 | string) }}`. Since `return` takes at most one argument, this form is unambiguous. It's the only template rewriting left for `return`.
+
+**Behaviour changes**
+- `TestPartialReturnPanicIssue13600` expected a "wrong number of args for string" error. That error came from the old rewrite cutting `return (…)` out of `{{ return (delimit . ", ") | string }}`. The pipeline is now evaluated as written, so the real error appears (`delimit` can't iterate over a page), and I updated the assertion.
+- In a partial that uses `return`, `.` and `$` used to point at the wrapper's `.Arg`. They now point at the data directly. This doesn't change what user templates see, but it is a behaviour difference.
+
+**Tests:** I added `TestReturnEarly` in `hugolib/template_test.go`. It covers:
+- returning early from a partial, including from inside `range`
+- `return` with no value
+- nested partials
+- `try` not catching a return
+- the pipeline form
+- early return in `define`/`block`, inline templates and a regular page template
+
+All of `./tpl/...` and `./hugolib/...` pass.
+
+**What failed**
+- **`./check.sh`:** stops at staticcheck on warnings in `config/allconfig/allconfig.go` and `hugolib/integrationtest_builder.go`. The same warnings appear on the unmodified base, but because the script stops there, its test step never ran. gofmt passed.
+- **`go test ./...`:** three failures, none in packages I changed:
+  - `TestCommands/mod`: an unexpected stderr line in `hugo mod verify`.
+  - `internal/warpc`: "dispatcher is shutting down" in `TestGreet`, `TestGreetParallel` and `TestKatexParallel`.
+
+  I didn't re-run either on the base, so I haven't confirmed they fail without this change.
+
+Nothing is committed yet.

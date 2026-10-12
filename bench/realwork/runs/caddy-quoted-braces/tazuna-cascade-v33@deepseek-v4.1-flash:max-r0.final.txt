@@ -1,0 +1,39 @@
+All done. Here's a summary of the change:
+
+## Problem
+
+Quoted braces were being treated as structural block delimiters by the Caddyfile parser. For example:
+
+```caddyfile
+:8080 {
+	respond "{"
+}
+```
+
+The quoted `"{"` incremented the parser's nesting counter, so the real `}` was treated as closing the quoted brace's phantom block, leaving the server block unclosed (`syntax error: unexpected token '', expecting '}'`). Quoted `"}"` caused the opposite: `Unexpected '}' because no matching opening brace`.
+
+## Fix
+
+Added two small token helpers in `caddyconfig/caddyfile/lexer.go` that identify **structural** (unquoted) braces:
+
+```go
+func isOpenCurlyBrace(t Token) bool  { return t.Text == "{" && t.wasQuoted == 0 }
+func isCloseCurlyBrace(t Token) bool { return t.Text == "}" && t.wasQuoted == 0 }
+```
+
+Then used them everywhere braces drive parsing, so quoted/backtick/heredoc braces are treated purely as literal text:
+
+- `parse.go`: `addresses()`, `directives()`, `doImport()`, `directive()`, `openCurlyBrace()`, `closeCurlyBrace()`, and `blockTokens()` (snippets/named routes). The now-redundant `wasQuoted` checks were consolidated into the helpers.
+- `dispenser.go`: `NextArg()` (a quoted `{` is now a legitimate argument instead of being rolled back as a block opener), `NextBlock()`, and `ArgErr()`.
+- Also fixed the "address ending in `{`" heuristic (`HasSuffix(value, "{")`) to not fire for quoted addresses.
+
+## Tests
+
+- Added `TestDispenser_QuotedBracesAreArguments` and new `TestParseOneAndImport` cases covering quoted `{`/`}` as arguments, and a quoted `{` immediately before a real block.
+- Added `TestSnippetWithQuotedBraces` to ensure quoted braces inside snippets don't corrupt nesting.
+
+## Verification
+
+- `go test -race -short -count=1 ./caddyconfig/caddyfile/ ./caddyconfig/httpcaddyfile/` — pass.
+- `go test -short ./...` — all packages pass; `go vet ./caddyconfig/...` and `go build ./...` clean.
+- End-to-end: `caddy adapt` now successfully adapts the issue's exact Caddyfile (plus `"}"`, `route`, `handle`, and named-route variants) into JSON.

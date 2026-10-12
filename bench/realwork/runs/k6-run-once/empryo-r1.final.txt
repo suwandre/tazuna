@@ -1,0 +1,11 @@
+`--once` is added to the flags shared by `k6 run`, `k6 cloud run` and `k6 archive`. `go test ./internal/cmd/` passes, and the new unit tests in `internal/cmd/config_test.go` cover the flag handling and the scenario transform. I did not run `k6 run --once` against a real script end to end.
+
+- **Flag:** `once` is registered in `optionFlagSet()` (`internal/cmd/options.go`). That set is also used by `k6 cloud upload`, so that command gets the flag too.
+- **Combining with shortcuts:** `isOnceEnabled` in `internal/cmd/config.go` rejects `--vus`, `--iterations`, `--duration` and `--stage` with `--once cannot be combined with --<flag>`.
+- **Transform:** `applyOnce` runs in `consolidateDeriveAndValidateConfig` (`internal/cmd/test_load.go`), after the config layers are merged and before the derive/validate step.
+  - It replaces the scenarios with one `shared-iterations` scenario at 1 VU and 1 iteration.
+  - It keeps the scenario's name, `exec`, `env`, `tags` and browser options, and drops its other fields (`startTime`, `gracefulStop`, `vus`, `iterations`, `duration`, `stages`).
+  - It also clears the top-level `vus`, `iterations`, `duration` and `stages`, so they can't override the scenario.
+  - With no scenarios, it creates the default scenario with 1 VU and 1 iteration.
+- **Multiple scenarios:** the run fails with `--once can run a single scenario only`.
+- **Scope:** the conflict check only looks at CLI flags. Script-level shortcut options such as `options.iterations` are cleared silently, not reported as a conflict.

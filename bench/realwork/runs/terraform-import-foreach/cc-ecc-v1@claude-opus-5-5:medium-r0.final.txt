@@ -1,0 +1,17 @@
+I fixed the bug: when several `import` blocks target different instances of the same `for_each` or `count` resource, every block is now honored instead of only the first one.
+
+**Cause:** `refactoring.FindImportStatements` in `internal/refactoring/import_statement.go` stored import blocks in a map keyed by the resource address without its instance key. `t["a"]` and `t["b"]` both became `terraform_data.t`, so the second block was silently skipped. The code assumed a second block for the same resource could only come from a child module (which a parent's block is meant to override) and threw it away. That's why the block declared first won, not the lowest key, and why single-instance resources weren't affected. This came in with the module import support from #38352, though as you saw it also hits root-only configurations.
+
+**Fix:**
+- `FindImportStatements` now returns every import block as a list, in the order they're declared.
+- It still records which module first claimed each resource. Blocks for that resource from a different (parent) module are still skipped, so the rule that a parent module's block overrides a child module's block is unchanged.
+- Child modules are visited in sorted order so the output is the same on every run.
+- The one caller, `findImportTargets` in `internal/terraform/context_plan.go`, now loops over the list.
+
+**Tests added:**
+- `TestContextApply_import_multipleBlocksSameResource` in `internal/terraform/context_apply_import_test.go` covers `for_each`, `for_each` with the blocks in reverse order, `count`, blocks inside a child module, and root blocks targeting child-module instances. Each case checks that every instance is planned as an import with the right ID and nothing is planned for creation. All five cases fail without the fix and pass with it.
+- `TestFindImportStatements` in `internal/refactoring/import_statement_test.go`, with a new fixture in `testdata/import-statements`, checks that every block is kept in order and that the parent override still applies.
+
+**Test results:** `go test` passes for `./internal/refactoring`, `./internal/terraform`, `./internal/backend/local`, and every `./internal/command/...` package except `./internal/command` itself. There, one test fails: `TestInit_providerLockFileReadonly`. It fails the same way on the untouched base commit, so the fix didn't cause it.
+
+I didn't add a changelog entry under `.changes/v1.17/`, because the existing entries need an issue number and I don't have the one for this report. Tell me the number and I'll add it. Nothing is committed yet.

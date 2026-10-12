@@ -1,0 +1,25 @@
+Your example now works: `respond "{"` (and `"}"`, or a backtick-quoted `{`) is treated as a plain value. Only an unquoted `{` or `}` opens or closes a block now. Tests and lint pass.
+
+**Cause:** the Caddyfile parser decided whether a token opened or closed a block by looking only at its text. It never checked whether the token had been quoted. In your example the quoted `{` was taken as an opening brace, so `respond` ended up with no argument and adapting failed.
+
+**Fix** (all in `caddyconfig/caddyfile`):
+- `lexer.go`: two new helpers that are true only for an unquoted `{` or `}`.
+- `dispenser.go` and `parse.go`: every place that treats a brace as block structure now uses those helpers. That covers block nesting, argument reading, site address parsing, snippet detection and reading the contents of import blocks.
+- The parser previously had narrow workarounds for quoted braces (e.g. `dir1 "{" a b "}"`). The general rule replaces them, and those existing tests still pass.
+
+**Tests added:**
+- `parse_test.go`: quoted `{` and `}` used as directive and subdirective arguments, with and without a real block afterwards. Also an unclosed real block that still contains a quoted `}`, which must still be an error.
+- `dispenser_test.go`: a new test, `TestDispenser_QuotedCurlyBraces`, showing that quoted braces come back as normal arguments and don't change nesting.
+- `caddytest/integration/caddyfile_adapt/quoted_curly_braces.caddyfiletest`: adapts `respond "{"` and `respond /close "}"` to JSON.
+
+**Results:**
+- `go test -race -short ./caddyconfig/... ./caddytest/integration/` passes, and the earlier run of `./modules/caddyhttp/...` passed too.
+- `golangci-lint` reports 0 issues on the package, and `gofmt` is clean.
+- The new parser, dispenser and adapt tests fail on the original code, so they do catch this bug.
+- `caddy adapt` gives the expected JSON for your example, and `caddy fmt` leaves the file unchanged.
+
+**Behaviour changes to be aware of:**
+- A quoted `{` after a site address is no longer read as the start of the site block. It becomes part of the address, which then fails as an invalid address.
+- Snippet arguments are not covered. If a snippet uses `{args[0]}` and the import passes `"{"`, the result is an unquoted brace, which still counts as structure. That matches how it behaved before; I left it alone.
+
+Nothing is committed yet. Under the contribution rules in `AGENTS.md`, a PR needs to say this was written with AI help (Claude Opus 5.5), and you'll need to be able to explain every line.

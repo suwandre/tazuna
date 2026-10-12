@@ -1,0 +1,19 @@
+Parentheses around a lone number in a duration position now survive `Expr.String()`. The `promql/parser` and `promql` tests pass.
+
+**Cause:** a parenthesised plain number reduced to a bare `*NumberLiteral`, which has no `Wrapped` field.
+
+**Fix:** a parenthesised lone number in a duration expression now becomes `&DurationExpr{Op: ADD, RHS: num, Wrapped: true}`. I did this in `generated_parser.y` (the `paren_duration_expr` rule), regenerated `generated_parser.y.go` with goyacc, and added helper `wrapNumberLiteral` in `parse.go`. `applyUnaryOpToDurationExpr` now also wraps the number for `-(5)` and `+(5)`.
+
+**Cases from the issue:**
+- `foo offset (5)`, `foo offset (5m)` and `foo[(5s)]` keep their parens.
+- `foo offset -(5)` prints back as `foo offset -(5)`.
+- `foo offset +(5)` prints as `foo offset (5)`, so the `+` is dropped, as it already is for `+(5*2)`.
+
+**Behaviour changes:**
+- **Printed form:** `foo offset (5)` now prints `foo offset (5)`, not `foo offset 5s`. The inner number is a plain literal, the same as `foo offset (5*2)` printing `(5 * 2)`.
+- **AST:** these cases now set `OriginalOffsetExpr` or `RangeExpr` instead of `OriginalOffset` or `Range`. The engine already evaluates those through `durationVisitor`.
+
+**Tests:**
+- I added round-trip cases to `printer_test.go`.
+- I updated the two `foo offset ±(5)` AST expectations in `parse_test.go`.
+- In the `-(5)` AST, the inner node's `StartPos` is the position of the `-` rather than the `(`. I kept that.

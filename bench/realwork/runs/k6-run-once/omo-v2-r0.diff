@@ -1,0 +1,428 @@
+diff --git a/internal/cmd/archive.go b/internal/cmd/archive.go
+index 859a53b..8eb3eb0 100644
+--- a/internal/cmd/archive.go
++++ b/internal/cmd/archive.go
+@@ -59,6 +59,7 @@ func (c *cmdArchive) flagSet() *pflag.FlagSet {
+ 	flags := pflag.NewFlagSet("", pflag.ContinueOnError)
+ 	flags.SortFlags = false
+ 	flags.AddFlagSet(optionFlagSet())
++	flags.AddFlagSet(onceFlagSet())
+ 	flags.AddFlagSet(runtimeOptionFlagSet(false))
+ 	flags.StringVarP(
+ 		&c.archiveOut, "archive-out", "O", c.archiveOut,
+diff --git a/internal/cmd/cloud_run.go b/internal/cmd/cloud_run.go
+index add1188..2a1c366 100644
+--- a/internal/cmd/cloud_run.go
++++ b/internal/cmd/cloud_run.go
+@@ -103,6 +103,7 @@ func getCmdCloudRun(gs *state.GlobalState) *cobra.Command {
+ 
+ 	thisCmd.Flags().SortFlags = false
+ 	thisCmd.Flags().AddFlagSet(cloudRunCmd.flagSet())
++	thisCmd.Flags().AddFlagSet(onceFlagSet())
+ 	thisCmd.Flags().AddFlagSet(cloudCmdFlagSet(&cloudRunCmd.showCloudLogs, &cloudRunCmd.exitOnRunning))
+ 
+ 	return thisCmd
+diff --git a/internal/cmd/config.go b/internal/cmd/config.go
+index 617cdec..6273c1e 100644
+--- a/internal/cmd/config.go
++++ b/internal/cmd/config.go
+@@ -41,6 +41,72 @@ func configFlagSet() *pflag.FlagSet {
+ 	return flags
+ }
+ 
++const onceFlagName = "once"
++
++// onceIncompatibleFlags are the execution shortcut flags that can't be combined with --once.
++var onceIncompatibleFlags = []string{"vus", "iterations", "duration", "stage"} //nolint:gochecknoglobals
++
++// onceFlagSet returns a FlagSet with the --once flag.
++func onceFlagSet() *pflag.FlagSet {
++	flags := pflag.NewFlagSet("", 0)
++	flags.SortFlags = false
++	flags.Bool(onceFlagName, false,
++		"run the script once, with 1 VU and 1 iteration, preserving the scenario configuration")
++	return flags
++}
++
++// isOnceEnabled checks if the --once flag is defined and set, and that it isn't combined with
++// any of the execution shortcut flags.
++func isOnceEnabled(flags *pflag.FlagSet) (bool, error) {
++	if flags == nil || flags.Lookup(onceFlagName) == nil {
++		return false, nil
++	}
++	once, err := flags.GetBool(onceFlagName)
++	if err != nil || !once {
++		return false, err
++	}
++	for _, name := range onceIncompatibleFlags {
++		if flags.Changed(name) {
++			return true, fmt.Errorf("--%s cannot be combined with --%s", onceFlagName, name)
++		}
++	}
++	return true, nil
++}
++
++// applyOnce transforms the consolidated config so the script runs with 1 VU and 1 iteration.
++// Without scenarios, the execution shortcuts are replaced so that the default scenario is derived
++// later. A single scenario keeps its exec, env, tags and options, but it's replaced with a
++// shared-iterations executor; all of its other fields are discarded.
++func applyOnce(conf Config) (Config, error) {
++	if len(conf.Scenarios) > 1 {
++		return conf, fmt.Errorf("--%s can run a single scenario only, but the script defines %d scenarios",
++			onceFlagName, len(conf.Scenarios))
++	}
++
++	for name, sc := range conf.Scenarios {
++		once := executor.NewSharedIterationsConfig(name)
++		once.VUs = null.IntFrom(1)
++		once.Iterations = null.IntFrom(1)
++		once.Exec = null.StringFrom(sc.GetExec())
++		once.Env = sc.GetEnv()
++		once.Tags = sc.GetTags()
++		once.Options = sc.GetScenarioOptions()
++		conf.Scenarios = lib.ScenarioConfigs{name: once}
++
++		// The shortcuts would conflict with the scenario when deriving.
++		conf.VUs = null.Int{}
++		conf.Iterations = null.Int{}
++	}
++	if len(conf.Scenarios) == 0 {
++		conf.VUs = null.IntFrom(1)
++		conf.Iterations = null.IntFrom(1)
++	}
++	conf.Duration = types.NullDuration{}
++	conf.Stages = nil
++
++	return conf, nil
++}
++
+ // Config ...
+ type Config struct {
+ 	lib.Options
+diff --git a/internal/cmd/once_test.go b/internal/cmd/once_test.go
+new file mode 100644
+index 0000000..c2566b0
+--- /dev/null
++++ b/internal/cmd/once_test.go
+@@ -0,0 +1,156 @@
++package cmd
++
++import (
++	"testing"
++	"time"
++
++	"github.com/sirupsen/logrus"
++	"github.com/spf13/pflag"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++	"gopkg.in/guregu/null.v3"
++
++	"go.k6.io/k6/v2/lib"
++	"go.k6.io/k6/v2/lib/executor"
++	"go.k6.io/k6/v2/lib/types"
++)
++
++func TestIsOnceEnabled(t *testing.T) {
++	t.Parallel()
++
++	tests := []struct {
++		name    string
++		args    []string
++		once    bool
++		wantErr string
++	}{
++		{name: "not set", args: nil},
++		{name: "shortcuts without once", args: []string{"--iterations", "10", "-u", "2"}},
++		{name: "once", args: []string{"--once"}, once: true},
++		{name: "once=false", args: []string{"--once=false", "--iterations", "10"}},
++		{name: "with iterations", args: []string{"--once", "--iterations", "10"}, once: true,
++			wantErr: "--once cannot be combined with --iterations"},
++		{name: "with short iterations", args: []string{"--once", "-i", "10"}, once: true,
++			wantErr: "--once cannot be combined with --iterations"},
++		{name: "with vus", args: []string{"--once", "--vus", "2"}, once: true,
++			wantErr: "--once cannot be combined with --vus"},
++		{name: "with duration", args: []string{"--once", "--duration", "1s"}, once: true,
++			wantErr: "--once cannot be combined with --duration"},
++		{name: "with stage", args: []string{"--once", "--stage", "1s:2"}, once: true,
++			wantErr: "--once cannot be combined with --stage"},
++	}
++
++	for _, tc := range tests {
++		t.Run(tc.name, func(t *testing.T) {
++			t.Parallel()
++
++			flags := pflag.NewFlagSet("", pflag.ContinueOnError)
++			flags.AddFlagSet(optionFlagSet())
++			flags.AddFlagSet(onceFlagSet())
++			require.NoError(t, flags.Parse(tc.args))
++
++			once, err := isOnceEnabled(flags)
++			assert.Equal(t, tc.once, once)
++			if tc.wantErr != "" {
++				require.EqualError(t, err, tc.wantErr)
++				return
++			}
++			require.NoError(t, err)
++		})
++	}
++
++	t.Run("flag not defined", func(t *testing.T) {
++		t.Parallel()
++
++		flags := optionFlagSet()
++		require.NoError(t, flags.Parse([]string{"--iterations", "10"}))
++		once, err := isOnceEnabled(flags)
++		require.NoError(t, err)
++		assert.False(t, once)
++	})
++}
++
++func TestApplyOnceWithoutScenarios(t *testing.T) {
++	t.Parallel()
++
++	conf := Config{Options: lib.Options{
++		VUs:        null.IntFrom(10),
++		Iterations: null.IntFrom(100),
++		Duration:   types.NullDurationFrom(time.Minute),
++		Stages:     []lib.Stage{{Duration: types.NullDurationFrom(time.Second), Target: null.IntFrom(5)}},
++	}}
++
++	got, err := applyOnce(conf)
++	require.NoError(t, err)
++	assert.Equal(t, null.IntFrom(1), got.VUs)
++	assert.Equal(t, null.IntFrom(1), got.Iterations)
++	assert.False(t, got.Duration.Valid)
++	assert.Nil(t, got.Stages)
++	assert.Nil(t, got.Scenarios)
++
++	derived, err := executor.DeriveScenariosFromShortcuts(got.Options, logrus.New())
++	require.NoError(t, err)
++	require.Len(t, derived.Scenarios, 1)
++	sc, ok := derived.Scenarios[lib.DefaultScenarioName].(executor.SharedIterationsConfig)
++	require.True(t, ok)
++	assert.Equal(t, null.IntFrom(1), sc.VUs)
++	assert.Equal(t, null.IntFrom(1), sc.Iterations)
++}
++
++func TestApplyOnceSingleScenario(t *testing.T) {
++	t.Parallel()
++
++	scenarioOpts := &lib.ScenarioOptions{Browser: map[string]any{"type": "chromium"}}
++	ramping := executor.NewRampingVUsConfig("only")
++	ramping.Exec = null.StringFrom("custom")
++	ramping.Env = map[string]string{"FOO": "bar"}
++	ramping.Tags = map[string]string{"team": "a"}
++	ramping.Options = scenarioOpts
++	ramping.StartTime = types.NullDurationFrom(5 * time.Second)
++	ramping.StartVUs = null.IntFrom(7)
++	ramping.Stages = []executor.Stage{{Duration: types.NullDurationFrom(time.Minute), Target: null.IntFrom(50)}}
++
++	conf := Config{Options: lib.Options{
++		VUs:       null.IntFrom(10),
++		Duration:  types.NullDurationFrom(time.Minute),
++		Scenarios: lib.ScenarioConfigs{"only": ramping},
++	}}
++
++	got, err := applyOnce(conf)
++	require.NoError(t, err)
++
++	require.Len(t, got.Scenarios, 1)
++	sc, ok := got.Scenarios["only"].(executor.SharedIterationsConfig)
++	require.True(t, ok, "expected shared-iterations, got %T", got.Scenarios["only"])
++	assert.Equal(t, "only", sc.GetName())
++	assert.Equal(t, null.IntFrom(1), sc.VUs)
++	assert.Equal(t, null.IntFrom(1), sc.Iterations)
++	assert.Equal(t, "custom", sc.GetExec())
++	assert.Equal(t, map[string]string{"FOO": "bar"}, sc.GetEnv())
++	assert.Equal(t, map[string]string{"team": "a"}, sc.GetTags())
++	assert.Same(t, scenarioOpts, sc.GetScenarioOptions())
++	assert.Zero(t, sc.GetStartTime())
++
++	assert.False(t, got.VUs.Valid)
++	assert.False(t, got.Iterations.Valid)
++	assert.False(t, got.Duration.Valid)
++	assert.Nil(t, got.Stages)
++	_, err = executor.DeriveScenariosFromShortcuts(got.Options, logrus.New())
++	require.NoError(t, err)
++
++	assert.Contains(t, conf.Scenarios, "only")
++	_, isRamping := conf.Scenarios["only"].(executor.RampingVUsConfig)
++	assert.True(t, isRamping)
++}
++
++func TestApplyOnceMultipleScenarios(t *testing.T) {
++	t.Parallel()
++
++	conf := Config{Options: lib.Options{Scenarios: lib.ScenarioConfigs{
++		"a": executor.NewSharedIterationsConfig("a"),
++		"b": executor.NewSharedIterationsConfig("b"),
++	}}}
++
++	_, err := applyOnce(conf)
++	require.ErrorContains(t, err, "--once can run a single scenario only")
++}
+diff --git a/internal/cmd/run.go b/internal/cmd/run.go
+index 6e4a886..08dfa1c 100644
+--- a/internal/cmd/run.go
++++ b/internal/cmd/run.go
+@@ -507,6 +507,7 @@ func (c *cmdRun) flagSet() *pflag.FlagSet {
+ 	flags := pflag.NewFlagSet("", pflag.ContinueOnError)
+ 	flags.SortFlags = false
+ 	flags.AddFlagSet(optionFlagSet())
++	flags.AddFlagSet(onceFlagSet())
+ 	flags.AddFlagSet(runtimeOptionFlagSet(true))
+ 	flags.AddFlagSet(configFlagSet())
+ 	return flags
+diff --git a/internal/cmd/test_load.go b/internal/cmd/test_load.go
+index bfc6337..7e79099 100644
+--- a/internal/cmd/test_load.go
++++ b/internal/cmd/test_load.go
+@@ -550,6 +550,17 @@ func (lt *loadedTest) consolidateDeriveAndValidateConfig(
+ 		return nil, err
+ 	}
+ 
++	// --once transforms the scenarios after the consolidation, so it overrides all other config layers.
++	if cmd != nil {
++		var once bool
++		if once, err = isOnceEnabled(cmd.Flags()); err == nil && once {
++			consolidatedConfig, err = applyOnce(consolidatedConfig)
++		}
++		if err != nil {
++			return nil, errext.WithExitCodeIfNone(err, exitcodes.InvalidConfig)
++		}
++	}
++
+ 	gs.Logger.Debug("Parsing thresholds and validating config...")
+ 	// Parse the thresholds, only if the --no-threshold flag is not set.
+ 	// If parsing the threshold expressions failed, consider it as an
+diff --git a/internal/cmd/tests/cmd_run_once_test.go b/internal/cmd/tests/cmd_run_once_test.go
+new file mode 100644
+index 0000000..f5f8fb7
+--- /dev/null
++++ b/internal/cmd/tests/cmd_run_once_test.go
+@@ -0,0 +1,125 @@
++package tests
++
++import (
++	"bytes"
++	"testing"
++
++	"github.com/sirupsen/logrus"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++
++	"go.k6.io/k6/v2/errext/exitcodes"
++	"go.k6.io/k6/v2/internal/cmd"
++	"go.k6.io/k6/v2/internal/lib/testutils"
++	"go.k6.io/k6/v2/lib"
++	"go.k6.io/k6/v2/lib/executor"
++	"go.k6.io/k6/v2/lib/fsext"
++)
++
++const onceDefaultScript = `
++	export const options = { vus: 5, duration: '1h' };
++	export function setup() { console.log('setup-ran'); }
++	export default function () { console.log('default-ran'); }
++	export function teardown() { console.log('teardown-ran'); }
++`
++
++const onceSingleScenarioScript = `
++	export const options = {
++		scenarios: {
++			only: {
++				executor: 'constant-vus',
++				vus: 5,
++				duration: '1h',
++				exec: 'custom',
++				env: { FOO: 'bar' },
++				tags: { team: 'a' },
++			},
++		},
++	};
++	export function custom() { console.log('custom-ran-' + __ENV.FOO); }
++`
++
++const onceMultiScenarioScript = `
++	export const options = {
++		scenarios: {
++			a: { executor: 'shared-iterations', vus: 1, iterations: 1 },
++			b: { executor: 'shared-iterations', vus: 1, iterations: 1 },
++		},
++	};
++	export default function () {}
++`
++
++func TestRunOnceWithoutScenarios(t *testing.T) {
++	t.Parallel()
++
++	ts := getSingleFileTestState(t, onceDefaultScript, []string{"--once", "--no-usage-report", "--log-output=stdout"}, 0)
++	cmd.ExecuteWithGlobalState(ts.GlobalState)
++
++	stdout := ts.Stdout.String()
++	assert.Contains(t, stdout, "1 iterations shared among 1 VUs")
++	assert.Contains(t, stdout, "1 complete and 0 interrupted iterations")
++	assert.Equal(t, 1, bytes.Count([]byte(stdout), []byte("default-ran")))
++	assert.Contains(t, stdout, "setup-ran")
++	assert.Contains(t, stdout, "teardown-ran")
++}
++
++func TestRunOnceSingleScenario(t *testing.T) {
++	t.Parallel()
++
++	ts := getSingleFileTestState(t, onceSingleScenarioScript,
++		[]string{"--once", "--no-usage-report", "--log-output=stdout", "--out", "json=results.json"}, 0)
++	cmd.ExecuteWithGlobalState(ts.GlobalState)
++
++	stdout := ts.Stdout.String()
++	assert.Contains(t, stdout, "1 iterations shared among 1 VUs")
++	assert.Contains(t, stdout, "1 complete and 0 interrupted iterations")
++	assert.Contains(t, stdout, "custom-ran-bar")
++
++	results, err := fsext.ReadFile(ts.FS, "results.json")
++	require.NoError(t, err)
++	tagged := getSampleValues(t, results, "iterations", map[string]string{"team": "a", "scenario": "only"})
++	assert.Equal(t, float64(1), sum(tagged))
++}
++
++func TestRunOnceMultipleScenarios(t *testing.T) {
++	t.Parallel()
++
++	ts := getSingleFileTestState(t, onceMultiScenarioScript, []string{"--once"}, exitcodes.InvalidConfig)
++	cmd.ExecuteWithGlobalState(ts.GlobalState)
++
++	assert.True(t, testutils.LogContains(ts.LoggerHook.Drain(), logrus.ErrorLevel,
++		"--once can run a single scenario only"))
++}
++
++func TestRunOnceWithShortcutFlag(t *testing.T) {
++	t.Parallel()
++
++	ts := getSingleFileTestState(t, onceDefaultScript, []string{"--once", "--iterations", "10"}, exitcodes.InvalidConfig)
++	cmd.ExecuteWithGlobalState(ts.GlobalState)
++
++	assert.True(t, testutils.LogContains(ts.LoggerHook.Drain(), logrus.ErrorLevel,
++		"--once cannot be combined with --iterations"))
++}
++
++func TestArchiveOnce(t *testing.T) {
++	t.Parallel()
++
++	ts := NewGlobalTestState(t)
++	require.NoError(t, fsext.WriteFile(ts.FS, "/test.js", []byte(onceSingleScenarioScript), 0o644))
++	ts.CmdArgs = []string{"k6", "archive", "--once", "-O", "/out.tar", "/test.js"}
++	cmd.ExecuteWithGlobalState(ts.GlobalState)
++
++	data, err := fsext.ReadFile(ts.FS, "/out.tar")
++	require.NoError(t, err)
++	arc, err := lib.ReadArchive(bytes.NewReader(data))
++	require.NoError(t, err)
++
++	require.Len(t, arc.Options.Scenarios, 1)
++	sc, ok := arc.Options.Scenarios["only"].(executor.SharedIterationsConfig)
++	require.True(t, ok, "expected shared-iterations, got %T", arc.Options.Scenarios["only"])
++	assert.Equal(t, int64(1), sc.VUs.Int64)
++	assert.Equal(t, int64(1), sc.Iterations.Int64)
++	assert.Equal(t, "custom", sc.GetExec())
++	assert.Equal(t, map[string]string{"FOO": "bar"}, sc.GetEnv())
++	assert.Equal(t, map[string]string{"team": "a"}, sc.GetTags())
++}

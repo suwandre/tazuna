@@ -1,0 +1,3 @@
+Updated Caddyfile parsing so quoted brace tokens are treated as content, not block delimiters. Added a parser test covering quoted opening and closing braces.
+
+Verified with `go test ./caddyconfig/caddyfile ./caddyconfig/httpcaddyfile`.

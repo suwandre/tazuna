@@ -1,0 +1,56 @@
+reverseproxy: lb_retry_match with a request-only expression retries successful responses (502 since v2.11.3)
+
+Since v2.11.3, an `lb_retry_match` block with an `expression` that only tests the request makes every successful upstream response retryable. The request is sent again to the next upstreams (a POST arrives with an empty body after the first attempt), and once the retries run out the client gets a `502`. A GET gets a `200` with an empty body.
+
+Version: v2.11.7 and current master. v2.11.2 behaves as expected.
+
+Caddyfile (two backends that always answer 200 on :9001 and :9002):
+
+```
+{
+	admin off
+	auto_https off
+}
+:9000 {
+	reverse_proxy 127.0.0.1:9001 127.0.0.1:9002 {
+		lb_policy round_robin
+		lb_retries 2
+		lb_retry_match {
+			expression `{http.request.method} == "POST"`
+		}
+	}
+}
+```
+
+```
+$ curl -i -d order=1 localhost:9000/order
+HTTP/1.1 502 Bad Gateway
+Server: Caddy
+Content-Length: 0
+```
+
+The backends log three POSTs for that one request: the first with body `order=1`, the next two with an empty body:
+
+```
+HIT :9002 POST /order body=b'order=1'
+HIT :9001 POST /order body=b''
+HIT :9002 POST /order body=b''
+```
+
+With v2.11.2 the same request gets the backend's `200` and the backend sees it once.
+
+The docs describe `lb_retry_match` as restricting "with which requests retries are allowed" when the round-trip failed, using request matcher syntax, so a successful response should be passed through.
+
+Since #7569, every retry_match set that contains an `expression` matcher is evaluated against the upstream response (in `modules/caddyhttp/reverseproxy/reverseproxy.go`, after the round trip). An expression that doesn't look at the response matches every response for a matching request, so every response is treated as retryable.
+
+---
+
+Maintainers agreed on this behavior:
+
+- Response-based retries apply only to expressions that actually read response data: `{rp.status_code}` / `{rp.status_text}`, `{rp.header.*}` and the upstream latency placeholders (the Caddyfile adapts `{rp.*}` to `{http.reverse_proxy.*}`). This must work whether the expression uses the `{placeholder}` shorthand or calls `ph(req, "...")` directly.
+- Every other expression is a request condition again, as before v2.11.3. That includes expressions that only use placeholders known before the response arrives, such as `{http.reverse_proxy.upstream.host}`, text that merely looks like a response placeholder inside a string literal (e.g. an escaped `\{http.reverse_proxy.status_code}`), and placeholders whose names only start like a response placeholder but are different (e.g. `{http.reverse_proxy.status_codes}`).
+- If the placeholder name can't be known until evaluation time, keep treating the expression as a possible response condition.
+- The existing examples from #7569 (all of which reference `{rp.*}`) keep working as before.
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

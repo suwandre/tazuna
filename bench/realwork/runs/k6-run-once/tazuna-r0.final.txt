@@ -1,0 +1,20 @@
+I added a `--once` flag. It runs the script with 1 VU and 1 iteration and keeps the scenario's `exec`, `env`, `tags` and `options`. The new tests and the existing `internal/cmd`, `lib` and `cmd` suites pass, and `gofmt` reports nothing. I haven't run `k6 cloud run` (cloud or `--local-execution`) or `k6 archive` with the flag.
+
+**Behaviour**
+- **No scenarios:** runs `default()` once. Any `vus`, `iterations`, `duration` or `stages` set in the script, config file or env are dropped.
+- **One scenario:** the executor becomes `shared-iterations` with 1 VU and 1 iteration, under the same scenario name. Everything else on the scenario (`startTime`, `gracefulStop`, `vus`, `duration` and so on) is discarded.
+- **Several scenarios:** fails with `--once can run a single scenario only`.
+- **With `--vus`, `--iterations`, `--duration` or `--stage`:** fails with `--once cannot be combined with --<flag>`.
+- Both errors exit with the invalid-config exit code.
+- `setup()` and `teardown()` run as usual.
+
+**Where it lives**
+- **Flag:** it is in `optionFlagSet()` in `internal/cmd/options.go`. That means `k6 run`, `k6 cloud run` and `k6 archive` get it, and so does `k6 cloud upload`, which you didn't ask for.
+- **Transform:** it runs right after config consolidation in `consolidateDeriveAndValidateConfig` (`internal/cmd/test_load.go`). It runs there so the archive and cloud paths pick it up too, since they read the consolidated config.
+- **Executor logic:** it is a new `ApplyOnce` in `lib/executor/execution_config_shortcuts.go`.
+
+If a scenario sets `exec: "default"` explicitly, that explicit setting is dropped. The result is the same because `default` is what runs anyway.
+
+**Tests**
+- `TestApplyOnce` in `lib/executor/execution_config_shortcuts_once_test.go` covers the three scenario cases.
+- `TestRunOnce` in `internal/cmd/run_test.go` runs `k6 run --once` end to end for the default function, a single scenario with `exec` and `env`, several scenarios, and the flag combined with `--iterations`.

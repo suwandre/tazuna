@@ -1,0 +1,15 @@
+All of a `for_each` resource's import blocks are now honored again, not just the first one.
+
+**Root cause:** `refactoring.FindImportStatements` stored import blocks in a map keyed by config resource (`terraform_data.t`, with no instance key). Blocks for `t["a"]` and `t["b"]` therefore shared a key, and the first one declared won. The dedup was only meant to let a parent module's block override a child module's block for the same resource. In practice it dropped any later block for the same resource, with no diagnostic.
+
+**Fix:**
+- `internal/refactoring/import_statement.go`: `FindImportStatements` now returns a `[]ImportStatement` in declaration order. A block is skipped only when a different module has already claimed that config resource. That is the parent-overrides-child case. Several blocks from the same module are all kept, and the same-module duplicate check already happens at config load.
+- `internal/terraform/context_plan.go`: `findImportTargets` iterates the slice. A side benefit is that import targets no longer come out in map-iteration order.
+
+**Tests:**
+- I added `TestContext2Plan_importMultipleBlocksForEachResource`, which has three separate import blocks for one `for_each` resource.
+- Without the fix it fails with the reported symptom: only `["first"]` is imported and the other two get a Create action. With the fix it passes.
+- The `Import`-matching tests in `internal/terraform` pass, as do `internal/refactoring` and `go vet` on both packages.
+- I didn't get a result from `./internal/command`: that run timed out together with the `internal/terraform` run, so it's unverified.
+- I didn't test `count`. The change doesn't depend on the expansion mode, so it should apply equally.
+- I didn't add a test for the parent-overrides-child case. I kept that behavior but didn't exercise it separately.

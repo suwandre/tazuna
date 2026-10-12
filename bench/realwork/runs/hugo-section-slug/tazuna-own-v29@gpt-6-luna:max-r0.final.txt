@@ -1,0 +1,3 @@
+Fixed the failing test expectation and adjusted section path generation to use the parent section path when a section slug is set. Added a multilingual section-slug integration test.
+
+Verified with `go test ./hugolib/ ./resources/page/` (both packages pass).

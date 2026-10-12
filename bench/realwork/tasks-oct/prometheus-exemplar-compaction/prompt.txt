@@ -1,0 +1,30 @@
+TSDB: exemplars are lost on restart after head compaction removes their series
+
+### What did you do?
+
+Exemplar storage enabled (`--enable-feature=exemplar-storage`). A series gets a sample, and later an exemplar with a timestamp newer than that last sample (for example the target stopped exposing the sample but an exemplar was still ingested, or the series went stale). Then:
+
+1. Head compaction persists the series' samples into a block. Because the series has no unpersisted samples left, head GC removes the series from the head.
+2. More data for other series arrives, another compaction runs, and the WAL is checkpointed and truncated.
+3. Prometheus restarts.
+
+### What did you expect to see?
+
+The exemplar is still returned by the exemplar query API after the restart. It was accepted, and its WAL record is still within the range that WAL replay covers.
+
+### What did you see instead?
+
+The exemplar is gone after the restart. Exemplars are not written to blocks; they only survive a restart through WAL replay. The checkpoint drops the series record once the series has been removed from the head and its WAL expiry has passed, but the exemplar record itself is in a newer segment that is still replayed. On replay the exemplar refers to a series reference that no longer resolves, it is counted in `prometheus_tsdb_wal_replay_unknown_refs_total{type="exemplars"}` and dropped.
+
+The same happens for all three ways the head drops series after persisting them: ordinary head compaction (`DB.Compact`), compacting selected series (`DB.CompactSelectedSeries`) and stale-series compaction (`DB.CompactStaleHead`). It also happens when the exemplar is older than the series' last sample, as long as it is still at or after the WAL replay cutoff (the head's minimum valid time). Both appender APIs (`Appender` and `AppenderV2`) are affected.
+
+### Expected behavior
+
+- A series that still has an exemplar at or after the replay cutoff keeps its identity (the same in-memory series and series reference) through head GC, so the WAL checkpoint keeps its series record. Once the cutoff moves past the exemplar, the series can be removed as before. Zero and negative exemplar timestamps count as real timestamps.
+- The protection must survive restarts: after the exemplar has been replayed from the WAL (or restored with the memory snapshot on shutdown enabled), a further compaction plus restart must not lose it either.
+- Keeping the identity must not keep the persisted samples in memory. When selected or stale compaction persists such a series, its sample chunks (head and memory-mapped) and its appender are released, `prometheus_tsdb_head_chunks` drops accordingly and `prometheus_tsdb_head_chunks_removed_total` counts them once; compacting the retained, now empty series again must neither write another block nor count chunks again. The empty retained series must not hold back the head's minimum time.
+- Existing protections stay: samples appended concurrently with the compaction (in-order or out-of-order) keep their chunks.
+- After selected/stale compaction and a restart, WAL replay may bring back samples that were already persisted (their records are still in the replay range); a later compaction can release them again.
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

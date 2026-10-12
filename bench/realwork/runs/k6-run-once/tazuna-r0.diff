@@ -1,0 +1,292 @@
+diff --git a/internal/cmd/options.go b/internal/cmd/options.go
+index 5dd9e55..dd62fb1 100644
+--- a/internal/cmd/options.go
++++ b/internal/cmd/options.go
+@@ -28,6 +28,7 @@ func optionFlagSet() *pflag.FlagSet {
+ 	flags.DurationP("duration", "d", 0, "test duration limit")
+ 	flags.Int64P("iterations", "i", 0, "script total iteration limit (among all VUs)")
+ 	flags.StringSliceP("stage", "s", nil, "add a `stage`, as `[duration]:[target]`")
++	flags.Bool("once", false, "run the script once, with 1 VU and 1 iteration, preserving the scenario configuration")
+ 	flags.String("execution-segment", "", "limit execution to the specified segment, e.g. 10%, 1/3, 0.2:2/3")
+ 	flags.String("execution-segment-sequence", "", "the execution segment sequence") // TODO better description
+ 	flags.BoolP("paused", "p", false, "start the test in a paused state")
+diff --git a/internal/cmd/run_test.go b/internal/cmd/run_test.go
+index 34aab4a..e15d7b0 100644
+--- a/internal/cmd/run_test.go
++++ b/internal/cmd/run_test.go
+@@ -10,6 +10,7 @@ import (
+ 	"path"
+ 	"path/filepath"
+ 	"runtime"
++	"strings"
+ 	"testing"
+ 
+ 	"go.k6.io/k6/v2/errext"
+@@ -370,3 +371,77 @@ func TestThresholdsRuntimeBehavior(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func TestRunOnce(t *testing.T) {
++	t.Parallel()
++
++	const defaultScript = `
++export const options = { vus: 5, iterations: 50 };
++export function setup() { console.log("setup-ran"); }
++export default function () { console.log("default-ran"); }
++export function teardown() { console.log("teardown-ran"); }
++`
++	const singleScenario = `
++export const options = {
++  scenarios: { foo: { executor: 'constant-vus', vus: 5, duration: '1m', exec: 'fn', env: { MYENV: 'hello' } } },
++};
++export function fn() { console.log("fn-ran-" + __ENV.MYENV); }
++export default function () { console.log("default-ran"); }
++`
++	const twoScenarios = `
++export const options = {
++  scenarios: {
++    a: { executor: 'constant-vus', vus: 1, duration: '1s' },
++    b: { executor: 'constant-vus', vus: 1, duration: '1s' },
++  },
++};
++export default function () {}
++`
++
++	t.Run("default function", func(t *testing.T) {
++		t.Parallel()
++		ts := tests.NewGlobalTestState(t)
++		require.NoError(t, fsext.WriteFile(ts.FS, filepath.Join(ts.Cwd, "s.js"), []byte(defaultScript), 0o644))
++		ts.CmdArgs = []string{"k6", "run", "--once", "s.js"}
++		newRootCommand(ts.GlobalState).execute()
++
++		stdout := ts.Stdout.String()
++		assert.Equal(t, 1, strings.Count(stdout+ts.Stderr.String(), "default-ran"))
++		assert.Contains(t, stdout+ts.Stderr.String(), "setup-ran")
++		assert.Contains(t, stdout+ts.Stderr.String(), "teardown-ran")
++	})
++
++	t.Run("single scenario", func(t *testing.T) {
++		t.Parallel()
++		ts := tests.NewGlobalTestState(t)
++		require.NoError(t, fsext.WriteFile(ts.FS, filepath.Join(ts.Cwd, "s.js"), []byte(singleScenario), 0o644))
++		ts.CmdArgs = []string{"k6", "run", "--once", "s.js"}
++		newRootCommand(ts.GlobalState).execute()
++
++		out := ts.Stdout.String() + ts.Stderr.String()
++		assert.Equal(t, 1, strings.Count(out, "fn-ran-hello"))
++		assert.NotContains(t, out, "default-ran")
++	})
++
++	t.Run("multiple scenarios", func(t *testing.T) {
++		t.Parallel()
++		ts := tests.NewGlobalTestState(t)
++		require.NoError(t, fsext.WriteFile(ts.FS, filepath.Join(ts.Cwd, "s.js"), []byte(twoScenarios), 0o644))
++		ts.CmdArgs = []string{"k6", "run", "--once", "s.js"}
++		ts.ExpectedExitCode = int(exitcodes.InvalidConfig)
++		newRootCommand(ts.GlobalState).execute()
++
++		assert.Contains(t, ts.Stderr.String(), "--once can run a single scenario only")
++	})
++
++	t.Run("combined with shortcut", func(t *testing.T) {
++		t.Parallel()
++		ts := tests.NewGlobalTestState(t)
++		require.NoError(t, fsext.WriteFile(ts.FS, filepath.Join(ts.Cwd, "s.js"), []byte(defaultScript), 0o644))
++		ts.CmdArgs = []string{"k6", "run", "--once", "--iterations", "10", "s.js"}
++		ts.ExpectedExitCode = int(exitcodes.InvalidConfig)
++		newRootCommand(ts.GlobalState).execute()
++
++		assert.Contains(t, ts.Stderr.String(), "--once cannot be combined with --iterations")
++	})
++}
+diff --git a/internal/cmd/test_load.go b/internal/cmd/test_load.go
+index bfc6337..7f91f45 100644
+--- a/internal/cmd/test_load.go
++++ b/internal/cmd/test_load.go
+@@ -29,6 +29,7 @@ import (
+ 	"go.k6.io/k6/v2/internal/loader"
+ 	"go.k6.io/k6/v2/js/modules"
+ 	"go.k6.io/k6/v2/lib"
++	"go.k6.io/k6/v2/lib/executor"
+ 	"go.k6.io/k6/v2/lib/fsext"
+ 	"go.k6.io/k6/v2/metrics"
+ )
+@@ -550,6 +551,14 @@ func (lt *loadedTest) consolidateDeriveAndValidateConfig(
+ 		return nil, err
+ 	}
+ 
++	// Done after the consolidation, so shortcuts from any config layer are discarded
++	// and the scenarios of the script are preserved.
++	if once, onceErr := applyOnceFlag(cmd.Flags(), &consolidatedConfig); onceErr != nil {
++		return nil, errext.WithExitCodeIfNone(onceErr, exitcodes.InvalidConfig)
++	} else if once {
++		gs.Logger.Debug("Running once: 1 VU, 1 iteration")
++	}
++
+ 	gs.Logger.Debug("Parsing thresholds and validating config...")
+ 	// Parse the thresholds, only if the --no-threshold flag is not set.
+ 	// If parsing the threshold expressions failed, consider it as an
+@@ -583,6 +592,30 @@ func (lt *loadedTest) consolidateDeriveAndValidateConfig(
+ 	}, nil
+ }
+ 
++// applyOnceFlag transforms the consolidated config if the --once flag is set.
++// It returns whether the flag was set.
++func applyOnceFlag(flags *pflag.FlagSet, conf *Config) (bool, error) {
++	if flags == nil || flags.Lookup("once") == nil {
++		return false, nil
++	}
++	once, err := flags.GetBool("once")
++	if err != nil || !once {
++		return false, err
++	}
++
++	for _, name := range []string{"vus", "iterations", "duration", "stage"} {
++		if flags.Changed(name) {
++			return false, fmt.Errorf("--once cannot be combined with --%s", name)
++		}
++	}
++
++	conf.Options, err = executor.ApplyOnce(conf.Options)
++	if err != nil {
++		return false, err
++	}
++	return true, nil
++}
++
+ // loadedAndConfiguredTest contains the whole loadedTest, as well as the
+ // consolidated test config and the full test run state.
+ type loadedAndConfiguredTest struct {
+diff --git a/lib/executor/execution_config_shortcuts.go b/lib/executor/execution_config_shortcuts.go
+index 39d936c..a94f45c 100644
+--- a/lib/executor/execution_config_shortcuts.go
++++ b/lib/executor/execution_config_shortcuts.go
+@@ -4,6 +4,7 @@ import (
+ 	"github.com/sirupsen/logrus"
+ 	"gopkg.in/guregu/null.v3"
+ 
++	"go.k6.io/k6/v2/internal/lib/consts"
+ 	"go.k6.io/k6/v2/lib"
+ 	"go.k6.io/k6/v2/lib/types"
+ )
+@@ -46,6 +47,40 @@ func getSharedIterationsScenario(iters null.Int, duration types.NullDuration, vu
+ 	return lib.ScenarioConfigs{lib.DefaultScenarioName: ds}
+ }
+ 
++// ApplyOnce transforms the options so the script runs with 1 VU and 1 iteration.
++// If no scenarios are configured, the default one is used. If exactly one scenario
++// is configured, it is replaced by a shared-iterations executor (1 VU, 1 iteration)
++// that preserves only its exec, env, tags and options. Any execution shortcuts
++// (vus, iterations, duration, stages) are discarded.
++// More than one scenario is an error.
++func ApplyOnce(opts lib.Options) (lib.Options, error) {
++	if len(opts.Scenarios) > 1 {
++		return opts, ExecutionConflictError("--once can run a single scenario only")
++	}
++
++	name := lib.DefaultScenarioName
++	once := NewSharedIterationsConfig(name)
++	for scName, sc := range opts.Scenarios {
++		name = scName
++		once = NewSharedIterationsConfig(name)
++		if exec := sc.GetExec(); exec != consts.DefaultFn {
++			once.Exec = null.StringFrom(exec)
++		}
++		once.Env = sc.GetEnv()
++		once.Tags = sc.GetTags()
++		once.Options = sc.GetScenarioOptions()
++	}
++	once.VUs = null.IntFrom(1)
++	once.Iterations = null.IntFrom(1)
++
++	opts.Scenarios = lib.ScenarioConfigs{name: once}
++	opts.VUs = null.Int{}
++	opts.Iterations = null.Int{}
++	opts.Duration = types.NullDuration{}
++	opts.Stages = nil
++	return opts, nil
++}
++
+ // DeriveScenariosFromShortcuts checks for conflicting options and turns any
+ // shortcut options (i.e. duration, iterations, stages) into the proper
+ // long-form scenario/executor configuration in the scenarios property.
+diff --git a/lib/executor/execution_config_shortcuts_once_test.go b/lib/executor/execution_config_shortcuts_once_test.go
+new file mode 100644
+index 0000000..52be88d
+--- /dev/null
++++ b/lib/executor/execution_config_shortcuts_once_test.go
+@@ -0,0 +1,73 @@
++package executor
++
++import (
++	"testing"
++	"time"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++	"gopkg.in/guregu/null.v3"
++
++	"go.k6.io/k6/v2/lib"
++	"go.k6.io/k6/v2/lib/types"
++)
++
++func TestApplyOnce(t *testing.T) {
++	t.Parallel()
++
++	t.Run("no scenarios", func(t *testing.T) {
++		t.Parallel()
++		res, err := ApplyOnce(lib.Options{
++			VUs:        null.IntFrom(10),
++			Iterations: null.IntFrom(100),
++			Duration:   types.NullDurationFrom(time.Minute),
++			Stages:     []lib.Stage{{Target: null.IntFrom(5)}},
++		})
++		require.NoError(t, err)
++		assert.False(t, res.VUs.Valid)
++		assert.False(t, res.Iterations.Valid)
++		assert.False(t, res.Duration.Valid)
++		assert.Nil(t, res.Stages)
++		require.Len(t, res.Scenarios, 1)
++		sc, ok := res.Scenarios[lib.DefaultScenarioName].(SharedIterationsConfig)
++		require.True(t, ok)
++		assert.Equal(t, int64(1), sc.VUs.Int64)
++		assert.Equal(t, int64(1), sc.Iterations.Int64)
++	})
++
++	t.Run("single scenario", func(t *testing.T) {
++		t.Parallel()
++		orig := NewConstantVUsConfig("foo")
++		orig.VUs = null.IntFrom(10)
++		orig.Duration = types.NullDurationFrom(time.Minute)
++		orig.StartTime = types.NullDurationFrom(time.Second)
++		orig.Exec = null.StringFrom("fn")
++		orig.Env = map[string]string{"A": "b"}
++		orig.Tags = map[string]string{"t": "v"}
++		orig.Options = &lib.ScenarioOptions{Browser: map[string]any{"type": "chromium"}}
++
++		res, err := ApplyOnce(lib.Options{Scenarios: lib.ScenarioConfigs{"foo": orig}})
++		require.NoError(t, err)
++		require.Len(t, res.Scenarios, 1)
++		sc, ok := res.Scenarios["foo"].(SharedIterationsConfig)
++		require.True(t, ok)
++		assert.Equal(t, "foo", sc.Name)
++		assert.Equal(t, int64(1), sc.VUs.Int64)
++		assert.Equal(t, int64(1), sc.Iterations.Int64)
++		assert.Equal(t, "fn", sc.GetExec())
++		assert.Equal(t, orig.Env, sc.Env)
++		assert.Equal(t, orig.Tags, sc.Tags)
++		assert.Equal(t, orig.Options, sc.Options)
++		assert.Zero(t, sc.StartTime.Duration)
++		assert.Empty(t, sc.Validate())
++	})
++
++	t.Run("multiple scenarios", func(t *testing.T) {
++		t.Parallel()
++		_, err := ApplyOnce(lib.Options{Scenarios: lib.ScenarioConfigs{
++			"a": NewConstantVUsConfig("a"),
++			"b": NewConstantVUsConfig("b"),
++		}})
++		require.ErrorContains(t, err, "--once can run a single scenario only")
++	})
++}

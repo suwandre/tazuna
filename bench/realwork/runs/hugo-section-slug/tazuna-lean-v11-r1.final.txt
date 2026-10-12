@@ -1,0 +1,9 @@
+`slug` now works in section, taxonomy and term pages. It replaces that page's directory name in the URL, and the change carries through to every descendant page and section. The `hugolib` and `resources` tests and the `common/paths` tests pass. I did not run `./check.sh`.
+
+- **Core change:** `hugolib/page__paths.go` has a new `slugDir` helper. It builds the page's directory with the slugs of its own branch page and its ancestor sections swapped in. It returns nothing when no slug applies, so existing sites behave as before.
+- **Descriptor field:** `resources/page/page_paths.go` gets a new `Dir` field on `TargetPathDescriptor`. When set, it replaces the section path for branch pages and the container directory for regular pages.
+- **Test:** `TestSlugInSectionTaxonomyAndTerm` in `hugolib/site_sections_test.go` covers a section with a slug, a page with a slug inside it, and a nested section and page under it. It also covers a taxonomy and a term with slugs. For example, `help/` with `slug: ayuda` gives `/ayuda/`, `/ayuda/faq/`, `/ayuda/como-frobear/` and `/ayuda/sub/p/`. A `tags` taxonomy with `slug: etiquetas` and a term with `slug: eh` gives `/etiquetas/eh/`.
+
+- **Multilingual:** the test is single-language, so the `_index.es.md` case from your example isn't exercised directly. I expect it to work, because the slug is read per page and the language prefix is added separately.
+- **Permalink patterns:** a `[permalinks]` pattern that builds the URL from `:sections` still uses the directory names. Patterns using `:sectionslugs` already pick up slugs.
+- **Explicit `url`:** a page with `url` set still overrides all of this, as before.

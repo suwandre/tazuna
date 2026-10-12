@@ -1,0 +1,212 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..bd65206 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -16,6 +16,7 @@ package hugolib
+ import (
+ 	"net/url"
+ 	"path"
++	"slices"
+ 	"strings"
+ 
+ 	"github.com/gohugoio/hugo/output"
+@@ -132,7 +133,11 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		URL:         pm.pageConfig.URL,
+ 	}
+ 
+-	if pm.Slug() != "" {
++	if p.Kind() == kinds.KindPage || p.Kind() == kinds.KindSection || p.Kind() == kinds.KindTaxonomy || p.Kind() == kinds.KindTerm {
++		desc.SectionPath = sectionPathWithSlugs(p)
++	}
++
++	if pm.Slug() != "" && !kinds.IsBranch(p.Kind()) {
+ 		desc.BaseName = pm.Slug()
+ 	} else if pm.isStandalone() && pm.standaloneOutputFormat.BaseName != "" {
+ 		desc.BaseName = pm.standaloneOutputFormat.BaseName
+@@ -207,3 +212,37 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 
+ 	return desc, nil
+ }
++
++// sectionPathWithSlugs returns the path of the page's container (the page itself for
++// branch pages) with section slugs applied, or empty if no section has a slug.
++func sectionPathWithSlugs(p *pageState) string {
++	var sections page.Pages
++	if kinds.IsBranch(p.Kind()) {
++		sections = append(sections, p)
++	}
++	sections = append(sections, p.Ancestors()...)
++
++	var hasSlug bool
++	segments := make([]string, 0, len(sections))
++	for _, sp := range slices.Backward(sections) {
++		if sp.IsHome() {
++			continue
++		}
++		segment := sp.Slug()
++		if segment == "" {
++			pi := sp.PathInfo()
++			if p.s.Conf.DisablePathToLower() {
++				pi = pi.Unnormalized()
++			}
++			segment = path.Base(pi.Base())
++		} else {
++			hasSlug = true
++		}
++		segments = append(segments, segment)
++	}
++
++	if !hasSlug {
++		return ""
++	}
++	return strings.Join(segments, "/")
++}
+diff --git a/hugolib/section_slug_test.go b/hugolib/section_slug_test.go
+new file mode 100644
+index 0000000..379d1a8
+--- /dev/null
++++ b/hugolib/section_slug_test.go
+@@ -0,0 +1,108 @@
++// Copyright 2025 The Hugo Authors. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package hugolib
++
++import (
++	"testing"
++)
++
++func TestSectionTaxonomyTermSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++disableKinds = ["rss", "sitemap"]
++[taxonomies]
++tag = "tags"
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: Frob
++tags: [t1]
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Frob es
++slug: como-frobear
++tags: [t1]
++---
++-- content/help/sub/_index.es.md --
++---
++title: Sub
++slug: sub-es
++---
++-- content/help/sub/p1.es.md --
++---
++title: P1
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/t1/_index.es.md --
++---
++title: T1
++slug: et1
++---
++-- content/docs/_index.md --
++---
++title: Docs
++---
++-- content/docs/Mixed/_index.md --
++---
++title: Mixed
++slug: mixed-slug
++---
++-- content/docs/Mixed/Child/_index.md --
++---
++title: Child
++---
++-- content/docs/Mixed/Child/p.md --
++---
++title: P
++---
++-- layouts/all.html --
++{{ .Kind }}|{{ .RelPermalink }}|
++`
++	b := Test(t, files)
++	b.AssertFileExists("public/help/index.html", true)
++	b.AssertFileExists("public/help/how-to-frob/index.html", true)
++	b.AssertFileExists("public/es/ayuda/index.html", true)
++	b.AssertFileExists("public/es/ayuda/como-frobear/index.html", true)
++	b.AssertFileExists("public/es/ayuda/sub-es/index.html", true)
++	b.AssertFileExists("public/es/ayuda/sub-es/p1/index.html", true)
++	b.AssertFileExists("public/es/etiquetas/index.html", true)
++	b.AssertFileExists("public/es/etiquetas/et1/index.html", true)
++	b.AssertFileExists("public/tags/t1/index.html", true)
++	b.AssertFileExists("public/docs/mixed-slug/child/index.html", true)
++	b.AssertFileExists("public/docs/mixed-slug/child/p/index.html", true)
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "page|/es/ayuda/como-frobear/|")
++	b.AssertFileContent("public/es/etiquetas/et1/index.html", "term|/es/etiquetas/et1/|")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..87f66e2 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -50,6 +50,10 @@ type TargetPathDescriptor struct {
+ 	// 2) the file base name (TranslationBaseName).
+ 	BaseName string
+ 
++	// SectionPath is the path of the container (the page itself for branch pages)
++	// with any section slugs applied. Empty if no section has a slug.
++	SectionPath string
++
+ 	// PrefixFilePath contains zero or more content dimensions used as a file
+ 	// path prefix. Dimensions are ordered role/version/language for
+ 	// single-host and language/role/version for multihost.
+@@ -165,6 +169,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.SectionPath != "" {
++			pb.Add(d.SectionPath)
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}
+@@ -206,7 +212,9 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			if dir := d.Path.ContainerDir(); dir != "" {
++			if d.SectionPath != "" {
++				pb.Add(d.SectionPath)
++			} else if dir := d.Path.ContainerDir(); dir != "" {
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {

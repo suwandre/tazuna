@@ -1,0 +1,295 @@
+diff --git a/caddyconfig/caddyfile/dispenser.go b/caddyconfig/caddyfile/dispenser.go
+index 66b9b10..15f6a5b 100644
+--- a/caddyconfig/caddyfile/dispenser.go
++++ b/caddyconfig/caddyfile/dispenser.go
+@@ -90,7 +90,7 @@ func (d *Dispenser) NextArg() bool {
+ 	if !d.nextOnSameLine() {
+ 		return false
+ 	}
+-	if d.Val() == "{" {
++	if d.Token().isOpenBrace() {
+ 		// roll back; a block opening is not an argument
+ 		d.cursor--
+ 		return false
+@@ -169,9 +169,9 @@ func (d *Dispenser) NextBlock(initialNestingLevel int) bool {
+ 		if !d.Next() {
+ 			return false // should be EOF error
+ 		}
+-		if d.Val() == "}" && !d.nextOnSameLine() {
++		if d.Token().isCloseBrace() && !d.nextOnSameLine() {
+ 			d.nesting--
+-		} else if d.Val() == "{" && !d.nextOnSameLine() {
++		} else if d.Token().isOpenBrace() && !d.nextOnSameLine() {
+ 			d.nesting++
+ 		}
+ 		return d.nesting > initialNestingLevel
+@@ -179,12 +179,12 @@ func (d *Dispenser) NextBlock(initialNestingLevel int) bool {
+ 	if !d.nextOnSameLine() { // block must open on same line
+ 		return false
+ 	}
+-	if d.Val() != "{" {
++	if !d.Token().isOpenBrace() {
+ 		d.cursor-- // roll back if not opening brace
+ 		return false
+ 	}
+ 	d.Next() // consume open curly brace
+-	if d.Val() == "}" {
++	if d.Token().isCloseBrace() {
+ 		return false // open and then closed right away
+ 	}
+ 	d.nesting++
+@@ -406,7 +406,7 @@ func (d *Dispenser) Reset() {
+ // a line break or open curly brace was encountered instead of
+ // an argument.
+ func (d *Dispenser) ArgErr() error {
+-	if d.Val() == "{" {
++	if d.Token().isOpenBrace() {
+ 		return d.Err("unexpected token '{', expecting argument")
+ 	}
+ 	return d.Errf("wrong argument count or unexpected line ending after '%s'", d.Val())
+diff --git a/caddyconfig/caddyfile/dispenser_test.go b/caddyconfig/caddyfile/dispenser_test.go
+index f5d2260..f9793d5 100644
+--- a/caddyconfig/caddyfile/dispenser_test.go
++++ b/caddyconfig/caddyfile/dispenser_test.go
+@@ -17,6 +17,7 @@ package caddyfile
+ import (
+ 	"errors"
+ 	"reflect"
++	"slices"
+ 	"strings"
+ 	"testing"
+ )
+@@ -168,6 +169,37 @@ func TestDispenser_NextBlock(t *testing.T) {
+ 	assertNextBlock(false, 8, 0) // empty block is as if it didn't exist
+ }
+ 
++func TestDispenser_NextBlock_QuotedBraces(t *testing.T) {
++	d := NewTestDispenser(`foobar {
++		sub1 "{"
++		sub2 "}"
++	}
++	other`)
++
++	d.Next() // foobar
++	var vals []string
++	for nesting := d.Nesting(); d.NextBlock(nesting); {
++		vals = append(vals, d.Val())
++	}
++	if expected := []string{"sub1", "{", "sub2", "}"}; !slices.Equal(vals, expected) {
++		t.Errorf("Expected block tokens %v, got %v", expected, vals)
++	}
++	if d.Nesting() != 0 {
++		t.Errorf("Expected nesting 0 after block, got %d", d.Nesting())
++	}
++
++	if !d.Next() || d.Val() != "other" {
++		t.Errorf("Expected next token to be 'other', got '%s'", d.Val())
++	}
++
++	// a quoted brace is an argument, not a block opening
++	d = NewTestDispenser(`foobar "{" arg`)
++	d.Next() // foobar
++	if !d.NextArg() || d.Val() != "{" {
++		t.Errorf("Expected quoted '{' to be an argument, got '%s'", d.Val())
++	}
++}
++
+ func TestDispenser_Args(t *testing.T) {
+ 	var s1, s2, s3 string
+ 	input := `dir1 arg1 arg2 arg3
+diff --git a/caddyconfig/caddyfile/lexer.go b/caddyconfig/caddyfile/lexer.go
+index 40ea2e5..df9272b 100644
+--- a/caddyconfig/caddyfile/lexer.go
++++ b/caddyconfig/caddyfile/lexer.go
+@@ -347,6 +347,18 @@ func (t Token) Quoted() bool {
+ 	return t.wasQuoted > 0
+ }
+ 
++// isOpenBrace returns true if the token is an unquoted
++// opening curly brace, i.e. one that opens a block.
++func (t Token) isOpenBrace() bool {
++	return t.Text == "{" && t.wasQuoted == 0
++}
++
++// isCloseBrace returns true if the token is an unquoted
++// closing curly brace, i.e. one that closes a block.
++func (t Token) isCloseBrace() bool {
++	return t.Text == "}" && t.wasQuoted == 0
++}
++
+ // NumLineBreaks counts how many line breaks are in the token text.
+ func (t Token) NumLineBreaks() int {
+ 	lineBreaks := strings.Count(t.Text, "\n")
+diff --git a/caddyconfig/caddyfile/parse.go b/caddyconfig/caddyfile/parse.go
+index 38d3b9b..1ab756b 100644
+--- a/caddyconfig/caddyfile/parse.go
++++ b/caddyconfig/caddyfile/parse.go
+@@ -229,7 +229,7 @@ func (p *parser) addresses() error {
+ 		}
+ 
+ 		// Open brace definitely indicates end of addresses
+-		if value == "{" {
++		if token.isOpenBrace() {
+ 			if expectingAnother {
+ 				return p.Errf("Expected another address but had '%s' - check for extra comma", value)
+ 			}
+@@ -320,7 +320,7 @@ func (p *parser) blockContents() error {
+ func (p *parser) directives() error {
+ 	for p.Next() {
+ 		// end of server block
+-		if p.Val() == "}" {
++		if p.Token().isCloseBrace() {
+ 			// p.nesting has already been decremented
+ 			break
+ 		}
+@@ -384,7 +384,7 @@ func (p *parser) doImport(nesting int) error {
+ 		for bd.Next() {
+ 			currentMappingKey := bd.Val()
+ 
+-			if currentMappingKey == "{" {
++			if bd.Token().isOpenBrace() {
+ 				return p.Err("anonymous blocks are not supported")
+ 			}
+ 
+@@ -518,14 +518,14 @@ func (p *parser) doImport(nesting int) error {
+ 			}
+ 		}
+ 
+-		switch token.Text {
+-		case "{":
++		switch {
++		case token.isOpenBrace():
+ 			nesting++
+ 			if index == 1 && maybeSnippetId && nesting == 1 {
+ 				maybeSnippet = true
+ 				maybeSnippetId = false
+ 			}
+-		case "}":
++		case token.isCloseBrace():
+ 			nesting--
+ 			if nesting == 0 && maybeSnippet {
+ 				maybeSnippet = false
+@@ -641,9 +641,9 @@ func (p *parser) directive() error {
+ 	segment = append(segment, p.Token())
+ 
+ 	for p.Next() {
+-		if p.Val() == "{" {
++		if p.Token().isOpenBrace() {
+ 			p.nesting++
+-			if !p.isNextOnNewLine() && p.Token().wasQuoted == 0 {
++			if !p.isNextOnNewLine() {
+ 				return p.Err("Unexpected next token after '{' on same line")
+ 			}
+ 			if p.isNewLine() {
+@@ -656,9 +656,9 @@ func (p *parser) directive() error {
+ 		} else if p.isNewLine() && p.nesting == 0 {
+ 			p.cursor-- // read too far
+ 			break
+-		} else if p.Val() == "}" && p.nesting > 0 {
++		} else if p.Token().isCloseBrace() && p.nesting > 0 {
+ 			p.nesting--
+-		} else if p.Val() == "}" && p.nesting == 0 {
++		} else if p.Token().isCloseBrace() && p.nesting == 0 {
+ 			return p.Err("Unexpected '}' because no matching opening brace")
+ 		} else if p.Val() == "import" && p.isNewLine() {
+ 			if err := p.doImport(1); err != nil {
+@@ -685,7 +685,7 @@ func (p *parser) directive() error {
+ // because it returns an error if the token is not
+ // an opening curly brace. It does NOT advance the token.
+ func (p *parser) openCurlyBrace() error {
+-	if p.Val() != "{" {
++	if !p.Token().isOpenBrace() {
+ 		if p.valLooksLikeGlobalOptionsAfterImportedSnippets() {
+ 			return p.Err("global options block must appear before import directives; move the global options block to the top of the Caddyfile")
+ 		}
+@@ -713,7 +713,7 @@ func (p *parser) valLooksLikeGlobalOptionsAfterImportedSnippets() bool {
+ // because it returns an error if the token is not
+ // a closing curly brace. It does NOT advance the token.
+ func (p *parser) closeCurlyBrace() error {
+-	if p.Val() != "}" {
++	if !p.Token().isCloseBrace() {
+ 		return p.SyntaxErr("}")
+ 	}
+ 	return nil
+@@ -750,7 +750,7 @@ func (p *parser) blockTokens(retainCurlies bool) ([]Token, error) {
+ 		tokens = append(tokens, p.Token())
+ 	}
+ 	for p.Next() {
+-		if p.Val() == "}" {
++		if p.Token().isCloseBrace() {
+ 			nesting--
+ 			if nesting == 0 {
+ 				if retainCurlies {
+@@ -759,7 +759,7 @@ func (p *parser) blockTokens(retainCurlies bool) ([]Token, error) {
+ 				break
+ 			}
+ 		}
+-		if p.Val() == "{" {
++		if p.Token().isOpenBrace() {
+ 			nesting++
+ 		}
+ 		tokens = append(tokens, p.tokens[p.cursor])
+diff --git a/caddyconfig/caddyfile/parse_test.go b/caddyconfig/caddyfile/parse_test.go
+index 9403f7a..d0e0110 100644
+--- a/caddyconfig/caddyfile/parse_test.go
++++ b/caddyconfig/caddyfile/parse_test.go
+@@ -310,6 +310,26 @@ func TestParseOneAndImport(t *testing.T) {
+ 		{`localhost
+ 		  dir1 "{" a b "}"`, false, []string{"localhost"}, []int{5}},
+ 
++		// Quoted braces are plain arguments and do not open or close blocks
++		{`:8080 {
++			respond "{"
++		}`, false, []string{":8080"}, []int{2}},
++		{`:8080 {
++			respond "}"
++		}`, false, []string{":8080"}, []int{2}},
++		{`:8080 {
++			respond "{" 200
++			respond "}" 200
++		}`, false, []string{":8080"}, []int{3, 3}},
++		{`:8080 {
++			dir1 {
++				sub "{"
++				sub2 "}"
++			}
++		}`, false, []string{":8080"}, []int{7}},
++		{`localhost
++		  dir1 "}"`, false, []string{"localhost"}, []int{2}},
++
+ 		// Unexpected '{}' at end of line
+ 		{`localhost
+ 		  dir1 {}`, true, []string{"localhost"}, []int{}},
+diff --git a/caddytest/integration/caddyfile_adapt/quoted_braces.caddyfiletest b/caddytest/integration/caddyfile_adapt/quoted_braces.caddyfiletest
+new file mode 100644
+index 0000000..92af23a
+--- /dev/null
++++ b/caddytest/integration/caddyfile_adapt/quoted_braces.caddyfiletest
+@@ -0,0 +1,27 @@
++:8080 {
++	respond "{"
++}
++----------
++{
++	"apps": {
++		"http": {
++			"servers": {
++				"srv0": {
++					"listen": [
++						":8080"
++					],
++					"routes": [
++						{
++							"handle": [
++								{
++									"body": "{",
++									"handler": "static_response"
++								}
++							]
++						}
++					]
++				}
++			}
++		}
++	}
++}

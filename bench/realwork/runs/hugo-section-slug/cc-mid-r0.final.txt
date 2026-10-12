@@ -1,0 +1,13 @@
+`slug` in a section, taxonomy or term `_index` file now changes that page's URL and the URLs of everything under it. The new test and the `hugolib` and `resources/page/...` packages pass. I didn't run the rest of the repo, such as `tpl` and `commands`. The full `hugolib` run timed out in my shell, and the result I got was a cached pass from that earlier run.
+
+With your example, `help/_index.es.md` with `slug="ayuda"` gives `/es/ayuda/`, and `index.es.md` with `slug="como-frobear"` under it gives `/es/ayuda/como-frobear/`. The English pages stay at `/help/` and `/help/how-to-frob/`. A taxonomy slug and a term slug work the same way, for example `/es/etiquetas/et1/`.
+
+I changed two files:
+- **`hugolib/page__paths.go`:** A new `applySectionSlugs` swaps each ancestor's directory name for its slug, and for sections, taxonomies and terms also the page's own name. Sites with no slugs on any section are unaffected.
+- **`resources/page/page_paths.go`:** `TargetPathDescriptor` got two optional fields, `SectionBase` and `ContainerDir`, which hold the slug-applied path. If they're empty, the old path logic runs.
+
+`url` in front matter and permalink patterns (such as `:slug` or `:sectionslugs`) still take priority over the new behaviour.
+
+Existing sites that already have `slug` in a section `_index.md`, but no permalink pattern or `url`, will see those URLs change, since the field was previously ignored there.
+
+I added `TestSectionSlug` to `hugolib/site_sections_test.go`. It covers your `help/` example plus a nested section, a taxonomy and a term, in a two-language site.

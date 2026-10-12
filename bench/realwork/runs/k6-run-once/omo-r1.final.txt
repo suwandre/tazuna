@@ -1,0 +1,24 @@
+> Ask: add `--once` to `k6 run`, `k6 cloud run` and `k6 archive`, keeping scenario config. Wanted: a working flag with tests.
+> For you: done. The flag builds, the new tests pass, and `go test ./internal/cmd/... ./lib/executor/` is green.
+> Now: none. Next: none.
+
+**Behavior**
+- **Where it runs:** the transform runs in `consolidateDeriveAndValidateConfig` right after `getConsolidatedConfig`, so `k6 run`, `cloud run` (including `--local-execution`) and `archive` all get it. `inspect` and `cloud upload` don't define the flag, so they are untouched.
+- **No scenarios:** the script gets a `default` shared-iterations scenario with 1 VU and 1 iteration. Any script-level `vus`, `iterations`, `duration` or `stages` are dropped.
+- **Single scenario:** it becomes shared-iterations with 1 VU and 1 iteration. It keeps its name, `exec`, `env`, `tags` and browser `options`, and drops `startTime`, `gracefulStop` and the old executor fields.
+- **Multiple scenarios:** the run fails with `--once can run a single scenario only, but the script defines N: a, b`.
+- **Shortcut flags:** `--once` with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --X`.
+- **Exit code:** both errors exit with the invalid-config code.
+- **Archive and cloud:** both only use the consolidated config. Because the transform runs before derivation, the archive and cloud upload contain the 1/1 scenario.
+
+**Changes**
+- New code is in `internal/cmd/once.go`, which has the flag definition and `applyOnceFlag`.
+- The flag is registered in `run.go`, `archive.go` and `cloudCmdFlagSet` in `cloud.go`.
+- `run.go` also gets a `--once` help example.
+- Unit tests are in `internal/cmd/once_test.go`.
+- Integration tests are in `internal/cmd/tests/cmd_run_once_test.go`. They cover a script with no scenarios, a single scenario with `exec`, `env` and tags, the multi-scenario error, each shortcut-flag conflict, and the archive contents.
+
+**Not covered**
+- There is no test for the cloud-run path, which uses the same code path.
+- I did not add a release-notes entry.
+- gopls isn't installed, so I used `go vet`, `gofmt` and `go build` instead of LSP diagnostics. They report nothing.

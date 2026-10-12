@@ -1,0 +1,28 @@
+`return` now works as a runtime sentinel. It can appear anywhere in any template: in conditionals, inside `range`, and in page templates, shortcodes and partials. The partial-return wrapper transformation is gone. All tests pass in `./tpl/...` and `./hugolib/...`, and `./check.sh` is clean apart from staticcheck warnings that are also there without my change. In `./resources/...`, one image test (`TestImagesGoldenProcessAviStraws`) failed with an AVIF resize timeout. I didn't re-run it, but it's image processing and doesn't touch the template code. Nothing is committed.
+
+**How it works**
+- **The `return` function** (`tpl/partials/partials.go`): `Return(args ...any)` returns a `*texttemplate.ReturnError{Value}`.
+- **The Go template fork** (`hugo_template.go`):
+  - `evalCall` re-raises a `ReturnError` as-is instead of wrapping it as an execution error, and `try` passes it through rather than treating it as a failure.
+  - `executeWithState` catches it and hands back the value. `Executer.ExecuteWithContext` now returns `(any, error)`.
+  - `walkTemplate` also catches it, so a `return` inside `{{ template "x" }}` only exits that template. I copied `walkTemplate` into `hugo_template.go` and added the matching rename rule to `scripts/fork_go_templates/main.go`, so the upstream files stay unedited and the fork stays easy to maintain.
+- **The template store**: `TemplateStore.ExecuteWithContextAndKey` passes the value back to partials. The public `ExecuteWithContext` signature is unchanged.
+- **The transformer** (`templatetransform.go`) is much smaller. It now only:
+  - rewrites `return f x | g` to `f x | g | return`, so existing pipelines keep their meaning;
+  - flags partials containing a `return` with a value as `HasReturn`. Their rendered output is discarded, as before.
+
+**Behaviour changes to be aware of**
+- In a value-returning partial, if execution never reaches a value `return`, the result is `nil`. Before, the single `return` was effectively always run at the end.
+- A bare `{{ return }}` in a partial with no value `return` anywhere gives back the output rendered so far.
+- `TestPartialReturnPanicIssue13600` now fails on the real error (`delimit` on a page) instead of the old misleading "wrong number of args for string" error. I updated that test's expectation.
+
+**Tests and docs**
+- New tests `TestReturnEarly` and `TestReturnTooManyArgs` in `tpl/partials/partials_integration_test.go`. They cover:
+  - early return in a home page, a shortcode, and a `range` loop;
+  - falsy values, a bare `return`, and dot/`$` handling;
+  - pipelines after `return`;
+  - `return` inside `{{ template }}`;
+  - an error for too many arguments.
+- I updated `docs/content/en/functions/go-template/return.md`, removing the "must be the last statement" rules.
+
+**Remaining limitation:** a `return` inside the body of a `{{ with partial … }}` decorator block exits the internal decorator partial that wraps the body, not the outer template. That's an edge case I didn't address.

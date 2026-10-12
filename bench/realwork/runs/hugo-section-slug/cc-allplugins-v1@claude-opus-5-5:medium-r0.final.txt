@@ -1,0 +1,10 @@
+Setting `slug` on a section, taxonomy or term page now changes that directory's name in the URL, for that page and for every page under it. The example from the issue gives `/help/`, `/help/how-to-frob/`, `/es/ayuda/` and `/es/ayuda/como-frobear/`.
+
+**How it works**
+- `hugolib/page__paths.go`: a new helper, `sectionSlugPath`, walks up from the page's current section through its parent sections. Wherever one of them has a slug, it swaps the matching directory name for the slug. If no section in the chain has a slug, nothing changes. Sections that skip levels (e.g. `a/b/c/_index.md` with no `a/b/_index.md`) are handled, because it replaces by position in the path.
+- `resources/page/page_paths.go`: a new field, `TargetPathDescriptor.SectionSlugPath`, holds that rewritten path. Section, taxonomy and term pages use it as their own path. Regular pages use it in place of the section part of their directory, so a page in a subfolder that isn't a section (e.g. `help/misc/p1.md`) becomes `/es/ayuda/misc/p1/`.
+- Front matter `url` and `[permalinks]` config still take priority over this.
+
+**Test:** I added `TestSlugInSectionTaxonomyAndTerm` in `hugolib/page_permalink_test.go`. It covers the issue's example, nested section slugs (including a non-ASCII one), a subfolder that isn't a section, and slugs on a taxonomy and a term. It also checks that the English pages, which have no slug, keep their original paths.
+
+`go test ./hugolib/... ./resources/page/...` passes. `./check.sh` (gofmt, staticcheck, tests) passes, but its output only listed `./hugolib/...`, so `resources/page` may have been covered by `go test` alone. I haven't run the full `./check.sh` over the whole repo, and nothing is committed.

@@ -1,0 +1,180 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..b6fe462 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -18,6 +18,7 @@ import (
+ 	"path"
+ 	"strings"
+ 
++	"github.com/gohugoio/hugo/common/paths"
+ 	"github.com/gohugoio/hugo/output"
+ 
+ 	"github.com/gohugoio/hugo/resources/kinds"
+@@ -192,7 +193,14 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		return desc, err
+ 	}
+ 
+-	if opath != "" {
++	if opath == "" && desc.URL == "" {
++		// No permalink pattern matches; check if any section in the
++		// hierarchy (or the page itself, for branch pages) has a slug set.
++		opath = pathWithSectionSlugs(p, pageInfoPage, desc.BaseName)
++		if opath != "" {
++			desc.ExpandedPermalink = opath
++		}
++	} else if opath != "" {
+ 		opath, _ = url.QueryUnescape(opath)
+ 		opath = path.Clean(opath)
+ 
+@@ -207,3 +215,64 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 
+ 	return desc, nil
+ }
++
++// pathWithSectionSlugs returns the target path for p where any section (or
++// taxonomy/term) in its path having a slug set gets that slug as its path element.
++// For regular pages baseName is used as the last element.
++// It returns an empty string if no path element is replaced.
++func pathWithSectionSlugs(p *pageState, pageInfo *paths.Path, baseName string) string {
++	kind := p.Kind()
++	isBranch := kinds.IsBranch(kind)
++	if kind == kinds.KindHome || (!isBranch && kind != kinds.KindPage) {
++		return ""
++	}
++
++	unnormalized := p.s.Conf.DisablePathToLower()
++	slugs := make(map[string]string)
++	add := func(pg page.Page) {
++		if pg.IsHome() || !kinds.IsBranch(pg.Kind()) || pg.Slug() == "" {
++			return
++		}
++		pi := pg.PathInfo()
++		if unnormalized {
++			pi = pi.Unnormalized()
++		}
++		slugs[pi.Base()] = pg.Slug()
++	}
++
++	if isBranch {
++		add(p)
++	}
++	for _, a := range p.Ancestors() {
++		add(a)
++	}
++	if len(slugs) == 0 {
++		return ""
++	}
++
++	var dir string
++	if isBranch {
++		dir = pageInfo.Base()
++	} else {
++		dir = pageInfo.ContainerDir()
++	}
++
++	orig := strings.FieldsFunc(dir, func(r rune) bool { return r == '/' })
++	elems := make([]string, 0, len(orig)+1)
++	var replaced bool
++	for i, e := range orig {
++		if slug, found := slugs["/"+strings.Join(orig[:i+1], "/")]; found {
++			e = slug
++			replaced = true
++		}
++		elems = append(elems, e)
++	}
++	if !replaced {
++		return ""
++	}
++	if !isBranch {
++		elems = append(elems, baseName)
++	}
++
++	return "/" + strings.Join(elems, "/")
++}
+diff --git a/hugolib/page_permalink_test.go b/hugolib/page_permalink_test.go
+index d5ae693..1dc5770 100644
+--- a/hugolib/page_permalink_test.go
++++ b/hugolib/page_permalink_test.go
+@@ -201,3 +201,82 @@ path = '/books/**'
+ 
+ 	b.AssertFileContent("public/shelf/my-book/index.html", "RelPermalink: /shelf/my-book/")
+ }
++
++func TestSectionSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++disableKinds = ['rss','sitemap']
++defaultContentLanguage = 'en'
++defaultContentLanguageInSubdir = false
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++[taxonomies]
++tag = 'tags'
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: Frob
++tags: [t1]
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Frobear
++slug: como-frobear
++tags: [t1]
++---
++-- content/help/other.es.md --
++---
++title: Otro
++---
++-- content/help/sub/_index.es.md --
++---
++title: Sub
++slug: subseccion
++---
++-- content/help/sub/page.es.md --
++---
++title: Page
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/t1/_index.es.md --
++---
++title: T1
++slug: uno
++---
++-- layouts/all.html --
++{{ .Kind }}: {{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileExists("public/help/index.html", true)
++	b.AssertFileExists("public/help/how-to-frob/index.html", true)
++	b.AssertFileExists("public/es/ayuda/index.html", true)
++	b.AssertFileExists("public/es/ayuda/como-frobear/index.html", true)
++	b.AssertFileExists("public/es/ayuda/other/index.html", true)
++	b.AssertFileExists("public/es/ayuda/subseccion/index.html", true)
++	b.AssertFileExists("public/es/ayuda/subseccion/page/index.html", true)
++	b.AssertFileExists("public/es/help/index.html", false)
++	b.AssertFileExists("public/es/etiquetas/index.html", true)
++	b.AssertFileExists("public/es/etiquetas/uno/index.html", true)
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "page: /es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/subseccion/index.html", "section: /es/ayuda/subseccion/")
++	b.AssertFileContent("public/es/etiquetas/uno/index.html", "term: /es/etiquetas/uno/")
++	b.AssertFileContent("public/tags/t1/index.html", "term: /tags/t1/")
++}

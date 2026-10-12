@@ -1,0 +1,3 @@
+**Implemented parenthesis preservation for plain duration literals.** Parenthesized numeric literals are retained as wrapped duration expressions, so offsets, range selectors, and subquery durations keep their parentheses in `Expr.String()`. Unary minus remains outside the parentheses, and positive-range validation is preserved.
+
+Verified with `go test ./promql/parser ./promql ./web/api/v1 -count=1` and `make lint`.

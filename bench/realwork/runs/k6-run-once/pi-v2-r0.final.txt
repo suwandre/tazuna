@@ -1,0 +1,20 @@
+I added `--once` to `k6 run`, `k6 cloud run` and `k6 archive`. The new tests and the full `internal/cmd` suite pass, as do the new `ApplyOnce` tests in `lib/executor`. I didn't run a cloud command, including `--local-execution`, so those paths are untested. `go vet` is clean on both packages. I didn't run `make lint`.
+
+**What it does**
+- **No scenarios:** it creates the `default` scenario with 1 VU and 1 iteration.
+- **Single scenario:** it replaces the executor with `shared-iterations` at 1 VU and 1 iteration. It keeps the scenario name, `exec`, `env`, `tags` and browser options. It discards `startTime`, `gracefulStop` and all other executor fields.
+- **Top-level options:** `vus`, `iterations`, `duration` and `stages` are cleared. This applies whether they came from the script, the config file or `K6_*` env vars.
+- **Multiple scenarios:** it fails with `--once can run a single scenario only`.
+- **Shortcut flags:** `--once` can't be combined with `--vus`, `--iterations`, `--duration` or `--stage`. The error reads `--once cannot be combined with --iterations`, for example. The issue only showed `--iterations`; I extended the check to the other three shortcut flags.
+- **Exit code:** both errors use the invalid-config exit code (104).
+
+**Where the code lives**
+- `lib/executor/once.go` has `ApplyOnce`.
+- `internal/cmd/options.go` has the `--once` flag and the conflict check.
+- `internal/cmd/test_load.go` applies it right after config consolidation. It is applied to the consolidated config, so archives and cloud uploads get the same scenario that runs locally.
+
+**Tests**
+- `lib/executor/once_test.go` has unit tests for `ApplyOnce`.
+- `internal/cmd/once_test.go` has integration tests. They cover a run with no scenarios and a run with a single scenario, including `setup()` and `teardown()`. They also cover the multiple-scenario error, the four flag conflicts, and the scenario in an archive's metadata.
+
+The flag is registered in the shared option flag set, so `k6 cloud upload` also accepts `--once`. I didn't add a release-notes entry.

@@ -1,0 +1,14 @@
+Quoted `{` and `}` are now treated as plain values, so the Caddyfile from the issue parses. `caddy adapt` on that file gives a `static_response` handler with `"body":"{"`. The `caddyconfig/...` tests pass. The `caddytest` and `modules/caddyhttp` run showed only log output in what I looked at, and I didn't check its final result.
+
+**Root cause:** the parser and dispenser compared token text against `"{"` and `"}"` without checking whether the token was quoted. A quoted `"{"` therefore opened a block that never closed.
+
+**Changes:**
+- **`caddyconfig/caddyfile/dispenser.go`:** I added `isOpenBrace()` and `isCloseBrace()`, which match only unquoted braces. `NextArg`, `NextBlock` and `ArgErr` now use them.
+- **`caddyconfig/caddyfile/parse.go`:** The same unquoted check now applies in site-address parsing, `directives`, `directive`, `openCurlyBrace`, `closeCurlyBrace` and `blockTokens`. It also applies to the nesting and snippet detection in `doImport` and to the anonymous-block check.
+
+**Tests added:**
+- Cases in `TestParseOneAndImport` for quoted `{` and `}`, including one with a real block that follows.
+- `TestQuotedBracesInSnippetsAndBlocks`, which covers a snippet and an import.
+- `TestDispenser_QuotedBracesAreNotBlocks`.
+
+I did not touch the formatter (`formatter.go`) or test whether `caddy fmt` handles quoted braces.

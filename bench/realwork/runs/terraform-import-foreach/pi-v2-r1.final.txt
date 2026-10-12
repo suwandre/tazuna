@@ -1,0 +1,13 @@
+Fixed: every `import` block that targets an instance of a `for_each` resource is now honored, not just the first one.
+
+**Cause:** `FindImportStatements` in `internal/refactoring/import_statement.go` deduplicated import blocks by config resource (`terraform_data.t`) instead of by instance (`terraform_data.t["a"]`). The first block won and the rest were silently dropped. The dedup was meant to let a parent module's import override a child module's import of the same target. Its guard compared the address with itself, so it was always true.
+
+**Fix:**
+- `FindImportStatements` now returns an ordered slice, with parent modules before their children.
+- It only drops a block when an earlier block targets the same resource instance and the target can be read from the config. Blocks that use `for_each` are never dropped.
+- In `internal/terraform/node_resource_plan.go`, `expandResourceImports` keeps the first import for an address. This preserves "parent wins" for the cases the static dedup can't catch.
+- `internal/terraform/context_plan.go` is updated for the new return type.
+
+**Tests:** I added `TestContext2Plan_importMultipleBlocksForEachResource` in `internal/terraform/context_plan_import_test.go`. It uses three separate import blocks on one `for_each` resource. It failed before the change, reproducing the bug. The `internal/terraform`, `internal/refactoring` and `internal/configs` test packages pass, and `go build ./...` succeeds. I didn't add a test for the parent-overrides-child case, and I didn't test `count`.
+
+**Not changed:** config generation and the provider lookup still read the first import block's config (`importTargets[0]`). That only matters if blocks for the same resource name different providers, which shouldn't happen.

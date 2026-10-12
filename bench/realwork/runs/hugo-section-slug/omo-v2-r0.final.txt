@@ -1,0 +1,26 @@
+Ask: support `slug` in section, taxonomy and term pages - wanted: localized section URLs without `url`/`[[cascade]]`, with tests.
+For you: done. `slug` on a section, taxonomy or term page now replaces that section's path segment in its own URL and in all descendant URLs, as in your `help/` → `es/ayuda/` example.
+Now: none, all tasks complete.
+Next: none.
+
+**Change** (`hugolib/page__paths.go`):
+- When a section, taxonomy, term or regular page has no `url` and no matching permalink pattern, a new helper, `sectionsPathWithSlugs`, walks its section chain. It swaps each section's path segment for its `slug` where one is set.
+- If any ancestor has a slug, the result becomes the target path.
+- Sites with no section slugs are untouched.
+- A `url` or a configured permalink pattern still takes precedence.
+
+**Test** (`hugolib/section_slug_integration_test.go`, `TestSlugInSectionTaxonomyAndTermPages`):
+- It builds an en/es site and checks that the English URLs stay unchanged.
+- It checks these Spanish URLs:
+  - `/es/ayuda/`
+  - `/es/ayuda/como-frobear/` (a bundle with its own slug)
+  - `/es/ayuda/faq/`
+  - `/es/ayuda/sub/` and `/es/ayuda/sub/p1/` (a nested section without a slug)
+  - `/es/etiquetas/` (taxonomy)
+  - `/es/etiquetas/frobear/` (term)
+- It also checks that `/es/help/` is not generated.
+- With my change stashed, the test fails with `public/es/ayuda/index.html: file does not exist`. With it applied, it passes.
+
+**Verification:** `go test ./hugolib/... ./resources/page/...` passes. `go vet ./hugolib/` and `gofmt -l` are clean. I did not run `./check.sh`. gopls isn't installed, so there were no LSP diagnostics. The only comments in the new file are the standard license header.
+
+**Not covered:** I did not test `slug` together with `disablePathToLower`.

@@ -1,0 +1,9 @@
+Stash was denied, so I'll skip the fail-before check and run the broader suites on the fix.`internal/refactoring/import_statement.go` — `FindImportStatements` returned a map keyed by config resource and dropped every later import block for the same resource. So `["a"]` and `["b"]` collided on `terraform_data.t`, and only the first-declared block survived.
+
+I changed it to return a slice. It now skips a block only when a different module (a parent) already claimed that resource, so the parent-overrides-child rule still holds. Multiple blocks in the same module are all kept. `findImportTargets` in `internal/terraform/context_plan.go` was updated to match.
+
+I added `TestContext2Plan_importMultipleBlocksForEachResource` in `internal/terraform/context_plan_import_test.go`. It uses a `for_each` resource with two single-instance import blocks and asserts both instances are imported with the right IDs. It passes with the fix, but I couldn't confirm it fails without it. The `git stash` I used for that check was denied.
+
+`go test ./internal/terraform/ ./internal/refactoring/` passes. `internal/command` fails in `TestInit_providerLockFileReadonly` on a provider checksum mismatch, which looks environmental and unrelated. I didn't confirm it fails without my change.
+
+One thing to check before committing: `.gitignore` shows an added `.empryo` line that I didn't make, so you may want to drop it.

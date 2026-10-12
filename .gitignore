@@ -1,1 +1,11 @@
 /target
+# benchmark kit: machine state, logs and data that must not leave the machine
+/bench/guard.state.json
+/bench/guard.log
+/bench/ABORT
+/bench/PAUSE
+/bench/addons/
+/bench/company/
+/bench/**/*.log
+/bench/**/*.log2
+/bench/realwork/DONE*

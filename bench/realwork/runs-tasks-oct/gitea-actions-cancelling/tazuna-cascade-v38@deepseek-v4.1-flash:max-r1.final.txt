@@ -1,0 +1,24 @@
+All changes are complete and verified. Here's a summary:
+
+## Root causes fixed
+
+**1. A cancelled reusable caller was marked `cancelled` immediately, even while its children were still `cancelling`** (`models/actions/run_job.go`, `cancelOneJob`)
+A caller has no task, so it took the "no task → mark Cancelled" shortcut, overwriting the `cancelling` status derived from its children. When the runner later acknowledged the child, the caller's aggregated status was already `cancelled`, so nothing changed and the run was never re-aggregated. Now a taskless caller with children refreshes its status from them (`RefreshReusableCallerStatus`), so it stays `cancelling` until the last descendant is done, at any nesting depth.
+
+**2. A child status change did not re-aggregate the run when the caller's status was unchanged** (`RefreshReusableCallerStatus`)
+`UpdateRunJob` returns after cascading to the parent caller. If the caller was already `cancelled` ahead of its child (stuck rows from before the fix), the cascade was a no-op, so the run stayed `cancelling`. The caller refresh now re-aggregates the run when the caller row itself doesn't change, letting the last child acknowledgement settle the attempt/run.
+
+**3. Settling a run with no cancellable jobs never re-checked its concurrency group** (`services/actions/cancel.go`, `cancelRun`)
+When `CancelJobs` updates nothing (all jobs already final), only `SettleRunAfterCancel` runs and `EmitJobsIfReadyByJobs` had nothing to emit, so runs blocked behind it stayed blocked. `cancelRun` now enqueues the settled run (`EmitJobsIfReadyByRun`) so `checkRunConcurrency` can wake the queued runs.
+
+## Tests
+- `TestCancelJobs_ReusableCallerWaitsForDescendants`: two-level caller tree + runner ack; callers stay `cancelling` and the run settles to `cancelled`.
+- `TestUpdateRunJob_ChildFinishRecomputesRunWithUnchangedCaller`: already-cancelled caller + finishing child settles attempt/run.
+- `TestCancelRun_SettledRunIsEmitted`: cancel of an all-final run emits the run for a concurrency check.
+
+All three fail against the unpatched code (verified by temporarily reverting the source changes), and pass with the fix.
+
+## Verification
+- `go test -count=1 ./models/actions/ ./services/actions/ ./routers/api/actions/runner/ ./routers/web/repo/actions/ ./routers/api/v1/repo/` — all pass.
+- `go test -run 'TestAPIActionsWorkflowRun/ForceCancelWorkflowRun' gitea.dev/tests/integration` — passes.
+- `make fmt`, `gofmt`, and `golangci-lint run models/actions/ services/actions/` — clean, no issues.

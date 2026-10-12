@@ -126,7 +126,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   reviewer are untested.
 - `--fallback-model`, `--advisor`; a cross-family judge; real sandboxing; git tags and a fixed scoreboard.
 - A cheaper or stricter review (Sonnet, or acceptance criteria one by one at high effort).
-- Smaller items: a verification shortcut, moving the benchmark kit into the repo.
+- Smaller items: a verification shortcut.
 
 ## Tried or ruled out (do not retry without a new reason)
 
@@ -212,6 +212,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: cascade by default with `--provider` (0.0.41). Open: the hand-over runs Opus 5.5 at medium, a default never
   measured; it only sees the tasks the cheap model failed, where effort matters most (terraform: medium 1/3 in every
   harness, max 3/3). Next with weekly headroom: the October hand-over tasks (prometheus, lazygit, telegraf) at high vs medium.
+- 2026-10-12: the benchmark kit moved into the repo (`bench/`: run, judge, guard, calibration, task definitions, results and
+  diffs). Company tickets and cloned plugins stay out.
 - 2026-10-11: clean benchmark (7 tasks merged after DeepSeek's release, 2 runs, judged without reference): cascade +0.7
   judge at ~1/8 the cost of tazuna on Opus. The earlier ~2.4-point lead on older tasks was mostly the judge's reference
   anchoring; the real lead is smaller but holds. Cascade stays the plan for code that may leave the machine (`--data any`).

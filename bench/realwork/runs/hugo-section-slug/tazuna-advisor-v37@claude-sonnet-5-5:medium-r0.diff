@@ -1,0 +1,150 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..be45dcf 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -109,6 +109,30 @@ func (l pagePaths) OutputFormats() page.OutputFormats {
+ 	return l.outputFormats
+ }
+ 
++// sectionBaseWithSlugs returns the section path of p with section slugs applied,
++// or an empty string if no section in the hierarchy has a slug.
++func sectionBaseWithSlugs(p *pageState) string {
++	cs := p.CurrentSection()
++	sections := append(cs.Ancestors().Reverse(), cs)
++	var segments []string
++	hasSlug := false
++	for _, s := range sections {
++		if s.IsHome() {
++			continue
++		}
++		seg := path.Base(s.PathInfo().Base())
++		if slug := s.Slug(); slug != "" {
++			seg = slug
++			hasSlug = true
++		}
++		segments = append(segments, seg)
++	}
++	if !hasSlug {
++		return ""
++	}
++	return "/" + strings.Join(segments, "/")
++}
++
+ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error) {
+ 	s := p.s
+ 	d := s.Deps
+@@ -132,6 +156,8 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		URL:         pm.pageConfig.URL,
+ 	}
+ 
++	desc.SectionBase = sectionBaseWithSlugs(p)
++
+ 	if pm.Slug() != "" {
+ 		desc.BaseName = pm.Slug()
+ 	} else if pm.isStandalone() && pm.standaloneOutputFormat.BaseName != "" {
+diff --git a/hugolib/section_slug_test.go b/hugolib/section_slug_test.go
+new file mode 100644
+index 0000000..75e3f2b
+--- /dev/null
++++ b/hugolib/section_slug_test.go
+@@ -0,0 +1,64 @@
++package hugolib
++
++import "testing"
++
++func TestSectionSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++disableKinds = ["rss", "sitemap"]
++[taxonomies]
++tag = "tags"
++[languages.en]
++[languages.es]
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: Frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Frobear
++slug: como-frobear
++tags: [t1]
++---
++-- content/help/sub/_index.es.md --
++---
++title: Sub
++slug: sub-es
++---
++-- content/help/sub/p.es.md --
++---
++title: P
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- layouts/all.html --
++{{ .Kind }}|{{ .RelPermalink }}
++`
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "section|/help/")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "page|/help/how-to-frob/")
++	b.AssertFileContent("public/es/ayuda/index.html", "section|/es/ayuda/")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "page|/es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/sub-es/index.html", "section|/es/ayuda/sub-es/")
++	b.AssertFileContent("public/es/ayuda/sub-es/p/index.html", "page|/es/ayuda/sub-es/p/")
++	b.AssertFileContent("public/es/etiquetas/index.html", "taxonomy|/es/etiquetas/")
++	b.AssertFileContent("public/es/etiquetas/t1/index.html", "term|/es/etiquetas/t1/")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..d346831 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -45,6 +45,10 @@ type TargetPathDescriptor struct {
+ 	Path    *paths.Path
+ 	Section *paths.Path
+ 
++	// SectionBase is the Section base with any section slugs applied.
++	// Empty if no section in the hierarchy has a slug.
++	SectionBase string
++
+ 	// For regular content pages this is either
+ 	// 1) the Slug, if set,
+ 	// 2) the file base name (TranslationBaseName).
+@@ -165,6 +169,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.SectionBase != "" {
++			pb.Add(d.SectionBase)
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}
+@@ -207,6 +213,11 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+ 			if dir := d.Path.ContainerDir(); dir != "" {
++				if d.SectionBase != "" {
++					if rest, ok := strings.CutPrefix(dir, d.Section.Base()); ok {
++						dir = d.SectionBase + rest
++					}
++				}
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {

@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/caddy",
+  "base": "b2be548275c99cd061ec1c2f9c27eedae64a17b8",
+  "fix": "873fac5fc094fe538d0c477509127bb321d51a32",
+  "pr": "https://github.com/caddyserver/caddy/pull/7875",
+  "issue": "https://github.com/caddyserver/caddy/issues/7874",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./caddyconfig/caddyfile ./caddytest/integration -run '^(TestDispenser_QuotedBracesAreArguments|TestParseOneAndImport|TestSnippetWithQuotedBraces|TestFormatter|TestCaddyfileAdaptToJSON)$'",
+  "suite_cmd": "go test -count=1 ./caddyconfig/...",
+  "suite_skip_note": "suite skips PR-specific tests excluded from hidden (pinned wording/helpers not in the ticket); it checks pre-existing behavior only"
+}

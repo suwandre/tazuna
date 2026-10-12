@@ -1,0 +1,32 @@
+`return` now works in any template, anywhere in the template, and the partial return-wrapper rewriting is gone. Tests pass for `./hugolib/...`, `./tpl/...`, `./markup/...` and `./resources/...`. `./check.sh` (gofmt, staticcheck, tests) passed for `./tpl/partials/...` only; I didn't run it on the other packages or on the whole repo.
+
+**How it works**
+- `return` is now `partials.Namespace.Return(args ...any) (any, error)`. It returns a sentinel `*ReturnError{Value, HasValue}`. More than one argument is an error.
+- The change to Go's template execution package is small, in `texttemplate/exec.go` and `hugo_template.go`:
+  - `evalCall` turns the sentinel into a panic.
+  - `errRecover` returns it from the top-level execute.
+  - `walkTemplate` runs the called template through a new `walkReturnable`, which consumes the sentinel. `template` and `block` calls therefore end only that template.
+  - `try` re-panics the sentinel instead of swallowing it.
+- `ExecuteWithContextAndKey` in `templatestore.go` hands the sentinel to `doInclude` for partials and returns nil for other templates.
+- I removed `ParseInfo.HasReturn`, `contextWrapper`, the return-wrapper template and `collectReturnNode`. `doInclude` always buffers output now, which costs a little for partials that only return a value.
+- The partial's result is the returned value if there is one; a bare `return` gives the rendered output so far.
+
+**Behaviours I added beyond your sketch**
+- A `return` with a value outside a partial is an error: "return with a value is only supported in partial templates". This includes a value return in a `template`/`block` call inside a partial.
+- `return x | f` is rejected when the template is transformed, with "return must be the last command in a pipeline". `x | return` is still fine.
+
+**Breaking change:** the old `{{ return add . 42 }}` form no longer works. It now fails with "error calling add: must provide at least two numbers". Write `{{ return (add . 42) }}`.
+
+**Tests**
+- I updated `TestPartialWithReturn` to use `(add . 42)` in `hugolib/template_test.go`.
+- I updated `TestPartialReturnPanicIssue13600`, which now expects the pipeline-position error.
+- New tests in `tpl/partials/partials_integration_test.go` cover:
+  - early return in `range`/`if`, `return nil`, and a bare `return` (output kept)
+  - `partialCached` with return
+  - return in a template called from a partial, and in a block
+  - return in a top-level template
+  - value return outside a partial
+  - `return` with two arguments
+  - `return` not last in a pipeline
+
+I didn't look at how `return` inside a partial decorator's `with` body now behaves.

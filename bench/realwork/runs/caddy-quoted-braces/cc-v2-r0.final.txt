@@ -1,0 +1,14 @@
+Quoted braces no longer affect block parsing, so `respond "{"` inside a site block now works. The new tests pass, along with the rest of the tests in `caddyconfig` and `caddytest/integration`. I didn't run the full `go test -race -short ./...` or `golangci-lint`.
+
+**The fix.** The parser and dispenser were matching braces by their text alone, so a quoted `"{"` or `"}"` (or a backtick or heredoc one) counted as a block delimiter. I added two small helpers, `Token.isOpenBrace()` and `Token.isCloseBrace()`, that only match when the token wasn't quoted, plus matching methods on the dispenser. Every brace check now uses them:
+- `Dispenser.NextArg`, `NextBlock` and `ArgErr` in `dispenser.go`.
+- The parser's address parsing, `directives`, `directive`, `blockTokens`, `openCurlyBrace`, `closeCurlyBrace`, the snippet detection in import handling, and the check for anonymous import blocks, all in `parse.go`.
+
+The lexer and formatter already left quoted braces alone.
+
+**Tests added.**
+- `TestQuotedBracesDoNotAffectBlockParsing` and `TestQuotedBracesInSnippet` in `parse_test.go`.
+- `TestDispenser_NextBlockQuotedBraces` and `TestDispenser_NextArgQuotedBrace` in `dispenser_test.go`.
+- A new adapt test, `caddytest/integration/caddyfile_adapt/quoted_braces.caddyfiletest`, using the exact Caddyfile from the issue.
+
+**Disclosure.** Per the project's AI contribution rules, this change was written with AI assistance (Claude Sonnet 5.5), so please review every line before submitting it. I haven't created or filed anything on GitHub.

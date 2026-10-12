@@ -1,0 +1,18 @@
+`return` now works in any template, anywhere in the template, and the AST rewrite is gone. `go build ./...` and `go test ./tpl/... ./hugolib/` pass. My last run of the whole repo's tests timed out, so I haven't confirmed the other packages beyond `./common/... ./deps/... ./commands/...`, which also passed.
+
+**How it works**
+- **Sentinel error:** `tpl.ReturnError{Value any}` and `tpl.AsReturnError` are new in `tpl/template.go`.
+- **The function:** `templates.Return(args ...any) (any, error)` has the alias `return`. It always returns the sentinel, carrying the first argument if there is one. The old no-op `return` in the `partials` namespace is removed.
+- **Trapping:** Template execution wraps the error, so `ExecuteWithContextAndKeyAndReturn` in `tplimpl/templatestore.go` finds it with `errors.As`. It reports the sentinel and returns no error. `ExecuteWithContextAndKey` keeps its signature and treats an early return as a normal finish. `return` inside a `{{ template }}` or `define` ends the whole execution, not just that block.
+- **Partials:** `doInclude` now always renders into a buffer. If the template ended through `return`, it uses the returned value. Otherwise it uses the output, as before. `contextWrapper`, `ParseInfo.HasReturn` and the transformer's return-node rewriting are deleted.
+
+**No changes to Go's generated template files**
+The only addition to the forked `parse` package is a new file, `hugo_node.go`, with one small method. `return add . 42` is still supported by rewriting it to `return (add . 42)` in the transformer.
+
+**Behaviour changes**
+- The output of a partial that calls `return` is now discarded, as before, but the partial no longer needs `return` to be its last command. A `return` that isn't reached means the partial falls back to its output.
+- `return (x) | fn` no longer silently works. `fn` is never applied. I updated `TestPartialReturnPanicIssue13600`, whose expected error text changed to the underlying `delimit` error.
+- `try (return ...)` would swallow the sentinel. I didn't handle that case.
+
+**Tests**
+I added two tests in `tpl/templates/templates_integration_test.go`. `TestReturnInRegularTemplate` returns early from a page template inside a `range`. `TestReturnPartialValues` covers conditional early return and bare `return`. It also covers return inside a `{{ template }}` block, `range` and `with`, a falsy value, `partialCached`, `templates.Return`, and nested partials. The existing `TestPartialWithReturn` covers the old `return add . 42` form.

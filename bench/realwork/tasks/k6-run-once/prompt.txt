@@ -1,0 +1,41 @@
+Add `--once` flag for single-run execution mode
+
+## Brief summary
+
+k6 cannot run a scenario-based script with 1 VU and 1 iteration without editing it.
+
+Shortcut flags (`--vus`, `--iterations`) replace all scenarios with a default one, losing exec functions, browser options, env, and tags.
+
+## Proposal
+
+Add `--once` to `k6 run` and `k6 cloud run`. It runs the script with 1 VU and 1 iteration while preserving scenario config.
+
+**No scenarios (script exports `default`):**
+```shell
+$ k6 run script.js --once     # runs default() with 1 VU, 1 iteration
+```
+
+**Single scenario:**
+```shell
+$ k6 run script.js --once     # runs the scenario with 1/1, keeps exec, env, tags, browser options
+```
+
+**Multiple scenarios:**
+```shell
+$ k6 run script.js --once     # error: --once can run a single scenario only
+```
+
+**Combined with shortcut flags:**
+```shell
+$ k6 run script.js --once --iterations 10   # error: --once cannot be combined with --iterations
+```
+
+Preserves `exec`, `options`, `env`, `tags`. Replaces executors with `shared-iterations`. Discards `vus`, `iterations`, `duration`, `stages`, and other fields. `setup()` and `teardown()` run normally. Works with `k6 run`, `k6 cloud run`, `k6 cloud run --local-execution`, and `k6 archive`. Transforms scenarios after config consolidation to avoid issues (#883, #2529).
+
+## Context
+
+- #3742
+- #5515
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

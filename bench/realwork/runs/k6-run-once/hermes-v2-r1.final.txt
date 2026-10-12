@@ -1,0 +1,12 @@
+I added `--once` to `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. The new tests pass, and so do the existing `internal/cmd` and `internal/cmd/tests` packages. I did not run the whole repo suite or the linter, and I didn't test `k6 cloud run` against a mock cloud server.
+
+- **Where it runs:** `--once` is applied right after config consolidation and before scenarios are derived from shortcuts (`internal/cmd/test_load.go`). This is also why the cloud and archive paths pick it up, since they send the consolidated options.
+- **No scenarios:** The script gets a default 1 VU, 1 iteration scenario that runs `default()`. Any `vus`, `iterations`, `duration` or `stages` in the script, env or config file are dropped.
+- **One scenario:** It keeps its name, `exec`, `env`, `tags` and browser `options`. The executor becomes `shared-iterations` with 1 VU and 1 iteration. `startTime` and other executor-specific fields are reset, so `gracefulStop` goes back to the 30s default.
+- **Several scenarios:** It fails with `--once can run a single scenario only`.
+- **Shortcut flags:** `--once` combined with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>`. Both errors exit with the invalid-config code.
+- **Setup and teardown:** `setup()` and `teardown()` still run (covered by a test).
+
+The transform is `ApplyOnce` in `lib/executor/once.go`, and the flag helpers are in `internal/cmd/once.go`. The tests are `lib/executor/once_test.go` and `internal/cmd/tests/cmd_run_once_test.go`. They cover the executor transform, `k6 run` with and without scenarios, the error cases, setup/teardown, and the `k6 archive` output.
+
+I did not add `--once` to `k6 cloud upload`, since you didn't list it. It's one line in its flag set if you want it.

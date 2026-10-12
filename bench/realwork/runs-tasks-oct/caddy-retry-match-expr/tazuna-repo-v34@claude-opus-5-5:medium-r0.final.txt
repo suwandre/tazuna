@@ -1,0 +1,30 @@
+I fixed it: an `lb_retry_match` expression that only tests the request is no longer checked against upstream responses. A POST like the one in the report now reaches the backend once, with its body, and the client gets the backend's `200`. The new tests and existing tests pass.
+
+**Cause.** Since v2.11.3, the proxy checked the upstream response against every `retry_match` set that contained any `expression`. An expression like `{http.request.method} == "POST"` is true for every POST, so every response was treated as retryable.
+
+**Fix.**
+- **`modules/caddyhttp/celmatcher.go`:** When `MatchExpression` is provisioned, it now records which placeholders the compiled expression reads. A new method, `Placeholders()`, returns that list plus a flag saying whether some name can only be known at evaluation time. Because this comes from the compiled expression rather than the raw text:
+  - the `{placeholder}` shorthand and direct `ph(req, "...")` calls are treated the same way;
+  - an escaped `\{http.reverse_proxy.status_code}` is just text inside a string, so it doesn't count as reading the response.
+- **`modules/caddyhttp/reverseproxy/reverseproxy.go`:** I replaced the old "contains an expression" check with `matcherSetReadsResponse`. A set is checked against the response only if one of its expressions reads a response placeholder or a placeholder whose name can't be known in advance. The response placeholders are:
+  - `http.reverse_proxy.status_code`
+  - `http.reverse_proxy.status_text`
+  - `http.reverse_proxy.header.*`
+  - `http.reverse_proxy.upstream.latency` and `latency_ms`
+
+  Names must match exactly, so `{http.reverse_proxy.status_codes}` doesn't count, and neither do placeholders that are known before the response, like `upstream.host`. Every other expression is a request condition again, as in v2.11.2.
+
+**Tests added:**
+- `TestMatchExpressionPlaceholders` in `celmatcher_test.go` checks which placeholder names are found, including escaped and computed ones.
+- `TestMatcherSetReadsResponse` in `retries_test.go` is a table covering each rule the maintainers agreed on.
+- `TestRequestOnlyExpressionDoesNotRetryResponses` in `retries_test.go` reproduces the report. It sends a POST with an `order=1` body through a request-only expression and checks that the backend is hit once, sees the body, and the client gets `200`.
+
+**Test results:**
+- `go test -race ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/` passes.
+- `go test ./caddytest/integration/ -run 'RetryMatch|TestCaddyfileAdaptToJSON'` passes. This includes the existing `{rp.*}` response-retry examples from #7569.
+
+I didn't run `golangci-lint` or the full `./...` suite.
+
+Two behaviours worth knowing:
+- `http.reverse_proxy.upstream.duration` isn't treated as a response placeholder, because it's only set after the retry check runs.
+- A name built from strings, such as `"http.reverse_proxy." + "status_code"`, is treated as "can't be known in advance", so it still counts as a possible response condition.

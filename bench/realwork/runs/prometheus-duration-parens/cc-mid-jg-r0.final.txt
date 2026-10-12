@@ -1,0 +1,27 @@
+Parentheses around a plain duration literal now survive the round-trip, but plain numbers print as `(5)`, not `(5s)`. `go test` passes for `./promql/...` and `./cmd/promtool/...`. I also ran `./rules/...` and `./web/api/...` after the main change, and both passed. I did not rerun those two after the final positivity-check change.
+
+I didn't run `jg` before the code search. The first `jg` query's output was too large to display, so I read the saved file in part and went straight to exact searches after that.
+
+**Cause:** a `*NumberLiteral` can't record parentheses, and offsets and ranges were turned into plain `time.Duration` values. So a parenthesised literal reached those fields with no trace of the parens.
+
+**Fix:**
+- **Wrapping (`generated_parser.y`, `parse.go`):** a parenthesised literal is now wrapped in a unary-plus `DurationExpr` with `Wrapped: true`. This covers both `(N)` and `±(N)`. The wrapping is done by a new helper, `wrapNumberLiteral`. I regenerated `generated_parser.y.go` with goyacc. The grammar conflict counts (96 shift/reduce, 345 reduce/reduce) are the same as before my change.
+- **Positivity check:** `foo[(0)]` and `foo[-(5)]` still fail with "duration must be greater than 0". A new helper, `wrappedNumberLiteralValue`, handles this case.
+- **`Pretty()` (`prettier.go`):** a unary `+` is no longer printed, so a wrapped literal doesn't come out as `(+5)`. This matches `String()`.
+
+**Output now:**
+
+| Input | `Expr.String()` |
+|---|---|
+| `foo offset (5)` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[(5s)]` |
+
+- **Suffix-less literals:** the literal's own text is kept instead of being turned into seconds. `foo offset (5)` prints `(5)`, not `(5s)`.
+- **AST change:** these offsets and ranges are now stored as a `DurationExpr`, so `OriginalOffset` is 0 for them and the value lives in `OriginalOffsetExpr`. It is evaluated through the existing duration-expression path.
+
+**Tests:**
+- **`printer_test.go`:** new round-trip cases, including `foo[(5s):(1m)]` and `foo offset ((5) + 1)`.
+- **`parse_test.go`:** the two existing `foo offset +(5)` and `foo offset -(5)` expectations now use the new AST. I added error cases for `foo[(0)]` and `foo[-(5)]`.

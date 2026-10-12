@@ -1,0 +1,9 @@
+Two usage edits are missing. Apply them directly.Passes first try. Run the broader packages for regressions.`slug` now works on sections, taxonomies and terms. It replaces that path segment and carries through to every descendant page and section. `go test ./resources/page/... ./hugolib/...` passes with no failures, and `./tpl/...` passed in the earlier run.
+
+- **`resources/page/page_paths.go`:** `TargetPathDescriptor` has a new `Slugs` map (base path → slug). A new `applySlugs` rewrites matching segments, and `CreateTargetPaths` uses it for branch pages (section base path) and for regular pages (container dir).
+- **`hugolib/page__paths.go`:** a new `sectionSlugs(p)` collects front-matter slugs from the page's ancestor chain, plus the page itself if it's a branch, and `createTargetPathDescriptor` sets `desc.Slugs` from it. Home is skipped, and `disablePathToLower` is respected.
+- **`hugolib/page_slug_section_test.go` (new):** `TestSectionSlug` covers your example. The `es` section gets `slug: ayuda` and the `es` bundle `slug: como-frobear`. The `en` pages keep `/help/` and `/help/how-to-frob/`. It also checks that a non-bundle page and a nested section with its own slug follow the parent, and that a taxonomy and a term slug (`etiquetas/fu`) apply.
+
+A section slug is ignored when a `permalinks` config applies to that section or when the page sets an explicit `url`. Both paths are left unchanged.
+
+`.gitignore` also shows a `.empryo` line I didn't add; it came from the tooling, so revert it if you don't want it.

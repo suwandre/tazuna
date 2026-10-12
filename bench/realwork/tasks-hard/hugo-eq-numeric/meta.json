@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "Make Hugo's eq/ne agree with lt/le/gt/ge for mixed int/uint/float operands, numerically exact (no float64 precision loss for large ints, uint64 vs negative ints), and make collections.Where follow the same rules. Touches hreflect conversion helpers, tpl/compare and tpl/collections. Hidden tests: template integration test plus table tests in tpl/compare and tpl/collections; the PR's unit tests for new/changed hreflect helpers were excluded (they pin internal helper APIs).",
+  "merged_at": "2026-09-16T09:24:35Z",
+  "files_changed": 5,
+  "lines_changed": 292
+}

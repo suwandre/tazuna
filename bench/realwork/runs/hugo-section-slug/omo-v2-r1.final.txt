@@ -1,0 +1,9 @@
+Ask: support `slug` in section, taxonomy, and term pages, with tests. Wanted: localized section URLs without hand-written `url` and `[[cascade]]`.
+
+For you: the change is in and the new test passes. The wider `go vet` and `go test ./hugolib/... ./resources/page/...` run is still going in the background (`bash_5`). I haven't seen its result yet, so there's no regression check so far.
+
+- **Code:** in `hugolib/page__paths.go`, `createTargetPathDescriptor` now falls back to a new `sectionSlugsPath` helper. It runs only when no `[permalinks]` rule matched and the page has no `url`. The helper builds the path from the page's section and its ancestors, using each one's `slug` or its directory name. It does nothing if no slug is involved, so existing sites are unchanged.
+- **Precedence:** `url` and `[permalinks]` still win over the section slug.
+- **Test:** `TestSectionSlug` in `hugolib/section_slug_test.go` covers your `help/` example and passed on the first run. It also covers a regular page, a nested section without a slug, a taxonomy and a term. The language-less `help/` section and its `how-to-frob` page keep their unslugged URLs.
+
+Now: the background run of `./hugolib/...` and `./resources/page/...`. Next: once it reports, I'll check for regressions and finish.

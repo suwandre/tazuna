@@ -1,0 +1,110 @@
+diff --git a/internal/refactoring/import_statement.go b/internal/refactoring/import_statement.go
+index ac2cafd..02c7455 100644
+--- a/internal/refactoring/import_statement.go
++++ b/internal/refactoring/import_statement.go
+@@ -16,39 +16,38 @@ type ImportStatement struct {
+ }
+ 
+ // FindImportStatements recurses through the modules of the given configuration
+-// and returns a set of all "import" blocks defined within after deduplication
+-// on the To address.
+-//
+-// An "import" block in a parent module overrides an import block in a child
+-// module when both target the same configuration object.
+-func FindImportStatements(rootCfg *configs.Config) addrs.Map[addrs.ConfigResource, ImportStatement] {
+-	imports := findImportStatements(rootCfg, addrs.MakeMap[addrs.ConfigResource, ImportStatement]())
+-	return imports
++// and returns all "import" blocks defined within. Multiple import blocks can
++// target different instances of the same configuration resource.
++func FindImportStatements(rootCfg *configs.Config) []ImportStatement {
++	return findImportStatements(rootCfg, nil)
+ }
+ 
+-func findImportStatements(cfg *configs.Config, into addrs.Map[addrs.ConfigResource, ImportStatement]) addrs.Map[addrs.ConfigResource, ImportStatement] {
++func findImportStatements(cfg *configs.Config, into []ImportStatement) []ImportStatement {
+ 	for _, mi := range cfg.Module.Import {
+ 		// First, stitch together the module path and the RelSubject to form
+-		// the absolute address of the config resource being removed.
++		// the absolute address of the config resource being imported.
+ 		res := mi.ToResource
+ 		toAddr := addrs.ConfigResource{
+ 			Module:   append(cfg.Path, res.Module...),
+ 			Resource: res.Resource,
+ 		}
+ 
+-		// If we already have an import statement for this ConfigResource, it
+-		// must have come from a parent module, because duplicate import
+-		// blocks in the same module result in an error.
+-		// The import block in the parent module overrides the block in the
+-		// child module.
+-		existingResource, ok := into.GetOk(toAddr)
+-		if ok {
+-			if existingResource.AbsToResource.Equal(toAddr) {
+-				continue
++		// An import block in a parent module overrides an import block in a
++		// child module when both target the same configuration resource.
++		// Multiple blocks in the same module are retained; the graph handles
++		// instance addresses later when expanding the resource.
++		fromParent := false
++		for _, existing := range into {
++			if existing.AbsToResource.Equal(toAddr) && len(existing.ContainingModule) < len(cfg.Path) {
++				fromParent = true
++				break
+ 			}
+ 		}
++		if fromParent {
++			continue
++		}
+ 
+-		into.Put(toAddr, ImportStatement{
++		into = append(into, ImportStatement{
+ 			AbsToResource:    toAddr,
+ 			ContainingModule: cfg.Path,
+ 			Import:           mi,
+diff --git a/internal/refactoring/import_statement_test.go b/internal/refactoring/import_statement_test.go
+new file mode 100644
+index 0000000..2761700
+--- /dev/null
++++ b/internal/refactoring/import_statement_test.go
+@@ -0,0 +1,28 @@
++// Copyright IBM Corp. 2014, 2026
++// SPDX-License-Identifier: BUSL-1.1
++
++package refactoring
++
++import (
++	"testing"
++
++	"github.com/hashicorp/terraform/internal/addrs"
++	"github.com/hashicorp/terraform/internal/configs"
++)
++
++func TestFindImportStatementsForEachResource(t *testing.T) {
++	cfg := &configs.Config{
++		Path: addrs.RootModule,
++		Module: &configs.Module{
++			Import: []*configs.Import{
++				{ToResource: addrs.ConfigResource{Resource: addrs.Resource{Mode: addrs.ManagedResourceMode, Type: "test", Name: "example"}}},
++				{ToResource: addrs.ConfigResource{Resource: addrs.Resource{Mode: addrs.ManagedResourceMode, Type: "test", Name: "example"}}},
++			},
++		},
++	}
++
++	got := FindImportStatements(cfg)
++	if len(got) != 2 {
++		t.Fatalf("got %d import statements, want 2", len(got))
++	}
++}
+diff --git a/internal/terraform/context_plan.go b/internal/terraform/context_plan.go
+index d779025..b77dad9 100644
+--- a/internal/terraform/context_plan.go
++++ b/internal/terraform/context_plan.go
+@@ -750,7 +750,7 @@ func (c *Context) postPlanValidateMoves(config *configs.Config, stmts []refactor
+ func (c *Context) findImportTargets(config *configs.Config) []*ImportTarget {
+ 	var importTargets []*ImportTarget
+ 	importStatements := refactoring.FindImportStatements(config)
+-	for _, ic := range importStatements.Values() {
++	for _, ic := range importStatements {
+ 		importTargets = append(importTargets, &ImportTarget{
+ 			Config:              ic.Import,
+ 			RelModule:           ic.ContainingModule,

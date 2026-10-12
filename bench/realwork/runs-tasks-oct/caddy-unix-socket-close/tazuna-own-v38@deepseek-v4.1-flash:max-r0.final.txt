@@ -1,0 +1,30 @@
+Done. Here's a summary of the fix:
+
+## Root cause
+
+In `listen_unix.go`, both `unixListener.Close` and `unixConn.Close` called `File()` only to discover the socket's name:
+
+1. `File()` duplicates the listening fd, and the returned `*os.File` was never closed — the dup kept the socket **listening until the GC finalizer ran**, which is exactly the reported 2-minute/`GOGC=off` behavior.
+2. `File().Name()` returns `"unix:/path/sock->"`, not the filesystem path, so `syscall.Unlink(name)` silently failed and **the file stayed on disk**.
+3. The refcount was decremented unconditionally, so a double `Close` released two references, and close wasn't serialized with a concurrent re-listen.
+
+## Changes (`listen_unix.go`)
+
+- Close the duplicated `socketFile` right after `net.FileListener`/`net.FilePacketConn` in `reuseUnixSocket` (also fixes an fd leak on every reuse).
+- Skip the pre-bind unlink probe for Linux abstract sockets (`@name`).
+- Added `closed atomic.Bool` to `unixListener`/`unixConn`; `Close` now:
+  - CASes `closed` first, so a second `Close` returns `net.ErrClosed` without touching the refcount;
+  - holds `unixSocketsMu` while decrementing the refcount, closing the underlying socket, deleting the map entry, and unlinking — serializing against `Listen`/reuse so a racing re-listen either creates a fresh socket or inherits a live one with its file intact;
+  - derives the path from `Addr()`/`LocalAddr()` instead of the leaked `File()`;
+  - never unlinks for Linux/Android abstract sockets (`isAbstractUnixSocket` helper).
+- Switched the struct literals to named fields for the new member.
+
+## Tests
+
+Added `listen_unix_test.go` (mirrors upstream) covering: immediate close+unlink for stream/datagram, refcounted sharing (file removed only at zero), double-close returning `net.ErrClosed` without releasing another holder's reference, concurrent close/re-listen races, and abstract sockets not unlinking a same-named filesystem file.
+
+## Verification
+
+- `go test -race -short ./...` — all pass; new tests run with `-race -count=5`.
+- `go build ./...` plus cross-compiles for linux, windows, solaris and a linux/arm64 test build; `golangci-lint run .` clean.
+- Manual end-to-end repro from the issue: after unix→TCP admin reload, `curl --unix-socket` now fails immediately (exit 7, ~10 ms) instead of timing out, no orphan LISTEN socket, socket file removed, new admin works. Also verified unix→unix, unix→TCP→unix, same-path reloads, and a site `bind unix/...` moved to TCP. The Linux-only abstract-socket test skips on this darwin host.

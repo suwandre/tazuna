@@ -1,0 +1,11 @@
+Handoff:
+> Ask: fix the silent drop of all but the first `import` block per `for_each` resource - wanted: every block honored (`2 to import, 0 to add` for the repro), with a `go test` regression test. For you: the fix and test are written, but I haven't seen any `go test` result yet, so nothing is verified. Now: waiting on the background build and test run (`bash_7`). Next: read its result, then report.
+
+**Root cause:** `refactoring.FindImportStatements` returned a map keyed by config resource address. All the `import` blocks for one `for_each` resource share that address, so each later block was silently dropped as an "already overridden by parent" duplicate. That test (`existing.AbsToResource.Equal(toAddr)`) was always true once a key existed.
+
+**Changes made:**
+- **`internal/refactoring/import_statement.go`:** `FindImportStatements` now returns a `[]ImportStatement`. A block is skipped only when an earlier one for the same resource came from a different module, so a parent module's blocks still override a child's. Blocks in the same module are all kept.
+- **`internal/terraform/context_plan.go`:** `findImportTargets` iterates the slice instead of `.Values()`. It is the only caller.
+- **`internal/terraform/context_plan_import_test.go`:** added `TestContext2Plan_importMultipleBlocksForEachResource`, which mirrors your repro. It asserts that both instances plan as imports with the right IDs.
+
+**Not yet verified:** `bash_7` is running `go build ./internal/...`, `go test ./internal/terraform -run 'TestContext2Plan_import|TestContext2Validate.*[Ii]mport'` and `go test ./internal/refactoring`. gopls isn't installed here, so the build and tests are the only checks. I haven't confirmed the new test fails without the fix. The result will arrive automatically and I'll report it then.

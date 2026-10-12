@@ -1,0 +1,13 @@
+Sections, taxonomies and terms now accept `slug`. A section's slug replaces its directory name in the URL, and every page and subsection under it gets that renamed directory too. Your example produces `/help/`, `/help/how-to-frob/`, `/es/ayuda/` and `/es/ayuda/como-frobear/`. The new test passes, the full `go test ./hugolib/... ./resources/page/...` run passes, and `gofmt` and `go vet` are clean. I haven't run the full `./check.sh`.
+
+**What changed:**
+- `resources/page/page_paths.go`: `TargetPathDescriptor` has a new `Dir` field. When it's set, it's used instead of the folder name from the content tree. When it's empty, paths are built exactly as before.
+- `hugolib/page__paths.go`: `dirWithSlugs` and `sectionPathWithSlugs` work out `Dir` by walking up the parent sections and swapping in each one's slug where it has one. Folders between sections that have no `_index.md` are kept as they are. `disablePathToLower` is respected.
+- Test: `TestSlugInSectionTaxonomyAndTerm` in `hugolib/page_permalink_test.go` checks your example plus a nested section and page under the slugged section, a taxonomy slug (`/es/etiquetas/`) and a term slug (`/es/etiquetas/fu/`).
+
+**Behaviour to know about:**
+- `url` and any matching `[permalinks]` pattern still win over the slug.
+- Like page slugs, section slugs are lowercased unless `disablePathToLower` is set.
+- Each page now looks up its parent sections when its paths are built. Sections are usually shallow so this should be cheap, but I haven't benchmarked it on a large site.
+
+Nothing is committed yet.

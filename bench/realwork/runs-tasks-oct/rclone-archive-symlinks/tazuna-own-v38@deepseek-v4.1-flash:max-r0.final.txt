@@ -1,0 +1,22 @@
+All archive tests pass with the external `rclone`, `zip`, and `mksquashfs` binaries on PATH.
+
+## Summary
+
+The archive backend now handles symlinks in both zip and squashfs archives, following the convention the local backend uses.
+
+**`backend/archive/zip/zip.go`**
+- Symlink members (`FileHeader.Mode()&os.ModeSymlink`) are skipped by default and counted; a single NOTICE per archive names `-l/--links`.
+- With `--links` the member is listed under its name plus `fs.LinkSuffix`; since the member body already holds the link target, size and reads are correct with no extra machinery.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Symlinks were previously dropped entirely. Now they are skipped unless `--links` is set, with the same notice.
+- Added an `isLink`/`link` pair on `Object` and `objectFromLink`/`readlink` helpers; symlinks become objects named `name+"."+fs.LinkSuffix` whose size is `len(target)` and whose `Open` returns the target (clamping offset, honouring range/seek via `readers.NewLimitedReadCloser`).
+- `newObjectNative` was taught to name links the same way `List` does so listings and lookups agree, and to build a link object rather than a file object.
+
+**Tests**
+- `zip_internal_test.go`: `TestReadZipSymlink` — default listing hides the link and logs the notice; with `ConfigInfo.Links` the `.rclonelink` entry exists, has target length, and reads back the target.
+- `archive_internal_test.go`: `TestArchiveSquashfsSymlink` (mksquashfs) covers listing/reading links and that a regular member ending in `.rclonelink` stays a regular file; `TestArchiveZipSymlinkEscape` is the end-to-end hostile-archive check (symlink pointing above the root plus a member "inside" it) verifying the copy fails without writing outside the destination.
+
+**Docs**: added a "Symlinks" section to `docs/content/archive.md` with the same `lsl`/`copy` example from the request.
+
+Verification: `gofmt`, `go vet`, `golangci-lint` (0 issues), `go build ./...`, and `go test ./backend/archive/...` all pass, including the external-binary `TestArchiveZip`/`TestArchiveSquashfs` tests. I also exercised `rclone lsl --links`, `rclone cat --links --offset/--count`, `rclone copy --links` against a real `zip -y` archive (recreating `link.txt -> file.txt`), a `mksquashfs` image, and a hand-crafted hostile zip (no escape, symlink reproduced, write-through refused).

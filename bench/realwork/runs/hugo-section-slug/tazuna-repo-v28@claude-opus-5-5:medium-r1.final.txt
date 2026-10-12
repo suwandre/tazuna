@@ -1,0 +1,17 @@
+Setting `slug` on a section, taxonomy or term page now changes the URL for that page and everything under it, as if the directory had been renamed. The `go test` runs on `./hugolib/...` and `./resources/page/...` pass. The full `./check.sh` did not run: the machine is out of disk space. `gofmt` and `go vet` are clean on the two changed packages.
+
+Your example now gives `/help/`, `/help/how-to-frob/`, `/es/ayuda/` and `/es/ayuda/como-frobear/`. Pages without a slug, and the English pages, keep their existing URLs.
+
+**What changed:**
+- **`hugolib/page__paths.go`**: a new `sectionDirWithSlugs` helper walks up from a page's section to the home page and replaces each directory name with that section's slug where one is set. It returns nothing if no section in the chain has a slug, so sites without section slugs keep their current paths.
+- **`resources/page/page_paths.go`**: the path descriptor has a new `SectionDir` field, and `CreateTargetPaths` uses it:
+  - Section, taxonomy and term pages use it instead of their directory path.
+  - Regular pages swap their section's part of the directory for it. A page's own `slug` still applies on top.
+
+A front-matter `url` and configured permalinks still take precedence over this.
+
+**Test:** `TestSlugInSectionTaxonomyAndTerm` in `hugolib/page_test.go` covers:
+- your example
+- a regular page with no slug inside a slugged section
+- a nested section under a directory that has no `_index.md`
+- a slugged taxonomy (`/es/etiquetas/`) and term (`/es/etiquetas/fu/`)

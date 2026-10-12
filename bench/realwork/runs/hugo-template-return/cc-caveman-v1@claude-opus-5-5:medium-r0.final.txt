@@ -1,0 +1,23 @@
+`return` now works as an early exit in any template, implemented as a sentinel error that the forked Go template executor catches. The old rewrite of partial templates is gone. Tests in all `tpl/...` packages and in `hugolib` pass, but the full repo run is not clean. `go test ./...` has 4 failures and `./check.sh` stops at staticcheck. I believe none of these come from this change (details at the end). Nothing is committed.
+
+**How it works**
+- **The func:** `templates.Return` (alias `return`) takes zero or one argument. It returns a `*texttemplate.ReturnError{Value}`, which is pretty much your sketch. More than one argument is an error.
+- **Fork patch** (`hugo_template.go`, one line in `exec.go`):
+  - `evalCall` turns a `*ReturnError` from a function into a panic.
+  - A new `walkReturnable` catches it at the top of a template and at each `{{ template }}`/`block` call, and `try` passes it through.
+  - `Executer.ExecuteWithContext` now returns `(any, error)` so the value reaches the caller.
+  - I added a matching rule to `scripts/fork_go_templates/main.go` so the `exec.go` change survives a re-fork. That is the only edit to upstream Go code; the rest is in Hugo's own file.
+- **Where it works:** in every template — pages, shortcodes, partials, and blocks/templates called with `{{ template }}`. A `return` inside a `define`/`block` exits only that block, so `{{ define "main" }}{{ if .Params.hide }}{{ return }}{{ end }}…` still renders the baseof header and footer.
+- **Partials:** if a partial contains `return` with a value (`{{ return x }}` or `{{ x | return }}`), its output is thrown away and it returns that value. It returns `nil` if execution never reaches such a `return`. A bare `{{ return }}` stops early and the partial returns the output rendered so far.
+- **Old transforms removed:** the return wrapper, `contextWrapper`, and the AST rewriting in `templatetransform.go` are gone. What's left: a check that sets `HasReturn` (a partial contains `return` with a value), and a small shim that rewrites `{{ return add . 42 }}` to `{{ return (add . 42) }}` so existing sites keep working.
+
+**One behaviour change to know about:** `{{ return x | string }}` now runs `return` first, so `string` is never called. Because of that I updated the expected error in `TestPartialReturnPanicIssue13600`.
+
+**Tests and docs:** new `tpl/templates/return_integration_test.go` covers early return in partials, `partialCached`, a falsy return value, piped returns, `$`, bare `return`, nested partials, baseof/`define` blocks, `{{ template }}`, ranges, shortcodes, `try`, and too many arguments. I also updated the `return`, `partials.Include` and `partials.IncludeCached` docs.
+
+**Failures in the full run**
+- **Staticcheck** stops `./check.sh` with warnings about deprecated fields in `config/allconfig/allconfig.go` and an unused value in `hugolib/integrationtest_builder.go`. I didn't touch either file.
+- **`internal/warpc`:** `TestGreet`, `TestGreetParallel` and `TestKatexParallel` fail with "dispatcher is shutting down". That package doesn't import anything under `tpl`.
+- **`TestCommands/mod`:** the `hugo mod verify` step failed on unexpected stderr after downloading modules from the network.
+
+I didn't re-run the warpc and mod failures on the base commit to prove they were already failing.

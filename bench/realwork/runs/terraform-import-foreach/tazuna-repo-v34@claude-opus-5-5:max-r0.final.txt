@@ -1,0 +1,27 @@
+Fixed. With the issue's exact configuration, `terraform plan` went from `1 to import, 1 to add` to `2 to import, 0 to add`. All import blocks are now honored, including with `count` and inside modules.
+
+**Root cause:** `refactoring.FindImportStatements`, added in 1.16 for import blocks in modules (#38352), grouped import blocks by resource address (`terraform_data.t`) rather than by instance (`terraform_data.t["a"]`). The code was copied from `removed` blocks, which can only target whole resources. As a result, every block after the first for the same resource was dropped without any message. This affected `count` as well, blocks inside child modules, and blocks in parent and child modules that target *different* instances.
+
+**Changes:**
+- **`internal/refactoring/import_statement.go`**: returns every import block as a list, with a module's blocks before its child modules' blocks, in a fixed order. I also fixed a hidden memory-sharing bug in the same line (`append(cfg.Path, ...)`): at module depth 3 or more, two import blocks could overwrite each other's target address.
+- **`internal/terraform/node_resource_plan.go`**: the intended rule that a parent module's block overrides a child's is now applied per instance during planning. If a `count = 2` module is overridden only for `[0]`, the module's own block still applies to `[1]`. Within a single module, behaviour is the same as 1.15.
+- **`internal/terraform/transform_config.go`**: import targets for a resource that has no configuration now share one graph node. Without this, removing the grouping caused an "expansion already registered" crash, which I reproduced in a test.
+- **`internal/terraform/context_plan.go`**: updated for the new list return type.
+- **Changelog entry**: added to `.changes/v1.16/`, assuming this will be backported to 1.16.x. The `Issue` field is left empty because it expects a PR number.
+
+**Tests added:**
+- `TestContext2Plan_importMultipleBlocksSameResource`, with 6 cases: `for_each`, `count`, a `for_each` block mixed with a plain block, blocks inside a child module, parent and child blocks targeting different instances, and a parent overriding a child for one module instance only. All 6 failed before the fix.
+- `TestContextPlan_import_in_parent_and_child_module_without_config`: covers the crash scenario.
+- `TestFindImportStatements` and `TestFindImportStatements_modulePathCapacity`: unit tests for the refactoring function.
+- I temporarily broke the override check and the memory-sharing fix in turn, and the tests caught each one.
+
+**Verification:**
+- `go vet` is clean.
+- `internal/terraform`, `internal/refactoring`, `internal/command/...`, `internal/backend/local` and `internal/stacks/stackruntime/...` all pass except `TestInit_providerLockFileReadonly`. That test fails the same way on an untouched copy of the base commit (a provider checksum mismatch), so it isn't caused by this change.
+- I built binaries from the original and fixed code and ran them on two configurations:
+  - **The issue's configuration:** `1 to import, 1 to add` before, `2 to import, 0 to add` after.
+  - **An 8-block configuration shaped like the reporter's:** before, 4 of 8 were imported, matching the report. After, all 8 were imported, `apply` succeeded and the state had the correct IDs.
+
+**Worth a look:**
+- When a parent block overrides a child block for the *same* instance, it is still silent (only a debug log line), as in the 1.16 design. A warning might be better; that's a maintainer decision.
+- `remove_statement.go` has the same `append(cfg.Path, ...)` memory-sharing pattern. I left it alone since it's outside this issue.

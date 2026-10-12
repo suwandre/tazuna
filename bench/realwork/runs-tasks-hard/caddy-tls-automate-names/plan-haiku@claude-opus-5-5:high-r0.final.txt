@@ -1,0 +1,20 @@
+The implementation matches the plan and covers everything the task asked for, so I changed nothing.
+
+**What I checked:** the diff is the same code I prototyped before writing the plan, and it meets each requirement:
+- **Repeating the option:** each `tls_automate_names` line adds to the list instead of replacing it.
+- **No routes:** the names get no route in the http app.
+- **No site blocks:** a config with only the global option produces just the `tls` app.
+- **Dummy-site comparison:** with the task's example, the `tls` automation policies come out the same as with the empty `*.example.com {}` block.
+- **localhost and IP addresses:** they get the internal issuer.
+- **Names that also have a site block:** they stay on the automation list, the site block's own policy wins, and no second policy is created.
+- **`auto_https off`:** the names are still listed for automation.
+
+**Tests I re-ran in the repo:**
+- `go build ./...` and `go vet ./caddyconfig/httpcaddyfile/`: no errors.
+- `go test -race -short ./caddyconfig/... ./modules/caddytls/`: all passed. The `httpcaddyfile` and `caddytls` results were served from Go's test cache, which is keyed on the current code.
+- `go test -count=1 -run TestCaddyfileAdaptToJSON ./caddytest/integration/`: passed on a fresh run, including the four new adapt test files.
+
+**Still not checked:**
+- **Flaky integration test:** I didn't look into the occasional `TestACMEServerWithDefaults` timeout the implementer saw. It doesn't touch this feature, but no one has run it on the unmodified code to confirm it fails there too.
+- **Full test suite:** the complete `go test -race -short ./...` hasn't been run, by me or by the implementer.
+- **Contribution rules:** `AGENTS.md` requires disclosing AI assistance and naming the model (Claude Opus 5.5) when this is submitted, and you'll need to be able to explain every line of the change.

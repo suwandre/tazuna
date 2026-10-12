@@ -1,0 +1,15 @@
+> Ask: support `slug` in section, taxonomy and term pages - wanted: the slug changes the section URL and the URLs of everything under it.
+> For you: it works, and the new test and the `hugolib` and `resources/page` suites pass. Now: done. Next: nothing.
+
+**What changed**
+- `resources/page/page_paths.go`: `TargetPathDescriptor` has a new `SectionSlugs` field, a map from section path (for example `/help`) to its slug. A new `applySectionSlugs` method swaps the matching path elements. It is applied to the section path of branch pages and to the container directory of regular pages.
+- `hugolib/page__paths.go`: `createTargetPathDescriptor` fills `SectionSlugs` from the page's ancestors, plus the page itself when it is a section, taxonomy or term. Home is skipped.
+- `hugolib/section_slug_test.go` has a new test, `TestSectionSlug`. It covers your example, a nested section with its own slug, a regular page under a slugged section, a taxonomy and a term. The English URLs stay unchanged and `public/es/help/` is not produced.
+
+**What I ran**
+- `go test ./hugolib/... ./resources/page/...` passes.
+- `go vet` and `gofmt` came back clean.
+- I did not run `./check.sh`.
+- gopls isn't installed here, so there were no LSP diagnostics.
+
+**Known gap:** if a section uses a `[permalinks]` pattern, the slug is not applied to it (`ExpandedPermalink` takes precedence). Only the default path-based URLs pick up the slug.

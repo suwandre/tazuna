@@ -1,0 +1,183 @@
+diff --git a/.gitignore b/.gitignore
+index 381bf74..afc500d 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -29,3 +29,4 @@ caddy-dist
+ # IDE files
+ .idea/
+ .vscode/
++.empryo
+diff --git a/caddyconfig/caddyfile/dispenser.go b/caddyconfig/caddyfile/dispenser.go
+index 66b9b10..62428aa 100644
+--- a/caddyconfig/caddyfile/dispenser.go
++++ b/caddyconfig/caddyfile/dispenser.go
+@@ -90,7 +90,7 @@ func (d *Dispenser) NextArg() bool {
+ 	if !d.nextOnSameLine() {
+ 		return false
+ 	}
+-	if d.Val() == "{" {
++	if d.Val() == "{" && !d.Token().Quoted() {
+ 		// roll back; a block opening is not an argument
+ 		d.cursor--
+ 		return false
+@@ -169,9 +169,9 @@ func (d *Dispenser) NextBlock(initialNestingLevel int) bool {
+ 		if !d.Next() {
+ 			return false // should be EOF error
+ 		}
+-		if d.Val() == "}" && !d.nextOnSameLine() {
++		if d.Val() == "}" && !d.Token().Quoted() && !d.nextOnSameLine() {
+ 			d.nesting--
+-		} else if d.Val() == "{" && !d.nextOnSameLine() {
++		} else if d.Val() == "{" && !d.Token().Quoted() && !d.nextOnSameLine() {
+ 			d.nesting++
+ 		}
+ 		return d.nesting > initialNestingLevel
+@@ -179,12 +179,12 @@ func (d *Dispenser) NextBlock(initialNestingLevel int) bool {
+ 	if !d.nextOnSameLine() { // block must open on same line
+ 		return false
+ 	}
+-	if d.Val() != "{" {
++	if d.Val() != "{" || d.Token().Quoted() {
+ 		d.cursor-- // roll back if not opening brace
+ 		return false
+ 	}
+ 	d.Next() // consume open curly brace
+-	if d.Val() == "}" {
++	if d.Val() == "}" && !d.Token().Quoted() {
+ 		return false // open and then closed right away
+ 	}
+ 	d.nesting++
+@@ -406,7 +406,7 @@ func (d *Dispenser) Reset() {
+ // a line break or open curly brace was encountered instead of
+ // an argument.
+ func (d *Dispenser) ArgErr() error {
+-	if d.Val() == "{" {
++	if d.Val() == "{" && !d.Token().Quoted() {
+ 		return d.Err("unexpected token '{', expecting argument")
+ 	}
+ 	return d.Errf("wrong argument count or unexpected line ending after '%s'", d.Val())
+diff --git a/caddyconfig/caddyfile/parse.go b/caddyconfig/caddyfile/parse.go
+index 38d3b9b..2f58578 100644
+--- a/caddyconfig/caddyfile/parse.go
++++ b/caddyconfig/caddyfile/parse.go
+@@ -229,7 +229,7 @@ func (p *parser) addresses() error {
+ 		}
+ 
+ 		// Open brace definitely indicates end of addresses
+-		if value == "{" {
++		if value == "{" && !token.Quoted() {
+ 			if expectingAnother {
+ 				return p.Errf("Expected another address but had '%s' - check for extra comma", value)
+ 			}
+@@ -320,7 +320,7 @@ func (p *parser) blockContents() error {
+ func (p *parser) directives() error {
+ 	for p.Next() {
+ 		// end of server block
+-		if p.Val() == "}" {
++		if p.Val() == "}" && !p.Token().Quoted() {
+ 			// p.nesting has already been decremented
+ 			break
+ 		}
+@@ -518,14 +518,14 @@ func (p *parser) doImport(nesting int) error {
+ 			}
+ 		}
+ 
+-		switch token.Text {
+-		case "{":
++		switch {
++		case token.Text == "{" && !token.Quoted():
+ 			nesting++
+ 			if index == 1 && maybeSnippetId && nesting == 1 {
+ 				maybeSnippet = true
+ 				maybeSnippetId = false
+ 			}
+-		case "}":
++		case token.Text == "}" && !token.Quoted():
+ 			nesting--
+ 			if nesting == 0 && maybeSnippet {
+ 				maybeSnippet = false
+@@ -641,7 +641,7 @@ func (p *parser) directive() error {
+ 	segment = append(segment, p.Token())
+ 
+ 	for p.Next() {
+-		if p.Val() == "{" {
++		if p.Val() == "{" && !p.Token().Quoted() {
+ 			p.nesting++
+ 			if !p.isNextOnNewLine() && p.Token().wasQuoted == 0 {
+ 				return p.Err("Unexpected next token after '{' on same line")
+@@ -656,9 +656,9 @@ func (p *parser) directive() error {
+ 		} else if p.isNewLine() && p.nesting == 0 {
+ 			p.cursor-- // read too far
+ 			break
+-		} else if p.Val() == "}" && p.nesting > 0 {
++		} else if p.Val() == "}" && !p.Token().Quoted() && p.nesting > 0 {
+ 			p.nesting--
+-		} else if p.Val() == "}" && p.nesting == 0 {
++		} else if p.Val() == "}" && !p.Token().Quoted() && p.nesting == 0 {
+ 			return p.Err("Unexpected '}' because no matching opening brace")
+ 		} else if p.Val() == "import" && p.isNewLine() {
+ 			if err := p.doImport(1); err != nil {
+@@ -685,7 +685,7 @@ func (p *parser) directive() error {
+ // because it returns an error if the token is not
+ // an opening curly brace. It does NOT advance the token.
+ func (p *parser) openCurlyBrace() error {
+-	if p.Val() != "{" {
++	if p.Val() != "{" || p.Token().Quoted() {
+ 		if p.valLooksLikeGlobalOptionsAfterImportedSnippets() {
+ 			return p.Err("global options block must appear before import directives; move the global options block to the top of the Caddyfile")
+ 		}
+@@ -713,7 +713,7 @@ func (p *parser) valLooksLikeGlobalOptionsAfterImportedSnippets() bool {
+ // because it returns an error if the token is not
+ // a closing curly brace. It does NOT advance the token.
+ func (p *parser) closeCurlyBrace() error {
+-	if p.Val() != "}" {
++	if p.Val() != "}" || p.Token().Quoted() {
+ 		return p.SyntaxErr("}")
+ 	}
+ 	return nil
+@@ -750,7 +750,7 @@ func (p *parser) blockTokens(retainCurlies bool) ([]Token, error) {
+ 		tokens = append(tokens, p.Token())
+ 	}
+ 	for p.Next() {
+-		if p.Val() == "}" {
++		if p.Val() == "}" && !p.Token().Quoted() {
+ 			nesting--
+ 			if nesting == 0 {
+ 				if retainCurlies {
+@@ -759,7 +759,7 @@ func (p *parser) blockTokens(retainCurlies bool) ([]Token, error) {
+ 				break
+ 			}
+ 		}
+-		if p.Val() == "{" {
++		if p.Val() == "{" && !p.Token().Quoted() {
+ 			nesting++
+ 		}
+ 		tokens = append(tokens, p.tokens[p.cursor])
+diff --git a/caddyconfig/caddyfile/parse_test.go b/caddyconfig/caddyfile/parse_test.go
+index 9403f7a..db98d72 100644
+--- a/caddyconfig/caddyfile/parse_test.go
++++ b/caddyconfig/caddyfile/parse_test.go
+@@ -317,6 +317,23 @@ func TestParseOneAndImport(t *testing.T) {
+ 		{`localhost
+ 		  dir1 "{}"`, false, []string{"localhost"}, []int{2}},
+ 
++		// quoted braces do not affect block parsing
++		{`:8080 {
++			respond "{"
++		}`, false, []string{":8080"}, []int{2}},
++		{`:8080 {
++			respond "}"
++		}`, false, []string{":8080"}, []int{2}},
++		{`:8080 {
++			respond "{" "}"
++			foo bar
++		}`, false, []string{":8080"}, []int{3, 2}},
++		{`:8080 {
++			handle {
++				respond "}"
++			}
++		}`, false, []string{":8080"}, []int{5}},
++
+ 		// import with args
+ 		{`import testdata/import_args0.txt a`, false, []string{"a"}, []int{}},
+ 		{`import testdata/import_args1.txt a b`, false, []string{"a", "b"}, []int{}},

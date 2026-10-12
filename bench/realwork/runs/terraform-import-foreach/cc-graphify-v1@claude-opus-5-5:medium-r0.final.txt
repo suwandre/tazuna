@@ -1,0 +1,15 @@
+I fixed the bug: every `import` block that targets a different instance of the same `for_each` or `count` resource is now honored, not just the first one.
+
+**Cause.** `FindImportStatements` in `internal/refactoring/import_statement.go` stored import blocks in a map keyed by the resource address without its instance key. So `terraform_data.t["a"]` and `terraform_data.t["b"]` used the same key. The code that is meant to let a parent module's import override a child module's import then dropped every later block as a duplicate. That is why the block declared first was kept, whatever its key. It is also why single-instance resources were unaffected and why it happened without any modules. This lookup was added with the module-import support from #38352, so that was the regression.
+
+**Fix.**
+- `internal/refactoring/import_statement.go`: `FindImportStatements` now returns a list in declaration order. It records which module first claimed each resource. Blocks from the same module are all kept. A child module's blocks are still dropped when a parent module has already claimed that resource, so the parent-overrides-child behaviour is unchanged.
+- `internal/terraform/context_plan.go`: the only caller, updated for the new return type.
+
+**Tests.**
+- `TestContext2Plan_importMultipleBlocksSameResource` in `internal/terraform/context_plan_import_test.go` uses two import blocks on a `for_each` resource and two on a `count` resource. Without the fix it fails on `["second"]` and `[1]`, so `count` was affected too, which the report hadn't tested. With the fix it passes.
+- `TestFindImportStatements` in the new `internal/refactoring/import_statement_test.go`, with a fixture in `testdata/import-statements/`. It checks that several instance blocks are kept, that a parent block overrides the child's blocks for the same resource, and that the child's blocks are kept when the parent doesn't target that resource.
+
+`go vet` is clean, and `go test` passes for `./internal/refactoring/...`, `./internal/terraform/...` and `./internal/backend/local/...`. In `./internal/command/...` one test fails: `TestInit_providerLockFileReadonly`, with a provider checksum mismatch in `terraform init`. It fails the same way with my changes stashed, so it's not caused by this fix, probably by the local environment.
+
+I also added a changelog entry at `.changes/v1.17/BUG FIXES-20261011-120000.yaml`. Its `Issue` field is set to `"TODO"` because I don't know the issue number, so please fill it in. If you plan to backport this to 1.16.x, it may also need an entry under `v1.16`. Nothing has been committed.

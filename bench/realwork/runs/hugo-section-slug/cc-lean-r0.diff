@@ -1,0 +1,181 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..4ab5e76 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -18,6 +18,7 @@ import (
+ 	"path"
+ 	"strings"
+ 
++	"github.com/gohugoio/hugo/common/paths"
+ 	"github.com/gohugoio/hugo/output"
+ 
+ 	"github.com/gohugoio/hugo/resources/kinds"
+@@ -132,6 +133,8 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		URL:         pm.pageConfig.URL,
+ 	}
+ 
++	desc.SectionBase = sectionBaseWithSlugs(p, pageInfoCurrentSection)
++
+ 	if pm.Slug() != "" {
+ 		desc.BaseName = pm.Slug()
+ 	} else if pm.isStandalone() && pm.standaloneOutputFormat.BaseName != "" {
+@@ -207,3 +210,41 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 
+ 	return desc, nil
+ }
++
++// sectionBaseWithSlugs returns the path of the given section where any path
++// element that maps to a section (or taxonomy/term) page with a slug set
++// is replaced with that slug.
++// It returns an empty string if no slugs are involved.
++func sectionBaseWithSlugs(p *pageState, section *paths.Path) string {
++	base := section.Base()
++	if base == "" || base == "/" {
++		return ""
++	}
++	// Tree keys are normalized.
++	normSegments := strings.Split(strings.Trim(p.CurrentSection().PathInfo().Base(), "/"), "/")
++	segments := strings.Split(strings.Trim(base, "/"), "/")
++	if len(normSegments) != len(segments) {
++		return ""
++	}
++
++	var found bool
++	for i := range segments {
++		key := "/" + strings.Join(normSegments[:i+1], "/")
++		n := p.s.pageMap.treePages.Get(key)
++		if n == nil {
++			continue
++		}
++		sp, ok := n.(*pageState)
++		if !ok || !kinds.IsBranch(sp.Kind()) {
++			continue
++		}
++		if slug := sp.m.Slug(); slug != "" {
++			segments[i] = slug
++			found = true
++		}
++	}
++	if !found {
++		return ""
++	}
++	return "/" + strings.Join(segments, "/")
++}
+diff --git a/hugolib/page_permalink_test.go b/hugolib/page_permalink_test.go
+index d5ae693..a83495c 100644
+--- a/hugolib/page_permalink_test.go
++++ b/hugolib/page_permalink_test.go
+@@ -201,3 +201,78 @@ path = '/books/**'
+ 
+ 	b.AssertFileContent("public/shelf/my-book/index.html", "RelPermalink: /shelf/my-book/")
+ }
++
++func TestSlugSectionTaxonomyTerm(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++disableKinds = ["rss", "sitemap"]
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++[taxonomies]
++tag = "tags"
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: Frob
++tags: [foo]
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Frobear
++slug: como-frobear
++tags: [foo]
++---
++-- content/help/sub/_index.es.md --
++---
++title: Sub
++slug: sub-es
++---
++-- content/help/sub/page.es.md --
++---
++title: Page
++---
++-- content/help/other.es.md --
++---
++title: Other
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/foo/_index.es.md --
++---
++title: Foo
++slug: fu
++---
++-- layouts/all.html --
++{{ .Kind }}|{{ .RelPermalink }}
++`
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "section|/help/")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "page|/help/how-to-frob/")
++	b.AssertFileContent("public/es/ayuda/index.html", "section|/es/ayuda/")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "page|/es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/sub-es/index.html", "section|/es/ayuda/sub-es/")
++	b.AssertFileContent("public/es/ayuda/sub-es/page/index.html", "page|/es/ayuda/sub-es/page/")
++	b.AssertFileContent("public/es/ayuda/other/index.html", "page|/es/ayuda/other/")
++	b.AssertFileContent("public/es/etiquetas/index.html", "taxonomy|/es/etiquetas/")
++	b.AssertFileContent("public/es/etiquetas/fu/index.html", "term|/es/etiquetas/fu/")
++	b.AssertFileContent("public/tags/foo/index.html", "term|/tags/foo/")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..cb12dd6 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -45,6 +45,11 @@ type TargetPathDescriptor struct {
+ 	Path    *paths.Path
+ 	Section *paths.Path
+ 
++	// SectionBase, if set, replaces the path of Section when building
++	// the target path. It is used to apply any slugs set on the section
++	// pages (the section itself and its ancestors).
++	SectionBase string
++
+ 	// For regular content pages this is either
+ 	// 1) the Slug, if set,
+ 	// 2) the file base name (TranslationBaseName).
+@@ -165,6 +170,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.SectionBase != "" {
++			pb.Add(d.SectionBase)
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}
+@@ -207,6 +214,9 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+ 			if dir := d.Path.ContainerDir(); dir != "" {
++				if d.SectionBase != "" && d.Section != nil && dir == d.Section.Base() {
++					dir = d.SectionBase
++				}
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {

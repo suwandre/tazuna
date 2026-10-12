@@ -1,0 +1,19 @@
+`slug` in front matter now works for section, taxonomy and term pages. It changes the URL of that page and of everything below it. Your example gives `help/`, `help/how-to-frob/`, `es/ayuda/` and `es/ayuda/como-frobear/`.
+
+The tests in `./hugolib/...` and `./resources/...` pass, and gofmt and vet are clean. I didn't run `./check.sh`.
+
+The change has two parts:
+- **`hugolib/page__paths.go`:** a new `sectionBaseWithSlugs` builds the section's path from the home-less chain of ancestor sections plus the section itself. Each part uses its `slug` if set, otherwise its directory name. It returns nothing unless some section in the chain has a slug, so sites without section slugs get exactly the same URLs as before.
+- **`resources/page/page_paths.go`:** a new `SectionBase` field on `TargetPathDescriptor`. `CreateTargetPaths` uses it in place of the section path for section, taxonomy and term pages and for pages in that section.
+
+Cases I left alone:
+- A `url` in front matter or a matching `[permalinks]` rule still overrides the slug-built path for that page.
+- A page whose directory isn't its current section's directory keeps its normal path.
+
+I added `TestSectionTaxonomyTermSlug` in `hugolib/page_test.go`. It covers:
+- your English/Spanish example
+- a nested section under a slugged parent
+- a taxonomy slug (`etiquetas`)
+- a term slug (`fu`)
+
+It fails without the change.

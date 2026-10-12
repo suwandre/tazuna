@@ -1,0 +1,31 @@
+I fixed this: when the experimental duration-expression flag is on, parentheses around a plain duration literal now survive `Expr.String()`. Tests pass for `./promql/...` and `./web/api/...`, and `golangci-lint` reports nothing new on `promql/parser`. Nothing is committed yet.
+
+| Input | Before | After |
+|---|---|---|
+| `foo offset (5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -5s` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset 5m` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[5s]` | `foo[(5s)]` |
+
+`+(5)` printing as `(5)` matches how the existing `foo offset +(5*2)` prints as `(5 * 2)`.
+
+**The fix:** `*NumberLiteral` has no `Wrapped` field, and an offset or range given as a plain literal is stored as a fixed duration rather than an expression. So when a literal is in parentheses, I wrap it in a `*DurationExpr` that just passes the value through (a unary `+`) with `Wrapped: true`. The printer and evaluator already handle that node correctly.
+
+- **Grammar (`generated_parser.y`):** `paren_duration_expr` now wraps a bare literal, and I regenerated `generated_parser.y.go` with goyacc v0.6.0.
+- **`parse.go`:**
+  - New helper `wrapNumberLiteral`.
+  - `applyUnaryOpToDurationExpr` now uses it for the `foo offset ±(N)` form. I only do this when `ExperimentalDurationExpr` is on, so `foo offset -(5)` still parses as before when the flag is off.
+  - New helper `durationLiteralValue` looks through the wrapper and any unary `+`/`-`. Without it, `foo[(0)]`, `foo[-(5)]` and `x / (0)` would stop being parse errors and only fail at query time. The "must be greater than 0" and division/modulo-by-zero checks now use it.
+- **`prettier.go`:** a unary `+` now prints just its operand, as the main printer already does. Otherwise `Prettify` would print `(+5m)`.
+
+**Tests:**
+- `TestParseExpressions`: the expected trees for `foo offset +(5)` and `-(5)` changed, so I updated those. I added cases for `foo offset (5)`, `foo offset (5m)` and `foo[(5s)]`, plus error cases for `foo[(0)]`, `foo[-(5)]` and `foo offset (5 / (0))`. The error cases already failed before this change; they're there to make sure they keep failing.
+- `TestExprString`: added round-trip cases, including `((5m))` → `(5m)`, a subquery with step and offset, and `(5s) + 1s`.
+- `TestDurationExprPretty`: added `(5m)` and `+(5m)`.
+
+I checked the new parse, print and prettify cases against the original code: they all fail there and pass now.
+
+**Behaviour change:** the change applies wherever parentheses appear in a duration position, so a query like `foo[(5s)]` now evaluates through the duration-expression path instead of the plain fixed-range path. The result is the same. I didn't add an engine-level evaluation test, but the existing `promql` and `promqltest` suites pass.
+
+If you open a PR, a suggested title is `promql/parser: preserve parentheses around duration literals`, with `[BUGFIX] PromQL: Preserve parentheses around plain duration literals in offset and range positions when printing expressions.` in the release-notes block.

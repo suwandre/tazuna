@@ -1,0 +1,16 @@
+Quoted `{` and `}` are now treated as ordinary values, so `respond "{"` inside a site block parses. The `caddyconfig` and `modules/caddyhttp` tests pass, and `go build` and `go vet` are clean.
+
+Before this change, the parser and dispenser compared only the token text, so a quoted `"{"` was counted as a real brace. That threw off the nesting count.
+
+**What changed:**
+- **`dispenser.go`:** I added `isOpenBrace()` and `isCloseBrace()`, which match only unquoted braces. `NextArg`, `NextBlock` and `ArgErr` use them.
+- **`parse.go`:** the places that check braces for site addresses, directives and block collection now use those helpers. The same goes for the check that skips braces when expanding imports and snippets, and the `{block}` / `{blocks.*}` handling.
+- **Quote types:** double quotes, backticks and heredocs all count as quoted.
+- **Existing quote check:** the old `wasQuoted == 0` check on `{` in `directive()` is gone, since the helper now covers it.
+
+**Tests:**
+- **Parser test:** `TestQuotedBracesDoNotAffectBlocks` covers the exact case from the issue plus `"}"`, both braces together, backticks, nesting, and multiple site blocks.
+- **Dispenser test:** `TestDispenser_QuotedBracesAreNotBlocks` checks that quoted braces stay arguments and don't open a block.
+- **Check without the fix:** both tests fail when the `parse.go` and `dispenser.go` changes are stashed, and pass with them.
+
+I didn't touch the formatter (`caddy fmt`), so I haven't checked how it handles quoted braces.

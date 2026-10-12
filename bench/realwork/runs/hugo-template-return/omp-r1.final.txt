@@ -1,0 +1,17 @@
+`return` now works in any template, anywhere in it, and no longer has to be last. It follows your sentinel-error design. `go test` passes for `./tpl/...`, `./hugolib/...`, `./resources/...` and `./markup/...`. The one failure was `TestPartialReturnPanicIssue13600`, covered under the behaviour changes below. I haven't run the rest of the repo's tests, and haven't run `./check.sh`.
+
+**How it works**
+- **The `return` function:** `partials.Namespace.Return(args ...any)` returns a `*texttemplate.ReturnError` with the value and a `HasValue` flag. The flag lets `return nil` and a bare `return` behave differently.
+- **Trapping it:** in the forked `texttemplate`, `evalCall` panics with the `ReturnError` instead of wrapping it in an "error calling …" message. The top-level execution returns it as an error. A `{{ template "x" }}` call swallows it, so `return` inside an invoked template exits only that template.
+- **Fork surface:** `exec.go` gets two small patches, one case in `errRecover` and one call in `walkTemplate`. The rest is in `hugo_template.go`.
+- **Store and partials:** `TemplateStore.ExecuteWithContextAndKey` now returns `(*ReturnError, error)`; `ExecuteWithContext` discards the return value. `doInclude` uses the returned value if there is one, otherwise the rendered output.
+- **Removed:** the `$_hugo_dot`/`range` wrapper template, `contextWrapper`, `ParseInfo.HasReturn`, `returnNode`, and the pipe-command deletion logic.
+
+**Behaviour changes**
+- **Early return:** `return` runs where it is written, so the "only one `return`, at the end" restriction is gone.
+- **Bare `return`:** it stops execution. In a partial, the result is the output rendered so far; elsewhere it just exits. Previously a bare `return` was a no-op.
+- **Multi-argument `return`:** one small rewrite is left in `templatetransform.go`, `wrapReturnArgs`. It turns `{{ return add . 42 }}` into `{{ return (add . 42) }}`. Without it, the documented `{{ return math.ModBool . 2 }}` would break, since `return` now takes a single argument.
+- **`return X | f`:** `f` is never applied, because `return` fires first. This was already broken before, but in a different way.
+- **`TestPartialReturnPanicIssue13600`:** the template `{{ return ( delimit . ", " ) | string }}` used to error with "wrong number of args for string", because the old transform dropped the `return` command and left `string` with no arguments. It now errors earlier, in `delimit`. I changed the expected message to match.
+
+I added `TestReturnEarlyExit` in `hugolib/template_test.go`. It covers early exit in a page template, a bare `return` in a partial, a value in a partial, `return nil`, a pipe form (`. | return`), a `return` inside a `template` call, and a `return` inside `with` and `range`. I updated `return.md`, `Include.md` and `IncludeCached.md` for the new semantics.

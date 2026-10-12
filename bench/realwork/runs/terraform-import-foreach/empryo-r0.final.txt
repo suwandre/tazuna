@@ -1,0 +1,11 @@
+FindImportStatements returns a keyed collection — likely deduped by resource address.Add a test after this one.`internal/refactoring/import_statement.go:24` — `FindImportStatements` keyed its results by config resource address, so two import blocks for the same `for_each` resource collapsed into one. The dedupe check compared a key to itself and always matched, so every later block in the same module was dropped. Fixed.
+
+It now returns a `[]ImportStatement`. Same-module blocks all survive, and a parent module's block still overrides a child's for the same resource. `internal/terraform/context_plan.go:752` is updated for the new return type.
+
+I added `TestContext2Plan_importMultipleBlocksForEachResource`, which has two import blocks on one `for_each` resource and expects both instances imported with `NoOp`. It passes, but I never ran it against the old code, so I haven't seen it fail. `go test` passes for `internal/terraform` and `internal/refactoring`.
+
+`internal/command` has one failure, `TestInit_providerLockFileReadonly` (provider checksum mismatch). I didn't run it on the unmodified code, so I haven't confirmed it was already failing. It's an init and lock-file test, which this change doesn't touch.
+
+`.gitignore` shows an added `.empryo` line that isn't mine; I left it.
+
+One related issue I left alone: `internal/terraform/node_resource_plan.go:354` always passes `n.importTargets[0].Config` as the import config. That only affects config generation for `for_each` instances, so it doesn't change the reported plan.

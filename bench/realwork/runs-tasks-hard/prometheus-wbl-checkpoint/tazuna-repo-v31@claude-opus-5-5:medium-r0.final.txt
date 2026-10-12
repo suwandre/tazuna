@@ -1,0 +1,12 @@
+The full `tsdb` test package has now completed with the fix. One test failed in that run, `TestDataMissingOnQueryDuringCompaction_AppenderV2`, and it passed 3 out of 3 times when rerun alone.
+
+**Why `go test ./tsdb/` kept timing out:** six other sessions on this machine were running full `tsdb` suites against their own copies of the repo. These tests write to disk heavily, so they all compete for it, and the package takes about 45 minutes here instead of finishing within `go test`'s default 10-minute limit. Some of my runs were also killed from outside, probably by those sessions cleaning up `go test` processes. To get a complete result, I compiled the tests into a separately named binary and ran it with a 90-minute timeout.
+
+**Full run result:** that one failure was the only one. The test waits for head truncation to start, and the same run logged a head compaction taking 11 seconds, so under this load it ran out of time. Alone it passed 3 out of 3 times with the fix and also passes on the unchanged code. Earlier, `TestDelayedCompaction` missed a 5-second timing check under the same load and also passed when run alone.
+
+**The fix itself:**
+- The new test passes. Without the fix, the out-of-order sample is lost and WBL replay reports an unknown series reference.
+- The WAL, WBL, checkpoint and out-of-order tests pass.
+- The other `tsdb/...` packages pass, and `golangci-lint` is clean.
+
+The change is in `tsdb/head.go`, `tsdb/head_wal.go` and `tsdb/db_test.go`, and is still uncommitted.

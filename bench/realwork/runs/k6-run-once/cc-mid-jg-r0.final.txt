@@ -1,0 +1,14 @@
+I added `--once`. It runs the script with 1 VU and 1 iteration and keeps the scenario's name, `exec`, `env`, `tags` and `options`. The new tests pass, as do the full `internal/cmd` and `internal/cmd/tests` packages. I only exercised it through `k6 run`; `k6 cloud run`, `k6 cloud run --local-execution` and `k6 archive` are untested.
+
+- **Flag:** it's defined in `optionFlagSet()` in `options.go`, so `k6 run`, `k6 cloud run` and `k6 archive` get it. `k6 cloud upload` also picks it up, which you didn't ask for.
+- **Transform:** `DeriveOnceScenario` in `lib/executor/execution_config_shortcuts.go` is where the work happens.
+  - With one scenario, it swaps the executor for `shared-iterations` at 1/1.
+  - With none, it creates `default` at 1/1. If the script's options set `iterations`/`vus`, those are discarded.
+  - With more than one, it fails with `--once can run a single scenario only`.
+- **Where it runs:** in `consolidateDeriveAndValidateConfig` in `test_load.go`, right after config consolidation and before the shortcuts derivation. It rewrites the consolidated options, which are also what archive and cloud use.
+- **Shortcut conflict:** `--once` with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>`. Only the command-line flags are checked. A script or env that sets `iterations` or `vus` is silently overridden by `--once`.
+- **Tests:**
+  - `TestDeriveOnceScenario` covers the transform.
+  - `TestOnceFlag` in `internal/cmd/tests/cmd_run_test.go` runs `k6 run --once` end to end for no scenarios, a single scenario with `exec`/`env`, multiple scenarios, and the flag conflict.
+
+I haven't updated the `k6 run` help examples.

@@ -1,0 +1,3 @@
+The explorer finished earlier, and I've already used its findings. It reported where the parentheses get dropped. That was `paren_duration_expr` in `generated_parser.y` and `applyUnaryOpToDurationExpr` in `parse.go`. It also pointed me to the existing tests in `printer_test.go` and `parse_test.go`.
+
+I used that to make the fix described above. Tests pass in `promql/parser` and `promql`, and nothing is committed.

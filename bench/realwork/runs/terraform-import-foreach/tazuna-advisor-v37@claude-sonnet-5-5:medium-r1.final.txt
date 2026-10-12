@@ -1,0 +1,16 @@
+Terraform now honors every `import` block for a `for_each` resource, not just the first. My regression test fails without the fix and passes with it.
+
+**Root cause:** `refactoring.FindImportStatements` stored import blocks in a map keyed by the config resource (`terraform_data.t`), not the instance. A second block targeting `t["b"]` replaced or skipped the first, depending on the check. The "already seen" check meant to let a parent module override a child was always true, so it also skipped sibling blocks in the same module. That is why only the first-declared block survived.
+
+**Fix:**
+- **`internal/refactoring/import_statement.go`:** The map now holds a slice of statements per config resource. Several blocks from the same module are all kept. If the blocks already recorded came from a different module (a parent), a child module's blocks are still skipped, as before.
+- **`internal/terraform/context_plan.go`:** `findImportTargets` now loops over each resource's slice.
+- **`internal/terraform/context_plan_import_test.go`:** New test `TestContext2Plan_importMultipleBlocksForEachResource`. It uses two separate `import` blocks for `a["first"]` and `a["second"]` and expects both to be imports, with no create.
+
+**Verification:**
+- `go test ./internal/refactoring/` passes.
+- `go test ./internal/terraform/ -run Import` passes.
+- With the fix stashed, the new test fails on `a["second"]`: it isn't imported and is planned for create, matching the report.
+- I did not complete a full `./internal/terraform` or `./internal/command` run. The combined run timed out after 120s, so the wider suite is untested.
+
+I didn't test `count`. The same keying applied to it, so it should be fixed too.

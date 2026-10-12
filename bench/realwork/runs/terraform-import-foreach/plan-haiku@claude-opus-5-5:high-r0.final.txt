@@ -1,0 +1,14 @@
+The fix matches the plan and solves the reported bug: every import block is now kept, not just the first one per `for_each` resource. A parent module's import block still overrides a child's for the same resource.
+
+**The fix:** `FindImportStatements` in `internal/refactoring/import_statement.go` used to key import blocks by resource and skip any later block for a resource it had already seen. That's why `t["b"]` was silently dropped and planned for creation. It now keeps every block and only skips blocks from a child module when a parent module already imports that resource. `findImportTargets` in `internal/terraform/context_plan.go` was updated to read the new list.
+
+**One change I made, in the tests only:** the new tests' fake provider returned an `id` attribute that its schema doesn't have. That didn't affect what the tests check, since the import ID comes from the import block, but the fake didn't match its schema. I replaced it with the same fixed response the existing `TestContext2Plan_importForEach` uses. I also staged the edited test file alongside the implementer's staged changes.
+
+**Test results:**
+- On the base code, both new tests fail with `expected import` on `["second"]`, the reported bug. With the fix they pass.
+- `TestContextApply_import_duplication`, which checks that a parent module's block wins over a child's, still passes.
+- `go build ./...`, `go vet` and gofmt report nothing.
+- The full `./internal/refactoring/...` and `./internal/terraform/` suites pass.
+- I didn't rerun `internal/command/...` after my test change, since it doesn't touch that code. The implementer reported those packages passing except `TestInit_providerLockFileReadonly`, which also fails on the unmodified code.
+
+There's no changelog entry and no separate unit test for `FindImportStatements`. The two new plan tests cover the change.

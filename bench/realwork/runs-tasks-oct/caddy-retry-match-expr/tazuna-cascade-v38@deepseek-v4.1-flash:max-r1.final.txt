@@ -1,0 +1,18 @@
+## Summary
+
+**Root cause:** Since #7569, `reverseProxy()` evaluated every `lb_retry_match` matcher set containing *any* expression matcher against the completed upstream response. A request-only expression (e.g. `{http.request.method} == "POST"`) therefore matched every successful response and forced retries; once retries were exhausted, the client got a 502 (and retried POSTs lost their body).
+
+**Fix (3 files):**
+
+- `modules/caddyhttp/celmatcher.go` — `MatchExpression.Provision()` now records the placeholder names read by the checked CEL AST (`celPlaceholderNames`), scanning for `ph(...)` calls so *only real placeholders* count (escaped placeholder text in string literals is ignored). A placeholder name that isn't a string literal is recorded as `""` (unknown until evaluation). Added `MatchExpression.Placeholders()`, which returns a defensive copy.
+- `modules/caddyhttp/reverseproxy/reverseproxy.go` — replaced `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`, which inspects `expr.Placeholders()` and treats a set as response-based only if it references `http.reverse_proxy.status_code` / `status_text`, `http.reverse_proxy.upstream.latency[_ms]`, any `http.reverse_proxy.header.*`, or a dynamically-named placeholder. Exact names are matched, so `status_codes` or pre-response placeholders like `upstream.host` stay request conditions. This covers both `{placeholder}` shorthand (after Caddyfile `{rp.*}` adaptation) and direct `ph(req, "...")` calls.
+- `modules/caddyhttp/reverseproxy/retries_test.go` — extended `TestResponseRetryStatusCode` to also exercise direct `ph(req, "...")` calls and added `TestRequestOnlyExpressionDoesNotRetryResponses` covering method, upstream-selection placeholders, escaped placeholder text, and similarly-named placeholders.
+
+This matches the maintainer-approved upstream fix (caddyserver/caddy PR #8168, commit `7c74563`); the repo's base files were byte-identical to that commit's parent, so the change is applied verbatim.
+
+**Verification:**
+- `go test -race -short ./...` — exit 0, all 30 packages pass.
+- Targeted tests pass: `TestResponseRetry*`, `TestRequestOnlyExpressionDoesNotRetryResponses`, `TestTransportErrorPlaceholder*`.
+- Existing integration tests `TestReverseProxyRetryMatch{StatusCode,Header,Combined,IsTransportError}` pass via `go test ./caddytest/integration/`.
+- Temporarily added an end-to-end test for the exact reported Caddyfile (request-only expression, `lb_retries 2`, round robin, POST body); it returned 200, hit one upstream, and preserved `order=1` — then removed the temporary file.
+- `gofmt` and `go vet ./modules/caddyhttp/...` clean.

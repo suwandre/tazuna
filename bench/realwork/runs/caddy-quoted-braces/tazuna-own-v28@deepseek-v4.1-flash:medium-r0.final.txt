@@ -1,0 +1,31 @@
+## Summary
+
+**Root cause:** The lexer already recorded whether a token was quoted (`Token.wasQuoted`), but every block-structure check in the parser compared only the token *text* against `"{"`/`"}"`. So a quoted `"{"` looked like a structural block opener, and a quoted `"}"` looked like a block closer.
+
+**Fix:** Centralized structural-brace detection in two helpers in `caddyconfig/caddyfile/lexer.go`:
+
+```go
+func isOpenCurlyBrace(t Token) bool  { return t.Text == "{" && t.wasQuoted == 0 }
+func isCloseCurlyBrace(t Token) bool { return t.Text == "}" && t.wasQuoted == 0 }
+```
+
+and routed every brace comparison through them:
+- **`dispenser.go`** — `NextArg`, `NextBlock`, `ArgErr`; doc comments for `RemainingArgs`/`RemainingArgsRaw`/`RemainingArgsAsTokens` updated to say *unquoted* open brace terminates arguments.
+- **`parse.go`** — `addresses` (plus the "address ends with `{`" hint now ignores quoted tokens, so a quoted address containing a brace is no longer rejected), `directives`, `doImport` (anonymous-block check + snippet detection), `directive`, `openCurlyBrace`, `closeCurlyBrace`, `blockTokens`.
+- The redundant `wasQuoted == 0` checks in `directive` were removed/shifted since the helper now covers them.
+
+The formatter already handled quoted braces correctly (it tracks quote state), so no formatter logic change was needed; I added a regression case for it.
+
+**Tests added/updated:**
+- `dispenser_test.go`: `TestDispenser_QuotedBracesAreArguments` — quoted braces are returned by `RemainingArgs` and don't open blocks.
+- `parse_test.go`: two `TestParseOneAndImport` cases (quoted braces as literal args; quoted `"{"` before a real block) and `TestSnippetWithQuotedBraces`.
+- `formatter_test.go`: "Preserve quoted brace arguments".
+- `caddytest/integration/caddyfile_adapt/quoted_brace_args.caddyfiletest`: end-to-end adapt test asserting the exact issue config (`respond "{"`) plus `header` values of `{`/`}` produce the expected JSON.
+
+**Verification:**
+- `go build ./...` OK; `gofmt -l` clean; `go vet` clean.
+- `go test -race -short ./...` — all packages pass, including `caddyconfig/caddyfile`, `caddyconfig/httpcaddyfile`, and the full integration suite.
+- `golangci-lint run --timeout 10m ./caddyconfig/...` — 0 issues.
+- Manually verified via the adapter that the reported config now adapts, and that nested blocks, matchers, heredocs, snippets, quoted addresses, and placeholder braces like `"{http.request.uri}"` still work.
+
+Note: per the project's guidance, this change should be disclosed as AI-assisted in any PR, and the human operator should review/understand every line before submitting.

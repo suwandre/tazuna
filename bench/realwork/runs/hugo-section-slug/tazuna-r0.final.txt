@@ -1,0 +1,7 @@
+`slug` in front matter now changes the URL of sections, taxonomies and terms, and of every page under them. Your help example gives `es/ayuda/` and `es/ayuda/como-frobear/`. The new test and the existing suites for `hugolib`, `resources/...` and `common/paths` pass.
+
+- **Path building:** `createTargetPathDescriptor` in `hugolib/page__paths.go` now builds the path for a section, taxonomy or term, or for a page's parent directory. It looks up each ancestor section in the page tree and swaps that segment for the section's `slug` when it has one. If no ancestor has a slug, the path is built as before.
+- **Path descriptor:** `TargetPathDescriptor` in `resources/page/page_paths.go` has two new optional fields, `SectionBase` and `ContainerDir`, which carry the slug-adjusted paths. `CreateTargetPaths` uses them when set.
+- **Test:** `TestSectionTaxonomyTermSlug` in `hugolib/page_test.go` covers a multilingual site with a localized section, a nested section, a page bundle, and a taxonomy and term. The English URLs stay unchanged. The test fails without the change and passes with it.
+
+An explicit `url` on a section or page, or a matching `[permalinks]` pattern, still takes precedence over `slug`. Those patterns have to use `:sectionslugs` or `:slug` to pick up the slugs.

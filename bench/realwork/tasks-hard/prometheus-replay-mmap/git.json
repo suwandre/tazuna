@@ -1,0 +1,12 @@
+{
+  "repo": "/Users/suwandre/bench-repos/prometheus",
+  "base": "1a221c811e490eb79e8bb97a2984fe1592b7c3d7",
+  "fix": "970b878cc775271673e82c029344807f05662ddb",
+  "pr": "https://github.com/prometheus/prometheus/pull/19805",
+  "issue": "https://github.com/prometheus/prometheus/issues/19804",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./tsdb -run '^TestWALReplayPreservesMappedChunksAcrossSeriesRefs$'",
+  "suite_cmd": "go test -count=1 -timeout 18m ./tsdb",
+  "suite_skip_note": "suite skips PR-specific tests excluded from hidden (pinned wording/helpers not in the ticket); it checks pre-existing behavior only",
+  "suite_note": "tsdb takes ~10 min under load; go test's default 10m timeout cut it off at the fix commit"
+}

@@ -1,0 +1,11 @@
+The Caddyfile from the issue now parses, and `respond "{"` adapts to a `static_response` with body `{`. The `go test ./caddyconfig/...` run passed for the `caddyfile` and `httpcaddyfile` packages. I haven't run golangci-lint or the full suite.
+
+A quoted or backtick-quoted `{` or `}` is now treated as plain text. Before, the parser and dispenser checked only the token's text, so a lone quoted brace unbalanced block nesting.
+
+- **`parse.go`**: I added `isOpenBrace()` and `isCloseBrace()` helpers. They match only unquoted braces and are used in `directive()`, `directives()`, `blockTokens()`, `openCurlyBrace()` and `closeCurlyBrace()`. In `directive()` the "Unexpected next token after '{' on same line" check no longer needs a separate quote exemption.
+- **`dispenser.go`**: the same two helpers are used in `NextArg()` and `NextBlock()`. A quoted `"{"` can therefore be read as an argument by Caddyfile directive parsers.
+- **`parse_test.go`**: I added cases for a lone quoted `"{"` and `"}"`, and for backtick-quoted and double-quoted braces inside a real block. The existing `dir1 "{" a b "}"` and `"{}"` cases still pass.
+
+I did not change the address-parsing checks (around `parse.go:231-246`) or the brace counting in import-argument substitution (around `parse.go:522`). I haven't checked whether quoted braces matter in either place.
+
+Since this touches the Caddyfile parser, a human reviewer should read it. Per the project's AI contribution rules, disclose that it was AI-assisted (Claude Sonnet 5.5) when you submit it.

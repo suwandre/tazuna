@@ -1,0 +1,28 @@
+I've fixed the bug: every `import` block that targets a different instance of a `for_each` or `count` resource is now honored, not just the first one declared. The relevant test packages pass, and the new test fails on the unfixed code in the same way the report describes.
+
+## Root cause
+
+`refactoring.FindImportStatements` (`internal/refactoring/import_statement.go`) was added with module-import support in 1.16.0. It collects import blocks in a map keyed by the resource's address with no instance key (`test_object.fe`), so `fe["a"]` and `fe["b"]` landed on the same key. The duplicate check was meant to let a parent module's import block override a child module's. But it compared the stored address with the lookup key, which always matches, so it fired every time. Every block after the first was skipped with no warning, which explains why the block declared first wins and why single-instance resources weren't affected.
+
+## Fix
+
+- **`internal/refactoring/import_statement.go`**: the map now holds a list of import statements for each resource. Blocks from the same module are added to the list in declaration order. A child module's blocks are skipped only if a *different* module (necessarily an ancestor, since parents are visited first) already declared imports for that resource. That keeps the documented parent-overrides-child behaviour.
+- **`internal/terraform/context_plan.go`**: `findImportTargets` now walks the lists. It was the only caller.
+
+## Tests
+
+- **`TestContext2Plan_importMultipleBlocksSameResource`** (`internal/terraform/context_plan_import_test.go`) covers several import blocks on one resource in three cases: `for_each` with the blocks deliberately out of key order, `count` (which the report hadn't tested), and inside a child module. It also checks that an instance with no import block is still planned as a create.
+  - Without the fix it fails just as reported: `fe["a"]`, `c[1]` and `module.child...fe["y"]` are planned as Create instead of imported.
+  - With the fix it passes.
+- **`TestFindImportStatements`** (new `internal/refactoring/import_statement_test.go` plus the fixture in `testdata/import-statements/`) is a unit test. It checks that multiple blocks in one module are all kept in order, and that root-module blocks override *all* of a child's blocks for the same resource.
+
+## Test results
+
+- `go test ./internal/refactoring/ ./internal/terraform/ ./internal/backend/local/` passes, and `go vet` and `gofmt` are clean.
+- In `go test ./internal/command/`, only `TestInit_providerLockFileReadonly` fails, with a provider-checksum mismatch. It fails the same way with my source changes stashed, so this fix doesn't cause it.
+
+## Decision for you
+
+Overrides between modules still apply to the whole resource, as in 1.16.0. If the root module imports `module.child.x["p"]` and the child module imports `x["r"]`, the child's `["r"]` block is dropped. Overriding per instance would mean resolving `for_each` targets before this step, which is a bigger change, so I left that behaviour as is. Silently dropping the child's block could cause the same problem the report describes, so a warning there may be worth a follow-up.
+
+Nothing is committed.

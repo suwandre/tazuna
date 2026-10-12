@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "WAL replay overwrites a series' m-mapped chunk lists when several WAL series records (references) resolve to the same live series, losing OOO samples and duplicating in-order chunks after restart. Fix must merge/deduplicate persisted mapped chunks across references while still discarding chunks re-created during replay, and keep head GC correct when chunk time order differs from disk order. Hidden test is the PR's end-to-end restart matrix (11 scenarios x all sample types x both appender APIs); the PR's unit test for its new internal merge helper was removed from the hidden copy and its head_test.go gc subtest was excluded.",
+  "merged_at": "2026-09-23T14:46:39Z",
+  "files_changed": 2,
+  "lines_changed": 53
+}

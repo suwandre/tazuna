@@ -1,0 +1,52 @@
+Unix socket listener keeps listening (clients hang) and its file isn't removed after a reload moves off it
+
+**Caddy version:** `v2.11.4` (official linux_amd64 release, built with go1.26.3)
+
+**What happens**
+
+When a config reload moves a listener off a Unix socket (the admin endpoint, or a site's `bind unix/...`), the old socket keeps listening but nothing accepts on it. A client that connects to the old path hangs instead of getting "connection refused". The log still says `stopped previous server` for the old admin address.
+
+It only clears at the process's next garbage collection. In an idle process that's the 2-minute forced GC: in 5 runs with `GODEBUG=gctrace=1`, the old socket stopped listening 124–130 s after the reload, each time at the first GC after the reload. With `GOGC=off` it never cleared (watched for 150 s). The socket file stays on disk afterwards.
+
+Moving between TCP addresses doesn't do this: the old port refuses immediately.
+
+**Reproduce**
+
+```sh
+mkdir -p /tmp/caddy-repro && cd /tmp/caddy-repro
+printf '{\n    admin unix//tmp/caddy-repro/admin.sock\n}\n:8081 {\n    respond ok\n}\n' > A
+printf '{\n    admin localhost:2999\n}\n:8081 {\n    respond ok\n}\n' > B
+caddy run --config A --adapter caddyfile &
+sleep 1
+caddy reload --config B --adapter caddyfile --address unix//tmp/caddy-repro/admin.sock
+curl -sS --max-time 5 --unix-socket /tmp/caddy-repro/admin.sock http://localhost/config/; echo "curl exit $?"
+ss -xlp | grep caddy-repro
+ls -l /tmp/caddy-repro/admin.sock
+```
+
+Output:
+
+```
+curl: (28) Operation timed out after 5005 milliseconds with 0 bytes received
+curl exit 28
+u_str LISTEN 1      4096   /tmp/caddy-repro/admin.sock 6499819            * 0    users:(("caddy",pid=58867,fd=9))
+s-w------- 1 user user 0 Sep 25 01:29 /tmp/caddy-repro/admin.sock
+```
+
+The result is the same with a `|0600` mode suffix on the socket address, when moving from one Unix socket to another, and for a site `bind unix/...` moved to a TCP port. Moving back to the same path works, but leaves two LISTEN sockets on that path (the orphan and the new one). Datagram sockets (`unixgram`) are handled by the same code in `listen_unix.go` and look affected the same way.
+
+**Expected**
+
+The same as TCP: after the reload the old socket is closed (connect is refused) and its file is removed.
+
+---
+
+Additional requirements from review:
+
+- A reusable socket is shared by several holders (reference counted). The file must only be removed when the last holder closes it; while another holder still uses it, the socket must keep working and the file must stay.
+- Closing the same listener/conn twice must not release a second reference. The second `Close` should report `net.ErrClosed`.
+- A close racing with a new listen on the same path (as happens during a reload) must leave a working socket and its file in place for the new listener.
+- Linux abstract sockets (names starting with `@`) have no file; closing them must never unlink a filesystem path of the same name.
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

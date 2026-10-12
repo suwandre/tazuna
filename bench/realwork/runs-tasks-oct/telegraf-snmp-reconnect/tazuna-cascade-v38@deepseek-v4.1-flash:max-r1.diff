@@ -1,0 +1,253 @@
+diff --git a/plugins/common/snmp/wrapper.go b/plugins/common/snmp/wrapper.go
+index 7b8d8dd..1ea3227 100644
+--- a/plugins/common/snmp/wrapper.go
++++ b/plugins/common/snmp/wrapper.go
+@@ -19,6 +19,7 @@ type Connection interface {
+ 	Walk(string, gosnmp.WalkFunc) error
+ 	Get(oids []string) (*gosnmp.SnmpPacket, error)
+ 	Reconnect() error
++	Close() error
+ }
+ 
+ // GosnmpWrapper wraps a *gosnmp.GoSNMP object so we can use it as a snmpConnection.
+@@ -31,9 +32,21 @@ func (gs GosnmpWrapper) Host() string {
+ 	return gs.Target
+ }
+ 
++// Get wraps GoSNMP.Get() and reconnects first if the connection was closed.
++func (gs GosnmpWrapper) Get(oids []string) (*gosnmp.SnmpPacket, error) {
++	if err := gs.Reconnect(); err != nil {
++		return nil, err
++	}
++	return gs.GoSNMP.Get(oids)
++}
++
+ // Walk wraps GoSNMP.Walk() or GoSNMP.BulkWalk(), depending on whether the
+-// connection is using SNMPv1 or newer.
++// connection is using SNMPv1 or newer, and reconnects first if the
++// connection was closed.
+ func (gs GosnmpWrapper) Walk(oid string, fn gosnmp.WalkFunc) error {
++	if err := gs.Reconnect(); err != nil {
++		return err
++	}
+ 	if gs.Version == gosnmp.Version1 {
+ 		return gs.GoSNMP.Walk(oid, fn)
+ 	}
+@@ -200,10 +213,19 @@ func (gs *GosnmpWrapper) SetAgent(agent string) error {
+ 	return nil
+ }
+ 
++// Reconnect connects again if the connection was closed. An SNMPv3 session
++// keeps the engine ID discovered on the first request, so it is reset to
++// discover the engine ID again, as the agent may have restarted with a new one.
+ func (gs GosnmpWrapper) Reconnect() error {
+-	if gs.Conn == nil {
+-		return gs.Connect()
++	if gs.Conn != nil {
++		return nil
+ 	}
+ 
+-	return nil
++	if usm, ok := gs.SecurityParameters.(*gosnmp.UsmSecurityParameters); ok {
++		usm.AuthoritativeEngineID = ""
++		usm.AuthoritativeEngineBoots = 0
++		usm.AuthoritativeEngineTime = 0
++	}
++
++	return gs.Connect()
+ }
+diff --git a/plugins/common/snmp/wrapper_test.go b/plugins/common/snmp/wrapper_test.go
+index ca13fc4..38b26a9 100644
+--- a/plugins/common/snmp/wrapper_test.go
++++ b/plugins/common/snmp/wrapper_test.go
+@@ -1,6 +1,11 @@
+ package snmp
+ 
+-import "github.com/gosnmp/gosnmp"
++import (
++	"testing"
++
++	"github.com/gosnmp/gosnmp"
++	"github.com/stretchr/testify/require"
++)
+ 
+ type testSNMPConnection struct {
+ 	host   string
+@@ -46,6 +51,32 @@ func (*testSNMPConnection) Reconnect() error {
+ 	return nil
+ }
+ 
++func (*testSNMPConnection) Close() error {
++	return nil
++}
++
++func TestReconnectResetsEngineID(t *testing.T) {
++	gs, err := NewWrapper(ClientConfig{Version: 3, SecName: "user", EngineID: "stale", EngineBoots: 3, EngineTime: 42})
++	require.NoError(t, err)
++	require.NoError(t, gs.SetAgent("udp://127.0.0.1:161"))
++	require.NoError(t, gs.Connect())
++	defer gs.Close()
++
++	// An open connection keeps the discovered engine ID
++	require.NoError(t, gs.Reconnect())
++	usm, ok := gs.SecurityParameters.(*gosnmp.UsmSecurityParameters)
++	require.True(t, ok)
++	require.Equal(t, "stale", usm.AuthoritativeEngineID)
++
++	// A closed connection discovers the engine ID again on reconnect
++	require.NoError(t, gs.Close())
++	require.NoError(t, gs.Reconnect())
++	require.NotNil(t, gs.Conn)
++	require.Empty(t, usm.AuthoritativeEngineID)
++	require.Zero(t, usm.AuthoritativeEngineBoots)
++	require.Zero(t, usm.AuthoritativeEngineTime)
++}
++
+ var tsc = &testSNMPConnection{
+ 	host: "tsc",
+ 	values: map[string]any{
+diff --git a/plugins/inputs/snmp/snmp.go b/plugins/inputs/snmp/snmp.go
+index b366a9e..bdc211e 100644
+--- a/plugins/inputs/snmp/snmp.go
++++ b/plugins/inputs/snmp/snmp.go
+@@ -117,6 +117,11 @@ func (s *Snmp) Gather(acc telegraf.Accumulator) error {
+ 			topTags := make(map[string]string)
+ 			if err := s.gatherTable(acc, gs, t, topTags, false); err != nil {
+ 				acc.AddError(fmt.Errorf("agent %s: %w", agent, err))
++				// Close the connection so the next request reconnects and, for
++				// SNMPv3, rediscovers the engine ID of a restarted agent.
++				if err := gs.Close(); err != nil {
++					s.Log.Debugf("Closing connection to agent %s failed: %v", agent, err)
++				}
+ 				if s.StopOnError {
+ 					return
+ 				}
+@@ -126,6 +131,9 @@ func (s *Snmp) Gather(acc telegraf.Accumulator) error {
+ 			for _, t := range s.Tables {
+ 				if err := s.gatherTable(acc, gs, t, topTags, true); err != nil {
+ 					acc.AddError(fmt.Errorf("agent %s: gathering table %s: %w", agent, t.Name, err))
++					if err := gs.Close(); err != nil {
++						s.Log.Debugf("Closing connection to agent %s failed: %v", agent, err)
++					}
+ 					if s.StopOnError {
+ 						return
+ 					}
+diff --git a/plugins/inputs/snmp/snmp_test.go b/plugins/inputs/snmp/snmp_test.go
+index 0e980ec..ff4197b 100644
+--- a/plugins/inputs/snmp/snmp_test.go
++++ b/plugins/inputs/snmp/snmp_test.go
+@@ -1,9 +1,9 @@
+ package snmp
+ 
+ import (
++	"errors"
+ 	"fmt"
+ 	"net"
+-	"path/filepath"
+ 	"sync"
+ 	"testing"
+ 	"time"
+@@ -19,6 +19,9 @@ import (
+ type testSNMPConnection struct {
+ 	host   string
+ 	values map[string]any
++	err    error
++
++	closed bool
+ }
+ 
+ func (tsc *testSNMPConnection) Host() string {
+@@ -26,6 +29,9 @@ func (tsc *testSNMPConnection) Host() string {
+ }
+ 
+ func (tsc *testSNMPConnection) Get(oids []string) (*gosnmp.SnmpPacket, error) {
++	if tsc.err != nil {
++		return nil, tsc.err
++	}
+ 	sp := &gosnmp.SnmpPacket{}
+ 	for _, oid := range oids {
+ 		v, ok := tsc.values[oid]
+@@ -45,6 +51,9 @@ func (tsc *testSNMPConnection) Get(oids []string) (*gosnmp.SnmpPacket, error) {
+ }
+ 
+ func (tsc *testSNMPConnection) Walk(oid string, wf gosnmp.WalkFunc) error {
++	if tsc.err != nil {
++		return tsc.err
++	}
+ 	for void, v := range tsc.values {
+ 		if void == oid || (len(void) > len(oid) && void[:len(oid)+1] == oid+".") {
+ 			if err := wf(gosnmp.SnmpPDU{
+@@ -62,6 +71,11 @@ func (*testSNMPConnection) Reconnect() error {
+ 	return nil
+ }
+ 
++func (tsc *testSNMPConnection) Close() error {
++	tsc.closed = true
++	return nil
++}
++
+ var tsc = &testSNMPConnection{
+ 	host: "tsc",
+ 	values: map[string]any{
+@@ -566,6 +580,34 @@ func TestGather(t *testing.T) {
+ 	require.Equal(t, 123456, m2.Fields["myOtherField"])
+ }
+ 
++func TestGatherClosesConnectionOnError(t *testing.T) {
++	conn := &testSNMPConnection{
++		host: "tsc",
++		err:  errors.New("incoming packet is not authentic, discarding"),
++	}
++	s := &Snmp{
++		Agents: []string{"TestGather"},
++		Name:   "mytable",
++		Fields: []snmp.Field{
++			{
++				Name: "myfield",
++				Oid:  ".1.0.0.1.2",
++			},
++		},
++		Log:             testutil.Logger{},
++		connectionCache: []snmp.Connection{conn},
++	}
++
++	var acc testutil.Accumulator
++	require.NoError(t, s.Gather(&acc))
++	require.Len(t, acc.Errors, 1)
++	require.ErrorContains(t, acc.Errors[0], "not authentic")
++
++	// The failed connection is closed so the next request reconnects
++	require.True(t, conn.closed)
++	require.Same(t, conn, s.connectionCache[0])
++}
++
+ func TestGather_host(t *testing.T) {
+ 	s := &Snmp{
+ 		Agents: []string{"TestGather"},
+@@ -597,8 +639,9 @@ func TestGather_host(t *testing.T) {
+ }
+ 
+ func TestSnmpInitGosmi(t *testing.T) {
+-	testDataPath, err := filepath.Abs("../../common/snmp/testdata/gosmi")
+-	require.NoError(t, err)
++	// Use a relative path as gosmi treats a colon in an absolute path as a
++	// path list separator.
++	testDataPath := "../../common/snmp/testdata/gosmi"
+ 
+ 	s := &Snmp{
+ 		Tables: []snmp.Table{
+diff --git a/plugins/processors/snmp_lookup/lookup_test.go b/plugins/processors/snmp_lookup/lookup_test.go
+index e8aa766..59654ba 100644
+--- a/plugins/processors/snmp_lookup/lookup_test.go
++++ b/plugins/processors/snmp_lookup/lookup_test.go
+@@ -53,6 +53,10 @@ func (*testSNMPConnection) Reconnect() error {
+ 	return errors.New("not implemented")
+ }
+ 
++func (*testSNMPConnection) Close() error {
++	return errors.New("not implemented")
++}
++
+ func TestRegistry(t *testing.T) {
+ 	require.Contains(t, processors.Processors, "snmp_lookup")
+ 	require.IsType(t, &SNMPLookup{}, processors.Processors["snmp_lookup"]())

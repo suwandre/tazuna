@@ -1,0 +1,9 @@
+`slug` in `_index.md` now works for sections, taxonomies and terms. It replaces that directory's name in the URL for the page itself and everything beneath it. Tests in `./hugolib/...` and `./resources/...` pass, and gofmt is clean. I didn't run `./check.sh`.
+
+With your example, the Spanish pages come out as `/es/ayuda/` and `/es/ayuda/como-frobear/`, and the English ones stay at `/help/` and `/help/how-to-frob/`. Nested sections, regular pages and leaf bundles under a slugged section inherit the parent's slug. Slugs are also applied through several levels of nesting (a slug on a child section combines with its parent's).
+
+How it works: `applySectionSlugs` in `hugolib/page__paths.go` goes up the page's section chain and rewrites any directory that has a slug. A new `SlugDir` field on `TargetPathDescriptor` carries the result, and `CreateTargetPaths` in `resources/page/page_paths.go` uses it in place of the section path (sections) or container dir (pages).
+
+If a page has `url` or a matching `[permalinks]` rule, that still takes precedence and the slug is ignored. The permalink tokens `:sections` and `:section` also still use the real directory names, not slugs.
+
+I added `TestSlugInSectionTaxonomyAndTermPages` to `hugolib/page_permalink_test.go`. It builds an en/es site covering sections, nested sections, plain pages, bundles, a taxonomy and a term. It failed before the change and passes now.

@@ -1,0 +1,16 @@
+I finished the fix and committed it. The tree is clean, and unit tests, lint and the relevant integration tests all pass.
+
+**What the previous attempt left:** it had committed its work, so there was nothing uncommitted. The parser fix and the test commits meet the maintainer's spec:
+- A path in a diff header now loses whatever single prefix git put in front of it (`i/`, `w/`, `c/`, …). This also works for C-quoted paths and paths in subdirectories. `/dev/null` stays `/dev/null`, and a path with no prefix resolves to nothing.
+- Sections with no `---`/`+++` lines take their path from `rename to`/`copy to`. Otherwise the `diff --git` line is split where both halves name the same path. If no split matches, the path is empty.
+- There's a test commit that shows the bug first, then the fix, plus a new integration test, `stage_hunk_with_mnemonic_prefix`.
+- Every diff lazygit asks git for now carries `-c` overrides for `diff.noprefix`, `diff.mnemonicPrefix` and `diff.srcPrefix`/`diff.dstPrefix`. I checked against real git 2.55, with all four set to unusual values: `git diff` and `git stash show -p` still print `a/`/`b/`.
+
+**What I added:** one diff was still missed. On git older than 2.35, "stash staged changes" pipes `git stash show -p` into `git apply -R` without the overrides, so `diff.noprefix` would break that patch. I added the overrides there as `24b2484 fixup! Ask git for diff paths with the standard prefixes`. No test covers that old-git path.
+
+**Checks:** `go test ./... -short` passes and `golangci-lint` reports 0 issues. These integration tests also pass: `stage_hunk_with_mnemonic_prefix`, `stage_diff_lines`, `unstage_diff_lines`, `move_patch_to_index_with_custom_diff_config` and the whole stash suite. `just` isn't installed here, so I ran the underlying commands directly.
+
+**For you:**
+- The branch has the earlier `fixup!`/`amend!` commits plus mine. They're for you to fold in with `git rebase --autosquash`; I haven't squashed anything.
+- The earlier commits carry a `Co-authored-by: deepseek-v4.1-flash` trailer, which is accurate because that model wrote them. My fixup has no trailer, but its message is thrown away when it's folded in.
+- I didn't open a PR, since AGENTS.md forbids it.

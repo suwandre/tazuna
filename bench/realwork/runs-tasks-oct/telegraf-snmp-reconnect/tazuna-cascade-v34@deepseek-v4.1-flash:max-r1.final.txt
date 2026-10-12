@@ -1,0 +1,18 @@
+I fixed the failing test, and all three SNMP packages now pass. The cause was the test environment, not the reconnect fix.
+
+**Why it failed:** `TestSnmpInitGosmi` fails the same way with the previous changes stashed. It gives the MIB library (gosmi) an absolute path to the test MIB files. gosmi splits its search path on `:`, and this checkout's directory name contains one (`...deepseek-v4.1-flash:max-...`). So the path got cut in two and every MIB failed to load. The test also never sets a logger, so the first warning about a failed load hit a nil logger and crashed. The common package's gosmi tests don't hit this because they also load a relative path.
+
+**Fix (test only):** In `plugins/inputs/snmp/snmp_test.go`, the test now uses a relative path (`../../common/snmp/testdata/gosmi`), with a comment explaining why. It also sets `Log: testutil.Logger{}`, so a failed load produces a warning instead of a crash.
+
+**The previous model's reconnect fix:** I reviewed it against gosnmp's source (v1.45.0 in the module cache, not the v1.44.0 in the report) and kept it as is:
+- The `snmp.Connection` interface now has `Close()`.
+- In the shared wrapper, `Get` and `Walk` reconnect first if the connection was closed.
+- `Reconnect` on a closed SNMPv3 connection clears the agent's engine ID, boot count, engine time and `ContextEngineID`. gosnmp then rediscovers the engine on the next request. An open connection keeps what it already discovered.
+- `inputs.snmp` closes an agent's connection whenever gathering its top-level fields or any table fails.
+
+**Checks against gosnmp:**
+- `Close` sets the connection to nil, so `Reconnect` will open a new one.
+- An empty engine ID makes gosnmp run discovery again, and that refills `ContextEngineID`.
+- Telegraf never sets `ContextEngineID` from config, so clearing it doesn't throw away user settings.
+
+**Tests:** `gofmt` and `go vet` are clean, and `go test -count=1` passes for `./plugins/common/snmp/`, `./plugins/inputs/snmp/` and `./plugins/processors/snmp_lookup/`. These include the earlier tests for the engine-state reset on reconnect and for closing the connection on field or table errors. Nothing was tested against a real SNMPv3 agent that restarts.

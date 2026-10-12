@@ -1,0 +1,21 @@
+Parentheses around a plain duration literal in an offset or range bracket now survive `Expr.String()`. `go test` passes for `promql/parser`, `promql` and `web`. I did not run `make lint`.
+
+**Fix.** `NumberLiteral` has no `Wrapped` field, so a parenthesised literal is now stored as a unary-plus `*DurationExpr` with `Wrapped: true`. A unary-plus `DurationExpr` already prints as its operand, so the output is just `(5)`. `-(5)` becomes a `SUB` wrapping that node.
+- The code is in `promql/parser/parse.go`, in `wrapDurationExpr` and `applyUnaryOpToDurationExpr`. `applyUnaryOpToDurationExpr` now takes the `(` token instead of a `wrapped` bool, so it can record the paren position.
+- The grammar actions in `generated_parser.y` are updated, and `generated_parser.y.go` is regenerated with goyacc v0.6.0.
+
+**Round-trip results**
+- `foo offset (5)` → `foo offset (5)`.
+- `foo offset -(5)` → `foo offset -(5)`.
+- `foo offset (5m)` → `foo offset (5m)`.
+- `foo[(5s)]` → `foo[(5s)]`.
+- `foo offset +(5)` → `foo offset (5)`. The `+` is dropped, as it already is for `+(5m + 1m)`.
+
+**Parse-time checks.** The "division by zero", "modulo by zero" and "duration must be greater than 0" errors used to fire only on a bare literal. A new `constantDurationValue` helper looks through parens and unary signs, so `(4d/(0))` and `foo[(0)]` are still rejected at parse time.
+
+**Behaviour changes**
+- `foo offset (5)`, `foo offset +(5)` and `foo offset -(5)` now set `OriginalOffsetExpr` instead of `OriginalOffset`. The duration visitor in `promql/durations.go` resolves it at evaluation time, and these forms already required `ExperimentalDurationExpr`.
+- The `foo offset +(5)` and `foo offset -(5)` cases in `parse_test.go` now expect the expression form.
+- The "must be greater than 0" error for `foo[(0)]` now has position range 4–6, because it covers the parenthesised node, not just the literal.
+
+**Tests.** I added round-trip cases to `printer_test.go` and the two parse-error cases above to `parse_test.go`.

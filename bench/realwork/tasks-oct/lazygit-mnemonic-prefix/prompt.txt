@@ -1,0 +1,30 @@
+mnemonicPrefix = true in gitconfig breaks hunk staging
+
+### Describe the bug
+Setting `mnemonicPrefix = true` under `[diff]` in gitconfig breaks staging hunks in the latest lazygit. Pressing `space` in the focused diff shows "Apply Patch" in the command log, but nothing gets staged. Discarding and unstaging are affected the same way.
+
+### To Reproduce
+1. `git config --global diff.mnemonicPrefix true`
+2. Modify a tracked file in any repo
+3. In lazygit, select the file in the Files panel and press `enter` to focus its diff
+4. Press `space` on a hunk or line
+5. "Apply Patch" appears in the command log, but the change stays unstaged (`git status` confirms)
+
+### Expected behavior
+The selected hunk or line is staged, the same as without `diff.mnemonicPrefix`.
+
+### Version info
+version=0.66.0 (regression in this release), os=linux, arch=amd64, git version=2.55.0
+
+---
+
+Notes from the maintainer:
+
+With `diff.mnemonicPrefix`, git names the two sides of a diff by what they are instead of `a/` and `b/`: `i/` (index) and `w/` (working tree) for the working tree's diff, `c/` (commit) and `i/` for the staged diff, and so on. lazygit reads the file path of each diff section out of its header (the `---`/`+++` lines, or the `diff --git` line when those are missing) to work out which file and line a row of the focused diff belongs to, and that only understands `a/`/`b/`. Expected behavior after the fix:
+
+- A path in a diff header resolves the same whatever single-component prefix git put in front of it (`a/`, `b/`, `i/`, `w/`, `c/`, ...), including C-quoted paths (`"w/caf\303\251.go"` is `café.go`) and paths in subdirectories (`b/dir/file.go` is `dir/file.go`). `/dev/null` stays `/dev/null`. A header path with no prefix component at all can't be resolved reliably and should resolve to nothing (empty) rather than a guess.
+- When a section has no `---`/`+++` lines (a mode change, a binary file, a rename or copy without content changes), the path comes from the `rename to` / `copy to` line if there is one, otherwise from the `diff --git` line. Parsing the `diff --git` line must not depend on `b/` either: paths can contain spaces (and even something that looks like ` w/`), so split it where both halves name the same path once their prefixes are stripped. If the two halves never name the same path, resolve nothing.
+- Make sure the diffs lazygit itself asks git for (and turns into patches for `git apply`) always carry a prefix it can strip, even if the user configured `diff.noprefix` or custom `diff.srcPrefix`/`diff.dstPrefix`.
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

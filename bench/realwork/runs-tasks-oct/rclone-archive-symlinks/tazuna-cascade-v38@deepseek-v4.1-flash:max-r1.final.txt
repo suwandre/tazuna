@@ -1,0 +1,31 @@
+## Summary
+
+Added symlink support to the archive backend, matching the project's existing convention for translated symlinks.
+
+### What changed
+
+**`backend/archive/zip/zip.go`**
+- Added a `links` field read from `fs.GetConfig(ctx).Links`.
+- In `readZip`, entries with `os.ModeSymlink` are now detected. Without `-l/--links` they are skipped and counted; with `--links` the `.rclonelink` suffix is appended (the member already stores the target as its content, so it reads back correctly through the existing `Object.Open`, including range/seek handling).
+- A single NOTICE naming the flag is shown when symlinks were skipped.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Same `links` field/config wiring.
+- `List` now handles `os.ModeSymlink` entries: skipped without `--links`, otherwise turned into an `Object` (via the new `objectFromLink`) whose name carries `.rclonelink` and whose size is the target length.
+- New `readlink` helper pulls the target from `squashfs.StatT.LinkTarget`.
+- `newObjectNative` names entries the same way `List` does (suffix + symlink skip) so listing and `NewObject` agree on which names exist.
+- `Object.Open` for a link returns the target path, clamped like the local backend's `openTranslatedLink`, so range/seek work.
+- A regular file literally named `*.rclonelink` is left alone (symlink-ness is decided by mode, not name).
+
+**Tests**
+- `zip_internal_test.go`: `TestReadZipSymlink` — skip by default, `.rclonelink` + target read with `--links`.
+- `archive_internal_test.go`: `TestArchiveSquashfsSymlink` (list/open parity, `.rclonelink`-named regular file stays regular) and `TestArchiveZipSymlinkEscape` (hostile symlink + member inside it must not write outside the destination).
+
+**`docs/content/archive.md`**: added a "Symlinks" section with the flag semantics and example.
+
+### Verification
+- `RCLONE_CONFIG=/notfound go test ./backend/archive/...` — all packages pass.
+- Targeted `TestReadZipSymlink`, `TestArchiveSquashfsSymlink`, `TestArchiveZipSymlinkEscape` pass; `go vet ./backend/archive/...` clean; `gofmt -l backend/archive/` empty.
+- `go build ./backend/... ./fs/...` and `go test ./cmd/archive/` pass.
+
+Note: this intentionally changes the zip backend's default listing — a symlink used to appear as a regular file containing the target and is now skipped unless `--links` is given (as documented).

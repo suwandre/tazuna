@@ -1,0 +1,30 @@
+`return` now works anywhere in a template, not just as the last command of a partial. It stops execution at that point, and the fork change is small (details below). I didn't commit anything. `go test` passes for `./tpl/...`, `./hugolib/...` and `./resources/...`, and `go vet` is clean on the packages I touched.
+
+**How it works**
+- **Sentinel error:** `return` is now `partials.Namespace.Return(args ...any) (any, error)`. It always returns a `*texttemplate.ReturnError{Value}`, and it errors if called with more than one argument.
+- **Fork change** (`texttemplate/hugo_template.go`): about 25 lines in Hugo's own file, and `exec.go` is untouched.
+  - `evalCall` turns a `ReturnError` into a panic instead of an "error calling …" failure.
+  - `executeWithState` catches that panic and returns it as the error.
+  - `try` re-panics it, so `try` can't swallow a return.
+- **Store** (`templatestore.go`): `ExecuteWithContext` treats a return as success. `ExecuteWithContextAndKey` passes the `ReturnError` through unwrapped so partials can read the value.
+- **Partials** (`partials.go`): a partial that hits `return` yields its value (`{{ return }}` gives nil). `contextWrapper` and the `$` rebinding are gone.
+- **Transformer** (`templatetransform.go`): the `returnNode` hoisting and the wrapper template are removed. It still sets `HasReturn` on a partial that uses `return`.
+
+**Behaviour changes to be aware of**
+- **Fall-through:** a partial that contains `return` but reaches its end without hitting it returns nil and discards its output. That matches what happened before, apart from the hoisting.
+- **Old syntax kept:** `{{ return add . 42 }}` and `{{ return $x | string }}` still work. A small rewrite wraps the pipeline as `return (add . 42)`. This is the one remaining AST rewrite; I kept it for compatibility.
+- **`return 1 2`:** that rewrite makes it fail with Go's "can't give argument to non-function" error, not my "at most one argument" message.
+- **`return` from nested templates:** inside a nested `{{ template }}` it returns from the whole execution.
+- **Edge case I didn't change:** a `return` in the body of `{{ with partial … }}` now runs as a real early return if the partial doesn't call `inner`. Before, it was effectively a no-op there.
+- **Existing test changed:** I updated `TestPartialReturnPanicIssue13600`. Its input was invalid (`delimit` called on a page), and with the new evaluation order it now fails on `delimit` with an ordinary error rather than the old "wrong number of args for string". It still checks that nothing panics.
+
+**New test**
+I added `TestReturnEarly` in `tpl/partials/partials_integration_test.go`. It covers:
+- conditional returns in partials;
+- return from inside a `range`;
+- a return with no value;
+- return from a nested `define`d template;
+- `partialCached`;
+- an early return in `home.html` that stops rendering.
+
+I haven't updated any docs for the new behaviour.

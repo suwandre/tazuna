@@ -1,0 +1,176 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..9a81eff 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -109,6 +109,48 @@ func (l pagePaths) OutputFormats() page.OutputFormats {
+ 	return l.outputFormats
+ }
+ 
++// sluggedSectionDir returns the section path of p with the last element
++// of each section replaced by its slug, if set.
++// It returns an empty string if no section in the chain has a slug.
++func sluggedSectionDir(p *pageState, unnormalized bool) string {
++	var chain []page.Page
++	for cur := p.CurrentSection(); cur != nil && !cur.IsHome(); cur = cur.Parent() {
++		chain = append(chain, cur)
++	}
++
++	var (
++		hasSlug bool
++		prev    string
++		b       strings.Builder
++	)
++	for i := len(chain) - 1; i >= 0; i-- {
++		pi := chain[i].PathInfo()
++		if unnormalized {
++			pi = pi.Unnormalized()
++		}
++		rel := strings.TrimPrefix(pi.Base(), prev)
++		prev = pi.Base()
++		if slug := chain[i].Slug(); slug != "" {
++			hasSlug = true
++			rel = path.Join(path.Dir(rel), slug)
++		}
++		b.WriteString(rel)
++	}
++
++	if !hasSlug {
++		return ""
++	}
++	if !kinds.IsBranch(p.Kind()) {
++		// Directories without an _index file aren't sections.
++		pi := p.PathInfo()
++		if unnormalized {
++			pi = pi.Unnormalized()
++		}
++		b.WriteString(strings.TrimPrefix(pi.ContainerDir(), prev))
++	}
++	return b.String()
++}
++
+ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error) {
+ 	s := p.s
+ 	d := s.Deps
+@@ -132,6 +174,11 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		URL:         pm.pageConfig.URL,
+ 	}
+ 
++	switch p.Kind() {
++	case kinds.KindPage, kinds.KindSection, kinds.KindTaxonomy, kinds.KindTerm:
++		desc.Dir = sluggedSectionDir(p, s.Conf.DisablePathToLower())
++	}
++
+ 	if pm.Slug() != "" {
+ 		desc.BaseName = pm.Slug()
+ 	} else if pm.isStandalone() && pm.standaloneOutputFormat.BaseName != "" {
+diff --git a/hugolib/page_permalink_test.go b/hugolib/page_permalink_test.go
+index d5ae693..bc438f4 100644
+--- a/hugolib/page_permalink_test.go
++++ b/hugolib/page_permalink_test.go
+@@ -201,3 +201,69 @@ path = '/books/**'
+ 
+ 	b.AssertFileContent("public/shelf/my-book/index.html", "RelPermalink: /shelf/my-book/")
+ }
++
++func TestSectionSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = 'https://example.org/'
++defaultContentLanguage = 'en'
++defaultContentLanguageInSubdir = false
++disableKinds = ['rss','sitemap']
++[languages.en]
++[languages.es]
++[taxonomies]
++tag = 'tags'
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: Frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Frobear
++slug: como-frobear
++---
++-- content/help/sub/p.es.md --
++---
++title: P
++tags: [t1]
++---
++-- content/help/sub/p.en.md --
++---
++title: P
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/t1/_index.es.md --
++---
++title: T1
++slug: uno
++---
++-- layouts/all.html --
++{{ .Kind }}|{{ .RelPermalink }}|
++`
++
++	b := Test(t, files)
++
++	b.AssertFileExists("public/help/index.html", true)
++	b.AssertFileExists("public/help/how-to-frob/index.html", true)
++	b.AssertFileExists("public/help/sub/p/index.html", true)
++	b.AssertFileContent("public/es/ayuda/index.html", "section|/es/ayuda/|")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "page|/es/ayuda/como-frobear/|")
++	b.AssertFileContent("public/es/ayuda/sub/p/index.html", "page|/es/ayuda/sub/p/|")
++	b.AssertFileContent("public/es/etiquetas/index.html", "taxonomy|/es/etiquetas/|")
++	b.AssertFileContent("public/es/etiquetas/uno/index.html", "term|/es/etiquetas/uno/|")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..08b1cdb 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -50,6 +50,10 @@ type TargetPathDescriptor struct {
+ 	// 2) the file base name (TranslationBaseName).
+ 	BaseName string
+ 
++	// Dir, if set, replaces the section path (branch pages) or the
++	// container dir (regular pages). It's set when a section has a slug.
++	Dir string
++
+ 	// PrefixFilePath contains zero or more content dimensions used as a file
+ 	// path prefix. Dimensions are ordered role/version/language for
+ 	// single-host and language/role/version for multihost.
+@@ -165,6 +169,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.Dir != "" {
++			pb.Add(d.Dir)
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}
+@@ -206,7 +212,11 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			if dir := d.Path.ContainerDir(); dir != "" {
++			dir := d.Path.ContainerDir()
++			if d.Dir != "" {
++				dir = d.Dir
++			}
++			if dir != "" {
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {

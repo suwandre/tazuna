@@ -1,0 +1,19 @@
+I fixed the bug: every `import` block that targets an instance of a `for_each` or `count` resource is now honored. The new tests and the `internal/refactoring` and `internal/terraform` packages pass.
+
+**Cause:** `refactoring.FindImportStatements` (`internal/refactoring/import_statement.go`) collected import blocks into a map keyed by the resource address without the instance key. So `terraform_data.t["a"]` and `terraform_data.t["b"]` both became `terraform_data.t`. When a second block for the same resource turned up, the code assumed it came from a child module and dropped it, since a parent module's block is meant to win. That is why the first block declared survived, not the lowest key, and why single-instance resources were unaffected. It's also why no modules are needed to reproduce it.
+
+**Fix:**
+- `FindImportStatements` now returns a list of every block, in the order they're declared, with parent modules visited before children.
+- It still remembers which module first claimed each resource. Blocks from that same module are all kept. Blocks from a child module are still overridden when a parent already targets that resource, same as before.
+- Two blocks targeting the exact same instance in one module are still reported as an error elsewhere, as before.
+- `findImportTargets` in `internal/terraform/context_plan.go` now loops over that list.
+
+**Tests:**
+- `TestContext2Plan_importMultipleBlocksSameResource` in `internal/terraform/context_plan_import_test.go` covers four cases: separate blocks on a `for_each` resource (declared out of order), on a `count` resource, a `for_each` import block mixed with a separate single-instance block, and the same pattern inside a module. Before the fix it failed in exactly the way the report describes: only the first block imported and the other instances were planned for create. It passes now.
+- `TestFindImportStatements` in `internal/refactoring/import_statement_test.go`, with fixtures in `testdata/import-statements/`, checks that all blocks are kept in declaration order and that a root-module block still overrides a child module's block for the same resource.
+
+**Test runs:**
+- `go vet` is clean, and `internal/refactoring`, `internal/terraform`, `internal/backend/local` and the `internal/command/*` subpackages all pass.
+- `internal/command` itself has one failure, `TestInit_providerLockFileReadonly`, a lock-file checksum mismatch. It fails the same way on the original code, so it isn't caused by this change.
+
+**Before merging:** I added a changelog entry at `.changes/v1.17/BUG FIXES-20261011-120000.yaml` with `Issue: "TODO"` because I don't know this issue's number. Please fill it in. Nothing has been committed.

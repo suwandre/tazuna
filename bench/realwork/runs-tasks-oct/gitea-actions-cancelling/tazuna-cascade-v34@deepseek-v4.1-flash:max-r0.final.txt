@@ -1,0 +1,18 @@
+## Summary
+
+**Root causes and fixes**
+
+1. **Caller cancelled prematurely** (`models/actions/run_job.go`)
+   `cancelOneJob` marked any task-less job — including reusable-workflow callers — as `cancelled` immediately, even while a child was still `cancelling` waiting for its runner to acknowledge. When the runner later acknowledged, `RefreshReusableCallerStatus` saw the caller already `cancelled`, made no update, and therefore never refreshed the attempt/run, leaving the run stuck in `cancelling`.
+   - `cancelOneJob` now routes reusable callers to a new `cancelReusableCallerJob`: a caller with children is re-aggregated from them (staying `cancelling` while any child is), so the child's acknowledgement changes the caller to `cancelled` and cascades up through nested callers to the attempt and run. A caller without children (never expanded) is still cancelled directly as before.
+
+2. **Settled run never woke its concurrency waiters** (`services/actions/cancel.go`)
+   When cancelling updated no job (all jobs already done, or none), `SettleRunAfterCancel` only wrote the run status and nothing checked its concurrency group. `cancelRun` now emits the run into the job emitter when no job changed, so `checkRunConcurrency` releases the group and re-emits the blocked runs.
+
+**Tests**
+- `models/actions/run_job_test.go`: `TestCancelJobs_ReusableCallerWaitsForChild` — caller/attempt/run stay `cancelling` until the child's runner acknowledges, then all become `cancelled`. Fails before the fix (caller = cancelled, run stuck cancelling), passes after.
+- `services/actions/cancel_test.go` (new): `TestForceCancelRun_WakesConcurrencyWaiter` — a stuck cancelling run holding a concurrency group is emitted and its blocked waiter starts. Fails before the fix, passes after.
+
+**Verification**
+- Full `go test ./models/actions/` and `go test ./services/actions/` pass; new tests re-run fresh with `-count=1`.
+- `make fmt`, `make lint-go` (0 issues), `go build ./...`, and `git diff --check` all clean.

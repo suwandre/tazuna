@@ -1,0 +1,430 @@
+diff --git a/pkg/commands/git_commands/diff.go b/pkg/commands/git_commands/diff.go
+index 01bb670..e218354 100644
+--- a/pkg/commands/git_commands/diff.go
++++ b/pkg/commands/git_commands/diff.go
+@@ -239,6 +239,7 @@ func (self *DiffCommands) DiffIndexCmdObj(diffArgs ...string) *oscommands.CmdObj
+ 	return self.cmd.New(
+ 		NewGitCmd("diff-index").
+ 			Config("diff.noprefix=false").
++			AddDiffPrefixes().
+ 			Arg("--submodule", "--no-ext-diff", "--no-color", "--patch").
+ 			Arg(diffArgs...).ToArgv(),
+ 	)
+diff --git a/pkg/commands/git_commands/git_command_builder.go b/pkg/commands/git_commands/git_command_builder.go
+index a4bd734..67f5938 100644
+--- a/pkg/commands/git_commands/git_command_builder.go
++++ b/pkg/commands/git_commands/git_command_builder.go
+@@ -144,6 +144,11 @@ func (self *GitCommandBuilder) NoLineEndingConversion() *GitCommandBuilder {
+ 		Config("core.safecrlf=false")
+ }
+ 
++// AddDiffPrefixes uses Git's standard a/ and b/ prefixes regardless of diff config.
++func (self *GitCommandBuilder) AddDiffPrefixes() *GitCommandBuilder {
++	return self.Arg("--src-prefix=a/", "--dst-prefix=b/")
++}
++
+ func (self *GitCommandBuilder) AddCommonDiffArgs(diffRendererConfigManager *config.DiffRendererConfigManager, userConfig *config.UserConfig, mode DiffMode) *GitCommandBuilder {
+ 	contextSize := userConfig.Git.DiffContextSize
+ 	useExtDiff := mode == DiffModeRendered && diffRendererConfigManager.GetDiffRendererType() == config.DiffRendererType_ExtDiff
+@@ -158,7 +163,10 @@ func (self *GitCommandBuilder) AddCommonDiffArgs(diffRendererConfigManager *conf
+ 		Arg(fmt.Sprintf("--find-renames=%d%%", userConfig.Git.RenameSimilarityThreshold)).
+ 		// The renderer's own arguments to git — a word diff, say — are part of the
+ 		// rendering, so they go with it.
+-		ArgIf(mode == DiffModeRendered, diffRendererConfigManager.GetRawGitArgs()...)
++		ArgIf(mode == DiffModeRendered, diffRendererConfigManager.GetRawGitArgs()...).
++		// Patches passed to git apply must have prefixes that are independent of the
++		// user's diff prefix configuration.
++		ArgIf(mode == DiffModePlain, "--src-prefix=a/", "--dst-prefix=b/")
+ }
+ 
+ func (self *GitCommandBuilder) ToArgv() []string {
+diff --git a/pkg/commands/git_commands/patch.go b/pkg/commands/git_commands/patch.go
+index 823206c..d88e2f7 100644
+--- a/pkg/commands/git_commands/patch.go
++++ b/pkg/commands/git_commands/patch.go
+@@ -435,6 +435,7 @@ func (self *PatchCommands) PullPatchIntoNewCommitBefore(
+ func (self *PatchCommands) diffHeadAgainstCommit(commit *models.Commit) (string, error) {
+ 	cmdArgs := NewGitCmd("diff").
+ 		Config("diff.noprefix=false").
++		AddDiffPrefixes().
+ 		Arg("--no-ext-diff", "--no-color").
+ 		Arg("HEAD.." + commit.Hash()).
+ 		ToArgv()
+diff --git a/pkg/commands/git_commands/stash.go b/pkg/commands/git_commands/stash.go
+index f904a7a..6d9a31f 100644
+--- a/pkg/commands/git_commands/stash.go
++++ b/pkg/commands/git_commands/stash.go
+@@ -83,6 +83,7 @@ func (self *StashCommands) Hash(index int) (string, error) {
+ func (self *StashCommands) ShowStashEntryCmdObj(index int, mode DiffMode) *oscommands.CmdObj {
+ 	// "-u" is the same as "--include-untracked", but the latter fails in older git versions for some reason
+ 	cmdArgs := NewGitCmd("stash").Arg("show").
++		Config("diff.noprefix=false").
+ 		AddCommonDiffArgs(self.diffRendererConfigManager, self.UserConfig(), mode).
+ 		Arg("-p").
+ 		Arg("--stat").
+diff --git a/pkg/commands/git_commands/stash_test.go b/pkg/commands/git_commands/stash_test.go
+index 35b687c..be577e9 100644
+--- a/pkg/commands/git_commands/stash_test.go
++++ b/pkg/commands/git_commands/stash_test.go
+@@ -114,7 +114,7 @@ func TestStashStashEntryCmdObj(t *testing.T) {
+ 			contextSize:         3,
+ 			similarityThreshold: 50,
+ 			ignoreWhitespace:    false,
+-			expected:            []string{"git", "-C", "/path/to/worktree", "stash", "show", "--no-ext-diff", "--unified=3", "--find-renames=50%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
++			expected:            []string{"git", "-C", "/path/to/worktree", "-c", "diff.noprefix=false", "stash", "show", "--no-ext-diff", "--unified=3", "--find-renames=50%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
+ 		},
+ 		{
+ 			testName:            "Show diff with custom context size",
+@@ -122,7 +122,7 @@ func TestStashStashEntryCmdObj(t *testing.T) {
+ 			contextSize:         77,
+ 			similarityThreshold: 50,
+ 			ignoreWhitespace:    false,
+-			expected:            []string{"git", "-C", "/path/to/worktree", "stash", "show", "--no-ext-diff", "--unified=77", "--find-renames=50%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
++			expected:            []string{"git", "-C", "/path/to/worktree", "-c", "diff.noprefix=false", "stash", "show", "--no-ext-diff", "--unified=77", "--find-renames=50%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
+ 		},
+ 		{
+ 			testName:            "Show diff with custom similarity threshold",
+@@ -130,7 +130,7 @@ func TestStashStashEntryCmdObj(t *testing.T) {
+ 			contextSize:         3,
+ 			similarityThreshold: 33,
+ 			ignoreWhitespace:    false,
+-			expected:            []string{"git", "-C", "/path/to/worktree", "stash", "show", "--no-ext-diff", "--unified=3", "--find-renames=33%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
++			expected:            []string{"git", "-C", "/path/to/worktree", "-c", "diff.noprefix=false", "stash", "show", "--no-ext-diff", "--unified=3", "--find-renames=33%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
+ 		},
+ 		{
+ 			testName:            "Show diff with external diff command",
+@@ -139,7 +139,7 @@ func TestStashStashEntryCmdObj(t *testing.T) {
+ 			similarityThreshold: 50,
+ 			ignoreWhitespace:    false,
+ 			diffRendererConfig:  &config.DiffRendererConfig{Type: "extDiff", Command: "difft --color=always"},
+-			expected:            []string{"git", "-C", "/path/to/worktree", "stash", "show", "--ext-diff", "--unified=3", "--find-renames=50%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
++			expected:            []string{"git", "-C", "/path/to/worktree", "-c", "diff.noprefix=false", "stash", "show", "--ext-diff", "--unified=3", "--find-renames=50%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
+ 		},
+ 		{
+ 			testName:            "Show diff using git's external diff config",
+@@ -148,7 +148,7 @@ func TestStashStashEntryCmdObj(t *testing.T) {
+ 			similarityThreshold: 50,
+ 			ignoreWhitespace:    false,
+ 			diffRendererConfig:  &config.DiffRendererConfig{Type: "extDiff"},
+-			expected:            []string{"git", "-C", "/path/to/worktree", "stash", "show", "--ext-diff", "--unified=3", "--find-renames=50%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
++			expected:            []string{"git", "-C", "/path/to/worktree", "-c", "diff.noprefix=false", "stash", "show", "--ext-diff", "--unified=3", "--find-renames=50%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
+ 		},
+ 		{
+ 			testName:            "Ignore whitespace",
+@@ -156,7 +156,7 @@ func TestStashStashEntryCmdObj(t *testing.T) {
+ 			contextSize:         3,
+ 			similarityThreshold: 50,
+ 			ignoreWhitespace:    true,
+-			expected:            []string{"git", "-C", "/path/to/worktree", "stash", "show", "--no-ext-diff", "--unified=3", "--ignore-all-space", "--find-renames=50%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
++			expected:            []string{"git", "-C", "/path/to/worktree", "-c", "diff.noprefix=false", "stash", "show", "--no-ext-diff", "--unified=3", "--ignore-all-space", "--find-renames=50%", "-p", "--stat", "-u", "--color=always", "refs/stash@{5}"},
+ 		},
+ 	}
+ 
+diff --git a/pkg/commands/git_commands/working_tree.go b/pkg/commands/git_commands/working_tree.go
+index 4f4a19a..f88ef32 100644
+--- a/pkg/commands/git_commands/working_tree.go
++++ b/pkg/commands/git_commands/working_tree.go
+@@ -397,6 +397,7 @@ func (self *WorkingTreeCommands) WorktreeFileDiffCmdObj(node models.IFile, mode
+ 	noIndex := !node.GetIsTracked() && !node.GetHasStagedChanges() && !cached && node.GetIsFile()
+ 
+ 	cmdArgs := NewGitCmd("diff").
++		Config("diff.noprefix=false").
+ 		AddCommonDiffArgs(self.diffRendererConfigManager, self.UserConfig(), mode).
+ 		Arg("--submodule").
+ 		Arg(fmt.Sprintf("--color=%s", mode.colorArg(self.diffRendererConfigManager))).
+diff --git a/pkg/commands/git_commands/working_tree_test.go b/pkg/commands/git_commands/working_tree_test.go
+index e9e5e48..9ef16ce 100644
+--- a/pkg/commands/git_commands/working_tree_test.go
++++ b/pkg/commands/git_commands/working_tree_test.go
+@@ -221,7 +221,7 @@ func TestWorkingTreeDiff(t *testing.T) {
+ 			contextSize:         3,
+ 			similarityThreshold: 50,
+ 			runner: oscommands.NewFakeRunner(t).
+-				ExpectGitArgs([]string{"-C", "/path/to/worktree", "diff", "--no-ext-diff", "--unified=3", "--find-renames=50%", "--submodule", "--color=always", "--", "test.txt"}, expectedResult, nil),
++				ExpectGitArgs([]string{"-C", "/path/to/worktree", "-c", "diff.noprefix=false", "diff", "--no-ext-diff", "--unified=3", "--find-renames=50%", "--submodule", "--color=always", "--", "test.txt"}, expectedResult, nil),
+ 		},
+ 		{
+ 			testName: "cached",
+@@ -236,7 +236,7 @@ func TestWorkingTreeDiff(t *testing.T) {
+ 			contextSize:         3,
+ 			similarityThreshold: 50,
+ 			runner: oscommands.NewFakeRunner(t).
+-				ExpectGitArgs([]string{"-C", "/path/to/worktree", "diff", "--no-ext-diff", "--unified=3", "--find-renames=50%", "--submodule", "--color=always", "--cached", "--", "test.txt"}, expectedResult, nil),
++				ExpectGitArgs([]string{"-C", "/path/to/worktree", "-c", "diff.noprefix=false", "diff", "--no-ext-diff", "--unified=3", "--find-renames=50%", "--submodule", "--color=always", "--cached", "--", "test.txt"}, expectedResult, nil),
+ 		},
+ 		{
+ 			testName: "plain",
+@@ -251,7 +251,7 @@ func TestWorkingTreeDiff(t *testing.T) {
+ 			contextSize:         3,
+ 			similarityThreshold: 50,
+ 			runner: oscommands.NewFakeRunner(t).
+-				ExpectGitArgs([]string{"-C", "/path/to/worktree", "diff", "--no-ext-diff", "--unified=3", "--find-renames=50%", "--submodule", "--color=never", "--", "test.txt"}, expectedResult, nil),
++				ExpectGitArgs([]string{"-C", "/path/to/worktree", "-c", "diff.noprefix=false", "diff", "--no-ext-diff", "--unified=3", "--find-renames=50%", "--src-prefix=a/", "--dst-prefix=b/", "--submodule", "--color=never", "--", "test.txt"}, expectedResult, nil),
+ 		},
+ 		{
+ 			testName: "File not tracked and file has no staged changes",
+@@ -266,7 +266,7 @@ func TestWorkingTreeDiff(t *testing.T) {
+ 			contextSize:         3,
+ 			similarityThreshold: 50,
+ 			runner: oscommands.NewFakeRunner(t).
+-				ExpectGitArgs([]string{"-C", "/path/to/worktree", "diff", "--no-ext-diff", "--unified=3", "--find-renames=50%", "--submodule", "--color=always", "--no-index", "--", "/dev/null", "test.txt"}, expectedResult, nil),
++				ExpectGitArgs([]string{"-C", "/path/to/worktree", "-c", "diff.noprefix=false", "diff", "--no-ext-diff", "--unified=3", "--find-renames=50%", "--submodule", "--color=always", "--no-index", "--", "/dev/null", "test.txt"}, expectedResult, nil),
+ 		},
+ 		{
+ 			testName: "Default case (ignore whitespace)",
+@@ -281,7 +281,7 @@ func TestWorkingTreeDiff(t *testing.T) {
+ 			contextSize:         3,
+ 			similarityThreshold: 50,
+ 			runner: oscommands.NewFakeRunner(t).
+-				ExpectGitArgs([]string{"-C", "/path/to/worktree", "diff", "--no-ext-diff", "--unified=3", "--ignore-all-space", "--find-renames=50%", "--submodule", "--color=always", "--", "test.txt"}, expectedResult, nil),
++				ExpectGitArgs([]string{"-C", "/path/to/worktree", "-c", "diff.noprefix=false", "diff", "--no-ext-diff", "--unified=3", "--ignore-all-space", "--find-renames=50%", "--submodule", "--color=always", "--", "test.txt"}, expectedResult, nil),
+ 		},
+ 		{
+ 			testName: "Show diff with custom context size",
+@@ -296,7 +296,7 @@ func TestWorkingTreeDiff(t *testing.T) {
+ 			contextSize:         17,
+ 			similarityThreshold: 50,
+ 			runner: oscommands.NewFakeRunner(t).
+-				ExpectGitArgs([]string{"-C", "/path/to/worktree", "diff", "--no-ext-diff", "--unified=17", "--find-renames=50%", "--submodule", "--color=always", "--", "test.txt"}, expectedResult, nil),
++				ExpectGitArgs([]string{"-C", "/path/to/worktree", "-c", "diff.noprefix=false", "diff", "--no-ext-diff", "--unified=17", "--find-renames=50%", "--submodule", "--color=always", "--", "test.txt"}, expectedResult, nil),
+ 		},
+ 		{
+ 			testName: "Show diff with custom similarity threshold",
+@@ -311,7 +311,7 @@ func TestWorkingTreeDiff(t *testing.T) {
+ 			contextSize:         3,
+ 			similarityThreshold: 33,
+ 			runner: oscommands.NewFakeRunner(t).
+-				ExpectGitArgs([]string{"-C", "/path/to/worktree", "diff", "--no-ext-diff", "--unified=3", "--find-renames=33%", "--submodule", "--color=always", "--", "test.txt"}, expectedResult, nil),
++				ExpectGitArgs([]string{"-C", "/path/to/worktree", "-c", "diff.noprefix=false", "diff", "--no-ext-diff", "--unified=3", "--find-renames=33%", "--submodule", "--color=always", "--", "test.txt"}, expectedResult, nil),
+ 		},
+ 	}
+ 
+diff --git a/pkg/gui/controllers/helpers/diff_line_parser.go b/pkg/gui/controllers/helpers/diff_line_parser.go
+index 8f8420d..47d46b0 100644
+--- a/pkg/gui/controllers/helpers/diff_line_parser.go
++++ b/pkg/gui/controllers/helpers/diff_line_parser.go
+@@ -308,15 +308,15 @@ func diffLineTypeForKind(kind patch.PatchLineKind) types.DiffLineType {
+ 
+ // pathFromDiffHeader extracts the new-file path of a single diff section. A
+ // submodule's section states its path in the line it opens with. For a file of the
+-// repo the path comes from the "+++ b/<path>" line, falling back to "--- a/<path>"
+-// when the new path is /dev/null (a deleted file), and to the "diff --git" line when
+-// there are no such lines at all (a pure rename, which has no hunks).
++// repo the path comes from the "+++" line, falling back to "---" when the new path
++// is /dev/null (a deleted file). Sections without those lines use the destination
++// path from a rename or copy header, or the "diff --git" line when neither is present.
+ func pathFromDiffHeader(fileLines []string) string {
+ 	if path := submodulePath(fileLines[0]); path != "" {
+ 		return path
+ 	}
+ 
+-	var oldPath, newPath string
++	var oldPath, newPath, renamedTo, copiedTo string
+ 	for _, line := range fileLines {
+ 		if strings.HasPrefix(line, "@@") {
+ 			break // past the header
+@@ -326,6 +326,10 @@ func pathFromDiffHeader(fileLines []string) string {
+ 			newPath = pathFromDiffHeaderField(strings.TrimPrefix(line, "+++ "))
+ 		case strings.HasPrefix(line, "--- "):
+ 			oldPath = pathFromDiffHeaderField(strings.TrimPrefix(line, "--- "))
++		case strings.HasPrefix(line, "rename to "):
++			renamedTo = decodeDiffHeaderField(strings.TrimPrefix(line, "rename to "))
++		case strings.HasPrefix(line, "copy to "):
++			copiedTo = decodeDiffHeaderField(strings.TrimPrefix(line, "copy to "))
+ 		}
+ 	}
+ 
+@@ -335,12 +339,18 @@ func pathFromDiffHeader(fileLines []string) string {
+ 	if oldPath != "" && oldPath != "/dev/null" {
+ 		return oldPath
+ 	}
++	if renamedTo != "" {
++		return renamedTo
++	}
++	if copiedTo != "" {
++		return copiedTo
++	}
+ 	return pathFromDiffGitLine(fileLines[0])
+ }
+ 
+-// pathFromDiffHeaderField decodes one path field of a diff header — the part
+-// after "--- " or "+++ ", or one of the two paths on the "diff --git" line —
+-// into the repo-relative path it names.
++// pathFromDiffHeaderField decodes one prefixed path field of a diff header —
++// the part after "--- " or "+++ ", or one of the two paths on the "diff --git"
++// line — into the repo-relative path it names.
+ //
+ // git spells such a field in three ways: plain; terminated by a tab, when the
+ // path contains a space; or C-quoted as a whole, when the path contains
+@@ -349,9 +359,15 @@ func pathFromDiffHeader(fileLines []string) string {
+ // `"b/caf\303\251"`. The quoting is Go's string syntax, octal escapes included,
+ // so strconv decodes it for us.
+ //
+-// Returns "" for a quoted field we can't decode: better to resolve nothing than
+-// to point a consumer at a path that doesn't exist.
++// Returns "" for a quoted field we can't decode or a field without a prefix:
++// better to resolve nothing than to point a consumer at a path that does not
++// exist.
+ func pathFromDiffHeaderField(field string) string {
++	return stripDiffPathPrefix(decodeDiffHeaderField(field))
++}
++
++// decodeDiffHeaderField decodes a path field without stripping its diff prefix.
++func decodeDiffHeaderField(field string) string {
+ 	field = strings.TrimSuffix(field, "\t")
+ 
+ 	if strings.HasPrefix(field, `"`) {
+@@ -362,17 +378,22 @@ func pathFromDiffHeaderField(field string) string {
+ 		field = unquoted
+ 	}
+ 
+-	return stripDiffPathPrefix(field)
++	return field
+ }
+ 
+-// stripDiffPathPrefix removes the a/ or b/ prefix git puts on the paths in a
+-// diff header. We ask git for these prefixes explicitly (diff.noprefix=false),
+-// so they are always there.
++// stripDiffPathPrefix removes the first path component git prepends to each
++// side of a diff. A path without a component separator does not reveal whether
++// it has a prefix, so it cannot be resolved reliably.
+ func stripDiffPathPrefix(path string) string {
+-	if strings.HasPrefix(path, "a/") || strings.HasPrefix(path, "b/") {
+-		return path[2:]
++	if path == "/dev/null" {
++		return path
++	}
++
++	separator := strings.IndexByte(path, '/')
++	if separator <= 0 {
++		return ""
+ 	}
+-	return path
++	return path[separator+1:]
+ }
+ 
+ // parseDiffLineMetadata parses the payload of an OSC 1717 record, in which a
+@@ -436,17 +457,26 @@ func diffLineTypeFromMetadata(typeField string) (types.DiffLineType, bool) {
+ 	}
+ }
+ 
+-// pathFromDiffGitLine extracts the new-file path from a "diff --git a/X b/X"
+-// line, where the two paths are separated by a space and either may be quoted.
+-// A path containing " b/" (or ` "b/`) would defeat this, but the +++/--- lines
+-// are unambiguous and we only get here when they are absent.
++// pathFromDiffGitLine extracts the new-file path from a "diff --git" line. The
++// two paths may be quoted or contain spaces, so their separator is the space at
++// which stripping both diff prefixes leaves the same path. Renames have different
++// paths and are resolved from their "rename to" line instead.
+ func pathFromDiffGitLine(line string) string {
+ 	rest := strings.TrimPrefix(line, diffFilePrefix)
+-	if idx := strings.LastIndex(rest, ` "b/`); idx != -1 {
+-		return pathFromDiffHeaderField(rest[idx+1:])
+-	}
+-	if idx := strings.LastIndex(rest, " b/"); idx != -1 {
+-		return pathFromDiffHeaderField(rest[idx+1:])
++	var matchedPath string
++	for separator := 0; separator < len(rest); separator++ {
++		if rest[separator] != ' ' {
++			continue
++		}
++		oldPath := pathFromDiffHeaderField(rest[:separator])
++		newPath := pathFromDiffHeaderField(rest[separator+1:])
++		if oldPath == "" || oldPath != newPath {
++			continue
++		}
++		if matchedPath != "" {
++			return ""
++		}
++		matchedPath = newPath
+ 	}
+-	return ""
++	return matchedPath
+ }
+diff --git a/pkg/gui/controllers/helpers/diff_line_parser_test.go b/pkg/gui/controllers/helpers/diff_line_parser_test.go
+index 5c5c412..2f6719e 100644
+--- a/pkg/gui/controllers/helpers/diff_line_parser_test.go
++++ b/pkg/gui/controllers/helpers/diff_line_parser_test.go
+@@ -252,6 +252,11 @@ func TestPathFromDiffHeaderField(t *testing.T) {
+ 		{"a missing file", "/dev/null", "/dev/null"},
+ 		// git terminates the field with a tab when the path has a space in it.
+ 		{"path with a space", "b/with space.go\t", "with space.go"},
++		{"mnemonic prefix", "i/file.go", "file.go"},
++		{"mnemonic prefix in a subdirectory", "w/dir/file.go", "dir/file.go"},
++		{"quoted mnemonic prefix", `"w/caf\303\251.go"`, "café.go"},
++		{"path without prefix", "file.go", ""},
++		{"prefixed path in a subdirectory", "b/dir/file.go", "dir/file.go"},
+ 		// With core.quotePath enabled (the default) every non-ASCII byte is
+ 		// escaped, and the field is quoted as a whole, prefix included.
+ 		{"non-ASCII path", `"b/caf\303\251.go"`, "café.go"},
+@@ -297,6 +302,58 @@ func TestParseDiffLineFromBufferQuotedPath(t *testing.T) {
+ 	assert.Equal(t, parsedDiffLine{Path: "café new.go", Type: types.DiffLineFileHeader, NewLine: 1}, result)
+ }
+ 
++func TestPathFromDiffGitLine(t *testing.T) {
++	scenarios := []struct {
++		name     string
++		line     string
++		expected string
++	}{
++		{"mnemonic prefixes", `diff --git i/file.go w/file.go`, "file.go"},
++		{"spaces containing prefix-like text", `diff --git i/dir with w/file.go w/dir with w/file.go`, "dir with w/file.go"},
++		{"quoted mnemonic prefixes", `diff --git "i/caf\303\251.go" "w/caf\303\251.go"`, "café.go"},
++		{"different paths", `diff --git a/old.go b/new.go`, ""},
++		{"no path prefixes", `diff --git file.go file.go`, ""},
++	}
++
++	for _, s := range scenarios {
++		t.Run(s.name, func(t *testing.T) {
++			assert.Equal(t, s.expected, pathFromDiffGitLine(s.line))
++		})
++	}
++}
++
++func TestPathFromDiffHeaderWithoutContent(t *testing.T) {
++	scenarios := []struct {
++		name     string
++		lines    []string
++		expected string
++	}{
++		{"rename", []string{"diff --git i/old.go w/new.go", "similarity index 100%", "rename from old.go", "rename to new.go"}, "new.go"},
++		{"copy", []string{"diff --git i/source.go w/copy.go", "similarity index 100%", "copy from source.go", "copy to copy.go"}, "copy.go"},
++		{"mode change", []string{"diff --git i/dir/file.go w/dir/file.go", "old mode 100644", "new mode 100755"}, "dir/file.go"},
++	}
++
++	for _, s := range scenarios {
++		t.Run(s.name, func(t *testing.T) {
++			assert.Equal(t, s.expected, pathFromDiffHeader(s.lines))
++		})
++	}
++}
++
++func TestParseDiffLineFromBufferMnemonicPrefixes(t *testing.T) {
++	bufferLines := strings.Split(`diff --git i/dir/café.go w/dir/café.go
++index 1111111..2222222 100644
++--- i/dir/café.go
+++++ w/dir/café.go
++@@ -1 +1 @@
++-old
+++new`, "\n")
++
++	result, ok := parseDiffLineFromBuffer(bufferLines, 6)
++	assert.True(t, ok)
++	assert.Equal(t, parsedDiffLine{Path: "dir/café.go", Type: types.DiffLineAdded, NewLine: 1}, result)
++}
++
+ func TestParseAllDiffLinesFromBuffer(t *testing.T) {
+ 	// Some decoration above the diff, which belongs to no file section: a commit
+ 	// message and a diffstat, as `git show` renders them.
+diff --git a/pkg/integration/tests/main_view/stage_diff_lines.go b/pkg/integration/tests/main_view/stage_diff_lines.go
+index 5e103bd..bce3a00 100644
+--- a/pkg/integration/tests/main_view/stage_diff_lines.go
++++ b/pkg/integration/tests/main_view/stage_diff_lines.go
+@@ -15,6 +15,7 @@ var StageDiffLines = NewIntegrationTest(NewIntegrationTestArgs{
+ 	SetupRepo: func(shell *Shell) {
+ 		shell.CreateFileAndAdd("file1", "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\n")
+ 		shell.Commit("one")
++		shell.SetConfig("diff.mnemonicPrefix", "true")
+ 
+ 		// Two change blocks, far enough apart to stay separate hunks.
+ 		shell.UpdateFile("file1", "one\ntwo\nADD1\nADD2\nthree\nfour\nfive\nsix\nseven\neight\nNINE\nten\n")

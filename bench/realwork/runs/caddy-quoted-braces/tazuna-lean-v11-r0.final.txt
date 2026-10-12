@@ -1,0 +1,16 @@
+Quoted `{` and `}` no longer count as block delimiters, so `respond "{"` now adapts to a `static_response` with body `{`. The `caddyconfig` and `caddytest/integration` tests pass, and `go vet` and `gofmt` are clean on `caddyconfig`.
+
+**The cause:** the parser and `Dispenser` compared token text to `"{"` or `"}"` and ignored whether the token was quoted. A quoted brace was therefore treated as a block opener or closer.
+
+**The fix:**
+- In `caddyconfig/caddyfile/parse.go` and `dispenser.go`, every place that decides what opens or closes a block now also requires the token to be unquoted (`!Token().Quoted()`). That covers address parsing, `directives()` and `directive()`, `NextArg`, `NextBlock`, `ArgErr`, and the snippet/import nesting tracking.
+- I dropped a now-redundant `wasQuoted == 0` check in the "Unexpected next token after '{'" branch. That branch only runs for unquoted braces now.
+- Backtick-quoted and heredoc tokens count as quoted too, since `Token.Quoted()` covers them.
+
+**Tests added:**
+- `TestParseQuotedBraces` in `parse_test.go` covers `"{"`, `"}"`, backticks, and quoted braces inside a nested block.
+- `TestDispenser_QuotedBraces` in `dispenser_test.go` checks that quoted braces are returned as arguments and don't change the nesting level.
+
+I also ran `caddy adapt` on the issue's Caddyfile. `caddy fmt` leaves a file with `respond "{"` and `respond "}"` unchanged.
+
+I did not run the full `go test -race -short ./...` suite or `golangci-lint`.

@@ -1,0 +1,10 @@
+Ask: fix Caddyfile parsing so quoted `{` and `}` aren't block delimiters, with tests. Wanted: the issue's Caddyfile parses and the tests pass.
+For you: Fixed. `:8080 { respond "{" }` now adapts to a `static_response` with body `{`. `go test ./caddyconfig/...` passes for both `caddyfile` and `httpcaddyfile`. Not run: `go vet`, the full `./...` suite, and `golangci-lint`. The package-level test is the only check I ran besides the adapt.
+
+- **Cause:** the lexer already records whether a token was quoted, but the parser and dispenser compared only `Text == "{"` or `"}"`, so a quoted brace was treated as a block delimiter.
+- **Fix:**
+  - `lexer.go`: new `Token.isOpenBrace()` and `isCloseBrace()`, which return true only for unquoted braces.
+  - `dispenser.go` and `parse.go`: every brace check now uses them. That covers `NextArg`, `NextBlock`, `ArgErr`, directive and block collection, `import` snippet nesting, and the open/close assertions.
+- **Tests:** I added table cases to `parse_test.go`. They cover a quoted `"{"` or `"}"` as an argument, the issue's exact input, and a block containing both a quoted brace and real nesting.
+- **Cleanup:** the old special case allowing a quoted `{` on the same line is gone, because quoted braces no longer count as braces at all.
+- **Not touched:** `formatter.go` (`caddy fmt`). I didn't check whether it handles `"{"` correctly.

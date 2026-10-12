@@ -1,0 +1,23 @@
+## Summary
+
+**Root causes**
+
+1. `cancelOneJob` treated a taskless reusable-workflow caller like any other taskless job and wrote `cancelled` immediately, even while a child with a task was still in the `cancelling` handshake. When the runner later acknowledged, the child's update cascaded to the parent, but the parent's status no longer changed, so `RefreshReusableCallerStatus` returned early and the run/attempt was never re-aggregated — stuck in `cancelling` forever. (MySQL/MariaDB also skips the cascade on no-op status updates, which is why sqlite behaved differently.)
+2. `cancelRun` only called `SettleRunAfterCancel` when no job row was updated, and nothing emitted the run after settling. With all jobs already `cancelled`, `CancelJobs` returns nothing, so the run was settled but the job-emitter pass that checks concurrency waiters behind it was never queued.
+
+**Changes**
+
+- `models/actions/run_job.go`
+  - `cancelOneJob` now derives a taskless reusable caller's status from its direct children (`AggregateJobStatus`): it stays `cancelling` while any child awaits its runner's acknowledgement, and only gets `Stopped` set when the aggregate is final. Unexpanded callers (no children) still cancel directly.
+  - `SettleRunAfterCancel` doc updated; it is now also called after partial job updates so a caller whose aggregate didn't change cannot leave the run behind.
+- `services/actions/cancel.go`
+  - Always recompute the run status after `CancelJobs` (handles the "child force-cancelled under an already-cancelled caller" case).
+  - When no job was updated (nothing above emitted the run), emit the settled run explicitly so `checkRunConcurrency` can wake runs blocked on its concurrency group.
+- Tests
+  - `models/actions/run_job_test.go`: nested caller/child cancellation stays `cancelling` across all depth levels until the runner acknowledges via `UpdateTaskByState`, then caller chain, attempt and run become `cancelled`. Verified this test fails on the old code (`expected 8, actual 3` for callers; run stayed `cancelling` after ack).
+  - `services/actions/cancel_test.go` (new): force-cancel of a run whose jobs are all cancelled settles it, emits it, and `checkRunConcurrency` finds the blocked run runnable; force-cancel with a still-cancelling child also settles the run. Verified both fail on the old code.
+
+**Verification**
+
+- `go test -count=1 ./models/actions/ ./services/actions/` — pass.
+- `make fmt`, `make lint-go`, and `golangci-lint run ./models/actions/... ./services/actions/...` — 0 issues.

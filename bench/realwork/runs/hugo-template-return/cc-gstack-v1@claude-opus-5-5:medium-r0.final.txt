@@ -1,0 +1,28 @@
+`return` now works in every template, can appear anywhere, and can be used more than once. It's built the way you suggested, as a sentinel error that template execution traps, and the old AST rewrite (`partialReturnWrapper`, `contextWrapper`, `HasReturn`) is gone. Tests pass in `./tpl/...`, `./hugolib/...`, `./resources/...` and `./internal/js/...`. A full `go test ./...` had two failures I believe are unrelated, though I didn't re-run them on the base commit (see the end).
+
+**Changes to the Go template fork** (about 40 lines, all in `hugo_template.go`, plus one rename):
+- **The error type:** a new `ReturnError{Value any; HasValue bool}`.
+- **Catching it:** when a func call returns a `ReturnError`, `evalCall` panics with it directly instead of wrapping it in `ExecError`. `try` re-panics it rather than swallowing it. `executeWithState` recovers it and returns it as the error.
+- **`template`/`block`:** `walkTemplate` is now a Hugo override that recovers the return, so a `return` inside a `define` stops only that block. Without this, an early return in `main` would also cut off the footer in `baseof.html`. The original is renamed `walkTemplateOld`, the same way `evalCall` is handled, and the rename is also added to `scripts/fork_go_templates/main.go` so future syncs keep it.
+- Range loops already re-panic anything that isn't break/continue, so they needed no change.
+
+**Hugo side:**
+- **The func:** `templates.Return`, aliased `return`. I moved it from the partials namespace because it's no longer partial-only. It takes 0 or 1 args.
+- **The store:** `TemplateStore.ExecuteWithContext` treats the return as success. `ExecuteWithContextAndKey`, which only partials call, passes the `*ReturnError` through.
+- **Partials:** if the partial returned a value, that value is used. Otherwise the rendered output is returned as before.
+- **Kept rewrite:** one small transform turns `{{ return add . 42 }}` into `{{ return (add . 42) }}`, so existing partials that use the old form without parentheses keep working.
+
+**Behaviour changes to review:**
+- **Bare `{{ return }}` in a partial** now returns the output rendered so far. Before, it was effectively a no-op.
+- **Partials always render into a buffer.** The old code skipped buffering (`io.Discard`) for partials that returned a value; now it can't know in advance whether `return` will run.
+- **`TestPartialReturnPanicIssue13600`:** I updated the expected error. `{{ return (delimit . ", ") | string }}` now fails at `delimit` instead of an odd `string` arg-count error that came from the old rewrite. The test still checks that it errors rather than panics.
+- **Partial decorators:** a `return` inside a `with partial … ` block stops only the generated inner partial, not the enclosing template.
+
+**Tests and docs:** I added `TestReturn` and `TestReturnErrors` in `tpl/templates/templates_integration_test.go`. They cover early return in a `block`/`baseof`, return inside `range`, a nested `define` in a partial, `true`/`false`/`nil` return values, `partialCached`, a bare `return`, and `try (return 1)`. I also updated `docs/content/en/functions/go-template/return.md`.
+
+**Check results:**
+- `./check.sh ./tpl/...` passes.
+- The full `./check.sh` stopped at staticcheck warnings in files this change doesn't touch (`config/allconfig/allconfig.go`, `hugolib/integrationtest_builder.go`).
+- In `go test ./...`, the only failures were `TestCommands/mod` (a `hugo mod verify` stderr check after a module download) and `internal/warpc` `TestGreet` ("dispatcher is shutting down"). Neither involves templates.
+
+Nothing is committed.

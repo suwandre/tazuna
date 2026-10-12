@@ -1,0 +1,32 @@
+Support slug in section, taxonomy, and term pages
+
+Currently with multilanguage sites you can localize the URL for pages by setting `slug` in the frontmatter.
+
+However there is no `slug` support for sections. This means the only way to localize a section URL is to use `url` together with `[[cascade]]`. This is annoying since you have to "redo from scratch" the entire URL format, with `:` tokens, duplicating names for parent sections, etc.
+
+Proposal: add support for `slug` in section pages. It would behave the obvious way, basically being equivalent to changing the directory name for the section. It would affect the URL for the section and all descendant pages.
+
+Example:
+
+```
+help/
+    _index.en.md    # contains no slug
+    _index.es.md    # contains slug="ayuda"
+    how-to-frob/
+       index.en.md    # contains no slug
+       index.es.md    # contains slug="como-frobear"
+```
+
+would result in the following paths:
+
+```
+help/
+help/how-to-frob/
+es/ayuda/
+es/ayuda/como-frobear/
+```
+
+
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

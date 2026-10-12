@@ -1,0 +1,17 @@
+`--once` is now available on `k6 run`, `k6 cloud run` and `k6 archive`. Tests and lint pass for `internal/cmd/...` and `lib/executor`. I didn't test `k6 cloud run` (remote or `--local-execution`) end to end; it only gets the flag registered.
+
+- **Core logic**: the new `executor.ApplyOnce` in `lib/executor/execution_config_shortcuts.go` does the transform.
+  - With no scenarios, it creates the `default` scenario as `shared-iterations` with 1 VU and 1 iteration.
+  - With one scenario, it swaps in `shared-iterations` at 1/1 and keeps the scenario's name, `exec`, `env`, `tags` and browser `options`. `startTime`, `gracefulStop` and the other executor fields are dropped.
+  - With several scenarios, it returns an error: `--once can run a single scenario only…`.
+  - It clears `vus`, `iterations`, `duration` and `stages` from the options, so shortcut derivation doesn't conflict with the new scenario.
+- **Wiring**: `applyOnceFlag` in `internal/cmd/config.go` runs right after `getConsolidatedConfig`, so it overrides script, config-file and env values. It rejects `--vus`, `--iterations`, `--duration` and `--stage` with `--once cannot be combined with --<flag>`. Both error cases exit with `InvalidConfig`.
+- **Archive and cloud**: `archive` and non-local `cloud run` serialize the consolidated config, so the single 1/1 scenario ends up in the archive. `setup()` and `teardown()` still run.
+- **Flag**: it's registered through a new `onceFlagSet()` in `internal/cmd/options.go`, and I added an example to the `k6 run` help.
+- **Not covered**: `k6 cloud upload` doesn't get `--once`, since the spec only lists the other commands.
+
+For tests, `lib/executor/execution_config_once_test.go` has unit tests for `ApplyOnce`. `internal/cmd/tests/cmd_once_test.go` has integration tests for the following cases:
+- `run` with no scenarios and with a single scenario, checking that `exec`, env and `setup`/`teardown` are preserved.
+- `run` with multiple scenarios, which errors.
+- `run` with each of the four conflicting flags, which errors.
+- The `archive` metadata for a single scenario.

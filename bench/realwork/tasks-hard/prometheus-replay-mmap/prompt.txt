@@ -1,0 +1,29 @@
+TSDB: WAL replay can overwrite mapped chunk state when series references are merged
+
+### What did you do?
+
+With OOO ingestion enabled:
+
+1. Compact a series out of the head, then recreate it with the same labels under a new reference. Keep both series definitions in the WAL.
+2. Restart. WAL replay merges the references onto one live series.
+3. Append enough OOO samples to write a mapped chunk under that live reference.
+4. Restart again, without checkpointing or compacting the OOO data first.
+
+### What did you expect to see?
+
+All acknowledged samples remain queryable after restart.
+
+### What did you see instead?
+
+Only 3 of 35 samples remain queryable, across all seven tested sample types.
+
+WAL replay recognizes that both references describe the same series, but `resetSeriesWithMMappedChunks` replaces that series' mapped chunk lists with the chunks belonging to each reference in turn. A later definition can therefore overwrite still-needed chunks loaded for an earlier reference, even with an empty list. WBL replay subsequently clears the in-memory copies at mmap markers, assuming those chunks are still attached.
+
+The same reset also affects in-order chunks: with a healthy WAL, I reproduced duplicate chunk files that trigger out-of-sequence mmap recovery on the next restart; with WAL corruption, samples in healthy mapped chunks also became unqueryable.
+
+### Possible direction
+
+Preserve still-needed mapped chunk state when another reference resolves to the same live series, while retaining the intended cleanup of already-compacted history. Processing multiple definitions is supported; unconditionally replacing their shared state is the problem.
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

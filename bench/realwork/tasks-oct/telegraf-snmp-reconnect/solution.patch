@@ -1,0 +1,80 @@
+diff --git a/plugins/common/snmp/wrapper.go b/plugins/common/snmp/wrapper.go
+index 7b8d8dd..1ea3227 100644
+--- a/plugins/common/snmp/wrapper.go
++++ b/plugins/common/snmp/wrapper.go
+@@ -19,6 +19,7 @@ type Connection interface {
+ 	Walk(string, gosnmp.WalkFunc) error
+ 	Get(oids []string) (*gosnmp.SnmpPacket, error)
+ 	Reconnect() error
++	Close() error
+ }
+ 
+ // GosnmpWrapper wraps a *gosnmp.GoSNMP object so we can use it as a snmpConnection.
+@@ -31,9 +32,21 @@ func (gs GosnmpWrapper) Host() string {
+ 	return gs.Target
+ }
+ 
++// Get wraps GoSNMP.Get() and reconnects first if the connection was closed.
++func (gs GosnmpWrapper) Get(oids []string) (*gosnmp.SnmpPacket, error) {
++	if err := gs.Reconnect(); err != nil {
++		return nil, err
++	}
++	return gs.GoSNMP.Get(oids)
++}
++
+ // Walk wraps GoSNMP.Walk() or GoSNMP.BulkWalk(), depending on whether the
+-// connection is using SNMPv1 or newer.
++// connection is using SNMPv1 or newer, and reconnects first if the
++// connection was closed.
+ func (gs GosnmpWrapper) Walk(oid string, fn gosnmp.WalkFunc) error {
++	if err := gs.Reconnect(); err != nil {
++		return err
++	}
+ 	if gs.Version == gosnmp.Version1 {
+ 		return gs.GoSNMP.Walk(oid, fn)
+ 	}
+@@ -200,10 +213,19 @@ func (gs *GosnmpWrapper) SetAgent(agent string) error {
+ 	return nil
+ }
+ 
++// Reconnect connects again if the connection was closed. An SNMPv3 session
++// keeps the engine ID discovered on the first request, so it is reset to
++// discover the engine ID again, as the agent may have restarted with a new one.
+ func (gs GosnmpWrapper) Reconnect() error {
+-	if gs.Conn == nil {
+-		return gs.Connect()
++	if gs.Conn != nil {
++		return nil
+ 	}
+ 
+-	return nil
++	if usm, ok := gs.SecurityParameters.(*gosnmp.UsmSecurityParameters); ok {
++		usm.AuthoritativeEngineID = ""
++		usm.AuthoritativeEngineBoots = 0
++		usm.AuthoritativeEngineTime = 0
++	}
++
++	return gs.Connect()
+ }
+diff --git a/plugins/inputs/snmp/snmp.go b/plugins/inputs/snmp/snmp.go
+index b366a9e..4328e7f 100644
+--- a/plugins/inputs/snmp/snmp.go
++++ b/plugins/inputs/snmp/snmp.go
+@@ -117,6 +117,9 @@ func (s *Snmp) Gather(acc telegraf.Accumulator) error {
+ 			topTags := make(map[string]string)
+ 			if err := s.gatherTable(acc, gs, t, topTags, false); err != nil {
+ 				acc.AddError(fmt.Errorf("agent %s: %w", agent, err))
++				// Close the connection so the next request reconnects and, for
++				// SNMPv3, rediscovers the engine ID of a restarted agent.
++				gs.Close()
+ 				if s.StopOnError {
+ 					return
+ 				}
+@@ -126,6 +129,7 @@ func (s *Snmp) Gather(acc telegraf.Accumulator) error {
+ 			for _, t := range s.Tables {
+ 				if err := s.gatherTable(acc, gs, t, topTags, true); err != nil {
+ 					acc.AddError(fmt.Errorf("agent %s: gathering table %s: %w", agent, t.Name, err))
++					gs.Close()
+ 					if s.StopOnError {
+ 						return
+ 					}

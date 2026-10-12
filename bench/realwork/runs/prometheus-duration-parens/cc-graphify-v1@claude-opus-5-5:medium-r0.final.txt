@@ -1,0 +1,27 @@
+Parentheses around a single number in a duration position now survive the `String()` round-trip. Tests pass for `./promql/...` and `golangci-lint` is clean. I haven't committed anything.
+
+| Input | Before | Now |
+|---|---|---|
+| `foo offset (5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -5s` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset 5m` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[5s]` | `foo[(5s)]` |
+
+`+(5)` prints as `(5)`, the same way `+(5m + 1m)` already prints as `(5m + 1m)`.
+
+**Fix.** When the parser sees a lone number in parentheses in a duration position, it now wraps it in a `*DurationExpr` with `Wrapped: true`, marked as a unary plus. Printing, prettifying and evaluation already handle that shape, so I didn't add a `Wrapped` field to `*NumberLiteral`. The changes are in `promql/parser/generated_parser.y` and a new helper in `promql/parser/parse.go`. I regenerated `generated_parser.y.go` with goyacc v0.6.0, the version the Makefile uses.
+
+**What changes for users of the AST:**
+- **Offsets and ranges are filled in later.** Expressions like `foo offset (5)` or `foo[(5s)]` now come out of the parser with `OriginalOffsetExpr`/`RangeExpr` set and `OriginalOffset`/`Range` left at 0. The engine works out the value when it evaluates the query, as it already does for `foo offset (5m + 1m)`. Code that reads `OriginalOffset` straight from a parsed AST without running the engine will see 0 for these inputs. This only affects queries using the experimental duration-expression feature, since parentheses in these positions need it.
+- **Errors are still caught at parse time.** The "duration must be greater than 0", "division by zero" and "modulo by zero" checks used to test for a bare number. A new helper, `durationLiteralValue`, also looks through the parentheses and `+`/`-` signs, so `foo[(0)]`, `foo[-(5)]` and `foo[5s/(0)]` still fail when parsed. The one difference is that the error for `foo[(0)]` now starts at the `(`, column 5 instead of 6.
+
+**Tests:**
+- **Round-trip (`printer_test.go`):** cases for the inputs in the issue, plus `foo offset ((5m) + 1m)`, `foo[(5s):(1s)]`, `foo[(5s) * 2]` and `foo[min_of((5s), 1m)]`.
+- **Parser (`parse_test.go`):** the existing expected ASTs for `foo offset +(5)` and `foo offset -(5)` now expect the new shape. I added parse-error cases for `foo[(0)]`, `foo[-(5)]` and `foo[5s/(0)]`.
+- **Evaluation (`duration_expression.test`):** cases for `[(30m)]`, `offset (100)`, `offset +(100)`, `offset -(100)` and `[(30s):(10s)]`, so the engine computes the right values. I broke one expected value on purpose and the test failed, which confirms the new cases actually run.
+
+For the PR I'd use the title `promql/parser: preserve parentheses around duration number literals` with this release note:
+```release-notes
+[BUGFIX] PromQL: Preserve parentheses around single number literals in duration expressions (e.g. `foo offset (5)`) when printing queries.
+```

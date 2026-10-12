@@ -1,0 +1,12 @@
+The implementation is correct and I changed nothing. `slug` now works on sections, taxonomies and terms: setting it on a section changes the URL of that section and of everything below it. With the issue's example, the Spanish pages end up at `es/ayuda/` and `es/ayuda/como-frobear/`, while the English ones stay at `help/` and `help/how-to-frob/`.
+
+**Tests:**
+- The new test, `TestSlugInBranchPages` in `hugolib/page_permalink_test.go`, passes.
+- `go test ./hugolib/... ./resources/page/...` all pass.
+- `TestCommands/mod`, which made `./check.sh` fail, failed once more when I ran it alone and then passed on the next run with your changes in place. When it fails, `hugo mod get -u` prints download progress to stderr. That depends on network speed, and this change doesn't touch modules, so it's a flaky test. I didn't re-run the full `./check.sh`.
+
+**How it works:** a new field on the path descriptor carries the page's directory with section slugs applied (`resources/page/page_paths.go`). A small helper in `hugolib/page__paths.go` fills it by walking up through the page's parent sections. Sites that don't set `slug` on a section get the same paths as before. Permalink patterns and `url` still take precedence over slugs.
+
+**Not tested:** slugs combined with `disablePathToLower`. I'd expect it to work, because the slug replaces whole path segments, but no test covers it.
+
+Nothing is committed yet.

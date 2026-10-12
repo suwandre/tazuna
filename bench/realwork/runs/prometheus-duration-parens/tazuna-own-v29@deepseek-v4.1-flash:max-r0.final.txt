@@ -1,0 +1,25 @@
+The change is complete. Final summary:
+
+## Summary
+
+Fixed `promql/parser` so parentheses around a plain duration literal survive `Expr.String()` round-trip in duration-expression positions (offset/range/subquery step).
+
+### Root cause
+`paren_duration_expr` in the grammar only set the `Wrapped` flag when the parenthesised payload was already a `*DurationExpr`. A single `*NumberLiteral` payload (e.g. `foo offset (5)`, `foo[(5s)]`) was returned unchanged, so the printer had no marker to re-emit the parens. The unary `-(5)` path had the same gap.
+
+### Fix
+- **`promql/parser/generated_parser.y`** (and regenerated `generated_parser.y.go` via `goyacc -l`): `paren_duration_expr` now calls a new `wrapParenDurationExpr` helper, passing the paren token positions.
+- **`promql/parser/parse.go`**: added `wrapParenDurationExpr`, which sets `Wrapped` on an existing `*DurationExpr` or lifts a bare `*NumberLiteral` into a unary-plus `*DurationExpr` with `Wrapped: true` (the unary `+` prints nothing, so `DurationExpr.writeTo` emits `(5)`). `applyUnaryOpToDurationExpr` now routes wrapped operands through the helper, so `foo offset -(5)` produces `SUB(DurationExpr{ADD, RHS: 5, Wrapped})` and prints `foo offset -(5)`. The helper also records start/end positions.
+- **`promql/parser/prettier.go`**: `DurationExpr.Pretty` suppresses the unary `+` for `ADD` (matching `String()`), so `Prettify` round-trips `(5)` too.
+
+### Tests
+- `printer_test.go`: added round-trip cases `foo offset +(5)`, `-(5)`, `(5)`, `(5m)`, `foo[(5s)]`, `foo[(5m):(1m)]` (kept the pre-existing `+(5*2)` case).
+- `parse_test.go`: updated `foo offset +(5)`/`-(5)` expected ASTs and added `foo offset (5)` and `foo[(5s)]` cases asserting the new `Wrapped` `*DurationExpr` AST shape and position ranges.
+
+### Verification
+- `go test -count=1 ./promql/parser/... ./promql/...` — pass (parser, engine, promqltest).
+- `go test -count=1 ./web/api/v1/... ./rules/... ./cmd/promtool/...` — pass.
+- `golangci-lint run ./promql/parser/...` — clean; `gofmt`/`go vet` clean; regenerated parser file reproduces byte-identically.
+- Manually confirmed all six reported losing cases now round-trip, and end-to-end `promqltest` evaluation of `foo offset (5m)`, `foo offset -(5m)`, `foo[(5m)]`, `foo[(2m+3m)]` works.
+
+One intentional behavior note (matching upstream Prometheus main, which contains this same fix): `foo[(0s)]`/`foo offset (0)` now parse without the eager "duration must be greater than 0" error, because the positive-duration check only inspects bare `*NumberLiteral`s; the error is still raised during preprocessing/evaluation. `foo[0s]` still errors at parse time as before.

@@ -1,0 +1,14 @@
+Every `import` block for a `for_each` resource is now honored. Your `terraform_data.t["a"]` and `["b"]` example should plan as 2 to import instead of 1 import and 1 create.
+
+**Cause:** `refactoring.FindImportStatements` stored import blocks in a map keyed by config resource, so the key had no instance part. It meant to let a parent module's import override a child's for the same resource. But it also dropped a second block in the *same* module, and the first block declared won. That matches your swapped-order observation. The config loader already rejects duplicate import blocks for the same instance, so several blocks per resource are valid.
+
+**Fix:**
+- `FindImportStatements` (`internal/refactoring/import_statement.go`) now returns a slice. It keeps every block from the same module and still skips a child's block when a parent module has already claimed that resource.
+- I updated the one caller, `findImportTargets` in `internal/terraform/context_plan.go`.
+
+**Tests:**
+- `TestContext2Plan_importMultipleBlocksForEachResource` in `context_plan_import_test.go` reproduces your case. It failed before the fix with `test_object.a["second"] is not being imported`, and it passes now.
+- `TestFindImportStatements` in `internal/refactoring/import_statement_test.go` uses a new fixture under `testdata/import-statements`. It checks that several blocks for one `for_each` resource are all kept and that a parent block overrides a child block.
+- `go test` passes for `internal/refactoring`, `internal/terraform` and `internal/configs`. A `go test` run that included `internal/command` timed out, so that package is untested.
+
+I didn't test `count`. It should behave the same way, since the bug was in how blocks were grouped rather than anything specific to `for_each`.

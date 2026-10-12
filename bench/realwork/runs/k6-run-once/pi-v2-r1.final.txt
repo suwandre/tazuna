@@ -1,0 +1,11 @@
+I added `--once` to `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. The new tests and the `internal/cmd/...` tests pass, along with a run of the new executor tests. I didn't run the full `./lib/executor` suite, and I didn't try `k6 cloud run` against Cloud. I also haven't added a release note.
+
+- **Conversion:** the new `executor.DeriveOnceScenario` in `lib/executor/execution_config_shortcuts.go` does the work.
+  - **No scenarios:** it builds a `default` scenario with the `shared-iterations` executor (1 VU, 1 iteration).
+  - **One scenario:** it keeps the scenario's name, `exec`, `env`, `tags` and `options` (browser options included). The executor becomes `shared-iterations` with 1 VU and 1 iteration, and `startTime`, `gracefulStop` and the other fields are discarded.
+  - **Shortcut options:** `vus`, `iterations`, `duration` and `stages` are cleared.
+  - **Several scenarios:** it returns the error `--once can run a single scenario only`.
+- **Where it runs:** `consolidateDeriveAndValidateConfig` in `internal/cmd/test_load.go` applies it right after config consolidation and before derivation and validation. That placement means `k6 archive` and `k6 cloud run` serialise the once-form scenario.
+- **Flag conflicts:** combining `--once` with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>`. It exits with the `InvalidConfig` code.
+- **Flag definition:** `--once` is defined in `onceFlagSet` in `internal/cmd/options.go`. It isn't on `k6 cloud upload` or `k6 inspect`; `k6 inspect` wasn't in the issue and I left `cloud upload` alone too.
+- **Tests:** `lib/executor/execution_config_shortcuts_once_test.go` covers the conversion. `internal/cmd/tests/cmd_run_once_test.go` covers `run` with a default function, a single scenario that keeps `exec` and `env`, multiple scenarios, and a shortcut conflict. It also covers `archive --once`.

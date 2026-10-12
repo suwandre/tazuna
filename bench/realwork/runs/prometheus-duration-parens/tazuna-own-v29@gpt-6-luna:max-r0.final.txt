@@ -1,0 +1,3 @@
+I wasn’t able to complete or verify this fix. The parser grammar changes did not resolve the round-trip cases, and the generated parser became inconsistent during regeneration, so I reverted the generated file and removed the temporary tests.
+
+The remaining edits in `ast.go`, `generated_parser.y`, `parse.go`, and `printer.go` are incomplete and should not be treated as a working fix. `go test ./promql/parser` still fails on the reported cases.

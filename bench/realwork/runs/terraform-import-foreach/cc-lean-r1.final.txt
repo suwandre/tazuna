@@ -1,0 +1,16 @@
+All the import blocks that target instances of one `for_each` resource are now honored. I confirmed the new test fails without the fix and passes with it. `go test` passes for `internal/refactoring` and `internal/terraform`. I did not run `internal/command`, because that run timed out earlier.
+
+**Cause:** `FindImportStatements` in `internal/refactoring/import_statement.go` stored import blocks in a map keyed by the config resource (`terraform_data.t`), not by instance. The `["a"]` and `["b"]` blocks share that key, so only the first one survived. This also explains why it's the first-declared block that wins. The map was meant to implement "a parent module's import overrides a child's", but it also collapsed same-module blocks.
+
+**Fix:**
+- `FindImportStatements` now returns a `[]ImportStatement`. All blocks from the same module are kept.
+- A block is still dropped if an ancestor module already has an import for the same config resource, so the parent-overrides-child rule is unchanged.
+- I updated the one caller, `findImportTargets` in `internal/terraform/context_plan.go`.
+
+**Test:** `TestContext2Plan_importMultipleBlocksForEachResource` in `internal/terraform/context_plan_import_test.go` imports three instances of one `for_each` resource. Without the fix, `["b"]` and `["c"]` are planned as `Create`.
+
+I didn't test `count`.
+
+I noticed two things in `expandResourceImports` that I left alone because they don't cause this bug:
+- It reassigns `ctx` inside its loop.
+- `concreteResource` takes `importConfig` from `importTargets[0]` rather than the matching block. That field is only used for generating config.

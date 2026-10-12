@@ -1,0 +1,20 @@
+Every import block is now kept, so each `for_each` instance gets its own import and the second instance in your example is no longer planned as a create.
+
+**Cause:** `refactoring.FindImportStatements` in `internal/refactoring/import_statement.go` stored import blocks in a map keyed by the config resource (`terraform_data.t`), not the instance. A later block for the same resource was treated as a duplicate and dropped, so only the first one survived. That matches what you saw: the first-declared block wins, and single-instance resources are unaffected.
+
+**Fix:** `FindImportStatements` now returns a slice, and the only caller, `findImportTargets` in `context_plan.go`, was updated to match.
+- **Same module:** all blocks are kept.
+- **Parent and child modules:** a parent's blocks for a resource still override the child's blocks for that same resource, as before.
+
+**Test:** I added `TestContext2Plan_importMultipleBlocksForEachResource` in `context_plan_import_test.go`. It uses three separate import blocks on one `for_each` resource and checks that all three instances are imported with the right IDs. I did not run it against the old code to confirm it fails there.
+
+**Test results:**
+- `go test ./internal/terraform/` passes.
+- `internal/refactoring` has no test files.
+- `internal/command` has failures that are not from this change:
+  - `TestPlan_varsUnset`, `TestPlan_providerArgumentUnset` and `TestPlan_providerConfigMerge` fail identically with my changes stashed.
+  - The `TestFmt_*` failures are "No file or directory" path errors in the temp dir.
+
+**Not changed:** `importConfig: n.importTargets[0].Config` in `concreteResource` always uses the first block's config. It is only used for generating config, so it does not affect this bug.
+
+I did not run your `terraform_data` reproduction through the CLI.

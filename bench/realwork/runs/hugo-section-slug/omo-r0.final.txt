@@ -1,0 +1,17 @@
+The test run is still going. I'm stopping here until its completion notification arrives with the results.
+
+> Ask: Support `slug` in section, taxonomy and term pages - wanted: a section slug changes the URL of the section and its descendants, with tests. For you: the implementation and three new tests are written. The new tests passed in the earlier run. After I corrected the ugly-URL expectation, the full run of `./hugolib/`, `./resources/...` and `./common/paths/...` is still in progress as `bash_6`, so I haven't confirmed it is green. Now: full test run (`bash_6`). Next: read its result, fix any failures my change caused, then report.
+
+**What changed**
+- `resources/page/page_paths.go`: `TargetPathDescriptor` has a new `SectionDir` field. When it is set and no permalink pattern or `url` applies, it replaces the path-derived section directory for sections, taxonomies and terms. For regular pages it replaces the container directory.
+- `hugolib/page__paths.go`: new `sectionDirWithSlugs` swaps each path element owned by the current section or an ancestor section for that section's `slug`. It returns an empty string when no section has a slug, so sites without section slugs behave as before.
+- `hugolib/site_sections_test.go`: three new tests, `TestSectionSlug`, `TestSectionSlugUglyURLs` and `TestTaxonomyAndTermSlug`.
+  - `TestSectionSlug` follows your multilingual `help/` example, giving `/es/ayuda/` and `/es/ayuda/como-frobear/`. It also covers a plain page and a nested section under the slugged one.
+  - `TestSectionSlugUglyURLs` covers a section slug with `uglyURLs = true`.
+  - `TestTaxonomyAndTermSlug` covers a slug on a taxonomy page and on a term page.
+
+**Behavior notes**
+- A section `slug` now changes the URL of all pages under it, including sites that already had `slug` in an `_index.md` and no permalink pattern or `url` on that section. Sites using `:sectionslug` or `:sectionslugs` permalinks, or an explicit `url`, are unaffected because those take precedence.
+- With `uglyURLs`, a section stays at `<slug>/index.html`, matching existing section behavior.
+- The test comment cites issue 5090. I did not check that number against the real issue, so please correct it.
+- gopls isn't installed here, so I relied on `go build`, which compiled cleanly. `gofmt` and `go vet` were part of the same background command and I haven't seen their output yet.

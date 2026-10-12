@@ -1,0 +1,152 @@
+diff --git a/tsdb/head_test.go b/tsdb/head_test.go
+index 247596c..d491384 100644
+--- a/tsdb/head_test.go
++++ b/tsdb/head_test.go
+@@ -985,6 +985,86 @@ func TestHead_WALMultiRef(t *testing.T) {
+ 	}}, series)
+ }
+ 
++// TestHead_WALMultiRef_KeepsMmappedChunksOfLiveRef verifies that when WAL replay
++// resolves a duplicate series record onto the live series, the chunks m-mapped under
++// the live ref after an earlier replay merged the refs are preserved.
++func TestHead_WALMultiRef_KeepsMmappedChunksOfLiveRef(t *testing.T) {
++	for name, scenario := range sampleTypeScenarios {
++		t.Run(name, func(t *testing.T) {
++			dir := t.TempDir()
++			opts := DefaultHeadOptions()
++			opts.ChunkRange = 1000
++			opts.ChunkDirRoot = dir
++			opts.OutOfOrderCapMax.Store(4)
++			opts.OutOfOrderTimeWindow.Store(1000 * time.Minute.Milliseconds())
++
++			openHead := func() *Head {
++				wal, err := wlog.New(nil, nil, filepath.Join(dir, "wal"), compression.None)
++				require.NoError(t, err)
++				wbl, err := wlog.New(nil, nil, filepath.Join(dir, wlog.WblDirName), compression.None)
++				require.NoError(t, err)
++				h, err := NewHead(nil, nil, wal, wbl, opts, nil)
++				require.NoError(t, err)
++				require.NoError(t, h.Init(0))
++				return h
++			}
++
++			lset := labels.FromStrings("foo", "bar")
++			appendSamples := func(h *Head, tss ...int64) storage.SeriesRef {
++				var ref storage.SeriesRef
++				for _, ts := range tss {
++					app := h.Appender(context.Background())
++					var err error
++					ref, _, err = scenario.appendFunc(app, lset, ts, ts)
++					require.NoError(t, err)
++					require.NoError(t, app.Commit())
++				}
++				return ref
++			}
++			queryTimestamps := func(h *Head) []int64 {
++				qHead, err := NewBlockQuerier(h, math.MinInt64, math.MaxInt64)
++				require.NoError(t, err)
++				q := NewHeadAndOOOQuerier(math.MinInt64, math.MinInt64, math.MaxInt64, h, h.oooIso.TrackReadAfter(0), qHead)
++				var tss []int64
++				for _, s := range query(t, q, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))[lset.String()] {
++					tss = append(tss, s.T())
++				}
++				return tss
++			}
++
++			// Garbage collect the series and recreate it under a new ref, keeping both
++			// series records in the WAL.
++			h := openHead()
++			ref1 := appendSamples(h, 100, 1500)
++			require.NoError(t, h.Truncate(1600))
++			ref2 := appendSamples(h, 1700, 2000)
++			require.NotEqual(t, ref1, ref2)
++			require.NoError(t, h.Close())
++
++			// The replay merges both refs onto the series with ref1. M-map in-order and
++			// out-of-order chunks under ref1.
++			h = openHead()
++			require.Equal(t, []int64{1700, 2000}, queryTimestamps(h))
++			appendSamples(h, 2100, 3100, 4100)
++			oooTss := []int64{1710, 1720, 1730, 1740, 1750, 1760, 1770, 1780, 1790}
++			appendSamples(h, oooTss...)
++			ms := h.series.getByID(chunks.HeadSeriesRef(ref1))
++			require.NotNil(t, ms)
++			require.NotEmpty(t, ms.mmappedChunks)
++			require.NotEmpty(t, ms.ooo.oooMmappedChunks)
++			require.NoError(t, h.Close())
++
++			expected := []int64{1700, 1710, 1720, 1730, 1740, 1750, 1760, 1770, 1780, 1790, 2000, 2100, 3100, 4100}
++			for range 2 {
++				h = openHead()
++				require.Equal(t, expected, queryTimestamps(h))
++				require.Equal(t, 0.0, prom_testutil.ToFloat64(h.metrics.mmapChunkCorruptionTotal))
++				require.NoError(t, h.Close())
++			}
++		})
++	}
++}
++
+ // TestHead_WALMultiRef_StaleDeletion_ChunkGaugeNotNegative is a regression test
+ // for https://github.com/prometheus/prometheus/issues/10884.
+ //
+diff --git a/tsdb/head_wal.go b/tsdb/head_wal.go
+index ae33a3d..9123fb0 100644
+--- a/tsdb/head_wal.go
++++ b/tsdb/head_wal.go
+@@ -22,6 +22,7 @@ import (
+ 	"math"
+ 	"os"
+ 	"path/filepath"
++	"sort"
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+@@ -551,15 +552,41 @@ func (h *Head) resetSeriesWithMMappedChunks(mSeries *memSeries, mmc, oooMmc []*m
+ 		}
+ 	}
+ 
+-	h.metrics.chunksCreated.Add(float64(len(mmc) + len(oooMmc)))
+-	h.metrics.chunksRemoved.Add(float64(len(mSeries.mmappedChunks)))
+-	h.metrics.chunks.Add(float64(len(mmc) + len(oooMmc) - len(mSeries.mmappedChunks)))
+-
+-	if mSeries.ooo != nil {
+-		h.metrics.chunksRemoved.Add(float64(len(mSeries.ooo.oooMmappedChunks)))
+-		h.metrics.chunks.Sub(float64(len(mSeries.ooo.oooMmappedChunks)))
++	created := len(mmc) + len(oooMmc)
++	var removed int
++	if mSeries.ref == walSeriesRef {
++		removed = len(mSeries.mmappedChunks)
++		if mSeries.ooo != nil {
++			removed += len(mSeries.ooo.oooMmappedChunks)
++		}
++	} else {
++		// Another ref resolved to the same series. The m-mapped chunks already attached
++		// to the series may have been written under the live ref after an earlier replay
++		// merged the refs, so they must not be replaced. Only the in-order chunks that do
++		// not come after the chunks of walSeriesRef belong to already compacted history;
++		// in-order chunks before the minValidTime were already skipped when loading them.
++		kept := mSeries.mmappedChunks
++		if len(mmc) > 0 {
++			lastMaxt := mmc[len(mmc)-1].maxTime
++			i := sort.Search(len(kept), func(i int) bool { return kept[i].minTime > lastMaxt })
++			removed = i
++			kept = kept[i:]
++		}
++		merged := make([]*mmappedChunk, 0, len(mmc)+len(kept))
++		merged = append(merged, mmc...)
++		mmc = append(merged, kept...)
++
++		if mSeries.ooo != nil && len(mSeries.ooo.oooMmappedChunks) > 0 {
++			mergedOOO := make([]*mmappedChunk, 0, len(mSeries.ooo.oooMmappedChunks)+len(oooMmc))
++			mergedOOO = append(mergedOOO, mSeries.ooo.oooMmappedChunks...)
++			oooMmc = append(mergedOOO, oooMmc...)
++		}
+ 	}
+ 
++	h.metrics.chunksCreated.Add(float64(created))
++	h.metrics.chunksRemoved.Add(float64(removed))
++	h.metrics.chunks.Add(float64(created - removed))
++
+ 	mSeries.mmappedChunks = mmc
+ 	if len(oooMmc) == 0 {
+ 		mSeries.ooo = nil

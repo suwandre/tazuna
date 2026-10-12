@@ -1,0 +1,38 @@
+`return` now works by stopping execution with a sentinel error instead of rewriting the template. It works in any template, can appear anywhere, and most of the old transformation code is gone. The changed packages' tests pass (`tpl/...`, `hugolib/...`). The full `go test ./...` run had two failures that look unrelated, though I didn't re-run them on the unmodified tree to confirm:
+- **`internal/warpc` (`TestGreet` and two others):** failed with "dispatcher is shutting down". That package has nothing to do with templates.
+- **`TestCommands/mod`:** failed because `hugo mod verify` printed a "collected modules in 3278 ms" timing line to stderr.
+
+`./check.sh` stopped at staticcheck, on deprecation warnings and one unused value in `config/allconfig` and `hugolib/integrationtest_builder.go`. I didn't touch either file.
+
+## How it works
+
+**Changes to the forked template package.** I kept the changes small and in the same style as the existing overrides:
+- `ReturnError{Value any; HasValue bool}` is the sentinel, defined in `texttemplate/hugo_template.go`.
+- In `evalCall`, when a func returns a `*ReturnError`, it is re-panicked as-is instead of being wrapped in an `ExecError`.
+- `executeWithState` catches it and returns it as the error.
+- `walkTemplate` is overridden: it's renamed to `walkTemplateOld` in `exec.go`, with a matching line added to the replacer in `scripts/fork_go_templates/main.go`. The override catches the sentinel, so a `return` inside `{{ template }}` or `{{ block }}` only ends that sub-template. Without this, a `return` in `define "main"` would also cut off the rest of `baseof`.
+- `try` re-panics a `ReturnError` instead of swallowing it.
+
+**Hugo side:**
+- `partials.Return(args ...any) (any, error)` backs the `return` alias. It has to return `(any, error)` rather than just the error type, because Go templates only treat the second return value as an error.
+- `TemplateStore.ExecuteWithContext` drops the sentinel, so ordinary templates simply stop rendering. `ExecuteWithContextAndKey`, which only partials call, passes it back so the partial can read the value.
+- In partials:
+  - `{{ return x }}` returns `x`, including `nil` and `false`.
+  - A bare `{{ return }}` returns the output rendered up to that point.
+  - A partial that never reaches a `return` returns its rendered output.
+- I removed `contextWrapper`, `ParseInfo.HasReturn`, the wrapper template and `collectReturnNode`. `applyTransformations` now returns only `error`, because it no longer deletes any nodes.
+
+## Compatibility notes
+- **One small rewrite remains.** `{{ return add . 42 }}` worked before, and in Go template syntax it would call `return` with three args. `wrapReturnArgs` turns it into `{{ return (add . 42) }}` at parse time. It's a local change to a single command node.
+- **Different behaviour for some existing partials.** Before, a `return` was found anywhere in the partial and always took effect, even inside an `if` branch that wasn't taken. Now it only takes effect when execution reaches it; otherwise the partial returns its rendered output.
+- **One test expectation changed.** `TestPartialReturnPanicIssue13600` was checking for an error that only happened because of the old rewrite. The real error now shows instead: `error calling delimit: can't iterate over`.
+
+## Tests
+I added `TestReturnEarly` and `TestReturnTooManyArgs` in `tpl/partials/partials_integration_test.go`. They cover:
+- early return in a home template, a `define` block and a `{{ template }}` call
+- return inside `range`, inside `with`/`else`, and inside `try`
+- `partialCached`, plus `nil` and `false` as return values
+- a bare `return` returning the output rendered so far
+- the error for too many arguments
+
+Nothing is committed.

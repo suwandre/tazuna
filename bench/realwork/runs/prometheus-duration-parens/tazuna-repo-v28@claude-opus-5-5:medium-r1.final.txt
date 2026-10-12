@@ -1,0 +1,15 @@
+Parentheses around a plain duration literal now survive `Expr.String()` round-trip. All five failing cases from the issue print back exactly as written: `foo offset (5)`, `foo offset -(5)`, `foo offset (5m)` and `foo[(5s)]`. The fifth, `foo offset +(5)`, prints as `foo offset (5)`, which matches how `+(5*2)` already drops the unary `+`. `go test ./promql/...` passes, and `golangci-lint` on `promql/parser` reported no issues. I haven't committed anything.
+
+**The fix:** in duration positions (offset, range, subquery step), a parenthesised number is now stored as a parenthesised duration expression wrapping the number, rather than as a bare number. So it now carries the same `Wrapped` flag as `(5m + 1m)`. It works like a unary `+`, which the printer doesn't print.
+- `generated_parser.y` and `parse.go`: a new helper, `wrapDurationExpr`, handles both the `(…)` and `-(…)` paths. I removed the now-unused `wrapped` argument from `applyUnaryOpToDurationExpr` and regenerated `generated_parser.y.go` with goyacc. The parser's conflict counts didn't change.
+- `prettier.go`: `Pretty()` now leaves out a unary `+` the same way `String()` does. Without this, `(5)` would have been pretty-printed as `(+5)`.
+
+**What else changes:**
+- **AST shape:** `foo offset (5)` and `foo offset -(5)` now set `OriginalOffsetExpr` instead of `OriginalOffset`. The offset is worked out at evaluation time, the same way `(5m + 1m)` already is. I updated the two existing test expectations that checked the old shape.
+- **Errors still caught at parse time:** turning these into expressions would have made `foo[(0)]` and `foo[-(5)]` parse without error. I added a small helper, `durationLiteralValue`, so they are still rejected with "duration must be greater than 0", and added tests for both.
+- **Not fixed:** nested parens like `foo offset ((5m))` collapse to `(5m)`, because `Wrapped` is a true/false flag. `((5m + 1m))` already behaves this way; the test documents it.
+- **Unchanged:** pure-number contexts like `(5)`, `-(5)` and `(5) + 1` still use the normal parenthesis node, as before.
+
+**Tests:** I added the issue's cases plus a few combinations (subquery step, `rate(foo[(5m)])`, `((5m) + 1m)`) to `TestExprString`, and the error cases to `TestParseExpressions`.
+
+When this goes up as a PR, it would be titled something like `promql/parser: preserve parentheses around duration literals`. The release note could be `[BUGFIX] PromQL: Preserve parentheses around plain duration literals such as `foo offset (5m)` when printing expressions.`

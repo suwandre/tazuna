@@ -1,0 +1,10 @@
+Section, taxonomy and term pages now honor `slug`, and it carries down to every descendant URL. The `hugolib` and `resources/page` test packages pass. I haven't run `./check.sh`.
+
+Your example now gives `help/`, `help/how-to-frob/`, `es/ayuda/` and `es/ayuda/como-frobear/`.
+
+- **Section path:** the target path descriptor gets a new `SectionBase` field, set in `hugolib/page__paths.go` by `sectionBaseWithSlugs`. It is the section path with each ancestor's slug standing in for its directory name, and stays empty when no ancestor has a slug.
+- **Descendant paths:** in `resources/page/page_paths.go`, branch pages (section, taxonomy, term) use that field for their directory. Regular pages swap it in for the section prefix of their container directory.
+- **Precedence:** `url` front matter and permalink config still take precedence over `slug`, as before.
+- **Test:** `TestSectionSlug` in `hugolib/page_permalink_test.go` is a multilanguage test. It covers the section, a bundle inside it, a nested subsection with a page, and a taxonomy and term slug.
+
+One thing to be aware of: slugs are used as written, not URL-escaped, the same way a page's own slug already is.

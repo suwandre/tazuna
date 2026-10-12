@@ -1,0 +1,30 @@
+The upstream-style implementation is complete and verified. Here's a summary of what changed:
+
+## Changes
+
+**`internal/cmd/options.go`**
+- Registered the `--once` bool flag (`run the test with 1 VU and 1 iteration`).
+- `getOptions()` now calls `checkOnceConflicts()`, rejecting `--once` combined with `--vus`, `--duration`, `--iterations`, `--stage`, `--execution-segment`, or `--execution-segment-sequence` with `--once cannot be combined with --X`.
+
+**`internal/cmd/once.go`** (new)
+- `checkOnceConflicts` — CLI shortcut conflict validation.
+- `dropOnceShortcuts` — clears `vus`/`duration`/`iterations`/`stages`/execution-segment shortcuts from lower-priority layers (disk config, script options, env) before consolidation so `--once` wins, warning about each dropped option per layer.
+- `rejectAmbiguousOnce` — errors with `--once can run only with a single scenario, but got: ...` when multiple scenarios exist.
+- `applyOnce`/`onceScenario` — rewrites scenarios to `shared-iterations` with exactly 1 VU and 1 iteration, preserving scenario name, `exec`, `env`, `tags`, and scenario `options` (e.g. browser).
+
+**`internal/cmd/config.go`**
+- Added the unexported `once` field to `Config` (kept out of JSON/env layers).
+- `getConsolidatedConfig` drops lower-layer shortcuts before merging when `--once` is set.
+
+**`internal/cmd/test_load.go`**
+- Carries `--once` from CLI flags into consolidation, then after consolidation rejects multiple scenarios and applies the transformation to `consolidatedConfig.Options` *before* `DeriveScenariosFromShortcuts`/validation — so `k6 archive`, `k6 run`, and both `k6 cloud run` modes serialize/execute the single-run scenarios.
+
+**Tests** (`internal/cmd/once_test.go`, `internal/cmd/tests/cmd_once_test.go`)
+- Unit coverage: scenario name/exec/env/tags/options preservation, lower-layer shortcut dropping + warnings, multi-scenario and CLI conflict errors.
+- Integration coverage: `k6 run --once` (iterations + thresholds/tags), multi-scenario rejection, `k6 cloud run --local-execution --once`, uploaded archive rewrite, `k6 archive --once`, and replaying a plain archive with `k6 run --once`.
+
+## Verification
+- `go build ./internal/cmd/...` and full binary build succeeded; `gofmt -s`/`go vet` clean.
+- `go test ./internal/cmd/... -count=1` — all packages pass.
+- `go test -race -run 'Once' ./internal/cmd/ ./internal/cmd/tests/` — pass.
+- Manual smoke tests with a built binary confirmed single-scenario behavior (1/1, preserved `exec`/`env`), default-function behavior, the multi-scenario error, conflict errors, and archive round-trip.

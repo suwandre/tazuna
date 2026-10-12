@@ -1,0 +1,3 @@
+Implemented `return` as an execution sentinel. It now exits regular templates immediately and returns an optional value from partials, including when reached inside conditional blocks. Removed the return-specific template rewrites and context wrapper, and updated the documentation and integration tests.
+
+Verification: relevant `go test` packages and scoped `./check.sh` checks passed. The full `./check.sh` is blocked by unrelated staticcheck findings in `config/allconfig` and `hugolib/integrationtest_builder.go`.

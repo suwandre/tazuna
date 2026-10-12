@@ -1,0 +1,24 @@
+I've fixed the bug. The config from the issue now gives `Plan: 2 to import, 0 to add, 2 to change, 0 to destroy.` with a locally built binary, which matches 1.15.9.
+
+## Root cause
+
+The bug is in `internal/refactoring/import_statement.go`, which is part of the import-in-modules support from #38352. `FindImportStatements` gathered import blocks into a map keyed by resource address (for example `terraform_data.t`), not by instance (`terraform_data.t["a"]`). So every import block aimed at a different instance of the same `for_each` or `count` resource collided on one key. The code then skipped anything already in the map, so the first block declared won and the rest were dropped silently. That fits everything in the report: the first-declared block survives, single-instance resources are fine, and no modules are needed to trigger it. `count` was affected too.
+
+## Fix
+
+- **`internal/refactoring/import_statement.go`**: `FindImportStatements` now returns every import block as an ordered list (parent modules before their children) instead of the map. It still keeps the rule that a parent module's import block overrides a child module's block, but only at instance level:
+  - Blocks in the same module never cancel each other out. True duplicates there are already rejected when the config is loaded.
+  - A parent block overrides a child block only if both target the same resource and the same instance key.
+  - If either target can't be worked out without evaluating it (an import block using `for_each`), the parent overrides all of the child's blocks for that resource. That's what it did before.
+- **`internal/terraform/context_plan.go`**: a one-line change to loop over the list instead of the map.
+
+## Tests
+
+- **`TestContext2Plan_importMultipleBlocksSameResource`** (in `internal/terraform/context_plan_import_test.go`): three blocks on a `for_each` resource, declared out of order, two on a `count` resource, and one on a single-instance resource. All six must be imported. Without the fix it fails the same way as the report: `a["first"]`, `a["third"]` and `b[1]` are planned as Create.
+- **`TestFindImportStatements`** (new file `internal/refactoring/import_statement_test.go`, with a fixture under `testdata/import-statements/`): covers multiple blocks per resource and the parent-over-child rule, both instance-level and for an import block using `for_each`.
+
+The `internal/refactoring`, `internal/terraform`, `internal/configs` and `internal/backend/local` packages all pass. In `internal/command`, only `TestInit_providerLockFileReadonly` fails, with a provider checksum mismatch. It fails the same way with my changes removed, so it isn't caused by this fix.
+
+**Decision for you:** the instance-level override rule is my reading of the comment in the original code, and I didn't find an existing test that pins down the intended behaviour. If a parent import block is supposed to override every child-module block for that resource no matter which instance it targets, the check in `overriddenByParent` would need to change.
+
+I haven't committed anything.

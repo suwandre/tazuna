@@ -1,0 +1,9 @@
+Section, taxonomy and term pages now honor `slug`. It replaces the section's directory segment in its own URL and in the URLs of everything under it. Your example produces `es/ayuda/` and `es/ayuda/como-frobear/`, while the English URLs stay as they were.
+
+Tests for `resources`, `hugolib`, `tpl` and `output` all pass and `gofmt` is clean. I didn't run `./check.sh`, which AGENTS.md asks for when done.
+
+- **Slug lookup:** a new `sectionSlugsDir` in `hugolib/page__paths.go` walks the page's ancestors, plus the page itself for section, taxonomy and term pages. Each ancestor with a slug replaces its segment in the path. Ancestors are looked up per language, so `_index.es.md` only affects the `es` site.
+- **Path building:** `TargetPathDescriptor` in `resources/page/page_paths.go` gets a `Dir` field, which `CreateTargetPaths` uses in place of the default section path or container dir.
+- **Test:** `TestSectionSlug` in `hugolib/page_permalink_test.go` covers your example, a nested section with slugged and unslugged pages below it, and taxonomy and term slugs. It fails without the change and passes with it.
+
+If a page has `url` set or its section matches a `[permalinks]` pattern, the existing URL or pattern still wins and the section slug is ignored. I left that alone because `:sectionslugs` already covers the permalink case.

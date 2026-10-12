@@ -1,0 +1,11 @@
+Quoted `{` and `}` no longer count as block delimiters in the Caddyfile parser. Your example (`:8080 { respond "{" }`) now adapts to a `static_response` with body `{`.
+
+I added two helpers, `Token.isOpenBrace()` and `Token.isCloseBrace()`, in `lexer.go`. They match only when the text is `{` or `}` and the token wasn't quoted. I then used them in every place that tracks block nesting:
+- **`parse.go`:** block opening and closing in server block keys and directives, `directive()`, `blockTokens`, `import` block handling, and the snippet nesting counter in `doImport`.
+- **`dispenser.go`:** `NextArg` and `NextBlock`.
+
+I left two things alone:
+- **Quoted `"{"` as a site address:** it still errors, now with the "cannot end with a curly brace" message.
+- **`formatter.go`:** I only grepped it for brace handling and didn't test it with quoted braces.
+
+I added a case to `TestParseAll` covering quoted `"{"` and `"}"` as arguments, including inside a nested block. `go test` passes for `caddyconfig/caddyfile` and `caddyconfig/httpcaddyfile`. I didn't confirm the new test fails without the fix. I didn't run the integration tests under `caddytest`.

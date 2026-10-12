@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "With diff.mnemonicPrefix=true git writes diff headers with i/, w/, c/ prefixes instead of a/ b/, so lazygit's diff-line parser cannot resolve the file path and staging/discarding hunks from the focused main view silently does nothing. Fix must strip any single-component prefix, split the 'diff --git' line where both halves name the same path (paths may contain spaces), take rename/copy targets from the 'rename to'/'copy to' lines, and (in the PR) also pin parseable prefixes on the git commands. Hidden tests: the PR's parser unit tests in pkg/gui/controllers/helpers; the PR's git_commands tests (exact argv with new -c flags) and integration tests were excluded.",
+  "merged_at": "2026-10-10T11:03:31Z",
+  "files_changed": 8,
+  "lines_changed": 126
+}

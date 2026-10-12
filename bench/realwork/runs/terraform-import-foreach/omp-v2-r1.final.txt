@@ -1,0 +1,14 @@
+Every `import` block is now honored, including several that target different instances of one `for_each` resource. The new test and the `internal/refactoring` and `internal/terraform` suites pass. I didn't run the new test against the old code, and I didn't run your `terraform_data` repro with the CLI.
+
+**Cause:** `refactoring.FindImportStatements` stored import blocks in a map keyed by config resource (`terraform_data.t`, with no instance key). Every import block for the same `for_each` resource therefore collapsed into the first one. The rest were dropped silently, which also explains why the first-declared block won.
+
+**Fix:**
+- **`internal/refactoring/import_statement.go`:** `FindImportStatements` now returns a `[]ImportStatement` in declaration order, parents before children, instead of a map. A parent module's import blocks for a resource still override all of a child module's blocks for that resource, as before. Blocks in the same module all stay.
+- **`internal/terraform/context_plan.go`:** the one caller now loops over the slice.
+- **`internal/terraform/context_plan_import_test.go`:** `TestContext2Plan_importMultipleBlocksForEachResource` has three separate import blocks for the instances of one `for_each` resource. It expects all three to be imported with their own IDs.
+
+**Not changed:** I didn't add a `.changes` entry because the file needs an issue number, which I don't have. `.changes/v1.17` exists, so a fix on main probably belongs there.
+
+**Not tested:** `count`, which I expect to be fixed by the same change.
+
+**Left alone:** `concreteResource` in `node_resource_plan.go` still passes `importTargets[0].Config` as the import config for every instance. That config is only used for config generation, which only happens for unclaimed single targets, so I left it.

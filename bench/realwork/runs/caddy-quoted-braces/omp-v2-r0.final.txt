@@ -1,0 +1,10 @@
+Quoted `{` and `}` no longer count as block delimiters in Caddyfile parsing. Your example now adapts to a `static_response` with body `{`.
+
+- **Cause:** the parser and dispenser compared `Val()` to `"{"` and `"}"` without checking whether the token was quoted.
+- **Fix:** I added `isOpenCurly()` and `isCloseCurly()` helpers in `caddyconfig/caddyfile/dispenser.go`. They require the token to be unquoted, and every block-structure check now uses them.
+- **Where:** the checks are in `dispenser.go` and `parse.go`: `NextArg`, `NextBlock`, `ArgErr`, the server-address and directive parsers, `blockTokens`, anonymous snippet-block detection, and snippet nesting.
+- **Cleanup:** the old `wasQuoted == 0` exception in `directive()` is gone, since the quoted case no longer reaches that branch.
+- **Tests:** I added three cases to `TestParseOneAndImport` in `parse_test.go`: `respond "{"`, `respond "}"`, and a quoted brace next to a real block.
+- **Result:**
+  - `go test ./caddyconfig/...` passes.
+  - `go test ./caddytest/...` fails in `TestLoadUnorderedJSON` and `TestCheckID`, both with network errors against the test server (EOF, connection reset). I read these as sandbox network trouble, not this change, but I didn't confirm that. A second `caddytest` run is still going in the background.

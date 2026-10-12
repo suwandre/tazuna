@@ -1,0 +1,23 @@
+Slugs now work on section, taxonomy, and term pages, and descendant URLs follow them. The issue's example produces `es/ayuda/` and `es/ayuda/como-frobear/`. The full `go test ./...` run passes.
+
+**What changed**
+
+- `resources/page/page_paths.go`: `TargetPathDescriptor` has a new `Dir` field, the directory the URL is built from. `CreateTargetPaths` uses it in place of `Section.Base()` and `Path.ContainerDir()`.
+- `hugolib/page__paths.go`: `dirWithSlugs` walks up the parent branch pages and substitutes each slug for its path element. Regular pages get that section directory plus the rest of their container path.
+- Docs: `content-management/urls.md`, `content-management/front-matter.md`, and `content-management/multilingual.md` no longer say slug is not applicable to section, taxonomy, or term pages.
+- Tests: `hugolib/slug_test.go` has three integration tests. One covers the multilingual example plus taxonomy and term slugs. One covers nested sections. One covers `disablePathToLower`.
+
+**Choices I made**
+
+- A slug on a home page is ignored, as the docs already said.
+- Slug only changes URLs. `.Path`, `.Section`, and `GetPage` lookups still use the content path, the same as page slugs.
+- A `url` in front matter still overrides everything, and permalink patterns still take precedence.
+- I did not add an issue number to the test comments because I don't know it.
+
+**Verification**
+
+- `go test ./hugolib/... ./resources/page/...` passes, and so does `go test ./...` (exit 0).
+- I ran `gofmt` and `go vet` on the changed packages. I did not run `./check.sh`: `staticcheck` isn't installed, and the script tries to `go install` it.
+- The shell's `GOCACHE` pointed at a directory that doesn't exist, so I used `/private/var/folders/9c/yftw74s95b1gm6rfjtjql9_40000gn/T/hugo-gocache` instead.
+
+Nothing is committed.

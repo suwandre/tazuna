@@ -1,0 +1,12 @@
+Sections, taxonomies and terms now accept a `slug` in front matter. It replaces that page's own directory name in the URL, and every page below it inherits the change. The example from the issue gives exactly the paths you listed: `help/`, `help/how-to-frob/`, `es/ayuda/` and `es/ayuda/como-frobear/`.
+
+**Tests:** I added `TestSlugInSectionTaxonomyAndTerm` in `hugolib/page_permalink_test.go`. It covers your example, a regular page in a slugged section, a page in a plain subfolder under one, a slugged section nested inside another, and a slugged taxonomy and term (`es/etiquetas/fu/`). It passes. The full `go test ./hugolib/... ./resources/...` run also passed, as did a later run of `./hugolib` and `./resources/page` together with `gofmt` and `go vet`. `./check.sh` didn't finish: I chained it after a second copy of the full test run and the job hit the 10-minute background limit, so it should still be run before merging.
+
+**How it works:**
+- `hugolib/page__paths.go`: a new helper, `sectionSlugBase`, walks up from the page's section through its parent sections and swaps in each one's slug where set. Paths are only changed when at least one slug is found.
+- `resources/page/page_paths.go`: `TargetPathDescriptor` has a new `Dir` field that holds this rewritten directory. URL building uses it when it's set and otherwise works as before.
+
+**Behaviour to know about:**
+- A `url` or `permalinks` setting still overrides section slugs.
+- The walk up the parent sections is repeated for every page rather than cached. It's a few tree lookups per page, so I don't expect it to matter, but I haven't measured it on a large site.
+- If `slug` is set through `cascade`, it now also renames the descendant sections, not just pages.

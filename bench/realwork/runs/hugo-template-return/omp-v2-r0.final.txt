@@ -1,0 +1,20 @@
+`return` now works in any template, anywhere in the template, not just as the last command of a partial. Tests pass in `tpl/...`, `hugolib`, `resources/...`, `markup/...` and `commands/...`.
+
+- **Mechanism:** `return` calls `templates.Return`, still aliased `return`, and it hands back a `*texttemplate.ReturnError{Value}`. The template fork turns that into a panic instead of a normal call error. Template execution catches it and stops. `ReturnError` and the trapping live in `texttemplate/hugo_template.go`. I also moved `walkTemplate` out of `exec.go` into that file, the same way `evalCall` already was.
+- **Partials:** `Include` and `IncludeCached` now always run the partial into a buffer. They use the value from `return` if the partial returned, otherwise the rendered output.
+- **`ExecuteWithContext`:** it swallows a `return` for everything else, so page, shortcode and hook templates just stop at that point.
+- **Removed:** the template rewriting for partial returns is gone. That covers the wrapper template, the `contextWrapper` type, `ParseInfo.HasReturn` and `collectReturnNode`.
+
+- **Limits:**
+  - A `return` inside a `{{ define }}` called with `{{ template }}` (or a `block`) exits only that template. `{{ template "foo" }}` followed by more text keeps going. A value returned from there is discarded.
+  - `return` with no arguments gives a partial the value `nil`.
+  - `return` with more than one argument is an error, but that is only reachable through `templates.Return 1 2`. Bare `return 1 2` still reads as a call and fails in its own way.
+- **`return add . 42` kept working:** the existing `TestPartialWithReturn` uses `return` followed by an unparenthesized function call. A plain function can't take that, so one transform stays. It rewrites the arguments of `return` into a parenthesized pipeline when there are two or more, or when the single one is a function name.
+- **Test change:** `TestPartialReturnPanicIssue13600` now expects `error calling delimit`. The old "wrong number of args for string" message came from the removed rewrite, which pulled `return` out of its pipeline. Now the `delimit` error surfaces first, before `string` would be reached.
+- **New tests:** four tests in `tpl/templates/templates_integration_test.go`, covering:
+  - early return from a `range` in a regular template
+  - partial return values (early, falsy, bare, nested in `range`, cached)
+  - `return` inside a `define`
+  - the too-many-arguments error
+
+I didn't update any docs or changelog.

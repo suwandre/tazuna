@@ -1,0 +1,24 @@
+quoted braces should not affect caddyfile block parsing
+
+### Issue Details
+
+right now, this caddyfile fails
+
+```caddyfile
+:8080 {
+	respond "{"
+}
+```
+
+i think it would be correct to ignore quoted "{" and "}" as open/close characters for block parsing
+
+### Assistance Disclosure
+
+AI used
+
+### If AI was used, describe the extent to which it was used.
+
+ai discovered while working on a different feature
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

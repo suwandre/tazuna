@@ -1,0 +1,68 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..f316c34 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -132,7 +132,7 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		URL:         pm.pageConfig.URL,
+ 	}
+ 
+-	if pm.Slug() != "" {
++	if pm.Slug() != "" && !kinds.IsBranch(p.Kind()) {
+ 		desc.BaseName = pm.Slug()
+ 	} else if pm.isStandalone() && pm.standaloneOutputFormat.BaseName != "" {
+ 		desc.BaseName = pm.standaloneOutputFormat.BaseName
+diff --git a/hugolib/site_sections_test.go b/hugolib/site_sections_test.go
+index 779c380..e8a69e2 100644
+--- a/hugolib/site_sections_test.go
++++ b/hugolib/site_sections_test.go
+@@ -107,6 +107,37 @@ Kind: {{ .Kind }}|RelPermalink: {{ .RelPermalink }}|SectionsPath: {{ .SectionsPa
+ 	b.AssertFileContent("public/index.html", "Kind: home|RelPermalink: /|SectionsPath: /|SectionsEntries: []|Len: 0")
+ }
+ 
++func TestSectionSlugURLs(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++defaultContentLanguage = 'en'
++defaultContentLanguageInSubdir = true
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++-- content/help/_index.es.md --
++---
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++-- content/help/how-to-frob/index.es.md --
++---
++slug: como-frobear
++---
++-- layouts/list.html --
++{{ .RelPermalink }}
++-- layouts/single.html --
++{{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++	b.AssertFileExists("public/en/help/index.html", true)
++}
++
+ func TestParentWithPageOverlap(t *testing.T) {
+ 	files := `
+ -- hugo.toml --
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..1d657de 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -165,6 +165,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.Kind == kinds.KindSection && d.BaseName != "" && d.BaseName != d.Path.BaseNameNoIdentifier() {
++			pb.Add(path.Join(d.Section.Dir(), d.BaseName))
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}

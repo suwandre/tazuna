@@ -1,0 +1,26 @@
+## Summary
+
+Root cause: with `diff.mnemonicPrefix`, git puts `i/`, `w/`, `c/`, `o/`, `1/`, `2/` in front of diff header paths instead of `a/`/`b/`. lazygit's diff-line parser only stripped `a/`/`b/`, so it resolved e.g. `w/file.go` as the nonexistent path `<worktree>/w/file.go`, mapped no file, and the stage/discard/unstage silently did nothing. Most diff commands also only passed `-c diff.noprefix=false`, which doesn't override `mnemonicPrefix` or custom `diff.srcPrefix`/`diff.dstPrefix`.
+
+### Changes
+
+**Parser** (`pkg/gui/controllers/helpers/diff_line_parser.go`)
+- `stripDiffPathPrefix` now strips any single path component (`a/`, `b/`, `i/`, `w/`, `c/`, …), leaves `/dev/null`, and resolves a path with no `/` to `""` rather than guessing.
+- Split decoding (`decodeDiffPathField`) from prefix stripping (`pathFromDiffHeaderField`), so `rename to`/`copy to` paths (which carry no prefix) can be decoded without a component being stripped.
+- `pathFromDiffHeader` now uses `rename to`/`copy to` for sections with no `---`/`+++` lines (pure renames/copies), falling back to the `diff --git` line (mode changes, binaries).
+- `pathFromDiffGitLine` no longer looks for `" b/`; it tries every space and picks the split whose halves name the same path after each side's own prefix is stripped, handling paths with spaces (including ones that read like ` w/`), quoted paths, and resolving nothing when the halves disagree.
+
+**Git commands** (`pkg/commands/git_commands/`)
+- Added `GitCommandBuilder.ExplicitDiffPrefixes()` (`--src-prefix=a/ --dst-prefix=b/`), which overrides `diff.noprefix`, `diff.mnemonicPrefix` and custom prefixes.
+- Used it in `DiffCmdObj`, `GetDiff`, `DiffIndexCmdObj`, `ShowCmdObj`, `diffHeadAgainstCommit`, `ShowFileDiffCmdObj`, and — the flow from the report — `WorktreeFileDiffCmdObj`, which had no prefix protection at all. Remaining `Config("diff.noprefix=false")` (name-status only) is untouched since that output has no prefixes.
+
+**Tests**
+- `diff_line_parser_test.go`: mnemonic prefixes for `+++`/`---`, quoted/subdirectory paths, no-prefix → empty, pure rename/copy/mode-change sections, and a direct `pathFromDiffGitLine` table (spaces, paths resembling other paths, mismatched halves).
+- Command-arg unit tests updated for the new `--src-prefix`/`--dst-prefix` args.
+- New integration test `main_view/stage_and_unstage_with_mnemonic_prefix.go` + regenerated `test_list.go`; I confirmed it fails against the base commit (`Apply patch` logged, nothing staged) and passes with the fix.
+
+### Verification
+- `go build ./...`, `go test ./... -short`, `scripts/gofumpt-check.sh`, and `golangci-lint` are all clean.
+- Ran integration groups `main_view`, `file`, `commit`, `filter_by_path`, `status`, `patch_building`, `diff` — all pass. The broader run's failures were unrelated environment issues (`direnv` not installed, reftable git) and parallel-load flakes; both non-environment failures pass when rerun individually.
+
+Changes are left uncommitted per the explicit instruction not to commit.

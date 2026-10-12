@@ -1,0 +1,18 @@
+The SNMPv3 reconnect fix itself was fine. The test failure came from the folder this repo is checked out in, not from the code change, and the three test packages now pass.
+
+**Why it failed:** The folder path contains a colon (`…flash:max-…`), and gosmi (the MIB-parsing library) treats `:` as a separator between search paths. `TestSnmpInitGosmi` passed an absolute path to the test MIB files, so none of them loaded. Loading then tried to log a warning, but the test had no logger set, so it crashed with a nil-pointer panic. The same panic happens with the earlier changes stashed (the base code), which confirms the cause. The tests also passed through a symlinked path without a colon.
+
+**What I changed:**
+- **`plugins/inputs/snmp/snmp_test.go`:** `TestSnmpInitGosmi` now uses the relative path `../../common/snmp/testdata/gosmi`, the same way the `common/snmp` tests do, so the folder name can't break it. I removed the now-unused `path/filepath` import.
+- **`plugins/inputs/snmp/snmp.go`:** The two `gs.Close()` calls added after a failed gather ignored their error, which the repo's `errcheck` lint rule rejects. They now log a debug message if closing fails.
+
+**The earlier fix, kept as is:**
+- The `Connection` interface now has `Close()`.
+- On a closed connection, `GosnmpWrapper.Reconnect()` clears the saved SNMPv3 engine ID, boots and time before connecting again, so the agent's engine ID is discovered afresh. An open connection keeps what it discovered.
+- `Get` and `Walk` reconnect first if the connection was closed.
+- `inputs.snmp` closes an agent's connection whenever the top-level fields or any table fail to gather, and keeps the connection object in its cache.
+- Tests cover all of this.
+
+I checked in the gosnmp source that `Close()` clears the connection and that a new engine ID causes the auth and privacy keys to be recomputed, so encryption stays correct after rediscovery.
+
+**Verification:** `go test -count=1 ./plugins/common/snmp/ ./plugins/inputs/snmp/ ./plugins/processors/snmp_lookup/` passes when run from the original path, and `go vet` and `gofmt` are clean. I didn't run `golangci-lint` itself.

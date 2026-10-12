@@ -1,0 +1,20 @@
+Ask: fix import blocks being dropped when several target instances of one `for_each` resource - wanted: every block honored, with a test. For you: fixed and verified.
+
+**Cause.** `refactoring.FindImportStatements` keyed its results by config resource, ignoring the instance key. Its "parent module overrides child module" check was meant to compare modules. Because the map was keyed by resource, it skipped every later block for the same resource. That left only one block per `for_each` or `count` resource. `count` was affected too.
+
+**Fix**
+- `internal/refactoring/import_statement.go`: `FindImportStatements` now returns `[]ImportStatement`. It records which module first claimed each config resource and skips a block only when a different module (a parent) already claimed it. Multiple blocks in the same module are all kept.
+- `internal/terraform/context_plan.go`: the one caller now ranges over the slice.
+
+**Test.** I added `TestContext2Plan_importSeparateBlocksPerInstance` in `context_plan_import_test.go`. It uses a `for_each` resource and a `count` resource, each imported with one block per instance, with the blocks deliberately out of key order. It asserts all four instances are imported with the right IDs.
+
+**Verification**
+- Without the fix, the new test fails: `test_object.a["first"]` and `test_object.b[1]` are planned as Create instead of imported.
+- With the fix, it passes.
+- The other `importForEach*` tests also pass.
+- `go test ./internal/refactoring/` passes.
+- `go test ./internal/terraform/ -run 'Import|import'` passes.
+- I did not run the full `internal/terraform` suite or other packages.
+- `gopls` isn't installed, so I used `go build` and `go test` as the compile check.
+
+I didn't add a regression test for the parent-overrides-child behavior. It's unchanged in intent, and `refactoring` has no test file for this function.

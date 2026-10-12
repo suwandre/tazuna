@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/k6",
+  "base": "1e35440eea685de703fb990ffd21bf3e5d0bbdef",
+  "fix": "7debc9f7f1b82cd47653f664aa58187e702c102a",
+  "pr": "https://github.com/grafana/k6/pull/6338",
+  "issue": "https://github.com/grafana/k6/issues/5791",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./internal/cmd/tests -run '^(TestRunOnce|TestRunOnceRewritesPlainArchive|TestCloudRunOnceLocalExecution|TestCloudRunOnceUploadsRewrittenArchive|TestArchiveOnceWritesRewrittenOptions)$'",
+  "suite_cmd": "go test -count=1 ./internal/cmd ./internal/cmd/tests -skip '^(TestApplyOncePreservesScenarioExec|TestApplyOncePreservesScenarioFields|TestApplyOncePreservesScenarioName|TestDropOnceShortcutsWarnsOnlyWhenItDropsShortcuts|TestGetConsolidatedConfigOnceDropsLowerLayerShortcuts|TestGetOptionsRejectsOnceWithShortcut|TestOncePreservesScenarioAcrossLayers|TestRunOnceRejectsMultipleScenarios)$'",
+  "suite_skip_note": "suite skips PR-specific tests excluded from hidden (pinned wording/helpers not in the ticket); it checks pre-existing behavior only"
+}

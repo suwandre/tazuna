@@ -1,0 +1,26 @@
+All changes are complete and verified. Here's a summary:
+
+## What changed
+
+**`backend/archive/zip/zip.go`**
+- Added a `links` field set from `fs.GetConfig(ctx).Links`, so the archiver follows the global `-l/--links` flag.
+- In `readZip`, entries with `os.ModeSymlink` are now skipped with a single NOTICE naming the flag unless `--links` is set; with `--links` they are exposed under their name plus `.rclonelink`. Since the member body *is* the link target, the existing `Object` (`Size()` = uncompressed size, `Open()` with seek/range support) reads the target back without further changes.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Added the same `links` flag.
+- `List` now skips symlinks (with a NOTICE naming `-l/--links`) unless enabled; when enabled it converts them via the new `objectFromLink`, using `squashfs.StatT.LinkTarget`, with size = target length and the `.rclonelink` suffix.
+- `newObjectNative` names entries exactly as `List` does, so listing and `NewObject` agree; a regular member whose name ends in `.rclonelink` still resolves as a regular file.
+- `Object.Open` returns the link target for symlink objects, clamping offsets and honouring range/seek limits.
+
+**Tests** (`archive_internal_test.go`, `zip/zip_internal_test.go`): added `TestReadZipSymlink`, `TestArchiveSquashfsSymlink` (via external `mksquashfs`) and `TestArchiveZipSymlinkEscape`, which pins the hostile symlink-plus-member archive end-to-end and confirms nothing is written outside the destination.
+
+**`docs/content/archive.md`**: documented the symlink `.rclonelink` behaviour with examples.
+
+## Verification
+- `go build ./...`, `go vet ./backend/archive/...`, `gofmt -l` and `git diff --check` are clean.
+- `go test ./backend/archive/...` passes; I installed `mksquashfs` so the squashfs symlink test actually ran and passed.
+- End-to-end with a freshly built binary reproduced the requested behaviour:
+  - `rclone lsl :archive:/tmp/e2e.zip` skips the symlink with `NOTICE: ... Skipped 1 symlinks - use -l/--links to read them`
+  - `rclone lsl --links ...` lists `src/link.txt.rclonelink` with size 8
+  - `rclone copy --links ...` recreates `/tmp/e2e-out/src/link.txt -> file.txt`
+- Temporary scratch tests additionally confirmed seek/range handling on symlink objects in both backends (kept out of the final diff).

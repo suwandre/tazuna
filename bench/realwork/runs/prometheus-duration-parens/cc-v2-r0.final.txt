@@ -1,0 +1,15 @@
+Parentheses around a plain duration literal now survive `Expr.String()`. The issue's failing inputs (`foo offset (5)`, `+(5)`, `-(5)`, `(5m)` and `foo[(5s)]`) all print back with their parentheses. Tests pass for `promql/...`, `web/...`, `cmd/promtool` and `rules`. I haven't run `make lint`, and I added no new `release-notes` or changelog entry.
+
+**Fix:** `(N)` now parses to `&DurationExpr{Op: ADD, RHS: <literal>, Wrapped: true}` instead of a bare `*NumberLiteral`. A `-` in front gives `-(5)` as a `SUB` node around that. This reuses the existing `Wrapped` printing and evaluation of unary plus, so the printer, the engine's `durations.go` and the web API need no changes. `NumberLiteral` is unchanged.
+
+The change is in `paren_duration_expr` in `generated_parser.y`, a new `wrapNumberLiteral` helper in `parse.go`, and `applyUnaryOpToDurationExpr`. I regenerated `generated_parser.y.go` with `goyacc`, and its diff is only the 5 new lines.
+
+**Behaviour changes:**
+- **Offset and range fields:** with a wrapped literal, `OriginalOffsetExpr` or `RangeExpr` is now set, and `OriginalOffset` or `Range` stays 0 until the engine evaluates the expression. This is the same as any other duration expression such as `(5m + 1m)`. Code that reads `OriginalOffset` straight after parsing, without going through the engine, will now see 0 for these inputs when `ExperimentalDurationExpr` is on.
+- **`+` is dropped:** `+(5)` prints as `(5)`, the same as `+(5m + 1m)` already did.
+- **Literal format:** a wrapped bare number prints as written, so `(5)` stays `(5)` and does not become `(5s)`.
+
+**Tests:**
+- `parse_test.go`: the AST expectations for `foo offset +(5)` and `foo offset -(5)` now expect the wrapped expression nodes.
+- `printer_test.go`: new round-trip cases for the issue's inputs, plus `foo offset 5` printing `5s` as before.
+- `durations_test.go`: a case for evaluating a wrapped unary-plus literal.

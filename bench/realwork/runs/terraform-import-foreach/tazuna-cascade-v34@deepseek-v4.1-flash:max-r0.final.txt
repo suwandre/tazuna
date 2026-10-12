@@ -1,0 +1,20 @@
+## Summary
+
+**Root cause:** `refactoring.FindImportStatements` collected import blocks into an `addrs.Map` keyed by `addrs.ConfigResource` — a resource-level key that ignores instance keys. Two import blocks targeting different instances of the same `for_each`/`count` resource produced the same key, so the dedup logic (`continue` on an existing key) silently dropped every block after the first. The dropped block then planned the target instance for creation instead of import.
+
+**Changes:**
+
+1. `internal/refactoring/import_statement.go` — `FindImportStatements` now returns an ordered `[]ImportStatement` and performs no deduplication; instance-level uniqueness can't be determined before expansion (dynamic `to` expressions / module instances).
+2. `internal/terraform/context_plan.go` — `findImportTargets` iterates the slice instead of `Map.Values()`, preserving source order.
+3. `internal/terraform/node_resource_plan.go` — `expandResourceImports` now deduplicates after expansion when the concrete instance address is known: `knownImports.Has(to)` / `Has(res)` skips a target already claimed by an earlier statement. Since statements are collected root-module-first, this preserves the intended "parent module import overrides child module import" semantics while allowing sibling instance imports.
+4. `internal/terraform/context_apply_import_test.go` — added three regressions:
+   - two import blocks for different `for_each` instances in the root module,
+   - root + child module imports of different instances,
+   - root import for one instance plus a child `for_each` import block for all instances.
+5. `.changes/v1.16/BUG FIXES-20260827-165511.yaml` — changelog entry (issue #39068).
+
+**Verification:**
+- New tests pass: `go test ./internal/terraform/ -run 'TestContextApply_import_to_instance|...' -v`
+- Confirmed they fail on the unfixed code by temporarily stashing the source changes (instance `["b"]` was created, id empty).
+- Full `go test ./internal/terraform/` and `go test ./internal/refactoring/...` pass.
+- `go vet` and `gofmt` clean; `go build` of refactoring/terraform/command packages succeeds.

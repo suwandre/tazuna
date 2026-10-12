@@ -1,0 +1,15 @@
+Ask: fix `import` blocks being dropped for `for_each` resources in 1.16.0, with tests. Wanted: every import block honored, plus a test.
+For you: the fix is in and its new test passes, but the full-package run is still going, so I haven't confirmed that nothing else broke.
+Now: running the `go test` suites for `internal/terraform`, `internal/refactoring`, `internal/configs` and `internal/command`, plus `go vet`.
+Next: report the results when they arrive.
+
+**Cause:** `refactoring.FindImportStatements` returned a map keyed by the resource's config address, so `terraform_data.t["a"]` and `["b"]` shared one key. The second `Put` was skipped by the "parent overrides child" check, and the block vanished with no diagnostic.
+
+**Fix** (`internal/refactoring/import_statement.go`, `internal/terraform/context_plan.go`):
+- `FindImportStatements` now returns a slice of every import block instead of a map. The caller in `context_plan.go` ranges over it. `ConfigTransformer` and `expandResourceImports` already handled several targets per resource, so nothing else needed to change.
+- A parent-module block still overrides a child's block for the same resource instance. Child blocks are listed before parent blocks, and a later block replaces an earlier one for the same instance.
+- This changes the old rule slightly. The override used to apply to the whole resource, so a parent block for `["a"]` silently dropped a child block for `["b"]`. It now applies per instance, which fits the rule better.
+
+**Test:** `TestContext2Plan_importMultipleBlocksForEachResource` uses two import blocks on one `for_each` resource. It fails without the fix with `test_object.a["second"] is not being imported`, and passes with it.
+
+I haven't tested `count`, and I haven't added a cross-module override test.

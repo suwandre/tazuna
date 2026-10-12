@@ -1,0 +1,197 @@
+diff --git a/docs/content/en/content-management/urls.md b/docs/content/en/content-management/urls.md
+index 0a7095f..db3cbab 100644
+--- a/docs/content/en/content-management/urls.md
++++ b/docs/content/en/content-management/urls.md
+@@ -22,7 +22,7 @@ Override the default URL for a page using these front matter fields.
+ 
+ ### Slug
+ 
+-Set the `slug` in front matter to override the last segment of the path. This front matter field is not applicable to `home`, `section`, `taxonomy`, or `term` pages.
++Set the `slug` in front matter to override the last segment of the path. For `section`, `taxonomy`, and `term` pages, the slug also replaces that segment in the paths of all descendant pages. This front matter field is not applicable to the `home` page.
+ 
+ {{< code-toggle file=content/posts/post-1.md fm=true >}}
+ title = 'My First Post'
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..9510d0d 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -140,6 +140,8 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		desc.BaseName = pageInfoPage.BaseNameNoIdentifier()
+ 	}
+ 
++	desc.Dir = dirWithSectionSlugs(p, desc)
++
+ 	addPrefix := func(filePath, link string) {
+ 		if filePath != "" {
+ 			if desc.PrefixFilePath != "" {
+@@ -207,3 +209,49 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 
+ 	return desc, nil
+ }
++
++// dirWithSectionSlugs returns the directory of p with each path element
++// replaced by the slug of the section, taxonomy or term page at that path, if any.
++// It returns an empty string if no slugs apply.
++func dirWithSectionSlugs(p *pageState, desc page.TargetPathDescriptor) string {
++	dir := desc.Path.ContainerDir()
++	if kinds.IsBranch(p.Kind()) {
++		dir = desc.Section.Base()
++	}
++	if dir == "" || dir == "/" {
++		return ""
++	}
++
++	slugs := map[string]string{}
++	add := func(bp page.Page) {
++		if bp.IsHome() {
++			return
++		}
++		if slug := bp.Slug(); slug != "" {
++			pi := bp.PathInfo()
++			if p.s.Conf.DisablePathToLower() {
++				pi = pi.Unnormalized()
++			}
++			slugs[pi.Base()] = slug
++		}
++	}
++	for _, a := range p.Ancestors() {
++		add(a)
++	}
++	if kinds.IsBranch(p.Kind()) {
++		add(p)
++	}
++	if len(slugs) == 0 {
++		return ""
++	}
++
++	elems := strings.Split(strings.Trim(dir, "/"), "/")
++	out := make([]string, len(elems))
++	for i, e := range elems {
++		out[i] = e
++		if slug, ok := slugs["/"+strings.Join(elems[:i+1], "/")]; ok {
++			out[i] = slug
++		}
++	}
++	return strings.Join(out, "/")
++}
+diff --git a/hugolib/page_permalink_test.go b/hugolib/page_permalink_test.go
+index d5ae693..48db76f 100644
+--- a/hugolib/page_permalink_test.go
++++ b/hugolib/page_permalink_test.go
+@@ -201,3 +201,79 @@ path = '/books/**'
+ 
+ 	b.AssertFileContent("public/shelf/my-book/index.html", "RelPermalink: /shelf/my-book/")
+ }
++
++func TestSectionTaxonomyTermSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++disableKinds = ["rss", "sitemap"]
++[taxonomies]
++tag = "tags"
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: How to frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Cómo frobear
++slug: como-frobear
++---
++-- content/help/sub/_index.es.md --
++---
++title: Sub
++slug: sub-es
++---
++-- content/help/sub/p.es.md --
++---
++title: P
++tags: [t1]
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/t1/_index.es.md --
++---
++title: T1
++slug: etiqueta-uno
++---
++-- layouts/all.html --
++{{ .Kind }}|{{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileExists("public/help/index.html", true)
++	b.AssertFileExists("public/help/how-to-frob/index.html", true)
++	b.AssertFileExists("public/es/ayuda/index.html", true)
++	b.AssertFileExists("public/es/ayuda/como-frobear/index.html", true)
++	b.AssertFileExists("public/es/ayuda/sub-es/index.html", true)
++	b.AssertFileExists("public/es/ayuda/sub-es/p/index.html", true)
++	b.AssertFileExists("public/es/help/index.html", false)
++	b.AssertFileExists("public/es/etiquetas/index.html", true)
++	b.AssertFileExists("public/es/etiquetas/etiqueta-uno/index.html", true)
++
++	b.AssertFileContent("public/es/ayuda/index.html", "section|/es/ayuda/")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "page|/es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/sub-es/p/index.html", "page|/es/ayuda/sub-es/p/")
++	b.AssertFileContent("public/es/etiquetas/index.html", "taxonomy|/es/etiquetas/")
++	b.AssertFileContent("public/es/etiquetas/etiqueta-uno/index.html", "term|/es/etiquetas/etiqueta-uno/")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..f72a1d7 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -50,6 +50,10 @@ type TargetPathDescriptor struct {
+ 	// 2) the file base name (TranslationBaseName).
+ 	BaseName string
+ 
++	// Dir, if set, replaces the directory derived from Path (pages) or
++	// Section (branches), e.g. with section slugs applied.
++	Dir string
++
+ 	// PrefixFilePath contains zero or more content dimensions used as a file
+ 	// path prefix. Dimensions are ordered role/version/language for
+ 	// single-host and language/role/version for multihost.
+@@ -165,6 +169,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.Dir != "" {
++			pb.Add(d.Dir)
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}
+@@ -206,7 +212,11 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			if dir := d.Path.ContainerDir(); dir != "" {
++			dir := d.Dir
++			if dir == "" {
++				dir = d.Path.ContainerDir()
++			}
++			if dir != "" {
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {

@@ -1,0 +1,21 @@
+`slug` now works on section, taxonomy and term pages. It changes the URL of the page and all its descendants, as in the issue's example. The `hugolib`, `resources/page` and `common/paths` test suites pass.
+
+**Approach**
+- In `hugolib/page__paths.go`, a new helper `pathInfoWithBranchSlugs` walks the page's branch ancestors in the site's content tree. For each one with a `slug`, it swaps that path element and re-parses the path. Only the output path changes.
+- The content tree keys, `.Path`, `.Section`, and `GetPage` lookups still use the source paths, so they are unaffected.
+- Pages without a branch slug in their ancestry take the same path as before.
+- The per-language behavior comes from the site's own tree, so `_index.es.md` with `slug: ayuda` only changes the Spanish site.
+
+**Tests** (`hugolib/slug_test.go`, new)
+- `TestSectionSlugMultilingual`: the issue's example, checking `/help/` and `/es/ayuda/como-frobear/`, and that `GetPage` still resolves.
+- `TestSectionSlugNested`: nested section slugs, a leaf bundle, and an implicit section.
+- `TestTaxonomyAndTermSlug`: a taxonomy slug (`/etiketten/`) and a term slug (`/etiketten/golang/`).
+- All three fail on the original `page__paths.go` and pass with the change.
+
+**Docs**: I removed "not applicable to section/taxonomy/term" from the `slug` entries in `urls.md` and `front-matter.md`, and changed the localization bullet in `multilingual.md`.
+
+**Things to know**
+- This changes behavior for existing sites. A section, taxonomy or term that already has `slug` in its front matter will now produce different URLs. Before, the value was ignored for these page kinds.
+- I did not run `./check.sh`. It installs staticcheck over the network and runs the whole suite. I ran `go test` on the relevant packages and `gofmt`, which is clean.
+- The disk was briefly full, and Go's shared build cache at `/Users/suwandre/bench-gocache` was missing object files. I did not touch that cache. I built with a scratch cache at `T/gocache-hugo-slug`, which you can delete.
+- Nothing is committed.

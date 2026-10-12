@@ -1,0 +1,27 @@
+## Summary
+
+Added the `--once` flag for single-run execution mode, matching k6's upstream implementation (PR #6338, released in v2.3.0).
+
+### What changed
+
+**`internal/cmd/once.go`** (new) — core logic:
+- `checkOnceConflicts()` — rejects `--once` combined with CLI shortcuts (`--vus`, `--duration`, `--iterations`, `--stage`, `--execution-segment`, `--execution-segment-sequence`).
+- `dropOnceShortcuts()` — clears shortcut load fields (`vus`, `duration`, `iterations`, `stages`, execution segments) from lower config layers (file, script, env) before merging, warning when it does so. This preserves the scenario through `Config.Apply()`.
+- `rejectAmbiguousOnce()` — errors if more than one scenario is defined.
+- `applyOnce()` / `onceScenario()` — replaces the effective scenario with a `shared-iterations` config with 1 VU / 1 iteration, preserving the map key, raw `exec`, `env`, `tags`, and `options` (browser config). Keeps constructor defaults for `maxDuration`/`gracefulStop`.
+
+**`internal/cmd/options.go`** — registers the `--once` bool flag and calls `checkOnceConflicts()` in `getOptions()`. Since it's in `optionFlagSet()`, it's exposed on `k6 run`, `k6 cloud run`, `k6 cloud run --local-execution`, `k6 archive`, and `k6 cloud upload`.
+
+**`internal/cmd/config.go`** — adds unexported `once` field to `Config` (kept out of JSON/env), and drops lower-layer shortcuts in `getConsolidatedConfig()` before `Apply()`.
+
+**`internal/cmd/test_load.go`** — carries `--once` from the CLI layer and runs `rejectAmbiguousOnce` + `applyOnce` after consolidation but before shortcut derivation/validation.
+
+### Tests added
+- `internal/cmd/once_test.go` — unit tests for scenario field preservation (`exec`, `env`, `tags`, `options`, name), shortcut dropping across layers with warning messages, and CLI conflict rejection with exit codes.
+- `internal/cmd/tests/cmd_once_test.go` — end-to-end: `k6 run --once`, multiple-scenario rejection, `cloud run --local-execution --once`, `cloud run --once` archive rewrite, `archive --once`, and running a plain archive with `--once`.
+
+### Verification
+- `go build ./...` succeeds.
+- `go test ./internal/cmd/... ./lib/executor/... ./lib/` all pass (including with `-race` on the new tests).
+- `golangci-lint run internal/cmd/...` → 0 issues; `gofmt` clean.
+- Manual E2E with a built binary confirmed: single scenario preserves `exec`/`env`/`tags`/browser options, runs exactly one iteration; no scenarios → `default` 1/1; multiple scenarios and shortcut combinations produce the documented errors; `archive --once` serializes the rewritten config.

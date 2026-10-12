@@ -1,0 +1,321 @@
+diff --git a/docs/content/en/content-management/front-matter.md b/docs/content/en/content-management/front-matter.md
+index 9210d75..7a3d854 100644
+--- a/docs/content/en/content-management/front-matter.md
++++ b/docs/content/en/content-management/front-matter.md
+@@ -126,7 +126,7 @@ The most common front matter fields are `date`, `draft`, `title`, and `weight`,
+   <!-- markdownlint-enable MD049 -->
+ 
+ `slug`
+-: (`string`) Overrides the last segment of the URL path. Not applicable to `home`, `section`, `taxonomy`, or `term` pages. See the [URL management][] page for details. Access this value from a template using the [`Slug`][] method on a `Page` object.
++: (`string`) Overrides the last segment of the URL path. Not applicable to `home` pages. For `section`, `taxonomy`, and `term` pages, replaces the directory name, affecting the URLs of descendant pages too. See the [URL management][] page for details. Access this value from a template using the [`Slug`][] method on a `Page` object.
+ 
+ `summary`
+ : (`string`) Conceptually different than the page `description`, the summary either summarizes the content or serves as a teaser to encourage readers to visit the page. Access this value from a template using the [`Summary`][] method on a `Page` object.
+diff --git a/docs/content/en/content-management/multilingual.md b/docs/content/en/content-management/multilingual.md
+index a05d341..56b3998 100644
+--- a/docs/content/en/content-management/multilingual.md
++++ b/docs/content/en/content-management/multilingual.md
+@@ -88,7 +88,7 @@ Because paths and file names are used to handle linking, all translated pages wi
+ To localize URLs:
+ 
+ - For a regular page, set either [`slug`][] or [`url`][] in front matter
+-- For a section page, set [`url`][] in front matter
++- For a section page, set either [`slug`][] or [`url`][] in front matter
+ 
+ For example, a French translation can have its own localized slug.
+ 
+diff --git a/docs/content/en/content-management/urls.md b/docs/content/en/content-management/urls.md
+index 0a7095f..8bbac8a 100644
+--- a/docs/content/en/content-management/urls.md
++++ b/docs/content/en/content-management/urls.md
+@@ -22,7 +22,9 @@ Override the default URL for a page using these front matter fields.
+ 
+ ### Slug
+ 
+-Set the `slug` in front matter to override the last segment of the path. This front matter field is not applicable to `home`, `section`, `taxonomy`, or `term` pages.
++Set the `slug` in front matter to override the last segment of the path. This front matter field is not applicable to `home` pages.
++
++For `section`, `taxonomy`, and `term` pages, the slug replaces the directory name, and so also applies to the URLs of all descendant pages.
+ 
+ {{< code-toggle file=content/posts/post-1.md fm=true >}}
+ title = 'My First Post'
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..5032569 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -116,17 +116,25 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 	alwaysInSubDir := p.Kind() == kinds.KindSitemap
+ 	pageInfoPage := p.PathInfo()
+ 
+-	pageInfoCurrentSection := p.CurrentSection().PathInfo()
+-	if p.s.Conf.DisablePathToLower() {
++	currentSection := p.CurrentSection()
++	pageInfoCurrentSection := currentSection.PathInfo()
++	disablePathToLower := p.s.Conf.DisablePathToLower()
++	if disablePathToLower {
+ 		pageInfoPage = pageInfoPage.Unnormalized()
+ 		pageInfoCurrentSection = pageInfoCurrentSection.Unnormalized()
+ 	}
+ 
++	dir := dirWithSlugs(currentSection, disablePathToLower)
++	if !kinds.IsBranch(p.Kind()) {
++		dir += strings.TrimPrefix(pageInfoPage.ContainerDir(), strings.TrimSuffix(pageInfoCurrentSection.Base(), "/"))
++	}
++
+ 	desc := page.TargetPathDescriptor{
+ 		PathSpec:    d.PathSpec,
+ 		Kind:        p.Kind(),
+ 		Path:        pageInfoPage,
+ 		Section:     pageInfoCurrentSection,
++		Dir:         dir,
+ 		UglyURLs:    s.h.Conf.IsUglyURLs(p.Section()),
+ 		ForcePrefix: s.h.Conf.IsMultihost() || alwaysInSubDir,
+ 		URL:         pm.pageConfig.URL,
+@@ -207,3 +215,27 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 
+ 	return desc, nil
+ }
++
++// dirWithSlugs returns the directory of the branch page p, with the slug of p
++// or of any of its branch ancestors, if set, in place of its path element.
++func dirWithSlugs(p page.Page, unnormalized bool) string {
++	if p.IsHome() {
++		return ""
++	}
++
++	parent := p.Parent()
++	parentDir := dirWithSlugs(parent, unnormalized)
++	if slug := p.Slug(); slug != "" {
++		return parentDir + "/" + slug
++	}
++
++	return parentDir + strings.TrimPrefix(pathInfoBase(p, unnormalized), strings.TrimSuffix(pathInfoBase(parent, unnormalized), "/"))
++}
++
++func pathInfoBase(p page.Page, unnormalized bool) string {
++	pi := p.PathInfo()
++	if unnormalized {
++		pi = pi.Unnormalized()
++	}
++	return pi.Base()
++}
+diff --git a/hugolib/slug_test.go b/hugolib/slug_test.go
+new file mode 100644
+index 0000000..fdb37bb
+--- /dev/null
++++ b/hugolib/slug_test.go
+@@ -0,0 +1,179 @@
++package hugolib
++
++import (
++	"testing"
++)
++
++func TestSlugInMultilingualSectionTaxonomyAndTermPages(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++defaultContentLanguage = 'en'
++
++[taxonomies]
++tag = 'tags'
++
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: How to frob
++tags: [foo]
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Como frobear
++slug: como-frobear
++tags: [foo]
++---
++-- content/help/faq.en.md --
++---
++title: FAQ
++---
++-- content/help/faq.es.md --
++---
++title: Preguntas
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/foo/_index.es.md --
++---
++title: Foo
++slug: bar
++---
++-- content/help/baz.es.md --
++---
++title: Baz
++tags: [baz]
++---
++-- layouts/home.html --
++{{ .Title }}
++-- layouts/section.html --
++{{ .Title }}
++-- layouts/page.html --
++{{ .Title }}
++-- layouts/taxonomy.html --
++{{ .Title }}
++-- layouts/term.html --
++{{ .Title }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileExists("public/help/index.html", true)
++	b.AssertFileExists("public/help/how-to-frob/index.html", true)
++	b.AssertFileExists("public/help/faq/index.html", true)
++	b.AssertFileExists("public/tags/foo/index.html", true)
++
++	b.AssertFileExists("public/es/ayuda/index.html", true)
++	b.AssertFileExists("public/es/ayuda/como-frobear/index.html", true)
++	b.AssertFileExists("public/es/ayuda/faq/index.html", true)
++	b.AssertFileExists("public/es/etiquetas/index.html", true)
++	b.AssertFileExists("public/es/etiquetas/bar/index.html", true)
++	b.AssertFileExists("public/es/etiquetas/baz/index.html", true)
++
++	b.AssertFileExists("public/es/help/index.html", false)
++	b.AssertFileExists("public/es/ayuda/how-to-frob/index.html", false)
++	b.AssertFileExists("public/es/tags/index.html", false)
++	b.AssertFileExists("public/es/tags/foo/index.html", false)
++}
++
++func TestSlugInNestedSections(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++-- content/a/_index.md --
++---
++title: A
++slug: x
++---
++-- content/a/b/_index.md --
++---
++title: B
++slug: y
++---
++-- content/a/b/c/index.md --
++---
++title: C
++---
++-- content/a/d/_index.md --
++---
++title: D
++---
++-- content/a/d/e.md --
++---
++title: E
++---
++-- layouts/home.html --
++{{ .Title }}
++-- layouts/section.html --
++{{ .Title }}
++-- layouts/page.html --
++{{ .Title }}
++-- layouts/taxonomy.html --
++{{ .Title }}
++-- layouts/term.html --
++{{ .Title }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileExists("public/x/index.html", true)
++	b.AssertFileExists("public/x/y/index.html", true)
++	b.AssertFileExists("public/x/y/c/index.html", true)
++	b.AssertFileExists("public/x/d/index.html", true)
++	b.AssertFileExists("public/x/d/e/index.html", true)
++
++	b.AssertFileExists("public/a/index.html", false)
++	b.AssertFileExists("public/a/b/c/index.html", false)
++}
++
++func TestSlugInSectionWithDisablePathToLower(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++disablePathToLower = true
++-- content/Help/_index.md --
++---
++title: Help
++slug: Ayuda
++---
++-- content/Help/Sub/_index.md --
++---
++title: Sub
++---
++-- content/Help/Sub/Page.md --
++---
++title: Page
++---
++-- layouts/home.html --
++{{ .Title }}
++-- layouts/section.html --
++{{ .Title }}
++-- layouts/page.html --
++{{ .Title }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileExists("public/Ayuda/Sub/index.html", true)
++	b.AssertFileExists("public/Ayuda/Sub/Page/index.html", true)
++	b.AssertFileExists("public/Help/index.html", false)
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..304081c 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -45,6 +45,10 @@ type TargetPathDescriptor struct {
+ 	Path    *paths.Path
+ 	Section *paths.Path
+ 
++	// The directory the path is built from, with the slugs of any section,
++	// taxonomy or term pages applied.
++	Dir string
++
+ 	// For regular content pages this is either
+ 	// 1) the Slug, if set,
+ 	// 2) the file base name (TranslationBaseName).
+@@ -166,7 +170,7 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			pb.Add(d.Section.Base())
++			pb.Add(d.Dir)
+ 		}
+ 		needsBase = false
+ 	}
+@@ -206,9 +210,7 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			if dir := d.Path.ContainerDir(); dir != "" {
+-				pb.Add(dir)
+-			}
++			pb.Add(d.Dir)
+ 			if d.BaseName != "" {
+ 				pb.Add(d.BaseName)
+ 			} else {

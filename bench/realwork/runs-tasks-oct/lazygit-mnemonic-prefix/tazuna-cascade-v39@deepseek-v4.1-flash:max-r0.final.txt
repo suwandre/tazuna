@@ -1,0 +1,24 @@
+All checks pass. Here's a summary of the work.
+
+## Root cause
+
+With `diff.mnemonicPrefix = true`, git prefixes diff header paths with `i/`/`w/`/`c/` instead of `a/`/`b/`. The diff parser only stripped `a/`/`b/`, so the resolved path was e.g. `w/file.go`, which matches no file in the files panel — staging/discarding silently did nothing. Sections without `---`/`+++` lines (mode change, pure rename/copy, binary) had the same problem because the `diff --git` fallback searched for a literal ` b/`.
+
+## Changes
+
+- **`pkg/gui/controllers/helpers/diff_line_parser.go`**
+  - `stripDiffPathPrefix` now strips whatever single path component git put in front (`a/`, `b/`, `i/`, `w/`, `c/`, …); a path with no `/` resolves to `""` (can't tell prefix from path) and `/dev/null` is preserved.
+  - `pathFromDiffHeader` falls back to the `rename to`/`copy to` line when there are no `+++`/`---` lines, before the `diff --git` line.
+  - `pathFromDiffGitLine` no longer looks for ` b/`; it tries each split and returns the path where both halves agree after their prefixes are stripped, so paths containing spaces (including ` w/`) parse correctly. Decoding of a header field was extracted into `unquoteDiffPath`.
+- **`pkg/commands/git_commands/git_command_builder.go`** — new `ParseableDiffPrefixes()` builder method that overrides the user's `diff.noprefix`, `diff.srcPrefix` and `diff.dstPrefix` (while leaving `diff.mnemonicPrefix` alone, since those prefixes are now strippable and users want to see them). Applied to every diff/show/stash command lazygit parses paths out of or turns into `git apply` patches.
+- **Tests** — extended the parser unit tests (mnemonic/custom/no prefixes, quoted paths, subdirectories, `diff --git` splitting, mode-change/copy sections), updated expected argv in `commit_test.go`, `stash_test.go`, `working_tree_test.go`, and added four integration tests (staging with no/custom/mnemonic prefixes, jumping to a file of a stash with `diff.noprefix`), including the generated `test_list.go`.
+
+## Verification
+
+- `go tool gofumpt -l -w .` and `./scripts/gofumpt-check.sh` — clean
+- `go build ./...` — OK
+- `go test ./... -short` — all pass
+- `./scripts/golangci-lint-shim.sh run` — 0 issues
+- Integration tests: full `main_view` suite plus `patch_building`, `stash`, `commit`, `diff`, `file`, `reflog`, `worktree`, `filter_by_path` all pass (the whole suite exceeds this tool's per-command time limit, so it was run by suite)
+
+Per harness instructions the changes are left uncommitted in the working tree.

@@ -1,0 +1,109 @@
+import blocks: only the first block per for_each resource is honored in 1.16.0
+
+### Terraform Version
+
+```
+Terraform v1.16.0
+on darwin_arm64
+```
+
+Also reproduced with `hashicorp/aws` v6.61.0 and v6.62.0. Last working version is 1.15.9.
+
+### Terraform Configuration Files
+
+```hcl
+resource "terraform_data" "t" {
+  for_each = toset(["a", "b"])
+  input    = each.key
+}
+
+import {
+  to = terraform_data.t["a"]
+  id = "aaa"
+}
+
+import {
+  to = terraform_data.t["b"]
+  id = "bbb"
+}
+```
+
+### Debug Output
+
+`terraform plan` on 1.16.0:
+
+```
+terraform_data.t["a"]: Preparing import... [id=aaa]
+
+Terraform will perform the following actions:
+
+  # terraform_data.t["a"] will be updated in-place
+  # (imported from "aaa")
+  ~ resource "terraform_data" "t" {
+        id     = "aaa"
+      + input  = "a"
+      + output = (known after apply)
+    }
+
+  # terraform_data.t["b"] will be created
+  + resource "terraform_data" "t" {
+      + id     = (known after apply)
+      + input  = "b"
+      + output = (known after apply)
+    }
+
+Plan: 1 to import, 1 to add, 1 to change, 0 to destroy.
+```
+
+Same configuration on 1.15.9:
+
+```
+terraform_data.t["a"]: Preparing import... [id=aaa]
+terraform_data.t["b"]: Preparing import... [id=bbb]
+
+Plan: 2 to import, 0 to add, 2 to change, 0 to destroy.
+```
+
+### Expected Behavior
+
+Both import blocks are honored: `2 to import, 0 to add`.
+
+### Actual Behavior
+
+Only the first import block is honored. The second is discarded with no error or warning, and the resource instance it targeted is planned for creation instead.
+
+Applying that plan against real infrastructure attempts to create a resource that already exists. In our case (importing a multi-region KMS key with three replicas into a `for_each` resource) the apply imported half the resources and would have failed on `AlreadyExistsException` for the rest, leaving partial state.
+
+The silent part is the problem: the plan is well-formed and gives no indication that configuration was dropped.
+
+### Steps to Reproduce
+
+```
+terraform init
+terraform plan
+```
+
+No provider or credentials needed with the `terraform_data` configuration above.
+
+### Additional Context
+
+The surviving block is the one declared first, not the lowest instance key: swapping the order of the two import blocks above makes `terraform_data.t["b"]` import and `["a"]` be created instead.
+
+Single-instance resources are unaffected. The configuration where we hit this had eight import blocks — two single-instance resources and two `for_each` resources of three instances each. Both single-instance imports were honored, and exactly one instance of each `for_each` resource, for four of eight.
+
+Not tested with `count`.
+
+Possibly related to #38352, which added support for `import` blocks inside modules in 1.16.0, though this reproduces with no modules involved.
+
+### References
+
+- #38352
+- #39010
+
+### Generative AI / LLM assisted development?
+
+Yes. The bug was found during a manual migration, and the diagnosis, minimal reproduction and this report were produced with LLM assistance. Both reproductions above were executed and their output copied verbatim.
+
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

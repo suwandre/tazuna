@@ -1,0 +1,19 @@
+A reload now closes the old Unix socket immediately and removes its file, the same as it already did for TCP. The fix is in `listen_unix.go`, with new tests in `listen_unix_test.go`. Nothing is committed.
+
+**Cause.** When the last holder of a socket closed it, `unixListener.Close` and `unixConn.Close` called `File()` to get its name. `File()` makes a duplicate file descriptor (`dup()`), and that duplicate was never closed. It kept the socket listening until a garbage collection finalized it, which matches the 2-minute delay you measured. The name `File()` returns also isn't the socket's path, so the unlink failed silently and the file stayed. `reuseUnixSocket` leaked a duplicate the same way on every reload that reused a socket.
+
+**Fix.**
+- **Shared state per socket:** the path, a reference count, and one private copy of the descriptor. New holders are made from that copy, so reuse works even if the newest holder has already closed. The old code failed there with "use of closed network connection".
+- **Last close:** removes the map entry, unlinks the path, and closes the private copy, all under the lock `Listen` already holds. A close racing with a new listen on the same path either hands the socket to the new listener or finishes before it, and in both cases the new listener ends up with a working socket and file.
+- **Double close:** each wrapper, including `deleteListener` and `deletePacketConn`, releases its reference at most once. A second `Close` returns `net.ErrClosed`.
+- **Abstract sockets:** names starting with `@` on Linux/Android get no path, so nothing on disk is unlinked, neither on close nor in the cleanup before listening. On macOS `@foo` is an ordinary file name, so it is still cleaned up there.
+
+**Tests and checks.**
+- **New tests:** close stops listening and removes the file; a shared socket keeps working until its last holder closes; reuse after the newest holder closed; double close for `unix` and `unixgram`; `unixgram` sharing; 200 rounds of close racing listen; and the abstract-socket case.
+- **Against the old code:** I ran the new tests on the original `listen_unix.go` and the six that run on macOS all failed. The abstract-socket test only runs on Linux, so it hasn't actually run yet. I only type-checked it with `GOOS=linux go vet`.
+- **Test suites:** `go test -race -short` passes for the root package, `modules/caddyhttp` and `caddyconfig/...`. `golangci-lint` reports 0 issues on the root package, and the code also builds for Windows.
+- **Your repro:** with a fresh build, after the reload the old admin socket refuses at once (curl exit 7 instead of a 5 s timeout), its file is gone, and the new `localhost:12999` admin endpoint works.
+
+**One leak I left alone:** in `listeners.go`, if `os.Chmod` fails after a socket is created (for example a bad `|mode` suffix), `listen()` returns the error without closing the socket. Closing it there would deadlock, because `Listen` still holds `unixSocketsMu`, so fixing it means restructuring that locking. I can do that separately if you want.
+
+Per the AI rules in `AGENTS.md`: if you send this upstream, disclose that it was AI-assisted (Claude Opus 5.5), and be ready to explain each change yourself.

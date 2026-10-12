@@ -1,0 +1,22 @@
+The fix is complete. Here's a summary:
+
+## Root cause
+
+In `paren_duration_expr`, parentheses were only preserved by setting `Wrapped` on a `*DurationExpr`. A parenthesised plain duration literal (`*NumberLiteral`) has no `Wrapped` field, so `foo offset (5)`, `foo offset -(5)`, `foo[(5s)]`, etc. were flattened on `Expr.String()`.
+
+## Changes (all in `promql/parser/`)
+
+- **`parse.go`** — added `wrapParenDurationExpr(expr, start, end)`: it sets `Wrapped` on an existing `*DurationExpr`, and otherwise lifts the `*NumberLiteral` into a unary-plus `*DurationExpr{Op: ADD, Wrapped: true}` (unary plus prints as just the operand, so it behaves as an identity). `applyUnaryOpToDurationExpr` now runs wrapped operands through this helper first, so `+(5)`/`-(5)` keep their parentheses too.
+- **`generated_parser.y`** (+ regenerated `generated_parser.y.go`) — `paren_duration_expr` now calls `wrapParenDurationExpr`, preserving the paren positions in `StartPos`/`EndPos`.
+- **`prettier.go`** — `DurationExpr.Pretty` no longer prints the unary `+`, matching `DurationExpr.String()` so the new wrapper pretty-prints as `(5)`.
+- **Tests** — `parse_test.go` updates the expected ASTs for `foo offset +(5)`/`-(5)` and adds `foo offset (5)` and `foo[(5s)]`; `printer_test.go` replaces the old `+(5*2)` case with round-trip cases for `foo offset +(5)`, `-(5)`, `(5)`, `(5m)`, `foo[(5s)]`, and `foo[(5m):(1m)]`.
+
+## Verification
+
+- All issue cases now round-trip stably: `foo offset (5)` → `foo offset (5)`, `foo offset +(5)` → `foo offset (5)`, `foo offset -(5)` → `foo offset -(5)`, `foo offset (5m)` → `foo offset (5m)`, `foo[(5s)]` → `foo[(5s)]`; nested cases like `foo[(5s) + 1s]` are preserved as well.
+- `go test ./promql/... ./web/api/v1/... ./rules/... ./cmd/promtool/...` — all pass.
+- Verified `generated_parser.y.go` is byte-for-byte what `goyacc v0.6.0` produces from the updated `.y` (via a temp output diff), and ran `gofmt`, `go vet`, and `golangci-lint` on `promql/parser` with no findings.
+
+```release-notes
+[BUGFIX] PromQL: Preserve parentheses around duration literals on Expr.String() round-trip.
+```

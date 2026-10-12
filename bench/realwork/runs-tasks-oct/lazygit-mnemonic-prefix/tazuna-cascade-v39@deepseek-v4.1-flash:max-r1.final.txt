@@ -1,0 +1,20 @@
+All done. Here's a summary of the fix.
+
+## Root cause
+lazygit reads a row's file path out of the rendered diff's `---`/`+++` (or `diff --git`) header. `stripDiffPathPrefix` only understood `a/`/`b/`, so with `diff.mnemonicPrefix=true` the `i/`/`w/` (or `c/`/`i/`) paths never resolved to a file and staging silently did nothing. On top of that, the working-tree and stash diff commands didn't force defaults for `diff.noprefix` / (newer git) `diff.srcPrefix`/`diff.dstPrefix`, so those user settings could also produce unparseable paths.
+
+## Changes
+- **`pkg/commands/git_commands/git_command_builder.go`**: new `GitCommandBuilder.ParseableDiffPrefixes()`, which forces `diff.noprefix=false`, `diff.srcPrefix=a/`, `diff.dstPrefix=b/` (leaving `diff.mnemonicPrefix` alone, since i/w/c/... paths are parseable and the user asked to see them).
+- **All diff-producing commands** (`commit`, `commit_file_loader`, `diff` ×3, `patch`, `stash`, `working_tree` ×2) now use it; the working-tree diff and stash-entry diff, which previously passed nothing, now force a strippable prefix too.
+- **`pkg/gui/controllers/helpers/diff_line_parser.go`**:
+  - `stripDiffPathPrefix` strips the first path component whatever it is (matching `git apply`), passes `/dev/null` through, and returns empty for a header path with no prefix component.
+  - Extracted `unquoteDiffPath` (C-quoted/tab-terminated path decoding) so unprefixed paths can be read from `rename to`/`copy to` lines.
+  - `pathFromDiffHeader` uses `rename to`/`copy to` when there are no `---`/`+++` lines (pure renames/copies, mode changes, binaries).
+  - `pathFromDiffGitLine` no longer searches for ` b/`; it splits at the space where both halves name the same path after prefix stripping, and resolves nothing when they never match.
+- **Tests**: updated expected git args in `commit_test.go`/`stash_test.go`/`working_tree_test.go`; added `TestPathFromDiffGitLine`, mnemonic/prefix cases for `pathFromDiffHeaderField` and section parsing; added 4 integration tests (`stage_diff_lines_with_no_prefixes`, `..._with_custom_prefixes`, `..._with_mnemonic_prefixes`, `jump_to_a_file_of_a_stash_with_no_prefixes`) and regenerated `pkg/integration/tests/test_list.go` via `go generate ./...`.
+
+## Verification
+- `go test ./... -short` — pass; `./scripts/gofumpt-check.sh` and `./scripts/golangci-lint-shim.sh run` — clean.
+- Headless integration tests: all four new tests pass, plus the whole `main_view`, `patch_building`, and `file` suites (170 tests) pass.
+
+Note: per the harness instruction I did not commit; all changes are in the working tree.

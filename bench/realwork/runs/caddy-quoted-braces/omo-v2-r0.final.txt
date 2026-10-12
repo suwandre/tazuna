@@ -1,0 +1,18 @@
+Ask: make quoted `{` and `}` in a Caddyfile stop counting as block delimiters, with tests - wanted: the issue's example parses and adapts.
+For you: The fix is in, and the issue's Caddyfile now adapts to a `static_response` with `"body": "{"`. `go test` passes on `./caddyconfig/...` and on `./caddytest/integration/`, and `go vet` and `gofmt -l` reported nothing. I did not run the full `go test -race -short ./...` suite or `golangci-lint`.
+Now: done.
+Next: nothing outstanding.
+
+**Cause:** the lexer already marks tokens that were quoted. The parser and dispenser still compared the token text to `"{"` and `"}"`, so a quoted brace was read as a block delimiter.
+
+**Changes:**
+- **`lexer.go`:** added unexported `Token.isOpenBrace()` and `Token.isCloseBrace()`. They match only when the text is the brace and the token was unquoted.
+- **`parse.go`:** every brace check now uses those helpers. That covers the address list, directive parsing, block-token capture, open/close assertions, import-time nesting and `{block}` mapping. In `directive()` I dropped the old `wasQuoted == 0` condition on the "Unexpected next token after '{'" error, since the new guard makes it redundant.
+- **`dispenser.go`:** `NextArg`, `NextBlock` and `ArgErr` use the helpers, so a directive's own `NextBlock` loop no longer stops early on `"}"`.
+
+**Tests added:**
+- **`parse_test.go`:** cases for the issue's Caddyfile, a quoted `}`, both inside a site block, and quoted braces inside a nested block.
+- **`dispenser_test.go`:** `TestDispenser_NextBlock_QuotedBraces`.
+- **`caddytest/integration/caddyfile_adapt/quoted_braces.caddyfiletest`:** the issue's Caddyfile. I generated its expected JSON with `caddy adapt`.
+
+Two checks I left alone: a quoted address that ends in `{` (for example `"foo{"`) still triggers the "Site addresses cannot end with a curly brace" error. The formatter also still treats braces by its own rules, and its existing tests pass.

@@ -1,0 +1,174 @@
+diff --git a/tsdb/db.go b/tsdb/db.go
+index 315f33b6b..32b2e33b5 100644
+--- a/tsdb/db.go
++++ b/tsdb/db.go
+@@ -1879,6 +1879,11 @@ func (db *DB) compactHeadViewLocked(viewFactory headViewFactory, evict headSerie
+ 	return nil
+ }
+ 
++// CompactStaleHead writes stale series into blocks and evicts those that are still
++// eligible for removal. Series whose exemplars still need replay remain in the head,
++// but their persisted sample chunks are released if otherwise eligible for eviction.
++// WAL replay may restore those samples after a restart until the global replay
++// cutoff passes them.
+ func (db *DB) CompactStaleHead() (err error) {
+ 	db.cmtx.Lock()
+ 	defer func() {
+@@ -1944,6 +1949,10 @@ func (db *DB) CompactStaleHead() (err error) {
+ //
+ // Series that received new samples after the ref list was collected are skipped during eviction
+ // and remain in the head. They may be reconsidered during a subsequent compaction cycle.
++// Series with exemplars at or after the global replay cutoff also remain in the head,
++// until the cutoff passes the exemplar timestamps. Their persisted sample chunks are
++// released if the series is otherwise eligible for eviction. WAL replay may restore
++// those samples after a restart until the global replay cutoff passes them.
+ //
+ // This operation persists only in-order chunks. Series with non-empty out-of-order state at the
+ // time of compaction are therefore skipped as well, since evicting them would orphan their
+diff --git a/tsdb/head.go b/tsdb/head.go
+index a65bafbe1..6acecf05e 100644
+--- a/tsdb/head.go
++++ b/tsdb/head.go
+@@ -2563,6 +2563,14 @@ func (s *stripeSeries) gc(mint int64, minOOOMmapRef chunks.ChunkDiskMapperRef) (
+ 			}
+ 			return
+ 		}
++		// Exemplars are not persisted in blocks. Keep their series reference resolvable
++		// until WAL truncation and replay can discard them by timestamp. An empty
++		// series retained for exemplars must not affect the minimum sample time.
++		if series.hasExemplar && series.lastExemplarTs >= mint {
++			// Clear the appender so it does not retain the removed sample chunk.
++			series.app = nil
++			return
++		}
+ 		// The series is gone entirely. We need to keep the series lock
+ 		// and make sure we have acquired the stripe locks for hash and ID of the
+ 		// series alike.
+@@ -2600,17 +2608,42 @@ func (s *stripeSeries) gc(mint int64, minOOOMmapRef chunks.ChunkDiskMapperRef) (
+ 	return deleted, affected, rmChunks, staleSeriesDeleted, histogramSeriesDeleted, histogramBucketsDeleted, actualMint, minOOOTime, minMmapFile
+ }
+ 
+-// gcSeries removes the provided series from the head index and updates head metrics,
+-// postings, tombstones and WAL expiries accordingly. shouldEvict is the per-series predicate
+-// applied after the safety check for series that received fresh samples since the caller
+-// collected the ref list.
++// gcSeries removes eligible series from the head index and updates head metrics,
++// postings, tombstones and WAL expiries accordingly. Series with pending commits
++// or samples after maxt are skipped. The caller's shouldEvict predicate runs under
++// the series lock and must reject series with unpersisted samples or out-of-order data.
++// Series whose exemplars still need replay retain their identity, but their persisted
++// sample chunks are released if shouldEvict returns true.
+ //
+ // The returned references are the series that got deleted.
+ func (h *Head) gcSeries(seriesRefs []storage.SeriesRef, maxt int64, shouldEvict func(*memSeries) bool) map[storage.SeriesRef]struct{} {
+-	// Drop old chunks and remember series IDs and hashes if they can be
+-	// deleted entirely.
+-	deleted, affected, chunksRemoved, staleSeriesDeleted, histogramSeriesDeleted, histogramBucketsDeleted := h.series.gcSeries(seriesRefs, maxt, shouldEvict)
++	minValidTime := h.minValidTime.Load()
++	var protectedChunksRemoved int
++	deleted, affected, chunksRemoved, staleSeriesDeleted, histogramSeriesDeleted, histogramBucketsDeleted := h.series.gcSeries(seriesRefs, maxt, func(s *memSeries) bool {
++		// Keep unpersisted samples before considering chunk removal or series eviction.
++		if !shouldEvict(s) {
++			return false
++		}
++		// Delete the series if it has no exemplar at or after the WAL replay cutoff.
++		if !s.hasExemplar || s.lastExemplarTs < minValidTime {
++			return true
++		}
++
++		// Free the persisted sample chunks, but keep the series identity for exemplar replay.
++		// Memory mapping keeps the newest chunk in memory, so it needs at least two head chunks.
++		wasMmapReady := s.headChunkCount.Load() >= 2
++		protectedChunksRemoved += s.truncateChunksBefore(math.MaxInt64, 0)
++		// Clear the appender because it references the removed head chunk.
++		s.app = nil
++		// The series no longer has enough chunks to be ready for memory mapping.
++		if wasMmapReady && s.headChunkCount.Load() < 2 {
++			h.series.decMmapReady(s.ref)
++		}
++		// Prevent deletion of the series identity while its exemplar can still be replayed.
++		return false
++	})
+ 	seriesRemoved := len(deleted)
++	chunksRemoved += protectedChunksRemoved
+ 
+ 	h.metrics.seriesRemoved.Add(float64(seriesRemoved))
+ 	h.metrics.chunksRemoved.Add(float64(chunksRemoved))
+@@ -2958,6 +2991,12 @@ type memSeries struct {
+ 
+ 	lset labels.Labels // Locking required with -tags dedupelabels, not otherwise.
+ 
++	// Latest accepted exemplar timestamp, including exemplars awaiting commit.
++	// A rolled-back exemplar may conservatively delay eviction until this time.
++	lastExemplarTs int64
++	// Whether an exemplar timestamp has been recorded, including zero or negative timestamps.
++	hasExemplar bool
++
+ 	// Immutable chunks on disk that have not yet gone into a block, in order of ascending time stamps.
+ 	// When compaction runs, chunks get moved into a block and all pointers are shifted like so:
+ 	//
+@@ -3099,6 +3138,16 @@ func newMemSeries(lset labels.Labels, id chunks.HeadSeriesRef, shardHash uint64,
+ 	return s
+ }
+ 
++// updateExemplarTimestamp records the latest exemplar time while holding the series lock.
++func (s *memSeries) updateExemplarTimestamp(ts int64) {
++	s.Lock()
++	if !s.hasExemplar || ts > s.lastExemplarTs {
++		s.lastExemplarTs = ts
++	}
++	s.hasExemplar = true
++	s.Unlock()
++}
++
+ func (s *memSeries) minTime() int64 {
+ 	if len(s.mmappedChunks) > 0 {
+ 		return s.mmappedChunks[0].minTime
+diff --git a/tsdb/head_append.go b/tsdb/head_append.go
+index 9da9e1999..4694c5bfa 100644
+--- a/tsdb/head_append.go
++++ b/tsdb/head_append.go
+@@ -850,6 +850,8 @@ func (a *headAppender) AppendExemplar(ref storage.SeriesRef, lset labels.Labels,
+ 	}
+ 
+ 	b := a.getCurrentBatch(stNone, chunks.HeadSeriesRef(ref))
++	// Protect the series from ordinary compaction before the exemplar is committed.
++	s.updateExemplarTimestamp(e.Ts)
+ 	b.exemplars = append(b.exemplars, exemplarWithSeriesRef{ref, e})
+ 
+ 	return storage.SeriesRef(s.ref), nil
+diff --git a/tsdb/head_append_v2.go b/tsdb/head_append_v2.go
+index 85e733960..b4acb2579 100644
+--- a/tsdb/head_append_v2.go
++++ b/tsdb/head_append_v2.go
+@@ -378,6 +378,8 @@ func (a *headAppenderV2) appendExemplars(s *memSeries, exemplars []exemplar.Exem
+ 			continue
+ 		}
+ 		b := a.getCurrentBatch(stNone, s.ref)
++		// Protect the series from compaction before the exemplar is committed.
++		s.updateExemplarTimestamp(e.Ts)
+ 		b.exemplars = append(b.exemplars, exemplarWithSeriesRef{storage.SeriesRef(s.ref), e})
+ 	}
+ 	if len(errs) > 0 {
+diff --git a/tsdb/head_wal.go b/tsdb/head_wal.go
+index 31e2f1772..6fbf2bc47 100644
+--- a/tsdb/head_wal.go
++++ b/tsdb/head_wal.go
+@@ -147,6 +147,9 @@ func (h *Head) loadWAL(r *wlog.Reader, syms *labels.SymbolTable, multiRef map[ch
+ 			// At the moment the only possible error here is out of order exemplars, which we shouldn't see when
+ 			// replaying the WAL, so lets just log the error if it's not that type.
+ 			err = h.exemplars.AddExemplar(ms.labels(), exemplar.Exemplar{Ts: e.T, Value: e.V, Labels: e.Labels})
++			if err == nil {
++				ms.updateExemplarTimestamp(e.T)
++			}
+ 			if err != nil && errors.Is(err, storage.ErrOutOfOrderExemplar) {
+ 				h.logger.Warn("Unexpected error when replaying WAL on exemplar record", "err", err)
+ 			}
+@@ -1923,6 +1926,7 @@ Outer:
+ 					loopErr = fmt.Errorf("add exemplar: %w", err)
+ 					break Outer
+ 				}
++				ms.updateExemplarTimestamp(e.T)
+ 			}
+ 
+ 		default:

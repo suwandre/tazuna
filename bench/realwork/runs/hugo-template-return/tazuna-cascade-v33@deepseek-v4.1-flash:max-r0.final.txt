@@ -1,0 +1,29 @@
+Implemented the improved `return` keyword using a sentinel trapped in template execution, removing the old partial-only parse transformation.
+
+## What changed
+
+**Template executor** (`tpl/internal/go_templates/texttemplate/`)
+- Added `ReturnError` sentinel (`Value`, `HasValue`) in `hugo_template.go`.
+- `evalFunction` now intercepts the `return` keyword directly: it evaluates the optional value (`{{ return $v }}`, `{{ return add . 42 }}`, `{{ return nil }}`, pipelines like `{{ 32 | return }}`) and panics with the sentinel.
+- Bare `{{ return }}` is trapped at the nearest template boundary:
+  - `executeWithState` swallows it so top-level templates (pages, shortcodes, partials) stop early.
+  - `walkTemplate` (new wrapper around the renamed `walkTemplateOld` in `exec.go`) swallows it so `{{ template }}`/`{{ block }}` invocations only terminate themselves.
+- A valued `return` propagates to the partial boundary; outside partials it errors with `return with a value is only supported in partials`.
+- `try` re-panics the sentinel instead of swallowing it.
+
+**Partials** (`tpl/partials/`)
+- Removed `contextWrapper` and the `HasReturn`-driven `io.Discard` path; `doInclude` now always renders to a buffer and catches `*texttemplate.ReturnError` via `errors.As`, returning `rerr.Value` and discarding rendered output.
+- The `return` alias now maps to `func(v ...any) any` (intercepted before lookup); it stays registered so it resolves.
+
+**Transformations** (`tpl/tplimpl/`)
+- Removed the partial return wrapper rewriting (`partialReturnWrapperTempl`, `wrapInPartialReturnWrapper`, `applyTransformationsAndSetReturnWrapper`, `collectReturnNode`, `ParseInfo.HasReturn`).
+- Added a parse-time error when `return` is not the last command in a pipeline: `return must be the last command in a pipeline`.
+
+**Tests/docs**
+- Ported the upstream tests for issue 15212: return works conditionally, from `range`, nested in `{{ template }}`, with `nil`, bare early exit, valued return requires partials, and early exit from regular templates/blocks/template includes (`hugolib/template_test.go`, `tpl/partials/partials_integration_test.go`), and updated `TestPartialReturnPanicIssue13600`.
+- Updated `return`, `partials.Include`, and `partials.IncludeCached` docs to describe the new semantics.
+
+## Verification
+- `go build ./...` OK; `gofmt` clean.
+- `./check.sh` (gofmt + staticcheck + tests) passes for `tpl/partials/...`, `tpl/templates/...`, `tpl/tplimpl/...`, `tpl/internal/go_templates/texttemplate/...`, and `tpl/collections/...`.
+- Full `go test ./...` passes except the pre-existing, unrelated `internal/warpc` failure (confirmed failing on the base commit via a clean worktree).

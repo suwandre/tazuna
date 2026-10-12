@@ -1,0 +1,19 @@
+I reviewed the diff against the task and my plan and changed nothing: it matches the plan, and the build and all tests pass.
+
+**What `--once` does:**
+- It's available on `k6 run`, `archive`, `cloud`, `cloud run` (with or without `--local-execution`) and `cloud upload`.
+- The scenario rewrite happens right after config consolidation, so archives and cloud runs get the rewritten scenario too.
+- A script with no scenarios gets one `default` scenario with 1 VU and 1 iteration.
+- A single scenario keeps its name, `exec`, `env`, `tags` and `options` (including browser options) and is switched to a `shared-iterations` executor with 1 VU and 1 iteration. Its other fields are dropped, and so are any `vus`, `iterations`, `duration` and `stages` options.
+- Two or more scenarios fail with `--once can run a single scenario only`.
+- `--once` together with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>`.
+- Both errors return the invalid-config exit code.
+
+**Checks:**
+- `gofmt -s -l internal/cmd/` reports nothing and `go build ./...` and `go vet ./internal/cmd/` are clean.
+- The new tests pass: `TestApplyOnce`, `TestArchiveOnce`, `TestRunOnceDefault`, `TestRunOnceSingleScenario`, `TestRunOnceMultipleScenarios` and `TestRunOnceWithIterationsFlag`.
+- `go test -race ./internal/cmd/... ./lib/executor/` passes in full.
+
+One behaviour you might not expect: `--once` only rejects those four command-line flags. If `vus`, `iterations`, `duration` or `stages` come from environment variables (such as `K6_ITERATIONS`), the config file or the script, they are dropped without a warning.
+
+The six changed files are staged on `master` but not committed. The project instructions say to use a feature branch, so I'd create one (e.g. `add-once-flag`) before committing.

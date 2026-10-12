@@ -1,0 +1,24 @@
+Build clean. Run existing tests first.`return` now works in any template, anywhere in the template, and the wrapper-template rewriting in `tplimpl` is gone. `go test` over `./tpl/...`, `./hugolib/...`, `./commands/...` and `./resources/...` reports no failures.
+
+- **Sentinel error:** `ReturnError{Value any}` is in `texttemplate/hugo_template.go`. `evalCall` panics with it when a function returns it, and `errRecover` in `exec.go` hands it back unwrapped. That is about 20 lines added to the Go fork. `try` re-panics it so it can't be swallowed.
+- **`return` function:** `partials.Return(args ...any) (any, error)` takes zero or one argument and errors on more. It replaces the old stub in `tpl/partials/init.go`.
+- **Store:** `TemplateStore.ExecuteWithContext` treats an early return as success. `ExecuteWithContextAndKey` passes the sentinel up unwrapped, so `doInclude` in `tpl/partials/partials.go` can read the value.
+- **Partials:**
+  - The partial's result is the returned value if `return` runs.
+  - A partial that mentions `return` but never reaches it yields `nil`.
+  - A partial without `return` still returns its rendered output.
+  - The `contextWrapper` and the `$`/`.` rebinding are removed.
+- **Transform:** `tplimpl/templatetransform.go` no longer strips the return node or wraps the template. It only sets `HasReturn` for partials and rewrites `return add . 42` into `return (add . 42)`, so existing templates keep working. `return $x.Method arg` is wrapped the same way.
+
+- **Behaviour change:** `{{ return (delimit . ", ") | string }}` used to drop the `| string` and fail with "wrong number of args". It now parses as `string(return(...))` and fails on the `delimit` call. I changed the expected message in `TestPartialReturnPanicIssue13600` (`tpl/templates/templates_integration_test.go`) to `error calling delimit`. It still checks for an error rather than a panic.
+- **Early exit scope:** `return` inside a `{{ template "x" }}` call exits the whole current execution, not just that inline template. Partials called with `partial` are separate executions, so they only exit themselves.
+- **`.gitignore`:** it shows a modified `.empryo` line that I didn't make.
+
+New tests are in `tpl/partials/partials_integration_test.go`:
+- early return inside `if`, `range` and `with`
+- a bare `return`
+- piped `return`
+- `partialCached`
+- nested partials
+- early exit from `home.html` and `page.html`
+- the too-many-arguments error

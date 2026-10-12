@@ -1,0 +1,19 @@
+Parentheses around a plain duration literal now survive `Expr.String()`, so all five cases from the issue round-trip. The tests in `promql/...` and `web/...` pass. I didn't run `make lint`, and nothing is committed.
+
+**What changed**
+- A parenthesised literal such as `(5)` or `(5m)` in an offset or range position is now stored as a `Wrapped` unary-plus `*DurationExpr` around the `*NumberLiteral`. This reuses the existing `Wrapped` field instead of adding one to `NumberLiteral`.
+- The shared helper is `wrapDurationExpr` in `promql/parser/parse.go`.
+- Both the `paren_duration_expr` rule and the `unary_op ( … )` form in `generated_parser.y` go through that helper. I regenerated `generated_parser.y.go` with goyacc v0.6.0, the version the Makefile pins.
+- The engine's duration evaluator already handles a unary-plus expression, so evaluation needed no change.
+
+**Behaviour changes**
+- `foo offset (5)`, `+(5)` and `-(5)` now set `OriginalOffsetExpr` instead of `OriginalOffset`. This is the same as a multi-term parenthesised expression today, and the feature is already gated behind `ExperimentalDurationExpr`. Consumers that read `OriginalOffset` directly, without going through the engine's duration evaluator, will see 0 for these inputs.
+- `+(5)` prints as `(5)`, matching how `+(5m + 1m)` already prints without the `+`.
+- A zero or negative wrapped range such as `foo[(0)]` is now rejected when the duration is evaluated rather than at parse time. This is the same as `foo[(5m - 5m)]`. I didn't add a test for it.
+
+**Tests**
+- I updated the two `TestParseExpressions` cases for `foo offset +(5)` and `foo offset -(5)` to expect the new AST.
+- I added round-trip cases to `TestExprString`:
+  - `foo offset (5)`, `foo offset +(5)`, `foo offset -(5)`, `foo offset (5m)`
+  - `foo[(5s)]`, `foo[(5m):(1m)]`, `foo[5m + (1m)]`
+- I added `TestDurationVisitorWrappedLiteral` in `promql/durations_test.go`, which parses `foo[(5m)] offset -(5)`, checks the evaluated range and offset, and checks the string round-trips.

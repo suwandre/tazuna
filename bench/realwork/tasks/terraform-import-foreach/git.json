@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/terraform",
+  "base": "438068d79054ba0e574f493331ac410ece6b3f56",
+  "fix": "d052145462e9b513211f335509bff31b86507127",
+  "pr": "https://github.com/hashicorp/terraform/pull/39073",
+  "issue": "https://github.com/hashicorp/terraform/issues/39068",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./internal/terraform -run '^TestContextApply_import_(to_instance|to_instance_in_child|for_each_to_instance_in_child)$'",
+  "suite_cmd": "go test -count=1 ./internal/refactoring ./internal/terraform -skip '^(TestContextApply_import_for_each_to_instance_in_child|TestContextApply_import_to_instance|TestContextApply_import_to_instance_in_child)$'",
+  "suite_skip_note": "suite skips PR-specific tests excluded from hidden (pinned wording/helpers not in the ticket); it checks pre-existing behavior only"
+}

@@ -1,0 +1,41 @@
+archive: zip backend should expose symbolic links contained in ZIP archives
+
+rclone v1.74.3, linux/amd64, go1.26.4
+
+### What problem are you trying to solve?
+
+The ZIP archive backend does not recognize symbolic links stored inside ZIP archives.
+
+When a ZIP archive contains a symlink, rclone exposes it as a regular file whose content is the link target instead of preserving the symlink semantics.
+
+This is particularly problematic when accessing ZIP archives stored on object storage backends (e.g. S3 + archive backend), because filesystem metadata is partially lost and applications using mounted archives cannot correctly interpret symlinks.
+
+### How do you think rclone should be changed to solve that?
+
+Please, add support for symbolic links in the ZIP archive backend.
+
+When reading ZIP archives, detect entries with os.ModeSymlink and expose them as symlinks rather than regular files containing the target path. This would allow ZIP archives stored on backends such as S3 and accessed through the archive backend to preserve Unix filesystem semantics.
+
+---
+
+Maintainer notes:
+
+The squashfs side of the archive backend has the related problem that symlinks in an image are dropped entirely. Make both behave the same way, following the convention the other backends (e.g. local) use:
+
+- Symlinks in an archive are skipped unless `-l/--links` is in use. When some are skipped, log a notice that names the flag.
+- With `--links`, a symlink is listed under its name plus the `.rclonelink` suffix, its size is the length of the target, and opening it reads back the target path (honouring range/seek options), so `rclone copy --links :archive:/tmp/test.zip /tmp/out` recreates it as a symlink on a destination that supports them.
+- Listing and looking up a single object (`NewObject`) must agree on which names exist.
+- A regular archive member whose name happens to end in `.rclonelink` stays a regular file.
+- A hostile archive (a symlink pointing above the root plus a member "inside" it) must not be able to make a copy write outside the destination.
+
+```
+$ rclone lsl --links :archive:/tmp/test.zip
+        5 2026-09-28 14:16:59.000000000 src/file.txt
+        8 2026-09-28 14:16:59.000000000 src/link.txt.rclonelink
+$ rclone copy --links :archive:/tmp/test.zip /tmp/out
+$ ls -l /tmp/out/src/link.txt
+lrwxr-xr-x 1 user user 8 Sep 28 14:16 /tmp/out/src/link.txt -> file.txt
+```
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

@@ -1,0 +1,23 @@
+Fixed: with `diff.mnemonicPrefix = true`, pressing `space` on a line of the focused diff now stages it. Unit tests pass and lint is clean at the tip. The full integration suite passed when run one directory at a time. The `demo/*` and three `misc/direnv_*` tests failed in that run, then passed on a retry.
+
+**Why it broke:** the working tree's diff was the one lazygit diff that didn't force git's default `a/`/`b/` prefixes. With `mnemonicPrefix` the header read `w/file1`, the parser only knew how to strip `a/`/`b/`, and the path pointed at a file that doesn't exist. lazygit then applied a patch that matched nothing.
+
+**Commits on `master`**, following AGENTS.md:
+1. **Extract the pinning of diff path prefixes into a builder method:** a behavior-preserving refactor. The seven commands that each set `diff.noprefix=false` now call one helper.
+2. **Add a test for staging diff lines with `diff.mnemonicPrefix` set:** a new integration test that reproduces the bug, written as EXPECTED/ACTUAL.
+3. **Pin the a/ and b/ diff path prefixes:** the helper now passes `--src-prefix=a/ --dst-prefix=b/`. I checked against git 2.55 that this overrides `noprefix`, `mnemonicPrefix` and `srcPrefix`/`dstPrefix`. The plain `-c diff.noprefix=false` only covered `noprefix`. The working tree's diff now uses the helper too. This commit makes the integration test pass.
+4. **Add tests for reading paths out of diff headers with other prefixes:** unit tests that reproduce the parser bug. They cover `i/`, `w/`, `c/`, quoted paths, subdirectories, paths with no prefix, and `diff --git` lines containing spaces and lookalike ` w/`/` b/`. They also cover `rename to`/`copy to`.
+   - **Two `fixup!` commits for it:** gofumpt moved my inline EXPECTED comments, so I reshaped the rows to make the next commit a pure marker swap. They're waiting for you to autosquash.
+5. **Read diff header paths whatever prefix git put in front of them:** implements the maintainer's spec:
+   - Any single leading path component is stripped, the way `git apply` does it.
+   - `/dev/null` stays as is, and a path with no prefix component resolves to nothing.
+   - Renames and copies take their path from the `rename to`/`copy to` line.
+   - The `diff --git` line is split where both halves name the same path, and resolves to nothing if no split works.
+
+**Environment problems, not related to this change:**
+- **`just` isn't installed here.** I ran the commands the recipes stand for.
+- **The integration runner always builds lazygit to `/tmp/lazygit/test_lazygit`.** That path is shared by every checkout on the machine. Another session running e2e kept overwriting it during my full runs, which produced bogus "tests are missing from the list" panics. That's why I ran the suite one directory at a time.
+
+**Decisions for you:**
+- **Fixup diff parser:** `parseDiff` in `pkg/gui/controllers/helpers/fixup_helper.go` reads the filename with `line[6:]`. That assumes a two-character prefix and doesn't decode quoted paths, so files with non-ASCII names break there. Its diff now always has `a/`, so the mnemonic case is covered. The quoting problem is older and separate; I left it alone. Should I fix it on this branch or separately?
+- **Commit diff copied to the clipboard:** `GetCommitDiff` (in `commit.go`) still uses whatever prefixes the user configured. Only the user reads that output, so I didn't pin it. Say if you want it to match the rest.

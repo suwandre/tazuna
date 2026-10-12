@@ -1,0 +1,27 @@
+Ask: fix the round-trip loss of parentheses around a plain duration literal in offset and range positions - wanted: the fix, tests, and passing `go test`. For you: done. `go vet` and `gofmt` are clean, and `go test` passes for `./promql/parser/...`, `./promql`, and `./web/api/...`.
+
+**Cause:** a `*NumberLiteral` has no `Wrapped` field. `paren_duration_expr` and the `unary_op ( duration_expr )` rule returned the bare literal, so the parentheses were dropped.
+
+**Fix:** when the payload is a single number literal, the parser now wraps it in a unary-plus `*DurationExpr{Op: ADD, Wrapped: true}`. The existing `Wrapped` printing then keeps the parentheses. The evaluator in `promql/durations.go` already handles unary `ADD` and `SUB`, so semantics don't change.
+- `generated_parser.y`: `paren_duration_expr` wraps `*NumberLiteral` payloads. I regenerated `generated_parser.y.go` with `goyacc`.
+- `parse.go`: `applyUnaryOpToDurationExpr` does the same for `+(N)` and `-(N)`. The sign stays outside the parentheses, and the out-of-range check still runs. It also now calls `experimentalDurationExpr`, so `-(5)` needs `ExperimentalDurationExpr` like the other paren forms. That is a behavior change when the flag is off, and no existing test covered it.
+
+**Printed output now:**
+
+| Input | Output |
+|---|---|
+| `foo offset (5)` | `foo offset (5)` |
+| `foo offset (5m)` | `foo offset (5m)` |
+| `foo offset -(5)` | `foo offset -(5)` |
+| `foo[(5s)]` | `foo[(5s)]` |
+| `foo offset +(5)` | `foo offset (5)` |
+
+The `+` is lost, as it already is for `+(5m + 1m)`. The wrapped literal prints as written (`(5)`, not `(5s)`).
+
+**Behavior change:** these forms now populate `OriginalOffsetExpr` / `RangeExpr` instead of a plain duration, like any other duration expression. The engine evaluates them later. This means `foo offset (5)` and `foo offset -(5)` parse to `OriginalOffset: 0` plus an expression.
+
+**Tests:**
+- I updated the `foo offset +(5)` and `foo offset -(5)` expectations in `parse_test.go` to the new AST.
+- I added round-trip cases to `TestExprString` in `printer_test.go` for offset, range, and subquery positions.
+
+**Not checked:** `5m / (0)` and `foo[(0)]` used to fail at parse time through the `$3.(*NumberLiteral)` checks. They are now caught by the evaluator ("division by zero", "duration must be greater than 0"). I didn't add tests for that.

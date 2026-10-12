@@ -1,0 +1,24 @@
+All changes are in place and tests pass. Here's a summary.
+
+## Summary
+
+I implemented the improved `return` keyword by porting the upstream fix for Hugo issue #15212 (the repo is at v0.166.0-DEV, the release that shipped this).
+
+### Behavior changes
+- `return` now works in **any** template, not just partials.
+- It follows normal flow control: it executes wherever reached, can appear **any number of times**, and in any position (no longer "first occurrence regardless of position").
+- A bare `{{ return }}` terminates the current template only; execution continues in the caller (e.g. after a `{{ block }}` or `{{ template }}` include).
+- `{{ return VALUE }}` still returns a value, but only in partials; with a value elsewhere it errors: `return with a value is only supported in partials`.
+
+### Implementation
+- **`tpl/internal/go_templates/texttemplate/hugo_template.go`** — added the `ReturnError` sentinel (`Value`, `HasValue`). `evalFunction` panics with it for the `return` ident, evaluating the optional value the same way a command would (so `{{ return add . 42 }}` works, including `{{ return nil }}`). `executeWithState` traps it as the template boundary; `walkTemplate` traps a bare return so it only exits the included template. `try` re-panics `ReturnError` instead of swallowing it.
+- **`exec.go`** — renamed the original `walkTemplate` to `walkTemplateOld` (matching the existing fork-overload convention); `scripts/fork_go_templates/main.go` updated accordingly to keep the fork reproducible.
+- **`tpl/tplimpl/templatetransform.go`** — removed the parse-tree return-rewriting (`partialReturnWrapper`, `wrapInPartialReturnWrapper`, `collectReturnNode`, `applyTransformationsAndSetReturnWrapper`) and the `HasReturn` flag in `template_info.go`. Only a guard remains: `return` must be the last command in a pipeline.
+- **`tpl/partials`** — dropped the `contextWrapper`/`io.Discard` machinery; `doInclude` now writes to a buffer and `errors.As` extracts `*texttemplate.ReturnError` to use its value (discarding rendered output). `return` is registered as `func(v ...any) any`.
+- **Docs** — updated `docs/content/en/functions/go-template/return.md` to describe the new flow-control semantics, partial-value return, early return, and the pipeline limitation.
+
+### Verification
+- Added upstream integration tests in `hugolib/template_test.go` (early return from home/block/include, value-outside-partial error) and `tpl/partials/partials_integration_test.go` (conditional/range/nil/template-include returns); updated `TestPartialReturnPanicIssue13600` for the new pipeline error.
+- `go build ./...` passes; `go test ./hugolib/... ./tpl/...` all pass, including the new tests.
+
+Note: the maintainer's suggested `Namespace.Return` func returning a `ReturnErr` was not used; the upstream design traps the keyword directly in the executor, which is a smaller and more maintainable change to the fork, and it naturally supports bare `return` (no value).

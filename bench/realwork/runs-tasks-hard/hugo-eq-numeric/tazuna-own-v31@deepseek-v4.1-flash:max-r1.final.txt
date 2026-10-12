@@ -1,0 +1,28 @@
+## Summary
+
+Fixed the inconsistency where `eq`/`ne` compared numbers by normalized Go equality while `lt`/`le`/`gt`/`ge` compared them numerically.
+
+### Changes
+
+**`compare/compare.go`** — added exact cross-type numeric comparison:
+- `CompareNumbers(reflect.Value, reflect.Value) int` — compares signed ints, unsigned ints, and floats exactly (no lossy float64 rounding):
+  - int/uint mixed via sign check; int/int and uint/uint directly.
+  - int/float and uint/float via `math.Modf`/`math.Trunc` decomposition, so `int64(9007199254740993)` > `float64(9007199254740992)` and `uint64(MaxUint64)` > `-1`.
+  - NaN/Inf handled with a consistent total order.
+- `EqNumber(any, any) bool` — reports numeric equality, false for non-numbers (unwraps pointers/interfaces).
+
+**`tpl/compare/compare.go`**:
+- `Eq` now checks `compare.EqNumber` before falling back to the existing normalized `reflect.DeepEqual`, so `eq 1 1.0` is `true` and stays consistent with `le`/`ge`.
+- `compareGetWithCollator` now routes any two numeric kinds through `compare.CompareNumbers`, replacing the old lossy float64/`compareTwoUints` paths (which also had a `uint64(negative int)` bug).
+
+**`tpl/collections/where.go`**:
+- `checkCondition` stores numeric value pairs and evaluates `eq`/`ne`/`<`/`<=`/`>`/`>=` via `compare.CompareNumbers`, so `Where` follows the same exact rules.
+
+### Tests
+- `compare/compare_numbers_test.go` — exact comparison table incl. 2^53+1 vs float, `MaxUint64` vs `-1`, Inf/NaN, plus antisymmetry assertions.
+- `tpl/compare/compare_test.go` — mixed int/float cases in the shared compare table and a `TestCompareNumericConsistency` asserting `le == lt||eq`, `ge == gt||eq`, exactly one of lt/eq/gt holds.
+- `tpl/collections/where_test.go` — `TestCheckCondition` numeric edge cases.
+- `hugolib/template_test.go` — end-to-end render of the issue's template.
+
+### Verification
+`go build ./...`, `go vet`, and `check.sh` on `./compare/...`, `./tpl/compare/...`, `./tpl/collections/...` all pass; the new hugolib test passes.

@@ -1,0 +1,10 @@
+{
+  "repo": "/Users/suwandre/bench-repos/caddy",
+  "base": "256df3c8ad4ed93c58a7e83470a7f15ef8cb1b94",
+  "fix": "5ee9a2d424dc37ea20911026b7bf876de8f122a8",
+  "pr": "https://github.com/caddyserver/caddy/pull/8015",
+  "issue": "https://github.com/caddyserver/caddy/issues/7122",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./caddytest/integration -run '^TestCaddyfileAdaptToJSON$'",
+  "suite_cmd": "go test -count=1 ./caddyconfig/..."
+}

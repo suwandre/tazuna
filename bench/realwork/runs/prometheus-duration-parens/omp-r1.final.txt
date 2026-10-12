@@ -1,0 +1,22 @@
+Parentheses around a plain duration literal now survive `Expr.String()` in offset and range positions. I ran `go test ./promql/... ./web/...`, with the promqltest package re-run uncached, and it passes. I didn't run `make lint`.
+
+| Input | Before | Now |
+|---|---|---|
+| `foo offset (5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -5s` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset 5m` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[5s]` | `foo[(5s)]` |
+
+A smoke run also round-trips `foo[(5s):(1s)] offset (-(3))` and `foo offset (-5) ^ 2`, and re-parsing each output gives the same string. The second also had a precedence side effect before: `(-5)^2` printed as `-5s ^ 2`, which re-parses differently.
+
+**Cause and fix:** `*NumberLiteral` has no `Wrapped` field, and selectors store a plain literal as a `time.Duration`, so the parens had nowhere to live. A parenthesised literal is now wrapped in a unary-plus `*DurationExpr` with `Wrapped: true`. This is the same shape `+(5m + 1m)` already used, and it needs no new AST field. The helpers `wrapNumberLiteral` and `constantDurationValue` are in `parse.go`, and the grammar changes are in `generated_parser.y`. `generated_parser.y.go` is regenerated with goyacc v0.6.0, the version the Makefile pins.
+
+**Side effects:**
+- **AST shape:** `foo offset (5)` now fills `OriginalOffsetExpr` instead of `OriginalOffset`, and `foo[(5s)]` fills `RangeExpr` instead of `Range`. The engine's `durationVisitor` already evaluates these before execution.
+- **Zero or negative ranges:** `foo[(0)]` and `foo[-(5)]` still fail at parse time with "duration must be greater than 0". Without a check in `positive_duration_expr` they would have deferred to eval time. The reported error range now starts at the `(`, so it covers the parens.
+
+**Tests:**
+- **`parse_test.go`:** the AST expectations for `foo offset +(5)` and `foo offset -(5)` changed to the new shape, and I added the two rejection cases.
+- **`printer_test.go`:** added the round-trip cases from the issue.
+- **`duration_expression.test`:** added `offset (4)` and `offset -(4)` eval cases.

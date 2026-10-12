@@ -1,0 +1,228 @@
+diff --git a/tsdb/head_test.go b/tsdb/head_test.go
+index 247596c..60d67f4 100644
+--- a/tsdb/head_test.go
++++ b/tsdb/head_test.go
+@@ -1054,6 +1054,96 @@ func TestHead_WALMultiRef_StaleDeletion_ChunkGaugeNotNegative(t *testing.T) {
+ 	require.GreaterOrEqual(t, chunksGauge, 0.0, "prometheus_tsdb_head_chunks gauge must not be negative after WAL replay")
+ }
+ 
++// TestHead_WALMultiRef_ReplayKeepsChunksOfMergedSeries checks that m-mapped chunks
++// written for a series whose duplicate WAL refs were merged by an earlier replay
++// survive the next replay.
++func TestHead_WALMultiRef_ReplayKeepsChunksOfMergedSeries(t *testing.T) {
++	for _, tc := range []struct {
++		name string
++		// Whether the second ref has an m-mapped in-order chunk on disk.
++		mmapSecondRef bool
++	}{
++		{name: "second ref without m-mapped chunks"},
++		{name: "second ref with m-mapped chunks", mmapSecondRef: true},
++	} {
++		for name, scenario := range sampleTypeScenarios {
++			t.Run(tc.name+"/"+name, func(t *testing.T) {
++				dir := t.TempDir()
++				lset := labels.FromStrings("foo", "bar")
++				// Mimics the DB, which initialises the head with the max time of the last block.
++				const minValidTime = 1600
++
++				opts := DefaultHeadOptions()
++				opts.ChunkRange = 1000
++				opts.ChunkDirRoot = dir
++				opts.OutOfOrderCapMax.Store(4)
++				opts.OutOfOrderTimeWindow.Store(10000)
++
++				openHead := func(minValidTime int64) *Head {
++					wal, err := wlog.New(nil, nil, filepath.Join(dir, "wal"), compression.None)
++					require.NoError(t, err)
++					wbl, err := wlog.New(nil, nil, filepath.Join(dir, wlog.WblDirName), compression.None)
++					require.NoError(t, err)
++					h, err := NewHead(nil, nil, wal, wbl, opts, nil)
++					require.NoError(t, err)
++					require.NoError(t, h.Init(minValidTime))
++					return h
++				}
++				var expSamples []chunks.Sample
++				appendSample := func(h *Head, ts int64, expected bool) storage.SeriesRef {
++					app := h.Appender(context.Background())
++					ref, s, err := scenario.appendFunc(app, lset, ts, ts)
++					require.NoError(t, err)
++					require.NoError(t, app.Commit())
++					if expected {
++						expSamples = append(expSamples, s)
++					}
++					return ref
++				}
++
++				// The first ref is m-mapped, then truncated out of the head as if compacted.
++				h := openHead(0)
++				ref1 := appendSample(h, 100, false)
++				appendSample(h, 1500, false)
++				require.NoError(t, h.Truncate(minValidTime))
++
++				// The same labels are recreated under a second ref.
++				ref2 := appendSample(h, 1700, true)
++				require.NotEqual(t, ref1, ref2)
++				if tc.mmapSecondRef {
++					appendSample(h, 2100, true)
++				}
++				require.NoError(t, h.Close())
++
++				// The replay merges both refs onto the first one. Write in-order and
++				// out-of-order m-mapped chunks under the live ref.
++				h = openHead(minValidTime)
++				appendSample(h, 3500, true)
++				for ts := int64(2200); ts < 3200; ts += 100 {
++					appendSample(h, ts, true)
++				}
++				require.Positive(t, prom_testutil.ToFloat64(h.metrics.chunks))
++				require.NoError(t, h.Close())
++
++				slices.SortFunc(expSamples, func(a, b chunks.Sample) int { return int(a.T() - b.T()) })
++				// Replay twice to also check that the replay did not write
++				// overlapping chunks that break the next replay.
++				for range 2 {
++					h = openHead(minValidTime)
++					require.Equal(t, 0.0, prom_testutil.ToFloat64(h.metrics.mmapChunkCorruptionTotal))
++
++					q, err := NewBlockQuerier(NewRangeHead(h, 0, 5000), 0, 5000)
++					require.NoError(t, err)
++					q = NewHeadAndOOOQuerier(0, 0, 5000, h, h.oooIso.TrackReadAfter(0), q)
++					series := query(t, q, labels.MustNewMatcher(labels.MatchEqual, "foo", "bar"))
++					requireEqualSamples(t, lset.String(), expSamples, series[lset.String()], requireEqualSamplesIgnoreCounterResets)
++					require.NoError(t, h.Close())
++				}
++			})
++		}
++	}
++}
++
+ func TestHead_WALCheckpointMultiRef(t *testing.T) {
+ 	cases := []struct {
+ 		name               string
+diff --git a/tsdb/head_wal.go b/tsdb/head_wal.go
+index ae33a3d..0c67525 100644
+--- a/tsdb/head_wal.go
++++ b/tsdb/head_wal.go
+@@ -15,6 +15,7 @@ package tsdb
+ 
+ import (
+ 	"bytes"
++	"cmp"
+ 	"encoding/json"
+ 	"errors"
+ 	"fmt"
+@@ -22,6 +23,7 @@ import (
+ 	"math"
+ 	"os"
+ 	"path/filepath"
++	"slices"
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+@@ -526,40 +528,88 @@ Outer:
+ }
+ 
+ // resetSeriesWithMMappedChunks is only used during the WAL replay.
++//
++// When walSeriesRef is the series' own ref, the m-mapped chunks of the series are
++// replaced with mmc and oooMmc.
++//
++// When walSeriesRef is a different ref that resolves to the same series (a duplicate
++// series record), the chunks are merged instead. Refs with the same labels are never
++// live at the same time and chunk disk refs grow monotonically. Hence chunks already
++// attached to the series that were written before the last chunk of walSeriesRef
++// belong to a lifetime of the series that ended (was compacted and garbage collected)
++// before walSeriesRef was created, and are dropped. Chunks written after it were
++// written while the series was live under its current ref after an earlier replay
++// merged the refs, so they are still needed and kept. If walSeriesRef has no
++// m-mapped chunks, there is no such boundary and all attached chunks are kept.
+ func (h *Head) resetSeriesWithMMappedChunks(mSeries *memSeries, mmc, oooMmc []*mmappedChunk, walSeriesRef chunks.HeadSeriesRef) (overlapped bool) {
++	var oldOOOMmc []*mmappedChunk
++	if mSeries.ooo != nil {
++		oldOOOMmc = mSeries.ooo.oooMmappedChunks
++	}
++	oldCount := len(mSeries.mmappedChunks) + len(oldOOOMmc)
++
+ 	if mSeries.ref != walSeriesRef {
+-		// Checking if the new m-mapped chunks overlap with the already existing ones.
+-		if len(mSeries.mmappedChunks) > 0 && len(mmc) > 0 {
+-			if overlapsClosedInterval(
+-				mSeries.mmappedChunks[0].minTime,
+-				mSeries.mmappedChunks[len(mSeries.mmappedChunks)-1].maxTime,
+-				mmc[0].minTime,
+-				mmc[len(mmc)-1].maxTime,
+-			) {
++		var lastRef chunks.ChunkDiskMapperRef
++		for _, c := range mmc {
++			if c.ref.GreaterThan(lastRef) {
++				lastRef = c.ref
++			}
++		}
++		for _, c := range oooMmc {
++			if c.ref.GreaterThan(lastRef) {
++				lastRef = c.ref
++			}
++		}
++		noNewChunks := len(mmc) == 0 && len(oooMmc) == 0
++		writtenLater := func(c *mmappedChunk) bool {
++			return noNewChunks || c.ref.GreaterThan(lastRef)
++		}
++
++		var keptMmc []*mmappedChunk
++		for _, c := range mSeries.mmappedChunks {
++			if !writtenLater(c) {
++				continue
++			}
++			// In-order m-mapped chunks must not overlap and be sorted by time.
++			if len(mmc) > 0 && c.minTime <= mmc[len(mmc)-1].maxTime {
+ 				h.logger.Debug(
+ 					"M-mapped chunks overlap on a duplicate series record",
+ 					"series", mSeries.labels().String(),
+ 					"oldref", mSeries.ref,
+-					"oldmint", mSeries.mmappedChunks[0].minTime,
+-					"oldmaxt", mSeries.mmappedChunks[len(mSeries.mmappedChunks)-1].maxTime,
++					"oldmint", c.minTime,
++					"oldmaxt", c.maxTime,
+ 					"newref", walSeriesRef,
+ 					"newmint", mmc[0].minTime,
+ 					"newmaxt", mmc[len(mmc)-1].maxTime,
+ 				)
+ 				overlapped = true
++				continue
+ 			}
++			keptMmc = append(keptMmc, c)
++		}
++		if len(keptMmc) > 0 {
++			mmc = append(append(make([]*mmappedChunk, 0, len(mmc)+len(keptMmc)), mmc...), keptMmc...)
+ 		}
+-	}
+-
+-	h.metrics.chunksCreated.Add(float64(len(mmc) + len(oooMmc)))
+-	h.metrics.chunksRemoved.Add(float64(len(mSeries.mmappedChunks)))
+-	h.metrics.chunks.Add(float64(len(mmc) + len(oooMmc) - len(mSeries.mmappedChunks)))
+ 
+-	if mSeries.ooo != nil {
+-		h.metrics.chunksRemoved.Add(float64(len(mSeries.ooo.oooMmappedChunks)))
+-		h.metrics.chunks.Sub(float64(len(mSeries.ooo.oooMmappedChunks)))
++		var keptOOOMmc []*mmappedChunk
++		for _, c := range oldOOOMmc {
++			if writtenLater(c) {
++				keptOOOMmc = append(keptOOOMmc, c)
++			}
++		}
++		if len(keptOOOMmc) > 0 {
++			oooMmc = append(append(make([]*mmappedChunk, 0, len(oooMmc)+len(keptOOOMmc)), oooMmc...), keptOOOMmc...)
++			slices.SortFunc(oooMmc, func(a, b *mmappedChunk) int {
++				return cmp.Compare(a.ref, b.ref)
++			})
++		}
+ 	}
+ 
++	newCount := len(mmc) + len(oooMmc)
++	h.metrics.chunksCreated.Add(float64(newCount))
++	h.metrics.chunksRemoved.Add(float64(oldCount))
++	h.metrics.chunks.Add(float64(newCount - oldCount))
++
+ 	mSeries.mmappedChunks = mmc
+ 	if len(oooMmc) == 0 {
+ 		mSeries.ooo = nil

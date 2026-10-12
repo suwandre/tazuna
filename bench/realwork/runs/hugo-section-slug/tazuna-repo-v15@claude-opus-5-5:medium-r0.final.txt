@@ -1,0 +1,23 @@
+Setting `slug` in front matter now works on section, taxonomy and term pages. It replaces that directory name in the page's own URL and in the URLs of every page below it. The full `./check.sh` passes (gofmt, staticcheck and all tests).
+
+**How it works:**
+- `resources/page/page_paths.go`: I added a `Dir` field to `TargetPathDescriptor`. When it's set, it's used instead of the directory taken from the file path.
+- `hugolib/page__paths.go`: a new `applySectionSlugs` walks up from the page through its parent sections. Wherever one has a `slug`, it swaps that section's part of the path for the slug. If no section has a slug, `Dir` is left empty and URLs come out exactly as before.
+
+**Test:** `TestSlugInBranchPages` in `hugolib/page_permalink_test.go` uses the example from the request:
+- `help/` and `help/how-to-frob/` for English.
+- `es/ayuda/` and `es/ayuda/como-frobear/` for Spanish.
+
+It also covers:
+- a nested section with a slug that gets cleaned up: `Sub ES` becomes `sub-es`.
+- a page in a plain folder with no `_index` file, under a section with a slug: `es/ayuda/nosection/p2/`.
+- a taxonomy and a term: `es/etiquetas/fu/`.
+- checking that `es/help/` is no longer generated.
+
+**Behaviour to know about:**
+- A section's `slug` is ignored when `url` or a `permalinks` pattern applies to the page. Those still decide the URL, and permalink patterns can already use section slugs through `:sectionslugs`.
+- The slug belongs to each language's own `_index` file. If a language has no `_index` for a section, its pages keep the plain directory name.
+
+Partway through testing the disk ran out of space, so I cleared the Go build cache (`go clean -cache`). It rebuilds on its own, but the next build will be slower.
+
+Nothing is committed yet.

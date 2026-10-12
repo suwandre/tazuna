@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "PromQL parser drops parentheses around a single number/duration literal in offset/range positions on String() round-trip. Requires touching the parser (goyacc grammar + generated file or parse.go) and the printer/prettier. Hidden_cmd runs only TestExprString (string round-trip); the PR's AST-shape table in parse_test.go is shipped in hidden/ but not run since it pins one specific AST representation.",
+  "files_changed": 4,
+  "lines_changed": 66,
+  "merged_at": "2026-08-14T07:52:13Z"
+}

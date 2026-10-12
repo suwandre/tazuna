@@ -1,0 +1,199 @@
+diff --git a/.gitignore b/.gitignore
+index 7f3f745..e995580 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -6,4 +6,5 @@ public/
+ .DS_Store 
+ cache/filecache/_gen/
+ .claude/
+-dump.txt
+\ No newline at end of file
++dump.txt
++.empryo
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..9334108 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -109,6 +109,37 @@ func (l pagePaths) OutputFormats() page.OutputFormats {
+ 	return l.outputFormats
+ }
+ 
++// sectionPathWithSlugs returns base with the segments owned by p's ancestors
++// (and p itself if includeSelf is set) replaced by their slug, if any.
++// It returns an empty string if no slug is set.
++func sectionPathWithSlugs(p *pageState, base string, includeSelf bool) string {
++	segs := strings.Split(strings.Trim(base, "/"), "/")
++	changed := false
++	visit := func(a page.Page) {
++		if a == nil || a.IsHome() {
++			return
++		}
++		slug := strings.Trim(a.Slug(), "/")
++		if slug == "" {
++			return
++		}
++		if k := strings.Count(a.Path(), "/"); k >= 1 && k <= len(segs) {
++			segs[k-1] = slug
++			changed = true
++		}
++	}
++	for _, a := range p.Ancestors() {
++		visit(a)
++	}
++	if includeSelf {
++		visit(p)
++	}
++	if !changed {
++		return ""
++	}
++	return "/" + strings.Join(segs, "/")
++}
++
+ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error) {
+ 	s := p.s
+ 	d := s.Deps
+@@ -192,6 +223,14 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		return desc, err
+ 	}
+ 
++	if opath == "" && desc.URL == "" && p.Kind() != kinds.KindHome {
++		if kinds.IsBranch(p.Kind()) {
++			desc.ContainerPath = sectionPathWithSlugs(p, pageInfoCurrentSection.Base(), true)
++		} else {
++			desc.ContainerPath = sectionPathWithSlugs(p, pageInfoPage.ContainerDir(), false)
++		}
++	}
++
+ 	if opath != "" {
+ 		opath, _ = url.QueryUnescape(opath)
+ 		opath = path.Clean(opath)
+diff --git a/hugolib/page_slug_section_test.go b/hugolib/page_slug_section_test.go
+new file mode 100644
+index 0000000..57719c6
+--- /dev/null
++++ b/hugolib/page_slug_section_test.go
+@@ -0,0 +1,88 @@
++package hugolib
++
++import "testing"
++
++func TestSectionSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++disableKinds = ["rss", "sitemap"]
++[taxonomies]
++tag = "tags"
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: Frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Frobear
++slug: como-frobear
++---
++-- content/help/sub/_index.es.md --
++---
++title: Sub
++slug: sub-es
++---
++-- content/help/sub/p1.es.md --
++---
++title: P1
++---
++-- content/help/sub/p1.en.md --
++---
++title: P1
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/foo/_index.es.md --
++---
++title: Foo
++slug: fu
++---
++-- content/p.es.md --
++---
++title: P
++tags: [foo]
++---
++-- content/p.en.md --
++---
++title: P
++tags: [foo]
++---
++-- layouts/all.html --
++{{ .Title }}|{{ .RelPermalink }}
++`
++	b := Test(t, files)
++
++	b.AssertFileExists("public/help/index.html", true)
++	b.AssertFileExists("public/help/how-to-frob/index.html", true)
++	b.AssertFileExists("public/help/sub/p1/index.html", true)
++	b.AssertFileExists("public/es/ayuda/index.html", true)
++	b.AssertFileExists("public/es/ayuda/como-frobear/index.html", true)
++	b.AssertFileExists("public/es/ayuda/sub-es/index.html", true)
++	b.AssertFileExists("public/es/ayuda/sub-es/p1/index.html", true)
++	b.AssertFileExists("public/es/help/index.html", false)
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "Frobear|/es/ayuda/como-frobear/")
++	b.AssertFileExists("public/es/etiquetas/index.html", true)
++	b.AssertFileExists("public/es/etiquetas/fu/index.html", true)
++	b.AssertFileExists("public/es/tags/index.html", false)
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..91a362b 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -71,6 +71,11 @@ type TargetPathDescriptor struct {
+ 	// URL from front matter if set. Will override any Slug etc.
+ 	URL string
+ 
++	// ContainerPath, if set, is the path of the section (for branch pages) or
++	// of the containing section (for regular pages) with any section slugs applied.
++	// It replaces Section.Base() and Path.ContainerDir() when building the path.
++	ContainerPath string
++
+ 	// Used to create paginator links.
+ 	Addends string
+ 
+@@ -165,6 +170,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.ContainerPath != "" {
++			pb.Add(d.ContainerPath)
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}
+@@ -206,7 +213,9 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			if dir := d.Path.ContainerDir(); dir != "" {
++			if d.ContainerPath != "" {
++				pb.Add(d.ContainerPath)
++			} else if dir := d.Path.ContainerDir(); dir != "" {
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {

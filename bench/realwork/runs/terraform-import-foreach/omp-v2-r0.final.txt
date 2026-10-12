@@ -1,0 +1,13 @@
+Fixed: every import block for a `for_each` resource is now honored, not just the first one.
+
+**Cause:** `refactoring.FindImportStatements` stored import statements in a map keyed by `ConfigResource`. That key has no instance key, so `terraform_data.t["a"]` and `terraform_data.t["b"]` shared one entry. The first block won and the rest were dropped with no diagnostic. The map was meant to let a parent module's import override a child module's, but it also collapsed blocks within a single module.
+
+**Fix:**
+- `FindImportStatements` in `internal/refactoring/import_statement.go` now returns a `[]ImportStatement`.
+- It still skips a child module's import when an ancestor already claims the same config resource.
+- It keeps every block that comes from the same module.
+- I updated its one caller, `findImportTargets` in `internal/terraform/context_plan.go`.
+
+**Test:** I added `TestContext2Plan_importMultipleBlocksSameForEachResource` to `internal/terraform/context_plan_import_test.go`. It imports three instances of one `for_each` resource through three blocks and checks each instance has its own import ID and isn't planned for create. With the fix stashed it fails (`test_object.a["z"]` plans a `Create`). With the fix, `go test ./internal/refactoring/ ./internal/terraform/` passes.
+
+I didn't run the `terraform_data` repro from the issue through the CLI. I also didn't test `count`, though the same fix should cover it. I didn't add a `.changes` entry.

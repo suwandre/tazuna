@@ -1,0 +1,18 @@
+Parentheses around a lone number or duration now survive `Expr.String()` in duration positions. `go test` passes for `./promql/...`, `./rules/...` and `./web/...`.
+
+Every case from the issue now prints correctly except `+(5)`, which prints `(5)`. The unary `+` is dropped, as it already is for `+(5m + 1m)`.
+
+**The change**
+- **AST:** `NumberLiteral` gets a `Wrapped` flag, the counterpart of `DurationExpr.Wrapped`. `NumberLiteral.String()` prints the parentheses when it is set, so `2 * (5s)` also round-trips.
+- **Grammar (`generated_parser.y`, regenerated with goyacc v0.6.0):**
+  - **Marking and storing:** `paren_duration_expr` and `-(N)` / `+(N)` now mark the literal as wrapped. In offset and range positions, a wrapped literal is stored as a `*DurationExpr` so it fits `OriginalOffsetExpr` and `RangeExpr`.
+  - **Negation:** `-(5)` becomes a `SUB` `DurationExpr` around the wrapped `5`.
+  - **Parse-time checks:** `[(0)]`, `[-(5)]`, `5/(0)` and `5/-(0)` still error at parse time. They use a new `constantDurationValue` helper, which looks through a unary sign.
+
+**Behaviour change:** `foo offset +(5)` and `foo offset -(5)` now fill `OriginalOffsetExpr` at parse time and leave `OriginalOffset` at 0 until the engine evaluates the expression. This matches how `(5m + 1m)` already behaves. I changed the two existing `parse_test.go` expectations to match.
+
+**Tests added**
+- Printer round-trips in `printer_test.go`: `foo offset (5)`, `+(5)`, `-(5)`, `(5m)`, `-(-5m)`, `foo[(5s)]`, `foo[2 * (5s)]`, `foo[5m:(1m)]` and a subquery with parenthesised range, step and offset.
+- A parse-error case for `foo offset (4d/-(0))` in `parse_test.go`.
+
+I haven't run `make lint`, and I haven't committed anything.

@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "TSDB loses acknowledged out-of-order samples when a WAL checkpoint drops a series record the WBL still references via the in-memory multiRef mapping made during WAL replay. Fix must track the WBL-referenced refs during WBL replay, keep them in WAL checkpoints, and release them once the WBL is truncated. Hidden test is the PR's end-to-end DB restart test (all sample types); one assertion calling the PR's new internal helper (isWBLPinnedSeriesRef) was removed from the hidden copy, and the PR's head_test.go cases (which call new internal helpers) were excluded.",
+  "merged_at": "2026-10-02T06:11:07Z",
+  "files_changed": 2,
+  "lines_changed": 66
+}

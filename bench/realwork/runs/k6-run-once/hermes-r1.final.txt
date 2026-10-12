@@ -1,0 +1,19 @@
+`--once` is now a flag on `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. New tests pass, along with the existing `internal/cmd` and `lib/executor` packages. I didn't run the full `./...` suite or `make lint`. I haven't exercised `cloud run` end to end, since a non-local run needs a cloud login. I only checked that the flag shows up in its `--help`.
+
+How it behaves:
+- **No scenarios:** runs `default()` as a `default` scenario with 1 VU and 1 iteration.
+- **One scenario:** replaced by a `shared-iterations` executor with 1 VU and 1 iteration. It keeps `exec`, `env`, `tags` and the scenario `options` (browser options). It drops `startTime`, `gracefulStop` and any other executor settings.
+- **Shortcut options:** `vus`, `iterations`, `duration` and `stages` are cleared from the options, whether they came from the script, env or config file.
+- **Multiple scenarios:** fails with `--once can run a single scenario only`.
+- **Combined with flags:** `--once` with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>`. Both errors use the invalid-config exit code.
+- **setup/teardown:** unchanged.
+
+The transform runs right after config consolidation, in `consolidateDeriveAndValidateConfig` in `internal/cmd/test_load.go`. That is also the config `archive` and cloud upload use, so they get the same result. For `k6 archive`, the written `metadata.json` has the single `shared-iterations` scenario.
+
+The core logic is `executor.ApplyOnce` in `lib/executor/execution_config_once.go`. The CLI wiring and flag checks are in `internal/cmd/once.go`.
+
+I did not add the flag to `k6 cloud upload` or the old `k6 cloud` command, since the request only named run, cloud run and archive.
+
+Tests added:
+- **Unit:** `lib/executor/execution_config_once_test.go`.
+- **CLI:** `internal/cmd/tests/cmd_run_once_test.go` covers the no-scenario, single-scenario (exec, env and tags kept), multi-scenario, flag-conflict and archive cases.

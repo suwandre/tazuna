@@ -1,0 +1,18 @@
+`return` is now a real function that stops template execution early, and it works in any template, not just partials. `./check.sh ./tpl/... ./hugolib/` passes. I didn't run the other packages that execute templates (`commands`, `resources`, `internal/js`).
+
+**How it works**
+- **The error type:** `{{ return }}` returns a sentinel `texttemplate.ReturnError{Value}`. It lives in `tpl/internal/go_templates/texttemplate/hugo_template.go`, and `Namespace.Return` in `tpl/partials/partials.go` creates it.
+- **Fork patches:** `evalCall` turns that error into a panic. `errRecover` in `exec.go` returns it as the execution error. `try` re-panics it instead of swallowing it.
+- **Regular templates:** `TemplateStore.ExecuteWithContext` swallows the error, so output rendered before the `return` is kept.
+- **Partials:** `doInclude` uses the error's value as the partial's result. If the partial never reaches `return`, it gets the rendered output as before.
+- **Removed:** the partial-return transformation (`partialReturnWrapper`, `collectReturnNode`, `ParseInfo.HasReturn`, the `contextWrapper`).
+- **Kept:** one small parse-time rewrite, `{{ return add . 42 }}` to `{{ return (add . 42) }}`. Partials that use `return` with a function call, as `TestPartialWithReturn` does, would break without it.
+
+**Behaviour changes**
+- A `return` inside `{{ template "x" }}` or a `range` stops the whole top-level execution, not just the inner block.
+- `{{ return x | f }}` now returns as soon as `return` runs, so `f` never runs. `TestPartialReturnPanicIssue13600` now asserts on the earlier `delimit` error instead of the `string` arity error.
+- Partials that use `return` now always render into a buffer. They used to write to `io.Discard`.
+
+**Tests**
+- Added `TestReturnEarly` in `tpl/partials/partials_integration_test.go`. It covers return from `if` and `range` in a partial, a valueless return, a falsy return, a partial with no return, and an early return from a regular template.
+- Adjusted the assertion in `TestPartialReturnPanicIssue13600` as above.

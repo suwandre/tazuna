@@ -1,0 +1,28 @@
+Implemented the `tls_automate_names` global Caddyfile option.
+
+## Changes
+
+**`caddyconfig/httpcaddyfile/options.go`**
+- Registered the new `tls_automate_names` global option.
+- Added `parseOptAutomateNames`, which takes one or more names and appends across repeated occurrences of the option (so lists can be split across lines).
+
+**`caddyconfig/httpcaddyfile/tlsapp.go`**
+- In `buildTLSApp`, `tls_automate_names` entries are added to the `certificates.automate` loader (like `force_automate`), unconditionally — so they still work with `auto_https off`, with no site blocks at all, and for non-HTTP traffic (l4, mail, etc.).
+- Names already covered by a site block's own automation policy are left to that policy (no duplicate/conflicting policy is emitted), but still land in the automate loader — so a name served only over `http://` still gets a certificate.
+- A base automation policy built from the global options (e.g. `email`, `acme_ca`, `cert_issuer`) is attached to the remaining public names, and names that can't get public certs (`localhost`, IPs) go into an internal-issuer policy, mirroring site-block treatment. Consolidation then produces output identical to what an equivalent dummy site block would produce.
+- Extracted `hasGlobalACMEDefaults` helper and added `automationPolicyExistsForSubject` for the exact-subject check.
+
+**Tests** — added 5 adaptation fixtures under `caddytest/integration/caddyfile_adapt/`:
+- `tls_automate_names.caddyfiletest` (wildcard automate + real site, global email)
+- `tls_automate_names_without_site_block.caddyfiletest` (only the tls app is produced)
+- `tls_automate_names_existing_policy.caddyfiletest` (site policy wins; other name gets global policy)
+- `tls_automate_names_auto_https_off.caddyfiletest`
+- `tls_automate_names_internal.caddyfiletest` (internal names + repeated option appending)
+
+## Verification
+- `go build ./...` ✅
+- `go test -race -short ./caddyconfig/... ./modules/caddytls/...` ✅
+- `go test ./caddytest/integration/ -count=1` ✅ (all 5 new fixtures pass, full package green)
+- `gofmt -l` clean; manually adapted an `http://`-only site block case to confirm a policy and automate entry are still emitted.
+
+Note: this change was implemented with AI assistance (agent).

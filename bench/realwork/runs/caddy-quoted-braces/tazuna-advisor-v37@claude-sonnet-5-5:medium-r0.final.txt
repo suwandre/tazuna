@@ -1,0 +1,18 @@
+Quoted `{` and `}` no longer affect block parsing, so `respond "{"` now parses. Tests pass for `./caddyconfig/...` and the `caddytest/integration` adapt tests (`-run Adapt`). I did not run `golangci-lint` or the full `go test -race -short ./...`.
+
+**Cause.** The lexer already records whether a token was quoted, but the brace checks in `parse.go` and `dispenser.go` compared only the token text. A quoted `"{"` therefore opened a block, and a lone one ended in an unclosed-block error. I deduced that from the code and didn't reproduce it before the fix.
+
+**Fix.**
+- **Helpers:** `lexer.go` has two new unexported methods, `Token.isOpenBrace()` and `Token.isCloseBrace()`. They are true only for an unquoted `{` or `}`.
+- **Call sites:** the nesting and block checks in `parse.go` and `dispenser.go` use them.
+- **Left unchanged:** the same-line and new-line error checks in `directive()` already skipped quoted tokens.
+
+**Tests.**
+- **`parse_test.go`:** cases for `respond "{"`, `respond "}"`, a backtick-quoted `{`, and quoted braces inside a nested `handle` block.
+- **`dispenser_test.go`:** `TestDispenser_QuotedBraces` checks that `NextBlock` and `NextArg` treat quoted braces as plain arguments.
+- **First run:** one of my own `parse_test.go` expectations was wrong (segment sizes) and failed. I corrected it and the suite passes.
+- **Not added:** I didn't add an integration adapt test file.
+
+The older "workaround with quotes" parser tests (`dir1 "{" a b "}"`) still pass.
+
+I used Claude Sonnet 5.5 for this change. Per the project's AI-contribution rules, disclose that in the PR, and make sure you understand each changed line before submitting.

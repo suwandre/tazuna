@@ -1,0 +1,19 @@
+`return` now works in any template, anywhere in the template, and the old wrapper transformation is gone. The tests for `./tpl/...`, `./hugolib/...` and `./resources/...` pass. `./check.sh` has gofmt and tests passing, but staticcheck reports six warnings. They are in `config/allconfig/allconfig.go` and `hugolib/integrationtest_builder.go`, files I didn't touch (I didn't check them against a clean checkout).
+
+**How it works**
+- **Fork changes:** The patch to Go's template package is small. It adds an exported `ReturnError{Value any}` in `texttemplate/hugo_template.go`. `evalCall` panics with it when a function returns it, and `errRecover` in `exec.go` turns it into the error returned by `Execute`. `try` re-panics it, so it can't be swallowed.
+- **The function:** The `return` template function is a plain func in `tpl/partials/init.go`. It returns `(string, error)` with a `*ReturnError`, and errors if given more than one argument.
+- **Store:** `TemplateStore.ExecuteWithContextAndKey` now returns `(*ReturnError, error)`. Regular templates and shortcodes keep the output written before the `return`.
+- **Partials:** They always render into a buffer. If the template returned, the result is `ret.Value` (nil for a bare `return`). Otherwise it's the rendered output, as before.
+- **Removed:** `ParseInfo.HasReturn`, `contextWrapper`, the return-wrapper template and `collectReturnNode`.
+
+**Behaviour changes**
+- **Syntax kept:** `{{ return add . 42 }}` still works, as the docs show. A small rewrite in `templatetransform.go` turns it into `{{ return (add . 42) }}`. It doesn't touch the fork.
+- **Nested templates:** A `return` inside a `{{ template }}`, `define` or `block` only exits that template, not the whole page. I chose this because it seemed the least surprising. It costs a `defer`/`recover` in `walkTemplate`.
+- **Partial that doesn't reach `return`:** It now yields its rendered output instead of `nil`.
+- **Error message change:** `{{ return ( delimit . ", " ) | string }}` now fails with the `delimit` error instead of the `string` arity error. I updated `TestPartialReturnPanicIssue13600` to match.
+- **`return f | g`:** This now runs the `return` first, so `g` is never reached. Use `return (f | g)`.
+
+**Tests and docs**
+- **New tests:** `TestReturnEarly`, `TestReturnInRegularTemplate` and `TestReturnTooManyArgs`, all in `tpl/partials/partials_integration_test.go`.
+- **Docs:** I updated `return.md`, `Include.md` and `IncludeCached.md`. They no longer say `return` must be the only one and the last statement.

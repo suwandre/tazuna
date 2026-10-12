@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "Deliberately vague ticket (3 lines). Quoted \"{\" / \"}\" tokens must be treated as literal arguments by the Caddyfile lexer/dispenser/parser (blocks, snippets, imports, formatter). Agent must infer the scope from a one-example report.",
+  "files_changed": 3,
+  "lines_changed": 80,
+  "merged_at": "2026-07-12T00:33:32Z"
+}

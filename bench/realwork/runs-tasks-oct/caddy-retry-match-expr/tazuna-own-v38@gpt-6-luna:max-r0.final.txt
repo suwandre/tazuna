@@ -1,0 +1,7 @@
+**Fixed** response-retry classification: request-only CEL expressions no longer trigger retries after successful responses. Response retries are limited to expressions referencing status, headers, or upstream latency placeholders; direct `ph(req, "...")` calls are recognized, and unknown placeholder names remain conservatively eligible.
+
+Added tests for the POST-body regression, dynamic placeholders, and placeholder-name edge cases.
+
+**Verified:** relevant package tests, targeted reverse-proxy integration tests, race tests, and targeted `golangci-lint` all passed.
+
+AI-assisted change: GPT-6 Luna.

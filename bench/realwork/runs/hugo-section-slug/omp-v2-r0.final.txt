@@ -1,0 +1,11 @@
+`slug` in the front matter of a section, taxonomy or term page now replaces that directory name in the URL of the page and everything under it. Home pages are unaffected. `go test ./hugolib/... ./resources/...` passes, including the new test.
+
+In your example, `es/ayuda/` and `es/ayuda/como-frobear/` are what the new test checks. English stays at `help/` and `help/how-to-frob/`. The test also covers a nested section, a page under it, a taxonomy slug and a term slug.
+
+The change is in `hugolib/page__paths.go` and `resources/page/page_paths.go`. Each page's URL is now built from its section path with any ancestor slugs swapped in.
+
+- **`url` and `[permalinks]` still win:** If a page has `url` set, or matches a `[permalinks]` rule, the slug has no effect on its path. Permalink patterns still need `:sectionslugs` to pick up section slugs.
+- **Docs:** I updated `docs/content/en/content-management/front-matter.md` and `docs/content/en/content-management/urls.md`, which previously said `slug` wasn't applicable to these kinds.
+- **Not run:** I didn't run `./check.sh`.
+
+The new test is `hugolib/section_slug_test.go`.

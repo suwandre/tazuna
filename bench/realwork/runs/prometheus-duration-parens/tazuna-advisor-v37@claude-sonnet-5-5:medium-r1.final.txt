@@ -1,0 +1,20 @@
+Parentheses around a single duration literal now survive `Expr.String()`. All five cases from the issue round-trip, and `go test ./promql/... ./web/api/...` passes.
+
+`make lint` fails on a deprecation warning in `storage/remote/otlptranslator/...`, a file I didn't touch. I didn't check whether it also fails without my change.
+
+**The fix**
+- **Wrapper:** `OriginalOffsetExpr`, `RangeExpr` and `StepExpr` are typed `*DurationExpr`, so a lone `*NumberLiteral` had no field to hold the parentheses. The parser now wraps a parenthesised literal in `&DurationExpr{Op: ADD, RHS: lit, Wrapped: true}`, which is unary plus and prints as `(5)`. The engine's duration evaluation already handles unary `+` and ignores `Wrapped`.
+- **Both paths covered:** The change is in `paren_duration_expr` in `generated_parser.y` and in `applyUnaryOpToDurationExpr` in `parse.go`, which handles the `+(5)` and `-(5)` forms. I regenerated `generated_parser.y.go` with goyacc v0.6.0, and the diff against the committed file is small.
+- **Parse-time errors kept:** A parenthesised literal now fails `foo[(0)]` (duration must be greater than 0) and `foo offset (4d/(0))` (division by zero) at parse time. A new helper, `durationNumberLiteral`, looks through the wrapper in `positive_duration_expr` and in the divide and modulo checks.
+
+**Behaviour changes**
+- `foo offset +(5)` prints as `foo offset (5)`, not `+(5)`. This matches how `+(5*2)` already prints as `(5 * 2)`.
+- `foo offset (5)` now parses with `OriginalOffsetExpr` set instead of `OriginalOffset`. I updated the expected ASTs for `foo offset +(5)` and `foo offset -(5)` in `parse_test.go` accordingly.
+- In `-(5)`, the inner wrapper's `StartPos` is the `-` position, not the `(` position. This is only a position-range inaccuracy.
+
+**Tests**
+- **`printer_test.go`:** round-trip cases for the issue's five inputs, plus `foo[(5s):(1s)]` and `foo offset 5s + (2)`.
+- **`parse_test.go`:** the two parse-error cases.
+- **`duration_expression.test`:** eval cases for `offset (100)`, `offset -(100)` and `[(30s)]`.
+
+I haven't committed anything.

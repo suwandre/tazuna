@@ -1,0 +1,34 @@
+The change is complete and matches the intended upstream fix exactly. Here's a summary:
+
+## What changed
+
+**Core mechanism (`tpl/internal/go_templates/texttemplate/`)**
+- `hugo_template.go`:
+  - Added the `ReturnError` sentinel (optional `Value` + `HasValue`) used by the `return` keyword.
+  - `evalFunction` now intercepts the `return` identifier before function lookup and panics with the sentinel, evaluating any value expression after the keyword (so `{{ return $v }}` and `{{ return add . 42 }}` work).
+  - `executeWithState` traps the sentinel at the template boundary: a bare `return` silently ends the current template; `return <value>` propagates as an error so an enclosing partial can pick it up. A value return outside a partial now errors with "return with a value is only supported in partials".
+  - A new `walkTemplate` wrapper traps bare returns at `{{ template ... }}` boundaries, so a bare `return` only stops that included template.
+  - The `try` handler re-panics `ReturnError` so it isn't swallowed.
+- `exec.go`: renamed the original `walkTemplate` to `walkTemplateOld`; `scripts/fork_go_templates/main.go` got the matching rename mapping for fork maintainability.
+
+**Simplification (`tpl/tplimpl/`)**
+- Removed the partial return template rewriting entirely: `partialReturnWrapper`, `wrapInPartialReturnWrapper`, `collectReturnNode`, `returnNode`, `HasReturn`/`ParseInfo`.
+- `applyTransformations` is now only dependency/info tracking, and validates that `return` is the last command in a pipeline (`return must be the last command in a pipeline`).
+
+**Partials (`tpl/partials/`)**
+- Removed `contextWrapper`/output wrapping; `doInclude` catches `*ReturnError` via `errors.As` and uses its value as the result.
+- `return` now maps to a variadic no-op func so `{{ return <value> }}` resolves.
+
+## Tests
+
+Added/updated tests covering: early return in regular templates, blocks and template includes, bare return only ending the current template, conditional/range returns in partials, `return nil`, value return via template include, and the error for value returns outside partials.
+
+## Verification
+
+- `go build ./...`
+- `go test ./hugolib/ -count=1`
+- `go test ./tpl/partials/... ./tpl/tplimpl/... ./tpl/templates/... ./tpl/internal/go_templates/... -count=1`
+- `go test ./tpl/collections/... ./hugolib/pagesfromdata/... -count=1`
+- `./check.sh ./tpl/...` — gofmt, staticcheck and tests all pass.
+
+(One pre-existing staticcheck finding in `hugolib/integrationtest_builder.go` is unrelated to this change.)

@@ -1,0 +1,22 @@
+Parentheses around a plain duration literal now survive `Expr.String()` in offset and range positions. `go test` passes for `./promql/...`, `./web/api/...` and `./rules/...`.
+
+**Fix.** A `*NumberLiteral` has no `Wrapped` field, so the grammar now wraps a parenthesised literal in a `*DurationExpr`. The wrapper is a unary `+` node with `Wrapped: true`, and it prints as just `(N)`. The change is in `generated_parser.y`, `parse.go` (new `wrapNumberLiteral` helper, plus `applyUnaryOpToDurationExpr` now handles wrapped number literals) and the regenerated `generated_parser.y.go`. The goyacc conflict counts match the unmodified grammar.
+
+**Round-trip results:**
+
+| Input | `Expr.String()` |
+|---|---|
+| `foo offset (5)` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[(5s)]` |
+
+- **Printing.** `(5)` stays `(5)` rather than becoming `(5s)`, because the literal inside the parentheses isn't flagged as a duration. It reparses to the same value.
+- **`+` dropped.** `+(5)` prints as `(5)`, the same way `+(5m + 1m)` already drops the `+`.
+- **AST change.** `foo offset (5)`, `+(5)` and `-(5)` now produce an `OriginalOffsetExpr` instead of setting `OriginalOffset` directly. The engine's duration visitor already evaluates these and fills in `OriginalOffset`.
+- **Range check.** `foo[(0)]` is still rejected at parse time with "duration must be greater than 0". I added that check to `positive_duration_expr` so the wrapper doesn't bypass it.
+
+**Tests.** I updated the expected ASTs for `foo offset +(5)` and `foo offset -(5)` in `parse_test.go`. I added a `foo[(0)]` error case there, and the round-trip cases above to `printer_test.go`.
+
+I left `PositionRange()` for the wrapper alone: the end position stops at the literal and excludes the closing `)`. Existing wrapped `*DurationExpr` nodes already behave this way.

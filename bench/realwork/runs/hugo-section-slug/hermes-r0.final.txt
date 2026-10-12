@@ -1,0 +1,9 @@
+Sections, taxonomies and terms now honor `slug`. A section's slug replaces its path element in its own URL and in the URLs of everything beneath it. The tests in `./hugolib`, `./resources/...` and `./tpl/...` all pass. I did not run `./check.sh`.
+
+With your example, the Spanish pages come out as `/es/ayuda/` and `/es/ayuda/como-frobear/`, and the English ones stay at `/help/` and `/help/how-to-frob/`.
+
+- **`hugolib/page__paths.go`**: when building a page's path descriptor, it collects the slugs of the page itself (if it's a section, taxonomy or term) and of every ancestor section. It skips home and anything without a slug.
+- **`resources/page/page_paths.go`**: a new `SectionSlugs` field on `TargetPathDescriptor`, plus a helper that swaps slugs into the section path and into a page's container directory. Nested slugs combine, so `help/sub` with slugs on both becomes `ayuda/sub-es`.
+- **Test**: `TestSectionTaxonomyTermSlug` in `hugolib/page_permalink_test.go`. It covers a localized section, a leaf bundle and a regular page under it, a nested section, and a taxonomy with a term. It also checks that the English URLs are unchanged.
+
+If a page sets `url` or matches a `[permalinks]` pattern, that still takes precedence over the section slug. `:sections` in a permalink pattern still uses directory names. `:sectionslug` and `:sectionslugs` already use slugs, so use those if you want slugs in a pattern.

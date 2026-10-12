@@ -1,0 +1,17 @@
+You can now set `slug` in section, taxonomy and term pages. It renames that directory in the URL of the section and of every page beneath it. Your example comes out as you described: `/help/`, `/help/how-to-frob/`, `/es/ayuda/` and `/es/ayuda/como-frobear/`. The new test passes, and it fails when I remove the fix. `./check.sh ./hugolib/...` passed (gofmt, staticcheck, tests), and `go test ./resources/...` passed. I haven't run the plain `./check.sh` over the whole repo, which AGENTS.md asks for when you're done.
+
+**Changes:**
+- `hugolib/page__paths.go`: a new function, `sectionBaseWithSlugs`, works out a section's path from the page's current section up to the home page, using each section's slug in place of its directory name. Its result goes into the URL descriptor.
+- `resources/page/page_paths.go`: `TargetPathDescriptor` has a new `SectionBase` field. `CreateTargetPaths` uses it for section, taxonomy and term URLs. For regular pages, it swaps the section part at the front of the page's directory.
+
+**Test:** `TestSlugInBranchPages` in `hugolib/page_permalink_test.go` covers:
+- the example from the issue;
+- a nested section under a section with a slug;
+- a page in a plain subdirectory that isn't a section (it still picks up the parent's slug);
+- a taxonomy slug (`/es/etiquetas/`) and a term slug (`/es/etiquetas/fu/`).
+
+**Not covered:**
+- **`url` on a section:** it still affects only that section, not the pages under it. That's the same as before.
+- **Permalink patterns:** sections that use a `permalinks` config pattern build their URLs from that pattern, so section slugs don't apply there. Tokens like `:sections` still use the directory names.
+
+Nothing is committed.

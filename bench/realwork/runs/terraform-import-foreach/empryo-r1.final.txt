@@ -1,0 +1,10 @@
+Add a test after line 1352.Stash was denied; skip the fail-before check and run the full packages.`internal/refactoring/import_statement.go:29` — `findImportStatements` keyed import blocks by `ConfigResource` (the resource without its instance key). The second block for `terraform_data.t["b"]` hit the "already have one" check, which always compared the module to itself and so always skipped it. That's why the first-declared block won and the rest were dropped silently.
+
+The fix:
+- `FindImportStatements` now returns `[]ImportStatement` per resource. Blocks from the same module are all kept.
+- A child module's blocks are still skipped when a parent module already targets the same resource, so the existing parent-overrides-child behaviour holds.
+- `internal/terraform/context_plan.go:752` (`findImportTargets`) now flattens those lists.
+
+I added `TestContext2Plan_importMultipleBlocksForEachResource` in `internal/terraform/context_plan_import_test.go`. It uses two import blocks on a `for_each` resource and asserts both instances are imported. `go test ./internal/refactoring/ ./internal/terraform/` passes. I couldn't confirm the new test fails without the fix, because the stash I needed for that was denied.
+
+`node_resource_plan.go:354` and `:624` still read `n.importTargets[0].Config`. That only affects config generation and the missing-config error location, so I left it alone. It could point at the wrong import block, though.

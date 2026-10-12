@@ -1,0 +1,132 @@
+diff --git a/caddyconfig/caddyfile/parse.go b/caddyconfig/caddyfile/parse.go
+index 38d3b9b..5cdc0a7 100644
+--- a/caddyconfig/caddyfile/parse.go
++++ b/caddyconfig/caddyfile/parse.go
+@@ -229,7 +229,7 @@ func (p *parser) addresses() error {
+ 		}
+ 
+ 		// Open brace definitely indicates end of addresses
+-		if value == "{" {
++		if value == "{" && !token.Quoted() {
+ 			if expectingAnother {
+ 				return p.Errf("Expected another address but had '%s' - check for extra comma", value)
+ 			}
+@@ -243,7 +243,7 @@ func (p *parser) addresses() error {
+ 		}
+ 
+ 		// Users commonly forget to place a space between the address and the '{'
+-		if strings.HasSuffix(value, "{") {
++		if !token.Quoted() && strings.HasSuffix(value, "{") {
+ 			return p.Errf("Site addresses cannot end with a curly brace: '%s' - put a space between the token and the brace", value)
+ 		}
+ 
+@@ -320,7 +320,7 @@ func (p *parser) blockContents() error {
+ func (p *parser) directives() error {
+ 	for p.Next() {
+ 		// end of server block
+-		if p.Val() == "}" {
++		if p.Val() == "}" && !p.Token().Quoted() {
+ 			// p.nesting has already been decremented
+ 			break
+ 		}
+@@ -518,6 +518,11 @@ func (p *parser) doImport(nesting int) error {
+ 			}
+ 		}
+ 
++		if token.Quoted() {
++			tokensCopy = append(tokensCopy, token)
++			continue
++		}
++
+ 		switch token.Text {
+ 		case "{":
+ 			nesting++
+@@ -641,7 +646,11 @@ func (p *parser) directive() error {
+ 	segment = append(segment, p.Token())
+ 
+ 	for p.Next() {
+-		if p.Val() == "{" {
++		if p.Token().Quoted() {
++			segment = append(segment, p.Token())
++			continue
++		}
++		if p.Val() == "{" && !p.Token().Quoted() {
+ 			p.nesting++
+ 			if !p.isNextOnNewLine() && p.Token().wasQuoted == 0 {
+ 				return p.Err("Unexpected next token after '{' on same line")
+@@ -649,16 +658,16 @@ func (p *parser) directive() error {
+ 			if p.isNewLine() {
+ 				return p.Err("Unexpected '{' on a new line; did you mean to place the '{' on the previous line?")
+ 			}
+-		} else if p.Val() == "{}" {
++		} else if p.Val() == "{}" && !p.Token().Quoted() {
+ 			if p.isNextOnNewLine() && p.Token().wasQuoted == 0 {
+ 				return p.Err("Unexpected '{}' at end of line")
+ 			}
+ 		} else if p.isNewLine() && p.nesting == 0 {
+ 			p.cursor-- // read too far
+ 			break
+-		} else if p.Val() == "}" && p.nesting > 0 {
++		} else if p.Val() == "}" && !p.Token().Quoted() && p.nesting > 0 {
+ 			p.nesting--
+-		} else if p.Val() == "}" && p.nesting == 0 {
++		} else if p.Val() == "}" && !p.Token().Quoted() && p.nesting == 0 {
+ 			return p.Err("Unexpected '}' because no matching opening brace")
+ 		} else if p.Val() == "import" && p.isNewLine() {
+ 			if err := p.doImport(1); err != nil {
+@@ -685,7 +694,7 @@ func (p *parser) directive() error {
+ // because it returns an error if the token is not
+ // an opening curly brace. It does NOT advance the token.
+ func (p *parser) openCurlyBrace() error {
+-	if p.Val() != "{" {
++	if p.Val() != "{" || p.Token().Quoted() {
+ 		if p.valLooksLikeGlobalOptionsAfterImportedSnippets() {
+ 			return p.Err("global options block must appear before import directives; move the global options block to the top of the Caddyfile")
+ 		}
+@@ -713,7 +722,7 @@ func (p *parser) valLooksLikeGlobalOptionsAfterImportedSnippets() bool {
+ // because it returns an error if the token is not
+ // a closing curly brace. It does NOT advance the token.
+ func (p *parser) closeCurlyBrace() error {
+-	if p.Val() != "}" {
++	if p.Val() != "}" || p.Token().Quoted() {
+ 		return p.SyntaxErr("}")
+ 	}
+ 	return nil
+@@ -750,7 +759,7 @@ func (p *parser) blockTokens(retainCurlies bool) ([]Token, error) {
+ 		tokens = append(tokens, p.Token())
+ 	}
+ 	for p.Next() {
+-		if p.Val() == "}" {
++		if !p.Token().Quoted() && p.Val() == "}" {
+ 			nesting--
+ 			if nesting == 0 {
+ 				if retainCurlies {
+@@ -759,7 +768,7 @@ func (p *parser) blockTokens(retainCurlies bool) ([]Token, error) {
+ 				break
+ 			}
+ 		}
+-		if p.Val() == "{" {
++		if !p.Token().Quoted() && p.Val() == "{" {
+ 			nesting++
+ 		}
+ 		tokens = append(tokens, p.tokens[p.cursor])
+diff --git a/caddyconfig/caddyfile/parse_test.go b/caddyconfig/caddyfile/parse_test.go
+index 9403f7a..4d6e915 100644
+--- a/caddyconfig/caddyfile/parse_test.go
++++ b/caddyconfig/caddyfile/parse_test.go
+@@ -22,6 +22,15 @@ import (
+ 	"testing"
+ )
+ 
++func TestParseQuotedBraces(t *testing.T) {
++	for _, quotedBrace := range []string{`"{"`, `"}"`} {
++		input := ":8080 {\n\trespond " + quotedBrace + "\n}"
++		if _, err := Parse("", []byte(input)); err != nil {
++			t.Errorf("parsing quoted brace %s: %v", quotedBrace, err)
++		}
++	}
++}
++
+ func TestParseVariadic(t *testing.T) {
+ 	args := make([]string, 10)
+ 	for i, tc := range []struct {

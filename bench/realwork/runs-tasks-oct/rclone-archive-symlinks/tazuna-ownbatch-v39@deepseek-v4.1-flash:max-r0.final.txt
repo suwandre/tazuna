@@ -1,0 +1,24 @@
+Implemented symlink support in the archive backend.
+
+## Changes
+
+**`backend/archive/zip/zip.go`**
+- Added `links` field set from `fs.GetConfig(ctx).Links` at `New`.
+- In `readZip`, entries whose mode has `os.ModeSymlink` are now:
+  - skipped (counted and reported once with a NOTICE naming `-l/--links`) when `--links` is off,
+  - exposed under `name + fs.LinkSuffix` when `--links` is on. The object keeps zip's existing size (`UncompressedSize64`, i.e. the target length) and generic `Open`, so range/seek options work and the target is read back.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Added `links` field from the config.
+- `List` and `newObjectNative` now handle symlinks symmetrically: skipped when `--links` is off (with a flag-naming NOTICE from `List`), otherwise listed/looked up as `name + fs.LinkSuffix`.
+- Added `objectFromLink`/`readlink` helpers; link objects carry the target, size = target length, and `Open` returns the target as a string reader honouring offset/limit (clamped).
+
+**Tests**
+- `backend/archive/zip/zip_internal_test.go`: `TestReadZipSymlink` — skip by default, `.rclonelink` name/size/content with `--links`, `NewObject` agreement.
+- `backend/archive/archive_internal_test.go`: `TestArchiveSquashfsSymlink` (uses `mksquashfs`; regular file already ending in `.rclonelink` stays regular) and `TestArchiveZipSymlinkEscape` (hostile zip with `a -> ../outside` plus `a/pwned.txt` cannot be copied outside the destination).
+
+**Docs**: added a "Symlinks" section to `docs/content/archive.md` documenting the convention and example.
+
+## Verification
+- `go build ./...` and `go vet ./backend/archive/...` clean, `gofmt` clean.
+- `RCLONE_CONFIG=/notfound go test -count=1 ./backend/archive/...` — all packages pass, including the new tests (`TestArchiveSquashfsSymlink` ran since `mksquashfs` is installed).

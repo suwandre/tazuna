@@ -1,0 +1,19 @@
+Section, taxonomy, and term pages now honor `slug`, and it applies to the URLs of their descendants. The spec example now produces `es/ayuda/` and `es/ayuda/como-frobear/`, and `help/` is unchanged.
+
+**How it works**
+- `hugolib/page__paths.go`: a new `applySectionSlugs` walks the path one segment at a time. A segment is replaced by the slug of the section at that depth, if that section has one. It looks up sections in the same language's tree, so each language gets its own slugs. Home's slug is ignored.
+- `resources/page/page_paths.go`: `TargetPathDescriptor` gets `SectionBase` and `ContainerDir`, which hold the slugged paths. They replace the raw `Section.Base()` and `Path.ContainerDir()` in `CreateTargetPaths`.
+- Only output paths change. `.Path`, `ref`/`relref`, and `GetPage` still use the logical path, as with page `slug` today.
+- `url` and permalink-pattern overrides still take precedence, as they do for page slugs.
+
+**Tests**
+- New file `hugolib/section_slug_test.go` with four end-to-end tests: the multilingual spec example, nested sections (including a non-section intermediate directory), `disablePathToLower`, and taxonomy/term slugs (including a term with no content file).
+- `go test ./hugolib/... ./resources/page/...` passes in full. gofmt is clean.
+- I also checked a rebuild by changing a section slug in a running build. Descendant URLs updated correctly.
+
+**Docs**
+- `docs/content/en/content-management/front-matter.md` and `urls.md` said `slug` doesn't apply to sections, taxonomies, or terms. Both now say it does, and that it also applies to descendants.
+
+**Not done**
+- I didn't run `./check.sh`. It installs staticcheck over the network, so I ran gofmt and `go test` on the relevant packages instead.
+- The default Go build cache (`/Users/suwandre/bench-gocache`) was missing files and broke the build. I used a private cache at `/private/tmp/hugo-slug-gocache` for my runs and left the shared one untouched.

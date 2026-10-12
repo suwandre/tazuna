@@ -1,0 +1,28 @@
+All changes are complete and verified. Here's a summary:
+
+## Summary
+
+Fixed the round-trip loss of parentheses around a plain duration literal in duration-expression positions (`offset`, range, step) when `ExperimentalDurationExpr` is enabled.
+
+### Root cause
+
+`paren_duration_expr` in the grammar only set the `Wrapped` flag when the parenthesised duration expression was a `*DurationExpr`. A single `*NumberLiteral` has no `Wrapped` field, so `(5)` was indistinguishable from `5` afterwards and `String()` emitted `5s`.
+
+### Fix (mirrors upstream PR #19403)
+
+Rather than adding a new field to `NumberLiteral`, the fix reuses the existing `DurationExpr.Wrapped` mechanism:
+
+- **`promql/parser/parse.go`**: Added `wrapParenDurationExpr`, which sets `Wrapped` on a `*DurationExpr` as before, but lifts a bare `*NumberLiteral` into a unary-plus `*DurationExpr{Op: ADD, Wrapped: true, ...}`. `applyUnaryOpToDurationExpr` now routes its `wrapped` case through this helper.
+- **`promql/parser/generated_parser.y`**: `paren_duration_expr` now calls `wrapParenDurationExpr` and passes the paren positions. Regenerated `generated_parser.y.go` with `goyacc` (verified byte-identical to a fresh regeneration).
+- **`promql/parser/prettier.go`**: `DurationExpr.Pretty` skips printing a unary `+`, matching `String()`, so lifted nodes prettify as `(5)`.
+
+### Tests
+
+- `parse_test.go`: updated the `foo offset +(5)` / `foo offset -(5)` cases and added `foo offset (5)` and `foo[(5s)]`, asserting the new wrapped AST shape.
+- `printer_test.go`: added round-trip cases (`foo offset +(5)` → `foo offset (5)`, `-(5)`, `(5)`, `(5m)`, `foo[(5s)]`, `foo[(5m):(1m)]`).
+
+### Verification
+
+- `go test ./promql/... ./web/api/v1/...` — all pass.
+- Manually confirmed every case from the issue now round-trips stably, including `foo offset ((5))`, `foo offset +(-(5))`, and subquery `foo[1m:5s] offset (5s)`.
+- `gofmt` clean; the only `go vet` findings are pre-existing on the base commit.

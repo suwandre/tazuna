@@ -1,0 +1,22 @@
+I fixed it: after a reload moves off a Unix socket, the old socket now stops listening right away and its file is removed. I ran the issue's reproduction against a freshly built binary on macOS. After reloading from the Unix admin socket to `localhost:2999`, curl to the old socket gets "couldn't connect" (exit 7, not a hang), `admin.sock` is gone, and the admin API answers on 2999.
+
+**Cause** (`listen_unix.go`): when the last holder closed a socket, `Close()` called `File()` to get the socket's name. `File()` makes a copy of the file descriptor, and that copy was never closed. It kept the socket listening, with nothing accepting, until a garbage-collection cleanup closed it, which explains the ~2-minute delay and why `GOGC=off` never cleared it. The name it got back is in the form `unix:/path->`, not the path itself, so the `Unlink` always failed and the file stayed.
+
+**Fix:**
+- **One record per socket**: each socket now has a single tracked entry holding the real path (empty for abstract `@` sockets), one spare descriptor used to create new holders, and a reference count.
+  - When the count reaches zero, the spare descriptor is closed and the file is unlinked.
+  - Abstract sockets are never unlinked, and the "remove stale file before bind" step now skips them too.
+- **Reload race**: the count and the map are guarded by a new mutex, `unixSocketsStateMu`. The last close removes the map entry and unlinks the file in one locked step, so a listen racing with it either reuses the live socket or binds a fresh one whose file is left alone.
+  - The old code copied from whichever wrapper was stored last. If that wrapper's holder closed first, the next reuse failed with "use of closed network connection".
+- **Double close**: the wrappers (`unixListener`, `unixConn`, `deleteListener`, `deletePacketConn`) are now pointer types with a closed flag. A second `Close` returns `net.ErrClosed` without releasing anything.
+- **Reload bookkeeping**: a socket reused in a reload now also takes a reference in Caddy's pool of shared listeners (`listenerPool`), so that count stays correct when the old config closes.
+- **Extra fix** (`listeners.go`): if setting the socket's permissions fails, the new socket is now closed instead of leaked. This wasn't in the report but leaks the same way.
+
+**Tests:** the new tests are in `listen_unix_test.go`. They cover close refusing connections and removing the file (stream and `unixgram`), sharing until the last holder closes in either order, double close (including the pool count), 200 rounds of close racing listen, and the abstract-socket case. All of them except the abstract one fail on the original code and pass with the fix. `go test -race -short` passes for the root package and `./caddyconfig/...`, and `golangci-lint` reports 0 issues. I didn't run the rest of the repository's packages.
+
+**Not run here:**
+- The abstract-socket test only runs on Linux, so on this Mac it was skipped.
+- `unixgram` is covered only by the file-removal checks, not by the end-to-end reproduction.
+- I checked that the Windows build compiles and that `go vet` passes for Linux, but didn't run the tests on either.
+
+Per the project's contribution rules, the PR needs to say this change was written with Claude Code (Opus 5.5), and you'll need to be able to explain every line of it.

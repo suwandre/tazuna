@@ -1,0 +1,17 @@
+The failing command `go test ./plugins/common/snmp/ ./plugins/inputs/snmp/ ./plugins/processors/snmp_lookup/` now passes, with and without `-race`, and `go vet` and `gofmt` are clean.
+
+**Cause of the failure:** the reconnect changes weren't the problem. The working directory's path contains a colon (`…deepseek-v4.1-flash:max-…`). gosmi's `AppendPath` treats its argument as a list of paths and splits it at `:`. Neither piece exists, so both were silently dropped and no MIB modules loaded. `LoadMibsFromPath` then logged a warning through the test's nil `Log`, which caused the nil-pointer panic. This also happens on the base commit in this directory. My early test runs happened to execute from a colon-free scratch checkout, which is why they passed at first.
+
+**Fix:** in `plugins/common/snmp/mib_loader.go`, each MIB directory is now registered with gosmi as a file system (`os.DirFS`) through a small `mibDirFS` helper. The path no longer gets split. If that's ever not possible, it falls back to `AppendPath`.
+
+**Test:** `TestMibDirFSWithListSeparator` checks that a directory with a `:` in its name stays one path and its files are listed. My first version registered a temporary directory with gosmi's global state. Once the directory was deleted, every later MIB lookup failed, so I changed the test to check only the helper.
+
+**Reconnect changes from the previous attempt:** I reviewed these against gosnmp (the module resolves to v1.45.0) and kept them as they were:
+- `snmp.Connection` now has `Close()`, and the plugin closes an agent's connection when gathering its fields or a table fails, keeping it in the cache.
+- `Get` and `Walk` reconnect first if the connection is closed.
+- `Reconnect()` on a closed connection clears the cached engine ID, boots and time, so the next request runs a fresh engine discovery and looks up the agent address again.
+- When gosnmp sees a new engine ID, it regenerates the auth and privacy keys, so no stale keys are left over.
+
+Two things to be aware of:
+- A reconnect also drops any engine ID, boots or time set in the config, in favour of discovery. That matches the maintainer notes.
+- `go build ./...` fails on `plugins/inputs/execd/shim/example/cmd` because it has no `main` function. That's unrelated to these changes.

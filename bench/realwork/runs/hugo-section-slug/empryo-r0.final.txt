@@ -1,0 +1,8 @@
+Now a test.`slug` in a section, taxonomy or term `_index` file now replaces that directory's segment in its own URL and in every descendant's URL. Your `help/` example produces `es/ayuda/` and `es/ayuda/como-frobear/`. The new test passes, and `go test` on `./hugolib/...`, `./resources/page/...` and `./commands/...` passes.
+
+- **`hugolib/page__paths.go`:** a new helper, `sectionPathWithSlugs`, walks the page's ancestors and swaps in any slug at that ancestor's depth. Branch pages (section, taxonomy, term) also apply their own slug. It does nothing when no slug is set, so existing URLs don't change.
+- **`resources/page/page_paths.go`:** `TargetPathDescriptor` gets a `ContainerPath` field. When set, it replaces the plain section path.
+- **Overrides:** a front-matter `url` or a matching permalink pattern still wins over a section slug.
+- **Test:** `hugolib/page_slug_section_test.go` (`TestSectionSlug`) covers `en`/`es` with a nested section, a leaf bundle, a regular page, and taxonomy and term slugs.
+
+I did not touch `.gitignore`, but it shows a change (`.empryo` added), probably from the tooling.

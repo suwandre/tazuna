@@ -1,0 +1,18 @@
+Fixed: the Caddyfile parser now treats a quoted `{` or `}` as ordinary text, so it no longer opens or closes a block. That applies to `"…"`, `` `…` `` and heredoc quoting. Your example now adapts correctly to a `static_response` with body `{`, and `caddy fmt` leaves it unchanged.
+
+**Cause:** the parser and the token reader that directives use to read their arguments compared token text directly against `{` and `}`. The lexer was already recording whether a token was quoted, but those checks ignored it.
+
+**Fix** (in `caddyconfig/caddyfile`):
+- **`dispenser.go`:** I added a small private helper, `isCurlyBrace(brace)`, that is true only for an *unquoted* brace token. `NextArg`, `NextBlock` and `ArgErr` now use it.
+- **`parse.go`:** every place that checks for braces now ignores quoted ones. That covers server-block addresses, directive nesting, `directives`, `blockTokens`, the open/close brace checks, the anonymous import block check, and brace counting while finding snippets during `import`. One existing quoted-token check in `directive()` could never trigger any more, so I removed it.
+
+**Tests added:**
+- `TestQuotedBracesDoNotAffectBlocks` (`parse_test.go`) covers quoted `{` and `}` in each quoting style, inside nested blocks, and inside an imported snippet.
+- `TestQuotedBraceIsNotABlock` checks that a quoted brace still can't open or close a site block, so those inputs are still errors.
+- `TestDispenser_QuotedBraces` (`dispenser_test.go`) checks `NextArg`, `NextBlock` and `RemainingArgs` with quoted braces.
+
+The new tests fail without the fix and pass with it. `go build ./...` and `go vet` are clean, and `go test -race -short` passes for `./caddyconfig/...`, `./caddytest/...` (including integration) and `./modules/caddyhttp/...`. I didn't run the full `./...` suite or `golangci-lint`.
+
+**Behaviour change:** any existing config that used a quoted `"{"` as a real block opener will now fail to parse. That seems right but is worth mentioning in the PR. Since `caddyfile` parsing feeds the security-critical HTTP config, it deserves careful review. Per the project's contribution rules, the PR also needs to disclose that the change was AI-assisted (Claude Opus 5.5).
+
+Nothing is committed.

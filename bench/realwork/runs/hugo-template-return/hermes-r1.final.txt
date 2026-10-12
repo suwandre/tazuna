@@ -1,0 +1,27 @@
+`return` now works in any template and can sit anywhere in it. `go test` over `./hugolib/...`, `./tpl/...`, `./resources/...`, `./commands/...` and `./internal/...` passes, and `./check.sh ./tpl/...` is clean. The exception is three failures in `internal/warpc` (`TestGreet`, `TestGreetParallel`, `TestKatexParallel`), which fail the same way with my changes stashed. I didn't run `./check.sh` over the whole repo.
+
+**How it works**
+- `return` is now `templates.Return`, with the alias `return`, instead of a no-op func in the partials namespace. It returns a sentinel `*texttemplate.ReturnError{Value, HasValue}`.
+- The executor traps it with two small hooks in the forked package, both marked "Added for Hugo":
+  - `evalCall` in `hugo_template.go` turns the sentinel into a panic.
+  - `errRecover` in `exec.go` turns that panic back into the returned error.
+- `walkTemplate` in `exec.go` also consumes the panic, so a `return` inside a `define` or `block` ends only that block. Otherwise an early return in a `main` block would drop the closing `baseof.html` markup.
+- `TemplateStore.ExecuteWithContextAndKey` now returns `(*ReturnError, error)`. Page and shortcode rendering swallow the sentinel, and partials use its value.
+- The old rewrite machinery is gone: the return wrapper template, `contextWrapper`, `collectReturnNode`, `ParseInfo.HasReturn`, and the shifting of `$` and dot.
+- One small rewrite remains in the transformer. `{{ return add . 42 }}` is turned into `{{ return (add . 42) }}`. Without it, that existing syntax, which `TestPartialWithReturn` covers, would break, because a function call's arguments are not grouped.
+
+**Behaviour changes**
+- `{{ return }}` with no value in a partial returns the output rendered so far, since that is the early-exit-from-a-rendering-partial case. `{{ return nil }}` returns nil.
+- A partial that returns a value discards its rendered output, as before. Partials now always render into a buffer, where before only the ones without `return` did.
+- A `return` in the body of a `with partial` decorator now exits the host template if the partial never calls `inner`, because that body is then executed inline.
+- `{{ return ... | string }}` no longer reaches `string`, since `return` stops execution at the first command. I changed the `TestPartialReturnPanicIssue13600` assertion to match the error you now get.
+
+**Fork maintenance:** `scripts/fork_go_templates` regenerates `exec.go` from upstream, so the two `exec.go` hooks have to be reapplied after a re-fork. They are 2 and 8 lines.
+
+New tests are in `tpl/templates/templates_integration_test.go`:
+- early return in a page template
+- partials: conditional, in a range loop, bare, `nil`, piped, with a function call, and `partialCached`
+- return in `block` and `template` calls
+- the more-than-one-argument error, triggered via `templates.Return 1 2`
+
+I did not look for Hugo docs to update.

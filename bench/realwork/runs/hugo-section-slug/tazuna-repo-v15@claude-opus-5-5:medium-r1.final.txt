@@ -1,0 +1,16 @@
+`slug` in front matter now works for section, taxonomy and term pages. It changes the URL of the branch page and of everything below it. Your example now gives `/help/`, `/help/how-to-frob/`, `/es/ayuda/` and `/es/ayuda/como-frobear/`. The new test passes, the full `hugolib` and `resources` test suites pass, and `./check.sh` passes on those packages. I didn't run `./check.sh` on the whole repo.
+
+**How it works:**
+- `hugolib/page__paths.go`: a new `sectionBaseWithSlugs` builds the current section's path by walking up through the parent sections and using each one's slug where it has one. Directories in between that have no `_index` file keep their names. If the result differs from the normal section path, it's stored in a new `TargetPathDescriptor.SectionBase` field.
+- `resources/page/page_paths.go`: `CreateTargetPaths` uses `SectionBase` for branch pages. For regular pages, it swaps the section prefix in the page's folder path for the slugged one. When no slug applies, the old code path runs unchanged.
+
+**Test:** `TestSlugInSectionTaxonomyAndTermPages` in `hugolib/page_permalink_test.go` builds an en/es site and checks:
+- your example;
+- nested section slugs (`/es/ayuda/subseccion/p1/`);
+- pages in a plain folder under a slugged section (`/es/ayuda/misc/page/`);
+- taxonomy and term slugs (`/es/etiquetas/fu/`);
+- the English URLs staying the same.
+
+**Not covered:** section slugs don't feed into `permalinks` config patterns. When a section has a permalink pattern configured, that pattern still decides the URL, so `:sections` uses the folder names as before. I left that out to keep the change small.
+
+The shared Go build cache on this machine was corrupted, which made some packages fail to build even without my change. I ran the tests with a fresh temporary `GOCACHE`. Nothing is committed yet.

@@ -1,0 +1,31 @@
+The fix is complete and verified. Here's a summary.
+
+## Root cause
+
+With `diff.mnemonicPrefix=true`, git prefixes diff paths with `i/`, `w/`, `c/`, etc. The diff-line parser only recognized `a/`/`b/` prefixes, so it resolved rows to paths like `w/file.go`, found no matching repo file, and silently did nothing (logging "Apply Patch" before the per-file loop). Sections without `---`/`+++` lines (mode changes, binary files, pure renames) were resolved by looking for a literal ` b/`, which also failed. Finally, some diff commands lazygit asks git for didn't force a prefix at all, so `diff.noprefix` (or empty custom `diff.srcPrefix`/`diff.dstPrefix`) could strip it entirely.
+
+## Changes
+
+**Path parsing** (`pkg/gui/controllers/helpers/diff_line_parser.go`)
+- `stripDiffPathPrefix` now strips whatever single leading path component git put there (`a/`, `b/`, `i/`, `w/`, `c/`, …); `/dev/null` is preserved, and a path with no `/` resolves to `""` rather than guessing.
+- `unquoteDiffPath` was extracted so rename/copy lines can be decoded without prefix stripping (git doesn't put diff prefixes on those).
+- `pathFromDiffHeader` now falls back to `rename to`/`copy to` when there are no `---`/`+++` lines.
+- `pathFromDiffGitLine` no longer looks for ` b/`; it splits the line at the space where both halves name the same path after prefix stripping (handling spaces and quoted paths), resolving nothing for genuine renames.
+
+**Prefix guarantee** (`pkg/commands/git_commands/`)
+- New `GitCommandBuilder.ParseableDiffPrefixes()` overrides `diff.noprefix=false`, `diff.srcPrefix=a/`, `diff.dstPrefix=b/` while deliberately leaving `diff.mnemonicPrefix` alone (its prefixes are single-component and strippable, so user-requested `i/`/`w/` still show).
+- Applied to every diff lazygit parses or turns into patches: `diff`, `show`, `stash show`, working-tree diffs, `show file diff`, `diff-index`, `diff HEAD..commit`, and the commit file loader.
+
+**Tests**
+- Unit tests for prefix stripping (mnemonic, subdirectory, quoted, no prefix), `diff --git` splitting, and mnemonic/copy/pure-rename sections; updated command argv expectations for the new configs.
+- Four new integration tests: staging lines with `diff.noprefix`, with custom `diff.srcPrefix`/`diff.dstPrefix`, with `diff.mnemonicPrefix`, and jumping to a file of a stash with `diff.noprefix` (plus `test_list.go` regenerated).
+
+## Verification
+
+- `go build ./...` — OK
+- `go test ./... -short` — green (one unrelated, pre-existing flake in `pkg/tasks` failed once under load and passes in isolation/re-run)
+- `gofumpt` check and `golangci-lint` — clean, 0 issues
+- `go generate ./...` — no additional diffs
+- Integration tests: all four new tests pass, plus the full `main_view`, `patch_building`, `stash`, `file`, `commit`, `diff`, and `filter_by_path` groups, and the pre-existing `move_patch_to_index_with_custom_diff_config` test.
+
+The changes are left in the working tree, uncommitted, per the explicit harness instruction not to commit.

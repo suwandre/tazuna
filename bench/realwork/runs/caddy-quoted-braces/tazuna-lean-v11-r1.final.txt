@@ -1,0 +1,11 @@
+Quoted `{` and `}` no longer affect block parsing, so your example Caddyfile now parses. `respond "{"` adapts to a `static_response` with body `{`.
+
+**The fix:** the parser and dispenser compared token text against `"{"` and `"}"`, so a quoted brace looked the same as a real one. I added `isOpenBrace()` and `isCloseBrace()` helpers on `Token` in `lexer.go`. They only match an unquoted brace, which covers double quotes, backticks and heredocs. I switched the block-structure checks in `parse.go` and `dispenser.go` over to them. That covers `NextArg`, `NextBlock`, `ArgErr`, the server block, directive and `blockTokens` parsing, and the brace counting in `import` and snippet handling. Unquoted braces behave as before, and an unclosed block is still an error.
+
+**Tests:** I added `TestQuotedBracesDoNotAffectBlockParsing` in `parse_test.go`. It covers quoted `{` and `}` as arguments, in backticks, inside nested blocks, and followed by a real block. It also checks that a block left unclosed after a quoted `{` is still an error. `go test` passes for `./caddyconfig/...` and `./caddytest/integration/...`. `go test` for `./modules/caddyhttp/...` showed a failure; I only saw the tail of the output (the packages shown were all `ok`) and did not identify which package failed. I didn't run the new test against the old code, so I haven't confirmed it fails there.
+
+**Formatter:** `caddy fmt` already handled `respond "{"` correctly.
+
+**Left unchanged:** the check in `addresses()` that rejects a site address ending in `{`. A quoted address like `"foo{"` is still rejected.
+
+I used an AI agent (Claude) for this change, per the repo's disclosure rule.

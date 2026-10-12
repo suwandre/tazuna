@@ -1,0 +1,23 @@
+All tests pass and the code is formatted/vetted. Here's a summary of the work.
+
+## Summary
+
+### Root cause
+`refactoring.FindImportStatements` returned an `addrs.Map` keyed by `addrs.ConfigResource` — an address type that has **no instance key**. When two `import` blocks targeted different instances of the same `for_each`/`count` resource (e.g. `terraform_data.t["a"]` and `terraform_data.t["b"]`), they produced the same map key, so the second block silently overwrote the first. Only one target reached the plan graph, and the other instance was planned for creation.
+
+### Fix
+Changed `FindImportStatements` to return a flat `[]ImportStatement` (mirroring `FindMoveStatements`) and deduplicate explicitly:
+
+- **`internal/refactoring/import_statement.go`** — returns a slice; dedup is now based on a `target()` key that uses the statically-parseable instance address when available (so distinct instances stay distinct), falling back to the un-keyed config resource for dynamic addresses. Parent-overrides-child is preserved by only dropping a statement when an existing matching statement comes from a different module; statements within the same module are always retained (duplicate same-instance blocks in one module are already rejected at decode time).
+- **`internal/configs/import.go` / `module.go`** — exported the existing `parseImportToStatic` helper as `ParseImportToStatic` so the refactoring package can reuse it (no behavior change).
+- **`internal/terraform/context_plan.go`** — updated the single caller to iterate the slice.
+- **`CHANGELOG.md`** — added a bug-fix entry referencing #39010.
+
+### Tests added
+- **`internal/terraform/context_plan_import_test.go`**: `TestContext2Plan_importMultipleBlocksSameResource`, table-driven over `for_each` and `count`, asserting both instances are imported with the correct IDs. Fails before the fix (only `["first"]` imported), passes after.
+- **`internal/refactoring/import_statement_test.go`** + fixture `testdata/import-statements/`: `TestFindImportStatements` verifies multiple same-resource instances survive, the child-only block survives, and parent/child override semantics still hold at instance granularity.
+
+### Verification
+- `go build ./...`, `go vet`, `gofmt -l` clean.
+- `go test ./internal/refactoring/... ./internal/configs/... ./internal/terraform/` all pass.
+- `go test ./internal/command/ -run 'Import|Plan'` passes. The one failure in the full command package (`TestInit_providerLockFileReadonly`) is a pre-existing registry-checksum/network issue unrelated to this change — confirmed by reproducing it on a clean stash.

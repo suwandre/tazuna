@@ -1,0 +1,16 @@
+I've added `slug` support for section, taxonomy and term pages. Your example now produces `/help/`, `/help/how-to-frob/`, `/es/ayuda/` and `/es/ayuda/como-frobear/`. `go test ./hugolib/... ./resources/page/...` and the full `./check.sh` pass. No existing test needed its expected output changed.
+
+**How it behaves:**
+- **Sections:** a slug works like renaming the section's directory, for the section and everything below it. That includes pages in plain subfolders that aren't sections themselves, so `help/foo/bar/` becomes `/es/ayuda/foo/bar/`.
+- **Nested sections:** slugs stack, so a nested section with `slug: anidada` under `ayuda` ends up at `/es/ayuda/anidada/`.
+- **Taxonomies and terms:** these follow the same rule. With `slug: etiquetas` on the tags taxonomy, its URL is `/es/etiquetas/` and its terms move under it.
+- **Precedence:** `url` and configured permalink patterns still override a slug.
+- **Home page:** a slug there is ignored.
+- **Letter case:** a section slug keeps its case when `disablePathToLower` is on. I checked this with a temporary test that isn't kept in the suite.
+
+**Changes:**
+- `hugolib/page__paths.go`: a new helper builds the section's path by walking up its parent sections and swapping in any slugs. It's only used when that path differs from the normal one, so sites without section slugs get the same paths as before.
+- `resources/page/page_paths.go`: a new `SectionDir` field on `TargetPathDescriptor`. Section pages use it as their path, and regular pages use it in place of the section part of their folder.
+- `hugolib/section_slug_test.go`: a new end-to-end test, `TestSlugInSectionsAndTerms`, covering two languages, nested sections, plain subfolders, a home-page slug, and taxonomy and term slugs.
+
+Nothing is committed yet.

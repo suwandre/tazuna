@@ -1,0 +1,18 @@
+I left the printer.go range as a bare array. Fixing it.Only the first edit landed. Applying the rest with ast_edit.Now the paren_duration_expr insertion in both files.Now printer tests; check where the experimental-duration printer cases live, then add round-trip cases.Parentheses around a plain duration literal now survive `Expr.String()` in offset, range and subquery step positions. `go test` passes for `./promql/...`, `./web/api/...` and `./cmd/promtool/...`.
+
+**Root cause.** The grammar stored a plain `(N)` as a bare `*NumberLiteral`. Offset, range and step were then reduced to a `time.Duration`, so the printer never saw the parens.
+
+**Fix.**
+- **`generated_parser.y` and `generated_parser.y.go`:** `paren_duration_expr` now wraps a parenthesised literal in a `*DurationExpr` (`Op: ADD`, `Wrapped: true`). The existing `Wrapped` printing then emits the parens.
+- **Unary-sign case:** `-(5)` becomes a `SUB` node around the wrapped literal.
+- **`parse.go`:** `applyUnaryOpToDurationExpr` does the same wrapping for `+(5)` and `-(5)`. A new `constantDuration` helper reads the value back out of those wrappers.
+- **Numeric fields still set:** `Range`, `Step` and `OriginalOffset` are still filled in at parse time, as before. The `<= 0` check on ranges also still applies.
+- **`printer.go`:** `getSubqueryTimeSuffix` now prints `StepExpr` before `Step`. Otherwise `foo[(5s):(1s)]` lost the parens on the step.
+
+I couldn't run `goyacc`, so I edited `generated_parser.y.go` by hand to match the `.y` change. Regenerating with `make` should produce the same result, but I haven't checked.
+
+**Printed forms.** The inner literal keeps its original text, so `foo offset (5)` prints `(5)`, not `(5s)`. `foo offset (5m)`, `foo[(5s)]` and `foo[(5s):(1s)]` print unchanged. `foo offset +(5)` prints `foo offset (5)`, because the unary `+` is dropped as it already is for `+(5m + 1m)`.
+
+**Behaviour change.** `foo offset +(5)` and `foo offset -(5)` now also set `OriginalOffsetExpr`. I updated their expectations in `parse_test.go` and added round-trip cases to `printer_test.go`.
+
+I didn't touch the web UI.

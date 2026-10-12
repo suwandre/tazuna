@@ -1,0 +1,11 @@
+Every `import` block is now honored, including several that target different instances of one `for_each` resource.
+
+**Cause:** `refactoring.FindImportStatements` stored import blocks in a map keyed by the config resource, with no instance key. All the `terraform_data.t[...]` blocks shared one key, so the first block replaced the rest and the others were dropped silently. That matches the report that the first-declared block wins.
+
+**Fix:**
+- **`internal/refactoring/import_statement.go`:** `FindImportStatements` now returns a slice, so every block in a module is kept. The rule that a parent module's import block overrides a child module's block for the same resource still holds. The old check for it compared a statement's address with itself, so it never told the two cases apart.
+- **`internal/terraform/context_plan.go`:** `findImportTargets` now loops over that slice.
+
+**Tests:** I added `TestContext2Plan_importMultipleBlocksForEachResource` in `context_plan_import_test.go`. It uses two separate `import` blocks on a `for_each` resource and expects both instances to be imported with no creates. It crashes without the fix and passes with it. I didn't run `count` or the 1.15.9-vs-1.16.0 comparison.
+
+The `internal/terraform` tests (the import tests, plus the package's other tests as they ran earlier) and `internal/refactoring` pass. `internal/command` fails in `TestInit_providerLockFileReadonly` with a provider checksum error from `init`, which doesn't touch import handling. I don't know whether it also fails without my change. My attempt to check by stashing it was inconclusive.

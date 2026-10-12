@@ -1,0 +1,21 @@
+The Caddyfile from the issue (`respond "{"`) now parses. A `{` or `}` written in double quotes or backticks is treated as an ordinary argument instead of opening or closing a block.
+
+**The cause:** the parser and the `Dispenser` decided where blocks start and end by comparing token text to `"{"` / `"}"`, and never looked at whether the token was quoted. So a quoted brace opened or closed a block. One existing check in `directive()` already looked at the quote, but the quoted brace still changed the nesting depth.
+
+**The fix** (all in `caddyconfig/caddyfile/`):
+- `lexer.go`: added two unexported helpers on `Token`, `isOpenCurlyBrace()` and `isCloseCurlyBrace()`. They're true only for an unquoted `{` or `}`.
+- `dispenser.go`: added matching `Dispenser` wrappers and used them in `NextArg`, `NextBlock` and `ArgErr`. This matters because module unmarshalers use `NextArg`/`NextBlock`, and that's where `respond "{"` was failing with "wrong argument count".
+- `parse.go`: switched every place that finds block boundaries to the helpers: `addresses`, `directives`, `directive`, `openCurlyBrace`/`closeCurlyBrace`, `blockTokens`, and the nesting and snippet tracking in `doImport`. The separate quote check in `directive()` was no longer needed, so I removed it.
+
+Nothing exported changed. `caddy fmt` already handled quoted braces and leaves them alone.
+
+**Tests added:**
+- `parse_test.go`: new cases in `TestParseOneAndImport` for a quoted `{` or `}` as an argument, a quoted brace next to a real block, and an unclosed block that still errors as it should.
+- `dispenser_test.go`: new `TestDispenser_QuotedBraces`, which checks `NextArg`/`NextBlock` with quoted braces in both double quotes and backticks.
+- `caddytest/integration/caddyfile_adapt/respond_quoted_braces.caddyfiletest`: an adapt test using the issue's example.
+
+**Results:** `go test -race -short ./caddyconfig/... ./modules/caddyhttp/...` and the Caddyfile adapt integration test pass, and `gofmt` and `go vet` are clean. Without the fix, the new unit tests fail (I stashed it and reran them). I didn't run the full `./...` suite or `golangci-lint`.
+
+**Behaviour change:** a quoted brace now never counts as a block delimiter, anywhere. Before, a quoted `{` at the end of a site's address line acted as the block opener; now it's read as an address.
+
+Per the project's AGENTS.md, this change was written with AI help (Claude Opus 5.5). Say so if you submit it, and make sure you can explain each line before it goes up for review.

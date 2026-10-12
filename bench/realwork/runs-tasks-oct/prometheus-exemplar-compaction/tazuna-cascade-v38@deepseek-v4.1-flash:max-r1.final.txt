@@ -1,0 +1,19 @@
+Exemplars now survive a restart after head compaction removes their series. The `go test ./tsdb/` timeouts you hit were not caused by this change: an uncontended run of `go test ./tsdb/... -timeout 40m` passed every package, with `tsdb` taking 460s. That is close to Go's default 10-minute timeout, and my own background runs were competing for CPU while yours ran. Under that load, clean HEAD took 1266s and the changed tree took 1311s, so both overran the limit. Every timeout trace showed a test still running, not a hung lock. To verify, pass a longer timeout, e.g. `-timeout 30m`.
+
+Each of those loaded runs also had one wall-clock-sensitive failure:
+- **Clean HEAD:** `TestQueryHistogramFromBlocksWithCompaction`.
+- **Changed tree:** `TestDataMissingOnQueryDuringCompaction_AppenderV2`. It passed 5 of 5 times on its own and in the clean full run.
+
+**The fix** (mostly from the earlier attempt's working-tree changes, which I checked rather than rewrote):
+- **Keeping the series:** during head GC, a series that still has an exemplar at or after the head's minimum valid time stays in the head under the same reference. This applies to `DB.Compact`, `CompactSelectedSeries` and `CompactStaleHead`, so the WAL checkpoint keeps its series record. Once the cutoff passes the exemplar, the series is removed as before. Zero and negative exemplar timestamps are compared like any other timestamp.
+- **Releasing samples:** for selected and stale compaction, the kept series drops its head and memory-mapped chunks and its appender. `prometheus_tsdb_head_chunks` falls by the released chunks and `chunks_removed_total` counts them once. Compacting the now-empty series again writes no block and counts nothing.
+- **Unchanged protections:** series with pending commits, later samples or out-of-order data are still skipped. The empty series doesn't hold back the head's minimum time.
+- **Snapshot on shutdown:** it now reads exemplars first and looks up their series afterwards. Doing the lookup while holding the exemplar lock risked a deadlock with GC.
+
+**Tests:**
+- **`TestExemplarSurvivesRestartAfterHeadGC`** in `tsdb/db_test.go` (new): covers all three compaction paths, exemplars newer and older than the last sample, both appender APIs, and memory snapshot on and off. It does two rounds of compaction, WAL checkpoint and restart. It checks the exemplar is returned, the unknown-refs metric for exemplars is zero, the series keeps its reference, and the chunk metrics behave as described above. With retention switched off, all 20 subtests fail with the exemplar lost after restart.
+- **`TestCircularExemplarStorage_HasExemplarAtOrAfter`** in `tsdb/exemplar_test.go`: added by the earlier attempt, covering zero and negative timestamps.
+
+The new test adds about 23s to the `tsdb` package. Nothing is committed.
+
+Not changed: once a kept series' chunks are released, it accepts a sample older than its previous last sample if it is at or after the minimum valid time. A deleted and recreated series behaves the same way today, so this matches current behaviour.

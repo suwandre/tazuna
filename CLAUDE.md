@@ -7,5 +7,5 @@ out. A change of direction gets a line in its decision log, with the reason.
 - Never impersonate Claude Code: only the official `claude` CLI, no copied headers, no reuse of its OAuth token.
 - Every change that can move a metric is measured; CHANGELOG.md records the numbers (only for versions that change a
   measurable metric). Tiers and noise thresholds are defined there.
-- Benchmarks run with the usage guard (`cc-lean/guard.py`): limits spill silently into paid extra usage.
+- Benchmarks run with the usage guard (`bench/guard.py`; see bench/README.md): limits spill silently into paid extra usage.
 - Commits and PRs carry no Claude attribution (no Co-Authored-By trailer, no "Generated with Claude Code" line).

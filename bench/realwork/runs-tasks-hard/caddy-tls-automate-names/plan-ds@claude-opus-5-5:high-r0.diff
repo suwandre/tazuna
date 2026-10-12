@@ -1,0 +1,259 @@
+diff --git a/caddyconfig/httpcaddyfile/options.go b/caddyconfig/httpcaddyfile/options.go
+index dd35d13..15d5bd7 100644
+--- a/caddyconfig/httpcaddyfile/options.go
++++ b/caddyconfig/httpcaddyfile/options.go
+@@ -17,6 +17,7 @@ package httpcaddyfile
+ import (
+ 	"slices"
+ 	"strconv"
++	"strings"
+ 
+ 	"github.com/caddyserver/certmagic"
+ 	"github.com/libdns/libdns"
+@@ -65,6 +66,7 @@ func init() {
+ 	RegisterGlobalOption("persist_config", parseOptPersistConfig)
+ 	RegisterGlobalOption("dns", parseOptDNS)
+ 	RegisterGlobalOption("tls_resolvers", parseOptTLSResolvers)
++	RegisterGlobalOption("tls_automate_names", parseOptTLSAutomateNames)
+ 	RegisterGlobalOption("ech", parseOptECH)
+ 	RegisterGlobalOption("renewal_window_ratio", parseOptRenewalWindowRatio)
+ }
+@@ -320,6 +322,21 @@ func parseOptTLSResolvers(d *caddyfile.Dispenser, _ any) (any, error) {
+ 	return resolvers, nil
+ }
+ 
++func parseOptTLSAutomateNames(d *caddyfile.Dispenser, existingVal any) (any, error) {
++	d.Next() // consume option name
++	names := d.RemainingArgs()
++	if len(names) == 0 {
++		return nil, d.ArgErr()
++	}
++	for i := range names {
++		names[i] = strings.ToLower(names[i])
++	}
++	if existing, ok := existingVal.([]string); ok {
++		names = append(slices.Clone(existing), names...)
++	}
++	return names, nil
++}
++
+ func parseOptDefaultBind(d *caddyfile.Dispenser, _ any) (any, error) {
+ 	d.Next() // consume option name
+ 
+diff --git a/caddyconfig/httpcaddyfile/tlsapp.go b/caddyconfig/httpcaddyfile/tlsapp.go
+index 649c59f..0dbbc8c 100644
+--- a/caddyconfig/httpcaddyfile/tlsapp.go
++++ b/caddyconfig/httpcaddyfile/tlsapp.go
+@@ -93,6 +93,7 @@ func (st ServerType) buildTLSApp(
+ 	}
+ 
+ 	forcedAutomatedNames := make(map[string]struct{}) // explicitly configured to be automated, even if covered by a wildcard
++	siteBlockSubjects := make(map[string]struct{})    // names that got an automation policy from a site block
+ 
+ 	for _, p := range pairings {
+ 		// avoid setting up TLS automation policies for a server that is HTTP-only
+@@ -234,6 +235,9 @@ func (st ServerType) buildTLSApp(
+ 
+ 			hostsNotHTTP := sblock.hostsFromKeysNotHTTP(httpPort)
+ 			sort.Strings(hostsNotHTTP) // solely for deterministic test results
++			for _, h := range hostsNotHTTP {
++				siteBlockSubjects[h] = struct{}{}
++			}
+ 
+ 			// associate our new automation policy with this server block's hosts
+ 			ap.SubjectsRaw = hostsNotHTTP
+@@ -293,6 +297,62 @@ func (st ServerType) buildTLSApp(
+ 		}
+ 	}
+ 
++	// names from the tls_automate_names global option are managed by the
++	// automate loader without any HTTP routes; give the ones that don't have
++	// a site block of their own the same automation policy a site block would
++	automateNames, _ := options["tls_automate_names"].([]string)
++	var automateSubjects []string
++	for _, name := range automateNames {
++		if _, ok := siteBlockSubjects[name]; ok {
++			continue
++		}
++		if !slices.Contains(automateSubjects, name) {
++			automateSubjects = append(automateSubjects, name)
++		}
++	}
++	if len(automateSubjects) > 0 {
++		sort.Strings(automateSubjects) // solely for deterministic test results
++		ap, err := newBaseAutomationPolicy(options, warnings, true)
++		if err != nil {
++			return nil, warnings, err
++		}
++		ap.SubjectsRaw = automateSubjects
++
++		// without an issuer configured, names that don't qualify for a public
++		// certificate need the internal issuer; there may be no HTTP app to
++		// assign it to them at runtime, so set it explicitly
++		var internalAutomateAP *caddytls.AutomationPolicy
++		if len(ap.Issuers) == 0 {
++			var internal, external []string
++			for _, s := range automateSubjects {
++				if !certmagic.SubjectQualifiesForCert(s) {
++					return nil, warnings, fmt.Errorf("tls_automate_names: subject does not qualify for certificate: '%s'", s)
++				}
++				if subjectQualifiesForPublicCert(ap, s) {
++					external = append(external, s)
++				} else {
++					internal = append(internal, s)
++				}
++			}
++			if len(internal) > 0 {
++				ap.SubjectsRaw = external
++				apCopy := *ap
++				internalAutomateAP = &apCopy
++				internalAutomateAP.SubjectsRaw = internal
++				internalAutomateAP.IssuersRaw = []json.RawMessage{caddyconfig.JSONModuleObject(caddytls.InternalIssuer{}, "module", "internal", &warnings)}
++			}
++		}
++		if tlsApp.Automation == nil {
++			tlsApp.Automation = new(caddytls.AutomationConfig)
++		}
++		if len(ap.SubjectsRaw) > 0 {
++			tlsApp.Automation.Policies = append(tlsApp.Automation.Policies, ap)
++		}
++		if internalAutomateAP != nil {
++			tlsApp.Automation.Policies = append(tlsApp.Automation.Policies, internalAutomateAP)
++		}
++	}
++
+ 	// group certificate loaders by module name, then add to config
+ 	if len(certLoaders) > 0 {
+ 		loadersByName := make(map[string]caddytls.CertificateLoader)
+@@ -418,6 +478,9 @@ func (st ServerType) buildTLSApp(
+ 			}
+ 		}
+ 	}
++	for _, name := range automateNames {
++		forcedAutomatedNames[name] = struct{}{}
++	}
+ 	for name := range forcedAutomatedNames {
+ 		if slices.Contains(al, name) {
+ 			continue
+diff --git a/caddyconfig/httpcaddyfile/tlsapp_test.go b/caddyconfig/httpcaddyfile/tlsapp_test.go
+index 8426a39..04c1e17 100644
+--- a/caddyconfig/httpcaddyfile/tlsapp_test.go
++++ b/caddyconfig/httpcaddyfile/tlsapp_test.go
+@@ -1,6 +1,7 @@
+ package httpcaddyfile
+ 
+ import (
++	"encoding/json"
+ 	"testing"
+ 
+ 	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
+@@ -72,3 +73,109 @@ https://example.net localhost:8080 {
+ 		t.Fatalf("adapting Caddyfile: %v", err)
+ 	}
+ }
++
++func TestTLSAutomateNamesGlobalOption(t *testing.T) {
++	for i, tc := range []struct {
++		input   string
++		tls     string // expected compact JSON of the tls app
++		hasHTTP bool
++		wantErr bool
++	}{
++		{
++			// no site blocks: only the tls app; empty default policy is dropped
++			input: "{\n\ttls_automate_names example.com\n}\n",
++			tls:   `{"certificates":{"automate":["example.com"]}}`,
++		},
++		{
++			// repeated option appends; names are lowercased and deduplicated;
++			// internal names get the internal issuer
++			input: "{\n\ttls_automate_names example.com localhost 127.0.0.1\n\ttls_automate_names Example.com\n}\n",
++			tls:   `{"certificates":{"automate":["127.0.0.1","example.com","localhost"]},"automation":{"policies":[{"subjects":["127.0.0.1","localhost"],"issuers":[{"module":"internal"}]}]}}`,
++		},
++		{
++			// global email applies; names with an http:// site block are still
++			// automated and get a policy; auto_https off still lists the names
++			input:   "{\n\temail a@b.c\n\tauto_https off\n\ttls_automate_names example.com localhost\n}\nhttp://example.com {\n}\nb.example.com {\n\ttls internal\n}\n",
++			tls:     `{"certificates":{"automate":["example.com","localhost"]},"automation":{"policies":[{"subjects":["b.example.com","localhost"],"issuers":[{"module":"internal"}]},{"subjects":["example.com"],"issuers":[{"email":"a@b.c","module":"acme"},{"ca":"https://acme.zerossl.com/v2/DV90","email":"a@b.c","module":"acme"}]}]}}`,
++			hasHTTP: true,
++		},
++		{
++			// a site block's own TLS settings win for a listed name
++			input:   "{\n\ttls_automate_names b.example.com c.example.com\n}\nb.example.com {\n\ttls {\n\t\tissuer acme {\n\t\t\tdir https://ca.example.net/dir\n\t\t}\n\t}\n}\n",
++			tls:     `{"certificates":{"automate":["b.example.com","c.example.com"]},"automation":{"policies":[{"subjects":["b.example.com"],"issuers":[{"ca":"https://ca.example.net/dir","module":"acme"}]}]}}`,
++			hasHTTP: true,
++		},
++		{
++			input:   "{\n\ttls_automate_names\n}\n",
++			wantErr: true,
++		},
++	} {
++		adapter := caddyfile.Adapter{ServerType: ServerType{}}
++		out, _, err := adapter.Adapt([]byte(tc.input), nil)
++		if tc.wantErr {
++			if err == nil {
++				t.Errorf("Test %d: expected error but got none", i)
++			}
++			continue
++		}
++		if err != nil {
++			t.Fatalf("Test %d: adapting Caddyfile: %v", i, err)
++		}
++		var cfg struct {
++			Apps map[string]json.RawMessage `json:"apps"`
++		}
++		if err := json.Unmarshal(out, &cfg); err != nil {
++			t.Fatalf("Test %d: unmarshaling adapted config: %v", i, err)
++		}
++		if _, ok := cfg.Apps["http"]; ok != tc.hasHTTP {
++			t.Errorf("Test %d: expected http app present=%v, got %v", i, tc.hasHTTP, ok)
++		}
++		if got := string(cfg.Apps["tls"]); got != tc.tls {
++			t.Errorf("Test %d: expected tls app:\n%s\ngot:\n%s", i, tc.tls, got)
++		}
++	}
++}
++
++func TestTLSAutomateNamesMatchesDummySiteBlock(t *testing.T) {
++	withOption := `{
++	email nobody@example.com
++	tls_automate_names *.example.com
++}
++
++foo.example.com {
++	respond "Real site"
++}
++`
++	withDummySite := `{
++	email nobody@example.com
++}
++
++*.example.com {
++}
++
++foo.example.com {
++	respond "Real site"
++}
++`
++	automation := func(input string) string {
++		adapter := caddyfile.Adapter{ServerType: ServerType{}}
++		out, _, err := adapter.Adapt([]byte(input), nil)
++		if err != nil {
++			t.Fatalf("adapting Caddyfile: %v", err)
++		}
++		var cfg struct {
++			Apps struct {
++				TLS struct {
++					Automation json.RawMessage `json:"automation"`
++				} `json:"tls"`
++			} `json:"apps"`
++		}
++		if err := json.Unmarshal(out, &cfg); err != nil {
++			t.Fatalf("unmarshaling adapted config: %v", err)
++		}
++		return string(cfg.Apps.TLS.Automation)
++	}
++	if got, want := automation(withOption), automation(withDummySite); got != want {
++		t.Errorf("expected automation policies:\n%s\ngot:\n%s", want, got)
++	}
++}

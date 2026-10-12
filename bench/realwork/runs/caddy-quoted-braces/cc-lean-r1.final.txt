@@ -1,0 +1,9 @@
+Quoted `"{"` and `"}"` no longer count as block open/close tokens in the Caddyfile parser. Your example (`respond "{"` inside `:8080 { ... }`) now adapts with `"body": "{"`, and `caddy fmt` leaves it unchanged. `go test` passes for `caddyconfig/caddyfile` and `caddyconfig/httpcaddyfile`.
+
+**Fix:** I added two helpers to `dispenser.go`, `isOpenCurly()` and `isCloseCurly()`. They match only unquoted `{` and `}` tokens. I used them in the dispenser (`NextArg`, `NextBlock`, `ArgErr`) and in `parse.go`. In `parse.go` that covers server-block parsing, `directive()`, `blockTokens`, the open/close assertions, and the snippet and import nesting counters.
+
+**Tests added:**
+- A `TestParseAll` case with quoted braces in several server blocks, including a nested `handle` block.
+- `TestDispenser_QuotedBracesIgnored`.
+
+I stashed the fix and re-ran the suite. `TestDispenser_QuotedBracesIgnored` fails without the fix. I didn't check whether the new `TestParseAll` case also fails without it.

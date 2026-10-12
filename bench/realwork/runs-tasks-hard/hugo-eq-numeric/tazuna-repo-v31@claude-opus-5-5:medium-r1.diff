@@ -1,0 +1,319 @@
+diff --git a/common/hreflect/compare.go b/common/hreflect/compare.go
+new file mode 100644
+index 0000000..3e60ec4
+--- /dev/null
++++ b/common/hreflect/compare.go
+@@ -0,0 +1,102 @@
++// Copyright 2026 The Hugo Authors. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package hreflect
++
++import (
++	"cmp"
++	"math"
++	"reflect"
++)
++
++// CompareNumbers compares a and b exactly, without rounding or overflow,
++// returning -1, 0 or +1.
++// It returns false if either value is not a number or is NaN.
++func CompareNumbers(a, b reflect.Value) (int, bool) {
++	ak, bk := a.Kind(), b.Kind()
++	switch {
++	case IsInt(ak):
++		switch {
++		case IsInt(bk):
++			return cmp.Compare(a.Int(), b.Int()), true
++		case IsUint(bk):
++			return compareIntUint(a.Int(), b.Uint()), true
++		case IsFloat(bk):
++			return compareIntFloat(a.Int(), b.Float())
++		}
++	case IsUint(ak):
++		switch {
++		case IsInt(bk):
++			return -compareIntUint(b.Int(), a.Uint()), true
++		case IsUint(bk):
++			return cmp.Compare(a.Uint(), b.Uint()), true
++		case IsFloat(bk):
++			return compareUintFloat(a.Uint(), b.Float())
++		}
++	case IsFloat(ak):
++		switch {
++		case IsInt(bk):
++			c, ok := compareIntFloat(b.Int(), a.Float())
++			return -c, ok
++		case IsUint(bk):
++			c, ok := compareUintFloat(b.Uint(), a.Float())
++			return -c, ok
++		case IsFloat(bk):
++			af, bf := a.Float(), b.Float()
++			if math.IsNaN(af) || math.IsNaN(bf) {
++				return 0, false
++			}
++			return cmp.Compare(af, bf), true
++		}
++	}
++	return 0, false
++}
++
++func compareIntUint(i int64, u uint64) int {
++	if i < 0 {
++		return -1
++	}
++	return cmp.Compare(uint64(i), u)
++}
++
++func compareIntFloat(i int64, f float64) (int, bool) {
++	switch {
++	case math.IsNaN(f):
++		return 0, false
++	case f >= 1<<63:
++		return -1, true
++	case f < -1<<63:
++		return 1, true
++	}
++	t := math.Trunc(f)
++	if c := cmp.Compare(i, int64(t)); c != 0 {
++		return c, true
++	}
++	return cmp.Compare(t, f), true
++}
++
++func compareUintFloat(u uint64, f float64) (int, bool) {
++	switch {
++	case math.IsNaN(f):
++		return 0, false
++	case f < 0:
++		return 1, true
++	case f >= 1<<64:
++		return -1, true
++	}
++	t := math.Trunc(f)
++	if c := cmp.Compare(u, uint64(t)); c != 0 {
++		return c, true
++	}
++	return cmp.Compare(t, f), true
++}
+diff --git a/tpl/collections/where.go b/tpl/collections/where.go
+index 7a813fd..f2d7e25 100644
+--- a/tpl/collections/where.go
++++ b/tpl/collections/where.go
+@@ -104,6 +104,23 @@ func (ns *Namespace) checkCondition(v, mv reflect.Value, op string) (bool, error
+ 	var fma []float64
+ 	var sma []string
+ 
++	if c, ok := hreflect.CompareNumbers(v, mv); ok {
++		switch op {
++		case "", "=", "==", "eq":
++			return c == 0, nil
++		case "!=", "<>", "ne":
++			return c != 0, nil
++		case ">=", "ge":
++			return c >= 0, nil
++		case ">", "gt":
++			return c > 0, nil
++		case "<=", "le":
++			return c <= 0, nil
++		case "<", "lt":
++			return c < 0, nil
++		}
++	}
++
+ 	if mv.Kind() == v.Kind() {
+ 		switch v.Kind() {
+ 		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+diff --git a/tpl/collections/where_test.go b/tpl/collections/where_test.go
+index b4fd6e6..13fbffe 100644
+--- a/tpl/collections/where_test.go
++++ b/tpl/collections/where_test.go
+@@ -17,6 +17,7 @@ import (
+ 	"context"
+ 	"fmt"
+ 	"html/template"
++	"math"
+ 	"math/rand"
+ 	"reflect"
+ 	"strings"
+@@ -697,6 +698,16 @@ func TestCheckCondition(t *testing.T) {
+ 		expect
+ 	}{
+ 		{reflect.ValueOf(123), reflect.ValueOf(123), "", expect{true, false}},
++		{reflect.ValueOf(1), reflect.ValueOf(1.0), "eq", expect{true, false}},
++		{reflect.ValueOf(1), reflect.ValueOf(1.0), "ne", expect{false, false}},
++		{reflect.ValueOf(1), reflect.ValueOf(1.0), "<", expect{false, false}},
++		{reflect.ValueOf(1), reflect.ValueOf(1.0), "<=", expect{true, false}},
++		{reflect.ValueOf(uint(4)), reflect.ValueOf(4.0), "==", expect{true, false}},
++		{reflect.ValueOf(int64(9007199254740993)), reflect.ValueOf(float64(9007199254740992)), ">", expect{true, false}},
++		{reflect.ValueOf(int64(9007199254740993)), reflect.ValueOf(float64(9007199254740992)), "=", expect{false, false}},
++		{reflect.ValueOf(uint64(math.MaxUint64)), reflect.ValueOf(-1), ">", expect{true, false}},
++		{reflect.ValueOf(uint64(math.MaxUint64)), reflect.ValueOf(uint64(1)), ">", expect{true, false}},
++		{reflect.ValueOf(math.NaN()), reflect.ValueOf(1), "!=", expect{true, false}},
+ 		{reflect.ValueOf("foo"), reflect.ValueOf("foo"), "", expect{true, false}},
+ 		{
+ 			reflect.ValueOf(time.Date(2015, time.May, 26, 19, 18, 56, 12345, time.UTC)),
+diff --git a/tpl/compare/compare.go b/tpl/compare/compare.go
+index efac289..7cf87b6 100644
+--- a/tpl/compare/compare.go
++++ b/tpl/compare/compare.go
+@@ -146,6 +146,13 @@ func (n *Namespace) Eq(first any, others ...any) bool {
+ 			continue
+ 		}
+ 
++		if c, ok := hreflect.CompareNumbers(reflect.ValueOf(first), reflect.ValueOf(other)); ok {
++			if c == 0 {
++				return true
++			}
++			continue
++		}
++
+ 		other = normalize(other)
+ 		if reflect.DeepEqual(normFirst, other) {
+ 			return true
+@@ -242,16 +249,6 @@ func (ns *Namespace) compareGet(a any, b any) (float64, float64) {
+ 	return ns.compareGetWithCollator(nil, a, b)
+ }
+ 
+-func (ns *Namespace) compareTwoUints(a uint64, b uint64) (float64, float64) {
+-	if a < b {
+-		return 0, 1
+-	} else if a == b {
+-		return 0, 0
+-	} else {
+-		return 1, 0
+-	}
+-}
+-
+ func (ns *Namespace) compareGetWithCollator(collator *langs.Collator, a any, b any) (float64, float64) {
+ 	if ac, ok := a.(compare.Comparer); ok {
+ 		c := ac.Compare(b)
+@@ -287,20 +284,17 @@ func (ns *Namespace) compareGetWithCollator(collator *langs.Collator, a any, b a
+ 	av := reflect.ValueOf(a)
+ 	bv := reflect.ValueOf(b)
+ 
++	if c, ok := hreflect.CompareNumbers(av, bv); ok {
++		return float64(c), 0
++	}
++
+ 	switch av.Kind() {
+ 	case reflect.Array, reflect.Chan, reflect.Map, reflect.Slice:
+ 		left = float64(av.Len())
+ 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+-		if hreflect.IsUint(bv.Kind()) {
+-			return ns.compareTwoUints(uint64(av.Int()), bv.Uint())
+-		}
+ 		left = float64(av.Int())
+-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
++	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+ 		left = float64(av.Uint())
+-	case reflect.Uint64:
+-		if hreflect.IsUint(bv.Kind()) {
+-			return ns.compareTwoUints(av.Uint(), bv.Uint())
+-		}
+ 	case reflect.Float32, reflect.Float64:
+ 		left = av.Float()
+ 	case reflect.String:
+@@ -326,16 +320,9 @@ func (ns *Namespace) compareGetWithCollator(collator *langs.Collator, a any, b a
+ 	case reflect.Array, reflect.Chan, reflect.Map, reflect.Slice:
+ 		right = float64(bv.Len())
+ 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+-		if hreflect.IsUint(av.Kind()) {
+-			return ns.compareTwoUints(av.Uint(), uint64(bv.Int()))
+-		}
+ 		right = float64(bv.Int())
+-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32:
++	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+ 		right = float64(bv.Uint())
+-	case reflect.Uint64:
+-		if hreflect.IsUint(av.Kind()) {
+-			return ns.compareTwoUints(av.Uint(), bv.Uint())
+-		}
+ 	case reflect.Float32, reflect.Float64:
+ 		right = bv.Float()
+ 	case reflect.String:
+diff --git a/tpl/compare/compare_integration_test.go b/tpl/compare/compare_integration_test.go
+new file mode 100644
+index 0000000..241b6cf
+--- /dev/null
++++ b/tpl/compare/compare_integration_test.go
+@@ -0,0 +1,38 @@
++// Copyright 2026 The Hugo Authors. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package compare_test
++
++import (
++	"testing"
++
++	"github.com/gohugoio/hugo/hugolib"
++)
++
++func TestCompareIntWithEqualFloat(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++disableKinds = ["taxonomy", "term", "page", "rss", "sitemap", "section"]
++-- layouts/home.html --
++eq: {{ eq 1 1.0 }}|ne: {{ ne 1 1.0 }}|lt: {{ lt 1 1.0 }}|le: {{ le 1 1.0 }}|gt: {{ gt 1 1.0 }}|ge: {{ ge 1 1.0 }}|
++where: {{ len (where (slice (dict "n" 1) (dict "n" 2)) "n" "eq" 2.0) }}|
++`
++
++	b := hugolib.Test(t, files)
++	b.AssertFileContent("public/index.html",
++		"eq: true|ne: false|lt: false|le: true|gt: false|ge: true|",
++		"where: 1|",
++	)
++}
+diff --git a/tpl/compare/compare_test.go b/tpl/compare/compare_test.go
+index a94ac5d..9411e1f 100644
+--- a/tpl/compare/compare_test.go
++++ b/tpl/compare/compare_test.go
+@@ -221,6 +221,26 @@ func doTestCompare(t *testing.T, tp tstCompareType, funcUnderTest func(a, b any)
+ 		{0.0, 1.23, -1},
+ 		{1.1, 1.1, 0},
+ 		{float32(1.0), float64(1.0), 0},
++		{1, 1.0, 0},
++		{0, 0.0, 0},
++		{-1, -1.0, 0},
++		{int64(3), float64(3), 0},
++		{uint(4), 4.0, 0},
++		{1.0, 1, 0},
++		{1, 2.0, -1},
++		{1, 0.5, 1},
++		{-1, -0.5, -1},
++		{uint(0), -0.5, 1},
++		{int64(9007199254740993), float64(9007199254740992), 1},
++		{float64(9007199254740992), int64(9007199254740993), -1},
++		{uint64(9007199254740993), float64(9007199254740992), 1},
++		{int64(math.MaxInt64), float64(math.MaxInt64), -1},
++		{uint64(math.MaxUint64), float64(math.MaxUint64), -1},
++		{uint64(math.MaxUint64), -1, 1},
++		{-1, uint64(math.MaxUint64), -1},
++		{uint64(math.MaxUint64), int64(math.MinInt64), 1},
++		{math.Inf(1), uint64(math.MaxUint64), 1},
++		{int64(math.MinInt64), math.Inf(-1), 1},
+ 		{1.23, 0.0, 1},
+ 		{"5", "5", 0},
+ 		{"8", "5", 1},

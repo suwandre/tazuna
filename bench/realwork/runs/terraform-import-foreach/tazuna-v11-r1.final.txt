@@ -1,0 +1,14 @@
+All your `import` blocks for a `for_each` resource are now honored. The two-block `terraform_data` example from the report should plan as 2 to import, 0 to add. I didn't run that exact configuration. I covered it with a plan test using `test_object` and the mock provider.
+
+**Root cause:** `FindImportStatements` in `internal/refactoring/import_statement.go` stored import blocks in a map keyed by the config resource, which is `terraform_data.t` with no instance key. This is the dedupe added with #38352, which lets a parent module's import block override a child's. It also dropped any second import block in the same module, so only the first block per resource survived. That matches your finding that the surviving block was the one declared first, not the lowest key.
+
+**Fix:**
+- `FindImportStatements` now returns a slice and records which module first claimed each config resource. Blocks from the same module are all kept. Blocks from a descendant module are still dropped when an ancestor already targets the same resource, so the parent-overrides-child rule is unchanged.
+- `internal/terraform/context_plan.go` now loops over the slice.
+- I added `TestContext2Plan_importMultipleBlocksForEachResource` in `internal/terraform/context_plan_import_test.go`. It uses two import blocks on a two-instance `for_each` resource and checks that both are imported with the right IDs and no creates are planned. It fails without the fix (`["second"] is not being imported`) and passes with it.
+
+**Verification:** `go test ./internal/terraform` and `go test ./internal/refactoring` both pass. My first attempt at a broader run (including `./internal/command` and `./internal/configs/...`) timed out, so those packages were not tested.
+
+I haven't tested `count`. It goes through the same dedupe, so it should have had the same bug and should be fixed the same way.
+
+One thing I left alone: `concreteResource` in `node_resource_plan.go` always passes `n.importTargets[0].Config` as the import config. That only matters for generated config, which isn't supported for `for_each` resources, so it doesn't affect this bug.

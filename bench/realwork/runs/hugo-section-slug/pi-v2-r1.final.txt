@@ -1,0 +1,11 @@
+`slug` in front matter now works for section, taxonomy and term pages. It replaces that directory name in the page's URL and in the URLs of everything under it. The new test and the existing `hugolib`, `resources`, `tpl` and `commands` suites pass; I didn't run `./check.sh`.
+
+The change has two parts:
+- **`hugolib/page__paths.go`:** `createTargetPathDescriptor` now collects the slugs of the page's branch ancestors, including the page itself if it is a branch. It skips the home page. The slugs go into a new `SectionSlugs` field, indexed by path segment.
+- **`resources/page/page_paths.go`:** `CreateTargetPaths` substitutes those slugs into the section path for branch pages and into the container directory for regular pages.
+
+I added `TestSectionSlug` in `hugolib/page_test.go`. It checks your example plus a nested section, a taxonomy and a term. For instance, `es/ayuda/como-frobear/` and `es/etiquetas/e1/` resolve as expected. The English pages keep their original paths, and no stray `es/help/` is generated.
+
+If a `[permalinks]` rule applies to a section, its pattern still decides that section's path. A pattern using `:sections` ignores slugs; `:sectionslugs` already respected them.
+
+I didn't update the docs.

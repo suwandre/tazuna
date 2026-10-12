@@ -1,0 +1,17 @@
+I fixed the bug: every `import` block that targets an instance of a `for_each` resource is now honored, not just the first one declared. A new test fails without the fix and passes with it.
+
+**Root cause.** `refactoring.FindImportStatements` (in `internal/refactoring/import_statement.go`) was added with the module-import support in #38352. It stored import blocks in a map keyed by the resource address without the instance key (`terraform_data.t`, not `terraform_data.t["a"]`). The rule was meant to let a parent module's import block override a child module's block for the same resource. But it also fired for blocks in the same module, so the second block for a resource was skipped with no error or warning. That's why only the first-declared block survived, and why single-instance resources weren't affected.
+
+**Fix.**
+- `FindImportStatements` now returns a list of all import blocks in declaration order. It records which module first claims each resource and drops another module's blocks for that resource only if a parent module already claimed it. So a parent still overrides a child at resource level, and all blocks in the same module are kept. Duplicate targets within one module are still reported as errors by the existing validation.
+- `findImportTargets` in `internal/terraform/context_plan.go` loops over the new list. It was the only caller.
+
+**Test.** I added `TestContext2Plan_importMultipleBlocksForEachResource` to `internal/terraform/context_plan_import_test.go`. It uses two separate import blocks for `test_object.a["first"]` and `["second"]` on a `for_each` resource and checks that both instances are imported with the right IDs and nothing is created.
+
+**Verification.**
+- `go test ./internal/refactoring ./internal/terraform` passes, including the new test.
+- `go test ./internal/backend/local ./internal/stacks/...` passes.
+- `go test ./internal/command` has one failure, `TestInit_providerLockFileReadonly`, a lock-file checksum mismatch. It fails the same way with my changes stashed, so it's unrelated.
+- I didn't add a test for the parent-overrides-child rule or for `count` resources; the change should cover `count` the same way.
+
+**Possible follow-up (not changed):** when building each import node, `node_resource_plan.go` always passes along the first block's config (`n.importTargets[0].Config`). Only config generation reads that field, and that only happens for a resource with a single import target and no config, so it doesn't affect this bug.

@@ -1,0 +1,20 @@
+I fixed both problems from the issue. Each new test fails without the fix and passes with it.
+
+**1. Caller marked `cancelled` while its child is still `cancelling`** (`models/actions/run_job.go`)
+Callers have no task, so `cancelReusableCaller` used to write them as `cancelled` straight away. Nested callers below the top one got the same treatment. Now any caller that already has child jobs takes its status from those children. So it stays `cancelling` while any job below it, at any depth, is still `cancelling`. When the runner acknowledges, the existing update path changes the callers and the run to `cancelled`. A caller whose child jobs haven't been created yet is still cancelled directly, as before.
+
+This also explains why you couldn't reproduce it reliably on sqlite. After cancelling the caller, the old code reached the already-cancelling child a second time. On sqlite that update reports a changed row, so the caller's status got recomputed and put back to `cancelling` by luck. On MariaDB an update that changes nothing reports 0 rows, so nothing recomputed it. I worked this out from the code; I didn't test on MariaDB.
+
+**2. Force-cancel didn't start the waiting run** (`services/actions/cancel.go`)
+When cancelling updates no job (everything was already finished) and the run ends up done, `cancelRun` now also triggers the job emitter for that run. That runs the concurrency-group check, so the blocked run behind it can start. The same applies to a normal cancel of such a run.
+
+**Tests**
+- `TestCancelJobs_NestedReusableCallerWaitsForCancellingChild` in `models/actions/run_job_test.go`: outer caller → inner caller → child with a task. Graceful cancel leaves all three jobs and the run `cancelling`; after the runner acknowledges, all of them are `cancelled`.
+- `TestForceCancelRunWakesConcurrencyGroup` in the new `services/actions/cancel_test.go`: force-cancelling a run stuck in `cancelling` whose jobs are all cancelled settles it to `cancelled` and triggers the emitter for it.
+
+**Checks run**
+- `go test ./models/actions/ ./services/actions/`: pass.
+- `make lint-go`: 0 issues.
+- Integration tests on sqlite: pass. These were `TestCancelConcurrentRun`, `TestAPIActionsWorkflowRun` (which covers force-cancel), `TestAbandonConcurrentRun` and `TestCancelLegacyRunBlockedByConcurrency`.
+
+Runs already stuck in production stay stuck until you force-cancel them. With this change that settles them and lets the waiting runs start. Nothing is committed yet.

@@ -1,0 +1,13 @@
+The implementation matches the plan and fixes the issue, so I changed nothing.
+
+**Re-checked:**
+- `go build ./...` succeeds.
+- `go test -race -short ./caddyconfig/...` passes.
+- `go test -run TestCaddyfileAdaptToJSON ./caddytest/integration/` passes, including the new `quoted_curly_braces.caddyfiletest`.
+- I also ran `caddy adapt` on a config the new tests don't cover: `respond "}" 200` followed by `respond "{" { close }`. Before the fix this config failed with "Unexpected '}'". It now adapts to two handlers: `"body":"}"` with status 200, and `"body":"{"` with `"close":true`.
+
+**What was fixed:** a token is now treated as a block brace only if it is an unquoted `{` or `}`. The issue's `respond "{"` example now works, and so do quoted braces next to real blocks, inside snippets, and in imports.
+
+**Left out on purpose:** using a quoted `{` as a site address still fails, with "Site addresses cannot end with a curly brace". That check looks at the text of the address rather than whether the brace was quoted, and a brace as a site address isn't a real use case.
+
+Under the project's contribution rules, a PR built from this must say it was AI-assisted (Claude Opus 5.5), and the person submitting it needs to understand every changed line.

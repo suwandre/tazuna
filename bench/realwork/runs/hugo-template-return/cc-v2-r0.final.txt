@@ -1,0 +1,21 @@
+`return` now works as an early exit in any template, and the parse-tree rewrite is gone. The `internal/warpc` tests (`TestGreet`, `TestGreetParallel`, `TestKatexParallel`) fail, but they fail the same way on the untouched base, so my change didn't cause them. Everything else I ran passes: `./tpl/...`, `./hugolib/...`, `./resources/...`, `./commands/...` and `./internal/...`, plus staticcheck and gofmt. I did not run `./check.sh`.
+
+**How it works**
+- **The sentinel:** `texttemplate.ReturnError{Value}` is defined in `hugo_template.go`. `evalCall` turns it into a panic, and `executeWithState` catches that panic and returns it as the error. A `return` inside a `{{ template }}` call unwinds the whole execution, not just that sub-template.
+- **The function:** `partials.Namespace.Return` takes zero or one argument and returns the sentinel. It is registered under the existing `return` alias.
+- **Trapping the sentinel:** `TemplateStore.ExecuteWithContext` treats an early return as success, so pages, shortcodes and other callers just stop. `ExecuteWithContextAndKey` hands the sentinel back to partials, which use its value as the result.
+- **Parse step:** the only thing left in `templatetransform.go` is `handleReturn`. It sets `HasReturn` on partials. It also wraps a multi-argument form like `return add . 42` as `return (add . 42)`, so existing partials keep working.
+
+**Behaviour changes**
+- A bare `{{ return }}` in a partial now returns `nil`, where it used to return the rendered output.
+- A partial that contains `return` but finishes without reaching it returns `nil` and discards its output. That matches the old behaviour.
+- `{{ x | return }}` now works.
+- `TestPartialReturnPanicIssue13600` expected "wrong number of args for string". `return` is now evaluated first, so the error is `error calling delimit: can't iterate over …`. The template is still an error, so I updated the expected message.
+
+**Tests and docs**
+- I added `TestReturnEarly` and `TestReturnTooManyArguments` in `tpl/partials/partials_integration_test.go`.
+  - `TestReturnEarly` covers early return from a regular template, return inside `range`, the pipe form, a bare return, fall-through, nested partials and `partialCached`.
+  - `TestReturnTooManyArguments` checks the argument-count error.
+- I rewrote `docs/content/en/functions/go-template/return.md` and removed the "must be last / only one" wording from `Include.md` and `IncludeCached.md`.
+
+I did not add a test for `return` inside a decorator `with` block. That block is compiled into its own internal partial, so `return` there exits only that block.

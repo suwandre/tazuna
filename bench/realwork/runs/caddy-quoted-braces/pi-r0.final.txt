@@ -1,0 +1,18 @@
+Quoted `{` and `}` no longer open or close blocks in the Caddyfile parser, so `respond "{"` now parses correctly.
+
+**Fix.** The parser and dispenser compared token text to `"{"` and `"}"` without checking whether the token was quoted. I added `isOpenBrace()` and `isCloseBrace()` helpers that only match unquoted tokens. They are on `Token` (`lexer.go`) and `Dispenser` (`dispenser.go`). I used them in `NextArg`, `NextBlock`, `ArgErr`, and in the parser's address, directive, `blockTokens`, snippet and import handling in `parse.go`.
+
+I also dropped the old `wasQuoted == 0` check in `directive()`, since the helper now covers it.
+
+**Tests.** I added three tests:
+- `TestQuotedBracesDoNotAffectBlocks` in `parse_test.go`.
+- `TestQuotedBracesInSnippetAndImport` in `parse_test.go`.
+- `TestDispenser_QuotedBracesAreNotBlockDelimiters` in `dispenser_test.go`.
+
+Without the fix, the parser tests fail.
+
+**Results.** `go test` passes for `caddyfile`, `httpcaddyfile` and `caddytest/integration`. The integration package failed once in my first run. The next run with my changes passed, and with my changes stashed it failed in four ACME server tests, so those failures look flaky. I didn't investigate the first failure.
+
+I didn't run `golangci-lint` or the full `go test -race -short ./...`.
+
+Per the project's AI disclosure rules, mention in the PR that this was AI-assisted (Claude).

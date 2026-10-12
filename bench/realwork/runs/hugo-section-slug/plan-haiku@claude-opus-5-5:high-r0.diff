@@ -1,0 +1,159 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..8c91085 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -132,6 +132,12 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		URL:         pm.pageConfig.URL,
+ 	}
+ 
++	if kinds.IsBranch(p.Kind()) {
++		desc.Dir = sectionSlugsDir(p, pageInfoCurrentSection.Base())
++	} else {
++		desc.Dir = sectionSlugsDir(p.CurrentSection(), pageInfoPage.ContainerDir())
++	}
++
+ 	if pm.Slug() != "" {
+ 		desc.BaseName = pm.Slug()
+ 	} else if pm.isStandalone() && pm.standaloneOutputFormat.BaseName != "" {
+@@ -207,3 +213,25 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 
+ 	return desc, nil
+ }
++
++// sectionSlugsDir replaces the elements in dir owned by s or its ancestor
++// sections with their slugs, if set.
++func sectionSlugsDir(s page.Page, dir string) string {
++	var parts []string
++	for ; s != nil && !s.IsHome(); s = s.Parent() {
++		slug := s.Slug()
++		if slug == "" {
++			continue
++		}
++		if parts == nil {
++			parts = strings.Split(dir, "/")
++		}
++		if i := strings.Count(s.Path(), "/"); i < len(parts) {
++			parts[i] = slug
++		}
++	}
++	if parts == nil {
++		return dir
++	}
++	return strings.Join(parts, "/")
++}
+diff --git a/hugolib/page_permalink_test.go b/hugolib/page_permalink_test.go
+index d5ae693..ac472b7 100644
+--- a/hugolib/page_permalink_test.go
++++ b/hugolib/page_permalink_test.go
+@@ -201,3 +201,74 @@ path = '/books/**'
+ 
+ 	b.AssertFileContent("public/shelf/my-book/index.html", "RelPermalink: /shelf/my-book/")
+ }
++
++func TestSlugInBranchPages(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.com/"
++disableKinds = ["rss", "sitemap"]
++defaultContentLanguage = "en"
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: How to frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Como frobear
++slug: como-frobear
++---
++-- content/help/sub/_index.es.md --
++---
++title: Sub
++slug: subslug
++---
++-- content/help/sub/p1.es.md --
++---
++title: P1
++tags: [red]
++---
++-- content/help/nosection/p2.es.md --
++---
++title: P2
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/red/_index.es.md --
++---
++title: Rojo
++slug: rojo
++---
++-- layouts/all.html --
++{{ .Kind }}|{{ .RelPermalink }}|
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "section|/help/|")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "page|/help/how-to-frob/|")
++	b.AssertFileContent("public/es/ayuda/index.html", "section|/es/ayuda/|")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "page|/es/ayuda/como-frobear/|")
++	b.AssertFileContent("public/es/ayuda/subslug/index.html", "section|/es/ayuda/subslug/|")
++	b.AssertFileContent("public/es/ayuda/subslug/p1/index.html", "page|/es/ayuda/subslug/p1/|")
++	b.AssertFileContent("public/es/ayuda/nosection/p2/index.html", "page|/es/ayuda/nosection/p2/|")
++	b.AssertFileContent("public/es/etiquetas/index.html", "taxonomy|/es/etiquetas/|")
++	b.AssertFileContent("public/es/etiquetas/rojo/index.html", "term|/es/etiquetas/rojo/|")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..1e30913 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -64,6 +64,10 @@ type TargetPathDescriptor struct {
+ 	// Example (multihost):   guest/v1.0.0
+ 	PrefixLink string
+ 
++	// The directory of the page (the section for branch nodes) with any section slugs applied.
++	// If not set, it's derived from Path and Section.
++	Dir string
++
+ 	// If in multihost mode etc., every link/path needs to be prefixed, even
+ 	// if set in URL.
+ 	ForcePrefix bool
+@@ -165,6 +169,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.Dir != "" {
++			pb.Add(d.Dir)
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}
+@@ -206,7 +212,11 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			if dir := d.Path.ContainerDir(); dir != "" {
++			dir := d.Dir
++			if dir == "" {
++				dir = d.Path.ContainerDir()
++			}
++			if dir != "" {
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {

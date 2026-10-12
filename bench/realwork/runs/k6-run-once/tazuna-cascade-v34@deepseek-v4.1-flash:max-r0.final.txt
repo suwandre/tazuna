@@ -1,0 +1,23 @@
+All changes are in place and tests pass. Here's a summary:
+
+## What changed
+
+**New: `internal/cmd/once.go`** — the single-run implementation:
+- `checkOnceConflicts` — rejects `--once` combined with CLI load/segment shortcuts (`--vus`, `--duration`, `--iterations`, `--stage`, `--execution-segment`, `--execution-segment-sequence`) with `--once cannot be combined with --<flag>` and exit code `InvalidConfig`.
+- `dropOnceShortcuts` — clears top-level `vus`/`duration`/`iterations`/`stages`/execution-segment shortcuts from the lower-priority config, script, and environment layers (with a warning naming what was overridden), so non-CLI load can't delete or rewrite the scenario.
+- `rejectAmbiguousOnce` — errors with `--once can run only with a single scenario, but got: <names>` when 2+ scenarios are in effect.
+- `applyOnce`/`onceScenario` — rewrites the effective scenario (or synthesizes a `default` one) into a `shared-iterations` executor with `vus: 1`, `iterations: 1`, preserving the scenario name, raw `exec`, `env`, `tags`, and complete `options` block (e.g. `options.browser`); all old executor fields are discarded.
+
+**`internal/cmd/options.go`** — registers the `--once` flag in `optionFlagSet()` and calls `checkOnceConflicts` from `getOptions()`.
+
+**`internal/cmd/config.go`** — `Config.once` (unexported, so JSON/env can't set it); `getConsolidatedConfig` drops lower-layer shortcuts when set.
+
+**`internal/cmd/test_load.go`** — reads `--once` from the CLI layer after consolidation and applies `rejectAmbiguousOnce` + `applyOnce` to the consolidated options before shortcut derivation/validation, so local run, cloud run, cloud local-execution, and archive all carry the rewritten scenario.
+
+**Tests added:** `internal/cmd/once_test.go` (unit tests for scenario preservation, shortcut dropping/warnings, CLI conflicts) and `internal/cmd/tests/cmd_once_test.go` (end-to-end run, multi-scenario error, cloud upload/local execution, archive rewrite, archive re-run).
+
+## Verification
+
+- `go build ./...` clean; `gofmt`/`go vet`/`golangci-lint` clean on changed packages.
+- `go test -count=1 ./internal/cmd/...` — all pass; new tests also pass with `-race`.
+- Manual checks with a built binary: no-scenario script runs `default` 1×, single scenario keeps `exec`/`env`/`tags`/browser options and runs once, `setup`/`teardown` run normally, multiple scenarios and `--once --iterations` error with exit 104, and `k6 archive --once` stores the rewritten `shared-iterations` scenario so re-running the archive runs once.

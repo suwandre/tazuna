@@ -1,0 +1,15 @@
+Multiple `import` blocks that target different instances of the same `for_each` resource are now all honored. The tests in `internal/refactoring`, `internal/terraform` and `internal/configs` pass. I haven't run the `terraform plan` reproduction from the report or any other package. I didn't commit anything.
+
+**Cause:** `FindImportStatements` in `internal/refactoring/import_statement.go` deduplicated import blocks by config resource address (`terraform_data.t`), which has no instance key. `t["a"]` and `t["b"]` therefore looked like duplicates, and the first block won, which matches your observation that swapping the order swaps the survivor. Nothing reported the dropped block. The dedup was meant only to let a parent module's import override a child's for the same resource. `configs/module.go` already rejects true duplicates within a module.
+
+**Fix:**
+- The function now returns a list of statements instead of a map keyed by resource.
+- It records which module first claimed each config resource. Imports from the same module are all kept.
+- A block from a different module is dropped, and parents are visited before children, so the parent still overrides the child.
+- The one caller, `findImportTargets` in `internal/terraform/context_plan.go`, was updated to match.
+
+**Tests:**
+- `TestContext2Plan_importMultipleBlocksForEachResource` plans three separate import blocks against one `for_each` resource and checks that all three import with the right IDs. With the fix reverted it fails, with `second` and `third` planned as Create.
+- `TestFindImportStatements`, with a new `testdata/import-statements` fixture, checks that blocks for the same resource in one module are all kept. It also checks that a parent's blocks replace all the child's blocks for the same resource, while child resources the parent doesn't mention keep theirs.
+
+The report didn't test `count`. It goes through the same code path, so it should be fixed too, but I didn't test it.

@@ -1,0 +1,22 @@
+`return` now stops execution in any template, not just partials, and it no longer has to be the last command. The tests I ran all pass: `./tpl/...`, `./hugolib/`, `./resources/...` and `./markup/...`.
+
+**How it works**
+- **Trapping the return:** `return` is now `partials.Namespace.Return(args ...any) (any, error)`, which returns a `*texttemplate.ReturnError`. `ReturnError` is a new type in `tpl/internal/go_templates/texttemplate/hugo_template.go`, with `Value` and `HasValue` fields. The patches to Go's exec package are small:
+  - `evalCall` turns that error into a panic that unwinds the execution.
+  - `errRecover` in `exec.go` turns the panic back into an error returned from `Execute`.
+  - `try` re-panics on it, so it can't swallow an early return.
+  - `range` already re-panics anything that isn't `break` or `continue`.
+- **Partials:** `ExecuteWithContextAndKeyReturn` is a new `TemplateStore` method that reports the `ReturnError`. `doInclude` uses it, so a partial returns the value if one was passed. Otherwise it returns the rendered output.
+- **Other templates:** `ExecuteWithContextAndKey` ignores a `ReturnError`, so a `return` in a page, shortcode or render hook just ends that template. Output written before the `return` is kept.
+- **Removed:** the template rewrite, the `contextWrapper`, `ParseInfo.HasReturn`, and the old "must be the last command" handling. `return` is also no longer limited to the `CategoryPartial` templates.
+- **Kept:** a small normalizer in `templatetransform.go` that rewrites `return add . 42` to `return (add . 42)`. Without it the existing `{{ return add . 42 }}` syntax would break.
+
+**Behaviour changes**
+- A bare `{{ return }}` in a partial gives the output rendered so far. Before, a partial with no return value gave its output, and a `return` with a value discarded all output. `{{ return nil }}` still returns nil.
+- `return` exits the whole template execution, including from inside `{{ template }}` calls or `define` blocks. I didn't scope it to the nearest `template` call.
+- `{{ return X | f }}` no longer applies `f`. The old rewrite handled that case in an odd way.
+- I changed `TestPartialReturnPanicIssue13600`. It expected "wrong number of args for string…", which came from the old rewrite. The template now fails earlier with `error calling delimit: can't iterate over…`. It still checks that the template errors cleanly instead of panicking.
+
+**Tests added**
+- `TestReturnEarly` in `hugolib/template_test.go` covers early return in partials, in a `range` and in `if`. It also covers bare return, `return nil`, falsy values, and early return in a page template and a single page template.
+- `TestReturnError` in the texttemplate package covers the exec-level trapping, including `try`.

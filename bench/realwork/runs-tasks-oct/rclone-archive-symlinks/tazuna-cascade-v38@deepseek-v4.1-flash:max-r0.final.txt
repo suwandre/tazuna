@@ -1,0 +1,30 @@
+## Summary
+
+Implemented symlink support in the archive backend for both ZIP and squashfs members, following the `.rclonelink` convention used by the local backend.
+
+### Changes
+
+**`backend/archive/zip/zip.go`**
+- Read `fs.GetConfig(ctx).Links` into a new `Fs.links` field.
+- In `readZip`, entries whose mode has `os.ModeSymlink` are now:
+  - skipped (counted, with a notice naming `-l/--links`) when links are off;
+  - exposed under their name plus `fs.LinkSuffix` when `--links` is on. The object wraps the member, so its size is the target length and `Open` already honours seek/range options.
+- Regular members ending in `.rclonelink` are untouched, and `List`/`NewObject` remain consistent since both come from the same dirtree.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Same `links` config, plus `objectFromLink`/`readlink` helpers.
+- `List` exposes symlinks as `.rclonelink` objects or skips them with a flag-naming notice; `newObjectNative` applies the same naming so `NewObject` matches listings.
+- `Object` gained `isLink`/`link`; `Open` serves the target path through a limited reader with offset/limit clamping for range/seek options.
+
+**Tests**
+- `TestReadZipSymlink`: default skip, `--links` listing/size/read-back.
+- `TestArchiveSquashfsSymlink`: same via a real `mksquashfs` image, including a regular `note.rclonelink` staying regular.
+- `TestArchiveZipSymlinkEscape`: end-to-end hostile archive (symlink above root plus a member inside it) must fail to copy and write nothing outside the destination.
+
+**Docs** — added a "Symlinks" section to `docs/content/archive.md` with the usage example.
+
+### Verification
+- `gofmt`, `go vet`, `golangci-lint run ./backend/archive/...` — clean.
+- `go test -count=1 ./backend/archive/... ./cmd/archive/...` with the dev `rclone` on PATH — all pass, including the external `zip`/`mksquashfs` integration tests.
+- `go test -race` on the new symlink tests — pass.
+- Manual end-to-end with a freshly built binary: `lsl --links` reports `link.txt.rclonelink` size 8, `cat --links` reads `file.txt`, `copy --links` recreates the symlink on local, and the hostile archive copy fails without writing outside the destination.

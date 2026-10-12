@@ -1,0 +1,35 @@
+Done. Here's a summary of the change:
+
+## Root cause
+
+In `listen_unix.go`, `unixListener.Close()`/`unixConn.Close()` called `File()` (a `dup()` of the socket fd) just to obtain the socket name for unlinking. Two problems resulted:
+
+1. `File().Name()` is the `netFD` description (`unix:/path->`), **not** the filesystem path, so `syscall.Unlink(name)` always failed — the file stayed on disk.
+2. The dup returned by `File()` was never closed and only had an `os.File` finalizer, so the listening socket stayed alive until GC (the 2-minute forced GC observed in the report). `reuseUnixSocket` also leaked its `socketFile` dup after `net.FileListener`/`net.FilePacketConn` duplicated it.
+
+There was also no guard against double `Close()` (which could release another holder's reference) and no handling for Linux abstract sockets.
+
+## Fix (`listen_unix.go`, matches upstream Caddy v2.11.7)
+
+- Close the duplicated `socketFile` in `reuseUnixSocket` via `defer socketFile.Close()`.
+- Use `Addr().String()` / `LocalAddr().String()` (the real path) instead of a leaked `File()` dup for unlinking.
+- Add a per-wrapper `closed atomic.Bool`; the first `Close()` releases the reference, subsequent calls return `net.ErrClosed` without touching the shared counter.
+- Perform counter decrement, map cleanup, and unlink while holding `unixSocketsMu`, so a close racing a new listen on the same path serializes correctly: either the new listen reuses the socket first (count stays > 0, file retained), or the close removes it first and the new listen binds fresh.
+- Only unlink when the last reference (count reaches 0) closes.
+- Add `isAbstractUnixSocket()` (Linux/Android, names starting with `@`) and never unlink paths for those; `reuseUnixSocket` also skips pre-bind unlink for them.
+- Switched struct literals to keyed form for the added fields.
+
+## Tests
+
+Added `listen_unix_close_test.go` (unix-only) with tests for `unix` and `unixgram` sockets:
+- close removes the file immediately and dialing fails fast (no leaked listening fd),
+- shared/reused socket works and its file stays until the last holder closes,
+- double `Close` returns `net.ErrClosed` and doesn't release another holder's reference,
+- concurrent close + relisten loop leaves a working socket and file,
+- abstract sockets don't unlink a same-named filesystem path.
+
+## Verification
+
+- `go test -race -count=1 .` and `-short` variants pass; new tests pass under `-race -count=5`.
+- `go vet .` clean; `golangci-lint run .` reports 0 issues; `go build ./...` and `GOOS=linux go vet .` pass.
+- End-to-end with a built binary: reload from unix admin socket to TCP admin removed the old `.sock` immediately, `curl --unix-socket` failed instantly (exit 7, not timeout 28), the TCP admin returned 200, and moving back to the socket left exactly one open socket fd.

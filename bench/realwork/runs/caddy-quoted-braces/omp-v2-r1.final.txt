@@ -1,0 +1,16 @@
+Quoted `{` and `}` no longer open or close blocks, so `respond "{"` now parses and the server responds with `{`.
+
+**Cause:** the parser and `Dispenser` compared token text to `"{"` and `"}"` without checking whether the token was quoted. A quoted `"{"` was counted as a block opener that never got closed.
+
+**Fix:**
+- **Helper:** added `Token.isBrace` in `lexer.go`. It matches only unquoted braces.
+- **Dispenser:** `NextArg`, `NextBlock` and `ArgErr` in `dispenser.go` now use it.
+- **Parser:** every brace check in `parse.go` now uses it. That covers site addresses, `directives`, `directive`, `openCurlyBrace`/`closeCurlyBrace`, `blockTokens`, the snippet detection when expanding imports, and the "anonymous blocks" check.
+- **Cleanup:** I removed a `wasQuoted == 0` check in `directive()` that the new helper made redundant.
+
+**Tests added:**
+- **Parser:** cases in `parse_test.go` for quoted `"{"` and `"}"` in directive arguments and inside blocks.
+- **Dispenser:** `TestDispenser_QuotedBracesAreArgs` in `dispenser_test.go`.
+- **Integration:** `TestRespondQuotedBrace`, which uses the exact config from the issue.
+
+`go test ./caddyconfig/...` and `go test ./caddytest/integration/ -run TestRespond` pass. I did not run the full integration suite or the rest of the repo.

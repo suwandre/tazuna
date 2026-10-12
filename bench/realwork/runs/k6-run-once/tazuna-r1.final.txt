@@ -1,0 +1,24 @@
+I added `--once`, and it works with `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. The tests pass for `internal/cmd`, `internal/cmd/tests`, `lib` and `lib/executor`, and `go vet` is clean on the two packages I changed. I didn't run a real `k6 cloud run`; the cloud paths are only covered by the shared config code, and `archive` has its own test.
+
+**What `--once` does**
+- With no scenarios, the script's `default` function runs once, with 1 VU and 1 iteration.
+- With one scenario, it keeps that scenario's name, `exec`, `env`, `tags` and browser `options`, and swaps the executor for `shared-iterations` with 1 VU and 1 iteration. Start time, graceful stop and the other executor fields are dropped.
+- The `vus`, `iterations`, `duration` and `stages` options are cleared. `setup()` and `teardown()` run as normal.
+- With more than one scenario it fails with `--once can run a single scenario only`.
+- Combined with `--vus`, `--iterations`, `--duration` or `--stage` it fails with `--once cannot be combined with --<flag>`. Both errors exit with the invalid-config code.
+
+**Where the changes are**
+- `lib/executor/execution_config_shortcuts.go` has a new `ApplyOnce` function that does the scenario rewrite.
+- `internal/cmd/options.go` defines the `--once` flag.
+- `internal/cmd/test_load.go` applies it right after config consolidation. This avoids the problems in #883 and #2529, and the archive and cloud paths pick it up from there.
+
+I put the flag in `optionFlagSet`, so `k6 cloud upload` also accepts `--once`, which wasn't in the request.
+
+The same-flag check only looks at CLI flags. If `vus`, `iterations` or `duration` come from the script's `options` or from environment variables such as `K6_ITERATIONS`, `--once` silently discards them rather than erroring.
+
+**Tests added**
+- `TestApplyOnce` in `lib/executor/execution_config_once_test.go` covers no scenarios, one scenario (everything preserved) and multiple scenarios (error).
+- `TestRunOnce` in `internal/cmd/run_test.go` covers the single-scenario run, the no-scenario run, the multiple-scenario error and the combined-flag error.
+- `TestArchiveOnce` in `internal/cmd/archive_test.go` checks the archive metadata for the rewritten scenario.
+
+I didn't add a release note.

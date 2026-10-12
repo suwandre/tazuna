@@ -1,0 +1,21 @@
+I've fixed the bug: when several `import` blocks target different instances of the same `for_each` resource, all of them are now honored. The new plan tests fail on the original code for instance `"b"` and pass with the fix. I didn't run `terraform plan` on the configuration in your report.
+
+**Cause.** In `internal/refactoring/import_statement.go`, `FindImportStatements` removed duplicate import blocks by keying them on the resource address without the instance key. So `terraform_data.t["a"]` and `terraform_data.t["b"]` got the same key, and every block after the first was silently skipped. Block order decides which one survives, not the instance key, which is what you saw. That function was added with module-import support, so this is a regression.
+
+**Fix:**
+- **`import_statement.go`:** `FindImportStatements` now returns every block, in a fixed order. A block is dropped only if an import block in a parent module already targets that resource; that parent-overrides-child rule was the reason for removing duplicates. Several blocks in the same module are all kept. Exact duplicates in one module are already rejected earlier, in `internal/configs/module.go`.
+- **`context_plan.go`:** `findImportTargets` now reads this list instead of the old map.
+- **`node_resource_plan.go`:** this file had a second problem that only appears once multiple blocks get through: every imported instance was given the first block's config (`n.importTargets[0].Config`). Each instance now gets the config of the block that actually targets it.
+
+**Tests added:**
+- `internal/refactoring/import_statement_test.go`, with fixtures: two blocks for different instances of one `for_each` resource are both kept, and a parent module's block overrides a child's.
+- `TestContext2Plan_importMultipleBlocksForEach` and `TestContext2Plan_importMultipleBlocksForEachPartial` in `context_plan_import_test.go`. The second covers a third instance with no import block, which is the only one planned for creation.
+
+**Results:**
+- `go vet` passes on the two changed packages.
+- `go test` passes for `./internal/refactoring/`, `./internal/terraform/` and all `./internal/command/...` subpackages, including e2e tests.
+- One test in `./internal/command` fails: `TestInit_providerLockFileReadonly` (subtests `default` and `readonly`, a provider checksum mismatch). It fails the same way with my changes stashed, so it was already failing before this fix.
+
+One case is still silent: two blocks in the same module that end up at the same instance, such as `to = x["a"]` and `to = x[each.key]`, are resolved with the last one winning and no warning. That behavior is unchanged; turning it into an error would be a separate change.
+
+Nothing has been committed.

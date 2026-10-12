@@ -1,0 +1,16 @@
+Fixed. The issue's exact config now plans `2 to import, 0 to add, 2 to change, 0 to destroy`, the same as 1.15.9.
+
+**Cause:** `FindImportStatements` in `internal/refactoring/import_statement.go`, which came in with the import-in-modules work, stored import blocks in a map keyed by the resource as a whole (`terraform_data.t`), not by the instance. So `t["a"]` and `t["b"]` landed in the same slot and the second block was skipped without any message. That's why the first-declared block won and single-instance resources were fine. The key was only meant to let a parent module's import block override a child module's block for the same resource. But it also hit blocks within the same module, even though the code comment assumed those could never collide. Your guess about #38352 was right.
+
+**Fix:**
+- `FindImportStatements` now returns a list. A block is skipped only if a *different* module (which has to be an ancestor, since parents are visited first) has already claimed that resource. Several blocks in the same module are all kept. So parent-overrides-child still works.
+- Child modules are now visited in sorted order, so the output order is stable.
+- The one caller, `findImportTargets` in `internal/terraform/context_plan.go`, was updated for the new return type.
+
+**Tests added:**
+- `TestFindImportStatements` (`internal/refactoring/import_statement_test.go`, with a new fixture in `testdata/import-statements/`): several `for_each` blocks in the root, a parent block overriding a child's `count` blocks, and a child block that isn't overridden and must survive.
+- `TestContext2Plan_importMultipleBlocksSameResource` (`internal/terraform/context_plan_import_test.go`): two blocks each for a `for_each` resource and a `count` resource. On the old code it fails exactly as the issue describes (`each["b"]` and `counted[1]` aren't imported). It passes with the fix. `count` was broken the same way.
+
+**Test results:** `go test` passes for `./internal/refactoring/...` and `./internal/terraform/...`. In `./internal/command/...`, one test fails: `TestInit_providerLockFileReadonly`, with a provider checksum mismatch. It fails the same way with my changes removed, so it isn't caused by this fix.
+
+I didn't add a changelog entry under `.changes/`. Tell me which version line this should go in (v1.16 patch or v1.17) and I'll add one. Nothing is committed yet.

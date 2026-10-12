@@ -1,0 +1,19 @@
+The implementation matches the plan and fixes the bug, so I changed nothing.
+
+**The fix:** `FindImportStatements` used to keep only one import block per resource, so a second block aimed at another instance of the same `for_each` resource was silently thrown away. It now keeps every block declared in the same module. The existing rule that a parent module's import block overrides a child module's block for the same resource still applies. `findImportTargets` (`internal/terraform/context_plan.go`) now reads the new list.
+
+**Tests:** I re-ran them myself and they pass:
+- `go test ./internal/refactoring/...`
+- `go test ./internal/terraform/ -run 'TestContext2Plan_import|TestContextPlan_import|TestContext2Apply_import|TestContextImport'`
+- `go vet ./internal/refactoring/ ./internal/terraform/` is clean.
+
+There are three new tests:
+- **`TestContext2Plan_importForEachMultipleBlocks`**: the issue's case, with two blocks for different instances in the root module.
+- **`TestContext2Plan_importForEachMultipleBlocksInModule`**: the same case inside a child module.
+- **`TestFindImportStatements`**: checks that both instance blocks are kept and that a parent block still overrides the child's block for the same resource.
+
+The implementer says both plan tests fail on the unfixed code. I didn't check that.
+
+**Changelog:** the implementer also added `.changes/v1.17/BUG FIXES-20261009-000000.yaml`, which wasn't in the plan. It goes in v1.17 because the repo is at `1.17.0-dev`, it follows the format of the other entries there, and it references #39010. If you also want it in a 1.16.x patch release, it would need backporting.
+
+**Flaky test:** the implementer saw `TestApply_WithPlanPolicyDiagnosticsJSON` in `internal/command` fail once, then pass on repeat runs with and without the change. I didn't re-run it.

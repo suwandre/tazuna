@@ -1,0 +1,17 @@
+The verification failure was environmental but real: this working directory's name contains a colon (`...flash:max-tx2f2rnc`), and `TestSnmpInitGosmi` passed `filepath.Abs(...)` to gosmi. gosmi's `AppendPath` joins MIB paths with `os.PathListSeparator` (`:`) and then splits them again with `filepath.SplitList`, so the absolute path was shredded into non-existent pieces, no MIBs were registered, the first failed `loadModule` hit the test's nil logger, and the panic followed.
+
+## Additional change
+
+**`plugins/inputs/snmp/snmp_test.go`** — `TestSnmpInitGosmi` now uses the relative colon-free path `filepath.Join("..", "..", "common", "snmp", "testdata", "gosmi")` instead of `filepath.Abs(...)`, with a comment explaining gosmi's path-list-separator limitation. Assertions are unchanged; gosmi expands the relative path itself once the path list has been parsed correctly.
+
+The SNMPv3 engine-rediscovery fix from before is unchanged:
+- `plugins/common/snmp/wrapper.go`: `Connection` gained `Close()`; `Get`/`Walk` reconnect a closed connection; `Reconnect()` resets discovered SNMPv3 engine ID/boots/time and context engine ID when re-establishing a closed connection, while an open connection keeps them.
+- `plugins/inputs/snmp/snmp.go`: `Gather` closes the agent's cached connection when the top-level fields or any table fails, so the next gather reconnects and rediscovers the engine.
+- Tests: wrapper reconnect/request-reconnect tests, gather close-on-error/keep-on-success/recovery tests, mocks updated for `Close()`.
+
+## Verification
+
+In this exact working directory (the one the verifier used):
+- `go test ./plugins/common/snmp/ ./plugins/inputs/snmp/ ./plugins/processors/snmp_lookup/` → exit 0, all three packages `ok`.
+- `go test -count=1` and `go test -race -count=1` on the same packages → all pass.
+- `go vet` → clean; `golangci-lint run` on those packages → 0 issues; `gofmt -l` → clean.

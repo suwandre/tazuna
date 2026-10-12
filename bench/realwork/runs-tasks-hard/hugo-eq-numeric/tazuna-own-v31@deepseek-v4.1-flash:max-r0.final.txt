@@ -1,0 +1,23 @@
+All changes intact. Let me give a final summary.
+
+## Summary
+
+`eq`/`ne` now compare numbers numerically, consistent with `lt`/`le`/`gt`/`ge`, using exact cross-type comparison (no `float64` rounding).
+
+### Changes
+
+- **`common/hreflect/compare.go`** (new): `CompareNumbers(a, b reflect.Value) (int, bool)` — exact 3-way comparison across signed ints, unsigned ints and floats. Avoids `float64` rounding (`int64(1<<53+1) > float64(1<<53)`), handles `uint64` max vs `-1`, infinities, and reports `ok=false` for NaN/non-numbers.
+- **`tpl/compare/compare.go`**: `Eq` no longer normalises numbers to `any` (which made `1 != 1.0`); it compares strings directly and otherwise uses `CompareNumbers`, falling back to `reflect.DeepEqual`. `compareGet` (used by `lt/le/gt/ge`) now delegates to `CompareNumbers` for all numeric pairs, replacing the old float64/`compareTwoUints` paths, so both halves of the API agree.
+- **`tpl/collections/where.go`**: `checkCondition` uses `CompareNumbers` for all numeric pairs (including `in`/`not in`), removing the float64 conversion and the strict same-Go-type requirement for slice membership. (`where` `eq/ne/</>/<=/>=` now use the same rules.)
+- **`tpl/collections/reflect_helpers.go`**: `normalize`/`numericKey` produce equal keys for numerically equal values of different Go types without precision loss.
+- **`tpl/collections/collections.go`**: `Intersect`/`Union`/`Uniq`/etc. match numbers exactly across types.
+- **`htesting/test_helpers.go`**: added `Is32Bit()` helper used by the new 32-bit-guarded tests.
+
+### Tests
+
+- New `TestEqIntFloat` integration test reproducing the issue (all six operators agree).
+- Extended `tpl/compare/compare_test.go` with mixed int/uint/float, `2^53` boundary and `MaxUint64` cases; extended `tpl/collections/where_test.go`, `collections_test.go` (`TestSetOperationsExactNumbers`) and added `TestWhereInNumericParams`.
+
+### Verification
+
+`go test ./tpl/... ./hugolib/... ./compare/... ./common/... ./htesting/...` → all 66 packages pass; `go vet` and `gofmt` clean.

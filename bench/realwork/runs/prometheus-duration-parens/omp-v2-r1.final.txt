@@ -1,0 +1,17 @@
+Parentheses around a plain duration literal now survive `Expr.String()` in offset and range positions. `go test` passes for `promql/parser`, `promql`, `promql/promqltest`, `web`, `web/api/v1` and `rules`. I didn't run `make lint`.
+
+**Fix.** `*NumberLiteral` has no `Wrapped` field, so a parenthesised literal is now held in a unary-plus `*DurationExpr` with `Wrapped: true`. The wrapping is done by a new `wrapDurationExpr` in `parse.go`. The grammar now calls it from `paren_duration_expr`, and `applyUnaryOpToDurationExpr` calls it for `±(N)`. Round-trips:
+- `foo offset (5)` → `foo offset (5)`
+- `foo offset -(5)` → `foo offset -(5)`
+- `foo offset (5m)` → `foo offset (5m)`
+- `foo[(5s)]` → `foo[(5s)]`
+
+**AST change.** `foo offset (5)`, `foo offset +(5)`, `foo offset -(5)` and `foo[(5s)]` now parse to `OriginalOffsetExpr` or `RangeExpr`. They no longer set `OriginalOffset` or `Range` directly. The engine's duration visitor already handles that form and fills in the concrete value. I updated the two existing parse tests for `+(5)` and `-(5)` to expect the new AST.
+
+**Operator and range checks.** The parse-time checks used to look for a bare `NumberLiteral`, so a wrapped one would have skipped them and failed only at evaluation. I added a `constantDuration` helper that sees through these wrappers and unary signs. It is used by the `> 0` check on ranges and the zero checks for `/` and `%`. `foo[(0)]`, `foo[-(5)]` and `foo offset (4d/(0))` still fail at parse time. The error ranges for the wrapped cases now start at the opening parenthesis.
+
+**Output change.** `foo offset +(5)` prints as `foo offset (5)`, so the leading `+` is dropped. That matches how `+(5*2)` already prints.
+
+**Generated parser.** I regenerated `generated_parser.y.go` with goyacc v0.6.0, the version the Makefile pins. Before editing the grammar, that version reproduced the existing file exactly.
+
+**Tests.** I added round-trip cases to `printer_test.go` and parse and error cases to `parse_test.go`.

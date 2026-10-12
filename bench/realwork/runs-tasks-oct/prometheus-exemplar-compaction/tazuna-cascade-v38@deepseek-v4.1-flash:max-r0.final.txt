@@ -1,0 +1,20 @@
+All of `go test ./tsdb/` passes on the patched tree when given a 30-minute timeout. I can't make it finish under the default 10 minutes on this machine: the unmodified base commit already took 859 s.
+
+**What was failing:** the timeouts and the `TestBlockReloadInterval` failure came from load, not from a bug in the exemplar fix.
+- **Machine load:** other agents were running the same test suite on this machine at the same time. The tests mostly sit waiting on disk (about 13–23% CPU).
+- **`TestBlockReloadInterval`:** it never touches the changed code. It waits for 5 timer-driven reloads in a 5 s window, so it misses the deadline when the machine is slow. It passes when run on its own.
+- **The new tests made it worse:** the previous attempt added about 75 subtests, each of which writes blocks and reopens the database several times. That added about 100 s of disk-bound time to the package. 48 of those subtests ran one after another in the package's sequential phase.
+
+**What I changed:** only the new tests in `tsdb/db_test.go`. The exemplar fix itself (in `head.go`, `head_append*.go`, `head_wal.go` and `db.go`) was already correct, so I left it alone.
+- **`TestSeriesCompactionReclaimsChunksWithExemplars`:** cut from 48 to 16 cases. Concurrent appends (in-order and out-of-order) are now tested with float samples only, since the logic doesn't depend on sample type. Histograms and float histograms still cover both the unchanged and memory-mapped cases. The old version and the new appender API alternate between cases instead of every case running twice.
+- **`TestExemplarAfterLastSampleSurvivesCompaction`:** cut from 12 to 6 cases, with the two appender versions alternated in the same way. The subtests now run in parallel.
+- **`TestExemplarBeforeLastSampleSurvivesSeriesCompaction`:** cut from 8 to 4 cases, alternated the same way. The subtests now run in parallel.
+
+Every compaction type, the memory-snapshot option, both appender versions and all sample types are still covered. The new tests now take about 17 s instead of about 104 s.
+
+**Verification:**
+- The new tests, `TestHeadAppenderV2_ExemplarsSurviveTruncation` and `TestStripeSeries_gc` pass.
+- Patched tree, full package with `-timeout 30m`: passed in 984 s.
+- Base commit, same command: passed in 859 s.
+
+Both runs shared the machine with other test runs, so the gap between them is not meaningful. To get a pass under the default 10-minute timeout, run the suite on a less loaded machine or raise the timeout (e.g. `-timeout 30m`).

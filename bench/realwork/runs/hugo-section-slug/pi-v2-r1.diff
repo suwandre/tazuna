@@ -1,0 +1,158 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..6555c21 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -132,6 +132,17 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		URL:         pm.pageConfig.URL,
+ 	}
+ 
++	for _, a := range append(page.Pages{p}, p.Ancestors()...) {
++		if !kinds.IsBranch(a.Kind()) || a.IsHome() || a.Slug() == "" {
++			continue
++		}
++		i := strings.Count(a.Path(), "/") - 1
++		if i >= len(desc.SectionSlugs) {
++			desc.SectionSlugs = append(desc.SectionSlugs, make([]string, i+1-len(desc.SectionSlugs))...)
++		}
++		desc.SectionSlugs[i] = a.Slug()
++	}
++
+ 	if pm.Slug() != "" {
+ 		desc.BaseName = pm.Slug()
+ 	} else if pm.isStandalone() && pm.standaloneOutputFormat.BaseName != "" {
+diff --git a/hugolib/page_test.go b/hugolib/page_test.go
+index 88a6b22..6ef9248 100644
+--- a/hugolib/page_test.go
++++ b/hugolib/page_test.go
+@@ -2542,3 +2542,73 @@ isCJKLanguage: true
+ 	b.AssertFileContent("public/p500/index.html", "500|500|1")
+ 	b.AssertFileContent("public/p501/index.html", "501|600|2")
+ }
++
++func TestSectionSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++disableKinds = ['rss','sitemap']
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++[taxonomies]
++tag = 'tags'
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: Frob
++tags: [t1]
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Frobear
++slug: como-frobear
++tags: [t1]
++---
++-- content/help/sub/_index.es.md --
++---
++title: Sub
++slug: sub-es
++---
++-- content/help/sub/p1.es.md --
++---
++title: P1
++---
++-- content/tags/_index.es.md --
++---
++title: Tags
++slug: etiquetas
++---
++-- content/tags/t1/_index.es.md --
++---
++title: T1
++slug: e1
++---
++-- layouts/all.html --
++{{ .Title }}|{{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "Help|/help/")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "Frob|/help/how-to-frob/")
++	b.AssertFileContent("public/es/ayuda/index.html", "Ayuda|/es/ayuda/")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "Frobear|/es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/sub-es/index.html", "Sub|/es/ayuda/sub-es/")
++	b.AssertFileContent("public/es/ayuda/sub-es/p1/index.html", "P1|/es/ayuda/sub-es/p1/")
++	b.AssertFileContent("public/es/etiquetas/index.html", "Tags|/es/etiquetas/")
++	b.AssertFileContent("public/es/etiquetas/e1/index.html", "T1|/es/etiquetas/e1/")
++	b.AssertFileExists("public/es/help/index.html", false)
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..805d674 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -50,6 +50,10 @@ type TargetPathDescriptor struct {
+ 	// 2) the file base name (TranslationBaseName).
+ 	BaseName string
+ 
++	// SectionSlugs holds the slugs of the section, taxonomy and term pages
++	// in the path to this page, indexed by path segment. Empty means no slug.
++	SectionSlugs []string
++
+ 	// PrefixFilePath contains zero or more content dimensions used as a file
+ 	// path prefix. Dimensions are ordered role/version/language for
+ 	// single-host and language/role/version for multihost.
+@@ -115,6 +119,24 @@ func (p TargetPaths) PermalinkForOutputFormat(s *helpers.PathSpec, f output.Form
+ 	return s.PermalinkForBaseURL(p.Link, baseURLstr)
+ }
+ 
++func (d TargetPathDescriptor) withSectionSlugs(dir string) string {
++	if len(d.SectionSlugs) == 0 {
++		return dir
++	}
++	elems := strings.Split(dir, slash)
++	// Skip the leading empty element.
++	n := 0
++	if elems[0] == "" {
++		n = 1
++	}
++	for i := n; i < len(elems); i++ {
++		if j := i - n; j < len(d.SectionSlugs) && d.SectionSlugs[j] != "" {
++			elems[i] = d.SectionSlugs[j]
++		}
++	}
++	return strings.Join(elems, slash)
++}
++
+ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	// Normalize all file Windows paths to simplify what's next.
+ 	if helpers.FilePathSeparator != "/" {
+@@ -166,7 +188,7 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			pb.Add(d.Section.Base())
++			pb.Add(d.withSectionSlugs(d.Section.Base()))
+ 		}
+ 		needsBase = false
+ 	}
+@@ -207,7 +229,7 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+ 			if dir := d.Path.ContainerDir(); dir != "" {
+-				pb.Add(dir)
++				pb.Add(d.withSectionSlugs(dir))
+ 			}
+ 			if d.BaseName != "" {
+ 				pb.Add(d.BaseName)

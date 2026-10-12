@@ -1,0 +1,158 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..48addcf 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -18,6 +18,7 @@ import (
+ 	"path"
+ 	"strings"
+ 
++	"github.com/gohugoio/hugo/common/paths"
+ 	"github.com/gohugoio/hugo/output"
+ 
+ 	"github.com/gohugoio/hugo/resources/kinds"
+@@ -109,6 +110,41 @@ func (l pagePaths) OutputFormats() page.OutputFormats {
+ 	return l.outputFormats
+ }
+ 
++// slugDir returns the directory of p with the slugs of its section (and, for
++// branch pages, its own slug) replacing the corresponding path elements.
++// It returns an empty string if there are no slugs to apply.
++func slugDir(p *pageState, pagePath, sectionPath *paths.Path) string {
++	isBranch := kinds.IsBranch(p.Kind())
++	dir := pagePath.ContainerDir()
++	if isBranch {
++		dir = sectionPath.Base()
++	}
++
++	elems := strings.Split(strings.Trim(dir, "/"), "/")
++	var replaced bool
++	replace := func(pg page.Page) {
++		if pg.IsHome() || pg.Slug() == "" {
++			return
++		}
++		if i := strings.Count(strings.Trim(pg.Path(), "/"), "/"); i < len(elems) {
++			elems[i] = pg.Slug()
++			replaced = true
++		}
++	}
++
++	if isBranch {
++		replace(p)
++	}
++	for _, a := range p.Ancestors() {
++		replace(a)
++	}
++
++	if !replaced {
++		return ""
++	}
++	return "/" + strings.Join(elems, "/")
++}
++
+ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error) {
+ 	s := p.s
+ 	d := s.Deps
+@@ -130,6 +166,7 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		UglyURLs:    s.h.Conf.IsUglyURLs(p.Section()),
+ 		ForcePrefix: s.h.Conf.IsMultihost() || alwaysInSubDir,
+ 		URL:         pm.pageConfig.URL,
++		Dir:         slugDir(p, pageInfoPage, pageInfoCurrentSection),
+ 	}
+ 
+ 	if pm.Slug() != "" {
+diff --git a/hugolib/site_sections_test.go b/hugolib/site_sections_test.go
+index 779c380..5b69cb5 100644
+--- a/hugolib/site_sections_test.go
++++ b/hugolib/site_sections_test.go
+@@ -182,3 +182,54 @@ title: content/s1.md
+ 	b.AssertFileContent("public/s1.html", "content/s1.md")
+ 	b.AssertFileContent("public/s1/p1.html", "content/s1/p1.md")
+ }
++
++func TestSlugInSectionTaxonomyAndTerm(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++disableKinds = ["rss", "sitemap"]
++[taxonomies]
++tag = "tags"
++-- content/help/_index.md --
++---
++title: Help
++slug: ayuda
++---
++-- content/help/faq.md --
++-- content/help/how-to-frob/index.md --
++---
++title: Frob
++slug: como-frobear
++tags: [a]
++---
++-- content/help/sub/_index.md --
++---
++title: Sub
++---
++-- content/help/sub/p.md --
++-- content/tags/_index.md --
++---
++title: Tags
++slug: etiquetas
++---
++-- content/tags/a/_index.md --
++---
++title: A
++slug: eh
++---
++-- layouts/all.html --
++{{ .RelPermalink }}|
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/ayuda/index.html", "/ayuda/|")
++	b.AssertFileContent("public/ayuda/faq/index.html", "/ayuda/faq/|")
++	b.AssertFileContent("public/ayuda/como-frobear/index.html", "/ayuda/como-frobear/|")
++	b.AssertFileContent("public/ayuda/sub/index.html", "/ayuda/sub/|")
++	b.AssertFileContent("public/ayuda/sub/p/index.html", "/ayuda/sub/p/|")
++	b.AssertFileContent("public/etiquetas/index.html", "/etiquetas/|")
++	b.AssertFileContent("public/etiquetas/eh/index.html", "/etiquetas/eh/|")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..287b1d5 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -50,6 +50,10 @@ type TargetPathDescriptor struct {
+ 	// 2) the file base name (TranslationBaseName).
+ 	BaseName string
+ 
++	// Dir, if set, replaces the section path (branch pages) or the container
++	// directory (other pages) with one where section slugs have been applied.
++	Dir string
++
+ 	// PrefixFilePath contains zero or more content dimensions used as a file
+ 	// path prefix. Dimensions are ordered role/version/language for
+ 	// single-host and language/role/version for multihost.
+@@ -165,6 +169,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.Dir != "" {
++			pb.Add(d.Dir)
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}
+@@ -206,7 +212,11 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			if dir := d.Path.ContainerDir(); dir != "" {
++			dir := d.Dir
++			if dir == "" {
++				dir = d.Path.ContainerDir()
++			}
++			if dir != "" {
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {

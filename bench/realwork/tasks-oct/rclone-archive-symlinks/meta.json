@@ -1,0 +1,7 @@
+{
+  "kind": "feature",
+  "difficulty_note": "The archive backend lists a zip symlink as a regular file holding the target and drops squashfs symlinks. Fix must skip symlinks unless -l/--links is set (as other backends do) and with the flag expose them with the .rclonelink suffix reading back as the target, consistently in List and NewObject, for both zip and squashfs (squashfs needs the link target from the stat info and an in-memory Open with offset/limit). Hidden tests: zip unit test, squashfs end-to-end test (skips without mksquashfs, which this machine lacks, so the squashfs half is not graded here), and the symlink-escape copy test.",
+  "merged_at": "2026-10-08T13:15:47Z",
+  "files_changed": 2,
+  "lines_changed": 92
+}

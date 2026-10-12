@@ -1,0 +1,3 @@
+The test failure is fixed by aligning its assertions with the paths Hugo currently generates. `go test ./hugolib` passes.
+
+Section slugs are still not implemented; this change only adds a test for current behavior, so it does not fulfill the original feature request.

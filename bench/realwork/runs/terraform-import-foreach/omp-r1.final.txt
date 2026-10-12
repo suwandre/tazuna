@@ -1,0 +1,16 @@
+Multiple `import` blocks targeting different instances of the same `for_each` resource are now all honored.
+
+**Cause:** `refactoring.FindImportStatements` keyed its results by config resource address (`terraform_data.t`, with no instance key). After the first block for a resource, every later block for it was skipped. That skip was meant to let a parent module's block override a child module's. It also applied to blocks in the same module, so a second block for another instance was silently dropped. Duplicate blocks for the same static instance are already rejected in `configs/module.go`, so same-module blocks never needed deduplicating.
+
+**Fix:**
+- `internal/refactoring/import_statement.go`: `FindImportStatements` now returns `[]ImportStatement` in declaration order. A block is skipped only when a different module already claimed that config resource, so parent-overrides-child behaves as before.
+- `internal/terraform/context_plan.go`: `findImportTargets` now iterates that slice.
+
+**Test:** I added `TestContext2Plan_importMultipleBlocksForEachResource`. It has two static import blocks on a root `for_each` resource and two on a child-module `for_each` resource, and asserts all four instances get their own import ID. It passes with the fix. I did not run it against the old code, so I haven't confirmed it fails there.
+
+**Verification:**
+- `go test ./internal/refactoring/` passes.
+- `go test ./internal/terraform/` passes, including the new test.
+- `go test ./internal/command/` has failures. In the `-run 'Import|Plan'` subset, `TestPlan_varsUnset`, `TestPlan_providerArgumentUnset` and `TestPlan_providerConfigMerge` fail identically with my change stashed. I did not re-run the other failures (the `Apply`, `Init`, and backend/metabackend migration tests) on the original code, but they are not import-related.
+
+**Remaining issue:** `node_resource_plan.go:354` still sets `importConfig` from `n.importTargets[0].Config` for every instance. It is only used when generating config for an import with no matching resource block, so I left it alone.

@@ -1,0 +1,22 @@
+The exemplar fix is in place and `go test ./tsdb/` passes, but only with a longer timeout. I didn't change any code for the timeout, because the unchanged base commit can't finish in 10 minutes on this machine either:
+
+| Run (`go test ./tsdb/ -count=1 -timeout 40m`, one after the other) | Result | Time |
+|---|---|---|
+| Base commit, without the change | pass | 1377s |
+| With the change | pass, no failures | 1225s |
+
+Both runs are well over the default 10-minute limit. `TestOOOSampleLossOnWALCheckpointBeforeOOOCompaction` was simply the test running when the clock ran out. Run alone it passes in 33s on base and 50s with the change, and that second number was measured while three other `tsdb` test runs were going at the same time. The 10 new tests take about 12s together. To verify, run `go test ./tsdb/ -timeout 40m`.
+
+**What the change does:**
+- **Keeping the series:** each series now remembers the newest timestamp among its accepted exemplars. This is recorded when exemplars are committed (both `Appender` and `AppenderV2`), when they are replayed from the WAL, and when they are restored from the memory snapshot. Zero and negative timestamps count like any other.
+- **Head GC:** if a series has no chunks left but still has an exemplar at or after the head's minimum valid time (the replay cutoff), it is kept. It keeps the same in-memory series and series ref, so the WAL checkpoint keeps its series record. Its appender is dropped, and it doesn't hold back the head's minimum time.
+- **Selected and stale compaction (`CompactSelectedSeries`, `CompactStaleHead`):** such a series has all its head and memory-mapped chunks and its appender released, and they are counted once in the chunk metrics. Compacting the now-empty series again writes no block and counts nothing. The existing protections for samples appended during compaction still apply.
+- **Cleanup on my part:** the earlier attempt had added the cutoff to `stripeSeries.gc` as an optional (variadic) parameter. I made it a normal required parameter and updated the test callers in `tsdb/head_test.go`.
+
+**Tests:** `tsdb/exemplar_retention_test.go` has 10 new tests covering all three compaction paths, restart through WAL replay and through the memory snapshot, zero and negative timestamps, `AppenderV2`, memory-mapped chunk release, samples appended during compaction, and persisted samples coming back after a restart. They and `TestStripeSeries_gc` also pass with `-race`.
+
+Two things you might want to change:
+- **Snapshot:** a retained series with no chunks loses its stale marker through a memory snapshot restart, because the snapshot only saves the last value when there is a head chunk. That was already true for any series without a head chunk.
+- **Test style:** the new tests use internal fields such as `series.getByID`, `headChunks` and `minValidTime.Store`, rather than only exported APIs as AGENTS.md prefers.
+
+Nothing is committed.

@@ -1,0 +1,21 @@
+Handoff
+Ask: improve `return` in templates - wanted: early return from any template, via a sentinel error trapped in execution, replacing the template-rewriting approach.
+For you: the implementation, tests and docs are written. `go build` of `./tpl/...` and `./hugolib/...` was clean, but the full test run (`go test ./tpl/... ./hugolib/`, background `bash_12`) hasn't reported yet, so nothing is verified beyond that. Earlier, the first `tpl/partials` run failed once on my own test's HTML escaping (`&lt;nil&gt;`). I fixed that assertion but haven't re-run it.
+Now: waiting on the `bash_12` test run.
+Next: fix any failures it reports, then run `./check.sh` and report.
+
+What changed:
+- **Sentinel error:** `texttemplate.ReturnError{Value}` is added in `hugo_template.go`. `evalCall` turns it into a panic, and `executeWithState` traps it and returns it as the error. The patch to Go's exec package is small: one type, one trap, and one `errors.As` check.
+- **`return` function:** it takes 0 or 1 arguments and returns the sentinel. Zero arguments gives `template.HTML("")`, as the docs say. Two or more is an error. It is a closure in `tpl/partials/init.go`, so there is no new public `partials.Return`.
+- **Template store:** `ExecuteWithContext` swallows the sentinel, so `return` in any non-partial template just stops that template. `ExecuteWithContextAndKey` passes it through unwrapped to `partials.doInclude`, which uses `Value` as the result.
+- **Removed:** the `$ := .Arg` / range rewrite, `contextWrapper`, `HasReturn`, and `collectReturnNode`, which I took out of `templatetransform.go`. A partial's output is now always buffered, even when it returns a value.
+- **Behavior change:** a `return` inside an `if` is now conditional. Before, it was hoisted to the end of the template and always ran.
+- **Docs:** I updated `return.md`, `Include.md` and `IncludeCached.md`.
+- **New tests:** in `tpl/partials/partials_integration_test.go`.
+  - `TestReturnEarlyInPartial` covers return inside `if` and `range`, `return nil`, bare `return`, falsy values and `partialCached`.
+  - `TestReturnEarlyInTemplate` covers `return` in a page template, with output before it kept.
+  - `TestReturnTooManyArgs` covers the argument-count error.
+
+Open points:
+- A `return` inside a `block` or `template` call exits the whole enclosing template, not just that block.
+- I haven't checked `return` inside a `with partial` decorator body.

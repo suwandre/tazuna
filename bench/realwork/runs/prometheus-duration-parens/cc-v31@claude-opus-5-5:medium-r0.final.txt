@@ -1,0 +1,20 @@
+Parentheses around a single duration literal now survive the `Expr.String()` round-trip. Parser and promql tests pass and `golangci-lint` on `./promql/...` is clean. Nothing is committed yet.
+
+**Fix:**
+- **Wrapping the literal** (`promql/parser/parse.go`): a new helper, `wrapDurationExpr`, puts a parenthesised `*NumberLiteral` inside a unary-ADD `*DurationExpr` with `Wrapped: true`, because the literal has no `Wrapped` field of its own. The engine's duration evaluator already handles unary ADD as "just the value".
+- **Where it's applied:** `paren_duration_expr` and `applyUnaryOpToDurationExpr` (the `±(…)` forms in offsets) now both use the helper. I regenerated `generated_parser.y.go` with goyacc v0.6.0.
+- **Parse-time checks kept:** the "duration must be greater than 0", "division by zero" and "modulo by zero" checks only looked for a bare `*NumberLiteral`. Without a change, `foo[(0)]`, `foo[-(5m)]` and `5s/(0)` would have slipped through to query time. A second helper, `constDurationValue`, sees through the parentheses and unary ±, so these are still rejected while parsing. I compared error messages against the base: they match, with one start position shifted slightly in `foo[+(-(5))]`.
+
+**Results:** `foo offset (5)`, `foo offset -(5)`, `foo offset (5m)`, `foo[(5s)]` and `foo[5m:(1m)]` now print back as written.
+
+**Behaviour changes to be aware of:**
+- `foo offset +(5)` prints as `foo offset (5)`. The leading `+` is dropped, as it already was for `+(5*2)`.
+- `((5m))` collapses to `(5m)`, as it already does for multi-term expressions.
+- `foo offset (5)` and `foo[(5s)]` now parse to `OriginalOffsetExpr` / `RangeExpr` rather than a fixed `OriginalOffset` / `Range`. The value is only filled in when the engine evaluates the query, the same as for `(5m + 1m)` today. Any code that reads `Range` or `OriginalOffset` straight from a parsed tree, without running a query, will see 0 for these inputs.
+
+**Tests:**
+- `printer_test.go`: round-trip cases for each form above.
+- `parse_test.go`: updated the expected trees for `foo offset ±(5)`, and added error cases `foo[(0m)]`, `foo[-(5m)]`, `foo offset (4d/(0))` and `foo offset (4d%-(0))`.
+- `duration_expression.test`: query-result checks for `offset (4)`, `offset -(4)`, `offset +(4s)` and `[(30m)]`.
+
+The wider `go test` run over `./promql/... ./rules/... ./cmd/... ./web/... ./model/... ./util/...` had one failure: `TestHeadCompactionWhileScraping` in `cmd/prometheus` timed out ("Condition never satisfied"). That test doesn't touch the parser, and each block write in its log took 3–5 seconds. I didn't re-run it on the base commit to confirm it fails there too.

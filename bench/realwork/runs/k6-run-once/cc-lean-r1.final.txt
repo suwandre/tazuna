@@ -1,0 +1,13 @@
+I added `--once` to `k6 run`, `k6 cloud run` and `k6 archive`. The new tests and `go test ./internal/cmd` pass. I didn't test `k6 cloud run` or `k6 archive` with `--once`.
+
+- **Flag:** `--once` is registered in `optionFlagSet()`, so those three commands get it.
+- **Transform:** `executor.ApplyOnce` is in the new `lib/executor/once.go`. It runs after config consolidation, from `consolidateDeriveAndValidateConfig` in `internal/cmd/test_load.go`.
+- **No scenarios:** it creates a `default` shared-iterations scenario with 1 VU and 1 iteration. Any `vus`, `iterations`, `duration` or `stages` from the script, environment or config file are cleared.
+- **One scenario:** it keeps the name, `exec`, `env`, `tags` and browser options, and swaps the executor for shared-iterations with 1 VU and 1 iteration. Everything else is dropped, including `startTime`.
+- **Several scenarios:** it fails with `--once can run a single scenario only`.
+- **Conflicts:** passing `--vus`, `--iterations`, `--duration` or `--stage` together with `--once` fails with `--once cannot be combined with --<flag>`. Both errors carry the invalid-config exit code.
+- **Tests:** unit tests are in `lib/executor/once_test.go`. End-to-end `k6 run` tests are in `internal/cmd/tests/cmd_run_once_test.go`. They cover no scenarios, one scenario keeping `exec` and tags, multiple scenarios, and the flag conflict.
+
+In the full `./lib/...` run, `TestVUHandleStartStopRace` in `lib/executor` panicked once with "returning took too long". It passed three times when I reran it alone. It doesn't exercise any code I changed, so I treated it as a timing flake.
+
+I didn't add a release-notes entry.

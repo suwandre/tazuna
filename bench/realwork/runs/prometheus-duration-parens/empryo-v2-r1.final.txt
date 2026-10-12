@@ -1,0 +1,15 @@
+Edits applied (the failure was in the run step). Build and probe.The sed failed (macOS), so I'll read the test file and edit it directly.Parentheses around a plain duration literal now survive `Expr.String()` for all five failing inputs. `go test` passes for `./promql/parser`, `./promql/promqltest`, `./web/api/v1` and `./cmd/promtool`. I didn't re-run the rest of `./promql/...` after the final edits.
+
+`foo offset (5)` now prints `foo offset (5)`, `foo offset -(5)` prints `foo offset -(5)`, `foo[(5s)]` prints `foo[(5s)]`, and so on. A bare `5` keeps printing as `5`; it isn't reformatted to `5s`.
+
+**Cause:** `*NumberLiteral` has no `Wrapped` field, so the parser handed back the bare literal and the parentheses were lost.
+
+**Fix:** a parenthesised literal is now represented as a unary-plus `*DurationExpr` with `Wrapped: true`. The helper `wrapDurationLiteral` and the grammar changes are in `promql/parser/parse.go`, `generated_parser.y` and `generated_parser.y.go`. I edited `generated_parser.y.go` by hand to match the `.y` file, so regenerating with `goyacc` would be a good check.
+
+**Behaviour changes:**
+- `foo[(0)]` and `foo[-(5)]` still fail at parse time with "duration must be greater than 0". I added a check in `positive_duration_expr` so the new wrapper doesn't push that error to evaluation.
+- `foo offset +(5)` and `foo offset -(5)` now parse to `OriginalOffsetExpr` instead of `OriginalOffset`, and I updated those two cases in `promql/parser/parse_test.go` to match. The engine already evaluates this shape, and `promql/promqltest` passes.
+
+I added `TestParenthesisedDurationLiteralRoundTrip` in `promql/parser/duration_paren_test.go`. It covers your tables plus `foo[(5):(1)]` and `foo offset (5m) + 1`, and checks that a second parse prints the same string.
+
+The tooling appended `.empryo` to `.gitignore`, and I couldn't revert it here. You'll probably want to drop that line before committing.

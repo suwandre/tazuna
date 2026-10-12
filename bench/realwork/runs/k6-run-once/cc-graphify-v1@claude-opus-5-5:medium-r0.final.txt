@@ -1,0 +1,26 @@
+I added `--once` to `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`. Tests and lint pass for the changed packages, apart from one timing test in `lib/executor` that fails on the base commit too (details at the end).
+
+**How it works**
+- **The flag:** it's defined next to the other run options in `internal/cmd/options.go`. Because that set of options is shared, `k6 cloud upload` and the legacy `k6 cloud` command get `--once` as well.
+- **Where it applies:** `applyOnceFlag` (`internal/cmd/config.go`) runs in `consolidateDeriveAndValidateConfig` right after the config layers are merged, before the existing step that turns `--vus`/`--iterations`/etc. into a scenario. So `--once` wins over values from the script, config file and env vars (e.g. `K6_ITERATIONS`), which avoids the #883/#2529 problems. It also changes the merged config, which is what archives and cloud uploads are built from, so they get the 1/1 scenario too.
+- **Conflicting flags:** `--once` combined with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>` (invalid-config exit code). `--vus` is on the list even though the proposal only gave `--iterations` as an example; drop it from `onceConflictingFlags` if you'd rather allow it.
+- **The transformation:** it's done by `executor.ApplyOnce` in the new `lib/executor/once.go`:
+  - **No scenarios:** creates a default `shared-iterations` scenario with 1 VU and 1 iteration.
+  - **One scenario:** replaces it with a 1/1 `shared-iterations` scenario that keeps the scenario name, `exec`, `env`, `tags` and `options` (browser options). Everything else is dropped, including `startTime` and `gracefulStop`.
+  - **More than one scenario:** fails with `--once can run a single scenario only`.
+  - **Shortcut options:** `vus`, `iterations`, `duration` and `stages` are cleared.
+- `setup()` and `teardown()` still run.
+
+**Tests added**
+- `lib/executor/once_test.go`: covers the three cases, and checks that the later shortcut step leaves the result unchanged.
+- `internal/cmd/tests/cmd_run_once_test.go`: end-to-end runs.
+  - A script with `vus: 10, iterations: 100` runs once and still calls setup and teardown.
+  - A `constant-arrival-rate` scenario runs 1/1 and keeps its exec function, env and tags.
+  - The multiple-scenario case and each conflicting flag return their errors.
+- `TestArchiveOnce` (`internal/cmd/archive_test.go`) and `TestCloudRunOnce` (`internal/cmd/tests/cmd_cloud_run_test.go`): check that the archive's `metadata.json` (written locally or uploaded to the mocked cloud) contains the converted scenario.
+
+**Results**
+- `go test -race ./internal/cmd/...` passes and `golangci-lint` reports 0 issues.
+- `go test -race ./lib/executor/` fails in `TestVUHandleStartStopRace` ("returning took too long"). It fails the same way with my changes stashed, and passes when run by itself, so it's an existing timing flake under load, not something this change caused.
+
+Nothing is committed yet.

@@ -1,0 +1,11 @@
+Fixed. A `for_each` resource now gets every one of its import blocks, not just the first.
+
+**Cause:** `refactoring.FindImportStatements` in `internal/refactoring/import_statement.go` keyed import blocks by config resource and kept one block per resource. That dedup was meant to let a parent module's import override a child module's. The old equality check was always true, so a second import block for the same resource in the same module was dropped too. Single-instance resources were never affected, which matches your report.
+
+**Fix:** `FindImportStatements` now returns a slice of all import blocks, in the order they are found. A block is skipped only when a different, ancestor module has already claimed that config resource, which is the intended parent-overrides-child rule. `findImportTargets` in `internal/terraform/context_plan.go` is the only caller, and I updated it for the new return type.
+
+**Tests:** I added `TestContext2Plan_importMultipleBlocksSameResource` in `internal/terraform/context_plan_import_test.go`. It plans three separate import blocks against one `for_each` resource. It fails without the fix (the second and third instances aren't imported) and passes with it. `go test` passes for `./refactoring`, `./terraform` and `./configs`.
+
+**Left alone:** the per-instance plan node still takes its `importConfig` from the first import block (`n.importTargets[0].Config`). Only config generation reads it, and that doesn't apply to resources that already have config.
+
+I didn't test `count`, but it goes through the same code path.

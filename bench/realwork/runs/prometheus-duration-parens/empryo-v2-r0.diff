@@ -1,0 +1,293 @@
+diff --git a/.gitignore b/.gitignore
+index cc4cf38..29c172b 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -33,3 +33,4 @@ npm_licenses.tar.bz2
+ 
+ # Ignore parser debug
+ y.output
++.empryo
+diff --git a/promql/parser/generated_parser.y b/promql/parser/generated_parser.y
+index da9bc93..d72b9c3 100644
+--- a/promql/parser/generated_parser.y
++++ b/promql/parser/generated_parser.y
+@@ -579,9 +579,9 @@ paren_expr      : LEFT_PAREN expr RIGHT_PAREN
+ 
+ positive_duration_expr : duration_expr
+                         {
+-                            if numLit, ok := $1.(*NumberLiteral); ok {
+-                                if numLit.Val <= 0 {
+-                                    yylex.(*parser).addParseErrf(numLit.PositionRange(), "duration must be greater than 0")
++                            if v, ok := constantDuration($1); ok {
++                                if v <= 0 {
++                                    yylex.(*parser).addParseErrf($1.PositionRange(), "duration must be greater than 0")
+                                     $$ = &NumberLiteral{Val: 0} // Return 0 on error.
+                                     break
+                                 }
+@@ -662,8 +662,8 @@ matrix_selector : expr LEFT_BRACKET positive_duration_expr RIGHT_BRACKET
+                         }
+ 
+                         var rangeNl time.Duration
+-                        if numLit, ok := $3.(*NumberLiteral); ok {
+-                                rangeNl = time.Duration(math.Round(numLit.Val*float64(time.Second)))
++                        if v, ok := constantDuration($3); ok {
++                                rangeNl = time.Duration(math.Round(v * float64(time.Second)))
+                         }
+                         rangeExpr, _ := $3.(*DurationExpr)
+                         $$ = &MatrixSelector{
+@@ -679,12 +679,12 @@ subquery_expr   : expr LEFT_BRACKET positive_duration_expr COLON positive_durati
+                         {
+                         var rangeNl time.Duration
+                         var stepNl time.Duration
+-                        if numLit, ok := $3.(*NumberLiteral); ok {
+-                                rangeNl = time.Duration(math.Round(numLit.Val*float64(time.Second)))
++                        if v, ok := constantDuration($3); ok {
++                                rangeNl = time.Duration(math.Round(v * float64(time.Second)))
+                         }
+                         rangeExpr, _ := $3.(*DurationExpr)
+-                        if numLit, ok := $5.(*NumberLiteral); ok {
+-                                stepNl = time.Duration(math.Round(numLit.Val*float64(time.Second)))
++                        if v, ok := constantDuration($5); ok {
++                                stepNl = time.Duration(math.Round(v * float64(time.Second)))
+                         }
+                         stepExpr, _ := $5.(*DurationExpr)
+                         $$ = &SubqueryExpr{
+@@ -699,8 +699,8 @@ subquery_expr   : expr LEFT_BRACKET positive_duration_expr COLON positive_durati
+                 | expr LEFT_BRACKET positive_duration_expr COLON RIGHT_BRACKET
+                         {
+                         var rangeNl time.Duration
+-                        if numLit, ok := $3.(*NumberLiteral); ok {
+-                                rangeNl = time.Duration(math.Round(numLit.Val*float64(time.Second)))
++                        if v, ok := constantDuration($3); ok {
++                                rangeNl = time.Duration(math.Round(v * float64(time.Second)))
+                         }
+                         rangeExpr, _ := $3.(*DurationExpr)
+                         $$ = &SubqueryExpr{
+@@ -1402,6 +1402,10 @@ paren_duration_expr : LEFT_PAREN duration_expr RIGHT_PAREN
+                                 $$ = durationExpr
+                                 break
+                             }
++                            if nl, ok := $2.(*NumberLiteral); ok {
++                                $$ = wrapDurationLiteral(nl, $1.Pos)
++                                break
++                            }
+                             $$ = $2
+                         }
+                 ;
+diff --git a/promql/parser/generated_parser.y.go b/promql/parser/generated_parser.y.go
+index 846d830..b3fdcf8 100644
+--- a/promql/parser/generated_parser.y.go
++++ b/promql/parser/generated_parser.y.go
+@@ -1648,9 +1648,9 @@ yydefault:
+ 	case 85:
+ 		yyDollar = yyS[yypt-1 : yypt+1]
+ 		{
+-			if numLit, ok := yyDollar[1].node.(*NumberLiteral); ok {
+-				if numLit.Val <= 0 {
+-					yylex.(*parser).addParseErrf(numLit.PositionRange(), "duration must be greater than 0")
++			if v, ok := constantDuration(yyDollar[1].node); ok {
++				if v <= 0 {
++					yylex.(*parser).addParseErrf(yyDollar[1].node.PositionRange(), "duration must be greater than 0")
+ 					yyVAL.node = &NumberLiteral{Val: 0} // Return 0 on error.
+ 					break
+ 				}
+@@ -1723,8 +1723,8 @@ yydefault:
+ 			}
+ 
+ 			var rangeNl time.Duration
+-			if numLit, ok := yyDollar[3].node.(*NumberLiteral); ok {
+-				rangeNl = time.Duration(math.Round(numLit.Val * float64(time.Second)))
++			if v, ok := constantDuration(yyDollar[3].node); ok {
++				rangeNl = time.Duration(math.Round(v * float64(time.Second)))
+ 			}
+ 			rangeExpr, _ := yyDollar[3].node.(*DurationExpr)
+ 			yyVAL.node = &MatrixSelector{
+@@ -1739,12 +1739,12 @@ yydefault:
+ 		{
+ 			var rangeNl time.Duration
+ 			var stepNl time.Duration
+-			if numLit, ok := yyDollar[3].node.(*NumberLiteral); ok {
+-				rangeNl = time.Duration(math.Round(numLit.Val * float64(time.Second)))
++			if v, ok := constantDuration(yyDollar[3].node); ok {
++				rangeNl = time.Duration(math.Round(v * float64(time.Second)))
+ 			}
+ 			rangeExpr, _ := yyDollar[3].node.(*DurationExpr)
+-			if numLit, ok := yyDollar[5].node.(*NumberLiteral); ok {
+-				stepNl = time.Duration(math.Round(numLit.Val * float64(time.Second)))
++			if v, ok := constantDuration(yyDollar[5].node); ok {
++				stepNl = time.Duration(math.Round(v * float64(time.Second)))
+ 			}
+ 			stepExpr, _ := yyDollar[5].node.(*DurationExpr)
+ 			yyVAL.node = &SubqueryExpr{
+@@ -1760,8 +1760,8 @@ yydefault:
+ 		yyDollar = yyS[yypt-5 : yypt+1]
+ 		{
+ 			var rangeNl time.Duration
+-			if numLit, ok := yyDollar[3].node.(*NumberLiteral); ok {
+-				rangeNl = time.Duration(math.Round(numLit.Val * float64(time.Second)))
++			if v, ok := constantDuration(yyDollar[3].node); ok {
++				rangeNl = time.Duration(math.Round(v * float64(time.Second)))
+ 			}
+ 			rangeExpr, _ := yyDollar[3].node.(*DurationExpr)
+ 			yyVAL.node = &SubqueryExpr{
+@@ -2546,6 +2546,10 @@ yydefault:
+ 				yyVAL.node = durationExpr
+ 				break
+ 			}
++			if nl, ok := yyDollar[2].node.(*NumberLiteral); ok {
++				yyVAL.node = wrapDurationLiteral(nl, yyDollar[1].item.Pos)
++				break
++			}
+ 			yyVAL.node = yyDollar[2].node
+ 		}
+ 	}
+diff --git a/promql/parser/parse.go b/promql/parser/parse.go
+index a56f16a..953f922 100644
+--- a/promql/parser/parse.go
++++ b/promql/parser/parse.go
+@@ -1070,6 +1070,11 @@ func (p *parser) addOffsetExpr(e Node, expr *DurationExpr) {
+ 		p.addParseErrf(e.PositionRange(), "offset may not be set multiple times")
+ 	case orgoffsetexprp != nil:
+ 		*orgoffsetexprp = expr
++		// A parenthesised plain duration literal is kept as an expression so
++		// the parentheses survive printing, but its value is known up front.
++		if v, ok := constantDuration(expr); ok {
++			*orgoffsetp = time.Duration(math.Round(v * float64(time.Second)))
++		}
+ 	}
+ 
+ 	*endPosp = p.lastClosing
+@@ -1214,10 +1219,44 @@ func (p *parser) experimentalDurationExpr(e Expr) {
+ 	}
+ }
+ 
++// constantDuration returns the value in seconds of n when it is a plain number
++// literal, possibly wrapped in parentheses and/or unary signs, and so needs no
++// evaluation.
++func constantDuration(n Node) (float64, bool) {
++	switch e := n.(type) {
++	case *NumberLiteral:
++		return e.Val, true
++	case *DurationExpr:
++		if e.LHS != nil || e.RHS == nil {
++			return 0, false
++		}
++		v, ok := constantDuration(e.RHS)
++		if !ok {
++			return 0, false
++		}
++		switch e.Op {
++		case ADD:
++			return v, true
++		case SUB:
++			return -v, true
++		}
++	}
++	return 0, false
++}
++
++// wrapDurationLiteral turns a number literal into a unary-plus *DurationExpr
++// flagged as parenthesised, since *NumberLiteral cannot record its parentheses.
++func wrapDurationLiteral(nl *NumberLiteral, start posrange.Pos) *DurationExpr {
++	return &DurationExpr{Op: ADD, RHS: nl, Wrapped: true, StartPos: start}
++}
++
+ // applyUnaryOpToDurationExpr applies a unary operator to a duration expression
+ // node, which may be a *DurationExpr or a *NumberLiteral. When wrapped is true
+ // (parenthesised form), the Wrapped flag is set on *DurationExpr nodes.
+ func (p *parser) applyUnaryOpToDurationExpr(op Item, expr Node, wrapped bool) Node {
++	if nl, ok := expr.(*NumberLiteral); ok && wrapped {
++		expr = wrapDurationLiteral(nl, op.Pos)
++	}
+ 	switch e := expr.(type) {
+ 	case *DurationExpr:
+ 		if wrapped {
+diff --git a/promql/parser/parse_test.go b/promql/parser/parse_test.go
+index b1912e1..944f6c0 100644
+--- a/promql/parser/parse_test.go
++++ b/promql/parser/parse_test.go
+@@ -1718,6 +1718,12 @@ var testExpr = []struct {
+ 		expected: &VectorSelector{
+ 			Name:           "foo",
+ 			OriginalOffset: 5 * time.Second,
++			OriginalOffsetExpr: &DurationExpr{
++				Op:       ADD,
++				RHS:      &NumberLiteral{Val: 5, PosRange: posrange.PositionRange{Start: 13, End: 14}},
++				Wrapped:  true,
++				StartPos: 11,
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+@@ -1729,12 +1735,23 @@ var testExpr = []struct {
+ 		expected: &VectorSelector{
+ 			Name:           "foo",
+ 			OriginalOffset: -5 * time.Second,
++			OriginalOffsetExpr: &DurationExpr{
++				Op: SUB,
++				RHS: &DurationExpr{
++					Op:       ADD,
++					RHS:      &NumberLiteral{Val: 5, PosRange: posrange.PositionRange{Start: 13, End: 14}},
++					Wrapped:  true,
++					StartPos: 11,
++				},
++				StartPos: 11,
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+ 			PosRange: posrange.PositionRange{Start: 0, End: 15},
+ 		},
+ 	},
++
+ 	{
+ 		input: `http_requests{group="production"} + on(instance) group_left(job,instance) cpu_count{type="smp"}`,
+ 		fail:  true,
+diff --git a/promql/parser/printer.go b/promql/parser/printer.go
+index 703dd09..baf34eb 100644
+--- a/promql/parser/printer.go
++++ b/promql/parser/printer.go
+@@ -325,10 +325,10 @@ func (node *SubqueryExpr) ShortString() string {
+ // getSubqueryTimeSuffix returns the '[<range>:<step>] @ <timestamp> offset <offset>' suffix of the subquery.
+ func (node *SubqueryExpr) getSubqueryTimeSuffix() string {
+ 	step := ""
+-	if node.Step != 0 {
+-		step = model.Duration(node.Step).String()
+-	} else if node.StepExpr != nil {
++	if node.StepExpr != nil {
+ 		step = node.StepExpr.String()
++	} else if node.Step != 0 {
++		step = model.Duration(node.Step).String()
+ 	}
+ 	offset := ""
+ 	switch {
+diff --git a/promql/parser/printer_test.go b/promql/parser/printer_test.go
+index 8be35d9..3bd9360 100644
+--- a/promql/parser/printer_test.go
++++ b/promql/parser/printer_test.go
+@@ -269,6 +269,25 @@ func TestExprString(t *testing.T) {
+ 		{
+ 			in: "foo offset -(step())",
+ 		},
++		{
++			in: "foo offset (5)",
++		},
++		{
++			in:  "foo offset +(5)",
++			out: "foo offset (5)",
++		},
++		{
++			in: "foo offset -(5)",
++		},
++		{
++			in: "foo offset (5m)",
++		},
++		{
++			in: "foo[(5s)]",
++		},
++		{
++			in: "foo[(5s):(1s)]",
++		},
+ 		{
+ 			in:  "foo offset +(5*2)",
+ 			out: "foo offset (5 * 2)",

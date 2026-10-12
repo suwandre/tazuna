@@ -1,0 +1,17 @@
+All work is complete. Here's a summary.
+
+## Summary
+
+**Root cause.** Exemplars live only in the in-memory circular buffer and survive a restart via WAL replay. After head compaction persists a series' samples, the series has no unpersisted data and is removed from the head. When the WAL is subsequently checkpointed, the series record is dropped once the series' WAL expiry passes — but an exemplar record with a newer timestamp may still sit in a WAL segment that is still replayed. On restart, replay could not resolve the series ref, counted it under `prometheus_tsdb_wal_replay_unknown_refs_total{type="exemplars"}`, and dropped the exemplar.
+
+**Fix (`tsdb/head.go`, `tsdb/exemplar.go`).**
+- `CircularExemplarStorage.seriesWithExemplarAtOrAfter` reports every series holding an exemplar at or after the WAL replay cutoff (`Head.minValidTime`). Timestamps ≤ 0 are treated as ordinary timestamps.
+- `Head.exemplarRetentionSet` builds that set **up front, before taking any stripe lock**, converting labels to the same serialization the exemplar index uses. Doing it up front avoids a lock-order inversion with WAL checkpointing (which takes the exemplar lock then stripe locks).
+- Both GC paths (`stripeSeries.gc` for ordinary/stale compaction and `stripeSeries.gcSeries` for selected-series/stale compaction) now keep a series whose samples were just persisted when its labels are in the retention set. For selected/stale compaction the now-persisted head and mmapped chunks and the appender are released (`releaseExemplarRetainedChunks`), `firstChunkID` advances, the mmap-ready counter is decremented, and `rmChunks` counts the chunks exactly once. An empty retained series contributes nothing to `actualMint`, so it does not hold back `HeadMinTime`; a subsequent compaction of the shell writes no block and counts nothing.
+- `memSeries.resetSampleState` clears the last-sample fields for retained shells, keeping the stale-series and native-histogram gauges in sync. Existing late-append protection is untouched (retained series keep any chunks appended after the snapshot).
+
+**Tests added.**
+- `tsdb/exemplar_test.go`: `TestCircularExemplarStorage_SeriesWithExemplarAtOrAfter` (cutoff semantics, zero/negative timestamps).
+- `tsdb/db_test.go`: coverage for all three removal paths (`DB.Compact`, `CompactSelectedSeries`, `CompactStaleHead`), end-to-end restart survival after a checkpoint, chunk release/counting exactly once and no extra block on re-compaction, both appender APIs, memory-snapshot restart, cutoff-past-exemplar eviction, zero/negative timestamps, late-append survival, and no `unknown_refs` on replay.
+
+**Verification.** `go build ./...` clean. Full `go test ./tsdb/` suite passes (also under `-race`, and with the `dedupelabels` and `slicelabels` build tags). I confirmed every new behavioral test fails when the retention hook is disabled, demonstrating it reproduces the bug.

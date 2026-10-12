@@ -1,0 +1,7 @@
+{
+  "kind": "feature",
+  "difficulty_note": "Add a `--once` flag for k6 run / cloud run / archive that rewrites the consolidated config to a single shared-iterations scenario with 1 VU/1 iteration while preserving scenario fields. Hidden_cmd runs the CLI-level tests only; PR unit tests on internal helpers (once_test.go) and the multiple-scenario error test (its message wording differs from the ticket) were excluded.",
+  "files_changed": 4,
+  "lines_changed": 164,
+  "merged_at": "2026-09-09T15:53:06Z"
+}

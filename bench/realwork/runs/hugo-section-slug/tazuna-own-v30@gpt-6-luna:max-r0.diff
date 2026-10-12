@@ -1,0 +1,226 @@
+diff --git a/docs/content/en/content-management/urls.md b/docs/content/en/content-management/urls.md
+index 0a7095f..60cdb69 100644
+--- a/docs/content/en/content-management/urls.md
++++ b/docs/content/en/content-management/urls.md
+@@ -22,7 +22,7 @@ Override the default URL for a page using these front matter fields.
+ 
+ ### Slug
+ 
+-Set the `slug` in front matter to override the last segment of the path. This front matter field is not applicable to `home`, `section`, `taxonomy`, or `term` pages.
++Set the `slug` in front matter to override the last segment of the path. This applies to regular, section, taxonomy, and term pages, but not to the home page. A section slug also changes the URL path for all descendant pages.
+ 
+ {{< code-toggle file=content/posts/post-1.md fm=true >}}
+ title = 'My First Post'
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..cbfea49 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -18,6 +18,8 @@ import (
+ 	"path"
+ 	"strings"
+ 
++	"github.com/gohugoio/hugo/common/paths"
++	"github.com/gohugoio/hugo/hugofs/files"
+ 	"github.com/gohugoio/hugo/output"
+ 
+ 	"github.com/gohugoio/hugo/resources/kinds"
+@@ -115,12 +117,13 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 	pm := p.m
+ 	alwaysInSubDir := p.Kind() == kinds.KindSitemap
+ 	pageInfoPage := p.PathInfo()
+-
+-	pageInfoCurrentSection := p.CurrentSection().PathInfo()
++	currentSection := p.CurrentSection()
++	pageInfoCurrentSection := currentSection.PathInfo()
+ 	if p.s.Conf.DisablePathToLower() {
+ 		pageInfoPage = pageInfoPage.Unnormalized()
+ 		pageInfoCurrentSection = pageInfoCurrentSection.Unnormalized()
+ 	}
++	pageInfoPage, pageInfoCurrentSection = applyBranchSlugsToPaths(p, currentSection, pageInfoPage, pageInfoCurrentSection)
+ 
+ 	desc := page.TargetPathDescriptor{
+ 		PathSpec:    d.PathSpec,
+@@ -207,3 +210,61 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 
+ 	return desc, nil
+ }
++
++func applyBranchSlugsToPaths(p *pageState, currentSection page.Page, pageInfoPage, pageInfoCurrentSection *paths.Path) (*paths.Path, *paths.Path) {
++	if currentSection.IsHome() {
++		return pageInfoPage, pageInfoCurrentSection
++	}
++
++	sections := currentSection.Ancestors().Reverse()
++	sections = append(sections, currentSection)
++
++	var (
++		sourceBranchPath string
++		targetBranchPath string
++		hasBranchSlug    bool
++	)
++
++	for _, section := range sections {
++		if section.IsHome() {
++			continue
++		}
++
++		sectionPathInfo := section.PathInfo()
++		if p.s.Conf.DisablePathToLower() {
++			sectionPathInfo = sectionPathInfo.Unnormalized()
++		}
++		sectionPath := sectionPathInfo.Base()
++		targetPath := sectionPath
++		if sourceBranchPath != "" && strings.HasPrefix(sectionPath, sourceBranchPath+"/") {
++			targetPath = targetBranchPath + strings.TrimPrefix(sectionPath, sourceBranchPath)
++		}
++		if slug := section.Slug(); slug != "" {
++			targetPath = path.Join(path.Dir(targetPath), slug)
++			hasBranchSlug = true
++		}
++
++		sourceBranchPath = sectionPath
++		targetBranchPath = targetPath
++	}
++
++	if !hasBranchSlug {
++		return pageInfoPage, pageInfoCurrentSection
++	}
++
++	remap := func(pathInfo *paths.Path) *paths.Path {
++		pagePath := pathInfo.Path()
++		if pagePath != sourceBranchPath && !strings.HasPrefix(pagePath, sourceBranchPath+"/") {
++			return pathInfo
++		}
++
++		pagePath = targetBranchPath + strings.TrimPrefix(pagePath, sourceBranchPath)
++		pathInfo = p.s.Conf.PathParser().Parse(files.ComponentFolderContent, pagePath)
++		if p.s.Conf.DisablePathToLower() {
++			pathInfo = pathInfo.Unnormalized()
++		}
++		return pathInfo
++	}
++
++	return remap(pageInfoPage), remap(pageInfoCurrentSection)
++}
+diff --git a/hugolib/page_test.go b/hugolib/page_test.go
+index 88a6b22..8c0a326 100644
+--- a/hugolib/page_test.go
++++ b/hugolib/page_test.go
+@@ -1290,6 +1290,65 @@ post = ":year/:month/:day/:title/"
+ 	}
+ }
+ 
++func TestSectionSlugAffectsDescendantPaths(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++disableKinds = ["taxonomy", "term"]
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- layouts/page.html --
++{{ .RelPermalink }}
++-- layouts/list.html --
++{{ .RelPermalink }}
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: How to frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++slug: como-frobear
++---
++-- content/help/guides/_index.en.md --
++---
++title: Guides
++---
++-- content/help/guides/_index.es.md --
++---
++slug: guias
++---
++-- content/help/guides/tips.en.md --
++---
++title: Tips
++---
++-- content/help/guides/tips.es.md --
++---
++title: Consejos
++---
++`
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "/help/")
++	b.AssertFileContent("public/es/ayuda/index.html", "/es/ayuda/")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "/help/how-to-frob/")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "/es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/guias/tips/index.html", "/es/ayuda/guias/tips/")
++}
++
+ func TestTranslationKey(t *testing.T) {
+ 	files := `
+ -- hugo.toml --
+diff --git a/hugolib/taxonomy_test.go b/hugolib/taxonomy_test.go
+index c663096..11890a4 100644
+--- a/hugolib/taxonomy_test.go
++++ b/hugolib/taxonomy_test.go
+@@ -131,6 +131,47 @@ Taxonomy Page 1|{{ .Title }}|Hello|{{ .Permalink }}|
+ 	b.AssertFileContent("public/s1/s2/s3s/index.html", "Taxonomy Page 1|This is S3s|Hello|https://example.com/s1/s2/s3s/|")
+ }
+ 
++func TestTaxonomyAndTermSlugs(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++[taxonomies]
++category = "categories"
++-- layouts/list.html --
++{{ .RelPermalink }}
++-- content/page.en.md --
++---
++categories: [music]
++---
++-- content/page.es.md --
++---
++categories: [music]
++---
++-- content/categories/_index.es.md --
++---
++slug: categorias
++---
++-- content/categories/music/_index.es.md --
++---
++slug: musica
++---
++`
++	b := Test(t, files)
++
++	b.AssertFileContent("public/categories/index.html", "/categories/")
++	b.AssertFileContent("public/es/categorias/index.html", "/es/categorias/")
++	b.AssertFileContent("public/categories/music/index.html", "/categories/music/")
++	b.AssertFileContent("public/es/categorias/musica/index.html", "/es/categorias/musica/")
++}
++
+ // https://github.com/gohugoio/hugo/issues/5719
+ func TestTaxonomiesNextGenLoops(t *testing.T) {
+ 	t.Parallel()

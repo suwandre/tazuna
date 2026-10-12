@@ -1,0 +1,22 @@
+I fixed it: a quoted `"{"` or `"}"` (double quotes, backticks or heredoc) is now treated as plain text, not as the start or end of a block. Both `respond "{"` and `respond "}"` now adapt to the right response body. Before, they failed with "wrong argument count" and "Unexpected '}' because no matching opening brace".
+
+**Cause:** the lexer already records whether each token was quoted, but the parser and the `Dispenser` only compared the token's text with `"{"` / `"}"`. So a quoted brace was counted as a real one. One spot already had a partial workaround for quoted braces.
+
+**Fix** (all in `caddyconfig/caddyfile/`):
+- `lexer.go`: added two small helpers, `Token.isOpenBrace()` and `Token.isCloseBrace()`, which only match braces that weren't quoted.
+- `parse.go` and `dispenser.go`: every place that checks for a brace now uses those helpers. That covers site addresses, directive and block nesting, the brace checks, the token collection used by snippets and imports, snippet detection during import, the "anonymous blocks" check, `NextArg`, `NextBlock` and `ArgErr`. This means plugins that read their config through the `Dispenser` get the fix too. The old partial workaround in `directive()` was no longer needed, so I removed it.
+
+**Tests added:**
+- `TestParseOneAndImport`: new cases for a quoted `{` or `}` at the top level of a site, a backtick-quoted brace, quoted braces inside a nested block, and an unclosed block after `"{"` (still an error).
+- `TestDispenser_QuotedBraces`: checks that quoted braces come back as arguments and don't change nesting in `NextBlock`.
+- `TestSnippetsWithQuotedBraces`: a snippet containing quoted braces imports correctly.
+
+**Results:**
+- The three new tests fail without the fix and pass with it.
+- `go test -race ./caddyconfig/... ./modules/caddyhttp/...` passes, and `gofmt` is clean.
+- `./caddytest/integration` failed once while I was running it alongside other packages. It then passed on two clean re-runs; I didn't dig further, but port conflicts are the likely cause.
+- I didn't run `golangci-lint`.
+
+**Behaviour change to note:** a quoted `"{"` on its own line used to give the "Unexpected '{' on a new line" error. It's now treated as an ordinary argument, which is the point of this change.
+
+Nothing is committed. Under the project's contribution rules, the PR has to state that the change was AI-assisted (Claude Opus 5.5), and you'll need to be able to explain every line yourself.

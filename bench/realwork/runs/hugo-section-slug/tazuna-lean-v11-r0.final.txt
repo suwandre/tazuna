@@ -1,0 +1,9 @@
+`slug` in front matter now works on section, taxonomy and term pages. It changes the URL of that page and of everything under it. `go test ./hugolib/... ./resources/...` passes. I didn't run `./check.sh`.
+
+With your example, the Spanish pages come out at `es/ayuda/` and `es/ayuda/como-frobear/`. The English pages stay at `help/` and `help/how-to-frob/`.
+
+- **`resources/page/page_paths.go`:** the target path descriptor has a new `Dir` field. When it's set, it replaces the section path for branch pages and the container dir for regular pages.
+- **`hugolib/page__paths.go`:** a new `sluggedSectionDir` helper walks the section chain from the root down. It swaps in each section's slug for the last path element of that section. It returns nothing when no section in the chain has a slug, so existing sites build exactly as before.
+- **Directories without `_index`:** these aren't sections, so their names are kept. A page in `help/sub/` under a slugged `help` ends up at `es/ayuda/sub/p/`.
+- **Permalink patterns:** if a `[permalinks]` pattern matches a page, it still takes precedence over the slug-based directory.
+- **Test:** `TestSectionSlug` in `hugolib/page_permalink_test.go` covers a slugged section, a slugged leaf bundle, a page in a plain subdirectory, a slugged taxonomy and a slugged term. It checks that the English output is unchanged.

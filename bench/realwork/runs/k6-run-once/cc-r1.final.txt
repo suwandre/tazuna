@@ -1,0 +1,23 @@
+`k6 run`, `k6 cloud run` and `k6 archive` now accept `--once`. It runs the script with 1 VU and 1 iteration and keeps the scenario config. `go test ./internal/cmd/... ./lib/executor/` passes and `golangci-lint` is clean on `./internal/cmd/...`.
+
+There's one flaky test. `TestHTTPAPIServerAddr` failed once with exit code 106 (a port-binding failure) in the first full run. It passed on the base commit and on three repeats plus the full suite with my changes, so it looks unrelated.
+
+I didn't add a `k6 cloud run --once` test, so that path is only covered through the shared code. I also didn't run it against the cloud or with `--local-execution`.
+
+**Behavior**
+- **No scenarios:** the default scenario becomes `shared-iterations` with 1 VU and 1 iteration.
+- **Single scenario:** the executor is replaced by `shared-iterations` with 1 VU and 1 iteration. Name, `exec`, `env`, `tags` and `options` are kept, and `startTime` is reset.
+- **Multiple scenarios:** it errors with `--once can run a single scenario only, but the script defines 2: a, b`.
+- **Shortcut flags:** `--once` with `--vus`, `--iterations`, `--duration` or `--stage` errors with `--once cannot be combined with --<flag>`.
+- **Discarded options:** `vus`, `iterations`, `duration` and `stages` from the script, env or config file are dropped silently. Only CLI flags conflict.
+- **Exit codes:** both errors exit with the invalid-config code.
+- **`setup()`/`teardown()`:** they run normally.
+
+**Where it lives**
+- **New code:** `internal/cmd/once.go` holds the flag and the transform. It runs in `consolidateDeriveAndValidateConfig`, right after `getConsolidatedConfig`, so the shortcut-flag overrides from #883/#2529 don't apply. The archive and cloud test options are built from the consolidated config, so they carry the change too.
+- **Wiring:** `run.go`, `cloud.go` (the `cloud run` flag set) and `archive.go` each add one line.
+- **`k6 cloud upload`:** it doesn't get `--once`, since the issue lists only `run`, `cloud run` and `archive`. Adding it would be one line if you want it.
+
+**Tests**
+- `internal/cmd/once_test.go` covers the transform: no scenarios, single scenario preserving config, multiple scenarios, and each conflicting flag.
+- `internal/cmd/tests/cmd_run_once_test.go` runs through the CLI. It checks that `k6 run --once` runs a single iteration, that `exec`/`env` are preserved and that `setup`/`teardown` run. It checks the error cases. It also reads the output of `k6 archive --once` back and checks the scenario.

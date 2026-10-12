@@ -1,0 +1,20 @@
+Both bugs from the issue are fixed. I kept the changes the earlier attempt left in the working tree, because they were the right approach. I checked them, shortened the long comments to fit AGENTS.md, and ran the tests. Nothing is committed.
+
+**1. A reusable-workflow caller job stays "cancelling" until its children finish** (`models/actions/run_job.go`)
+- **Cause:** a caller job has no task of its own, so cancelling it wrote `cancelled` straight away, even while a child below it was still `cancelling`, waiting for the runner to confirm. When the runner later confirmed, the caller's status didn't change, so the run's status was never recalculated. That left the run stuck in "Cancelling".
+- **Fix:** a caller with children now takes its status from those children, just like during normal runs. It stays `cancelling` while any child, at any nesting depth, is still `cancelling`. When the runner confirms the last one, the callers become `cancelled` and so does the run. A caller with no children is still marked `cancelled` directly.
+
+**2. Cancel and force-cancel now free the runs waiting behind it** (`services/actions/cancel.go`)
+- **Settling the run:** the run's status is now recalculated after every cancel. Before, this only happened when no job changed. This repairs runs already stuck on existing instances, like the rows in the issue.
+- **Waking waiting runs:** when no job needed cancelling (every job was already done), the cancel now also checks the run's concurrency group. That lets the blocked run start.
+
+**Tests:**
+- `TestCancelJobs_ReusableCallerStaysCancellingUntilChildAcknowledged` in `models/actions/run_job_test.go` covers one and two levels of callers. It checks that each caller and the run stay `cancelling` until the runner confirms, then become `cancelled`.
+- `TestForceCancelRun_SettlesRunWithFinalCaller` and `TestCancelRun_SettledRunIsEmitted` in the new `services/actions/cancel_test.go` cover stuck runs: one where the caller is already `cancelled` but a child is still `cancelling`, and one where every job is done. Both cancel and force-cancel should settle the run and wake the waiting run.
+
+**Results:**
+- `go test ./models/actions/` and `go test ./services/actions/` pass.
+- With the two fixed source files temporarily reverted, all three new tests fail, so they do catch the bugs.
+- `make fmt` and `make lint-go` report no issues.
+
+Since you couldn't reproduce this reliably on SQLite: the tests only use the default test database, not MariaDB, and I haven't tried a real runner.

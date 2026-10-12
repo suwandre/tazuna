@@ -1,0 +1,1422 @@
+diff --git a/internal/cmd/config.go b/internal/cmd/config.go
+index 617cdec..c952723 100644
+--- a/internal/cmd/config.go
++++ b/internal/cmd/config.go
+@@ -51,6 +51,9 @@ type Config struct {
+ 	NoUsageReport null.Bool `json:"noUsageReport" envconfig:"K6_NO_USAGE_REPORT"`
+ 	WebDashboard  null.Bool `json:"webDashboard" envconfig:"K6_WEB_DASHBOARD"`
+ 
++	// once carries --once between the layers. Unexported keeps json and envconfig out.
++	once bool
++
+ 	// NoArchiveUpload is an option that is only used when running in local-execution mode with the cloud run
+ 	// command.
+ 	//
+@@ -227,6 +230,17 @@ func getConsolidatedConfig(
+ 		return Config{}, errext.WithExitCodeIfNone(err, exitcodes.InvalidConfig)
+ 	}
+ 
++	// Lower layers drop their shortcuts before the merge; getOptions rejects the CLI ones.
++	if cliConf.once {
++		if err := dropOnceShortcuts(gs.Logger, map[string]*lib.Options{
++			"config":      &fileConf.Options,
++			"script":      &runnerOpts,
++			"environment": &envConf.Options,
++		}); err != nil {
++			return Config{}, err
++		}
++	}
++
+ 	conf := cliConf.Apply(fileConf)
+ 
+ 	warnOnShortHandOverride(conf.Options, runnerOpts, "script", gs.Logger)
+diff --git a/internal/cmd/once.go b/internal/cmd/once.go
+new file mode 100644
+index 0000000..e108818
+--- /dev/null
++++ b/internal/cmd/once.go
+@@ -0,0 +1,134 @@
++package cmd
++
++import (
++	"encoding/json"
++	"fmt"
++	"maps"
++	"slices"
++	"strings"
++
++	"github.com/sirupsen/logrus"
++	"github.com/spf13/pflag"
++	"gopkg.in/guregu/null.v3"
++
++	"go.k6.io/k6/v2/errext"
++	"go.k6.io/k6/v2/errext/exitcodes"
++	"go.k6.io/k6/v2/lib"
++	"go.k6.io/k6/v2/lib/executor"
++)
++
++// --once writes the load itself, so a CLI shortcut would fight the scenario it writes.
++func checkOnceConflicts(flags *pflag.FlagSet) error {
++	if !getNullBool(flags, "once").Bool {
++		return nil
++	}
++	for _, name := range []string{
++		"vus", "duration", "iterations", "stage",
++		"execution-segment", "execution-segment-sequence",
++	} {
++		if flags.Changed(name) {
++			return errext.WithExitCodeIfNone(
++				fmt.Errorf("--once cannot be combined with --%s", name), exitcodes.InvalidConfig)
++		}
++	}
++	return nil
++}
++
++// A shortcut left in a lower layer drops or rewrites the scenario applyOnce writes.
++func dropOnceShortcuts(logger logrus.FieldLogger, layers map[string]*lib.Options) error {
++	var unset lib.Options
++
++	// k6 merges the layers in this order, and the warning follows it.
++	for _, name := range []string{"config", "script", "environment"} {
++		o, ok := layers[name]
++		if !ok {
++			return fmt.Errorf("missing %q layer", name)
++		}
++
++		var dropped []string
++		drop := func(opt string, set bool) {
++			if set {
++				dropped = append(dropped, opt)
++			}
++		}
++		drop("vus", o.VUs.Valid)
++		drop("duration", o.Duration.Valid)
++		drop("iterations", o.Iterations.Valid)
++		drop("stages", o.Stages != nil)
++		drop("executionSegment", o.ExecutionSegment != nil)
++		drop("executionSegmentSequence", o.ExecutionSegmentSequence != nil)
++
++		// Clearing an unset shortcut changes nothing, so only the naming above needs a check.
++		o.VUs = unset.VUs
++		o.Duration = unset.Duration
++		o.Iterations = unset.Iterations
++		o.Stages = unset.Stages
++		o.ExecutionSegment = unset.ExecutionSegment
++		o.ExecutionSegmentSequence = unset.ExecutionSegmentSequence
++
++		if len(dropped) > 0 {
++			logger.Warnf("--once overrode %s in %q configuration", strings.Join(dropped, ", "), name)
++		}
++	}
++
++	return nil
++}
++
++// Bare --once never guesses which scenario runs, so several scenarios are ambiguous.
++func rejectAmbiguousOnce(scenarios lib.ScenarioConfigs) error {
++	if len(scenarios) <= 1 {
++		return nil
++	}
++	names := slices.Sorted(maps.Keys(scenarios))
++	return errext.WithExitCodeIfNone(
++		fmt.Errorf("--once can run only with a single scenario, but got: %s",
++			strings.Join(names, ", ")), exitcodes.InvalidConfig)
++}
++
++// Runs before DeriveScenariosFromShortcuts, so the archive gets the same scenarios.
++func applyOnce(opts lib.Options) (lib.Options, error) {
++	scenarios := opts.Scenarios
++	if len(scenarios) == 0 {
++		scenarios = lib.ScenarioConfigs{lib.DefaultScenarioName: nil}
++	}
++
++	rewritten := make(lib.ScenarioConfigs, len(scenarios))
++	for name, src := range scenarios {
++		sc, err := onceScenario(name, src)
++		if err != nil {
++			return opts, err
++		}
++		rewritten[name] = sc
++	}
++	opts.Scenarios = rewritten
++
++	return opts, nil
++}
++
++func onceScenario(name string, src lib.ExecutorConfig) (lib.ExecutorConfig, error) {
++	once := executor.NewSharedIterationsConfig(name)
++	once.VUs = null.IntFrom(1)
++	once.Iterations = null.IntFrom(1)
++	if src == nil {
++		return once, nil
++	}
++
++	// GetExec collapses an unset exec and an explicit "default" to the same "default",
++	// and the interface exposes no raw getter, so read the null.String through JSON.
++	data, err := json.Marshal(src)
++	if err != nil {
++		return nil, fmt.Errorf("reading the %q scenario: %w", src.GetName(), err)
++	}
++	var raw struct {
++		Exec null.String `json:"exec"`
++	}
++	if err := json.Unmarshal(data, &raw); err != nil {
++		return nil, fmt.Errorf("reading the exec of the %q scenario: %w", src.GetName(), err)
++	}
++	once.Exec = raw.Exec
++	once.Env = src.GetEnv()
++	once.Tags = src.GetTags()
++	once.Options = src.GetScenarioOptions()
++
++	return once, nil
++}
+diff --git a/internal/cmd/once_test.go b/internal/cmd/once_test.go
+new file mode 100644
+index 0000000..46e5d95
+--- /dev/null
++++ b/internal/cmd/once_test.go
+@@ -0,0 +1,243 @@
++package cmd
++
++import (
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/sirupsen/logrus"
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++	"gopkg.in/guregu/null.v3"
++
++	"go.k6.io/k6/v2/errext"
++	"go.k6.io/k6/v2/errext/exitcodes"
++	"go.k6.io/k6/v2/internal/cmd/tests"
++	"go.k6.io/k6/v2/internal/lib/testutils"
++	"go.k6.io/k6/v2/lib"
++	"go.k6.io/k6/v2/lib/executor"
++	"go.k6.io/k6/v2/lib/fsext"
++	"go.k6.io/k6/v2/lib/types"
++)
++
++func TestApplyOncePreservesScenarioName(t *testing.T) {
++	t.Parallel()
++
++	opts := lib.Options{Scenarios: lib.ScenarioConfigs{
++		"ui":  executor.NewConstantVUsConfig("ui"),
++		"api": executor.NewConstantVUsConfig("api"),
++	}}
++
++	res, err := applyOnce(opts)
++	require.NoError(t, err)
++	require.Len(t, res.Scenarios, 2)
++
++	for _, name := range []string{"ui", "api"} {
++		sc, ok := res.Scenarios[name].(executor.SharedIterationsConfig)
++		require.True(t, ok)
++		assert.Equal(t, name, sc.GetName())
++		assert.Equal(t, null.IntFrom(1), sc.VUs)
++		assert.Equal(t, null.IntFrom(1), sc.Iterations)
++	}
++}
++
++func mustExtractSingleSharedIterScenario(t *testing.T, opts lib.Options) executor.SharedIterationsConfig {
++	t.Helper()
++
++	require.Len(t, opts.Scenarios, 1)
++	for _, sc := range opts.Scenarios {
++		shared, ok := sc.(executor.SharedIterationsConfig)
++		require.True(t, ok)
++		return shared
++	}
++	return executor.SharedIterationsConfig{}
++}
++
++func TestApplyOncePreservesScenarioExec(t *testing.T) {
++	t.Parallel()
++
++	for _, tt := range []struct {
++		name string
++		exec null.String
++	}{
++		{"custom", null.StringFrom("api")},
++		{"unset", null.String{}},
++	} {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++
++			src := executor.NewSharedIterationsConfig("ui")
++			src.Exec = tt.exec
++			opts := lib.Options{Scenarios: lib.ScenarioConfigs{"ui": src}}
++
++			res, err := applyOnce(opts)
++			require.NoError(t, err)
++			assert.Equal(t, tt.exec, mustExtractSingleSharedIterScenario(t, res).Exec)
++		})
++	}
++}
++
++func TestApplyOncePreservesScenarioFields(t *testing.T) {
++	t.Parallel()
++
++	for _, tt := range []struct {
++		name  string
++		setup func(*executor.SharedIterationsConfig)
++		check func(*testing.T, executor.SharedIterationsConfig)
++	}{
++		{
++			name:  "env",
++			setup: func(s *executor.SharedIterationsConfig) { s.Env = map[string]string{"GREETING": "hi"} },
++			check: func(t *testing.T, s executor.SharedIterationsConfig) {
++				t.Helper()
++				assert.Equal(t, map[string]string{"GREETING": "hi"}, s.Env)
++			},
++		},
++		{
++			name:  "tags",
++			setup: func(s *executor.SharedIterationsConfig) { s.Tags = map[string]string{"team": "core"} },
++			check: func(t *testing.T, s executor.SharedIterationsConfig) {
++				t.Helper()
++				assert.Equal(t, map[string]string{"team": "core"}, s.Tags)
++			},
++		},
++		{
++			name: "options",
++			setup: func(s *executor.SharedIterationsConfig) {
++				s.Options = &lib.ScenarioOptions{Browser: map[string]any{"type": "chromium"}}
++			},
++			check: func(t *testing.T, s executor.SharedIterationsConfig) {
++				t.Helper()
++				assert.Equal(t, &lib.ScenarioOptions{Browser: map[string]any{"type": "chromium"}}, s.Options)
++			},
++		},
++	} {
++		t.Run(tt.name, func(t *testing.T) {
++			t.Parallel()
++
++			src := executor.NewSharedIterationsConfig("ui")
++			tt.setup(&src)
++			opts := lib.Options{Scenarios: lib.ScenarioConfigs{"ui": src}}
++
++			res, err := applyOnce(opts)
++			require.NoError(t, err)
++
++			sc := mustExtractSingleSharedIterScenario(t, res)
++			tt.check(t, sc)
++		})
++	}
++}
++
++func TestGetConsolidatedConfigOnceDropsLowerLayerShortcuts(t *testing.T) {
++	t.Parallel()
++
++	ts := tests.NewGlobalTestState(t)
++	require.NoError(t, ts.FS.MkdirAll(filepath.Dir(ts.Flags.ConfigFilePath), 0o755))
++	require.NoError(t, fsext.WriteFile(ts.FS, ts.Flags.ConfigFilePath,
++		[]byte(`{"vus": 7, "stages": [{"duration": "10s", "target": 5}]}`), 0o644))
++	ts.Env["K6_ITERATIONS"] = "5"
++
++	segment, err := lib.NewExecutionSegmentFromString("0:1/2")
++	require.NoError(t, err)
++	runnerOpts := lib.Options{
++		Duration:         types.NullDurationFrom(time.Second),
++		ExecutionSegment: segment,
++	}
++
++	conf, err := getConsolidatedConfig(ts.GlobalState, Config{once: true}, runnerOpts, nil)
++	require.NoError(t, err)
++
++	assert.False(t, conf.VUs.Valid)
++	assert.False(t, conf.Duration.Valid)
++	assert.False(t, conf.Iterations.Valid)
++	assert.Nil(t, conf.Stages)
++	assert.Nil(t, conf.ExecutionSegment)
++}
++
++func TestOncePreservesScenarioAcrossLayers(t *testing.T) {
++	t.Parallel()
++
++	ts := tests.NewGlobalTestState(t)
++	require.NoError(t, ts.FS.MkdirAll(filepath.Dir(ts.Flags.ConfigFilePath), 0o755))
++	require.NoError(t, fsext.WriteFile(ts.FS, ts.Flags.ConfigFilePath, []byte(`{"scenarios": {
++		"fromfile": { "executor": "constant-vus", "vus": 3, "duration": "2s", "exec": "api",
++			"env": { "GREETING": "hi" }, "tags": { "team": "core" },
++			"options": { "browser": { "type": "chromium" } } }
++	}}`), 0o644))
++	ts.Env["K6_ITERATIONS"] = "5"
++
++	runnerOpts := lib.Options{Duration: types.NullDurationFrom(time.Second)}
++
++	conf, err := getConsolidatedConfig(ts.GlobalState, Config{once: true}, runnerOpts, nil)
++	require.NoError(t, err)
++
++	opts, err := applyOnce(conf.Options)
++	require.NoError(t, err)
++
++	sc := mustExtractSingleSharedIterScenario(t, opts)
++	assert.Equal(t, "fromfile", sc.GetName())
++	assert.Equal(t, null.IntFrom(1), sc.VUs)
++	assert.Equal(t, null.IntFrom(1), sc.Iterations)
++	assert.Equal(t, null.StringFrom("api"), sc.Exec)
++	assert.Equal(t, map[string]string{"GREETING": "hi"}, sc.Env)
++	assert.Equal(t, map[string]string{"team": "core"}, sc.Tags)
++	assert.Equal(t, &lib.ScenarioOptions{Browser: map[string]any{"type": "chromium"}}, sc.Options)
++}
++
++func TestDropOnceShortcutsWarnsOnlyWhenItDropsShortcuts(t *testing.T) {
++	t.Parallel()
++
++	logger, hook := testutils.NewLoggerWithHook(t, logrus.WarnLevel)
++
++	require.NoError(t, dropOnceShortcuts(logger, map[string]*lib.Options{
++		"config":      {},
++		"script":      {},
++		"environment": {},
++	}))
++	assert.Empty(t, hook.Drain())
++
++	segment, err := lib.NewExecutionSegmentFromString("0:1/2")
++	require.NoError(t, err)
++	require.NoError(t, dropOnceShortcuts(logger, map[string]*lib.Options{
++		"config": {VUs: null.IntFrom(1), Stages: []lib.Stage{
++			{Duration: types.NullDurationFrom(time.Second), Target: null.IntFrom(1)},
++		}},
++		"script": {
++			VUs: null.IntFrom(1), Duration: types.NullDurationFrom(time.Second),
++			ExecutionSegment: segment,
++		},
++		"environment": {Iterations: null.IntFrom(1)},
++	}))
++
++	entries := hook.Drain()
++	require.Len(t, entries, 3)
++	assert.Equal(t, `--once overrode vus, stages in "config" configuration`, entries[0].Message)
++	assert.Equal(t, `--once overrode vus, duration, executionSegment in "script" configuration`, entries[1].Message)
++	assert.Equal(t, `--once overrode iterations in "environment" configuration`, entries[2].Message)
++}
++
++func TestGetOptionsRejectsOnceWithShortcut(t *testing.T) {
++	t.Parallel()
++
++	for _, tt := range []struct{ flag, value string }{
++		{"vus", "1"},
++		{"duration", "10s"},
++		{"iterations", "5"},
++		{"stage", "10s:5"},
++		{"execution-segment", "1/2:1"},
++	} {
++		t.Run(tt.flag, func(t *testing.T) {
++			t.Parallel()
++
++			flags := optionFlagSet()
++			require.NoError(t, flags.Parse([]string{"--once", "--" + tt.flag, tt.value}))
++
++			_, err := getOptions(flags)
++			require.EqualError(t, err, "--once cannot be combined with --"+tt.flag)
++
++			var ec errext.HasExitCode
++			require.ErrorAs(t, err, &ec)
++			assert.Equal(t, exitcodes.InvalidConfig, ec.ExitCode())
++		})
++	}
++}
+diff --git a/internal/cmd/options.go b/internal/cmd/options.go
+index 5dd9e55..cbf5d76 100644
+--- a/internal/cmd/options.go
++++ b/internal/cmd/options.go
+@@ -24,6 +24,7 @@ func optionFlagSet() *pflag.FlagSet {
+ 	flags := pflag.NewFlagSet("", 0)
+ 	flags.SortFlags = false
+ 
++	flags.Bool("once", false, "run the test with 1 VU and 1 iteration")
+ 	flags.Int64P("vus", "u", 1, "number of virtual users")
+ 	flags.DurationP("duration", "d", 0, "test duration limit")
+ 	flags.Int64P("iterations", "i", 0, "script total iteration limit (among all VUs)")
+@@ -79,6 +80,10 @@ func optionFlagSet() *pflag.FlagSet {
+ 
+ //nolint:funlen,gocognit,cyclop // this needs breaking up but probably should wait for croconf
+ func getOptions(flags *pflag.FlagSet) (lib.Options, error) {
++	if err := checkOnceConflicts(flags); err != nil {
++		return lib.Options{}, err
++	}
++
+ 	opts := lib.Options{
+ 		VUs:                     getNullInt64(flags, "vus"),
+ 		Duration:                getNullDuration(flags, "duration"),
+diff --git a/internal/cmd/test_load.go b/internal/cmd/test_load.go
+index bfc6337..90d05b8 100644
+--- a/internal/cmd/test_load.go
++++ b/internal/cmd/test_load.go
+@@ -541,6 +541,8 @@ func (lt *loadedTest) consolidateDeriveAndValidateConfig(
+ 		if err != nil {
+ 			return nil, err
+ 		}
++		// --once is CLI-only, so it rides on the CLI configuration layer.
++		cliConfig.once = getNullBool(cmd.Flags(), "once").Bool
+ 	}
+ 
+ 	gs.Logger.Debug("Consolidating config layers...")
+@@ -550,6 +552,15 @@ func (lt *loadedTest) consolidateDeriveAndValidateConfig(
+ 		return nil, err
+ 	}
+ 
++	if cliConfig.once {
++		if err = rejectAmbiguousOnce(consolidatedConfig.Scenarios); err != nil {
++			return nil, err
++		}
++		if consolidatedConfig.Options, err = applyOnce(consolidatedConfig.Options); err != nil {
++			return nil, err
++		}
++	}
++
+ 	gs.Logger.Debug("Parsing thresholds and validating config...")
+ 	// Parse the thresholds, only if the --no-threshold flag is not set.
+ 	// If parsing the threshold expressions failed, consider it as an
+diff --git a/internal/cmd/tests/cmd_once_test.go b/internal/cmd/tests/cmd_once_test.go
+new file mode 100644
+index 0000000..90dfea3
+--- /dev/null
++++ b/internal/cmd/tests/cmd_once_test.go
+@@ -0,0 +1,175 @@
++package tests
++
++import (
++	"bytes"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/stretchr/testify/assert"
++	"github.com/stretchr/testify/require"
++	"gopkg.in/guregu/null.v3"
++
++	"go.k6.io/k6/v2/errext/exitcodes"
++	"go.k6.io/k6/v2/internal/cmd"
++	"go.k6.io/k6/v2/lib"
++	"go.k6.io/k6/v2/lib/executor"
++	"go.k6.io/k6/v2/lib/fsext"
++)
++
++func TestRunOnce(t *testing.T) {
++	t.Parallel()
++
++	script := `
++		import { Counter } from 'k6/metrics';
++
++		export const options = {
++			tags: { top: 'level' },
++			thresholds: { 'hits{top:level}': ['count==1'] },
++		};
++
++		const hits = new Counter('hits');
++
++		export default function () {
++			hits.add(1);
++			console.log('once ran');
++		}
++	`
++
++	ts := getSingleFileTestState(t, script, []string{"--log-output=stdout", "--once"}, 0)
++	cmd.ExecuteWithGlobalState(ts.GlobalState)
++
++	stdout := ts.Stdout.String()
++	assert.Contains(t, stdout, "1 iterations shared among 1 VUs")
++	assert.Equal(t, 1, strings.Count(stdout, "once ran"))
++	assert.Contains(t, stdout, "hits{top:level}")
++	assert.Contains(t, stdout, "'count==1' count=1")
++}
++
++func TestRunOnceRejectsMultipleScenarios(t *testing.T) {
++	t.Parallel()
++
++	script := `
++		export const options = { scenarios: {
++			s1: { executor: 'shared-iterations' },
++			s2: { executor: 'shared-iterations' }
++		}};
++		export default function() {}
++	`
++
++	ts := getSingleFileTestState(t, script,
++		[]string{"--log-output=stdout", "--once"}, exitcodes.InvalidConfig)
++	cmd.ExecuteWithGlobalState(ts.GlobalState)
++
++	assert.Contains(t, ts.Stdout.String(),
++		"--once can run only with a single scenario")
++}
++
++const onceCloudScript = `
++	export const options = {
++		cloud: { name: 'once', projectID: 123456 },
++		scenarios: {
++			ui: { executor: 'shared-iterations', vus: 3, iterations: 9 }
++		}
++	};
++	export default function() { console.log('once ran'); }
++`
++
++func mustExtractSingleSharedIterScenario(t *testing.T, opts lib.Options) executor.SharedIterationsConfig {
++	t.Helper()
++
++	require.Len(t, opts.Scenarios, 1)
++	for _, sc := range opts.Scenarios {
++		shared, ok := sc.(executor.SharedIterationsConfig)
++		require.True(t, ok)
++		return shared
++	}
++	return executor.SharedIterationsConfig{}
++}
++
++func TestCloudRunOnceLocalExecution(t *testing.T) {
++	t.Parallel()
++
++	ts := makeTestState(t, onceCloudScript,
++		[]string{"--log-output=stdout", "--once", "--local-execution"})
++	setupLocalExecutionProvMock(t, ts)
++
++	cmd.ExecuteWithGlobalState(ts.GlobalState)
++
++	stdout := ts.Stdout.String()
++	assert.Contains(t, stdout, "1 iterations shared among 1 VUs")
++	assert.Equal(t, 1, strings.Count(stdout, "once ran"))
++}
++
++func TestCloudRunOnceUploadsRewrittenArchive(t *testing.T) {
++	t.Parallel()
++
++	_, tarData := uploadAndCaptureArchive(t,
++		[]string{"k6", "cloud", "run", "--once", "test.js"}, nil, onceCloudScript)
++
++	arc, err := lib.ReadArchive(bytes.NewReader(tarData))
++	require.NoError(t, err)
++
++	sc := mustExtractSingleSharedIterScenario(t, arc.Options)
++	assert.Equal(t, null.IntFrom(1), sc.VUs)
++	assert.Equal(t, null.IntFrom(1), sc.Iterations)
++}
++
++func buildArchive(t *testing.T, script string, flags ...string) []byte {
++	t.Helper()
++
++	ts := NewGlobalTestState(t)
++	tarPath := filepath.Join(ts.Cwd, "archive.tar")
++	require.NoError(t, fsext.WriteFile(
++		ts.FS, filepath.Join(ts.Cwd, "test.js"), []byte(script), 0o644))
++	ts.CmdArgs = append(append([]string{"k6", "archive"}, flags...), "-O", tarPath, "test.js")
++
++	cmd.ExecuteWithGlobalState(ts.GlobalState)
++
++	tarData, err := fsext.ReadFile(ts.FS, tarPath)
++	require.NoError(t, err)
++
++	return tarData
++}
++
++func TestArchiveOnceWritesRewrittenOptions(t *testing.T) {
++	t.Parallel()
++
++	script := `
++		export const options = { scenarios: {
++			ui: { executor: 'constant-vus', vus: 3, duration: '2s' }
++		}};
++		export default function() {}
++	`
++
++	arc, err := lib.ReadArchive(bytes.NewReader(buildArchive(t, script, "--once")))
++	require.NoError(t, err)
++
++	sc := mustExtractSingleSharedIterScenario(t, arc.Options)
++	assert.Equal(t, null.IntFrom(1), sc.VUs)
++	assert.Equal(t, null.IntFrom(1), sc.Iterations)
++}
++
++func TestRunOnceRewritesPlainArchive(t *testing.T) {
++	t.Parallel()
++
++	script := `
++		export const options = { scenarios: {
++			ui: { executor: 'shared-iterations', vus: 3, iterations: 9 }
++		}};
++		export default function() { console.log('once ran'); }
++	`
++
++	tarData := buildArchive(t, script)
++
++	ts := NewGlobalTestState(t)
++	tarPath := filepath.Join(ts.Cwd, "archive.tar")
++	require.NoError(t, fsext.WriteFile(ts.FS, tarPath, tarData, 0o644))
++	ts.CmdArgs = []string{"k6", "run", "--log-output=stdout", "--once", tarPath}
++
++	cmd.ExecuteWithGlobalState(ts.GlobalState)
++
++	stdout := ts.Stdout.String()
++	assert.Contains(t, stdout, "1 iterations shared among 1 VUs")
++	assert.Equal(t, 1, strings.Count(stdout, "once ran"))
++}
+diff --git a/openspec/changes/once/.openspec.yaml b/openspec/changes/once/.openspec.yaml
+new file mode 100644
+index 0000000..9567240
+--- /dev/null
++++ b/openspec/changes/once/.openspec.yaml
+@@ -0,0 +1,2 @@
++schema: spec-driven
++created: 2026-08-18
+diff --git a/openspec/changes/once/README.md b/openspec/changes/once/README.md
+new file mode 100644
+index 0000000..ee4265b
+--- /dev/null
++++ b/openspec/changes/once/README.md
+@@ -0,0 +1,3 @@
++# `once`
++
++Add `--once` for one VU and one iteration
+diff --git a/openspec/changes/once/design.md b/openspec/changes/once/design.md
+new file mode 100644
+index 0000000..eba3886
+--- /dev/null
++++ b/openspec/changes/once/design.md
+@@ -0,0 +1,110 @@
++## Context
++
++`loadedTest.consolidateDeriveAndValidateConfig()` initializes the runner, merges file, runner,
++environment, and CLI options in `getConsolidatedConfig()`, then calls `deriveAndValidateConfig()`.
++Load shortcuts at the top level can remove a scenario during `Config.Apply()` or replace it in
++`executor.DeriveScenariosFromShortcuts()`.
++
++Cloud execution adds two archive boundaries. `runCloudTest()` resets the runner to consolidated
++options before creating the remote archive. `createCloudTest()` creates the local execution archive
++before `cmdRun.run()` reinjects derived options.
++
++## Goals / Out of scope
++
++**Goals:**
++
++- Keep `--once` command scoped while producing one validated `shared-iterations` scenario for local
++  and cloud execution.
++- Preserve the selected scenario through configuration precedence and put the same transformed
++  execution settings in cloud archives and provisioning requests.
++- Cover the transformation at the narrowest unit, command, and archive test boundaries already
++  present in the repository.
++
++**Out of scope:**
++
++- Add a `once` option to scripts, environment variables, JSON configuration, or archives.
++- Change shortcut precedence without `--once`, add scenario selection, or expose the flag on
++  `archive` or `cloud upload`.
++
++## Decisions
++
++### Keep flag state on the run commands
++
++Register `--once` in `cmdRun.flagSet()` and `cmdCloudRun.flagSet()`, and pass its command state into
++the load and configuration flow. Keep it out of `optionFlagSet()`, `Config`, and `lib.Options`. A
++shared command check rejects conflicting load flags. During consolidation, reject load environment
++variables `K6_VUS`, `K6_ITERATIONS`, `K6_DURATION`, and `K6_STAGES` after they are parsed and before
++they are applied. Both checks run before a VU function or cloud request starts. Adding the flag to
++the shared option model was rejected because that would expose configuration and serialization
++paths and would make `archive` and `cloud upload` accept it.
++
++### Protect scenarios while applying configuration layers
++
++When the mode is active, `getConsolidatedConfig()` or a helper called from it must clear `vus`,
++`iterations`, `duration`, and `stages` at the top level of script, JSON config, and archive option
++layers before `Config.Apply()` can remove an existing scenario. CLI load flags have already failed
++the command check. A combination of `--once` and load environment variables must fail after
++`readEnvConfig()` parses them and before `Config.Apply()` applies them. Scenario maps still follow
++the current precedence.
++
++Clearing the fields only after consolidation was rejected because `Options.Apply()` may already
++have discarded the scenario that must be preserved.
++
++### Replace the effective scenario before derivation and validation
++
++After runner init, consolidation, and defaulting, reject more than one effective scenario. Replace
++zero or one scenario in `consolidatedConfig.Options` with a fresh
++`executor.SharedIterationsConfig`. Preserve the map key, raw nullable `exec`, env, tags, and
++scenario options, then set valid values of 1 for VUs and iterations. Leave `startTime`,
++`maxDuration`, and `gracefulStop` with `Valid == false`. Keep the constructor defaults for
++`maxDuration` and
++`gracefulStop` so they serialize as null but run with the 10 minute and 30 second durations. Do not
++use `ExecutorConfig.GetExec()` to copy `exec`, because it normalizes an unset value to `default`.
++Clear the four load fields at the top level, then pass the result to `deriveAndValidateConfig()`.
++
++This order lets initial decoding reject malformed values and unknown executors, lets the replacement
++discard invalid load combinations, and lets normal validation check the scenario and exported
++function that will run. Transforming after shortcut derivation was rejected because derivation may
++already have replaced the selected scenario.
++
++### Preserve execution segment allocation
++
++Execution segments divide one logical test among k6 processes. They do not define the test's total
++load. Apply the existing execution segment allocation after `--once` creates the global 1 VU / 1
++iteration scenario. Across a complete segment sequence, one segment receives the VU and its
++iteration, and the remaining segments receive no work. Giving every segment a VU and iteration
++would run the logical test more than once.
++
++### Use transformed consolidated options for archives and derived options for execution
++
++The remote path in `runCloudTest()` should keep archiving `test.consolidatedConfig.Options`; those
++options now contain the replacement scenario when `--once` is active and retain existing behavior
++otherwise. The local path must set the runner to the transformed consolidated options before
++`createCloudTest()` calls `makeArchive()`, because archive creation currently precedes the
++reinjection in `cmdRun.run()`.
++
++The scheduler, local provisioning `options`, execution plan, `max_vus`, and `total_duration`
++continue to use `derivedConfig.Options`. `--no-archive-upload` skips only archive creation and still
++provisions from the derived replacement. Using derived options for every archive was rejected
++because it would change how ordinary shortcut configurations are serialized. Only remote
++`k6 cloud run` calls `validate_options`; local cloud execution is checked through its provisioning
++request.
++
++### Put tests at the existing boundaries
++
++Keep source precedence and transformation tables beside `internal/cmd/config_consolidation_test.go`
++and `internal/cmd/config_test.go`. Put local and cloud behavior in
++`internal/cmd/tests/cmd_run_test.go` and `internal/cmd/tests/cmd_cloud_run_test.go`. Use the
++existing v6 and local provisioning test servers to inspect requests and archives. Use one full
++contract case per execution mode and smoke cases for the remaining file, archive, and stdin
++transports.
++
++Include nested browser options in the scenario transformation table with the other fields that the
++transformation preserves.
++
++## Risks and tradeoffs
++
++- Clearing a load field too late can lose the selected scenario. Clear it on each layer before
++  `Config.Apply()` and keep source matrix tests with and without `--once`.
++- The runner, uploaded archive, and provisioning request can diverge. Keep transformed consolidated
++  and derived options explicit, and compare captured archive and request data in both cloud paths.
+diff --git a/openspec/changes/once/proposal.md b/openspec/changes/once/proposal.md
+new file mode 100644
+index 0000000..2bc5e41
+--- /dev/null
++++ b/openspec/changes/once/proposal.md
+@@ -0,0 +1,45 @@
++## Why
++
++People use a run with 1 virtual user and 1 iteration to smoke test and functionally test with k6. Today they must edit the script for each environment or use a shortcut load flag. Shortcut flags replace every declared scenario with a generated `default` scenario, which drops `exec`, `env`, tags, and `options.browser`. A browser iteration can then fail with `browser not found in registry` while the process exits with code 0, so CI and Synthetic Monitoring get no failure signal. Synthetic Monitoring needs to guarantee one iteration for every check without changing the script.
++
++## What Changes
++
++- Add bare `--once` to `k6 run`, `k6 cloud run`, and `k6 cloud run --local-execution`. It works with script files, archives, and standard input.
++- Preserve the running scenario's name, `exec` target, `options` block including `options.browser`, `env`, and `tags`.
++- Replace every other scenario field. The result uses `shared-iterations` with `vus: 1`, `iterations: 1`, and the defaults for that executor.
++- Run the single effective scenario. If there is no scenario, create one named `default` and run the exported `default` function.
++- Fail when the effective configuration has two or more scenarios.
++- Fail when the effective configuration has no scenario and the script has no `default` function.
++- Reject `--once` combined with `--vus`, `--iterations`, `--duration`, or `--stage`, naming the conflicting flag.
++- Reject `--once` combined with `K6_VUS`, `K6_ITERATIONS`, `K6_DURATION`, or `K6_STAGES`, naming the conflicting variable.
++- Enable the behavior only through bare `--once` on the current command line. A `once` script option, `K6_ONCE`, `ONCE`, or a `once` field in a JSON config or archive leaves it off. The flag does not select a scenario.
++- Preserve setup, teardown, thresholds, pauses, and execution segments. A threshold can still fail the run, a pause can delay it, and execution segments divide the single VU and iteration across their full sequence. One segment receives the work; the others receive none.
++- Carry the resulting 1 virtual user / 1 iteration scenario into the archives that `k6 cloud run` and `k6 cloud run --local-execution` upload. A later run of that archive also runs once when no other source supplies load.
++- Ignore `vus`, `iterations`, `duration`, and `stages` from the script, JSON config, or archive without losing the selected scenario.
++- Keep `k6 archive --once` and `k6 cloud upload --once` invalid.
++
++## Out of scope
++
++- Naming a scenario to run with `--once=<name>`.
++- Running every declared scenario once. That was considered and rejected, because a test with N scenarios would run N virtual users, defeating the goal.
++- Changing what shortcut flags do on their own, without `--once`.
++- Changing the summary printed after the test. A run with `--once` reports the same metrics as any other run.
++
++## Capabilities
++
++### New Capabilities
++
++- once: Bare `--once` configures one scenario with 1 virtual user and 1 iteration while keeping its identity and options unrelated to load.
++
++### Modified Capabilities
++
++None.
++
++## Impact
++
++- The flag sets for `run` and `cloud run`, including local and archive execution. The shared option flag set also serves `archive` and `cloud upload`, which must reject `--once`.
++- Scenario and executor configuration after k6 combines all option sources.
++- Configuration merging and shortcut derivation. Load shortcuts can remove scenarios before `--once` transforms them, so k6 must preserve the selected scenario while the flag is active.
++- Archive generation for both cloud paths, which stores options before executor derivation.
++- Browser scenarios, which depend on the scenario's name and `options.browser` surviving into the run.
++- Errors and exit codes for rejected invocations.
+diff --git a/openspec/changes/once/specs/once/spec.md b/openspec/changes/once/specs/once/spec.md
+new file mode 100644
+index 0000000..8118456
+--- /dev/null
++++ b/openspec/changes/once/specs/once/spec.md
+@@ -0,0 +1,478 @@
++## ADDED Requirements
++
++### Requirement: Bare `--once` runs one VU for one iteration
++
++Passing bare `--once` MUST configure exactly one effective `shared-iterations` scenario with `vus: 1` and `iterations: 1`. It MUST work without a script change.
++
++#### Scenario: A declared scenario runs once
++
++- **GIVEN** `api.js` declares one `shared-iterations` scenario named `api`, with `exec: 'api'`, `vus: 4`, and `iterations: 4`, and its `api` function prints `API-RAN`
++- **WHEN** the user runs `k6 run --once api.js`
++- **THEN** the execution banner lists `api` as `1 iterations shared among 1 VUs`
++- **AND** `API-RAN` appears once
++- **AND** the final progress line reports `1 complete and 0 interrupted iterations`
++
++### Requirement: `--once` creates a new `shared-iterations` scenario
++
++`--once` MUST build a new scenario as follows:
++
++| Action | Scenario data |
++| --- | --- |
++| Preserve | scenario name, `exec`, `env`, `tags`, and the complete `options` block |
++| Set | `executor: shared-iterations`, `vus: 1`, and `iterations: 1` |
++| Discard | every other field from the original scenario |
++
++Discarded fields include the original `executor`, `vus`, `iterations`, `duration`, `startTime`, `maxDuration`, `timeUnit`, `stages`, `rate`, `startRate`, `gracefulStop`, `gracefulRampDown`, `preAllocatedVUs`, `startVUs`, and `maxVUs`.
++
++`--once` MUST leave `maxDuration` and `gracefulStop` unset. k6 MUST serialize them as `null` and apply the `shared-iterations` defaults at runtime: 10 minutes and 30 seconds.
++
++Iteration samples MUST use the preserved scenario tags. When the `scenario` system tag is enabled, they MUST also use the preserved scenario name.
++
++#### Scenario: Every executor becomes a scenario with one VU and one iteration
++
++- **GIVEN** six scripts that each declare one scenario named `api`
++- **AND** each `api` function prints its effective scenario from `k6/execution`
++- **AND** the declared scenarios use these valid configurations:
++
++  | Executor | Declared load |
++  | --- | --- |
++  | `shared-iterations` | `vus: 8`, `iterations: 20`, `maxDuration: '1h'`, `gracefulStop: '5m'` |
++  | `per-vu-iterations` | `vus: 8`, `iterations: 20`, `maxDuration: '1h'` |
++  | `constant-vus` | `vus: 8`, `duration: '30s'`, `startTime: '30s'` |
++  | `ramping-vus` | `startVUs: 8`, `stages: [{ duration: '30s', target: 16 }]`, `gracefulRampDown: '10s'` |
++  | `constant-arrival-rate` | `rate: 100`, `timeUnit: '1s'`, `duration: '30s'`, `preAllocatedVUs: 10`, `maxVUs: 20` |
++  | `ramping-arrival-rate` | `startRate: 10`, `timeUnit: '1s'`, `stages: [{ duration: '30s', target: 20 }]`, `preAllocatedVUs: 10`, `maxVUs: 20` |
++
++- **WHEN** the user runs each script with `k6 run --once`
++- **THEN** each `api` function prints a scenario named `api` with `executor: shared-iterations`, `vus: 1`, and `iterations: 1`
++- **AND** `startTime`, `maxDuration`, and `gracefulStop` are `null`
++- **AND** each execution banner shows `maxDuration: 10m0s` and `gracefulStop: 30s`
++- **AND** each run starts without the declared delay and completes one iteration
++- **AND** each printed scenario omits `duration`, `timeUnit`, `stages`, `rate`, `startRate`, `gracefulRampDown`, `preAllocatedVUs`, `startVUs`, and `maxVUs`
++
++#### Scenario: A scenario keeps its configuration and runs once
++
++- **GIVEN** `keep.js`:
++
++  ```js
++  import exec from 'k6/execution';
++  import { Counter } from 'k6/metrics';
++
++  const kept = new Counter('kept');
++
++  export const options = {
++    scenarios: {
++      api: {
++        executor: 'shared-iterations',
++        exec: 'api',
++        vus: 50,
++        iterations: 50,
++        env: { URL: 'https://example.com' },
++        tags: { team: 'core' },
++        options: { browser: { type: 'chromium' } },
++      },
++    },
++  };
++
++  export function api() {
++    const scenario = exec.test.options.scenarios.api;
++    kept.add(1);
++    console.log(`name=${exec.scenario.name} exec=${scenario.exec} executor=${scenario.executor} vus=${scenario.vus} iterations=${scenario.iterations} url=${__ENV.URL} browser=${scenario.options.browser.type}`);
++  }
++
++  export default function () { console.log('DEFAULT-RAN'); }
++  ```
++
++- **WHEN** the user runs `k6 run --once --out json=out.json keep.js`
++- **THEN** the log contains `name=api exec=api executor=shared-iterations vus=1 iterations=1 url=https://example.com browser=chromium` once
++- **AND** the log omits `DEFAULT-RAN`
++- **AND** `out.json` contains exactly one `type: Point` entry for the `kept` metric, with `data.tags.scenario: api` and `data.tags.team: core`
++
++### Requirement: One declared scenario chooses the function
++
++With one effective scenario, `--once` MUST run it. When `exec` has a value, it selects that export. A missing `exec` or `exec: 'default'` selects `default`.
++
++#### Scenario: Missing exec and explicit default exec behave the same
++
++- **GIVEN** two versions of a script, each with one scenario named `ui` and `env: { URL: 'https://example.com' }`, declaring either no `exec` or `exec: 'default'`
++- **AND** each default function prints `DEFAULT-RAN url=<URL> exec=<effective exec>` from `k6/execution`
++- **WHEN** the user runs each script with `k6 run --once`
++- **THEN** each run lists a scenario named `ui`, not `default`
++- **AND** the case without `exec` prints `DEFAULT-RAN url=https://example.com exec=null` once
++- **AND** the explicit case prints `DEFAULT-RAN url=https://example.com exec=default` once
++
++### Requirement: A test without scenarios runs `default`
++
++If the effective configuration has no scenario and the script exports `default`, `--once` MUST create a scenario named `default` with one VU and one iteration. It MUST also clear `vus`, `iterations`, `duration`, and `stages` outside `scenarios`.
++
++#### Scenario: Every form without scenarios runs `default` once
++
++- **GIVEN** scripts that export a `default` function printing `DEFAULT-RAN` and use one of these option forms:
++
++  | Form | Options |
++  | --- | --- |
++  | No options | no `options` export |
++  | Empty scenarios | `{ scenarios: {} }` |
++  | Null scenarios | `{ scenarios: null }` |
++  | VU shortcut | `{ vus: 8 }` |
++  | Duration shortcut | `{ vus: 8, duration: '30s' }` |
++  | Iteration shortcut | `{ vus: 8, iterations: 20 }` |
++  | Stage shortcut | `{ stages: [{ duration: '30s', target: 8 }] }` |
++
++- **WHEN** the user runs each script with `k6 run --once`
++- **THEN** k6 lists `default` as `1 iterations shared among 1 VUs`
++- **AND** `DEFAULT-RAN` appears once
++- **AND** the run reports `1 complete and 0 interrupted iterations`
++
++### Requirement: `--once` preserves setup and teardown
++
++`--once` MUST run setup before the selected function, pass its return value to that function and teardown, and run teardown afterward. `--no-setup`, `--no-teardown`, `noSetup`, and `noTeardown` MUST still skip them.
++
++#### Scenario: Setup data reaches the selected function and teardown
++
++- **GIVEN** `lifecycle.js` declares one `shared-iterations` scenario named `api`, with `exec: 'api'`, 50 VUs, and 50 iterations
++- **AND** setup prints `SETUP-RAN` and returns `{ token: 'abc' }`
++- **AND** `api(data)` prints `API-RAN token=abc`
++- **AND** teardown prints `TEARDOWN-RAN token=abc`
++- **AND** an exported default function prints `DEFAULT-RAN`
++- **WHEN** the user runs `k6 run --once lifecycle.js`
++- **THEN** the log shows `SETUP-RAN`, `API-RAN token=abc`, and `TEARDOWN-RAN token=abc` once each and in that order
++- **AND** the log omits `DEFAULT-RAN`
++- **AND** the run reports one complete iteration
++
++#### Scenario: CLI and JSON options still skip setup and teardown
++
++- **GIVEN** a lifecycle fixture where setup prints `SETUP-RAN`, the selected VU function prints `API-RAN`, and teardown prints `TEARDOWN-RAN`
++- **AND** its selected VU function and teardown do not read setup data
++- **WHEN** the user runs it with `k6 run --once` under each case:
++
++  | Source | Skip value | Required markers | Omitted marker |
++  | --- | --- | --- | --- |
++  | Command line | `--no-setup` | `API-RAN`, `TEARDOWN-RAN` | `SETUP-RAN` |
++  | Command line | `--no-teardown` | `SETUP-RAN`, `API-RAN` | `TEARDOWN-RAN` |
++  | JSON config | `noSetup: true` | `API-RAN`, `TEARDOWN-RAN` | `SETUP-RAN` |
++  | JSON config | `noTeardown: true` | `SETUP-RAN`, `API-RAN` | `TEARDOWN-RAN` |
++
++- **THEN** the log contains each required marker once and omits the row's omitted marker
++- **AND** k6 reports no script exception and exits with code 0
++
++### Requirement: Other options still control the run
++
++After an invocation passes the load conflict checks, k6 MUST apply `--once` after it combines options from the script, environment, JSON config, archive, and CLI. It MUST replace only the effective scenario and clear only `vus`, `iterations`, `duration`, and `stages` outside `scenarios`. It MUST leave every other option unchanged. Thresholds still determine the exit code. Pause and execution segment options still apply.
++
++`--once` configures one VU and one iteration for the whole test before execution segments divide the work. Across a complete execution segment sequence, the segments MUST receive one VU and one iteration in total. The segment that receives the VU MUST also receive the iteration. Other segments receive no work.
++
++#### Scenario: A failing threshold still fails the single run
++
++- **GIVEN** `threshold.js` has one 50 VU / 50 iteration scenario, a check that always fails, and `thresholds: { checks: ['rate==1.0'] }`
++- **WHEN** the user runs `k6 run --once threshold.js`
++- **THEN** the test performs one iteration
++- **AND** k6 reports that `checks` crossed its threshold
++- **AND** the process exits with code 99
++
++#### Scenario: Pause holds the iteration until the user resumes it
++
++- **GIVEN** `api.js` and a free REST API address
++- **WHEN** the user runs `k6 run --once --paused --address <address> api.js`
++- **THEN** `GET /v1/status` reports `paused: true` and status `4`, while the log omits `API-RAN`
++- **AND WHEN** the user sends `PATCH /v1/status` with `{"data":{"type":"status","id":"default","attributes":{"paused":false}}}` and receives HTTP 200
++- **THEN** `API-RAN` appears once and the run reports one complete iteration
++
++#### Scenario: Execution segments divide the single iteration
++
++- **GIVEN** `api.js`
++- **WHEN** the user runs both halves of the test with `k6 run --once --summary-mode=disabled --execution-segment <value> --execution-segment-sequence 0,1/2,1 api.js`:
++
++  | `--execution-segment` | Expected result |
++  | --- | --- |
++  | `0:1/2` | The run reports one VU and one complete iteration, `API-RAN` appears once, and the process exits with code 0 |
++  | `1/2:1` | The run reports zero VUs and zero complete iterations, `API-RAN` does not appear, and the process exits with code 0 |
++
++- **THEN** the two processes run one VU and one iteration in total
++
++### Requirement: Script files, archives, and standard input work with `--once`
++
++`k6 run`, `k6 cloud run`, and `k6 cloud run --local-execution` MUST accept `--once` with script files, archives, and scripts or archives supplied on standard input.
++
++`api.js` declares one `shared-iterations` scenario named `api` with `exec: 'api'`, four VUs, four iterations, and an `api` function that prints `API-RAN`. `api.tar` is an archive built from `api.js`.
++
++#### Scenario: Local runs accept archives and standard input
++
++- **GIVEN** `api.js` and `api.tar`
++- **WHEN** the user runs `k6 run --once` with `api.tar`, `api.js` on standard input, and `api.tar` on standard input in separate invocations
++- **THEN** each execution banner lists `api` as `1 iterations shared among 1 VUs`
++- **AND** each run prints `API-RAN` once and reports `1 complete and 0 interrupted iterations`
++
++#### Scenario: Remote cloud runs accept archives and standard input
++
++- **GIVEN** `api.js` and `api.tar`
++- **WHEN** the user runs `k6 cloud run --once` with `api.tar`, `api.js` on standard input, and `api.tar` on standard input in separate invocations
++- **THEN** each cloud upload contains one scenario named `api`, with `executor: shared-iterations`, `vus: 1`, `iterations: 1`, and `exec: api`
++
++#### Scenario: Local cloud runs accept archives and standard input
++
++- **GIVEN** `api.js` and `api.tar`
++- **WHEN** the user runs `k6 cloud run --local-execution --once` with `api.tar`, `api.js` on standard input, and `api.tar` on standard input in separate invocations
++- **THEN** each provisioning request contains one scenario named `api`, with `executor: shared-iterations`, `vus: 1`, `iterations: 1`, and `exec: api`
++- **AND** each execution banner lists `api` as `1 iterations shared among 1 VUs`
++- **AND** each run prints `API-RAN` once and reports `1 complete and 0 interrupted iterations`
++
++### Requirement: Script, config, and archive load fields cannot replace the scenario
++
++With `--once`, k6 MUST ignore `vus`, `iterations`, `duration`, and `stages` outside `scenarios` when they come from the script, JSON config, or archive. Those values MUST NOT remove, rename, or conflict with the effective scenario.
++
++When both the script and a JSON config declare scenarios, k6 MUST keep the script scenario. `--once` changes only how load fields outside `scenarios` affect that scenario.
++
++#### Scenario: `--once` keeps the selected scenario across option sources
++
++- **GIVEN** each case supplies one `api` scenario with `exec: 'api'`, `env.URL: 'https://example.com'`, `tags.team: 'core'`, and `options.browser.type: chromium`
++- **AND** `api` prints its scenario values as `API-RAN executor=<executor> vus=<vus> iterations=<iterations> exec=<exec> url=<URL> team=<team> browser=<browser>`, while a default function prints `FALLBACK-RAN`
++- **WHEN** the user runs each input with `--once` under its source case:
++
++  | Scenario source | Other load configuration |
++  | --- | --- |
++  | Script | `vus: 50` outside `scenarios` in the same script |
++  | Explicit JSON config; the script exports `api` but no options | the same config sets `vus` and `iterations` outside `scenarios` |
++  | Default JSON config; the script exports `api` but no options | the same config sets `duration` outside `scenarios` |
++  | Script, while an explicit JSON config declares a different scenario | the script's `api` scenario wins; neither source sets load outside `scenarios` |
++  | Explicit JSON config | the script sets `iterations: 50` outside `scenarios` |
++  | Stored archive options | the same archive stores `vus: 50` outside `scenarios` |
++
++- **THEN** every run prints `API-RAN executor=shared-iterations vus=1 iterations=1 exec=api url=https://example.com team=core browser=chromium` once
++- **AND** the log omits `FALLBACK-RAN`
++
++### Requirement: Cloud archives store the scenario created by `--once`
++
++Archives uploaded by `k6 cloud run --once` and `k6 cloud run --local-execution --once` MUST store the scenario created by `--once` and its preserved configuration.
++
++k6 MUST unset `vus`, `iterations`, `duration`, and `stages` outside `scenarios`, serialize them as `null`, and omit `once` from the archive options.
++
++The archive MUST run once without `--once` when no other source supplies load. With `--no-archive-upload`, local execution MUST still provision one VU and one iteration.
++
++The local execution provisioning request MUST set `max_vus: 1` and `total_duration: 630`. The 630 seconds include the 10 minute max duration and 30 second graceful stop.
++
++`archive.js` exports an `api` function that prints `API-RAN` and declares these options:
++
++| Location | Configuration |
++| --- | --- |
++| Outside `scenarios` | `vus: 50`, `duration: '30s'` |
++| Scenario `api` | `executor: 'ramping-arrival-rate'`, `exec: 'api'`, `env.URL: 'https://example.com'`, `tags.team: 'core'`, `options.browser.type: chromium`, `startRate: 10`, `timeUnit: '1s'`, `stages: [{ duration: '30s', target: 20 }]`, `preAllocatedVUs: 10`, `maxVUs: 20` |
++
++#### Scenario: Remote cloud execution keeps the scenario configuration
++
++- **GIVEN** `archive.js`
++- **WHEN** the user runs `k6 cloud run --once archive.js`
++- **THEN** the uploaded archive's `metadata.json.options` has `vus`, `iterations`, `duration`, and `stages` set to `null`
++- **AND** `metadata.json.options` has no `once` key
++- **AND** the archive stores exactly one `api` scenario with `exec: api`, `env.URL: https://example.com`, `tags.team: core`, and `options.browser.type: chromium`
++- **AND** that scenario has `executor: shared-iterations`, `vus: 1`, and `iterations: 1`
++- **AND** its `startTime`, `maxDuration`, and `gracefulStop` are `null`
++- **AND** it omits `startRate`, `timeUnit`, `stages`, `preAllocatedVUs`, and `maxVUs`
++- **AND** the request to `POST /cloud/v6/validate_options` matches the archive's `metadata.json.options`
++
++#### Scenario: Local cloud execution keeps the scenario configuration and runs once
++
++- **GIVEN** `archive.js`
++- **WHEN** the user runs `k6 cloud run --local-execution --once archive.js`
++- **THEN** the uploaded archive has no `once` key and sets `vus`, `iterations`, `duration`, and `stages` outside `scenarios` to `null`
++- **AND** it stores only the `api` scenario, with its name, `exec`, env, tags, and complete `options` block preserved
++- **AND** that scenario uses `shared-iterations`, one VU, and one iteration, with every other original executor field discarded
++- **AND** the provisioning request contains the same scenario with `max_vus: 1` and `total_duration: 630`
++- **AND** local execution prints `API-RAN` once and reports one complete iteration
++
++#### Scenario: A cloud archive runs once without the flag
++
++- **GIVEN** the archives uploaded from `archive.js` by both cloud paths
++- **WHEN** the user runs each archive with plain `k6 run` and no load from another source
++- **THEN** each execution banner lists `api` with `maxDuration: 10m0s` and `gracefulStop: 30s`
++- **AND** each run prints `API-RAN` once and reports one complete iteration
++
++#### Scenario: Cloud archives create `default` when the test has no scenario
++
++- **GIVEN** `plain.js` exports a default function, and its options declare `vus: 50` and `duration: '30s'` outside `scenarios`
++- **WHEN** the user runs it separately with `k6 cloud run --once` and `k6 cloud run --local-execution --once`
++- **THEN** each uploaded archive sets the four load fields outside `scenarios` to `null` and stores one `default` `shared-iterations` scenario with `vus: 1` and `iterations: 1`
++
++#### Scenario: Local execution can omit the archive without changing its run
++
++- **GIVEN** `archive.js`
++- **WHEN** the user runs `k6 cloud run --local-execution --no-archive-upload --once archive.js`
++- **THEN** the `start-local-execution` request contains the scenario created by `--once` and `archive_size: null`
++- **AND** k6 sends no request to a presigned archive upload URL
++- **AND** local execution prints `API-RAN` once and reports one complete iteration
++
++### Requirement: `--once` validates the configuration it runs
++
++`--once` MUST ignore errors caused only by a discarded load combination. It MUST still fail when k6 cannot read a value, does not recognize the declared executor, or cannot find the selected function.
++
++#### Scenario: Invalid discarded load values do not block the run
++
++- **GIVEN** a `shared-iterations` scenario named `api` with `exec: 'api'`, `vus: 5`, and `iterations: 1`, which is invalid without `--once` because it has more VUs than iterations
++- **AND** its `api` function prints `API-RAN`
++- **WHEN** the user runs it with `k6 run --once`
++- **THEN** k6 validates the replacement scenario, prints `API-RAN` once, and reports one complete iteration
++
++#### Scenario: Invalid field values and unknown executors still fail
++
++- **GIVEN** two scripts that export an `api` function which prints `API-RAN` and declare one scenario named `api` with `exec: 'api'`
++- **AND** one scenario has `executor: 'shared-iterations'`, `vus: 'not-a-number'`, and `iterations: 1`, while the other has `executor: 'not-an-executor'`
++- **WHEN** the user runs each script with `k6 run --once`
++- **THEN** k6 rejects each invalid configuration and exits with a code other than zero
++- **AND** `API-RAN` does not appear
++
++#### Scenario: Missing required functions still fail the run
++
++- **GIVEN** these fixtures:
++
++  | Configuration | Exports | Required error text |
++  | --- | --- | --- |
++  | No scenarios | only `api`, which prints `API-RAN` | `executor default: function 'default' not found in exports` |
++  | One scenario named `ui`, with no `exec` | only `api`, which prints `API-RAN` | `executor ui: function 'default' not found in exports` |
++  | One scenario named `ui`, with `exec: 'target'` | only `api`, which prints `API-RAN` | `executor ui: function 'target' not found in exports` |
++
++- **WHEN** the user runs each fixture with `k6 run --once`
++- **THEN** each invocation reports its required text and exits with a code other than zero
++- **AND** `API-RAN` does not appear
++
++### Requirement: `--once` rejects multiple scenarios
++
++With two or more effective scenarios, k6 MUST run init context to read the options, then reject `--once` before setup, VU initialization, browser launch, or any cloud request.
++
++The error MUST state that `--once` can run only with one scenario.
++
++#### Scenario: Exactly two scenarios fail through every run path
++
++- **GIVEN** `multi.js` prints `INIT-RAN` in init context and declares scenarios named `zulu` and `xray`
++- **AND** setup and both scenario functions print distinct markers
++- **AND** `xray` is a browser scenario that calls the browser API
++- **AND** the user builds `multi.tar` from `multi.js`
++- **AND** `K6_BROWSER_EXECUTABLE_PATH=/does/not/exist/chromium`
++- **WHEN** the user invokes each path:
++
++  | Path | Input |
++  | --- | --- |
++  | `k6 run --once` | `multi.js` |
++  | `k6 run --once` | `multi.tar` |
++  | `k6 cloud run --once` | `multi.js` or `multi.tar` |
++  | `k6 cloud run --local-execution --once` | `multi.js` or `multi.tar` |
++
++- **THEN** each invocation reports that `--once` can run only with one scenario and exits with a code other than zero
++- **AND** the log contains `INIT-RAN` but no setup or body markers
++- **AND** the log does not mention `/does/not/exist/chromium` or a browser executable error
++- **AND** no request reaches a cloud API
++
++### Requirement: `--once` rejects CLI load flags
++
++k6 MUST reject a command line that combines `--once` with `--vus`/`-u`, `--iterations`/`-i`, `--duration`/`-d`, or `--stage`/`-s`.
++
++k6 MUST identify `--once` and the conflicting flag by its long name.
++
++A value of zero MUST still count as a conflict.
++
++#### Scenario: Every CLI load flag fails through every run path
++
++- **GIVEN** `api.js`, which `--once` accepts on its own
++- **WHEN** the user runs every command with every added flag:
++
++  | Command |
++  | --- |
++  | `k6 run --once <added flag> api.js` |
++  | `k6 cloud run --once <added flag> api.js` |
++  | `k6 cloud run --local-execution --once <added flag> api.js` |
++
++  | Added flag | Conflicting long flag |
++  | --- | --- |
++  | `--vus 1` or `-u 2` | `--vus` |
++  | `--iterations 2` or `-i 0` | `--iterations` |
++  | `--duration 2s` or `-d 2s` | `--duration` |
++  | `--stage 2s:2` or `-s 2s:2` | `--stage` |
++
++- **THEN** every invocation exits with a code other than zero and `API-RAN` does not appear
++- **AND** the error identifies `--once` and the conflicting long flag
++- **AND** the cloud commands send no requests
++
++### Requirement: `--once` rejects load environment variables
++
++k6 MUST reject `--once` with `K6_VUS`, `K6_ITERATIONS`, `K6_DURATION`, or `K6_STAGES`. It MUST detect the conflict after reading environment options and before their load values can replace a declared scenario.
++
++The error MUST identify `--once` and the conflicting environment variable. A value of zero MUST still count as a conflict.
++
++#### Scenario: Every load environment variable fails through every run path
++
++- **GIVEN** `api.js`, which `--once` accepts on its own
++- **WHEN** the user runs every command with every environment value:
++
++  | Command |
++  | --- |
++  | `k6 run --once api.js` |
++  | `k6 cloud run --once api.js` |
++  | `k6 cloud run --local-execution --once api.js` |
++
++  | Environment value | Conflicting variable |
++  | --- | --- |
++  | `K6_VUS=1` | `K6_VUS` |
++  | `K6_ITERATIONS=0` | `K6_ITERATIONS` |
++  | `K6_DURATION=2s` | `K6_DURATION` |
++  | `K6_STAGES=2s:2` | `K6_STAGES` |
++
++- **THEN** every invocation exits with a code other than zero and `API-RAN` does not appear
++- **AND** the error identifies `--once` and the conflicting environment variable
++- **AND** the cloud commands send no requests
++
++### Requirement: Only bare CLI `--once` turns the behavior on
++
++`--once` MUST be off by default. Only the bare form `--once` on the current command may turn the behavior on. It does not select a scenario.
++
++An exported `once` option, `K6_ONCE`, `ONCE`, a JSON `once` field, or an archive option named `once` MUST NOT turn the behavior on.
++
++#### Scenario: Without `--once`, k6 keeps the original load
++
++- **GIVEN** `api.js`
++- **WHEN** the user runs `k6 run api.js`
++- **THEN** k6 lists `api` as `4 iterations shared among 4 VUs`
++- **AND** the run reports `4 complete and 0 interrupted iterations`
++
++#### Scenario: Without `--once`, `K6_ITERATIONS` replaces script scenarios
++
++- **GIVEN** a script declares one `shared-iterations` scenario named `api` with `exec: 'api'`, four VUs, and four iterations
++- **AND** its `api` function prints `API-RAN`
++- **AND** its default function prints `FALLBACK-RAN`
++- **WHEN** the user runs it without `--once` and with `K6_ITERATIONS=2`
++- **THEN** the environment load replaces the `api` scenario
++- **AND** `FALLBACK-RAN` appears twice and `API-RAN` does not appear
++
++#### Scenario: Scripts, environment, configs, and archives cannot turn the behavior on
++
++- **GIVEN** `api.js` declares four VUs and four iterations
++- **WHEN** the user runs it without `--once` under each case:
++
++  | Source | Value |
++  | --- | --- |
++  | Exported script options | `once: true` |
++  | Environment | `K6_ONCE=true` |
++  | Environment | `ONCE=true` |
++  | Explicit JSON config | `{"once": true}` passed with `-c` |
++  | Default JSON config | `{"once": true}` at the default config path |
++  | Archive metadata | `"once": true` in the stored options |
++
++- **THEN** every run reports four complete iterations
++- **AND** no run changes the load to one VU and one iteration
++
++#### Scenario: `--once=api` cannot select a scenario
++
++- **GIVEN** `script.js` is a valid test script whose default function prints `DEFAULT-RAN`
++- **WHEN** the user runs `k6 run --once=api script.js`
++- **THEN** k6 rejects the invocation as an invalid value for the `once` flag and exits with a code other than zero
++- **AND** `DEFAULT-RAN` does not appear
++
++### Requirement: Archive and cloud upload reject `--once`
++
++`k6 archive` and `k6 cloud upload` MUST reject `--once` as an unknown flag.
++
++#### Scenario: Archive and cloud upload reject the flag
++
++- **GIVEN** `api.js`
++- **WHEN** the user runs `k6 archive --once api.js`
++- **AND** separately runs `k6 cloud upload --once api.js`
++- **THEN** each command reports `unknown flag: --once`
++- **AND** each command exits with a code other than zero
+diff --git a/openspec/changes/once/tasks.md b/openspec/changes/once/tasks.md
+new file mode 100644
+index 0000000..e29594d
+--- /dev/null
++++ b/openspec/changes/once/tasks.md
+@@ -0,0 +1,94 @@
++After every task, format the changed files, run `make lint`, and run the tests affected by that
++task. Run Go tests with `-race`. Fix failures before starting the next task.
++
++## 1. Add the flag to run commands
++
++- [ ] 1.1 Register `--once` as a command switch on the dedicated `run` and `cloud run` flag sets,
++  carry its state through the command, and give it a clear help description. Do not add it to
++  `Config`, `lib.Options`, or `optionFlagSet()`. Check: help tests show the flag on `k6 run` and
++  `k6 cloud run` only, while `k6 archive --once` and `k6 cloud upload --once` fail as unknown flags.
++- [ ] 1.2 Reject an active `--once` combined with a changed `--vus`, `--iterations`, `--duration`,
++  or `--stage` flag, and report both `--once` and the conflicting long name. Check: one table covers
++  every combination of the long and short spellings and the local, remote cloud, and local cloud
++  run paths, including zero values. No VU function or cloud request starts.
++- [ ] 1.3 After environment options are parsed, reject `K6_VUS`, `K6_ITERATIONS`, `K6_DURATION`,
++  and `K6_STAGES` with `--once` before their load values can replace a scenario. Report `--once` and
++  the conflicting variable. Check: one table covers every combination of the four variables and
++  the local, remote cloud, and local cloud run paths, including a zero value. No VU function or
++  cloud request starts.
++- [ ] 1.4 Keep activation tied to bare `--once` on the current command. Check: a default run retains
++  the declared load, `--once=api` fails parsing, and script options, `K6_ONCE`, `ONCE`, explicit and
++  default JSON config, and archive metadata cannot enable the mode.
++
++## 2. Build and validate the effective scenario
++
++- [ ] 2.1 When `--once` is active, neutralize `vus`, `iterations`, `duration`, and `stages` at the
++  top level of script, JSON config, and archive options before they can erase or replace the
++  effective scenario. Leave all other options and normal precedence for the complete scenario map
++  unchanged. Check: a source matrix preserves the script scenario when both the script and JSON
++  config declare scenarios, preserves config and archive scenarios otherwise, and proves the
++  existing shortcut replacement behavior is unchanged without `--once`.
++- [ ] 2.2 Implement a focused transformation from zero or one effective scenario to a fresh
++  `shared-iterations` scenario with `vus: 1` and `iterations: 1`. Preserve only its name, raw `exec`
++  value, `env`, tags, and complete `options` block; clear the four load fields at the top level and
++  discard every other original executor field. Check: one table test covers no scenario and all six
++  current executor types. It verifies every preserved, set, and discarded field, including nested
++  browser options; distinguishes missing `exec` from explicit `exec: default`; verifies JSON nulls
++  for `startTime`, `maxDuration`, and `gracefulStop`; and verifies the 10 minute and 30 second
++  runtime defaults.
++- [ ] 2.3 Apply the transformation after init and consolidation for `--once`, but before shortcut
++  derivation and final validation, in the configuration flow shared by local and cloud runs.
++  Validate the configuration that will execute. Check: a discarded `vus > iterations` combination
++  succeeds, while unparseable typed fields, an unknown executor, and missing default or named
++  exports still fail before a VU function runs.
++- [ ] 2.4 Reject two or more effective scenarios with an error about `--once` after init and before
++  setup, VU initialization, browser launch, or a cloud request. Check: command tests exercise script
++  and archive input through local, remote cloud, and local cloud paths, and observe the init marker
++  but none of the later side effects.
++
++## 3. Verify local execution
++
++- [ ] 3.1 Add one full local command test with a script file, plus smoke cases for an archive file,
++  script stdin, and archive stdin. Check: the full case keeps the declared scenario, selected
++  function, env, tags, and options. Its JSON sample keeps the scenario name and custom tags. Each
++  smoke case accepts its transport, prints the selected marker once, and completes one iteration.
++- [ ] 3.2 Cover default function selection when scenarios are absent, empty, or null and when the
++  script contains only VU, duration, iteration, or stage shortcuts at the top level. Check: every
++  case creates a scenario named `default`, prints its marker once, and exposes no residual load
++  value in the effective options.
++- [ ] 3.3 Extend command integration tests for behavior unrelated to load that `--once` preserves.
++  Check: setup data reaches the selected function and teardown in order; CLI and JSON skip options
++  still work; a failing threshold exits 99; a paused run waits for REST resume; and the two
++  execution segment halves allocate one VU and one iteration in total, with only one half receiving
++  work.
++
++## 4. Carry the scenario through cloud runs
++
++- [ ] 4.1 Make archive creation use the transformed consolidated options in both cloud paths, while
++  local provisioning and execution use the derived options. Check: focused tests verify the options
++  passed at each boundary with `--once`, and prove behavior is unchanged without the flag.
++- [ ] 4.2 Add one full script file contract test for each cloud mode. Check: both archives contain
++  exactly one `shared-iterations` scenario with 1 VU and 1 iteration and preserve its name, `exec`,
++  env, tags, and options. They serialize the four load fields at the top level plus scenario
++  `startTime`, `maxDuration`, and `gracefulStop` as null and omit discarded executor fields and any
++  `once` key. Only remote `k6 cloud run` sends `validate_options`, and its payload matches
++  `metadata.json`; local provisioning sends `max_vus: 1` and `total_duration: 630`. Replaying either
++  archive with plain `k6 run` runs once with the 10 minute maximum and 30 second graceful stop.
++- [ ] 4.3 Smoke test archive file, script stdin, and archive stdin transport for both cloud modes.
++  Check: each input uploads or provisions successfully, and each local case runs one iteration. The
++  local `--no-archive-upload` case sends `archive_size: null`, performs no upload, and still runs
++  once.
++
++## 5. Verify the CLI manually
++
++- [ ] 5.1 Build `./k6` and use temporary scripts and archives to exercise `k6 run --once` manually.
++  Cover API and browser scenarios, a test without scenarios, load shortcuts, preserved scenario
++  fields, rejected load conflicts, multiple scenarios, execution segments, and file, archive, and
++  standard input. Check the command output, exit code, markers, and iteration count for each case.
++- [ ] 5.2 Run `k6 cloud run --once` and `k6 cloud run --local-execution --once` against an
++  authenticated Grafana Cloud test environment with representative API and browser scenarios.
++  Record each test run ID and use `gcx` to inspect its result and metrics. Check that each successful
++  cloud test ran one VU and one iteration. Inspect each uploaded archive and check its
++  `metadata.json` contains the transformed scenario and preserved fields. If the archive cannot be
++  retrieved, add temporary diagnostic output at the archive upload boundary, rebuild, and repeat
++  the cloud runs. Remove all diagnostic code, temporary scripts, and archives after verification.

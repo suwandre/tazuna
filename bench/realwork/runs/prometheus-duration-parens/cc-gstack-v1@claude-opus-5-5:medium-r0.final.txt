@@ -1,0 +1,32 @@
+Fixed: all five inputs from the issue now keep their parentheses on `Expr.String()` (`+(5)` keeps the parens but drops the `+`). `go test ./promql/...` passes, and `golangci-lint` and `gofmt` report nothing on the changed code.
+
+**How it works**
+
+A `*NumberLiteral` has no way to remember it was in parentheses. So when the parser sees one in parens in a duration position, it now wraps it in a unary `+` `*DurationExpr` with `Wrapped: true`. I chose unary `+` because the printer, prettifier and duration evaluator in `promql/durations.go` already handle it as a pass-through, so nothing else had to change.
+
+- `promql/parser/parse.go`: new `wrapDurationExpr` helper. `applyUnaryOpToDurationExpr` now calls it when `wrapped` is true, which covers `+(5)` and `-(5)` in offsets.
+- `promql/parser/generated_parser.y`: `paren_duration_expr` uses `wrapDurationExpr` too. I regenerated `generated_parser.y.go` with goyacc. `make parser` silently skips this if goyacc isn't on `PATH`; I had to add `$(go env GOPATH)/bin`.
+
+**Results**
+
+| Input | Before | After |
+|---|---|---|
+| `foo offset (5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -5s` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset 5m` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[5s]` | `foo[(5s)]` |
+
+**Behaviour changes to be aware of**
+
+- **The AST changes for these inputs.** They now set `OriginalOffsetExpr` / `RangeExpr` / `StepExpr` instead of `OriginalOffset` / `Range` / `Step`. The engine computes those fields when a query is created, the same way it already does for `(5m + 1m)`. Code that reads `OriginalOffset` straight from the parser output, without that step, would now see 0 for these inputs.
+- **Some errors still happen at parse time.** Without extra handling, `foo[(0)]` or `foo[-(5s)]` would only fail when the query runs. A new `constantDurationValue` helper in `positive_duration_expr` keeps them as parse errors ("duration must be greater than 0"), as before. Out-of-range literals such as `offset (99999999999999999)` are also still rejected by the parser.
+- **Some cases still don't round-trip exactly.** `+(5)` prints as `(5)`, and `((5m))` prints as `(5m)`. This matches how multi-term expressions already behave (`+(5m+1m)` prints as `(5m + 1m)`).
+
+**Tests**
+
+- `printer_test.go` (`TestExprString`): added round-trip cases for every row in the issue, plus `foo offset -(5m)`, `foo[(5s) + 1s]`, `foo[(5m):(1m)]` and the multi-term cases.
+- `parse_test.go`: updated the expected ASTs for `foo offset +(5)` and `foo offset -(5)`.
+- `promqltest/testdata/duration_expression.test`: added evaluation cases for `[(30m)]`, `offset (100)`, `offset -(100)`, `offset (100s)` and `[(30s):(10s)]`. They check the results are the same as without parens.
+
+Nothing is committed yet. A suggested PR title is `fix(promql): preserve parentheses around plain duration literals`, with a `[BUGFIX]` release note.

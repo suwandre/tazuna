@@ -1,0 +1,12 @@
+Quoted braces no longer count as block delimiters in the Caddyfile parser. Your example now adapts, with `respond` getting the body `{`. The tests pass with `-race -short` on `./caddyconfig/...` and `./caddytest/...`, including the integration suite. I didn't run the full `./...` suite or `golangci-lint`.
+
+**What changed:**
+- **Cause:** the parser and dispenser compared token text against `"{"` and `"}"` without checking whether the token was quoted. A quoted `"{"` was therefore read as a block opener, so `respond` appeared to have no argument.
+- **Fix:** I added `Token.isBrace`, `isOpenBrace` and `isCloseBrace` in `caddyconfig/caddyfile/lexer.go`. They only match unquoted tokens, which covers `"…"`, backtick and heredoc strings. The brace checks in `parse.go` and `dispenser.go` now use them. That includes block parsing, `import` block handling, snippet detection and `NextArg`/`NextBlock`.
+- **Cleanup:** the two earlier `wasQuoted == 0` special cases in `directive()` are now redundant, so I removed them.
+
+**Tests** (`caddyconfig/caddyfile/parse_test.go`):
+- `TestQuotedBracesDoNotAffectBlockParsing` covers quoted `{`, `}` and `{}`, backticks, nesting and snippets via `import`. It also checks that the quoted brace comes through as an ordinary argument and doesn't open a block.
+- `TestUnbalancedUnquotedBracesStillError` checks that genuinely unbalanced input still errors.
+
+The two new tests were never run against the old code, only the new code. I did confirm the unbalanced inputs failed to error on the old code too in my first draft. That draft's inputs were valid Caddyfiles, so I replaced them.

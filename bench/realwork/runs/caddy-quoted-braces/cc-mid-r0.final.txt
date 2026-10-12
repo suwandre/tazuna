@@ -1,0 +1,14 @@
+Quoted `{` and `}` no longer count as block delimiters, so your example now works. `caddy adapt` on that Caddyfile produces a `static_response` handler with body `{`.
+
+The root cause was that the parser and dispenser compared token text to `"{"` and `"}"` without checking whether the token was quoted. I added `isOpenBrace()` and `isCloseBrace()` helpers to `caddyconfig/caddyfile/dispenser.go`. They match only unquoted braces. I swapped them in at the brace checks in `parse.go` and `dispenser.go`, covering:
+- site address parsing;
+- directive and block-token reading;
+- snippet nesting;
+- `NextArg` and `NextBlock`;
+- the `ArgErr` message.
+
+That includes the old special case that allowed a quoted brace only when it came after a `{`. The existing `dir1 "{" a b "}"` test still passes, but those quoted braces are now plain arguments instead of an open and close block.
+
+I added three cases to `parse_test.go`: a bare `"{"` argument, a bare `"}"` argument, and your `:8080 { … "{" … }` example. `go test ./caddyconfig/...` and `go test ./caddytest/integration -run Adapt` both pass.
+
+I didn't change the formatter, since it works on raw text rather than parsed tokens. I also didn't test the formatter on quoted braces, beyond the existing formatter tests still passing.

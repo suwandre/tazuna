@@ -1,0 +1,21 @@
+I fixed the replay bug, but the full `tsdb` test run still has one failure. I believe it's caused by machine load, not my change, though I can't prove that from a single run.
+
+**Your two failed rounds.** Neither failure involved code I changed. Both were the `tsdb` package hitting Go's default 10-minute limit while running unrelated OOO querier tests. The first round also had a timing failure in `TestDelayedCompaction`. Other projects' full test suites (caddy, hugo) were running on the same machine at the time, and so was my own background run of the `tsdb` tests, which I've since stopped. I didn't change any code in response.
+
+**Tests now:**
+- With a 50-minute timeout, every `tsdb/...` package passes except `tsdb` itself. The only failure there is again `TestDelayedCompaction/delay_not_enabled`: a compaction took 7.0s against a 5s limit.
+- Run on its own, that test passes 3 out of 3 times with my change and 3 out of 3 without it. `TestQuerierOOOQuery_AppendV2` and `TestChunkQuerierOOOQuery_AppendV2` pass on their own (67s).
+- A plain `go test ./tsdb/` will keep timing out at 10 minutes while the machine is this busy. It needs `-timeout 30m` or more, or a quieter machine.
+- `go vet ./tsdb/` fails on an existing problem at `tsdb/querier_test.go:803`, a file I didn't touch.
+
+**The fix** (`tsdb/head_wal.go`, `resetSeriesWithMMappedChunks`): when a second WAL reference resolves to the same live series, its mapped chunks are now merged in rather than replacing the series' existing ones.
+- **OOO chunks** from both references are kept.
+- **In-order chunks:** existing chunks that end at or before the new reference's last chunk are dropped as already-compacted history, and the later ones are kept. If the new reference has no chunks, nothing is dropped.
+- **Unchanged:** the replayed in-memory samples are still reset. When the reference matches the live series, the old replace behaviour still applies.
+- **Metrics:** the chunk counters now count only chunks that were actually added or dropped.
+
+One limit: if the new reference has no mapped chunks, old in-order chunks of the earlier reference that weren't already skipped at load are kept, not dropped. In normal operation those are below the minimum valid time and skipped when loading.
+
+**New test:** `TestHead_WALMultiRef_KeepsMmappedChunksOfLiveRef` in `tsdb/head_test.go` covers all seven sample types. It merges two references on a restart, writes in-order and OOO mapped chunks under the live reference, then restarts twice more. It checks that all 14 samples are still queryable and that there's no mapped-chunk corruption. Without the fix it fails for every sample type, with only 1 of the 9 OOO samples left. The existing duplicate-reference and replay tests still pass.
+
+Nothing is committed yet.

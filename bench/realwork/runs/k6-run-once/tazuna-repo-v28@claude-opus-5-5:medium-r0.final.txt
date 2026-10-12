@@ -1,0 +1,24 @@
+I've added `--once`. It runs a script with 1 VU and 1 iteration and keeps the scenario's settings. It works with `k6 run`, `k6 cloud run` (local and cloud), `k6 cloud upload` and `k6 archive`. Tests pass for `./internal/cmd/...` and `./lib/executor/` with `-race`, and `golangci-lint` reports no issues on `internal/cmd`. Nothing is committed yet. Everything is on `master`, so I'd put it on a new branch before committing.
+
+**How it works**
+- The flag is in `optionFlagSet()` (`internal/cmd/options.go`), next to `--vus`, `--iterations` and `--stage`.
+- `applyOnceFlag` (`internal/cmd/config.go`) runs right after `getConsolidatedConfig`, before scenarios are built from the shortcut options. It changes the consolidated config, so archives and cloud uploads also contain the 1 VU / 1 iteration scenario.
+- **Conflicting flags:** `--once` together with `--vus`, `--iterations`, `--duration` or `--stage` fails with exit code 104 (invalid config), e.g. "--once cannot be combined with --iterations".
+- **No scenarios:** the script runs as a `default` shared-iterations scenario with 1 VU and 1 iteration. Top-level `vus`, `iterations`, `duration` and `stages` from the script, config file or environment are dropped.
+- **One scenario:** it becomes shared-iterations with 1 VU and 1 iteration under the same name. It keeps `exec`, `env`, `tags` and `options` (browser settings). Everything else, such as `startTime`, `gracefulStop` and `stages`, is dropped.
+- **Several scenarios:** it fails with "--once can run a single scenario only".
+- `setup()` and `teardown()` still run.
+
+**Tests added**
+- `TestDeriveOnceScenario` and `TestApplyOnceFlag` in `config_test.go` cover the transform, the conflicting flags and the exit code.
+- `TestArchiveOnce` in `archive_test.go` checks the scenario written into the archive's metadata.
+- `internal/cmd/tests/cmd_run_once_test.go` runs `k6 run` end to end for:
+  - a script with no scenarios
+  - one scenario, checking that exec, env and tags still apply
+  - several scenarios (error)
+  - `--once` with `--iterations` (error)
+
+**Worth knowing**
+- `k6 cloud upload` also gets the flag, because it shares `optionFlagSet()`.
+- Shortcut options set by environment variables (e.g. `K6_ITERATIONS`) are dropped without an error; only the CLI flags are rejected.
+- The existing table test in `config_consolidation_test.go` doesn't run through the `--once` code, so `--once` isn't covered there; the tests above cover it instead.

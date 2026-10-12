@@ -1,0 +1,19 @@
+The implementation matched the plan except for one regression, which I fixed. All the relevant tests pass now.
+
+**The regression:** `{{ return add . 42 }}` stopped working. The old code stripped `return` before execution, so anything after it was evaluated as one command. Now that `return` is an ordinary function, `add`, `.` and `42` are passed to it as three separate arguments, which fails. Forms like `{{ return dict "a" 1 }}` and `{{ return partial "x" . }}` are very common in real sites. The implementer had worked around this by adding parentheses in `hugolib/template_test.go` and in the docs instead of fixing it.
+
+**Fixes:**
+- **`tpl/tplimpl/templatetransform.go`:** added a small `wrapReturnArgs` step that rewrites `return fn arg1 arg2` to `return (fn arg1 arg2)` when it parses the template. Error messages still point at the right line.
+- **`hugolib/template_test.go` and the docs:** put back the original form without parentheses.
+- **`TestReturn`:** added a case for `{{ return dict "a" (add . 40) }}`.
+- **`TestReturnTooManyArgs`:** with the rewrite, `{{ return 1 2 }}` now fails with a different error, so the test uses `{{ 2 | return 1 }}` to still reach the "at most one argument" check.
+
+The other test edit, in `TestPartialReturnPanicIssue13600`, is fine. That template is still meant to fail, and only the error text changed.
+
+**Results:**
+- `go test ./tpl/...`: all 22 packages pass.
+- `go test ./hugolib/ -run 'Partial|Return|Template|Rebuild|Decorator'` and `go test ./hugolib/pagesfromdata/...`: pass.
+- `./check.sh` on `tpl/tplimpl`, `tpl/templates` and `tpl/partials` passes (gofmt, staticcheck and tests). I didn't run the full `./check.sh`.
+- The `internal/warpc` failures the implementer mentioned are still unchecked against the base commit. This change doesn't touch that package.
+
+The implementer's changes are staged and mine are unstaged on top. Nothing is committed.

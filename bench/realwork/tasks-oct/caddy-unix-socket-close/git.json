@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/caddy",
+  "base": "b72bf7a1efa0cfbf3c97b66db457912dc0d889fd",
+  "fix": "d483d7816f7a28fc104a21a2e33f0723261fc758",
+  "pr": "https://github.com/caddyserver/caddy/pull/8061",
+  "issue": "https://github.com/caddyserver/caddy/issues/8060",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 . -run '^Test(Unix|Abstract)'",
+  "suite_cmd": "go test -count=1 -timeout 10m . -skip '^Test(Unix|Abstract)'",
+  "suite_skip_note": "suite skips the hidden tests (and PR-specific tests excluded from hidden); it checks pre-existing behavior only"
+}

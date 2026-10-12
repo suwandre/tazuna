@@ -1,0 +1,217 @@
+diff --git a/.gitignore b/.gitignore
+index 7f3f745..e995580 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -6,4 +6,5 @@ public/
+ .DS_Store 
+ cache/filecache/_gen/
+ .claude/
+-dump.txt
+\ No newline at end of file
++dump.txt
++.empryo
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..dd4f6a7 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -16,8 +16,11 @@ package hugolib
+ import (
+ 	"net/url"
+ 	"path"
++	"slices"
+ 	"strings"
+ 
++	"github.com/gohugoio/hugo/common/paths"
++
+ 	"github.com/gohugoio/hugo/output"
+ 
+ 	"github.com/gohugoio/hugo/resources/kinds"
+@@ -109,6 +112,47 @@ func (l pagePaths) OutputFormats() page.OutputFormats {
+ 	return l.outputFormats
+ }
+ 
++// sectionBaseWithSlugs returns the base path of p's current section where each
++// section (including the current) with a slug set has its path segment replaced by that slug.
++// It returns an empty string if no section in the chain has a slug.
++func sectionBaseWithSlugs(p *pageState) string {
++	normalize := func(pi *paths.Path) string {
++		if p.s.Conf.DisablePathToLower() {
++			pi = pi.Unnormalized()
++		}
++		return pi.Base()
++	}
++
++	var (
++		segments []string
++		hasSlug  bool
++		cur      = p.CurrentSection()
++	)
++
++	for cur != nil && !cur.IsHome() {
++		parent := cur.Parent()
++		base := normalize(cur.PathInfo())
++		var parentBase string
++		if parent != nil && !parent.IsHome() {
++			parentBase = normalize(parent.PathInfo())
++		}
++		segment := strings.TrimPrefix(strings.TrimPrefix(base, parentBase), "/")
++		if slug := cur.Slug(); slug != "" {
++			segment = slug
++			hasSlug = true
++		}
++		segments = append(segments, segment)
++		cur = parent
++	}
++
++	if !hasSlug {
++		return ""
++	}
++
++	slices.Reverse(segments)
++	return "/" + strings.Join(segments, "/")
++}
++
+ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error) {
+ 	s := p.s
+ 	d := s.Deps
+@@ -130,6 +174,7 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		UglyURLs:    s.h.Conf.IsUglyURLs(p.Section()),
+ 		ForcePrefix: s.h.Conf.IsMultihost() || alwaysInSubDir,
+ 		URL:         pm.pageConfig.URL,
++		SectionBase: sectionBaseWithSlugs(p),
+ 	}
+ 
+ 	if pm.Slug() != "" {
+diff --git a/hugolib/site_sections_test.go b/hugolib/site_sections_test.go
+index 779c380..586b7a6 100644
+--- a/hugolib/site_sections_test.go
++++ b/hugolib/site_sections_test.go
+@@ -182,3 +182,89 @@ title: content/s1.md
+ 	b.AssertFileContent("public/s1.html", "content/s1.md")
+ 	b.AssertFileContent("public/s1/p1.html", "content/s1/p1.md")
+ }
++
++func TestSectionSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.com/"
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++disableKinds = ['rss','sitemap']
++[taxonomies]
++tag = "tags"
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: How to frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Como frobear
++slug: como-frobear
++---
++-- content/help/other/_index.es.md --
++---
++title: Otro
++slug: otro-slug
++---
++-- content/help/other/p1.es.md --
++---
++title: P1
++---
++-- content/help/p2.es.md --
++---
++title: P2
++---
++-- content/help/other/p1.en.md --
++---
++title: P1
++---
++-- content/tags/_index.es.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/foo/_index.es.md --
++---
++title: Foo
++slug: foo-es
++---
++-- content/p3.es.md --
++---
++title: P3
++tags: [foo]
++---
++-- layouts/all.html --
++{{ .Title }}|{{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "Help|/help/")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "How to frob|/help/how-to-frob/")
++	b.AssertFileContent("public/help/other/p1/index.html", "P1|/help/other/p1/")
++
++	b.AssertFileExists("public/es/help/index.html", false)
++	b.AssertFileContent("public/es/ayuda/index.html", "Ayuda|/es/ayuda/")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "Como frobear|/es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/otro-slug/index.html", "Otro|/es/ayuda/otro-slug/")
++	b.AssertFileContent("public/es/ayuda/otro-slug/p1/index.html", "P1|/es/ayuda/otro-slug/p1/")
++	b.AssertFileContent("public/es/ayuda/p2/index.html", "P2|/es/ayuda/p2/")
++
++	b.AssertFileContent("public/es/etiquetas/index.html", "Etiquetas|/es/etiquetas/")
++	b.AssertFileContent("public/es/etiquetas/foo-es/index.html", "Foo|/es/etiquetas/foo-es/")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..0c4fc0c 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -50,6 +50,11 @@ type TargetPathDescriptor struct {
+ 	// 2) the file base name (TranslationBaseName).
+ 	BaseName string
+ 
++	// SectionBase is the base path of Section with any section slugs applied,
++	// e.g. "/ayuda/como-frobear" for "/help/how-to-frob". Empty if neither the
++	// section nor any of its ancestors has a slug.
++	SectionBase string
++
+ 	// PrefixFilePath contains zero or more content dimensions used as a file
+ 	// path prefix. Dimensions are ordered role/version/language for
+ 	// single-host and language/role/version for multihost.
+@@ -165,6 +170,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.SectionBase != "" {
++			pb.Add(d.SectionBase)
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}
+@@ -207,6 +214,13 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+ 			if dir := d.Path.ContainerDir(); dir != "" {
++				if d.SectionBase != "" {
++					if sb := d.Section.Base(); dir == sb {
++						dir = d.SectionBase
++					} else if strings.HasPrefix(dir, sb+"/") {
++						dir = d.SectionBase + dir[len(sb):]
++					}
++				}
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {

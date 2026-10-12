@@ -1,0 +1,15 @@
+Every import block on a resource is now honored, so your `for_each` example plans `2 to import, 0 to add`. I didn't run `terraform plan` on your configuration. A new Go test covers that case: it passes with the fix and fails without it.
+
+**Root cause:** `refactoring.FindImportStatements` stored import statements in a map keyed by the config resource. All blocks for `terraform_data.t` share that key, so only the first one declared was kept and the rest were silently dropped. That also explains why swapping the order changes which instance imports. The map was meant to let a parent module's import override a child module's, not to collapse blocks within one module.
+
+**Fix:**
+- `internal/refactoring/import_statement.go`: `FindImportStatements` now returns a slice and records which module "owns" each resource. Blocks from the same module are all kept. Blocks for the same resource from a deeper module are still dropped in favor of the parent's, as before.
+- `internal/terraform/context_plan.go`: updated its single caller to iterate the slice.
+
+**Verification:**
+- The new test `TestContext2Plan_importForEachMultipleBlocks` is in `context_plan_import_test.go`.
+- I filtered `go test` on `internal/terraform` by name to the import tests, and the earlier run passed. I did not run the full `internal/terraform` package.
+- The `internal/refactoring` tests pass.
+- A broader `go test` over `../backend/... ../command` timed out after 120s, so I don't know the result there.
+
+**Left unchanged:** when generating config, `node_resource_plan.go` still takes `n.importTargets[0].Config` for every instance. This can pick the wrong block's config (e.g. provider reference) when a resource has several import blocks. It doesn't affect which instances get imported, so I didn't touch it.

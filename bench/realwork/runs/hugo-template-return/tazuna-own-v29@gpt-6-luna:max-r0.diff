@@ -1,0 +1,102 @@
+diff --git a/tpl/internal/go_templates/texttemplate/exec.go b/tpl/internal/go_templates/texttemplate/exec.go
+index eb67f04..ffbf410 100644
+--- a/tpl/internal/go_templates/texttemplate/exec.go
++++ b/tpl/internal/go_templates/texttemplate/exec.go
+@@ -172,6 +172,8 @@ func errRecover(errp *error) {
+ 			*errp = err.Err // Strip the wrapper.
+ 		case ExecError:
+ 			*errp = err // Keep the wrapper.
++		case error:
++			*errp = err
+ 		default:
+ 			panic(e)
+ 		}
+diff --git a/tpl/partials/init.go b/tpl/partials/init.go
+index 7d45f0e..62d0aba 100644
+--- a/tpl/partials/init.go
++++ b/tpl/partials/init.go
+@@ -45,7 +45,7 @@ func init() {
+ 
+ 		// TODO(bep) we need the return to be a valid identifiers, but
+ 		// should consider another way of adding it.
+-		ns.AddMethodMapping(func() string { return "" },
++		ns.AddMethodMapping(ctx.Return,
+ 			[]string{"return"},
+ 			[][2]string{},
+ 		)
+diff --git a/tpl/partials/partials.go b/tpl/partials/partials.go
+index be552ee..7ec51a2 100644
+--- a/tpl/partials/partials.go
++++ b/tpl/partials/partials.go
+@@ -17,6 +17,7 @@ package partials
+ 
+ import (
+ 	"context"
++	"errors"
+ 	"fmt"
+ 	"html/template"
+ 	"io"
+@@ -91,6 +92,21 @@ type Namespace struct {
+ 	cachedPartials *partialCache
+ }
+ 
++type returnError struct {
++	value any
++}
++
++func (e *returnError) Error() string { return "template return" }
++
++// Return exits the current template, optionally returning a value from a partial.
++func (ns *Namespace) Return(args ...any) error {
++	var value any
++	if len(args) > 0 {
++		value = args[0]
++	}
++	return &returnError{value: value}
++}
++
+ // contextWrapper makes room for a return value in a partial invocation.
+ type contextWrapper struct {
+ 	Arg    any
+@@ -181,7 +197,15 @@ func (ns *Namespace) doInclude(ctx context.Context, key string, templ *tplimpl.T
+ 	}
+ 
+ 	if err := ns.deps.GetTemplateStore().ExecuteWithContextAndKey(ctx, key, templ, w, data); err != nil {
+-		return includeResult{err: err}
++		var returnErr *returnError
++		if !errors.As(err, &returnErr) {
++			return includeResult{err: err}
++		}
++		if wrapper, ok := data.(*contextWrapper); ok {
++			wrapper.Result = returnErr.value
++		} else {
++			return includeResult{err: err}
++		}
+ 	}
+ 
+ 	var result any
+diff --git a/tpl/templates/templates_integration_test.go b/tpl/templates/templates_integration_test.go
+index 479103d..3cbc6c7 100644
+--- a/tpl/templates/templates_integration_test.go
++++ b/tpl/templates/templates_integration_test.go
+@@ -263,6 +263,20 @@ Line 3.
+ 	b.Assert(err.Error(), qt.Contains, filepath.FromSlash(` "/layouts/home.html:2:11": execute of template failed`))
+ }
+ 
++func TestReturnExitsRegularTemplateEarly(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++-- layouts/home.html --
++Before.{{ if true }}{{ return }}After.{{ end }} Never.
++`
++
++	b := hugolib.Test(t, files)
++	b.AssertFileContent("public/index.html", "Before.")
++	b.AssertFileContent("public/index.html", "After.")
++}
++
+ func TestPartialReturnPanicIssue13600(t *testing.T) {
+ 	t.Parallel()
+ 

@@ -1,0 +1,22 @@
+I added `--once` to `k6 run`, `k6 cloud run` (with and without `--local-execution`), `k6 cloud` and `k6 archive`. The relevant tests pass. The work is on branch `add-run-once-flag` and isn't committed.
+
+**How it works**
+- The flag is defined in `internal/cmd/options.go`. The logic is a new function, `applyOnce`, in `internal/cmd/config.go`. It runs in `internal/cmd/test_load.go` right after config consolidation and before scenarios are derived.
+- Because it runs at that point, the archive and cloud uploads also contain the single 1-VU/1-iteration scenario.
+- **No scenarios:** runs `default()` once in a scenario named `default`, using `shared-iterations`.
+- **One scenario:** becomes a `shared-iterations` scenario with 1 VU and 1 iteration. It keeps its name, `exec`, `env`, `tags` and `options` (including browser options). Every other field is dropped.
+- **Several scenarios:** fails with `--once can run a single scenario only, but the script defines 2 scenarios: a, b` and the invalid-config exit code.
+- **With `--vus`, `--iterations`, `--duration` or `--stage`:** fails with, for example, `--once cannot be combined with --iterations`.
+- `setup()` and `teardown()` run as normal.
+
+**Behaviour to be aware of**
+- Only command-line shortcut flags cause the "cannot be combined" error. If `vus`, `duration`, `iterations` or `stages` come from the script's options, a config file or `K6_*` environment variables, `--once` quietly overrides them.
+- `startTime` and `gracefulStop` are dropped too, since they weren't in the list of fields to keep.
+
+**Tests**
+- New `--once` cases in `config_consolidation_test.go`, each run for `run`, `archive` and `cloud run`.
+- A new `config_once_test.go` that checks the exact error messages and exit codes.
+- Two tests in `internal/cmd/tests/cmd_run_test.go` that actually run k6. One checks that a `constant-vus` scenario with `exec`, `env` and `tags` runs exactly once with its env intact. The other checks that two scenarios fail with the expected error.
+- `go vet` is clean, and `go test -race` passes for `./internal/cmd/` and `./lib/executor/`, plus the new tests in `./internal/cmd/tests/`.
+- In the first full run of `./internal/cmd/tests/`, one existing test, `TestEventSystemError/abort`, failed once. It passed in a full rerun and in five repeated runs, but I haven't checked whether it also fails without these changes.
+- `k6 cloud` and `k6 cloud run` are only covered by the config tests, not run end to end, because that needs a live cloud endpoint.

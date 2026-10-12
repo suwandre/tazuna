@@ -1,0 +1,19 @@
+The implementation is correct and complete. It matches the plan and fixes every case listed in the issue, so I made only one small cleanup.
+
+**What I checked:**
+- **Code:** the parser changes are action-only, and `generated_parser.y.go` was regenerated with goyacc v0.6.0 rather than edited by hand. The two helpers are in `parse.go`, and `applyUnaryOpToDurationExpr` uses them as planned.
+- **Tests:** the changes cover all the cases from the issue, and `foo[(0)]`, `foo[1m/(0)]` and `foo[1m%(0)]` are still parse-time errors.
+- **Engine tests:** the implementer showed the new lines in `duration_expression.test` actually run. While prototyping I also changed one expected value on purpose and saw `TestEvaluations` fail, so those lines are really checked.
+
+**What I changed:** the two updated test cases in `promql/parser/parse_test.go` (`foo offset +(5)` and `foo offset -(5)`) set `OriginalOffset: 0`, which is already the default. I removed those two lines and ran `gofmt`. My first `sed` attempt also deleted the same line from two older test cases and left the file failing `gofmt`. I restored the file and redid the edit on only the two new cases.
+
+**Checks after my change:**
+- `gofmt -l promql/parser/` is clean.
+- `go test -count=1 ./promql/parser/` passes.
+- I didn't rerun the slower `./promql/` tests, because I only touched test expectations in the parser package.
+
+**Left for you:**
+- Nothing is committed yet. All changes are staged.
+- `make check-generated-parser` compares against the last commit, so it will only pass once the regenerated parser is committed.
+- A full `make lint` timed out for the implementer. Lint on `promql/parser` is clean, and a `./promql/...` run reported only `gofumpt` findings in files this change doesn't touch.
+- Commit with `git commit -s` and use the PR title and release note from the plan.

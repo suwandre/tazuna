@@ -1,0 +1,21 @@
+The final state is confirmed. Here's a summary of the change:
+
+## Summary
+
+**Root cause:** Exemplars live only in the in-memory circular buffer and the WAL; they are never written to blocks. When head GC removed a series after its samples had been persisted (ordinary compaction, selected-series compaction, or stale-series compaction), the series record eventually stopped being written to WAL checkpoints. Since the exemplar's WAL record often sits in a newer segment still covered by replay, WAL replay then resolved the exemplar's series ref to nothing, counted it in `prometheus_tsdb_wal_replay_unknown_refs_total{type="exemplars"}`, and dropped it.
+
+**Fix** (`tsdb/head.go`, `tsdb/exemplar.go`):
+- Added `CircularExemplarStorage.HasExemplarAtOrAfter(labels, mint)`, which answers from the newest exemplar in the per-series index entry (exemplars are kept sorted by timestamp). Distinct zero/negative timestamps count normally.
+- Added an internal `exemplarRetainer` interface next to `ExemplarStorage` and an unexported `stripeSeries.keepSeries` predicate, wired to `Head.keepSeriesForExemplars`, which compares the newest exemplar against `h.minValidTime` (the head's WAL replay cutoff).
+- `stripeSeries.gc` (used by `Head.Truncate`/`DB.Compact`): when a fully-drained series is otherwise collectable, it keeps the series identity (so the checkpoint keeps its record) and only drops the now-dangling appender. The empty series doesn't contribute to `actualInOrderMint`, so it can't hold back the head's minimum time.
+- `stripeSeries.gcSeries` (used by `CompactSelectedSeries`/`CompactStaleHead`): same retention, but also releases the already-persisted chunks via the new `memSeries.releaseChunks()` (head + mmapped chunks, `firstChunkID` advanced, appender cleared, `mmapReady` decremented), so `prometheus_tsdb_head_chunks` drops and `prometheus_tsdb_head_chunks_removed_total` counts them exactly once. Re-compacting the empty series writes no block and releases nothing further.
+- Samples appended concurrently with compaction are unaffected: the existing `hasPendingCommit`/`maxTime > maxt`/fingerprint/`shouldEvict` checks run before the new branch.
+
+**Tests** (`tsdb/exemplar_retention_test.go`, new):
+- Ordinary `DB.Compact`, `Head.Truncate`, `CompactSelectedSeries` (both `Appender` and `AppenderV2`), `CompactStaleHead`: assert identity retention, chunk release/counting, no-op re-compaction, checkpoint retention, and no unknown exemplar refs plus a queryable exemplar after restart.
+- Zero and negative exemplar timestamps keep the series before the cutoff and allow removal after it.
+- Head+mmapped chunk release accounting.
+- Restart where replay resurrects persisted samples and a later compaction releases them again.
+- Memory-snapshot-on-shutdown restart, then a further compaction plus restart.
+
+**Verification:** each new test fails with the retention check disabled; `go test ./tsdb/... -count=1` passes (including `-race` for the retention and compaction tests); `golangci-lint run ./tsdb/...` is clean; also checked with the `dedupelabels` and `slicelabels` build tags.

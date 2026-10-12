@@ -1,0 +1,50 @@
+Actions: a cancelled reusable workflow run stays "cancelling"
+
+### Gitea Version
+
+28.0.0
+
+### What happened?
+
+**What I did**:
+Have repos with a (reusable) workflow CI job and `cancel-in-progress` concurrency, and push a new commit to a PR while the previous run is still running:
+
+```yaml
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  ci:
+    uses: org/repo/.gitea/workflows/x.yml@tag
+```
+
+**What I expected to happen**:
+The running CI run to be cancelled, and the new run to start against the new head.
+
+**What happened instead**:
+The old run gets stuck in "Cancelling" forever, although every job in it is cancelled. The new run stays blocked behind it.
+`force-cancel` (added in 28.0.0) does close the stuck run, but the waiting run then still does not start. Only a manual cancel and re-run of the waiting run frees it.
+
+Rows of a run in this state (fresh instance on main, MariaDB 12.3.1, a few minutes after the cancel). The run is `cancelling` (8), the caller job, the child job and the task are all `cancelled` (3), the next run is `blocked` (7):
+
+```
+action_run       id 804  status 8  stopped 0
+action_run       id 805  status 7  stopped 0        <- waits for the same concurrency group
+action_run_job   id 205  parent_job_id 0    is_reusable_caller 1  status 3
+action_run_job   id 206  parent_job_id 205  is_reusable_caller 0  status 3
+action_task      id 55   job_id 206                               status 3
+```
+
+I see the same rows on our production instance for runs stuck in "Cancelling".
+
+**Reproduce**:
+MariaDB 12.3.1, a runner that advertises the `cancelling` capability (`gitea-runner v4.1.0+6`), a repo with a caller workflow using the `concurrency` block above and a `uses:` job (the called workflow may itself call another reusable workflow). Push a commit, wait until the child job is running, push another commit to the same ref. The runner acknowledges the cancel and its job and task go to `cancelled`, the run stays `cancelling`. I could not reproduce this reliably on sqlite.
+
+What I could see so far: when the caller is cancelled, its child job has a task, so the child goes to `cancelling` until the runner acknowledges; but the caller job itself (which has no task) seems to be written as `cancelled` right away, while its child is still `cancelling`. When the runner later acknowledges, the caller's status therefore doesn't change and the run/attempt status is never refreshed. Separately, cancelling (or force-cancelling) a run whose jobs are all already finished only settles the run's status, and nothing then checks the concurrency group for the runs waiting behind it.
+
+**Expected behavior**:
+- While any job below a reusable-workflow caller (at any nesting depth) is still `cancelling`, the caller stays `cancelling` too; once the runner acknowledges and the last child is `cancelled`, the callers become `cancelled` and so does the run.
+- Force-cancelling a run that is stuck like this settles it and also lets the runs blocked on its concurrency group start.
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

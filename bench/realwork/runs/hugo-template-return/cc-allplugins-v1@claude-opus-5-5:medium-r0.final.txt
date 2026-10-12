@@ -1,0 +1,35 @@
+`return` now works in any template, anywhere in it, and stops execution right away. It's implemented with a sentinel error, as you suggested, and the change to the forked Go template package is small. `./check.sh ./tpl/...` passes (gofmt, staticcheck, tests), and `go test` passes for `./hugolib/`, `./scripts/...` and `./tpl/tplimpl/...`. My first full `./check.sh` run hit the 10-minute tool limit and was stopped, so `check.sh` was never run on `hugolib` or the rest of the repo.
+
+**How it works**
+- `partials.Return(args ...any) (any, error)` always returns `nil, &texttemplate.ReturnError{Value, HasValue}`. More than one argument is an error.
+- **Fork changes** (all in `hugo_template.go`):
+  - `evalCall` panics with the `*ReturnError` instead of turning it into an `ExecError`.
+  - `executeWithState` catches that panic. It passes the error up only when the return carried a value.
+  - `try` passes it through rather than catching it.
+  - `walkTemplate` is now wrapped, so a `return` inside a template called with `{{ template "x" }}` only exits that template. This needed one rename in `exec.go`, and I added a matching replacer in `scripts/fork_go_templates/main.go` so it survives the next fork update.
+- **Template store and partials:** `TemplateStore.ExecuteWithContextAndKey` hands the `ReturnError` on to partials and ignores it for every other kind of template. `doInclude` uses `Value` when there is one, and otherwise the rendered output.
+- **Removed:** the old return transform (`partialReturnWrapper`, `contextWrapper`, `HasReturn`, `collectReturnNode`) is gone.
+
+**Behaviour**
+- In a partial, `{{ return X }}` returns `X`.
+- A bare `{{ return }}` returns whatever has been rendered so far.
+- A partial that never reaches a `return` returns its rendered output, as before.
+- Outside partials, `return` just stops rendering, and any value is ignored.
+
+**Two things you might want to change**
+- **One parse-time rewrite remains:** `{{ return add . 41 | string }}` becomes `{{ add . 41 | string | return }}`. Without it, the existing `return fn args…` syntax breaks, because Go reads `add` as a bare argument. It's a small function, `moveReturnLast`.
+- **Changed test expectation:** `TestPartialReturnPanicIssue13600` now expects the real error (`error calling delimit: can't iterate over …`). The old transform dropped the `| string` part of the pipe, which produced a misleading arity error.
+
+**Tests and docs**
+- New test `TestTemplateReturn` covers:
+  - early return inside `if` and `range`
+  - bare return
+  - a falsy return value
+  - nested partials
+  - pipes
+  - `template` calls
+  - `try`
+  - early return from `home.html` itself
+- I also updated `docs/content/en/functions/go-template/return.md`. It no longer says the return must be the last statement.
+
+Nothing is committed yet.

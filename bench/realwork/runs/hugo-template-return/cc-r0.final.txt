@@ -1,0 +1,24 @@
+`return` now works anywhere in a template, not just as the last command in a partial. All tests pass except `internal/warpc` `TestGreet`, which also fails on the untouched base commit.
+
+I haven't run the full `./check.sh`: its staticcheck step fails on deprecation warnings in `config/allconfig` and an unused value in `hugolib/integrationtest_builder.go`. I haven't touched those files, and `./check.sh ./tpl/...` passes cleanly.
+
+## How it works
+- **Sentinel:** `return` is now a real template function, `partials.Namespace.Return`. It returns a `*texttemplate.ReturnError` carrying the optional value. A bare `return` is distinguished from `return nil` by a `HasValue` flag.
+- **Trapping it:** the fork's `evalCall` panics with the sentinel instead of reporting it as "error calling return". `errRecover` turns that into the error returned from `Execute`. Both sit next to the existing `walkBreak`/`walkContinue` mechanism.
+- **Scope:** `walkTemplate` also recovers it. So a `return` inside a `define` or `block` ends only that template. Placed in `baseof`'s `main` block, an early exit no longer cuts off the closing `</body>`.
+- **Partials:** `doInclude` renders into a buffer. `return X` gives X as the result. A bare `return` gives the output rendered so far, so early exits don't print `<no value>`. Otherwise the output is returned as before. Non-partial callers of `ExecuteWithContext` swallow the sentinel.
+
+## Removed
+- The `partialReturnWrapper` AST rewrite, `collectReturnNode`, `contextWrapper` and `ParseInfo.HasReturn`.
+- The old rewrite made dot and `$` point at the partial's argument; the argument is now passed directly.
+
+## Behaviour changes
+- `return fn a b` (used in the docs, e.g. `return math.ModBool . 2`) still works. A small transform rewrites it to `return (fn a b)`, because `return` is now a normal function.
+- `return (x) | string` used to drop the `return` from the pipe. Now `return` fires first, so `| string` never runs. I changed `TestPartialReturnPanicIssue13600` to expect the real `delimit` error. It no longer expects the old "wrong number of args for string".
+- A partial that has a `return` but doesn't reach it now returns its rendered output instead of nil.
+- Passing more than one argument to `return` is an error.
+
+## Tests and docs
+I added `TestReturnEarlyInPartial`, `TestReturnEarlyInTemplate` and `TestReturnTooManyArgs` to `tpl/partials/partials_integration_test.go`. They cover returns inside `if` and `range`, `partialCached`, bare and `return nil`, a `return` in a page template, a block and a define, and the too-many-arguments error. I rewrote `return.md` and updated `Include.md` and `IncludeCached.md`, which still said a partial may contain only one `return`, at the end.
+
+One cost: partials that end in `{{ return $x }}` now go through a panic and recover on every call, like `break` and `continue`. I haven't benchmarked it.

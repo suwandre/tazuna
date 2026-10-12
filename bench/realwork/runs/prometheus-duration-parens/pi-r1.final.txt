@@ -1,0 +1,12 @@
+Parentheses around a plain number in a duration expression now survive `Expr.String()`. `go test ./promql/... ./web/... ./rules/...` passes.
+
+**Fix**
+- **AST shape:** a parenthesised plain number in an offset or range position is now wrapped in a `*DurationExpr`. The wrapper has `Op: ADD`, `Wrapped: true` and the literal as `RHS`, so the existing `Wrapped` printing prints the parens. This is done by a new `wrapNumberLiteralInParens` helper in `promql/parser/parse.go`. It is called from `paren_duration_expr` and from the `unary_op ( duration_expr )` rule in `generated_parser.y`, and I regenerated `generated_parser.y.go` with goyacc v0.6.0.
+- **`+(5)` prints as `(5)`:** `foo offset +(5)` now prints `foo offset (5)`, dropping the `+`. That matches how `+(5m + 1m)` already behaves, but the issue doesn't say what output it expects for the `+` case.
+- **Parse-time check kept:** `positive_duration_expr` previously rejected `foo[(0)]` and `foo[-(5)]` at parse time, because it only recognised a bare `*NumberLiteral`. I added a `constantDurationValue` helper so it still looks through these wrappers and keeps the "duration must be greater than 0" parse error.
+
+**Behaviour change:** `foo offset (5)` and `foo offset -(5)` now set `OriginalOffsetExpr` instead of a numeric `OriginalOffset`. The engine's `durationVisitor` already evaluates `OriginalOffsetExpr` into `OriginalOffset` at query time, so evaluation is unchanged.
+
+**Tests**
+- I updated the `foo offset +(5)` and `foo offset -(5)` cases in `parse_test.go` to expect the new AST.
+- I added round-trip cases to `printer_test.go`: `foo offset (5)`, `foo offset +(5)`, `foo offset -(5)`, `foo offset (5m)`, `foo[(5s)]`, `foo[(5s):(1s)]` and `foo[(5s) + 1s]`. The multi-term cases from the issue are there too.

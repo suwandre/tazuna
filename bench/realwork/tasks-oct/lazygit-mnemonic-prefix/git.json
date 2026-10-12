@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/lazygit",
+  "base": "c5f7158154602d23b0750d4304c73e2aead8df5b",
+  "fix": "47e7a133a5a1a60c4e8c04cf2624c15506ede234",
+  "pr": "https://github.com/jesseduffield/lazygit/pull/6099",
+  "issue": "https://github.com/jesseduffield/lazygit/issues/6096",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./pkg/gui/controllers/helpers -run '^(TestPathFromDiffHeaderField|TestPathFromDiffGitLine|TestParseDiffLineFromBufferMnemonicPrefixes)$'",
+  "suite_cmd": "go test -count=1 -timeout 10m ./pkg/gui/controllers/helpers ./pkg/commands/patch -skip '^(TestPathFromDiffHeaderField|TestPathFromDiffGitLine|TestParseDiffLineFromBufferMnemonicPrefixes)$'",
+  "suite_skip_note": "suite skips the hidden tests (and PR-specific tests excluded from hidden); it checks pre-existing behavior only"
+}

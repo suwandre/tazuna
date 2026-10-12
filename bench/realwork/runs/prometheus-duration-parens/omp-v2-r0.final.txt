@@ -1,0 +1,22 @@
+Parentheses around a single number or duration now survive `Expr.String()` for offset and range positions. With `ExperimentalDurationExpr: true`, every case from your table prints as expected, and the "correct" cases are unchanged. `go test ./promql/...` passes, including the parser and promqltest packages.
+
+| Input | `Expr.String()` |
+|---|---|
+| `foo offset (5)` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[(5s)]` |
+
+- **Fix:** `*NumberLiteral` has no `Wrapped` field, so the parser now wraps a parenthesised literal in a unary-plus `*DurationExpr` with `Wrapped: true`. The engine and printer already handle that node, so I added no new AST field.
+- **`+(5)`:** it prints as `(5)`, with the plus dropped. That matches how `+(5*2)` already prints as `(5 * 2)`.
+- **Code changes:** a new helper, `wrapDurationExprInParens` in `promql/parser/parse.go`, is called from `paren_duration_expr` in `generated_parser.y`. The unary `-(N)` and `+(N)` path now goes through it as well. I regenerated `generated_parser.y.go` with goyacc v0.6.0, and the conflict counts it reported are expected to match the existing grammar (I didn't compare them against the old build).
+- **AST change:** a wrapped literal in an offset or range now lands in `OriginalOffsetExpr` or `RangeExpr`, with `OriginalOffset` or `Range` left at 0. That is how `(5m + 1m)` was already handled. A consumer that reads only `Range` or `OriginalOffset`, without running the engine's duration evaluation, now sees 0 for `foo offset (5)`.
+- **Zero or negative ranges:** `foo[(0)]` and `foo[-(5)]` still fail at parse time with "duration must be greater than 0". The positivity check in `positive_duration_expr` now looks through the wrapper, using a new helper `literalDurationSeconds`.
+- **Nested parens:** `-((5))` still prints as `-(5)`, losing one paren level. Wrapped `*DurationExpr`s such as `-((5m + 1m))` have the same limit, so I left it.
+- **Tests:**
+  - Updated the two `parse_test.go` AST expectations for `foo offset +(5)` and `foo offset -(5)`.
+  - Added round-trip cases to `printer_test.go` for `(5)`, `(5m)`, `+(5)`, `-(5)`, `[(5s)]` and `[(5s):(1s)]`.
+  - Added a `foo[(0)]` parse-error case.
+
+I didn't add a promqltest eval case for `offset (5)`.

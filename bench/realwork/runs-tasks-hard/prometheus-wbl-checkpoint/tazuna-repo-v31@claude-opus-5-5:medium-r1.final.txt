@@ -1,0 +1,14 @@
+The fix is finished. gofmt and `golangci-lint run ./tsdb/...` report no problems, and the diff contains only the intended changes. The full `tsdb` package passes with `-timeout 60m`, in about 36 minutes. With Go's default 10-minute limit it still times out on this machine whether or not the fix is applied.
+
+**What changed**
+- **The fix:** a WAL checkpoint now keeps the series record for a duplicate reference while any WBL segment still uses that reference. A new `Head.wblExpiries` map tracks those references.
+  - WBL replay fills the map, in `loadWBL` in `tsdb/head_wal.go`.
+  - The checkpoint's keep check reads it, in `keepSeriesInWALCheckpointFn` in `tsdb/head.go`.
+  - `truncateOOO` clears an entry once out-of-order compaction deletes the WBL segments that used it. Kept records are therefore not retained forever.
+- **The tests:**
+  - A new `TestWBLReplayAfterCheckpointWithDuplicateSeries` replays the sequence from the issue for every sample type. Without the fix it returns 3 of 4 samples.
+  - A new case in `TestHead_KeepSeriesInWALCheckpoint`.
+
+**One thing to know:** `loadWBL` now takes the WBL segment number as an extra argument. It is unexported, so this does not change the public Go API.
+
+Nothing is committed yet. Should I commit it signed off (`git commit -s`, as AGENTS.md asks) on a new branch, titled something like `tsdb: keep WAL series records still referenced by the WBL in checkpoints`? I can also draft the PR description with a `[BUGFIX]` release note.

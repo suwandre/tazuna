@@ -1,0 +1,27 @@
+The change is in place and tests pass. Here's a summary.
+
+## Summary
+
+Implemented the `tls_automate_names` Caddyfile global option, which decouples certificate automation from serving a name.
+
+### Behavior delivered
+- **`tls_automate_names <names...>`** takes one or more names; repeating the option appends to the list.
+- Names are added to the **tls app's `certificates.automate` loader** but produce **no HTTP route**.
+- Works with **no site blocks at all** — a config of only global options adapts to a `tls` app alone.
+- Global TLS/ACME options (e.g. `email`) produce the **same automation policies** as if the names had a site block (issuers get filled in), so the adapted output matches the dummy-site equivalent minus the route.
+- Names that can't get a public cert (`localhost`, IPs) are routed to the **internal issuer**, same as a site block.
+- If a name already has a site block's automation policy, it's **kept in the loader but no duplicate/conflicting policy is created** (avoids the "hostname appears in more than one automation policy" adapt error); the site block's policy wins.
+- Names are still listed with **`auto_https off`**.
+
+### Files changed
+- `caddyconfig/httpcaddyfile/options.go`: registered `tls_automate_names` with new `parseOptAutomateNames`.
+- `caddyconfig/httpcaddyfile/tlsapp.go`: merge `tls_automate_names` into the automate loader and build/reuse automation policies; factored out `hasGlobalACMEDefaults` and added helpers `automationPolicyExistsForSubject`, `hasGlobalACMEDefaults`.
+- Added 5 adaptation fixtures under `caddytest/integration/caddyfile_adapt/`: basic, auto_https off, existing-policy conflict, internal/append, and no-site-block-only.
+
+### Verification
+- `go build ./...` — passes.
+- `go test ./caddyconfig/httpcaddyfile/...` — passes.
+- `go test ./caddytest/integration/ -run TestCaddyfileAdaptToJSON` (incl. the new fixtures, run verbosely) — passes.
+- `go test -race -short ./caddyconfig/httpcaddyfile/...` and `go vet` on the package — clean.
+
+Note: I did not run the full `./caddytest/integration/...` suite to completion as it launches live servers and exceeded the 120s command timeout; the adaptation tests covering this feature were run in isolation and pass.

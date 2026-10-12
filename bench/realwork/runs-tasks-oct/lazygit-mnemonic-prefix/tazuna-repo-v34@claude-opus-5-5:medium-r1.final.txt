@@ -1,0 +1,22 @@
+With `diff.mnemonicPrefix` set, staging, unstaging and discarding from the focused diff work again. All unit tests and lint pass. I also ran 269 integration tests one by one (main_view, patch_building, stash, diff, filter_by_path, file, commit), and all of them pass. A new integration test, `main_view/stage_lines_with_mnemonic_prefix`, stages and then unstages lines with the setting on; it fails on the original code and passes now.
+
+**What was wrong.** The focused diff matched each row to a file by reading the path out of the diff header, and only knew how to strip `a/` and `b/`. With mnemonic prefixes it resolved `w/file.go`, which matches no file, so "Apply Patch" was logged but nothing was staged.
+
+**What changed:**
+- **Header paths** (`pkg/gui/controllers/helpers/diff_line_parser.go`): any single-component prefix (`a/`, `b/`, `i/`, `w/`, `c/`, …) is stripped, including in C-quoted paths and subdirectories. `/dev/null` stays as is, and a path with no prefix resolves to nothing.
+- **Sections without `---`/`+++` lines**: the path comes from `rename to` or `copy to` if present. Otherwise the `diff --git` line is split where both halves name the same path, so paths containing spaces or ` b/` work. If no split matches, nothing resolves.
+- **Diffs lazygit asks git for**: a new builder helper, `DiffPathPrefixes()`, forces `a/` and `b/` by overriding `diff.noprefix`, `diff.mnemonicPrefix`, `diff.srcPrefix` and `diff.dstPrefix`. The working-tree diff that staging uses didn't override any of these before. The two `stash show` diffs didn't either, and one of them is piped into `git apply`.
+
+**Decision for you to review.** The helper sets config rather than passing `--src-prefix=a/ --dst-prefix=b/`. I tried the flags first, but `git stash show` mishandles them: on git 2.55 it drops the prefix or prints garbage like `/etc/gitattributesf`. That broke `main_view/discard_from_a_commit_only_where_it_can_be_rewritten`. I asked how to handle it, but no one was available, so I chose the config approach. `--default-prefix` would also work but needs git 2.41, and the minimum is 2.32.
+
+**History notes:**
+- There are two fixup-style commits for you to fold in with `git rebase --autosquash`; I didn't squash anything:
+  - `189e117 fixup!` corrects how the demonstration tests were laid out. It is missing the `Co-Authored-By` trailer, which disappears when it's folded in anyway.
+  - `abec8a0 amend!` replaces the flag approach and rewrites the message of `9d4fd06`.
+- Until that `amend!` is folded in, `9d4fd06` on its own fails the stash integration test above.
+
+**Left as is:**
+- `GetFilesInDiff` still uses `-c diff.noprefix=false`; it only lists file names, so prefixes don't matter.
+- `GetCommitDiff` isn't parsed, so I didn't touch it.
+
+**Running integration tests in parallel.** Every run writes the lazygit binary to a fixed path, `/tmp/lazygit/test_lazygit`. Another checkout on this machine was overwriting it, which made most parallel runs fail instantly with a "tests missing from the list" panic. That is why I ran the tests one at a time, retrying only when that panic appeared.

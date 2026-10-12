@@ -1,0 +1,11 @@
+Quoted `{` and `}` no longer count as block delimiters, so `respond "{"` inside a site block now parses. The parser and dispenser used to compare token text only, so a quoted `"{"` looked the same as a real brace. They now treat a brace as a delimiter only if it was unquoted. Backtick and heredoc tokens count as quoted too.
+
+- **`lexer.go`:** I added two small `Token` helpers, `isOpenBrace()` and `isCloseBrace()`. Both require the token to be unquoted.
+- **`parse.go` and `dispenser.go`:** every place that tracked or checked block braces now uses those helpers. That covers server block keys, directive segments, `blockTokens`, `{block}` / `{blocks.*}` handling, `NextArg`, `NextBlock` and `ArgErr`.
+- **Tests:** I added `TestQuotedBracesDoNotAffectBlockParsing` in `parse_test.go` and `TestDispenser_QuotedBraces` in `dispenser_test.go`.
+
+The new parser test fails without the fix: the report's exact input gives `Unexpected '}' because no matching opening brace`. With the fix, tests pass in `caddyconfig/caddyfile` and `caddyconfig/httpcaddyfile`, and the `Adapt|Caddyfile` tests in `caddytest/integration` pass. I didn't run the full `go test -race -short ./...` suite or `golangci-lint`.
+
+I left `formatter.go` alone because it works on raw characters with its own quote handling, and I didn't test it with quoted braces.
+
+Since AI wrote this change, the PR will need the disclosure the project asks for, naming the agent and model.

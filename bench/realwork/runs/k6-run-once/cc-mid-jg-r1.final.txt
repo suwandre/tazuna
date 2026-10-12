@@ -1,0 +1,13 @@
+`k6 run`, `k6 cloud run` and `k6 archive` now take `--once`, which runs the script with 1 VU and 1 iteration and keeps the scenario config. The new unit tests, the new end-to-end tests and the existing `internal/cmd/...` tests pass. I didn't run `go test` on other packages. I didn't test `k6 cloud run --local-execution` or non-local `k6 cloud run` directly.
+
+- **Flag:** `--once` is registered in `optionFlagSet()` in `internal/cmd/options.go`, so every command that uses it gets the flag. `k6 cloud upload` shares that flag set, so it also accepts `--once` even though you didn't list it.
+- **Transform:** `executor.ApplyOnce` in `lib/executor/execution_config_shortcuts.go` does the work.
+  - With no scenarios, it makes the default scenario a 1/1 `shared-iterations` one.
+  - With one scenario, it swaps the executor for 1/1 `shared-iterations`. It keeps the name, `exec`, `env`, `tags` and browser `options`, and drops `startTime`, `gracefulStop` and everything else.
+  - In both cases it clears `vus`, `iterations`, `duration` and `stages`, so a script-level shortcut can't conflict or override it.
+  - With more than one scenario, it errors with `--once can run a single scenario only`.
+- **Where it runs:** in `consolidateDeriveAndValidateConfig` in `internal/cmd/test_load.go`, right after config consolidation. That covers `k6 run`, `k6 archive` and both `k6 cloud run` modes, since they all go through this function.
+- **Flag conflicts:** `validateOnceFlags` in `internal/cmd/config.go` rejects `--once` together with `--vus`, `--iterations`, `--duration` or `--stage`. The error reads `--once cannot be combined with --iterations`, for example.
+- **Tests:**
+  - `lib/executor/execution_config_shortcuts_test.go` has the new unit tests for `ApplyOnce`.
+  - `TestRunOnce` in `internal/cmd/tests/cmd_run_test.go` runs `k6 run` end to end. It covers the default function, a single scenario with `exec` and `env`, multiple scenarios, and `--once --iterations`.

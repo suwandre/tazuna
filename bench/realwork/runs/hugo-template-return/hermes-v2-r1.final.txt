@@ -1,0 +1,23 @@
+`return` now works in any template, not just partials. It can appear anywhere and stops execution at that point. It needed no changes to the Go template fork. `./tpl/...`, `./hugolib` (after the final fix) and `./check.sh ./tpl/...` pass. The rest of the wider run (`resources`, `internal`, `markup`, `commands`) showed no failures except `internal/warpc`. Its `TestGreet`, `TestGreetParallel` and `TestKatexParallel` also fail on the unmodified tree, so they're unrelated.
+
+**How it works**
+- `return` is now a regular template function that returns an error. The stock `text/template` evaluator already stops on a function error, so no patch to it was needed.
+- The error is a new `tpl.ReturnError` (`tpl/template.go`) carrying an optional value.
+- `templates.Return` (`tpl/templates/templates.go`) builds that error. `return` is registered as its alias, and the old no-op registration in the partials namespace is removed. Two or more arguments is an error.
+- `TemplateStore.ExecuteWithContextAndKey` passes a `ReturnError` through without adding file context. `ExecuteWithContext`, which pages, shortcodes and the other callers use, treats it as success, keeping whatever output was already written.
+- `partials.doInclude` takes the partial's result from the `ReturnError`. If the partial contains `return` but never reaches it, the result is still nil and its output is discarded, as before.
+
+**Removed from `tpl/tplimpl/templatetransform.go`**
+- The wrapper template that rewrote partial bodies, the `contextWrapper` type, and the "must be the last command" handling.
+- The transform now only sets `HasReturn` when it sees `return` in a partial.
+- `.` and `$` no longer need rebinding.
+
+**Behaviour changes**
+- `{{ return add . 42 }}` still works. I kept the old rule that everything after `return` is one command, by wrapping the arguments in parentheses during the transform. Without that, `add` would have been evaluated as a plain argument.
+- `return` inside `{{ template "x" }}` returns from the whole outer template or partial.
+- `{{ return (delimit . ", ") | string }}` now runs the pipeline as written. `return` is called first, so the pipeline fails earlier. I updated `TestPartialReturnPanicIssue13600` to expect `error calling delimit: can't iterate over`. It still checks that this doesn't panic.
+
+**New tests** (`tpl/templates/templates_integration_test.go`)
+- `TestReturnEarlyInPage` covers a home page, a content page inside `range`, and a shortcode.
+- `TestReturnInPartialNotLast` covers a conditional `return`, `return` inside `range`, a never-reached `return`, nested partials, `partialCached`, a `safeHTML` value and the command form.
+- `TestReturnTooManyArgs` covers the argument check.

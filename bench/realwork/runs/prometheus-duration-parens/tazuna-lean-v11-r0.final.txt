@@ -1,0 +1,14 @@
+Parentheses around a plain duration literal now survive `Expr.String()` in offset and range positions. `foo offset (5)`, `foo offset +(5)` (prints as `foo offset (5)`), `foo offset -(5)`, `foo offset (5m)` and `foo[(5s)]` all round-trip. `go test` passes for `./promql/...` and `./web/api/...`. A combined run that also included `./cmd/promtool/...` timed out, so I didn't run that package separately. I also didn't run `make lint`.
+
+**Cause:** `*NumberLiteral` has no `Wrapped` field, so the parser returned the bare literal and the parens were lost.
+
+**Fix:**
+- **Representation:** a parenthesised literal is now a `*DurationExpr` with `Wrapped: true`, using unary `ADD` over the literal. A leading `-` adds an outer unary `SUB`. The engine's `durationVisitor` already evaluates unary `ADD` and `SUB`, so evaluation is unchanged.
+- **Parser changes:**
+  - The change is in `generated_parser.y` (the `paren_duration_expr` rule) and in `applyUnaryOpToDurationExpr` in `parse.go`.
+  - I regenerated `generated_parser.y.go` with goyacc. goyacc reports the same shift/reduce and reduce/reduce conflict counts before and after my change.
+  - A new helper, `constantDurationValue`, keeps the "duration must be greater than 0" parse error for `foo[(0)]` and `foo[-(5)]`. Without it those would only fail at evaluation time.
+
+**One visible change:** `foo offset (5)` and `foo offset -(5)` now set `OriginalOffsetExpr` at parse time. `OriginalOffset` is filled in only when the engine evaluates the query, the same as for `(5m + 1m)`. I updated the two existing `TestParseExpressions` cases for `foo offset +(5)` and `foo offset -(5)` to match.
+
+**Tests:** I added round-trip cases to `TestExprString`: `(5)`, `+(5)`, `-(5)`, `(5m)`, `-(5m)`, `foo[(5s)]`, `foo[(5s):(1s)]`, and the multi-term cases that already worked.

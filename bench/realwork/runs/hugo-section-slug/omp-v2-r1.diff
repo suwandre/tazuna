@@ -1,0 +1,272 @@
+diff --git a/docs/content/en/content-management/front-matter.md b/docs/content/en/content-management/front-matter.md
+index 9210d75..49b426c 100644
+--- a/docs/content/en/content-management/front-matter.md
++++ b/docs/content/en/content-management/front-matter.md
+@@ -126,7 +126,7 @@ The most common front matter fields are `date`, `draft`, `title`, and `weight`,
+   <!-- markdownlint-enable MD049 -->
+ 
+ `slug`
+-: (`string`) Overrides the last segment of the URL path. Not applicable to `home`, `section`, `taxonomy`, or `term` pages. See the [URL management][] page for details. Access this value from a template using the [`Slug`][] method on a `Page` object.
++: (`string`) Overrides the last segment of the URL path. For `section`, `taxonomy`, and `term` pages, it replaces the corresponding path segment in the URL of the page and of all its descendants. Not applicable to `home` pages. See the [URL management][] page for details. Access this value from a template using the [`Slug`][] method on a `Page` object.
+ 
+ `summary`
+ : (`string`) Conceptually different than the page `description`, the summary either summarizes the content or serves as a teaser to encourage readers to visit the page. Access this value from a template using the [`Summary`][] method on a `Page` object.
+diff --git a/docs/content/en/content-management/urls.md b/docs/content/en/content-management/urls.md
+index 0a7095f..a453cee 100644
+--- a/docs/content/en/content-management/urls.md
++++ b/docs/content/en/content-management/urls.md
+@@ -22,7 +22,7 @@ Override the default URL for a page using these front matter fields.
+ 
+ ### Slug
+ 
+-Set the `slug` in front matter to override the last segment of the path. This front matter field is not applicable to `home`, `section`, `taxonomy`, or `term` pages.
++Set the `slug` in front matter to override the last segment of the path. For `section`, `taxonomy`, and `term` pages, the slug replaces the corresponding path segment in the URL of the page and of all its descendants. This front matter field is not applicable to the `home` page.
+ 
+ {{< code-toggle file=content/posts/post-1.md fm=true >}}
+ title = 'My First Post'
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..f036ce4 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -132,6 +132,12 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		URL:         pm.pageConfig.URL,
+ 	}
+ 
++	if kinds.IsBranch(desc.Kind) {
++		desc.Dir = p.dirWithSectionSlugs(pageInfoCurrentSection.Base())
++	} else {
++		desc.Dir = p.dirWithSectionSlugs(pageInfoPage.ContainerDir())
++	}
++
+ 	if pm.Slug() != "" {
+ 		desc.BaseName = pm.Slug()
+ 	} else if pm.isStandalone() && pm.standaloneOutputFormat.BaseName != "" {
+@@ -207,3 +213,26 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 
+ 	return desc, nil
+ }
++
++// dirWithSectionSlugs returns dir with the segments of any slugged sections
++// (the current section and its ancestors) replaced by their slugs.
++// It returns an empty string if no slug applies.
++func (p *pageState) dirWithSectionSlugs(dir string) string {
++	section := p.CurrentSection()
++	var segments []string
++	for _, s := range append(page.Pages{section}, section.Ancestors()...) {
++		if s.Slug() == "" || s.IsHome() {
++			continue
++		}
++		if segments == nil {
++			segments = strings.Split(strings.Trim(dir, "/"), "/")
++		}
++		if i := strings.Count(s.Path(), "/") - 1; i < len(segments) {
++			segments[i] = s.Slug()
++		}
++	}
++	if segments == nil {
++		return ""
++	}
++	return "/" + strings.Join(segments, "/")
++}
+diff --git a/hugolib/page_slug_branch_test.go b/hugolib/page_slug_branch_test.go
+new file mode 100644
+index 0000000..38f5b53
+--- /dev/null
++++ b/hugolib/page_slug_branch_test.go
+@@ -0,0 +1,155 @@
++// Copyright 2026 The Hugo Authors. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package hugolib
++
++import "testing"
++
++func TestSlugInSectionsAndDescendants(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.com"
++defaultContentLanguage = "en"
++defaultContentLanguageInSubdir = false
++disableKinds = ["taxonomy", "term", "RSS", "sitemap", "robotsTXT"]
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: Frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Frobear
++slug: como-frobear
++---
++-- content/help/deep/_index.es.md --
++---
++title: Profundo
++---
++-- content/help/deep/page.es.md --
++---
++title: Deep page
++---
++-- content/help/deep/sub/_index.es.md --
++---
++title: Sub
++slug: sub-slug
++---
++-- content/help/deep/sub/page.es.md --
++---
++title: Sub page
++---
++-- layouts/page.html --
++{{ .Title }}|{{ .RelPermalink }}|
++-- layouts/section.html --
++{{ .Title }}|{{ .RelPermalink }}|
++-- layouts/home.html --
++Home|{{ range site.Pages }}{{ .RelPermalink }}|{{ end }}
++`
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "Help|/help/|")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "Frob|/help/how-to-frob/|")
++	b.AssertFileContent("public/es/ayuda/index.html", "Ayuda|/es/ayuda/|")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "Frobear|/es/ayuda/como-frobear/|")
++	b.AssertFileContent("public/es/ayuda/deep/index.html", "Profundo|/es/ayuda/deep/|")
++	b.AssertFileContent("public/es/ayuda/deep/page/index.html", "Deep page|/es/ayuda/deep/page/|")
++	b.AssertFileContent("public/es/ayuda/deep/sub-slug/index.html", "Sub|/es/ayuda/deep/sub-slug/|")
++	b.AssertFileContent("public/es/ayuda/deep/sub-slug/page/index.html", "Sub page|/es/ayuda/deep/sub-slug/page/|")
++	b.AssertFileExists("public/es/help/index.html", false)
++}
++
++func TestSlugInSectionUglyURLs(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.com"
++uglyURLs = true
++disableKinds = ["taxonomy", "term", "RSS", "sitemap", "robotsTXT", "home"]
++-- content/help/_index.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/p1.md --
++---
++title: P1
++---
++-- layouts/page.html --
++{{ .Title }}|{{ .RelPermalink }}|
++-- layouts/section.html --
++{{ .Title }}|{{ .RelPermalink }}|
++`
++	b := Test(t, files)
++
++	b.AssertFileContent("public/ayuda/index.html", "Ayuda|/ayuda/index.html|")
++	b.AssertFileContent("public/ayuda/p1.html", "P1|/ayuda/p1.html|")
++}
++
++func TestSlugInTaxonomyAndTermPages(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++baseURL = "https://example.com"
++disableKinds = ["RSS", "sitemap", "robotsTXT", "home"]
++[taxonomies]
++tag = "tags"
++-- content/tags/_index.md --
++---
++title: Etiquetas
++slug: etiquetas
++---
++-- content/tags/foo/_index.md --
++---
++title: Foo
++slug: fu
++---
++-- content/tags/bar/_index.md --
++---
++title: Bar
++---
++-- content/p1.md --
++---
++title: P1
++tags: [foo, bar]
++---
++-- layouts/page.html --
++{{ .Title }}|{{ range .GetTerms "tags" }}{{ .RelPermalink }}|{{ end }}
++-- layouts/taxonomy.html --
++{{ .Title }}|{{ .RelPermalink }}|
++-- layouts/term.html --
++{{ .Title }}|{{ .RelPermalink }}|
++`
++	b := Test(t, files)
++
++	b.AssertFileContent("public/etiquetas/index.html", "Etiquetas|/etiquetas/|")
++	b.AssertFileContent("public/etiquetas/fu/index.html", "Foo|/etiquetas/fu/|")
++	b.AssertFileContent("public/etiquetas/bar/index.html", "Bar|/etiquetas/bar/|")
++	b.AssertFileContent("public/p1/index.html", "P1|/etiquetas/fu/|/etiquetas/bar/|")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..6957364 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -15,6 +15,7 @@ package page
+ 
+ import (
+ 	"bytes"
++	"cmp"
+ 	"path"
+ 	"path/filepath"
+ 	"strings"
+@@ -45,6 +46,10 @@ type TargetPathDescriptor struct {
+ 	Path    *paths.Path
+ 	Section *paths.Path
+ 
++	// Dir, if set, replaces the section path (branch kinds) or container
++	// directory (other kinds) derived from Path, e.g. when sections have slugs.
++	Dir string
++
+ 	// For regular content pages this is either
+ 	// 1) the Slug, if set,
+ 	// 2) the file base name (TranslationBaseName).
+@@ -166,7 +171,7 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			pb.Add(d.Section.Base())
++			pb.Add(cmp.Or(d.Dir, d.Section.Base()))
+ 		}
+ 		needsBase = false
+ 	}
+@@ -206,7 +211,7 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			if dir := d.Path.ContainerDir(); dir != "" {
++			if dir := cmp.Or(d.Dir, d.Path.ContainerDir()); dir != "" {
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {

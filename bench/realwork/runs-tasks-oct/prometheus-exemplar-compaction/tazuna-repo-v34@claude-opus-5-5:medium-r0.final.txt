@@ -1,0 +1,19 @@
+The fix is in, but I couldn't get `go test ./tsdb/` to pass on this machine. The new tests pass; the full package and my 2-hour run of the affected tests (head, compaction, WAL, snapshot) never finished and produced no results.
+
+**Why the package runs time out:** the machine's disk-sync queue is overloaded, not hung. A stack dump of a stuck test showed it waiting inside `fsync`, with no goroutine blocked on a lock. Verification runs keep running after they're reported as "killed after 600s". Two of them are still running now, started 2h05m and 2h37m ago, and another session is running its own tsdb tests on this machine. Each new run has to compete with all of them. Before the leftovers piled up, my new end-to-end test took about 20 seconds on its own; I've since cut it from 20 to 10 subtests, and the new tests now take 8.6s.
+
+**My mistake:** I killed what I took to be leftover runs, and one of them was the active verification. That caused the exit code 143. I haven't touched any process I didn't start since. The leftover runs should be stopped before verifying again, so the result reflects the code rather than the load.
+
+**The fix:**
+- **Remembering exemplars:** each in-memory series now records its newest exemplar timestamp. It's updated when exemplars are committed (both appender APIs share that code), replayed from the WAL, or restored from the shutdown snapshot. A spare bit in the existing `state` field marks "has an exemplar", so zero and negative timestamps count as real ones.
+- **Normal compaction (`DB.Compact`):** head GC keeps a series that has no samples left but has an exemplar at or after the cutoff. It keeps its ID, so the WAL checkpoint keeps its series record. It doesn't hold back the head's minimum time, and it's removed once the cutoff passes the exemplar.
+- **Selected and stale compaction:** such a series is no longer deleted, and no WAL tombstone is written for it. Its head and memory-mapped chunks and its appender are released, and the two chunk metrics are adjusted once. Compacting the empty series again writes no block and counts nothing. The existing guards for samples appended during compaction (in-order or out-of-order) are unchanged.
+
+**Tests:**
+- A new end-to-end test in `tsdb/db_test.go` covers all three compaction types, exemplars before and after the last sample, both appenders, and restarts with and without the snapshot, with a second compaction and restart. Without the fix, all 20 original cases lost the exemplar after a restart; with it they pass.
+- A new head test in `tsdb/head_test.go` covers zero and negative timestamps with both appenders.
+- `golangci-lint` is clean.
+
+One existing race is not changed by this fix. A query that starts while selected or stale compaction is evicting a series can fail with a chunk "not found" error. That already happens today for series that get deleted. Releasing chunks on a kept series doesn't make it worse.
+
+The changes are in `tsdb/head.go`, `tsdb/head_append.go` and `tsdb/head_wal.go`, plus the two test files. Nothing is committed.

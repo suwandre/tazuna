@@ -1,0 +1,5 @@
+Fixed the verification failure: the MIB loader now uses `gosmi.AppendFS`, so paths containing the path-list separator are preserved, and its warnings are safe when no logger is provided. Added a nil-logger regression test.
+
+SNMP recovery changes remain in place: failed gathers close the cached connection, and the wrapper reconnects before `Get` or `Walk`, refreshing SNMPv3 discovery state when closed.
+
+Verified with `go test ./plugins/common/snmp/ ./plugins/inputs/snmp/ ./plugins/processors/snmp_lookup/`; all passed.

@@ -1,0 +1,20 @@
+Quoted braces (`"{"`, `` `}` ``, heredocs) are now treated as plain text, so your example `:8080 { respond "{" }` parses and adapts correctly. The `caddyconfig/...` and `caddytest/integration` tests pass with `-race`, and `gofmt` and `go vet` are clean. I didn't run `golangci-lint` or the full `./...` suite.
+
+**Cause:** the parser and dispenser decided where blocks open and close by comparing token text to `"{"` / `"}"`. They ignored whether the token had been quoted.
+
+**Fix:**
+- `lexer.go`: added `Token.isOpenBrace()` and `Token.isCloseBrace()`, which match only unquoted braces.
+- `dispenser.go`: added matching `Dispenser` helpers and used them in `NextArg`, `NextBlock`, `ArgErr`, and the block-nesting logic.
+- `parse.go`: replaced the text comparisons with the helpers. This covers address parsing, `directives`, `directive`, `blockTokens`, `openCurlyBrace` / `closeCurlyBrace`, and the snippet and import-block nesting tracking.
+
+**Tests added:**
+- `TestQuotedBracesDoNotAffectBlocks` covers quoted `{` and `}`, backtick strings, nested blocks and snippet imports.
+- `TestUnbalancedBracesAroundQuotedBraces` checks that real unbalanced braces still error.
+- `TestDispenser_QuotedBracesAreNotBlockDelimiters` covers the dispenser.
+- A new adapter case, `caddytest/integration/caddyfile_adapt/quoted_braces.caddyfiletest`, covers the end-to-end Caddyfile → JSON output.
+
+I left two things alone:
+- A stray unquoted `}` after a closed site block is still silently accepted. It was before this change too.
+- A quoted site address ending in `{` still gets the "Site addresses cannot end with a curly brace" error.
+
+Since this is AI-assisted, the PR should disclose it (Claude Sonnet 5.5), and you should be able to explain each change before submitting.

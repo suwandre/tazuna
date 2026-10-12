@@ -1,0 +1,15 @@
+I've added `slug` support for section, taxonomy and term pages. A slug on one of these pages now changes its URL and the URLs of everything under it, as if you had renamed the folder. Your example gives `/help/`, `/help/how-to-frob/`, `/es/ayuda/` and `/es/ayuda/como-frobear/`. The full `./check.sh` passes, including gofmt, staticcheck and all tests.
+
+- **How it works:** a page's output path now uses the slug of every section folder above it. Regular pages and nested sections follow these slugs, even through folders that have no `_index.md`.
+- **Taxonomies and terms:** `content/tags/_index.md` with `slug: etiquetas` gives `/etiquetas/`. A term with `slug: bar` gives `/etiquetas/bar/`. Terms without a slug still move under `/etiquetas/`.
+- **When slugs are ignored:** if a page sets `url` or a permalink pattern applies to it, those still win and section slugs have no effect.
+- **Mixed case:** when `disablePathToLower` is set, a slug like `Ayuda` keeps its case, the same as page slugs already do.
+
+**Changes:**
+- `resources/page/page_paths.go`: a new `DirOverride` field on `TargetPathDescriptor`. When set, it replaces the folder part of the output path.
+- `hugolib/page__paths.go`: works out that folder from the slugs of the section pages above each page.
+- `hugolib/page_paths_slug_test.go`: new tests `TestSlugInSectionsAndTerms` and `TestSlugInTaxonomyAndTerms`.
+
+**Not checked:** files bundled with a page (like images in its folder) under a slugged section. I expect them to follow the page's new path, but no test covers this; an attempt to test it didn't work because of how the test site was set up.
+
+Nothing is committed yet. The second test reuses the example from the issue, so its author needs to be added as co-author when you commit.

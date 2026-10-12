@@ -1,0 +1,129 @@
+diff --git a/promql/parser/ast.go b/promql/parser/ast.go
+index 49608a1..0e6b0c7 100644
+--- a/promql/parser/ast.go
++++ b/promql/parser/ast.go
+@@ -164,6 +164,7 @@ type NumberLiteral struct {
+ 	Val float64
+ 
+ 	Duration bool // Used to format the number as a duration.
++	Wrapped  bool // Set when the duration is wrapped in parentheses.
+ 	PosRange posrange.PositionRange
+ }
+ 
+diff --git a/promql/parser/generated_parser.y b/promql/parser/generated_parser.y
+index da9bc93..f564595 100644
+--- a/promql/parser/generated_parser.y
++++ b/promql/parser/generated_parser.y
+@@ -594,11 +594,16 @@ positive_duration_expr : duration_expr
+ 
+ offset_expr: expr OFFSET offset_duration_expr
+                         {
+-                        if numLit, ok := $3.(*NumberLiteral); ok {
++                        if numLit, ok := $3.(*NumberLiteral); ok && !numLit.Wrapped {
+                             yylex.(*parser).addOffset($1, time.Duration(math.Round(numLit.Val*float64(time.Second))))
+                             $$ = $1
+                             break
+                         }
++                        if numLit, ok := $3.(*NumberLiteral); ok {
++                            yylex.(*parser).addOffsetExpr($1, &DurationExpr{Op: ADD, LHS: numLit, RHS: &NumberLiteral{Val: 0, Duration: true}, Wrapped: true})
++                            $$ = $1
++                            break
++                        }
+                         yylex.(*parser).addOffsetExpr($1, $3.(*DurationExpr))
+                         $$ = $1
+                         }
+@@ -1195,7 +1200,11 @@ maybe_grouping_labels: /* empty */ { $$ = nil }
+ // offset_duration_expr is needed to handle expressions like "foo offset -2^2" correctly.
+ // Without this rule, such expressions would be parsed as "foo offset (-2^2)" due to operator precedence.
+ // With this rule, they are parsed as "(foo offset -2)^2", which is the expected behavior without parentheses.
+-offset_duration_expr    : number_duration_literal
++offset_duration_expr    : paren_duration_expr
++                                {
++                                $$ = $1
++                                }
++                        | number_duration_literal
+                                 {
+                                 nl := $1.(*NumberLiteral)
+                                 if durationLiteralOutOfRange(nl.Val) {
+@@ -1205,6 +1214,10 @@ offset_duration_expr    : number_duration_literal
+                                 }
+                                 $$ = nl
+                                 }
++                        | unary_op paren_duration_expr
++                                {
++                                $$ = yylex.(*parser).applyUnaryOpToDurationExpr($1, $2.(Node), false)
++                                }
+                         | unary_op number_duration_literal
+                                 {
+                                 nl := $2.(*NumberLiteral)
+@@ -1300,6 +1313,18 @@ offset_duration_expr    : number_duration_literal
+                                 {
+                                 $$ = yylex.(*parser).applyUnaryOpToDurationExpr($1, $3.(Node), true)
+                                 }
++                | LEFT_PAREN duration_expr RIGHT_PAREN
++                                {
++                                if durationExpr, ok := $2.(*DurationExpr); ok {
++                                        durationExpr.Wrapped = true
++                                        $$ = durationExpr
++                                        break
++                                }
++                                if numberLiteral, ok := $2.(*NumberLiteral); ok {
++                                        numberLiteral.Wrapped = true
++                                }
++                                $$ = $2
++                                }
+                         | duration_expr
+                         ;
+ 
+@@ -1402,6 +1427,9 @@ paren_duration_expr : LEFT_PAREN duration_expr RIGHT_PAREN
+                                 $$ = durationExpr
+                                 break
+                             }
++                            if numberLiteral, ok := $2.(*NumberLiteral); ok {
++                                numberLiteral.Wrapped = true
++                            }
+                             $$ = $2
+                         }
+                 ;
+diff --git a/promql/parser/parse.go b/promql/parser/parse.go
+index a56f16a..ad69945 100644
+--- a/promql/parser/parse.go
++++ b/promql/parser/parse.go
+@@ -1232,6 +1232,9 @@ func (p *parser) applyUnaryOpToDurationExpr(op Item, expr Node, wrapped bool) No
+ 		}
+ 		return e
+ 	case *NumberLiteral:
++		if wrapped {
++			e.Wrapped = true
++		}
+ 		if op.Typ == SUB {
+ 			e.Val *= -1
+ 		}
+diff --git a/promql/parser/printer.go b/promql/parser/printer.go
+index 703dd09..d0f3977 100644
+--- a/promql/parser/printer.go
++++ b/promql/parser/printer.go
+@@ -356,13 +356,20 @@ func (node *SubqueryExpr) getSubqueryTimeSuffix() string {
+ }
+ 
+ func (node *NumberLiteral) String() string {
++	var s string
+ 	if node.Duration {
+ 		if node.Val < 0 {
+-			return fmt.Sprintf("-%s", model.Duration(-node.Val*1e9).String())
++			s = fmt.Sprintf("-%s", model.Duration(-node.Val*1e9).String())
++		} else {
++			s = model.Duration(node.Val * 1e9).String()
+ 		}
+-		return model.Duration(node.Val * 1e9).String()
++	} else {
++		s = strconv.FormatFloat(node.Val, 'f', -1, 64)
++	}
++	if node.Wrapped {
++		return "(" + s + ")"
+ 	}
+-	return strconv.FormatFloat(node.Val, 'f', -1, 64)
++	return s
+ }
+ 
+ func (node *ParenExpr) String() string {

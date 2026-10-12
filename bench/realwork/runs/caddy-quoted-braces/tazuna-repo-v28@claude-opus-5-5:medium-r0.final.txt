@@ -1,0 +1,20 @@
+Your example now works. `respond "{"` adapts to a `static_response` handler with body `{`, where before it failed with "wrong argument count or unexpected line ending after 'respond'".
+
+**Cause:** the lexer already records whether a token was quoted, but the parser and dispenser compared only the token's text against `{` and `}`. So a quoted `"{"` still opened a block, and `NextArg()` stopped at it, as if it were a block start.
+
+**Fix:**
+- **`lexer.go`:** two new token helpers, `isOpenCurlyBrace()` and `isCloseCurlyBrace()`. They return true only for an unquoted `{` or `}`.
+- **`dispenser.go`:** `NextArg`, `NextBlock` and `ArgErr` use the helpers.
+- **`parse.go`:** every place that checks for block braces uses them too. That covers site addresses, the end of server blocks, directive nesting, the open/close brace checks, block token collection, and nesting counting during imports. One `wasQuoted == 0` check in `directive()` was now redundant, so I removed it.
+
+Changing every brace check, rather than just the one `respond` hit, means quoted braces are plain arguments everywhere: double quotes, backticks and heredocs.
+
+**Tests:**
+- **`parse_test.go`:** five new cases in `TestParseOneAndImport`: a lone `"{"`, a lone `"}"`, quoted braces next to a real block, an unclosed block that contains `"{"` (still an error), and `"{"` as a site address (also an error).
+- **`dispenser_test.go`:** new `TestDispenser_QuotedBraces`. It checks that quoted braces come back as arguments from `RemainingArgs` and `NextArg`, both inside and outside blocks, and that a quoted `"{"` does not open a block in `NextBlock`.
+
+These all pass: `go test` on `./caddyconfig/...`, `./caddytest/...` and the integration tests, `go test -race -short ./modules/...`, and `go vet`.
+
+**Behavior change:** quoted braces used to count toward block nesting in the parser, and the dispenser treated a quoted `"{"` as a block start. Existing tests show quoting being used deliberately to get literal braces (for example `dir1 "{" a b "}"`), and those cases still parse. But a config that leaned on the old behavior would now parse differently.
+
+Nothing is committed yet. The project's contribution rules require any PR to say it was AI-assisted and which model was used (Claude Opus 5.5), and you'll need to be able to explain the changes to reviewers.

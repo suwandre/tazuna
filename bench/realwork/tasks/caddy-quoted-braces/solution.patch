@@ -1,0 +1,247 @@
+diff --git a/caddyconfig/caddyfile/dispenser.go b/caddyconfig/caddyfile/dispenser.go
+index 66b9b108..d7dd5c14 100644
+--- a/caddyconfig/caddyfile/dispenser.go
++++ b/caddyconfig/caddyfile/dispenser.go
+@@ -80,8 +80,9 @@ func (d *Dispenser) Prev() bool {
+ }
+ 
+ // NextArg loads the next token if it is on the same
+-// line and if it is not a block opening (open curly
+-// brace). Returns true if an argument token was
++// line and if it is not a block opening (unquoted
++// open curly brace; a quoted brace is a regular
++// argument). Returns true if an argument token was
+ // loaded; false otherwise. If false, all tokens on
+ // the line have been consumed except for potentially
+ // a block opening. It handles imported tokens
+@@ -90,7 +91,7 @@ func (d *Dispenser) NextArg() bool {
+ 	if !d.nextOnSameLine() {
+ 		return false
+ 	}
+-	if d.Val() == "{" {
++	if isOpenCurlyBrace(d.Token()) {
+ 		// roll back; a block opening is not an argument
+ 		d.cursor--
+ 		return false
+@@ -169,9 +170,9 @@ func (d *Dispenser) NextBlock(initialNestingLevel int) bool {
+ 		if !d.Next() {
+ 			return false // should be EOF error
+ 		}
+-		if d.Val() == "}" && !d.nextOnSameLine() {
++		if isCloseCurlyBrace(d.Token()) && !d.nextOnSameLine() {
+ 			d.nesting--
+-		} else if d.Val() == "{" && !d.nextOnSameLine() {
++		} else if isOpenCurlyBrace(d.Token()) && !d.nextOnSameLine() {
+ 			d.nesting++
+ 		}
+ 		return d.nesting > initialNestingLevel
+@@ -179,12 +180,12 @@ func (d *Dispenser) NextBlock(initialNestingLevel int) bool {
+ 	if !d.nextOnSameLine() { // block must open on same line
+ 		return false
+ 	}
+-	if d.Val() != "{" {
++	if !isOpenCurlyBrace(d.Token()) {
+ 		d.cursor-- // roll back if not opening brace
+ 		return false
+ 	}
+ 	d.Next() // consume open curly brace
+-	if d.Val() == "}" {
++	if isCloseCurlyBrace(d.Token()) {
+ 		return false // open and then closed right away
+ 	}
+ 	d.nesting++
+@@ -308,9 +309,10 @@ func (d *Dispenser) CountRemainingArgs() int {
+ }
+ 
+ // RemainingArgs loads any more arguments (tokens on the same line)
+-// into a slice of strings and returns them. Open curly brace tokens
+-// also indicate the end of arguments, and the curly brace is not
+-// included in the return value nor is it loaded.
++// into a slice of strings and returns them. An unquoted open curly
++// brace also indicates the end of arguments, and it is not included
++// in the return value nor is it loaded; quoted braces are returned
++// as regular arguments.
+ func (d *Dispenser) RemainingArgs() []string {
+ 	var args []string
+ 	for d.NextArg() {
+@@ -321,8 +323,9 @@ func (d *Dispenser) RemainingArgs() []string {
+ 
+ // RemainingArgsRaw loads any more arguments (tokens on the same line,
+ // retaining quotes) into a slice of strings and returns them.
+-// Open curly brace tokens also indicate the end of arguments,
+-// and the curly brace is not included in the return value nor is it loaded.
++// An unquoted open curly brace also indicates the end of arguments,
++// and it is not included in the return value nor is it loaded;
++// quoted braces are returned as regular arguments.
+ func (d *Dispenser) RemainingArgsRaw() []string {
+ 	var args []string
+ 	for d.NextArg() {
+@@ -332,9 +335,10 @@ func (d *Dispenser) RemainingArgsRaw() []string {
+ }
+ 
+ // RemainingArgsAsTokens loads any more arguments (tokens on the same line)
+-// into a slice of Token-structs and returns them. Open curly brace tokens
+-// also indicate the end of arguments, and the curly brace is not included
+-// in the return value nor is it loaded.
++// into a slice of Token-structs and returns them. An unquoted open curly
++// brace also indicates the end of arguments, and it is not included in the
++// return value nor is it loaded; quoted braces are returned as regular
++// arguments.
+ func (d *Dispenser) RemainingArgsAsTokens() []Token {
+ 	var args []Token
+ 	for d.NextArg() {
+@@ -406,7 +410,7 @@ func (d *Dispenser) Reset() {
+ // a line break or open curly brace was encountered instead of
+ // an argument.
+ func (d *Dispenser) ArgErr() error {
+-	if d.Val() == "{" {
++	if isOpenCurlyBrace(d.Token()) {
+ 		return d.Err("unexpected token '{', expecting argument")
+ 	}
+ 	return d.Errf("wrong argument count or unexpected line ending after '%s'", d.Val())
+diff --git a/caddyconfig/caddyfile/lexer.go b/caddyconfig/caddyfile/lexer.go
+index 40ea2e5f..2866039e 100644
+--- a/caddyconfig/caddyfile/lexer.go
++++ b/caddyconfig/caddyfile/lexer.go
+@@ -347,6 +347,16 @@ func (t Token) Quoted() bool {
+ 	return t.wasQuoted > 0
+ }
+ 
++// isOpenCurlyBrace returns true if the token is a structural (unquoted) open curly brace.
++func isOpenCurlyBrace(t Token) bool {
++	return t.Text == "{" && t.wasQuoted == 0
++}
++
++// isCloseCurlyBrace returns true if the token is a structural (unquoted) close curly brace.
++func isCloseCurlyBrace(t Token) bool {
++	return t.Text == "}" && t.wasQuoted == 0
++}
++
+ // NumLineBreaks counts how many line breaks are in the token text.
+ func (t Token) NumLineBreaks() int {
+ 	lineBreaks := strings.Count(t.Text, "\n")
+diff --git a/caddyconfig/caddyfile/parse.go b/caddyconfig/caddyfile/parse.go
+index 38d3b9bf..a95e0f30 100644
+--- a/caddyconfig/caddyfile/parse.go
++++ b/caddyconfig/caddyfile/parse.go
+@@ -229,7 +229,7 @@ func (p *parser) addresses() error {
+ 		}
+ 
+ 		// Open brace definitely indicates end of addresses
+-		if value == "{" {
++		if isOpenCurlyBrace(token) {
+ 			if expectingAnother {
+ 				return p.Errf("Expected another address but had '%s' - check for extra comma", value)
+ 			}
+@@ -243,7 +243,7 @@ func (p *parser) addresses() error {
+ 		}
+ 
+ 		// Users commonly forget to place a space between the address and the '{'
+-		if strings.HasSuffix(value, "{") {
++		if strings.HasSuffix(value, "{") && token.wasQuoted == 0 {
+ 			return p.Errf("Site addresses cannot end with a curly brace: '%s' - put a space between the token and the brace", value)
+ 		}
+ 
+@@ -320,7 +320,7 @@ func (p *parser) blockContents() error {
+ func (p *parser) directives() error {
+ 	for p.Next() {
+ 		// end of server block
+-		if p.Val() == "}" {
++		if isCloseCurlyBrace(p.Token()) {
+ 			// p.nesting has already been decremented
+ 			break
+ 		}
+@@ -384,7 +384,7 @@ func (p *parser) doImport(nesting int) error {
+ 		for bd.Next() {
+ 			currentMappingKey := bd.Val()
+ 
+-			if currentMappingKey == "{" {
++			if isOpenCurlyBrace(bd.Token()) {
+ 				return p.Err("anonymous blocks are not supported")
+ 			}
+ 
+@@ -518,14 +518,14 @@ func (p *parser) doImport(nesting int) error {
+ 			}
+ 		}
+ 
+-		switch token.Text {
+-		case "{":
++		switch {
++		case isOpenCurlyBrace(token):
+ 			nesting++
+ 			if index == 1 && maybeSnippetId && nesting == 1 {
+ 				maybeSnippet = true
+ 				maybeSnippetId = false
+ 			}
+-		case "}":
++		case isCloseCurlyBrace(token):
+ 			nesting--
+ 			if nesting == 0 && maybeSnippet {
+ 				maybeSnippet = false
+@@ -641,24 +641,24 @@ func (p *parser) directive() error {
+ 	segment = append(segment, p.Token())
+ 
+ 	for p.Next() {
+-		if p.Val() == "{" {
++		if isOpenCurlyBrace(p.Token()) {
+ 			p.nesting++
+-			if !p.isNextOnNewLine() && p.Token().wasQuoted == 0 {
++			if !p.isNextOnNewLine() {
+ 				return p.Err("Unexpected next token after '{' on same line")
+ 			}
+ 			if p.isNewLine() {
+ 				return p.Err("Unexpected '{' on a new line; did you mean to place the '{' on the previous line?")
+ 			}
+-		} else if p.Val() == "{}" {
+-			if p.isNextOnNewLine() && p.Token().wasQuoted == 0 {
++		} else if p.Val() == "{}" && p.Token().wasQuoted == 0 {
++			if p.isNextOnNewLine() {
+ 				return p.Err("Unexpected '{}' at end of line")
+ 			}
+ 		} else if p.isNewLine() && p.nesting == 0 {
+ 			p.cursor-- // read too far
+ 			break
+-		} else if p.Val() == "}" && p.nesting > 0 {
++		} else if isCloseCurlyBrace(p.Token()) && p.nesting > 0 {
+ 			p.nesting--
+-		} else if p.Val() == "}" && p.nesting == 0 {
++		} else if isCloseCurlyBrace(p.Token()) && p.nesting == 0 {
+ 			return p.Err("Unexpected '}' because no matching opening brace")
+ 		} else if p.Val() == "import" && p.isNewLine() {
+ 			if err := p.doImport(1); err != nil {
+@@ -685,7 +685,7 @@ func (p *parser) directive() error {
+ // because it returns an error if the token is not
+ // an opening curly brace. It does NOT advance the token.
+ func (p *parser) openCurlyBrace() error {
+-	if p.Val() != "{" {
++	if !isOpenCurlyBrace(p.Token()) {
+ 		if p.valLooksLikeGlobalOptionsAfterImportedSnippets() {
+ 			return p.Err("global options block must appear before import directives; move the global options block to the top of the Caddyfile")
+ 		}
+@@ -713,7 +713,7 @@ func (p *parser) valLooksLikeGlobalOptionsAfterImportedSnippets() bool {
+ // because it returns an error if the token is not
+ // a closing curly brace. It does NOT advance the token.
+ func (p *parser) closeCurlyBrace() error {
+-	if p.Val() != "}" {
++	if !isCloseCurlyBrace(p.Token()) {
+ 		return p.SyntaxErr("}")
+ 	}
+ 	return nil
+@@ -750,7 +750,7 @@ func (p *parser) blockTokens(retainCurlies bool) ([]Token, error) {
+ 		tokens = append(tokens, p.Token())
+ 	}
+ 	for p.Next() {
+-		if p.Val() == "}" {
++		if isCloseCurlyBrace(p.Token()) {
+ 			nesting--
+ 			if nesting == 0 {
+ 				if retainCurlies {
+@@ -759,7 +759,7 @@ func (p *parser) blockTokens(retainCurlies bool) ([]Token, error) {
+ 				break
+ 			}
+ 		}
+-		if p.Val() == "{" {
++		if isOpenCurlyBrace(p.Token()) {
+ 			nesting++
+ 		}
+ 		tokens = append(tokens, p.tokens[p.cursor])

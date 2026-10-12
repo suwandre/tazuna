@@ -1,0 +1,17 @@
+`k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive` now accept `--once`, which runs with 1 VU and 1 iteration. The new tests and the existing `internal/cmd/...` tests pass.
+
+- **Transform:** the new `executor.ApplyOnce` in `lib/executor/once.go` does the work.
+  - With no scenarios, it creates the `default` scenario.
+  - With one scenario, it keeps the name, `exec`, `options`, `env` and `tags`. The executor becomes `shared-iterations` with 1 VU and 1 iteration. Other fields, including `startTime` and `gracefulStop`, are dropped.
+  - It clears `vus`, `iterations`, `duration` and `stages`.
+  - With more than one scenario, it fails with `--once can run a single scenario only`.
+- **Where it runs:** `consolidateDeriveAndValidateConfig` in `internal/cmd/test_load.go` applies it right after config consolidation, so it works on the final merged options.
+  - The cloud and archive paths use the same consolidated options, so they get the transformed scenario too.
+- **Conflicts:** `--once` combined with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --iterations` (or the matching flag). Both errors exit with the invalid-config code.
+- **Registration:** the flag is added only to `run`, `archive` and `cloud run`, through a new `onceFlagSet()` in `internal/cmd/options.go`, so `cloud upload` doesn't get it.
+- **Env vars not checked:** shortcut options set through env vars such as `K6_ITERATIONS` are silently discarded rather than raising the conflict error. Only CLI flags are checked.
+- **Tests:**
+  - Unit tests in `lib/executor/once_test.go` cover no scenarios, a single scenario with the preserved fields, and multiple scenarios.
+  - `TestRunOnce` in `internal/cmd/tests/cmd_run_test.go` runs `k6 run --once` end to end: a script with no scenarios, a single scenario with a custom `exec`, multiple scenarios, and `--once --iterations`.
+  - I did not add tests for `cloud run` or `archive`.
+- **Release notes:** I haven't touched the release notes.

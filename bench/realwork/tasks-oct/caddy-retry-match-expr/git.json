@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/caddy",
+  "base": "7910dd94eea2750896f187301f4d99a21a522d24",
+  "fix": "7c7456353e52d1f6056f22538b1eb05b02708e57",
+  "pr": "https://github.com/caddyserver/caddy/pull/8168",
+  "issue": "https://github.com/caddyserver/caddy/issues/8166",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./modules/caddyhttp/reverseproxy -run '^(TestRequestOnlyExpressionDoesNotRetryResponses|TestResponseRetryStatusCode)$'",
+  "suite_cmd": "go test -count=1 -timeout 10m ./modules/caddyhttp ./modules/caddyhttp/reverseproxy -skip '^TestRequestOnlyExpressionDoesNotRetryResponses$'",
+  "suite_skip_note": "suite skips the hidden tests (and PR-specific tests excluded from hidden); it checks pre-existing behavior only"
+}

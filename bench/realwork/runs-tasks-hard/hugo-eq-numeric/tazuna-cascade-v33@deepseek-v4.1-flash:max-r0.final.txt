@@ -1,0 +1,18 @@
+All done. Summary of changes:
+
+**Core helper** — `common/hreflect/numbers.go` (new):
+- `CompareNumbers(a, b reflect.Value) (int, bool)` compares signed ints, unsigned ints and floats exactly, without going through `float64`. Mixed float/integer comparisons use `math.Trunc` + range checks, so values like `int64(9007199254740993)` vs `float64(9007199254740992)` and `uint64` max vs `-1` are exact. Returns `ok == false` for NaN (unordered).
+
+**`tpl/compare`**:
+- `Eq` now compares two numbers via `CompareNumbers` (so `ne` follows), keeping the existing `Eqer` precedence and `DeepEqual` path for non-numbers.
+- `compareGetWithCollator` short-circuits when both operands are numeric and maps the exact result to the existing normalized `(left, right)` pair (`compareTwoNumbers` replaces `compareTwoUints`); NaN maps to `(NaN, 0)` so all ordered comparisons stay false. Removed the lossy uint/float conversion branches that are now unreachable.
+
+**`tpl/collections/where.go`**:
+- `checkCondition` now routes any numeric/numeric pair through `CompareNumbers` for `eq`/`ne`/`gt`/`ge`/`lt`/`le`, matching the template function rules (including NaN semantics), while leaving `in`/`intersect`/`like` behavior untouched.
+
+**Tests**:
+- `common/hreflect/numbers_test.go`: table tests incl. boundaries/NaN/Inf, plus an exhaustive boundary cross-product validated against `math/big.Rat`.
+- `tpl/compare/compare_test.go`, `tpl/collections/where_test.go`: mixed int/uint/float and exact big-number cases across all six operators and `Where`.
+- `hugolib/template_test.go`: end-to-end `TestTemplateCompareNumbersMixedTypes` rendering the issue's six comparisons plus exact big int/float params.
+
+**Verification**: `go test -count=1 ./common/hreflect/ ./tpl/compare/ ./tpl/collections/`, `go test -count=1 ./tpl/...`, full `go test -count=1 ./hugolib/`, `go test ./resources/page/...`, `staticcheck`, and `./check_gofmt.sh` all pass. The issue's reproduction now prints `eq true, ne false, lt false, le true, gt false, ge true`.

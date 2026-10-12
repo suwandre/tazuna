@@ -1,0 +1,13 @@
+`--once` is now available on `k6 run`, `k6 cloud run` (including `--local-execution`) and `k6 archive`.
+
+The new tests pass in `internal/cmd` and `internal/cmd/tests`. One test, `TestHTTPAPIServerAddr/addr_flag_set`, failed once in the full `internal/cmd/tests` run with exit code 106. It passed when I re-ran it three times on its own with my changes, and once on a clean stash. It probably collides with another test over the HTTP API server address; I didn't investigate further. I did not test `cloud run` end to end, since no test exercises it. It uses the same config path as the others.
+
+- **Where it lives:** the transform runs in `consolidateDeriveAndValidateConfig` (`internal/cmd/test_load.go`), after config consolidation. The non-local `cloud run` and `archive` both serialize the consolidated options, so they pick it up too. The helpers `isOnceRequested` and `applyOnce` are in `internal/cmd/config.go`, and the flag is defined in `internal/cmd/options.go`.
+- **No scenarios:** you get a `default` scenario running 1 VU and 1 iteration under `shared-iterations`.
+- **Single scenario:** it is replaced with `shared-iterations` at 1 VU and 1 iteration. `exec`, `env`, `tags` and scenario `options` are kept. Fields like `startTime` and `gracefulStop` go back to defaults.
+- **Shortcut options:** `vus`, `iterations`, `duration` and `stages` are cleared from the consolidated options, wherever they came from, so they can't conflict with the scenario.
+- **Errors:** more than one scenario gives `--once can run a single scenario only`. Combining `--once` with `--vus`, `--iterations`, `--duration` or `--stage` gives `--once cannot be combined with --<flag>`. Both exit with the invalid-config exit code.
+
+Tests are in `internal/cmd/once_test.go` (unit tests for `applyOnce`) and `internal/cmd/tests/cmd_run_once_test.go` (integration tests for `run` and `archive`).
+
+I didn't touch `k6 cloud upload`, so it doesn't get the flag. I also didn't add a release note.

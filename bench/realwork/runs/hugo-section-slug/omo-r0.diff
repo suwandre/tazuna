@@ -1,0 +1,218 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..ce75c68 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -109,6 +109,26 @@ func (l pagePaths) OutputFormats() page.OutputFormats {
+ 	return l.outputFormats
+ }
+ 
++// sectionDirWithSlugs returns dir with the elements owned by cs and its
++// ancestor sections replaced by their slugs, or an empty string if none has a slug.
++func sectionDirWithSlugs(cs page.Page, dir string) string {
++	els := strings.Split(strings.Trim(dir, "/"), "/")
++	var found bool
++	for _, s := range append(page.Pages{cs}, cs.Ancestors()...) {
++		if s.IsHome() || s.Slug() == "" {
++			continue
++		}
++		if i := len(s.SectionsEntries()) - 1; i >= 0 && i < len(els) {
++			els[i] = s.Slug()
++			found = true
++		}
++	}
++	if !found {
++		return ""
++	}
++	return "/" + strings.Join(els, "/")
++}
++
+ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error) {
+ 	s := p.s
+ 	d := s.Deps
+@@ -132,6 +152,15 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		URL:         pm.pageConfig.URL,
+ 	}
+ 
++	if desc.URL == "" {
++		switch p.Kind() {
++		case kinds.KindPage:
++			desc.SectionDir = sectionDirWithSlugs(p.CurrentSection(), pageInfoPage.ContainerDir())
++		case kinds.KindSection, kinds.KindTaxonomy, kinds.KindTerm:
++			desc.SectionDir = sectionDirWithSlugs(p.CurrentSection(), pageInfoCurrentSection.Base())
++		}
++	}
++
+ 	if pm.Slug() != "" {
+ 		desc.BaseName = pm.Slug()
+ 	} else if pm.isStandalone() && pm.standaloneOutputFormat.BaseName != "" {
+diff --git a/hugolib/site_sections_test.go b/hugolib/site_sections_test.go
+index 779c380..4bcbe77 100644
+--- a/hugolib/site_sections_test.go
++++ b/hugolib/site_sections_test.go
+@@ -182,3 +182,128 @@ title: content/s1.md
+ 	b.AssertFileContent("public/s1.html", "content/s1.md")
+ 	b.AssertFileContent("public/s1/p1.html", "content/s1/p1.md")
+ }
++
++// See issue 5090.
++func TestSectionSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++defaultContentLanguage = 'en'
++disableKinds = ['rss','sitemap']
++[languages.en]
++[languages.es]
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: How to frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Como frobear
++slug: como-frobear
++---
++-- content/help/faq.en.md --
++---
++title: FAQ
++---
++-- content/help/faq.es.md --
++---
++title: FAQ
++---
++-- content/help/sub/deep/_index.es.md --
++---
++title: Deep
++---
++-- content/help/sub/deep/p1.es.md --
++---
++title: P1
++---
++-- layouts/all.html --
++{{ .Title }}|{{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "Help|/help/")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "How to frob|/help/how-to-frob/")
++	b.AssertFileContent("public/help/faq/index.html", "FAQ|/help/faq/")
++	b.AssertFileContent("public/es/ayuda/index.html", "Ayuda|/es/ayuda/")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "Como frobear|/es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/faq/index.html", "FAQ|/es/ayuda/faq/")
++	b.AssertFileContent("public/es/ayuda/sub/deep/index.html", "Deep|/es/ayuda/sub/deep/")
++	b.AssertFileContent("public/es/ayuda/sub/deep/p1/index.html", "P1|/es/ayuda/sub/deep/p1/")
++	b.AssertFileExists("public/es/help", false)
++}
++
++func TestSectionSlugUglyURLs(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++disableKinds = ['home','rss','sitemap','taxonomy','term']
++uglyURLs = true
++-- content/s1/_index.md --
++---
++title: S1
++slug: s1-slug
++---
++-- content/s1/p1.md --
++---
++title: P1
++---
++-- layouts/all.html --
++{{ .Title }}|{{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/s1-slug/index.html", "S1|/s1-slug/")
++	b.AssertFileContent("public/s1-slug/p1.html", "P1|/s1-slug/p1.html")
++}
++
++func TestTaxonomyAndTermSlug(t *testing.T) {
++	t.Parallel()
++
++	files := `
++-- hugo.toml --
++disableKinds = ['home','rss','sitemap']
++[taxonomies]
++tag = 'tags'
++-- content/tags/_index.md --
++---
++title: Tags
++slug: labels
++---
++-- content/tags/hugo/_index.md --
++---
++title: Hugo
++slug: hugo-slug
++---
++-- content/tags/go/_index.md --
++---
++title: Go
++---
++-- content/p1.md --
++---
++title: P1
++tags: [hugo, go]
++---
++-- layouts/all.html --
++{{ .Title }}|{{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/labels/index.html", "Tags|/labels/")
++	b.AssertFileContent("public/labels/hugo-slug/index.html", "Hugo|/labels/hugo-slug/")
++	b.AssertFileContent("public/labels/go/index.html", "Go|/labels/go/")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..f963f18 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -50,6 +50,10 @@ type TargetPathDescriptor struct {
+ 	// 2) the file base name (TranslationBaseName).
+ 	BaseName string
+ 
++	// The section directory with any section slugs applied.
++	// If set, it replaces the directory derived from the path.
++	SectionDir string
++
+ 	// PrefixFilePath contains zero or more content dimensions used as a file
+ 	// path prefix. Dimensions are ordered role/version/language for
+ 	// single-host and language/role/version for multihost.
+@@ -165,6 +169,8 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	} else if d.Kind != kinds.KindPage && d.URL == "" && d.Section.Base() != "/" {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
++		} else if d.SectionDir != "" {
++			pb.Add(d.SectionDir)
+ 		} else {
+ 			pb.Add(d.Section.Base())
+ 		}
+@@ -206,9 +212,11 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			if dir := d.Path.ContainerDir(); dir != "" {
+-				pb.Add(dir)
++			dir := d.SectionDir
++			if dir == "" {
++				dir = d.Path.ContainerDir()
+ 			}
++			pb.Add(dir)
+ 			if d.BaseName != "" {
+ 				pb.Add(d.BaseName)
+ 			} else {

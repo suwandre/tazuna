@@ -1,0 +1,19 @@
+The fix is complete and correct, so I changed nothing. Commit `a01cbe9` on branch `tsdb-wbl-series-checkpoint` matches the plan line for line. The empty diff in your summary was just a display problem; the actual commit touches `tsdb/head.go`, `tsdb/head_wal.go`, `tsdb/head_test.go` and `tsdb/db_test.go`.
+
+**Against the task:**
+- **Samples survive the restart:** the WBL's `ref2` series record stays in the WAL checkpoint, so a restart between checkpointing and out-of-order compaction keeps all 3 samples.
+- **Later restarts:** the samples are also still there after out-of-order compaction runs and Prometheus restarts again.
+- **Not kept forever:** once out-of-order compaction truncates the WBL, the next checkpoint drops `ref2` and keeps `ref1`.
+
+**Tests:** I re-ran the two new ones on the committed branch, `TestWALCheckpointKeepsSeriesRecordsUsedByWBL` and the new case in `TestHead_KeepSeriesInWALCheckpoint`, and both pass. The implementer reported that the full 12-test set passes, lint is clean, and the new test fails without the fix, which matches what I saw with my prototype.
+
+**On the implementer's notes:**
+- **Negative check:** my plan was wrong here. Stashing `head.go` fails to compile because the new test case calls `setWBLSeriesRef`. Disabling only the four calls in `head_wal.go` was the right way to check that the test catches the bug.
+- **Separate test function:** keeping it is fine. It runs a multi-restart scenario that doesn't fit any existing table, though a reviewer could still ask about it.
+- **`go vet` warnings:** they were all there before this change and don't come from it.
+
+**Still to do:** the branch hasn't been pushed and there's no PR. When you open one, use:
+- **Title:** `tsdb: keep WAL series records still referenced by the WBL in checkpoints`
+- **Release notes:** `[BUGFIX] TSDB: Do not lose out-of-order samples when a restart happens between WAL checkpointing and out-of-order compaction.`
+
+The commit's sign-off reads `Suwandre <suwandre@Mac.vodafone.ultrahub>`, taken from the local git config. Check that it's the identity you want for the DCO before pushing.

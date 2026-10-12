@@ -1,0 +1,22 @@
+`return` now works in any template, anywhere in it, not just as the last command of a partial. `go test ./tpl/... ./hugolib/` passes. I didn't run the whole repo's tests, only those two plus a few related packages (`./resources/resource_transformers/templates/...` and `./internal/js/...`).
+
+**How it works**
+- `return` is now `partials.Return(args ...any)`. It returns a `*tpl.ReturnError` sentinel, with an optional value, as the function's error.
+- Go's exec code already wraps function errors with `%w`, so the error comes back out of `Execute`. I catch it there with `errors.As` (`tpl.IsReturnError`). Execution stops at that point and nothing in the exec code needed patching.
+- `TemplateStore.ExecuteWithContext` treats the sentinel as a normal early exit. That covers pages, shortcodes, aliases and the like, and output rendered so far is kept.
+- `ExecuteWithContextAndKey` passes the sentinel through to the caller, and partials use it to get the returned value.
+- I removed the old `contextWrapper`, `HasReturn`, the `partialReturnWrapper` rewrite and `collectReturnNode`. Partials no longer have `$` and `.` rewritten.
+
+**Behaviour**
+- A partial with `return X` yields `X`. A bare `{{ return }}` yields the output rendered so far, as `template.HTML`, so early exit works in partials that render output. `return nil` gives a real nil.
+- `{{ return add . 42 }}`, with no parentheses, still works. A transform rewrites it to `return (add . 42)` at parse time.
+  - That needed one small addition to the forked parse package, `CommandNode.WrapArgsInPipe` in `parse/node.go`. It isn't intrusive.
+
+**Tests and docs**
+- I added integration tests in `tpl/partials/partials_integration_test.go` for early return in a page template, in a shortcode, and in partials. The partial cases cover a value, nil, bare return, return inside `range`, nested partials, `partialCached`, and a falsy return value.
+- I updated `TestPartialReturnPanicIssue13600`. It relied on the old transformation, so it now fails earlier with the normal `error calling delimit` message.
+- I rewrote the docs for `return` and `partials.Include`.
+
+Behaviour changes to be aware of:
+- `{{ return $x | foo }}` no longer pipes into `foo`. `return` runs first, and the old behaviour there was already odd.
+- A value-returning partial that exits early with a bare `return` gives an empty `template.HTML`, not nil.

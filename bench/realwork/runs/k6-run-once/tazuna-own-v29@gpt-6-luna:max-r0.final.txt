@@ -1,0 +1,3 @@
+Implemented the `--once` flag for `k6 run`, `k6 cloud run`, and archive creation. It transforms the consolidated configuration into a single shared-iterations scenario while preserving scenario metadata, and rejects incompatible shortcut flags and multiple scenarios.
+
+Verified with `go test ./internal/cmd ./internal/cmd/tests` and `git diff --check`.

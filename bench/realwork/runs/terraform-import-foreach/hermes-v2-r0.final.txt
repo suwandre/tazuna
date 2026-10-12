@@ -1,0 +1,18 @@
+Fixed: every import block is now honored, including several that target different instances of the same `for_each` resource.
+
+**Cause:** `refactoring.FindImportStatements` (`internal/refactoring/import_statement.go`) stored import blocks in a map keyed by config resource, so `terraform_data.t["a"]` and `terraform_data.t["b"]` collided on `terraform_data.t`. Only the first block survived, which is why swapping the order swapped the winner. The map was only meant to let a parent module's import override a child's.
+
+**Fix:**
+- `FindImportStatements` now returns a slice of statements, in discovery order.
+- A parent module's import blocks still override a child module's blocks for the same resource. Multiple blocks within one module are all kept.
+- I updated the one caller, `findImportTargets` in `internal/terraform/context_plan.go`.
+
+**Tests:**
+- `TestFindImportStatements` in `internal/refactoring` is new, with a fixture under `testdata/import-statements`. It covers several blocks on one resource, the parent-over-child override, and several blocks on a child's resource.
+- `TestContext2Plan_importMultipleBlocksSameResource` in `internal/terraform/context_plan_import_test.go` is new. It uses three separate import blocks on one `for_each` resource. I confirmed it fails without the fix, with only `["first"]` imported, and passes with it.
+- `go test` passes for `./internal/refactoring` and `./internal/terraform`.
+- `./internal/command` has one failure, `TestInit_providerLockFileReadonly`. It's a provider checksum error, and it also fails with my changes stashed, so it isn't caused by this fix.
+
+I only tested `for_each`, not `count`. The fix is keyed on the resource address, so I'd expect `count` to behave the same.
+
+I left one thing alone: `concreteResource` in `node_resource_plan.go:354` sets `importConfig` from `n.importTargets[0]`, which is the wrong block for later instances. That field is only read during config generation, which doesn't support `for_each`, so it has no effect today.

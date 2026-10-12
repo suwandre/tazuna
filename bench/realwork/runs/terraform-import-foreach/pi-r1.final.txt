@@ -1,0 +1,15 @@
+Fixed: all `import` blocks that target the same resource are now honored. The new tests pass, and `go test` passes for `internal/refactoring` and `internal/terraform`. `internal/command` has one failing test, `TestInit_providerLockFileReadonly`. It also fails with my changes stashed, so it isn't caused by this fix.
+
+**Cause:** `refactoring.FindImportStatements` (`internal/refactoring/import_statement.go`) stored import statements in a map keyed by the config resource. Every `to = test_object.a["x"]` block shares the same config resource, so only the first block per resource survived. The rest were dropped silently.
+
+**Fix:**
+- `FindImportStatements` now returns a `[]ImportStatement` instead of a map.
+- It keeps every import block from the module that first claims a resource.
+- A parent module's import blocks still override a child module's blocks for the same resource, as before.
+- The one caller, `findImportTargets` in `internal/terraform/context_plan.go`, is updated to match.
+
+**Tests:**
+- `TestContext2Plan_importMultipleBlocksForEachResource` in `context_plan_import_test.go` imports three instances of one `for_each` resource. It fails without the fix (`b` and `c` are planned as Create) and passes with it.
+- `TestFindImportStatements` in the new `internal/refactoring/import_statement_test.go` uses a new fixture, `testdata/import-statements`. It covers multiple blocks per resource and parent-over-child override.
+
+**Not changed:** `node_resource_plan.go` still passes `n.importTargets[0].Config` as the import config for every instance. That value is only used when generating config (`-generate-config-out`), which `for_each` doesn't support, so it doesn't affect this bug.

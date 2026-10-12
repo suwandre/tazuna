@@ -1,0 +1,13 @@
+Quoted `{` and `}` no longer count as block delimiters, so `respond "{"` inside a site block now parses.
+
+The `caddyconfig/...` tests pass. `TestReverseProxySNIPlaceHolder` in `caddytest/integration` fails, but it fails the same way with my changes stashed, so it isn't caused by this fix.
+
+**Cause:** the parser and dispenser compared token text to `"{"` and `"}"` without checking whether the token was quoted. A quoted `"{"` was therefore treated as a block opener.
+
+**Changes:**
+- **`caddyconfig/caddyfile/lexer.go`:** I added two small `Token` helpers, `isOpenBrace()` and `isCloseBrace()`. They match only unquoted braces.
+- **`caddyconfig/caddyfile/parse.go`:** Brace checks now use those helpers in the site-address loop, `directives()`, `directive()`, `blockTokens()`, `openCurlyBrace()`/`closeCurlyBrace()`, and the snippet detection in `doImport`. I also dropped a `wasQuoted == 0` check in `directive()` that the helper now makes redundant.
+- **`caddyconfig/caddyfile/dispenser.go`:** `NextArg()` and `NextBlock()` use the same helpers, so quoted braces are not treated as block markers when plugins read their config.
+- **`caddyconfig/caddyfile/parse_test.go`:** I added `TestQuotedBracesIgnoredForBlockParsing`. It covers quoted and backtick braces at the top level and inside nested blocks, and a quoted brace inside an imported snippet.
+
+I left `ArgErr()` alone. It still checks `d.Val() == "{"` to choose an error message, which doesn't affect parsing.

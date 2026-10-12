@@ -1,0 +1,15 @@
+Parentheses around a plain duration literal now survive `Expr.String()`. `go test ./promql/... ./web/api/...` passes.
+
+`foo offset (5)`, `foo offset +(5)`, `foo offset -(5)`, `foo offset (5m)` and `foo[(5s)]` now print `(5)`, `(5)`, `-(5)`, `(5m)` and `(5s)`. The first three print without an `s` suffix, because the literal is printed as it was written. `+` is dropped, as it already is for `+(5*2)`.
+
+**The fix**
+- **How it works:** `*NumberLiteral` can't carry a `Wrapped` flag. So `(N)` in a duration position is now a `*DurationExpr` with unary `ADD`, `Wrapped: true` and the literal as its operand. The engine's `durationVisitor` already evaluates unary `ADD`, so evaluation is unchanged.
+- **Where:** `wrapNumberLiteral` and `plainDurationValue` in `promql/parser/parse.go`. `paren_duration_expr` and `applyUnaryOpToDurationExpr` use them, so both `(5)` and `-(5)` keep their parentheses.
+- **Parse-time checks kept:** `foo[(0)]` still gives "duration must be greater than 0", and `x/(0)` still gives "division by zero" or "modulo by zero". They go through `plainDurationValue`.
+- **Generated parser:** `goyacc` isn't installed here, so I edited the action code in `generated_parser.y` and `generated_parser.y.go` by hand and kept the two identical. No grammar tables changed. Please regenerate with `make parser` when you can, to confirm the two files still match.
+
+**Behaviour change:** `foo offset +(5)` and `foo offset -(5)` now set `OriginalOffsetExpr` at parse time and leave `OriginalOffset` at 0 until the engine evaluates it. That is how `foo offset (5m + 1m)` already behaves. I updated the two expectations in `parse_test.go` accordingly.
+
+**New tests:** round-trip cases in `TestExprString` in `printer_test.go` for `foo offset (5)`, `+(5)`, `-(5)`, `(5m)`, `foo[(5s)]` and `foo[(5m):(1m)]`.
+
+I did not run the full repo test suite. I also did not add a test for the `foo[(0)]` and `x/(0)` parse errors, or one that evaluates `foo offset (5)` in the engine.

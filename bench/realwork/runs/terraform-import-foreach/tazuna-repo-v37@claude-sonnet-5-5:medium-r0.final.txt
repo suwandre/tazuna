@@ -1,0 +1,14 @@
+Multiple `import` blocks that target different instances of the same `for_each` resource are now all honored. The new regression test and the existing `internal/terraform` and `internal/refactoring` tests pass. I didn't run the `terraform_data` reproduction from the report.
+
+**Cause:** `FindImportStatements` in `internal/refactoring/import_statement.go` stored import blocks in a map keyed by config resource. `terraform_data.t["a"]` and `terraform_data.t["b"]` share the key `terraform_data.t`, so only the first block survived. That is why the surviving block was the one declared first. The other instance was then planned as a create, with no error or warning.
+
+**Fix:**
+- **`FindImportStatements`** now returns a slice and keeps every block.
+- **Parent-over-child rule:** the existing behavior where a parent module's import block overrides a child module's block for the same resource is kept. `TestContextApply_import_duplication` caught this when my first version dropped it.
+- **Caller:** `findImportTargets` in `context_plan.go` was updated to match.
+
+**Test:** I added `TestContext2Plan_importMultipleBlocksForEachResource` in `context_plan_import_test.go`. It has two separate import blocks for a `for_each` resource and checks that both instances are planned as imports with the right IDs.
+
+**Not changed:** `node_resource_plan.go` still passes `importTargets[0].Config` as the config for every instance of the resource. That looks wrong when the blocks differ, for example in provider alias. I didn't touch it because it wasn't needed for this bug.
+
+I didn't test `count`.

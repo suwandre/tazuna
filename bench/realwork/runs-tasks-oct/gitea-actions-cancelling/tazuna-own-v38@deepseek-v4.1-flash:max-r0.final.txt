@@ -1,0 +1,20 @@
+Both root causes are fixed and verified.
+
+## What changed
+
+**1. Callers stay `cancelling` until their descendants acknowledge** — `models/actions/run_job.go`
+
+`cancelOneJob` marked every task-less job, including reusable-workflow callers, as `cancelled` immediately. When a child still had a task in the graceful `cancelling` handshake, the caller was already `cancelled` by the time the runner acknowledged, so the child's acknowledgement cascaded into a no-op and the run/attempt status was never refreshed — the run stayed `cancelling` forever and kept holding its concurrency group.
+
+Now a reusable caller with children is re-aggregated from them (`refreshReusableCallerStatus`, extracted from `RefreshReusableCallerStatus` so preloaded children can be reused). Callers that were never expanded still get cancelled directly. Since the aggregation is applied deepest-first and status changes cascade, a nested caller stays `cancelling` while anything below it is `cancelling`, and the final acknowledgement moves the whole chain plus the run to `cancelled`.
+
+**2. Settling a run wakes runs blocked on its concurrency group** — `services/actions/cancel.go`
+
+When `CancelRun`/`ForceCancelRun` finds nothing left to update (all jobs already final), the run is settled by `SettleRunAfterCancel`, but nothing emitted it, so the job emitter never re-checked its concurrency group. `cancelRun` now emits the run in that case.
+
+## Tests
+
+- `TestCancelJobs_ReusableCallerWaitsForDescendantAck` (`models/actions`): two nesting levels with a task-backed child; asserts caller/child/run are `cancelling` after the cancel, and all `cancelled` after the runner acknowledges via `UpdateTaskByState`.
+- `TestForceCancelRun_SettledRunWakesConcurrencyWaiter` (`services/actions`): a run stuck in `cancelling` with all jobs final and a run blocked on the same group; asserts force-cancel settles it, emits it, and `checkRunConcurrency` collects the blocked run for re-emit.
+
+Verified each test fails when its respective fix is reverted, and `go test -count=1 ./models/actions/ ./services/actions/`, `go build ./...` and `golangci-lint run` on both packages pass.

@@ -1,0 +1,15 @@
+Import blocks that target different instances of the same `for_each` resource are all honored now. The new regression test and the `internal/terraform` and `internal/refactoring` packages pass.
+
+**Cause:** `refactoring.FindImportStatements` collected import blocks in a map keyed by `ConfigResource`, which is the resource without its instance key. Every instance of a `for_each` resource shares one key. The "already have a statement, skip" check was meant to let a parent module's block override a child's, but it also discarded every later block in the same module. The first-declared block won, which matches the swapped-order behaviour in your report.
+
+**Fix:**
+- `internal/refactoring/import_statement.go`: `FindImportStatements` now returns a `[]ImportStatement`. It records which module first claimed each config resource. A block is skipped only if a different, ancestor module already claimed that resource. Several blocks in the same module are all kept. Parent-overrides-child behaviour is unchanged.
+- `internal/terraform/context_plan.go`: `findImportTargets` now iterates the slice.
+
+**Tests:** I added `TestContext2Plan_importMultipleBlocksForEachResource` in `context_plan_import_test.go`. It imports three instances of a `for_each` resource, with the blocks deliberately out of key order. It checks that each instance is planned as an import with the right ID. With the fix reverted it fails (`test_object.a["x"]` planned as `Create`), and with the fix it passes.
+
+**Other test results:** `go test ./internal/command` has one failure, `TestInit_providerLockFileReadonly`, a provider checksum mismatch in the dependency lock file. It looks unrelated to this change, but I didn't run it on a clean checkout to confirm.
+
+**Not tested:** `count`. It should be fixed too, since it has the same single-config-resource key, but I didn't test it.
+
+**Known quirk, left alone:** `node_resource_plan.go` passes `n.importTargets[0].Config` as the import config for every instance. That only matters for config generation and doesn't drop imports.

@@ -1,0 +1,15 @@
+Setting `slug` in the front matter of a section, taxonomy or term page now changes that page's URL and the URL of every page below it. It works just like renaming the directory. The full `./check.sh` run passed (gofmt, staticcheck and all tests), along with `go test ./hugolib/... ./resources/page/...`.
+
+**How it works:**
+- `hugolib/page__paths.go`: a new `applySectionSlugs` helper goes up from the page's section through each parent section. Wherever a section has a slug, it replaces that section's directory name in the path. If no section has a slug, the path stays exactly as before.
+- `resources/page/page_paths.go`: `TargetPathDescriptor` has a new `Dir` field holding that rewritten path. URL building uses it when it's set, and falls back to the old values otherwise.
+
+A front-matter `url` or a configured `permalinks` pattern still overrides all of this, as it did before.
+
+**Test:** `TestSlugInSectionTaxonomyAndTerm` in `hugolib/page_permalink_test.go` uses the layout from your example and checks these paths:
+- `/help/` and `/help/how-to-frob/` stay unchanged in English.
+- `/es/ayuda/` and `/es/ayuda/como-frobear/` are produced for Spanish.
+- A nested section and a page inside a plain subfolder pick up the slug: `/es/ayuda/sub/` and `/es/ayuda/sub/nested/p1/`.
+- A taxonomy and a term with slugs get `/es/etiquetas/` and `/es/etiquetas/fu/`.
+
+Nothing is committed yet.

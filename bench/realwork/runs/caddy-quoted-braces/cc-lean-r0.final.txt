@@ -1,0 +1,24 @@
+Quoted braces no longer count as block open/close characters, so this now parses:
+
+```caddyfile
+:8080 {
+	respond "{"
+}
+```
+
+Tests pass in `caddyconfig/caddyfile` and `caddyconfig/httpcaddyfile`. I didn't run the rest of the repo.
+
+The lexer already marks quoted tokens, but the parser and dispenser compared only the token text. I added `Token.isOpenBrace()` and `isCloseBrace()` in `lexer.go`, which require an unquoted `{` or `}`. I then switched the brace checks to use them:
+
+- **`parse.go`:**
+  - the address list
+  - directive parsing
+  - block-token collection
+  - the `{`/`}` assertions
+  - snippet and import nesting tracking
+  - the "anonymous blocks" check
+- **`dispenser.go`:** `NextArg`, `NextBlock` and `ArgErr`. A quoted `"{"` is now an ordinary argument.
+
+I also removed the old `wasQuoted == 0` check in `directive()`. It is now redundant because the open-brace test already excludes quoted tokens.
+
+I added `TestQuotedBracesDoNotAffectBlocks` in `parse_test.go`. It covers quoted `{` and `}` in double quotes and backticks, a nested block, and a quoted brace read as an argument through the dispenser.

@@ -1,0 +1,14 @@
+Quoted `{` and `}` no longer count as block delimiters, so your example now adapts correctly. `caddy adapt` gives a `static_response` with body `"{"`, and `caddy fmt` leaves the file unchanged. The tests in `caddyconfig/...` pass and `go build ./...` succeeds.
+
+I didn't run the new tests against the old code to confirm they fail there.
+
+**Changes**
+- **Brace checks:** The parser and dispenser only treat `{` and `}` as braces when the token is unquoted. Quoted, backtick and heredoc tokens are treated as ordinary values. This covers brace checks in:
+  - the dispenser, in `NextArg`, `NextBlock` and `ArgErr`;
+  - the parser, in site-address parsing, `directives`, `directive`, `blockTokens`, `openCurlyBrace`, `closeCurlyBrace`, snippet and import tracking, and the anonymous-block check.
+- **Helpers:** I added two small helpers on `Dispenser`, `isOpenBrace()` and `isCloseBrace()`. The changes are in `caddyconfig/caddyfile/dispenser.go` and `parse.go`.
+- **New tests:** In `parse_test.go`, one test covers quoted braces in a site block, nested `route` blocks and backticks. Another covers a snippet imported into a site. In `dispenser_test.go`, one test covers `NextArg` and `NextBlock` with quoted braces.
+
+I left one check alone: a site address that ends in `{` is still rejected with the "put a space between the token and the brace" error, even if quoted.
+
+Per the project's AI disclosure rules, mention in your PR that this was AI-assisted and name the agent and model used.

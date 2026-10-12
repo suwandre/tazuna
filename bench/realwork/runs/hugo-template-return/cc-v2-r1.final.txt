@@ -1,0 +1,29 @@
+`return` is now a real function that stops execution wherever it appears, in partials and in regular templates. `go test` passes for `./tpl/...`, `./hugolib/...`, `./resources/...` and `./commands/...`. Two things fail that I did not investigate beyond the first:
+
+- **`internal/warpc`:** `TestGreet`, `TestGreetParallel` and `TestKatexParallel` fail the same way with my changes stashed.
+- **`./check.sh` on the whole repo:** it stops at staticcheck warnings in files I didn't touch (`config/allconfig/allconfig.go`, `hugolib/integrationtest_builder.go`). I didn't compare these against a clean tree. `./check.sh ./tpl/...` passes fully.
+
+## What changed
+
+- **Sentinel error:** `texttemplate.ReturnError{Value any}` lives in `hugo_template.go`. The only other change to the forked Go code is two small hooks in `exec.go` and `hugo_template.go`: `evalCall` panics with the `ReturnError`, and `errRecover` turns it into the execution's error. `try` rethrows it instead of swallowing it.
+- **`return` function:** `partials.Return(args ...any) (any, error)` returns that sentinel with the optional value. It is registered under the `return` alias in `tpl/partials/init.go`, replacing the placeholder `func() string`.
+- **`tplimpl` transform:** the partial wrapper (the `range`/`Set` rewrite, `returnNode` and `contextWrapper`) is gone. The transform now only sets `ParseInfo.HasReturn` when a partial uses `return`, so a partial whose `return` isn't reached still yields `nil` rather than its output. `applyTransformations` now returns just an `error`, since its bool existed only to delete the return node.
+- **Executing templates:** the new `TemplateStore.ExecuteWithReturn` catches the `ReturnError` and hands back its value. `ExecuteWithContextAndKey` wraps it and discards the value, so page, shortcode and other templates simply stop. `doInclude` uses the value for partials.
+- **Docs:** I rewrote `go-template/return.md` and the "single `return` at the end" notes in `Include.md` and `IncludeCached.md`.
+
+## Behaviour to know about
+
+- **Command-prefix form:** `{{ return add . 42 }}` is still valid. The transform rewrites it to `return (add . 42)` when there is more than one argument.
+- **Bare `return`:** it now returns `nil`. Before, it wasn't treated as a return at all.
+- **Pipelines:** `{{ x | return }}` works.
+- **Several values:** `{{ return 1 2 }}` is now an error: `can't give argument to non-function 1`.
+- **Existing test changed:** `TestPartialReturnPanicIssue13600` now gets the real `delimit` error instead of "wrong number of args for string". `return (…) | string` now evaluates the parenthesised call first, rather than the old transform splitting the pipe. There is still no panic, so I only changed the expected error text.
+- **Nested templates:** a `return` inside a `{{ template }}`/`define` called from a partial ends the whole partial, not just the nested template.
+
+## New tests
+
+They are in `tpl/partials/partials_integration_test.go`:
+
+- `TestReturnEarly` covers early return from `if`, `range`, nested partials, pipes, bare return and the `return add . 40` form.
+- `TestReturnEarlyInNonPartials` covers `home.html` and `page.html`.
+- `TestReturnTooManyArgs` covers the argument-count error.

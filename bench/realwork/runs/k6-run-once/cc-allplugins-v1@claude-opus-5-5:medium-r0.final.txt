@@ -1,0 +1,25 @@
+I added the `--once` flag. It works with `k6 run`, `k6 cloud run` (including `--local-execution`), `k6 archive` and `k6 cloud upload`. The `internal/cmd` and `internal/cmd/tests` packages pass and `golangci-lint` reports no issues. I didn't run the full repo test suite, and nothing is committed.
+
+**How it works**
+- The flag is defined next to the other execution flags (`--vus`, `--iterations`, …) in `internal/cmd/options.go`, so every command that takes those also takes `--once`.
+- It's applied in `consolidateDeriveAndValidateConfig` (`internal/cmd/test_load.go`), right after config consolidation and before thresholds and scenarios are worked out. So it overrides every config layer (config file, script, env, CLI). Cloud runs and archives save the already-changed config, so they run once too.
+- The logic is in `applyOnceFlag` / `applyOnce` in `internal/cmd/config.go`:
+  - **No scenarios:** creates a `default` scenario of type `shared-iterations` with 1 VU and 1 iteration.
+  - **One scenario:** replaces it with a 1 VU / 1 iteration `shared-iterations` scenario under the same name. It keeps `exec`, `env`, `tags` and `options` (browser settings) and drops everything else (`startTime`, `gracefulStop`, stages, …).
+  - **More than one scenario:** fails with `--once can run a single scenario only` (exit code: invalid config).
+  - **Combined with `--vus`, `--iterations`, `--duration` or `--stage`:** fails with `--once cannot be combined with --<flag>`.
+  - Top-level `vus`, `iterations`, `duration` and `stages` are cleared.
+  - `setup()` and `teardown()` run as normal.
+
+One behaviour to be aware of: only CLI flags trigger the "cannot be combined" error. If those settings come from the script, the config file or env vars (e.g. `K6_ITERATIONS`), they're silently dropped instead, which seemed the most useful reading of the spec. The help text for the flag is a bit simplified.
+
+**Tests**
+- `internal/cmd/once_test.go`: unit tests for the scenario change and the flag-conflict checks.
+- `internal/cmd/tests/cmd_run_once_test.go`: end-to-end runs covering:
+  - no scenarios, where script `vus`/`duration` are ignored and setup/teardown still run;
+  - a single scenario, checking custom `exec` and `env` are kept;
+  - the multiple-scenarios error;
+  - the error when combined with `--iterations`.
+- `TestArchiveOnce` in `internal/cmd/archive_test.go`: checks the archived `metadata.json` holds the changed scenario.
+
+In the first full run with `-race`, `TestActiveVUsCount` failed once on a timing message ("Could not get a VU from the buffer for 400ms"). That test doesn't use `--once`. It then passed 3 times in a row on its own with `-race`, and the full suites passed on a rerun without `-race`, so it looks like an existing flaky test rather than something this change caused.

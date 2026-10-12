@@ -1,0 +1,7 @@
+{
+  "kind": "feature",
+  "difficulty_note": "Make front-matter `slug` on section/taxonomy/term pages rewrite the URL segment for the branch and all descendants (multilingual). Needs understanding of Hugo's page path/target path computation. Hidden tests are site-build integration tests.",
+  "files_changed": 4,
+  "lines_changed": 71,
+  "merged_at": "2026-09-26T19:20:10Z"
+}

@@ -1,0 +1,28 @@
+Parentheses around a plain duration literal now survive `Expr.String()` in offset and range positions. The `promql/parser`, `promql`, `promqltest`, `web`, `web/api/v1` and `cmd/promtool` tests pass. I haven't run `make lint`.
+
+**Fix**
+- A parenthesised literal such as `(5)` now becomes a `*DurationExpr` with `Wrapped: true`. Its `Op` is `ADD`, which the printer and engine already treat as unary plus, so no new AST fields or evaluation code were needed.
+- `-(5)` becomes a `SUB` expression over that wrapped node.
+- The changes are in `paren_duration_expr` in `generated_parser.y` (regenerated with the Makefile's pinned goyacc v0.6.0) and in `applyUnaryOpToDurationExpr` in `parse.go`.
+- A small `constantDuration` helper in `parse.go` means `foo[(0)]` and `x / (0)` still fail at parse time, since those checks used to look for a bare `*NumberLiteral`.
+- `Pretty()` for a unary `+` duration now matches `String()` and drops the `+`.
+
+**Printed output**
+
+| Input | Output |
+|---|---|
+| `foo offset (5)` | `foo offset (5)` |
+| `foo offset (5m)` | `foo offset (5m)` |
+| `foo offset -(5)` | `foo offset -(5)` |
+| `foo[(5s)]` | `foo[(5s)]` |
+| `foo offset +(5)` | `foo offset (5)` |
+
+The leading `+` in the last case is still dropped. That matches how `+(5m + 1m)` already prints.
+
+**AST change**
+- These parenthesised forms now set `OriginalOffsetExpr` or `RangeExpr` instead of a plain `time.Duration`. The numeric field is filled in when the engine evaluates the query, as it already is for `foo[(5s + 1s)]`.
+- I updated the AST expectations for `foo offset +(5)` and `foo offset -(5)` in `parse_test.go`.
+
+**Tests**
+- Added round-trip cases to `printer_test.go`, including the multi-term cases that already worked.
+- Added parse-error cases for `foo[(0)]` and `foo offset (5s/(0))`.

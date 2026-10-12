@@ -1,0 +1,26 @@
+I've added `--once` to `k6 run`, and it runs the script with 1 VU and 1 iteration while keeping the scenario's `exec`, `env`, `tags` and `options`. The new tests pass. One existing test in `lib/executor` (`TestVUHandleStartStopRace`) fails, but it fails the same way on the untouched base code, so it isn't caused by this change. Nothing is committed yet.
+
+**How it works**
+- The flag is defined once, so it's available on `k6 run`, `k6 cloud run` (including `--local-execution`), `k6 archive` and `k6 cloud upload`.
+- The scenario rewrite happens after all config sources (CLI, config file, script, env) have been merged and before the existing shortcut-to-scenario step. The archive and cloud commands save that merged config, so the archive uploaded to the cloud already contains the single 1-VU, 1-iteration scenario.
+- The rewrite itself is a new function, `executor.DeriveSingleRunScenario` in `lib/executor/execution_config_shortcuts.go`:
+  - **No scenarios:** creates a `default` shared-iterations scenario with 1 VU and 1 iteration.
+  - **One scenario:** replaces it with a shared-iterations scenario of the same name and 1/1. It keeps `exec` (only if it isn't `default`), `env`, `tags` and `options`, and drops `startTime`, `gracefulStop`, `stages` and the other executor fields.
+  - **More than one scenario:** fails with `--once can run a single scenario only`.
+  - In all cases `vus`, `iterations`, `duration` and `stages` are cleared.
+- Combining `--once` with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>`. These errors exit with the invalid-config exit code.
+- `setup()` and `teardown()` run normally (covered by a test).
+
+**Tests added**
+- A unit test for the rewrite function covering the no-scenario, single-scenario and multiple-scenario cases, including that the original config isn't modified.
+- `internal/cmd/tests/cmd_run_once_test.go`: end-to-end `k6 run` tests for a script with `vus`/`duration` set, a single `constant-arrival-rate` scenario (checks that `exec`, `env` and tags reach the VU), the multiple-scenarios error, and each conflicting flag.
+- `TestArchiveOnce` in `archive_test.go`: checks the transformed scenario in the archive's `metadata.json`.
+- `TestCloudRunOnce` in `cmd_cloud_run_test.go`: checks the archive uploaded by `k6 cloud run --once` against the mock cloud server.
+
+**Test runs**
+- `go test -race` passes for `./internal/cmd/` and `./internal/cmd/tests/`. `golangci-lint` reports 0 issues.
+- The rest of `./lib/executor/` passes when `TestVUHandleStartStopRace` is skipped.
+
+**Limitations**
+- Only CLI flags are rejected when combined with `--once`. Env vars like `K6_ITERATIONS` are accepted and their values discarded. Because of how config merging already works, such an env var also removes the script's own scenarios before `--once` runs, so you get the default scenario instead of the script's.
+- There's no separate test for `k6 cloud run --local-execution --once`. It uses the same config path as the other commands, but setting up that test needs a lot of cloud mocking.

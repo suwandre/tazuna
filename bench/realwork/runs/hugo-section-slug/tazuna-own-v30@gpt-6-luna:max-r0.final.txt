@@ -1,0 +1,3 @@
+Implemented slug-aware paths for section, taxonomy, and term pages. Slugs now update branch URLs and are applied to descendant paths, including localized and nested sections. Added integration tests and updated the URL documentation.
+
+Verified with `go test ./hugolib`, `go test ./resources/page/...`, and `./check.sh`.

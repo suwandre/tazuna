@@ -1,0 +1,14 @@
+Quoted `{` and `}` no longer count as block delimiters, so the Caddyfile from the issue now adapts, with `"body": "{"` in the JSON. The `caddyconfig/...` tests pass with `-race -short`. The `caddytest/integration` package passes without `-race`, and the new adapt test passes. I didn't run `golangci-lint`.
+
+The lexer already recorded whether a token was quoted, but most brace checks only compared the token text. I added two small unexported helpers in `lexer.go`, `isOpenBrace()` and `isCloseBrace()`, which are true only for unquoted braces. I switched the brace checks over to them in `parse.go` and `dispenser.go`. That covers the block-nesting logic, `NextArg`, `NextBlock`, `ArgErr`, snippet/import token handling, `blockTokens`, and the open/close assertions. In the site-address loop I just added `!p.Token().Quoted()` to the existing `{` check.
+
+I also ran `caddy fmt` on a file with `respond "}"` and a backtick `{`. It left both untouched, so the formatter needed no change.
+
+Tests added:
+- `TestParseQuotedBraces` in `parse_test.go`: quoted `"{"`, `"}"`, a backtick `{`, and a quoted `"{"` followed by a real block.
+- `TestDispenser_QuotedBraces` in `dispenser_test.go`.
+- `caddytest/integration/caddyfile_adapt/respond_quoted_braces.caddyfiletest`: the exact Caddyfile from the issue.
+
+I did not add a heredoc case.
+
+Per the repo's AI rules, this change is AI-assisted (Claude Sonnet 5.5) and should be disclosed to reviewers. I haven't made any commits.

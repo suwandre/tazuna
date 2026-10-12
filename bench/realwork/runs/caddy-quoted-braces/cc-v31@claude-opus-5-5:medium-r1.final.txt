@@ -1,0 +1,16 @@
+Fixed: a quoted `{` or `}` (with `"…"`, backticks or a heredoc) is now treated as a normal argument, not a block delimiter. Your example adapts to `{"body":"{","handler":"static_response"}`, and `respond "}" 200` and ``respond `{` { close }`` also work now. Unquoted braces behave the same as before.
+
+**Cause:** the Caddyfile parser and the dispenser decided what a brace was by checking only the token's text. The parser already skipped one error check for a quoted `{`, but it still counted it as opening a block. The dispenser then refused `"{"` as an argument, which is why you got "wrong argument count".
+
+**Fix** (all in `caddyconfig/caddyfile`):
+- `lexer.go`: added two helpers on `Token`, `isOpenCurlyBrace()` and `isCloseCurlyBrace()`, which only match braces that aren't quoted.
+- `dispenser.go`: `NextArg`, `NextBlock` and `ArgErr` now use them.
+- `parse.go`: the address, directive, block, snippet and import-block code now use them too. The quote check in `directive()` was now redundant, so I removed it.
+
+**Tests:**
+- `parse_test.go`: new cases in `TestParseOneAndImport` for a quoted `{` or `}` as an argument, the backtick form, a quoted brace next to a real block, and an unclosed block where the only `}` is quoted (this should still be an error).
+- `dispenser_test.go`: new `TestDispenser_QuotedBraces`, which checks `NextArg`, `NextBlock` and the nesting level when quoted braces are present.
+
+`go test -race ./caddyconfig/...` and `go vet` pass, and `gofmt` reports nothing. The `caddytest` integration tests pass without `-race`. With `-race`, `TestLeafCertLoaders` fails, but it fails the same way on the unmodified code, so it's a problem in this environment and not caused by this change. I didn't run `golangci-lint` or the full `./...` suite.
+
+Nothing is committed. If you open a PR, the project's contribution rules ask you to say it was AI-assisted (Claude Opus 5.5), and you'll need to be able to explain every line.

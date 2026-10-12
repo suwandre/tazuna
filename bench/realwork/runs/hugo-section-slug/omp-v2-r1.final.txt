@@ -1,0 +1,14 @@
+Section, taxonomy and term pages now honour `slug`. The slug replaces that page's path segment in its own URL and in every descendant's URL. The new tests and the existing suites for `./hugolib/...`, `./resources/...`, `./common/...` and `./tpl/...` all pass.
+
+With your example, `es/ayuda/` and `es/ayuda/como-frobear/` are generated. The `en` pages stay at `help/` and `help/how-to-frob/`.
+
+- **Descriptor field:** `TargetPathDescriptor` in `resources/page/page_paths.go` has a new `Dir` field. `CreateTargetPaths` uses it in place of the derived section path or container directory when it's set.
+- **Slug application:** `createTargetPathDescriptor` in `hugolib/page__paths.go` calls the new `dirWithSectionSlugs`. It walks the current section and its ancestors and swaps in each slugged section's segment. `Dir` stays empty when no section has a slug, so pages without slugs build as before.
+- **Taxonomies and terms:** a taxonomy slug works the same way (`tags` slug `etiquetas` gives `/etiquetas/`). A term slug replaces that term's segment (`/etiquetas/fu/`).
+- **`url` and permalinks:** an explicit `url` still overrides the slug, and permalink patterns (`[permalinks]`) still take precedence. I didn't change either.
+- **Ugly URLs:** a slugged section with `uglyURLs = true` renders to `/ayuda/index.html`. That matches how unslugged sections already render, so I kept it.
+- **Home page:** `slug` has no effect on the home page.
+- **Tests:** the new tests are in `hugolib/page_slug_branch_test.go`. They cover your multilingual example, nested sections, a slugged section without a slug on its parent, ugly URLs, and taxonomy and term pages.
+- **Docs:** I updated `content-management/urls.md` and `front-matter.md`, which previously said slug didn't apply to these kinds.
+
+I didn't run `./check.sh`.

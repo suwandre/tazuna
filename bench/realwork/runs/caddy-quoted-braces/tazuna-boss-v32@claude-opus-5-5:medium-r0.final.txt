@@ -1,0 +1,14 @@
+The Caddyfile from the issue now parses. A quoted `"{"` or `"}"` (including backtick and heredoc tokens) is read as plain text instead of opening or closing a block. Running `caddy adapt` on the example gives `{"body":"{","handler":"static_response"}`, and `caddy fmt` leaves the file unchanged.
+
+**The fix** (`caddyconfig/caddyfile`):
+- **`dispenser.go`:** two new helpers, `isOpenCurlyBrace()` and `isCloseCurlyBrace()`, which only match braces that aren't quoted. `NextArg`, `NextBlock` and `ArgErr` now use them.
+- **`parse.go`:** every place that detects a block's start or end now uses the same check. That covers site addresses, directives, snippets and imports, and skipping over blocks. One spot already ignored a quoted `{` but not a quoted `}`; both are handled now. Unquoted braces behave exactly as before.
+
+**Tests added:**
+- `parse_test.go`: quoted braces in all three quote styles, inside nested blocks and inside an imported snippet. There's also a case confirming that a missing real `}` is still an error.
+- `dispenser_test.go`: a quoted `"{"` is a normal argument, and a quoted `"}"` inside a block doesn't end the block early.
+- `caddytest/integration/caddyfile_adapt/respond_quoted_curly_brace.caddyfiletest`: the example from the issue, with its expected JSON output.
+
+The new parser tests fail on the old code and pass with the fix. `go build ./...` and `go vet` are clean, and `go test -race -short ./caddyconfig/... ./caddytest/... ./modules/caddyhttp/...` all passes. I didn't run the full `./...` suite or the repo-wide lint. Nothing is committed.
+
+Since this was AI-assisted, the project's contribution rules require saying so in the PR, naming Opus 5.5 as the model.

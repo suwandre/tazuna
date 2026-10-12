@@ -1,0 +1,18 @@
+> Ask: fix Caddyfile block parsing so quoted `"{"` and `"}"` don't act as block delimiters - wanted: `respond "{"` works inside a site block, with tests. For you: done. Your example now parses and the new tests pass. Now: nothing open. Next: nothing.
+
+**Cause:** the parser and dispenser compared token text to `"{"` and `"}"` and ignored whether the token was quoted. `respond "{"` therefore bumped the nesting counter, and the block never closed.
+
+**Fix:**
+- **Helpers:** I added `isOpenBrace()` and `isCloseBrace()` on `Token` in `lexer.go`, and matching ones on `Dispenser` in `dispenser.go`. They match only unquoted braces.
+- **Parser:** every brace check in `parse.go` now uses them. That covers address parsing, `directives()`, `directive()`, `openCurlyBrace`, `closeCurlyBrace`, `blockTokens`, and the brace tracking inside `doImport`.
+- **Dispenser:** `NextArg`, `NextBlock` and `ArgErr` use them too.
+- **Cleanup:** the old `wasQuoted == 0` workaround in `directive()` is now redundant for `{`, so I dropped it there. The `{}` branch keeps its own check.
+
+**Tests:** I added cases to the `parse_test.go` table:
+- `:8080 { respond "{" }` and the `"}"` variant.
+- A bare `dir1 "{"` and `dir1 "}"` with no enclosing block.
+- A mixed block, `dir1 "{" { a "}" }`.
+
+With the fix stashed, three of these fail with "unexpected EOF" and "Unexpected '}'". With it applied, `go test ./caddyconfig/... ./caddytest/integration/` passes, and `go vet` and `gofmt` are clean.
+
+I didn't run the full `go test -race -short ./...` or `golangci-lint`. `gopls` isn't installed here, so I used `go vet` and the tests instead of LSP diagnostics. This code was written with AI assistance (Sonnet 5.5), which the project's contribution rules ask you to disclose in the PR.

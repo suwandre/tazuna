@@ -1,0 +1,29 @@
+Done. Here's a summary of the change:
+
+## What changed
+
+The `return` keyword is now a first-class control-flow construct backed by a sentinel error trapped in the template executor, instead of the old AST-rewriting scheme.
+
+**Template executor fork** (`tpl/internal/go_templates/texttemplate/`):
+- Added `ReturnError{Value, HasValue}` sentinel and `state.newReturnError`, which evaluates everything after `return` as a command (so `{{ return add . 42 }}` and `{{ return nil }}` work) and panics with it.
+- `state.evalFunction` intercepts the `return` identifier before function lookup. Bare `{{ return }}` unwinds to the nearest template boundary (`state.walkTemplate`, which catches and drops it), while `{{ return <value> }}` propagates to the partial invocation (`Template.executeWithState` turns it into an error).
+- The `try` keyword explicitly re-panics `ReturnError` so `try` doesn't swallow a return.
+- `walkTemplate` was renamed to `walkTemplateOld` (mechanical rename mirrored in `scripts/fork_go_templates/main.go`), keeping the fork delta tiny: one extra function wrapper plus the interception hook.
+
+**Partial handling** (`tpl/partials/`):
+- Removed `contextWrapper` and the `HasReturn` branched execution; every partial now executes into a buffer, and a returned `*ReturnError` supplies the result value, discarding rendered output.
+- The `return` func mapping now accepts `(v ...any) any` so any arity/type resolves.
+
+**Transform cleanup** (`tpl/tplimpl/`):
+- Deleted `partialReturnWrapper`, `wrapInPartialReturnWrapper`, `applyTransformationsAndSetReturnWrapper`, `collectReturnNode`, and `ParseInfo.HasReturn`, collapsing `applyTransformations` to its remaining dependency-tracking job.
+- Kept a guard that `return` must be the last command in a pipeline (avoids silently discarding the rest of the pipeline), which the existing issue-13600 test asserts.
+
+## Behavior
+
+- `return` works in **any** template, not just partials, and can appear anywhere (`if`, `range`, etc.); a bare `return` only ends the current template.
+- `{{ return <value> }}` in a non-partial is now an error instead of being silently ignored.
+
+## Verification
+
+- New tests: `TestTemplateReturnEarly`, `TestTemplateReturnEarlyFromBlock`, `TestTemplateReturnEarlyFromTemplateInclude`, `TestTemplateReturnWithValueOutsidePartialFails` (hugolib), and `TestPartialReturnConditional/FromRange/BareStopsEarly/Nil/ValueFromTemplateInclude` (tpl/partials).
+- Ran `./check.sh ./tpl/...` (gofmt, staticcheck, tests) — all pass; `go test ./hugolib/... ./resources/... ./tpl/...` pass. The one staticcheck SA4006 in `hugolib/integrationtest_builder.go` is pre-existing (present on the clean tree too).

@@ -1,0 +1,23 @@
+Quoted `{` and `}` are now treated as plain text, so `respond "{"` parses and serves `{`.
+
+The lexer already marks tokens that were quoted (double quotes, backticks, heredocs), but the parser and dispenser only compared the token text to `"{"` and `"}"`. I added `isOpenCurly()` and `isCloseCurly()` on `Token` (`caddyconfig/caddyfile/lexer.go`). They match only unquoted braces. I switched every block-delimiter check over to them in `parse.go` and `dispenser.go`:
+- address parsing
+- `directives`
+- `directive`
+- `blockTokens`
+- the open/close brace assertions
+- the import nesting and snippet tracking
+- `NextArg`, `NextBlock` and `ArgErr`
+
+The existing quote workaround (`dir1 "{" a b "}"`) still parses the same way.
+
+Tests added:
+- **Parser table** in `parse_test.go`: quoted `{` and `}` as arguments, inside nested blocks, and your exact `:8080 { respond "{" }` case.
+- **Dispenser test** in `dispenser_test.go`: quoted braces don't change `NextArg` or `NextBlock` nesting.
+- **Integration test** `TestRespondQuotedBraces` in `caddytest/integration/caddyfile_test.go`: `respond "{"` and `respond "}"` return those bodies.
+
+`go test ./caddyconfig/...` passes, and so do `TestRespond` and `TestRespondQuotedBraces`. I only ran the `TestRespond*` integration tests, not the full suite or `-race`. `TestRespondWithJSON` fails with a TLS "internal error", and it fails the same way with my changes stashed.
+
+I didn't touch `formatter.go`. It works on raw bytes rather than tokens, so I haven't checked how `caddy fmt` handles quoted braces.
+
+Per AGENTS.md, this was AI-assisted (Claude), so say so when you submit it.

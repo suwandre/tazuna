@@ -1,0 +1,22 @@
+Ask: quoted braces shouldn't affect Caddyfile block parsing, and `:8080 { respond "{" }` should work. Tests should be added and run.
+For you: fixed. The issue's config now adapts to a `static_response` with body `"{"`. The `caddyfile` and `httpcaddyfile` packages pass `go test`. I didn't finish the integration tests, because that run stopped at a `Password:` prompt. I killed it rather than enter a password, so `./caddytest/integration/...` was not run.
+Now: done.
+Next: nothing.
+
+**Cause.** The lexer already records whether a token was quoted (`wasQuoted`). The parser and dispenser ignored that and compared only the text, so `"{"` was counted as an open brace. That raised the nesting level and left the block unclosed.
+
+**Fix.**
+- **Helpers:** I added two unexported helpers, `Token.isOpenBrace()` and `Token.isCloseBrace()`, in `caddyconfig/caddyfile/lexer.go`. They match only unquoted braces.
+- **`parse.go`:** `directive()`, `directives()`, `openCurlyBrace()`, `closeCurlyBrace()`, `blockTokens()` and the snippet/`{block}` token scan now use the helpers.
+- **`dispenser.go`:** `NextArg()` and `NextBlock()` use them too. Directive modules therefore receive a quoted `"{"` or `"}"` as an ordinary argument instead of having it dropped.
+- **Cleanup:** I removed the old `wasQuoted == 0` workaround in `directive()`. The new check makes it redundant.
+
+**Tests.**
+- **`parse_test.go`:** five new cases cover quoted `{` and `}` at the top level, inside a braced site block, and inside a nested block.
+- **`dispenser_test.go`:** `TestDispenser_QuotedBracesAreArguments` covers `NextArg` and `NextBlock`.
+- **Other checks:** `go build ./...`, `go vet ./caddyconfig/...` and `gofmt -l` were clean. I ran `caddy adapt` on the exact config from the issue.
+- **Not checked:** I didn't confirm the new tests fail without the fix. `gopls` isn't installed, so I got no LSP diagnostics.
+
+I left site-address parsing alone: a quoted `"{"` as a site address still goes through the existing address checks. This is a separate edge case from the one in the issue.
+
+Per `AGENTS.md`, this change was AI-assisted (Claude Sonnet 5.5), so disclose that in the PR. The Caddy maintainers also ask that you be able to explain every line.

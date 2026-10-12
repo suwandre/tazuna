@@ -1,0 +1,11 @@
+Quoted `{` and `}` tokens no longer count as block delimiters, so your `:8080 { respond "{" }` example now parses. `go test ./caddyconfig/...` passes.
+
+The lexer already records whether a token was quoted. The parser and dispenser were comparing only the token text, so a quoted `"{"` looked like a real brace. I changed those comparisons to also require that the token is unquoted (`!Token().Quoted()`). The changes are in `caddyconfig/caddyfile/parse.go` and `caddyconfig/caddyfile/dispenser.go`:
+
+- **Parser:** server-block end detection, directive parsing, `blockTokens` nesting, snippet/import nesting and the open/close brace assertions.
+- **Dispenser:** `NextArg`, `NextBlock` and `ArgErr`.
+- **Redundant check:** I removed a `wasQuoted == 0` check in `directive()`. It is redundant now, because quoted `{` never reaches that branch.
+
+I added cases to `TestParseOneAndImport` in `parse_test.go`. They cover a quoted `"{"`, a quoted `"}"`, both together, and a quoted `"}"` inside a nested `handle { }`. With the fix reverted, the new cases fail, so they do exercise it.
+
+I didn't check the formatter for quoted braces, and I left the "site address ends with `{`" check alone.

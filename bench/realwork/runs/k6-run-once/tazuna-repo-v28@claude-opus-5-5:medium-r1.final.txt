@@ -1,0 +1,20 @@
+I've added `--once` to `k6 run`, `k6 cloud run` (with or without `--local-execution`) and `k6 archive`. It runs the script with 1 VU and 1 iteration and keeps the scenario config. `go test -race ./internal/cmd/...` passes and `golangci-lint` reports 0 issues. Nothing is committed yet.
+
+**How it works**
+- **Flag:** `--once` is declared in `internal/cmd/options.go`, in the option flags that all three commands share.
+- **Transformation:** a new `applyOnce` in `internal/cmd/config.go` runs on the consolidated config before scenarios are expanded and validated, as the issue asks. Because it changes the consolidated config, `k6 archive` and cloud uploads store the converted scenario.
+  - **No scenarios:** you get a `default` shared-iterations scenario with 1 VU and 1 iteration.
+  - **One scenario:** it keeps its name, `exec`, `env`, `tags` and `options` (browser), and its executor becomes shared-iterations with 1 VU and 1 iteration. Fields like `startTime`, `gracefulStop` and `stages` are dropped. `maxDuration` falls back to the shared-iterations default of 10 minutes.
+  - **Several scenarios:** it fails with `--once can run a single scenario only…`.
+  - **Shortcut options:** top-level `vus`, `iterations`, `duration` and `stages` are cleared, so values set in the script or a config file don't trigger a conflict.
+- **Flag conflicts:** `--once` with `--vus`, `--iterations`, `--duration` or `--stage` on the command line fails with `--once cannot be combined with --<flag>`. Both errors use the invalid-config exit code.
+
+**Tests**
+- **Unit tests** (`internal/cmd/config_test.go`): `TestApplyOnce` covers the no-scenario, single-scenario and multiple-scenario cases. `TestCheckOnceFlagConflicts` covers each conflicting flag.
+- **Integration tests** (new file `internal/cmd/tests/cmd_run_once_test.go`):
+  - `TestRunOnce` runs `k6 run --once` and checks that `setup`, the default function and `teardown` all run. It also checks that a single scenario keeps its `exec`, `env`, tags and name, and covers both error cases.
+  - `TestArchiveOnce` checks the scenario saved in the archive.
+
+**Not covered**
+- Only command-line flags count as a conflict. If `K6_VUS` or `K6_ITERATIONS` are set as environment variables, `--once` silently discards them instead of failing.
+- `k6 cloud run` has no test of its own. It goes through the same config code path that the `run` and `archive` tests cover.

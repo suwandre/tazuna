@@ -1,0 +1,7 @@
+{
+  "kind": "bug",
+  "difficulty_note": "lb_retry_match sets with an `expression` are evaluated against the upstream response since a recent change, so a request-only expression retries every successful response (POST re-sent with empty body, 502). Fix must decide per expression whether it reads response data: needs the placeholders actually referenced by the compiled CEL expression (both {placeholder} shorthand and ph(req, \"...\") calls), distinguishing response placeholders (status_code/status_text/upstream latency/header.*) from upstream-selection ones (upstream.host) and from escaped literals or look-alike names; a dynamic placeholder name must stay conservative. Hidden tests: the PR's table test of request-only expressions (escaped literal, look-alike name, upstream host) plus the extended status-code retry test (shorthand and ph() forms).",
+  "merged_at": "2026-10-09T21:22:32Z",
+  "files_changed": 2,
+  "lines_changed": 78
+}

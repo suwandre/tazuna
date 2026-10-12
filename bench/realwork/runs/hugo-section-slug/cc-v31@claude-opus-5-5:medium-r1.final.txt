@@ -1,0 +1,15 @@
+Setting `slug` on a section, taxonomy or term page now changes that part of the URL, and every page below it follows. Your example now gives `/help/`, `/help/how-to-frob/`, `/es/ayuda/` and `/es/ayuda/como-frobear/`. The full `./check.sh` passes (gofmt, staticcheck and all tests).
+
+**How it works:**
+- When a page's URL is built, Hugo now walks up through the page's section and all of that section's parents. Wherever one of them has a `slug`, it replaces that section's part of the path.
+- That path is passed in a new `Dir` field on `TargetPathDescriptor`. `CreateTargetPaths` uses it in place of the section path (for sections, taxonomies and terms) or the folder the page sits in (for regular pages).
+- Ordinary folders that aren't sections keep their names but still pick up a parent's slug: `help/nosection/p2.es.md` becomes `/es/ayuda/nosection/p2/`.
+- Taxonomies and terms work the same way, e.g. `/es/etiquetas/fu/`.
+- If a permalink pattern or a front matter `url` is set, it still takes priority over the slug.
+- The main change is in `hugolib/page__paths.go`.
+
+**Test:** `TestSlugInSectionTaxonomyAndTerm` in `hugolib/site_url_test.go` covers your example plus nested sections, non-section folders, page bundle resources, taxonomies and terms.
+
+**One thing to know:** a resource with no language, like `data.txt` in a bundle, is shared across languages. Its link still points to the first language's copy (`/help/how-to-frob/data.txt`), not the slugged path. That's how Hugo already handled shared resources, and I didn't change it. A language-specific file like `data.es.txt` does get the slugged path. That's why the test uses one.
+
+Nothing is committed yet.

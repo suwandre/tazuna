@@ -1,0 +1,21 @@
+I fixed it: when a `for_each` resource has several `import` blocks for different instances, Terraform now keeps every block instead of only the first. The `go test` runs pass, and the two new tests failed on the old code.
+
+**Cause:** `FindImportStatements` in `internal/refactoring/import_statement.go` filed import blocks under the resource's address without the instance key. So `t["a"]` and `t["b"]` landed in the same entry and every block after the first was dropped. There was no error because the duplicate-import check in `internal/configs` only fires when two blocks target the exact same address.
+
+**Fix:**
+- `FindImportStatements` now keeps a list of import blocks for each resource.
+- `findImportTargets` in `internal/terraform/context_plan.go` now goes through all blocks in that list.
+- The duplicate check now compares instances, not resources. A block inside a module is skipped only when a block in the calling module already targets the same instance. That keeps the existing rule that the calling module's block wins.
+- Blocks whose instance key is computed (e.g. `[var.k]`) are never treated as duplicates.
+
+**One behaviour change:** before, if the calling module had an import block for one instance of a resource, any block inside the module for a *different* instance of it was silently dropped. Now it's kept.
+
+**Tests added** in `internal/terraform/context_plan_import_test.go`:
+- `TestContext2Plan_importForEachMultipleBlocks`: two blocks for `["x"]` and `["y"]`; both are imported with the right IDs and nothing is planned for creation. On the old code only `"x"` was imported.
+- `TestContext2Plan_importForEachMultipleBlocksReverseOrder`: three instances with blocks declared in reverse order. On the old code only `"c"` was imported.
+
+**Checks run:**
+- `go build ./...`, `gofmt` and `go vet` are clean.
+- The full `internal/terraform` and `internal/refactoring` test suites pass, including the existing parent/child import tests, and so does `go test ./internal/configs/...`.
+
+I haven't tried `count`, and there's still no unit test for `FindImportStatements` itself because that package never had one. Nothing is committed.

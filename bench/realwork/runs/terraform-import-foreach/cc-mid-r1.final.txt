@@ -1,0 +1,11 @@
+Multiple `import` blocks targeting the same `for_each` resource are now all honored. I added a regression test, and the plan, validate, apply and refactoring tests pass. I didn't get a clean run of the whole `internal/terraform` package or `internal/command`. My first combined run timed out and I didn't rerun it.
+
+**Root cause:** `refactoring.FindImportStatements` stored import statements in a map keyed by the target config resource (`terraform_data.t`). Every block for that resource has the same key, so each one overwrote or skipped the rest. The code's comment says it was meant to let a parent module's import override a child module's. In practice it dropped every later block. That is why the first-declared block won, `count` is likely affected the same way, and single-instance resources were fine.
+
+**Fix:**
+- **`internal/refactoring/import_statement.go`:** the map now holds a list of statements per resource. Several blocks in the same module are all kept. If a different module also targets that resource, the parent module still wins and the child's blocks are dropped.
+- **`internal/terraform/context_plan.go`:** `findImportTargets` now flattens those lists into import targets.
+
+**Test:** I added `TestContext2Plan_importMultipleBlocksForEachResource`, which mirrors the report: two `import` blocks for `["first"]` and `["second"]` of one `for_each` resource. It fails without the fix (`["second"]` was not imported) and passes with it.
+
+I didn't touch `node_resource_plan.go:354`, which sets `importConfig` from `n.importTargets[0].Config`. It only feeds config generation, which the code notes doesn't support `for_each`, but it could pick the wrong block if that ever changes.

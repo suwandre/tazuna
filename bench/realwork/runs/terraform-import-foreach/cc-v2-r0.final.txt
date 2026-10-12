@@ -1,0 +1,16 @@
+The bug is fixed: every import block for a `for_each` resource is now honored, not just the first. The new tests pass, and so do the full `internal/terraform`, `internal/refactoring` and `internal/configs` packages. I did not commit anything.
+
+**Cause:** `FindImportStatements` in `internal/refactoring/import_statement.go` stored import blocks in a map keyed by the config resource (for example `terraform_data.t`). It skipped any block whose resource was already in the map. That check was meant to let a parent module override a child module, but it also dropped every later block for another instance of the same resource in the same module.
+
+**Fix:**
+- `FindImportStatements` now returns a slice in config order.
+- It skips a block only when a different, ancestor module already claimed that resource.
+- The caller in `internal/terraform/context_plan.go` was updated for the new return type.
+
+**Tests:**
+- `TestContext2Plan_importMultipleBlocksForEachResource` plans three `for_each` instances with three import blocks. Without the fix it fails (`["second"]` and `["third"]` are planned for create). With the fix it passes.
+- `TestFindImportStatements` uses a new fixture, `internal/refactoring/testdata/import-statements`, and checks two things. Several blocks for one resource are all kept, and a parent block still overrides a child block for the same resource.
+
+**Unrelated failure:** `TestInit_providerLockFileReadonly` in `internal/command` fails on the base commit too (a provider checksum mismatch), so my change didn't cause it. I didn't run the rest of the `command` package after that.
+
+**Not fixed:** `concreteResource` in `node_resource_plan.go` still passes `n.importTargets[0].Config` for every instance. It is only used when generating config. With several blocks per resource it can point at the wrong block, which matters if they use different provider aliases.

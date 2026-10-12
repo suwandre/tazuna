@@ -1,0 +1,26 @@
+The fix is complete. Here's a summary:
+
+## Root cause
+
+Since #7569, `reverseProxy()` evaluated **every** `lb_retry_match` set containing an `expression` matcher against the upstream response. A request-only expression (e.g. `{http.request.method} == "POST"`) matched every response, turning successful responses into retryable ones and exhausting retries into a 502.
+
+## Changes
+
+**`modules/caddyhttp/celmatcher.go`**
+- `MatchExpression` now records the placeholder names its checked CEL expression reads (`placeholders` field), populated during `Provision()` by a new `celPlaceholderNames()` helper that walks the checked AST for `ph(req, "...")` calls. Non-literal names are recorded as `""` (unknown until evaluation time), and escaped placeholder text inside string literals is ignored.
+- Added `Placeholders()` returning a cloned copy of those names.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`, which returns true only when an expression reads response data: `http.reverse_proxy.status_code`, `.status_text`, `.upstream.latency`, `.upstream.latency_ms` (exact), or `http.reverse_proxy.header.*` (prefix), plus placeholders whose name is only known at evaluation time. The Caddyfile adapter already rewrites `{rp.*}` to these names.
+- The post-round-trip retry loop now skips matcher sets that don't reference response data, so request-only expressions again act only as request conditions (as in v2.11.2), while #7569's `{rp.*}` examples keep working — including direct `ph(req, "...")` calls.
+
+**Tests**
+- `retries_test.go`: `TestResponseRetryStatusCode` now also covers a direct `ph(req, ...)` call; added `TestRequestOnlyExpressionDoesNotRetryResponses` covering method, upstream host, escaped placeholder-in-string-literal, and a lookalike name (`status_codes`).
+- `celmatcher_test.go`: added `TestMatchExpressionPlaceholders` covering shorthand, direct calls, multiple placeholders, escaped text, and dynamic names.
+
+## Verification
+- `go build ./...` — OK
+- `go test -race -short ./...` — all 30 packages pass
+- `go vet ./modules/caddyhttp/...` — clean
+- `golangci-lint run ./modules/caddyhttp/...` — 0 issues
+- `gofmt` clean on all changed files

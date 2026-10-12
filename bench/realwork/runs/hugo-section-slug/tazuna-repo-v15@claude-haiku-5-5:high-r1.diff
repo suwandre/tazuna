@@ -1,0 +1,222 @@
+diff --git a/docs/content/en/content-management/front-matter.md b/docs/content/en/content-management/front-matter.md
+index 9210d75..0bd85c7 100644
+--- a/docs/content/en/content-management/front-matter.md
++++ b/docs/content/en/content-management/front-matter.md
+@@ -126,7 +126,7 @@ The most common front matter fields are `date`, `draft`, `title`, and `weight`,
+   <!-- markdownlint-enable MD049 -->
+ 
+ `slug`
+-: (`string`) Overrides the last segment of the URL path. Not applicable to `home`, `section`, `taxonomy`, or `term` pages. See the [URL management][] page for details. Access this value from a template using the [`Slug`][] method on a `Page` object.
++: (`string`) Overrides the last segment of the URL path. For `section`, `taxonomy`, and `term` pages, also applies to the URLs of descendant pages. Not applicable to `home` pages. See the [URL management][] page for details. Access this value from a template using the [`Slug`][] method on a `Page` object.
+ 
+ `summary`
+ : (`string`) Conceptually different than the page `description`, the summary either summarizes the content or serves as a teaser to encourage readers to visit the page. Access this value from a template using the [`Summary`][] method on a `Page` object.
+diff --git a/docs/content/en/content-management/multilingual.md b/docs/content/en/content-management/multilingual.md
+index a05d341..7382d9f 100644
+--- a/docs/content/en/content-management/multilingual.md
++++ b/docs/content/en/content-management/multilingual.md
+@@ -88,7 +88,7 @@ Because paths and file names are used to handle linking, all translated pages wi
+ To localize URLs:
+ 
+ - For a regular page, set either [`slug`][] or [`url`][] in front matter
+-- For a section page, set [`url`][] in front matter
++- For a section, taxonomy, or term page, set [`slug`][] in front matter to localize its URL and the URLs of its descendants
+ 
+ For example, a French translation can have its own localized slug.
+ 
+diff --git a/docs/content/en/content-management/urls.md b/docs/content/en/content-management/urls.md
+index 0a7095f..bc0bed9 100644
+--- a/docs/content/en/content-management/urls.md
++++ b/docs/content/en/content-management/urls.md
+@@ -22,7 +22,7 @@ Override the default URL for a page using these front matter fields.
+ 
+ ### Slug
+ 
+-Set the `slug` in front matter to override the last segment of the path. This front matter field is not applicable to `home`, `section`, `taxonomy`, or `term` pages.
++Set the `slug` in front matter to override the last segment of the path. For `section`, `taxonomy`, and `term` pages, the slug also applies to the URLs of all descendant pages. This front matter field is not applicable to `home` pages.
+ 
+ {{< code-toggle file=content/posts/post-1.md fm=true >}}
+ title = 'My First Post'
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..7174f76 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -18,6 +18,7 @@ import (
+ 	"path"
+ 	"strings"
+ 
++	"github.com/gohugoio/hugo/common/paths"
+ 	"github.com/gohugoio/hugo/output"
+ 
+ 	"github.com/gohugoio/hugo/resources/kinds"
+@@ -109,14 +110,38 @@ func (l pagePaths) OutputFormats() page.OutputFormats {
+ 	return l.outputFormats
+ }
+ 
++// pathInfoWithBranchSlugs returns pi with the elements of its branch ancestors
++// (sections, taxonomies, terms; itself included) replaced by their slugs.
++func (s *Site) pathInfoWithBranchSlugs(pi *paths.Path) *paths.Path {
++	var elems []string
++	dir := pi.Dir()
++	for dir != "/" && dir != "" {
++		key, n := s.pageMap.treePages.LongestPrefix(dir, false, cnh.isBranchNode)
++		if n == nil {
++			break
++		}
++		if slug := n.(page.Page).Slug(); slug != "" {
++			if elems == nil {
++				elems = strings.Split(pi.Unnormalized().Path(), "/")
++			}
++			elems[strings.Count(key, "/")] = slug
++		}
++		dir = paths.Dir(key)
++	}
++	if elems == nil {
++		return pi
++	}
++	return s.h.Conf.PathParser().Parse(pi.Component(), strings.Join(elems, "/"))
++}
++
+ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error) {
+ 	s := p.s
+ 	d := s.Deps
+ 	pm := p.m
+ 	alwaysInSubDir := p.Kind() == kinds.KindSitemap
+-	pageInfoPage := p.PathInfo()
++	pageInfoPage := s.pathInfoWithBranchSlugs(p.PathInfo())
+ 
+-	pageInfoCurrentSection := p.CurrentSection().PathInfo()
++	pageInfoCurrentSection := s.pathInfoWithBranchSlugs(p.CurrentSection().PathInfo())
+ 	if p.s.Conf.DisablePathToLower() {
+ 		pageInfoPage = pageInfoPage.Unnormalized()
+ 		pageInfoCurrentSection = pageInfoCurrentSection.Unnormalized()
+diff --git a/hugolib/slug_test.go b/hugolib/slug_test.go
+new file mode 100644
+index 0000000..c3065bf
+--- /dev/null
++++ b/hugolib/slug_test.go
+@@ -0,0 +1,124 @@
++// Copyright 2026 The Hugo Authors. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package hugolib
++
++import (
++	"testing"
++)
++
++func TestSectionSlugMultilingual(t *testing.T) {
++	files := `
++-- hugo.toml --
++[languages]
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/help/_index.en.md --
++---
++title: Help
++---
++-- content/help/_index.es.md --
++---
++title: Ayuda
++slug: ayuda
++---
++-- content/help/how-to-frob/index.en.md --
++---
++title: How to frob
++---
++-- content/help/how-to-frob/index.es.md --
++---
++title: Como frobear
++slug: como-frobear
++---
++-- layouts/list.html --
++List: {{ .RelPermalink }}|{{ with .Site.GetPage "/help/how-to-frob" }}{{ .RelPermalink }}{{ end }}
++-- layouts/page.html --
++Page: {{ .RelPermalink }}|{{ with .Site.GetPage "/help/how-to-frob" }}{{ .RelPermalink }}{{ end }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/help/index.html", "List: /help/|/help/how-to-frob/")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "Page: /help/how-to-frob/|/help/how-to-frob/")
++	b.AssertFileContent("public/es/ayuda/index.html", "List: /es/ayuda/|/es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "Page: /es/ayuda/como-frobear/|/es/ayuda/como-frobear/")
++	b.AssertFileExists("public/es/help/index.html", false)
++	b.AssertFileExists("public/es/ayuda/how-to-frob/index.html", false)
++}
++
++func TestSectionSlugNested(t *testing.T) {
++	files := `
++-- hugo.toml --
++-- content/a/_index.md --
++---
++slug: x
++---
++-- content/a/b/_index.md --
++---
++slug: y
++---
++-- content/a/b/c/p.md --
++-- content/a/b/d/index.md --
++-- content/a/e/p.md --
++-- layouts/list.html --
++List: {{ .RelPermalink }}
++-- layouts/page.html --
++Page: {{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/x/index.html", "List: /x/")
++	b.AssertFileContent("public/x/y/index.html", "List: /x/y/")
++	b.AssertFileContent("public/x/y/c/p/index.html", "Page: /x/y/c/p/")
++	b.AssertFileContent("public/x/y/d/index.html", "Page: /x/y/d/")
++	b.AssertFileContent("public/x/e/p/index.html", "Page: /x/e/p/")
++	b.AssertFileExists("public/a/index.html", false)
++	b.AssertFileExists("public/a/b/index.html", false)
++}
++
++func TestTaxonomyAndTermSlug(t *testing.T) {
++	files := `
++-- hugo.toml --
++-- content/tags/_index.md --
++---
++slug: etiketten
++---
++-- content/tags/go/_index.md --
++---
++slug: golang
++---
++-- content/post/p1.md --
++---
++tags: [go, hugo]
++---
++-- layouts/taxonomy.html --
++Taxonomy: {{ .RelPermalink }}
++-- layouts/term.html --
++Term: {{ .RelPermalink }}
++-- layouts/page.html --
++Page: {{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileContent("public/etiketten/index.html", "Taxonomy: /etiketten/")
++	b.AssertFileContent("public/etiketten/golang/index.html", "Term: /etiketten/golang/")
++	b.AssertFileContent("public/etiketten/hugo/index.html", "Term: /etiketten/hugo/")
++	b.AssertFileContent("public/post/p1/index.html", "Page: /post/p1/")
++	b.AssertFileExists("public/tags/index.html", false)
++	b.AssertFileExists("public/tags/go/index.html", false)
++}

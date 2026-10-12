@@ -1,0 +1,256 @@
+diff --git a/internal/refactoring/import_statement.go b/internal/refactoring/import_statement.go
+index ac2cafd..c69a1ad 100644
+--- a/internal/refactoring/import_statement.go
++++ b/internal/refactoring/import_statement.go
+@@ -16,39 +16,41 @@ type ImportStatement struct {
+ }
+ 
+ // FindImportStatements recurses through the modules of the given configuration
+-// and returns a set of all "import" blocks defined within after deduplication
+-// on the To address.
++// and returns all "import" blocks defined within.
+ //
+-// An "import" block in a parent module overrides an import block in a child
+-// module when both target the same configuration object.
+-func FindImportStatements(rootCfg *configs.Config) addrs.Map[addrs.ConfigResource, ImportStatement] {
+-	imports := findImportStatements(rootCfg, addrs.MakeMap[addrs.ConfigResource, ImportStatement]())
+-	return imports
++// Multiple import blocks may target the same configuration object (for
++// example, different instances of a resource using for_each) as long as they
++// are declared in the same module. An "import" block in a parent module
++// overrides all import blocks in child modules that target the same
++// configuration object.
++func FindImportStatements(rootCfg *configs.Config) []ImportStatement {
++	return findImportStatements(rootCfg, nil, addrs.MakeMap[addrs.ConfigResource, addrs.Module]())
+ }
+ 
+-func findImportStatements(cfg *configs.Config, into addrs.Map[addrs.ConfigResource, ImportStatement]) addrs.Map[addrs.ConfigResource, ImportStatement] {
++func findImportStatements(cfg *configs.Config, into []ImportStatement, owners addrs.Map[addrs.ConfigResource, addrs.Module]) []ImportStatement {
+ 	for _, mi := range cfg.Module.Import {
+ 		// First, stitch together the module path and the RelSubject to form
+-		// the absolute address of the config resource being removed.
++		// the absolute address of the config resource being imported.
+ 		res := mi.ToResource
+ 		toAddr := addrs.ConfigResource{
+ 			Module:   append(cfg.Path, res.Module...),
+ 			Resource: res.Resource,
+ 		}
+ 
+-		// If we already have an import statement for this ConfigResource, it
+-		// must have come from a parent module, because duplicate import
+-		// blocks in the same module result in an error.
+-		// The import block in the parent module overrides the block in the
+-		// child module.
+-		existingResource, ok := into.GetOk(toAddr)
+-		if ok {
+-			if existingResource.AbsToResource.Equal(toAddr) {
++		// If another module has already claimed this ConfigResource, it must
++		// be a parent module, because modules are visited parent first. The
++		// import blocks in the parent module override those in the child.
++		// Blocks from the same module are all retained, since they may
++		// target different instances of the resource.
++		if owner, ok := owners.GetOk(toAddr); ok {
++			if !owner.Equal(cfg.Path) {
+ 				continue
+ 			}
++		} else {
++			owners.Put(toAddr, cfg.Path)
+ 		}
+ 
+-		into.Put(toAddr, ImportStatement{
++		into = append(into, ImportStatement{
+ 			AbsToResource:    toAddr,
+ 			ContainingModule: cfg.Path,
+ 			Import:           mi,
+@@ -56,7 +58,7 @@ func findImportStatements(cfg *configs.Config, into addrs.Map[addrs.ConfigResour
+ 	}
+ 
+ 	for _, childCfg := range cfg.Children {
+-		into = findImportStatements(childCfg, into)
++		into = findImportStatements(childCfg, into, owners)
+ 	}
+ 
+ 	return into
+diff --git a/internal/refactoring/import_statement_test.go b/internal/refactoring/import_statement_test.go
+new file mode 100644
+index 0000000..2927d2e
+--- /dev/null
++++ b/internal/refactoring/import_statement_test.go
+@@ -0,0 +1,50 @@
++// Copyright IBM Corp. 2014, 2026
++// SPDX-License-Identifier: BUSL-1.1
++
++package refactoring_test
++
++import (
++	"testing"
++
++	"github.com/hashicorp/terraform/internal/addrs"
++	"github.com/hashicorp/terraform/internal/refactoring"
++)
++
++func TestFindImportStatements(t *testing.T) {
++	rootCfg, _ := loadRefactoringFixture(t, "testdata/import-statements")
++
++	stmts := refactoring.FindImportStatements(rootCfg)
++	if got, want := len(stmts), 3; got != want {
++		t.Fatalf("wrong number of import statements %d; want %d", got, want)
++	}
++
++	each := addrs.ConfigResource{
++		Module:   addrs.RootModule,
++		Resource: addrs.Resource{Mode: addrs.ManagedResourceMode, Type: "test_resource", Name: "each"},
++	}
++	overridden := addrs.ConfigResource{
++		Module:   addrs.Module{"child"},
++		Resource: addrs.Resource{Mode: addrs.ManagedResourceMode, Type: "test_resource", Name: "overridden"},
++	}
++
++	var eachCount, overriddenCount int
++	for _, stmt := range stmts {
++		switch {
++		case stmt.AbsToResource.Equal(each):
++			eachCount++
++		case stmt.AbsToResource.Equal(overridden):
++			overriddenCount++
++			if !stmt.ContainingModule.IsRoot() {
++				t.Errorf("import block from child module should have been overridden by the parent")
++			}
++		default:
++			t.Errorf("unexpected import statement for %s", stmt.AbsToResource)
++		}
++	}
++	if eachCount != 2 {
++		t.Errorf("wrong number of import statements for %s: %d; want 2", each, eachCount)
++	}
++	if overriddenCount != 1 {
++		t.Errorf("wrong number of import statements for %s: %d; want 1", overridden, overriddenCount)
++	}
++}
+diff --git a/internal/refactoring/testdata/import-statements/child/main.tf b/internal/refactoring/testdata/import-statements/child/main.tf
+new file mode 100644
+index 0000000..2c0f699
+--- /dev/null
++++ b/internal/refactoring/testdata/import-statements/child/main.tf
+@@ -0,0 +1,7 @@
++resource "test_resource" "overridden" {
++}
++
++import {
++  to = test_resource.overridden
++  id = "child"
++}
+diff --git a/internal/refactoring/testdata/import-statements/main.tf b/internal/refactoring/testdata/import-statements/main.tf
+new file mode 100644
+index 0000000..5798605
+--- /dev/null
++++ b/internal/refactoring/testdata/import-statements/main.tf
+@@ -0,0 +1,23 @@
++module "child" {
++  source = "./child"
++}
++
++resource "test_resource" "each" {
++  for_each = { a = 1, b = 2 }
++}
++
++import {
++  to = test_resource.each["a"]
++  id = "aaa"
++}
++
++import {
++  to = test_resource.each["b"]
++  id = "bbb"
++}
++
++# Overrides the import block in the child module for the same resource.
++import {
++  to = module.child.test_resource.overridden
++  id = "parent"
++}
+diff --git a/internal/terraform/context_plan.go b/internal/terraform/context_plan.go
+index d779025..b77dad9 100644
+--- a/internal/terraform/context_plan.go
++++ b/internal/terraform/context_plan.go
+@@ -750,7 +750,7 @@ func (c *Context) postPlanValidateMoves(config *configs.Config, stmts []refactor
+ func (c *Context) findImportTargets(config *configs.Config) []*ImportTarget {
+ 	var importTargets []*ImportTarget
+ 	importStatements := refactoring.FindImportStatements(config)
+-	for _, ic := range importStatements.Values() {
++	for _, ic := range importStatements {
+ 		importTargets = append(importTargets, &ImportTarget{
+ 			Config:              ic.Import,
+ 			RelModule:           ic.ContainingModule,
+diff --git a/internal/terraform/context_plan_import_test.go b/internal/terraform/context_plan_import_test.go
+index cce43fa..24e4ee2 100644
+--- a/internal/terraform/context_plan_import_test.go
++++ b/internal/terraform/context_plan_import_test.go
+@@ -2559,3 +2559,67 @@ import {
+ 		Mode: plans.NormalMode,
+ 	})
+ }
++
++func TestContext2Plan_importMultipleBlocksForEachResource(t *testing.T) {
++	m := testModuleInline(t, map[string]string{
++		"main.tf": `
++resource "test_object" "a" {
++  for_each    = toset(["a", "b", "c"])
++  test_string = each.key
++}
++
++import {
++  to = test_object.a["a"]
++  id = "aaa"
++}
++
++import {
++  to = test_object.a["b"]
++  id = "bbb"
++}
++
++import {
++  to = test_object.a["c"]
++  id = "ccc"
++}
++`,
++	})
++
++	p := simpleMockProvider()
++	ctx := testContext2(t, &ContextOpts{
++		Providers: map[addrs.Provider]providers.Factory{
++			addrs.NewDefaultProvider("test"): testProviderFuncFixed(p),
++		},
++	})
++	p.ReadResourceResponse = &providers.ReadResourceResponse{
++		NewState: cty.ObjectVal(map[string]cty.Value{
++			"test_string": cty.StringVal("foo"),
++		}),
++	}
++	p.ImportResourceStateResponse = &providers.ImportResourceStateResponse{
++		ImportedResources: []providers.ImportedResource{
++			{
++				TypeName: "test_object",
++				State: cty.ObjectVal(map[string]cty.Value{
++					"test_string": cty.StringVal("foo"),
++				}),
++			},
++		},
++	}
++
++	plan, diags := ctx.Plan(m, states.NewState(), DefaultPlanOpts)
++	if diags.HasErrors() {
++		t.Fatalf("unexpected errors\n%s", diags.Err().Error())
++	}
++
++	for _, key := range []string{"a", "b", "c"} {
++		addr := mustResourceInstanceAddr(`test_object.a["` + key + `"]`)
++		instPlan := plan.Changes.ResourceInstance(addr)
++		if instPlan == nil {
++			t.Fatalf("no plan for %s at all", addr)
++		}
++		if instPlan.Importing == nil {
++			t.Errorf("%s: expected to be imported, but it is not (action %s)", addr, instPlan.Action)
++		}
++	}
++}

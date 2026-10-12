@@ -1,0 +1,12 @@
+Terraform now honors every import block that targets a `for_each` resource, so your example plans as `2 to import, 0 to add`.
+
+**Cause:** `FindImportStatements` in `internal/refactoring/import_statement.go` keeps one import block per config resource. Its duplicate check was meant to let a parent module's import override a child module's. But it compared the resource's address with itself, so it also dropped every later import block in the same module. That is why the first block won, and why swapping the order changed the winner. Single-instance resources only ever have one block, so they were unaffected.
+
+**Fix:**
+- `FindImportStatements` now returns a slice of all the import blocks instead of a map keyed by resource.
+- It records which module first claimed each resource. Blocks from a different module are skipped, and blocks from the same module are all kept.
+- Parent-over-child override still works. I updated the one caller, `findImportTargets` in `context_plan.go`, to iterate the slice.
+
+**Tests:** I added `TestContext2Plan_importMultipleBlocksForEachResource` in `context_plan_import_test.go`, which uses your two-block configuration. It fails without the fix (the second instance plans as Create). The full `internal/refactoring` and `internal/terraform` test packages pass with the fix.
+
+I did not test `count` or imports inside modules beyond the existing tests, which still pass.

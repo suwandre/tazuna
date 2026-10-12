@@ -1,0 +1,32 @@
+`return` now works in any template, can appear any number of times and anywhere, and stops execution where it is called. It's built the way you suggested, with a sentinel error, and the change to the Go template fork is small. The whole test suite passes except three `internal/warpc` tests (`TestGreet`, `TestGreetParallel`, `TestKatexParallel`), which fail the same way with my changes stashed. `./check.sh` didn't finish: staticcheck stops on existing warnings in `config/allconfig/allconfig.go` and `hugolib/integrationtest_builder.go`, which I didn't touch, so I ran `go test ./...` directly.
+
+**Fork changes** (all in `texttemplate/hugo_template.go`, plus one rename):
+- **The sentinel:** a new `ReturnError{Value any}` type. When a function call returns this error, `evalCall` panics with it instead of wrapping it as an execution error.
+- **Top level:** `executeWithState` recovers that panic and returns the `ReturnError` to the caller.
+- **`template`/`block`/`define`:** a new `walkTemplate` wraps upstream's (renamed `walkTemplateOld`) and recovers the return. So `return` inside `{{ define "main" }}` ends only that block, and `baseof` keeps rendering. I added the rename to `scripts/fork_go_templates/main.go`, like the existing `evalCallOld` renames.
+- **`try`:** passes the return through instead of catching it.
+
+**Hugo side:**
+- **The function:** `Return(args ...any) (any, error)` is in the `templates` namespace under the alias `return`, replacing the no-op placeholder in `partials`. It errors if given more than one argument.
+- **Getting the value:** `TemplateStore.ExecuteWithContextAndKey` now returns `(any, error)` and turns the `ReturnError` into the value. Partials read it from there, so `contextWrapper` and the AST wrapper template are gone.
+- **The remaining transform** in `templatetransform.go` does two small things:
+  - It flags partials that contain a `return` with a value, so their output is discarded. If execution ends without reaching a `return`, the partial returns `nil`, as before.
+  - It rewrites `return add . 42` to `return (add . 42)`, because the old syntax took the rest of the command as a pipeline and an existing test relies on that.
+
+**Partial results:**
+
+| Partial contains | Returns |
+|---|---|
+| `return` with a value | that value, or `nil` if execution ends without one |
+| only a bare `{{ return }}` | the output rendered up to that point |
+
+**Tests and docs:**
+- **New tests:** `TestReturnEarly` covers early return in `block`/`define`, inside `range`, several returns in one partial, falling through to `nil`, a bare return in a rendering partial, and `try`. `TestReturnTooManyArgs` covers the argument check.
+- **Changed test:** in `TestPartialReturnPanicIssue13600`, `return` now runs before the piped `string`, so the error comes from `delimit` instead of `string`. I updated the expected message; it's still an error and not a panic.
+- **Docs:** updated `return.md`, `Include.md` and `IncludeCached.md` to drop the "only one return, at the end" rule.
+
+**Two edge cases:**
+- `{{ return 1 2 }}` is now rewritten to `return (1 2)`, which gives a "non-function" error rather than the argument-count error. The count check only triggers via a pipeline such as `{{ 2 | return 1 }}`.
+- A `return` with a value inside a template that a partial calls with `{{ template "x" }}` still marks the partial as value-returning, so its output is dropped. This was already odd before; I left it alone.
+
+Nothing is committed.

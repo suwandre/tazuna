@@ -1,0 +1,18 @@
+Fixed: every import block for a `for_each` resource is now honored, not just the first.
+
+**Cause:** `refactoring.FindImportStatements` (`internal/refactoring/import_statement.go`) keyed its results by config resource (`test_object.a`, with no instance key). `a["a"]` and `a["b"]` collided on that key, so the first block won and the others were dropped without any diagnostic. That also explains why the surviving block was whichever was declared first.
+
+**Fix:**
+- `FindImportStatements` now returns an ordered slice, so several blocks in one module can target the same resource. Duplicates for the same instance are still rejected earlier, in `configs/module.go`.
+- A parent module's import for a resource still overrides the child module's blocks for it. The old code did this implicitly, because its map kept whichever entry came first.
+- The one caller, `findImportTargets` in `internal/terraform/context_plan.go`, was updated for the new return type.
+
+**Tests:**
+- `TestContext2Plan_importMultipleBlocksForEachResource` in `context_plan_import_test.go` plans three import blocks against one `for_each` resource. It fails on the old code (`a["y"]` planned for creation) and passes now.
+- `TestFindImportStatements_multiplePerResource` in `internal/refactoring/import_statement_test.go`, with fixtures under `testdata/import-multiple`, covers multiple blocks per resource and parent-over-child override.
+- `go test` passes for `internal/refactoring`, `internal/terraform` and `internal/configs/...`.
+- `internal/command` has one failure, `TestInit_providerLockFileReadonly`. It also fails with my changes stashed, so it isn't caused by this change.
+
+I only ran the plan test against `test_object`, not your exact `terraform_data` config. I didn't test `count`, but the fix isn't specific to `for_each`.
+
+One thing I left alone: `node_resource_plan.go:354` passes `n.importTargets[0].Config` as the config used for generated config. It only matters for `-generate-config-out`, which doesn't support `for_each` anyway.

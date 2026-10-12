@@ -1,0 +1,21 @@
+All green. Final summary.
+
+## Summary
+
+Fixed `promql/parser`: parentheses around a plain duration literal in a duration-expression position (offset, range bracket, step) were dropped on `Expr.String()` round-trip.
+
+### Root cause
+`paren_duration_expr` only preserved parentheses when the inner node was a `*DurationExpr` (by setting its `Wrapped` field). A bare `*NumberLiteral` has no such field, so `foo offset (5)` / `foo[(5s)]` flattened.
+
+### Changes
+- **`promql/parser/parse.go`**: Added `wrapParenDurationExpr`, which sets `Wrapped` on a `*DurationExpr` or wraps a bare `*NumberLiteral` in a unary-plus `*DurationExpr` with `Wrapped: true`. Refactored `applyUnaryOpToDurationExpr` to route parenthesised forms through it (so `offset +(5)` / `offset -(5)` also preserve parens).
+- **`promql/parser/generated_parser.y`** + regenerated **`generated_parser.y.go`**: `paren_duration_expr` now calls `wrapParenDurationExpr`, passing the paren positions. Confirmed the generated file is byte-identical to fresh `goyacc` output from the updated grammar.
+- **`promql/parser/prettier.go`**: `DurationExpr.Pretty` no longer prints the synthetic unary `+`, matching `String()` output.
+- **Tests**: Added/updated cases in `parse_test.go` (AST expectations for `foo offset +(5)`, `-(5)`, `(5)`, `foo[(5s)]`) and `printer_test.go` (round-trip `String()` cases for `(5)`, `-(5)`, `(5m)`, `foo[(5s)]`, `foo[(5m):(1m)]`).
+
+### Verification
+- `go test ./promql/parser/` and `go test ./promql/... ./web/api/v1/...` all pass.
+- Manually confirmed all reported cases now round-trip: `foo offset (5)`→`foo offset (5)`, `foo offset -(5)`→`foo offset -(5)`, `foo[(5s)]`→`foo[(5s)]`, etc., and re-parsing the output is stable.
+- `go build`, `go vet`, and `gofmt -l` clean.
+
+This matches the canonical upstream fix (Prometheus PR #19403, "promql/parser: preserve parentheses around duration literals").

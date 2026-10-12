@@ -1,0 +1,159 @@
+diff --git a/promql/parser/generated_parser.y b/promql/parser/generated_parser.y
+index da9bc93..1220fe4 100644
+--- a/promql/parser/generated_parser.y
++++ b/promql/parser/generated_parser.y
+@@ -1402,6 +1402,18 @@ paren_duration_expr : LEFT_PAREN duration_expr RIGHT_PAREN
+                                 $$ = durationExpr
+                                 break
+                             }
++                            if nl, ok := $2.(*NumberLiteral); ok {
++                                // A *NumberLiteral has no way to record the parentheses, so wrap it
++                                // in a unary plus *DurationExpr to preserve them on round-trip.
++                                $$ = &DurationExpr{
++                                    Op:       ADD,
++                                    RHS:      nl,
++                                    Wrapped:  true,
++                                    StartPos: nl.PosRange.Start,
++                                    EndPos:   nl.PosRange.End,
++                                }
++                                break
++                            }
+                             $$ = $2
+                         }
+                 ;
+diff --git a/promql/parser/generated_parser.y.go b/promql/parser/generated_parser.y.go
+index 846d830..5c69afe 100644
+--- a/promql/parser/generated_parser.y.go
++++ b/promql/parser/generated_parser.y.go
+@@ -2546,6 +2546,18 @@ yydefault:
+ 				yyVAL.node = durationExpr
+ 				break
+ 			}
++			if nl, ok := yyDollar[2].node.(*NumberLiteral); ok {
++				// A *NumberLiteral has no way to record the parentheses, so wrap it
++				// in a unary plus *DurationExpr to preserve them on round-trip.
++				yyVAL.node = &DurationExpr{
++					Op:       ADD,
++					RHS:      nl,
++					Wrapped:  true,
++					StartPos: nl.PosRange.Start,
++					EndPos:   nl.PosRange.End,
++				}
++				break
++			}
+ 			yyVAL.node = yyDollar[2].node
+ 		}
+ 	}
+diff --git a/promql/parser/parse.go b/promql/parser/parse.go
+index a56f16a..b833208 100644
+--- a/promql/parser/parse.go
++++ b/promql/parser/parse.go
+@@ -1239,6 +1239,30 @@ func (p *parser) applyUnaryOpToDurationExpr(op Item, expr Node, wrapped bool) No
+ 			p.addParseErrf(op.PositionRange(), "duration out of range")
+ 			return &NumberLiteral{Val: 0}
+ 		}
++		if wrapped {
++			// A *NumberLiteral cannot record the parentheses, so wrap it in a
++			// unary plus *DurationExpr to preserve them on round-trip. The sign
++			// is kept outside the parentheses, as written.
++			if op.Typ == SUB {
++				e.Val *= -1
++			}
++			inner := &DurationExpr{
++				Op:       ADD,
++				RHS:      e,
++				Wrapped:  true,
++				StartPos: e.PosRange.Start,
++				EndPos:   e.PosRange.End,
++			}
++			p.experimentalDurationExpr(inner)
++			if op.Typ == SUB {
++				return &DurationExpr{
++					Op:       SUB,
++					RHS:      inner,
++					StartPos: op.Pos,
++				}
++			}
++			return inner
++		}
+ 		e.PosRange.Start = op.Pos
+ 		return e
+ 	default:
+diff --git a/promql/parser/parse_test.go b/promql/parser/parse_test.go
+index b1912e1..8543ac7 100644
+--- a/promql/parser/parse_test.go
++++ b/promql/parser/parse_test.go
+@@ -1716,8 +1716,17 @@ var testExpr = []struct {
+ 	{
+ 		input: "foo offset +(5)",
+ 		expected: &VectorSelector{
+-			Name:           "foo",
+-			OriginalOffset: 5 * time.Second,
++			Name: "foo",
++			OriginalOffsetExpr: &DurationExpr{
++				Op: ADD,
++				RHS: &NumberLiteral{
++					Val:      5,
++					PosRange: posrange.PositionRange{Start: 13, End: 14},
++				},
++				Wrapped:  true,
++				StartPos: 13,
++				EndPos:   14,
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+@@ -1727,8 +1736,21 @@ var testExpr = []struct {
+ 	{
+ 		input: "foo offset -(5)",
+ 		expected: &VectorSelector{
+-			Name:           "foo",
+-			OriginalOffset: -5 * time.Second,
++			Name: "foo",
++			OriginalOffsetExpr: &DurationExpr{
++				Op: SUB,
++				RHS: &DurationExpr{
++					Op: ADD,
++					RHS: &NumberLiteral{
++						Val:      5,
++						PosRange: posrange.PositionRange{Start: 13, End: 14},
++					},
++					Wrapped:  true,
++					StartPos: 13,
++					EndPos:   14,
++				},
++				StartPos: 11,
++			},
+ 			LabelMatchers: []*labels.Matcher{
+ 				MustLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo"),
+ 			},
+diff --git a/promql/parser/printer_test.go b/promql/parser/printer_test.go
+index 8be35d9..9ba743a 100644
+--- a/promql/parser/printer_test.go
++++ b/promql/parser/printer_test.go
+@@ -269,6 +269,25 @@ func TestExprString(t *testing.T) {
+ 		{
+ 			in: "foo offset -(step())",
+ 		},
++		{
++			in: "foo offset (5)",
++		},
++		{
++			in:  "foo offset +(5)",
++			out: "foo offset (5)",
++		},
++		{
++			in: "foo offset -(5)",
++		},
++		{
++			in: "foo offset (5m)",
++		},
++		{
++			in: "foo[(5s)]",
++		},
++		{
++			in: "foo[(5s):(1s)] offset (5m)",
++		},
+ 		{
+ 			in:  "foo offset +(5*2)",
+ 			out: "foo offset (5 * 2)",

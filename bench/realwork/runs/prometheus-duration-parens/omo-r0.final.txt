@@ -1,0 +1,20 @@
+> Ask: fix `(N)` being dropped on `Expr.String()` round-trip in duration positions - wanted: parens preserved, with tests. For you: done. Parens around a plain duration literal now survive. `go test ./promql/parser/ ./promql/` passes, and gofmt and vet are clean. Now: none. Next: none.
+
+**Fix.** `*NumberLiteral` has no `Wrapped` field, so a parenthesised literal is now parsed into a wrapped unary-plus `*DurationExpr` that holds the literal. This reuses the existing `Wrapped` printing and the engine's duration evaluation, and adds no new AST type.
+- `promql/parser/generated_parser.y` (`paren_duration_expr`) and `promql/parser/parse.go` (a new `wrapDurationLiteral` helper plus a wrapped branch in `applyUnaryOpToDurationExpr`) make the change.
+- I regenerated `generated_parser.y.go` with goyacc. Its diff is 4 lines.
+- This also fixes the deeper case where `foo[(5)*2]` lost its parens on the left operand.
+
+**Round-trip results.** Some outputs differ from the issue's expectation table:
+- `foo offset (5)`, `foo offset +(5)` and `foo offset (5m)` now print `foo offset (5)`, `foo offset (5)` and `foo offset (5m)`.
+- `foo offset -(5)` prints `foo offset -(5)`, and `foo[(5s)]` prints `foo[(5s)]`.
+- `+(5)` still loses its `+`, as `+(5*2)` already does.
+- A bare number inside a duration expression prints without `s` (as in the existing `(5 * 2)`), so I expect `(5)`, not `(5s)`. That form also round-trips.
+
+**Tests.**
+- In `parse_test.go` I updated the `foo offset +(5)` and `foo offset -(5)` expectations to the new AST shape.
+- In `printer_test.go` I added round-trip cases to `TestExprString` for each case in the issue's table, plus `foo[(5)*2]`.
+
+**Behaviour changes.**
+- These queries now use `OriginalOffsetExpr` or `RangeExpr` instead of a precomputed `OriginalOffset` or `Range`. This is the same as `(5m+1m)` already did. Those fields get their values from the engine's duration visitor, so a consumer that reads `Range` or `OriginalOffset` straight from the parser without that visitor will see 0 for these queries. This only affects `ExperimentalDurationExpr` users.
+- Because the literal is now wrapped, a non-positive literal like `foo[(0)]` is rejected at query time, not parse time. I did not add a parse-time check for it.

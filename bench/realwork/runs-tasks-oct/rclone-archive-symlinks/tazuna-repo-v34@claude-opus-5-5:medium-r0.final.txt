@@ -1,0 +1,28 @@
+Zip and squashfs archives now handle symlinks the way the local backend does. `go test ./backend/archive/...` passes and `golangci-lint` reports nothing. I also built rclone and ran your example on a zip made with `zip -y`. Without `--links` it lists only `src/file.txt` and logs `Skipped 1 symlinks in the zip - use -l/--links to copy them as .rclonelink files`. With `--links` it lists `src/link.txt.rclonelink` (8 bytes). `copy --links` produced `link.txt -> file.txt`.
+
+**How it behaves**
+- **Without `--links`:** symlinks are left out of listings and can't be found by name. One notice per archive (per directory for squashfs) names the flag.
+- **With `--links`:** a symlink appears as `name.rclonelink`. Its size is the length of the target, and opening it returns the target path, honouring range and seek options. You can also point the archive root at a link, e.g. `src/link.txt.rclonelink`.
+- **Listing and `NewObject` agree:** zip already shared one tree for both. In squashfs, both now go through one new function, `dirEntries`, so they can't disagree.
+- **Regular members ending in `.rclonelink`** stay regular files.
+
+**Hostile archives**
+With `--links`, any entry that would become a symlink is dropped if its name (without the suffix) matches another entry or a parent directory of one. The comparison ignores case, because the destination may not. This covers:
+- a symlink `evil` plus a member `evil/passwd`, or a link with other links underneath it;
+- a regular member `fake.rclonelink`: the local backend would turn it into a symlink on copy, so it's checked the same way;
+- a symlink and a regular member that end up with the same name: the regular member wins.
+
+Dropped entries are counted in a notice. The zip test copies a hostile archive and checks that nothing appears in a directory next to the destination. I also checked that the test fails when the filter is turned off.
+
+**Things you might not expect**
+- **Squashfs `NewObject` change:** it now skips names that escape the archive, which `List` already did. Before, it could still find them.
+- **Target length cap:** link targets over 4096 bytes are skipped with a notice. I added this so a crafted archive can't make rclone read a huge "target".
+- **Case-only matching:** the clash check compares names by case only. It doesn't handle Unicode normalisation (e.g. macOS's composed vs decomposed accents).
+
+**Changes**
+- `backend/archive/archiver/links.go` (new) holds the code shared by both formats: the clash filter, the target length limit and opening a link's target.
+- `zip/zip.go` and `squashfs/squashfs.go` use it.
+- Tests are in `zip/zip_internal_test.go` and `squashfs/squashfs_test.go`. They cover behaviour with and without `--links`, a root pointing at a link, copying to local, and the hostile cases.
+- The squashfs tests build their images in Go because `mksquashfs` isn't installed here. go-diskfs only handles symlinks if it runs from inside the build directory and every link target exists, so the tests do that. As a result, the squashfs clash test can't include a dangling link that points above the root. That case is covered by the zip test using the same shared filter.
+
+Nothing is committed yet.

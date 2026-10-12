@@ -1,0 +1,3 @@
+Implemented `--once` for `k6 run`, `k6 cloud run`, local cloud execution, and `k6 archive`. It transforms the consolidated configuration into a single `shared-iterations` scenario while retaining its `exec`, scenario options, environment, and tags. It rejects multiple scenarios and combinations with shortcut flags.
+
+Added tests for preserving scenario settings and for the error cases. Verified with `go test ./internal/cmd ./lib/executor`.

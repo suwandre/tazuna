@@ -1,0 +1,16 @@
+`--once` now works on `k6 run`, `k6 archive` and `k6 cloud run`. It isn't added to `k6 cloud upload`. The new tests pass, along with the existing `internal/cmd`, `internal/cmd/tests` and `lib/executor` suites. `golangci-lint` reports 0 issues. `--once` on `k6 cloud run`, with or without `--local-execution`, is not tested directly; the `archive` test covers the shared code path.
+
+- **How it works:** The transform is `ApplyOnce` in `lib/executor/once.go`. It runs in `consolidateDeriveAndValidateConfig` (`internal/cmd/test_load.go`), after config consolidation and before the shortcut derivation. Because the archive and cloud paths write the consolidated options back to the runner, they pick up the transformed scenario too.
+- **No scenarios:** The script runs `default` as a `shared-iterations` scenario with 1 VU and 1 iteration.
+- **One scenario:** It becomes `shared-iterations` with 1 VU and 1 iteration. It keeps its name, `exec`, `env`, `tags` and `options` (including browser options). The executor type, `startTime` and `gracefulStop` are dropped.
+- **Script options:** `vus`, `iterations`, `duration` and `stages` are cleared from the options. Otherwise the shortcut derivation would override the scenario.
+- **More than one scenario:** It fails with "--once can run a single scenario only…".
+- **Conflicting flags:** `--once` with `--vus`, `--iterations`, `--duration` or `--stage` fails with "--once cannot be combined with --X". Both errors exit with `InvalidConfig`.
+
+A scenario with an explicit `exec: 'default'` loses that field in the transformed config. That has no effect on behaviour.
+
+New tests:
+- `lib/executor/once_test.go` has unit tests for the transform.
+- `internal/cmd/tests/cmd_run_once_test.go` has end-to-end tests for `run` (no scenario, one scenario, multiple scenarios, each conflicting flag) and `archive`. The `archive` test runs the produced archive to check the transform persisted.
+
+I didn't commit anything.

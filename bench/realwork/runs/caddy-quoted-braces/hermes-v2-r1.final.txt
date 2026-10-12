@@ -1,0 +1,17 @@
+Quoted `{` and `}` no longer count as block delimiters, so `respond "{"` inside `:8080 { ... }` now parses and adapts to a `static_response` with body `{`. The `caddyconfig/...` and `caddytest/integration` suites pass. One integration test, `TestReverseProxySNIPlaceHolder`, failed once on the first run; it passed on every later run, including the full suite, so I'm treating it as a flaky test.
+
+The cause was that the parser and dispenser compared token text to `"{"` and `"}"` without checking whether the token was quoted. I added `isOpenBrace()` and `isCloseBrace()` on `Token` (`caddyconfig/caddyfile/lexer.go`) that require the token to be unquoted. I switched every brace check in `parse.go` and `dispenser.go` to use them. Those cover `NextArg`, `NextBlock`, `ArgErr`, directive and block parsing, import and snippet nesting, and the open/close assertions.
+
+Quoted means double quotes, backticks and heredocs. The existing `dir1 "{" a b "}"` workaround still produces the same tokens.
+
+I didn't change the formatter. It already leaves `"{"` and `"}"` alone.
+
+Tests added:
+- **`parse_test.go`**:
+  - `TestQuotedBracesDoNotAffectBlockParsing` covers quoted braces as arguments, mixed with real blocks, and an unclosed block that has only a quoted `}`.
+  - `TestDispenserQuotedBraces` checks `RemainingArgs` and `NextBlock` with quoted braces.
+- **Adapter fixture**: `caddytest/integration/caddyfile_adapt/respond_quoted_braces.caddyfiletest` for the exact Caddyfile from the issue.
+
+The new parser and dispenser tests fail without the fix and pass with it.
+
+I did not run `golangci-lint` or `go test -race`.

@@ -1,0 +1,30 @@
+I've fixed the bug. Here's a summary.
+
+## Root cause
+
+`refactoring.FindImportStatements` (called from `Context.findImportTargets`) collected import blocks into an `addrs.Map[addrs.ConfigResource, ImportStatement]`. `ConfigResource` identifies a *resource* (mode/type/name), not an *instance* — it has no instance key (`["a"]`, `[0]`). So multiple import blocks targeting different instances of the same `for_each`/`count` resource all keyed to the same entry, and `Put` silently overwrote all but the first. That matches the report exactly: only the first block per resource survived, single-instance resources were unaffected, and order (not key) determined the winner.
+
+## Fix
+
+Changed `FindImportStatements` to return `[]ImportStatement` and dedupe with an explicit `seen` key set:
+
+- When an import block's `to` expression can be statically resolved (`hcl.AbsTraversalForExpr` + `ParseAbsResourceInstance`), the key is the full **resource instance** address, so distinct instances of an expanded resource are all retained.
+- Otherwise (dynamic `for_each` on the import block, unknown index) it falls back to the resource-level `ConfigResource`, preserving prior behavior.
+- The `seen` set is threaded through recursive module traversal, preserving the existing "parent module overrides child module" semantics.
+
+The caller `context_plan.go` was updated from `.Values()` iteration to a plain slice.
+
+## Tests added
+
+- `internal/refactoring/import_statement_test.go` + `testdata/import-statements/`: unit test covering per-instance `for_each`/`count` targets and parent-overrides-child dedup.
+- `TestContext2Plan_importMultipleBlocksForEach` and `TestContext2Plan_importMultipleBlocksCount` in `internal/terraform/context_plan_import_test.go`: verify both instances are planned for import with the correct IDs.
+- `TestContextApply_import_multiple_blocks_for_each` in `internal/terraform/context_apply_import_test.go`: end-to-end apply verifying both instances land in state.
+- CHANGELOG entry under 1.17.0 bug fixes.
+
+## Verification
+
+- Confirmed the new tests fail against the unmodified code (the second instance had `Importing == nil`).
+- `go test ./internal/terraform/ ./internal/refactoring/ ./internal/configs/` all pass, plus the existing module/expansion/duplication import apply tests.
+- `go build ./...`, `go vet`, and `gofmt` are clean.
+
+Note: `go test ./internal/command/` has pre-existing failures in `TestInit_providerLockFileReadonly` due to provider checksum/network issues in this environment, unrelated to this change; the import-focused command tests pass.

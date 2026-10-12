@@ -1,0 +1,20 @@
+`return` now works as an early exit in any template, and the parse-tree rewrite is gone. The tests pass in `./hugolib`, `./tpl/...` and `./resources/...`. I didn't run the full test suite.
+
+**How it works**
+- **Fork changes:** the fork patch is small and shouldn't make the fork hard to maintain.
+  - In `texttemplate/hugo_template.go` there is a new `*ReturnError` type (`Value`, `HasValue`). `evalCall` panics with it when a function returns it. `try` re-panics it instead of swallowing it.
+  - In `exec.go` `errRecover` has one new case, so `Execute` returns the `*ReturnError` unwrapped.
+- **The `return` func:** it's `partials.Namespace.Return(args ...any) (any, error)`, registered under the `return` alias. It takes at most one argument. It returns a `*ReturnError`, which carries the value if one was given.
+- **Template store:** `ExecuteWithContext` treats a `ReturnError` as a normal early exit, so non-partials just stop. `ExecuteWithContextAndKey` passes it through so partials can read the value.
+- **Partials:** `doInclude` now always renders into a buffer. If the partial hit `return <value>`, it discards the output and uses the value. `return` with no value, or never hitting a `return`, gives the rendered output.
+- **Removed:** the `partialReturnWrapper` rewrite, `collectReturnNode`, `contextWrapper`, `ParseInfo.HasReturn`, and the old "must be last" and partials-only limits.
+
+**Behaviour to be aware of**
+- `return` inside a shortcode or the main template exits that whole template. In a block or `template` call it exits the whole page template, not just the block.
+- I kept a tiny parse-time rewrite, `wrapReturnArgs`. It turns `{{ return add . 42 }}` into `{{ return (add . 42) }}`, so the existing unparenthesised form still works.
+
+**Tests**
+- I added `TestReturnEarly` in `hugolib/template_test.go`. It covers:
+  - `return` inside `if` and `range`, falsy and nil values, a bare `return`, and piped `return`.
+  - Nested partials, `partialCached`, a shortcode, and an early `return` in `home.html`.
+- I changed one existing test, `TestPartialReturnPanicIssue13600`. It guarded a panic from the old rewrite. The error is now the genuine `delimit` failure, so I updated its expected message.

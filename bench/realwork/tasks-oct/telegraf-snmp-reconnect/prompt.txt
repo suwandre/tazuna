@@ -1,0 +1,77 @@
+inputs.snmp: SNMPv3 polling never recovers after the agent restarts with a new engine ID
+
+### Relevant telegraf.conf
+
+```toml
+[[inputs.snmp]]
+  agents = ["udp://192.0.2.5:161"]
+  version = 3
+  sec_level = "authPriv"
+  sec_name = "<user>"
+  auth_protocol = "SHA"
+  auth_password = "<secret>"
+  priv_protocol = "AES"
+  priv_password = "<secret>"
+  interval = "60s"
+  timeout = "10s"
+  retries = 1
+
+  [[inputs.snmp.field]]
+    name = "device"
+    oid = ".1.3.6.1.2.1.1.5.0"
+    is_tag = true
+  [[inputs.snmp.field]]
+    name = "uptime"
+    oid = ".1.3.6.1.2.1.1.3.0"
+```
+
+### Logs from Telegraf
+
+```text
+2026-09-30T18:52:21Z E! [inputs.snmp] Error in plugin: agent udp://192.0.2.5:161: performing get on field device: request timeout (after 1 retries)
+(agent rebooting)
+2026-09-30T18:56:00Z E! [inputs.snmp] Error in plugin: agent udp://192.0.2.5:161: performing get on field device: incoming packet is not authentic, discarding
+(repeats on every gather until Telegraf is restarted)
+```
+
+### System info
+
+Telegraf 1.40.1 (gosnmp v1.44.0), Debian 13 host
+
+### Steps to reproduce
+
+1. Poll an SNMPv3 authPriv agent whose engine ID changes when it restarts. The UniFi U7 Pro XG Wall (8.7.11) generates a new engine ID on every boot.
+2. Reboot the agent and wait for it to come back.
+
+### Expected behavior
+
+Telegraf rediscovers the agent's engine ID and polling resumes, as it does for a freshly started Telegraf or for snmpget.
+
+### Actual behavior
+
+Every gather fails with "incoming packet is not authentic, discarding" indefinitely. Restarting Telegraf fixes it immediately. Seen three times in one week, once per AP reboot.
+
+### Additional info
+
+Capture on the Telegraf host during the failure:
+
+```
+TELEGRAF > AGENT.161: { SNMPv3 { F=apr } { USM B=1 T=98072 U="<user>" } { ScopedPDU [encrypted] } }
+AGENT.161 > TELEGRAF: { SNMPv3 { F= } { USM B=1 T=11385 U="<user>" } { ScopedPDU E=_80_00_1f_88_80_be_21_4d_13_97_e4_4e_6a_00_00_00_00 C="" { Report(29) R=0  .1.3.6.1.6.3.15.1.1.4.0=1497 } } }
+```
+
+The agent answers every request with an unauthenticated `usmStatsUnknownEngineIDs` REPORT. The session is still using the agent's pre-reboot engine ID and engine time (T=98072; the agent now reports B=1, T=11385). Sending that REPORT unauthenticated is standard behaviour.
+
+- `getConnection()` in `plugins/inputs/snmp/snmp.go` reuses the cached connection for an agent indefinitely, and `GosnmpWrapper.Reconnect()` only reconnects when `Conn == nil`. The USM state from the first engine discovery is never refreshed.
+- gosnmp checks every reply against the session's configured security level. The unsigned REPORT is rejected as "not authentic" before its REPORT handling can update the engine ID (tracked upstream in gosnmp/gosnmp#601, where a mismatched engine ID on an established session is going to become an explicit error), so recovery has to come from the caller.
+
+---
+
+Maintainer notes on the fix:
+
+- Keep the per-agent connection objects in the plugin's cache, but when gathering from an agent fails (the top-level fields or any table), close that agent's connection, so the next request connects again. The plugins talk to the agent through the `snmp.Connection` interface (`plugins/common/snmp`), which should support closing for this; the gosnmp-backed wrapper already can.
+- Put the recovery in the common SNMP wrapper so every SNMP plugin benefits: reconnecting a closed connection must start a fresh SNMPv3 engine discovery (gosnmp keeps the previously discovered authoritative engine ID, boots and time across a reconnect), while an open connection keeps what it discovered. Requests (`Get`, `Walk`) on a closed connection should reconnect first.
+- This applies to all SNMP versions; reconnecting also resolves the agent address again.
+
+
+Run tests with `go test` on the relevant packages. Add or update tests as appropriate.

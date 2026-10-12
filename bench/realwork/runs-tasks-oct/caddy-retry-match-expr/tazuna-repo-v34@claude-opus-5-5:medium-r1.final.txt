@@ -1,0 +1,21 @@
+I've fixed it. An `lb_retry_match` expression that only tests the request no longer makes successful responses retryable, so the reported `POST` gets the backend's 200 once, as it did in v2.11.2. Tests and lint pass for `caddyhttp`, `reverseproxy` and `caddytest/integration`. I haven't run the Caddyfile from the report against live backends; the new unit test does a `POST` with a body against a test upstream instead.
+
+**Fix**
+
+- **How a response condition is detected** (`modules/caddyhttp/celmatcher.go`): when the expression matcher is set up, it now records which placeholder names the expression reads. It gets them from the compiled expression, from every call to `ph(req, "...")`. That works the same whether you write the `{placeholder}` shorthand or call `ph(req, ...)` yourself. Text that only looks like a placeholder inside a string, including an escaped `\{...}`, doesn't count. If `ph` is called with a name that's only known at evaluation time, the expression is treated as a possible response condition. A new method, `MatchExpression.ReferencesPlaceholder(match func(string) bool) bool`, reports the result.
+- **Retry decision** (`modules/caddyhttp/reverseproxy/reverseproxy.go`): a new `matcherSetReadsResponse` replaces `matcherSetHasExpressionMatcher`. A set is checked against the upstream response only if one of its expressions may read response data. Response data means exactly these names:
+  - `http.reverse_proxy.status_code`
+  - `http.reverse_proxy.status_text`
+  - `http.reverse_proxy.upstream.latency`
+  - `http.reverse_proxy.upstream.latency_ms`
+  - anything starting with `http.reverse_proxy.header.`
+
+  The names must match exactly, so `{http.reverse_proxy.status_codes}` and `{http.reverse_proxy.upstream.host}` stay request conditions. The upstream `duration` placeholders aren't on the list because they are only set after the retry check runs.
+
+**Tests** (`modules/caddyhttp/reverseproxy/retries_test.go`)
+
+- `TestMatcherSetReadsResponse` is a table covering every case in the issue: shorthand and direct `ph()` calls, header and latency placeholders, a placeholder inside a `.exists()` macro, a name built at evaluation time, `upstream.host`, an escaped placeholder in a string, `status_codes`, `headers`, and a plain `method` matcher.
+- `TestRequestOnlyExpressionDoesNotRetryResponses` is the reported case: a `POST` with body `order=1` against `{http.request.method} == "POST"`. The upstream is hit once, the client gets 200, and the body arrives intact.
+- Both new tests fail on the old code. The existing tests from #7569 (status code, header, retries running out, header cleanup, transport-error placeholder) still pass, as do the retry-match integration tests.
+
+The fix adds a new exported method on `MatchExpression`, which reviewers should know about. If this goes into a PR, the project's contribution rules require disclosing that it was AI-assisted (Claude Opus 5.5), and you'll need to be able to explain every change.

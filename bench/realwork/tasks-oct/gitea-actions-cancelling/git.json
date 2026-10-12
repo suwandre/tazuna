@@ -1,0 +1,11 @@
+{
+  "repo": "/Users/suwandre/bench-repos/gitea",
+  "base": "251e697b0a0f02118b9f167fa41095a626050786",
+  "fix": "c344004e53848cfaac7f2c207c23d54b0ab316c3",
+  "pr": "https://github.com/go-gitea/gitea/pull/39706",
+  "issue": "https://github.com/go-gitea/gitea/issues/39702",
+  "setup": "go mod download",
+  "hidden_cmd": "go test -json -count=1 ./models/actions ./services/actions -run '^(TestCancelJobs_CallerWaitsForCancellingChild|TestForceCancelRun_SettledRunWakesConcurrencyWaiters)$'",
+  "suite_cmd": "go test -count=1 -timeout 10m ./models/actions ./services/actions -skip '^(TestCancelJobs_CallerWaitsForCancellingChild|TestForceCancelRun_SettledRunWakesConcurrencyWaiters)$'",
+  "suite_skip_note": "suite skips the hidden tests (and PR-specific tests excluded from hidden); it checks pre-existing behavior only"
+}

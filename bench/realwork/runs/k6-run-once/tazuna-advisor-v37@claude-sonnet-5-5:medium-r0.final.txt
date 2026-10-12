@@ -1,0 +1,13 @@
+`--once` is now on `k6 run`, `k6 cloud run` and `k6 archive`. The earlier "0" for `cloud run` was my mistake: zsh didn't split `"cloud run"` into two arguments, so the help check hit the wrong command. Re-run correctly, `k6 cloud run --help` lists `--once`.
+
+`go test ./internal/cmd/` passes. I haven't run `cloud run`, `cloud run --local-execution` or `archive` with `--once` on a real script, only checked that the flag shows up in their help.
+
+- **Where it hooks in:** `--once` is read after config consolidation in `consolidateDeriveAndValidateConfig` (`internal/cmd/test_load.go`). All three commands go through that function, including `cloud run` with and without `--local-execution`. That function also feeds the archive, so the archive should carry the once-shaped scenario.
+- **Behaviour:**
+  - With no scenarios, it runs `default()` with 1 VU and 1 iteration.
+  - With one scenario, it keeps `exec`, `env`, `tags` and options and swaps the executor for `shared-iterations` at 1 VU and 1 iteration.
+  - With more than one scenario, it fails with `--once can run a single scenario only`.
+  - Combining it with `--vus`, `--iterations`, `--duration` or `--stage` fails with `--once cannot be combined with --<flag>`.
+- **Tests and manual check:** the new tests are in `internal/cmd/once_test.go`. By hand, `k6 run /tmp/o.js --once` ran one iteration, and adding `-i 3` gave the conflict error.
+
+The core logic is in `internal/cmd/once.go`, and the flag is defined in `internal/cmd/options.go`.

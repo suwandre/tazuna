@@ -1,0 +1,16 @@
+The Caddyfile from the issue now parses. `caddy adapt` turns `respond "{"` into a `static_response` with body `{`. The `caddyconfig/...` and `caddytest/...` packages pass under `go test -race -short`. I didn't run the full `./...` suite or `golangci-lint`.
+
+**Cause:** the lexer already records whether a token was quoted, but the parser and dispenser compared only the token text to `"{"` and `"}"`. A quoted brace was therefore counted as a block delimiter.
+
+**Fix:**
+- **Helpers:** I added `Token.isOpenBrace()` and `Token.isCloseBrace()` in `caddyconfig/caddyfile/lexer.go`. They match a brace only when it's unquoted. That covers `"…"`, backtick strings and heredocs.
+- **`dispenser.go`:** `NextArg`, `NextBlock` and `ArgErr` use the helpers.
+- **`parse.go`:** the parser sites that track nesting or detect block start and end use them. These are server block addresses, `directives`, `directive`, `blockTokens`, snippet detection, import-block mapping, and `openCurlyBrace` / `closeCurlyBrace`.
+
+**Tests added:**
+- `TestQuotedBracesDoNotAffectBlocks` in `parse_test.go` covers quoted `{` and `}`, backtick quoting, quoted braces next to a real block, and quoted braces inside a snippet.
+- `TestDispenser_QuotedBracesAreArguments` in `dispenser_test.go` checks that quoted braces come back as arguments and unquoted ones still open and close blocks.
+
+A quoted `"{"` used as a site address is no longer treated as the block opener. It now gets the existing "addresses cannot end with a curly brace" error, which seems like the right outcome.
+
+Per the repo's AI contribution rules, this change was AI-assisted (Claude Sonnet 5.5), so disclose that to reviewers. You should also be able to explain each change before it goes up.

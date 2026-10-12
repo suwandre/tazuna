@@ -1,0 +1,8 @@
+Nothing is left to do: the fix and the regression test are finished.
+
+- **Tests:** `go test ./tsdb/` passes, but it needs `-timeout 40m` here because the package takes about 36 minutes on this loaded machine. All other `tsdb` sub-packages pass except `tsdb/wlog`, whose `TestRun_StartupTime` hangs on the clean tree too.
+- **Lint:** clean.
+- **New test:** `TestHead_WALMultiRef_ReplayKeepsChunksOfMergedSeries` fails without the fix and passes with it.
+- **Changes:** `tsdb/head_wal.go` (the fix) and `tsdb/head_test.go` (the test), both uncommitted.
+
+If you want, I can commit with sign-off and write the PR description, using a title like `tsdb: preserve m-mapped chunks of merged series refs on WAL replay` and a `[BUGFIX]` release note.

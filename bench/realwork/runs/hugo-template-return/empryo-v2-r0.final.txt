@@ -1,0 +1,17 @@
+Package name is `template`; alias the import.Now add tests, then build/run.Full run of the affected packages.`return` now works in any template and can sit anywhere. `go test` is clean on `./tpl/...`, `./hugolib/...`, `./commands`, `./markup/...` and `./resources/...`, and `go vet ./tpl/...` is clean.
+
+- **Executor:** `return` is a normal template func (`templates.Return`, alias `return`, in `tpl/templates/templates.go`). It returns a sentinel `*texttemplate.ReturnError` carrying an optional value. In the forked text/template, `evalCall` (`hugo_template.go`) panics with that error when a func returns it, and `errRecover` (`exec.go`, one added case) turns it into the execution's error. The fork diff is small: a type, two panic sites and one `case`.
+- **Regular templates:** `TemplateStore.ExecuteWithContext` treats the sentinel as a clean early exit, so `{{ if x }}{{ return }}{{ end }}` stops the page, shortcode or hook with no error.
+- **Partials:** `ExecuteWithContextAndKey` hands the sentinel back, and `doInclude` uses its value. `{{ return v }}` gives `v`, including `nil`. A bare `{{ return }}` gives the output rendered so far. The old `contextWrapper` and the `HasReturn` flag are gone.
+- **Transform:** the `$`/`.` rewriting, the return-node extraction and the wrapper template are deleted from `templatetransform.go`. I kept one small rewrite, `normalizeReturn`, so the legacy form `{{ return add . 42 }}` still works as `{{ return (add . 42) }}`.
+
+The `return` is placed in the `templates` namespace rather than `partials`; say if you'd rather keep it in `partials`.
+
+**Behavior to know about:**
+- `return` unwinds the whole top-level execution, not just a `block` or `template` sub-invocation. A `return` inside a page's `define "main"` ends that whole page render, not only the block. Catching it in `walkTemplate` instead would scope it to the sub-template, but then a value returned from a sub-template inside a partial gets lost.
+- `{{ return 1 2 }}` is an error (at most one argument).
+- `TestPartialReturnPanicIssue13600` now expects `error calling delimit`. Its `{{ return ( delimit . ", " ) | string }}` now fails at `delimit` before `string` is reached.
+
+New tests are in `tpl/templates/templates_integration_test.go`: `TestReturn`, `TestReturnShortcodeAndBlock` and `TestReturnTooManyArgs`. They cover early exit from a page template and a shortcode, partial values, `nil`, bare `return`, return inside `range` and `with`, piped `return`, nested partials, `partialCached`, and html output.
+
+`.gitignore` shows as modified in `git status`; I didn't change it.

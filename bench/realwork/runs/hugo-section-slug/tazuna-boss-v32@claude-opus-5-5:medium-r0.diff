@@ -1,0 +1,199 @@
+diff --git a/hugolib/page__paths.go b/hugolib/page__paths.go
+index 46a3a99..317bc39 100644
+--- a/hugolib/page__paths.go
++++ b/hugolib/page__paths.go
+@@ -109,6 +109,30 @@ func (l pagePaths) OutputFormats() page.OutputFormats {
+ 	return l.outputFormats
+ }
+ 
++// sectionSlugDir returns the path of section s with the slugs of s and its ancestors applied,
++// e.g. /ayuda/como-frobear. It equals s.PathInfo().Base() when no slugs are set.
++func sectionSlugDir(s page.Page, disablePathToLower bool) string {
++	if s.IsHome() {
++		return ""
++	}
++
++	pi, parentPi := s.PathInfo(), s.Parent().PathInfo()
++	if disablePathToLower {
++		pi, parentPi = pi.Unnormalized(), parentPi.Unnormalized()
++	}
++
++	rel := strings.Trim(strings.TrimPrefix(pi.Base(), parentPi.Base()), "/")
++	if slug := s.Slug(); slug != "" {
++		if i := strings.LastIndexByte(rel, '/'); i >= 0 {
++			rel = rel[:i+1] + slug
++		} else {
++			rel = slug
++		}
++	}
++
++	return sectionSlugDir(s.Parent(), disablePathToLower) + "/" + rel
++}
++
+ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error) {
+ 	s := p.s
+ 	d := s.Deps
+@@ -140,6 +164,10 @@ func createTargetPathDescriptor(p *pageState) (page.TargetPathDescriptor, error)
+ 		desc.BaseName = pageInfoPage.BaseNameNoIdentifier()
+ 	}
+ 
++	if sectionDir := sectionSlugDir(p.CurrentSection(), p.s.Conf.DisablePathToLower()); sectionDir != pageInfoCurrentSection.Base() {
++		desc.SectionDir = sectionDir
++	}
++
+ 	addPrefix := func(filePath, link string) {
+ 		if filePath != "" {
+ 			if desc.PrefixFilePath != "" {
+diff --git a/hugolib/section_slug_test.go b/hugolib/section_slug_test.go
+new file mode 100644
+index 0000000..b9b61c2
+--- /dev/null
++++ b/hugolib/section_slug_test.go
+@@ -0,0 +1,100 @@
++// Copyright 2026 The Hugo Authors. All rights reserved.
++//
++// Licensed under the Apache License, Version 2.0 (the "License");
++// you may not use this file except in compliance with the License.
++// You may obtain a copy of the License at
++// http://www.apache.org/licenses/LICENSE-2.0
++//
++// Unless required by applicable law or agreed to in writing, software
++// distributed under the License is distributed on an "AS IS" BASIS,
++// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++// See the License for the specific language governing permissions and
++// limitations under the License.
++
++package hugolib
++
++import "testing"
++
++func TestSlugInSectionsAndTerms(t *testing.T) {
++	files := `
++-- hugo.toml --
++baseURL = "https://example.org/"
++defaultContentLanguage = "en"
++[languages.en]
++weight = 1
++[languages.es]
++weight = 2
++-- content/_index.es.md --
++---
++slug: inicio
++---
++-- content/help/_index.md --
++-- content/help/_index.es.md --
++---
++slug: ayuda
++---
++-- content/help/how-to-frob/index.md --
++-- content/help/how-to-frob/index.es.md --
++---
++slug: como-frobear
++---
++-- content/help/nested/_index.md --
++-- content/help/nested/_index.es.md --
++---
++slug: anidada
++---
++-- content/help/nested/page.md --
++-- content/help/nested/page.es.md --
++-- content/help/foo/bar/index.md --
++-- content/help/foo/bar/index.es.md --
++-- content/tags/_index.md --
++-- content/tags/_index.es.md --
++---
++slug: etiquetas
++---
++-- content/tags/foo/_index.md --
++---
++slug: bar
++---
++-- content/post.md --
++---
++tags: [foo]
++---
++-- content/post.es.md --
++---
++tags: [foo]
++---
++-- layouts/page.html --
++Page: {{ .RelPermalink }}
++-- layouts/list.html --
++List: {{ .Kind }} {{ .RelPermalink }}
++`
++
++	b := Test(t, files)
++
++	b.AssertFileExists("public/help/index.html", true)
++	b.AssertFileExists("public/help/how-to-frob/index.html", true)
++	b.AssertFileExists("public/ayuda/index.html", false)
++	b.AssertFileExists("public/es/ayuda/index.html", true)
++	b.AssertFileExists("public/es/ayuda/como-frobear/index.html", true)
++	b.AssertFileExists("public/es/ayuda/anidada/index.html", true)
++	b.AssertFileExists("public/es/ayuda/anidada/page/index.html", true)
++	b.AssertFileExists("public/es/ayuda/foo/bar/index.html", true)
++	b.AssertFileExists("public/es/help/index.html", false)
++	b.AssertFileExists("public/es/inicio/index.html", false)
++	b.AssertFileExists("public/es/index.html", true)
++
++	b.AssertFileContent("public/es/ayuda/index.html", "List: section /es/ayuda/")
++	b.AssertFileContent("public/es/ayuda/como-frobear/index.html", "Page: /es/ayuda/como-frobear/")
++	b.AssertFileContent("public/es/ayuda/anidada/page/index.html", "Page: /es/ayuda/anidada/page/")
++	b.AssertFileContent("public/help/how-to-frob/index.html", "Page: /help/how-to-frob/")
++	b.AssertFileContent("public/help/nested/page/index.html", "Page: /help/nested/page/")
++	b.AssertFileContent("public/help/foo/bar/index.html", "Page: /help/foo/bar/")
++
++	b.AssertFileContent("public/tags/bar/index.html", "List: term /tags/bar/")
++	b.AssertFileExists("public/tags/foo/index.html", false)
++	b.AssertFileExists("public/es/etiquetas/foo/index.html", true)
++	b.AssertFileContent("public/es/etiquetas/foo/index.html", "List: term /es/etiquetas/foo/")
++	b.AssertFileContent("public/tags/index.html", "List: taxonomy /tags/")
++	b.AssertFileContent("public/es/etiquetas/index.html", "List: taxonomy /es/etiquetas/")
++}
+diff --git a/resources/page/page_paths.go b/resources/page/page_paths.go
+index 4f24488..4af2a23 100644
+--- a/resources/page/page_paths.go
++++ b/resources/page/page_paths.go
+@@ -45,6 +45,9 @@ type TargetPathDescriptor struct {
+ 	Path    *paths.Path
+ 	Section *paths.Path
+ 
++	// SectionDir is the slug-aware Section.Base(), set only when it differs.
++	SectionDir string
++
+ 	// For regular content pages this is either
+ 	// 1) the Slug, if set,
+ 	// 2) the file base name (TranslationBaseName).
+@@ -166,7 +169,7 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 		if d.ExpandedPermalink != "" {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+-			pb.Add(d.Section.Base())
++			pb.Add(d.sectionDir())
+ 		}
+ 		needsBase = false
+ 	}
+@@ -207,6 +210,9 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 			pb.Add(d.ExpandedPermalink)
+ 		} else {
+ 			if dir := d.Path.ContainerDir(); dir != "" {
++				if d.SectionDir != "" {
++					dir = d.SectionDir + strings.TrimPrefix(dir, d.Section.Base())
++				}
+ 				pb.Add(dir)
+ 			}
+ 			if d.BaseName != "" {
+@@ -301,6 +307,13 @@ func CreateTargetPaths(d TargetPathDescriptor) (tp TargetPaths) {
+ 	return
+ }
+ 
++func (d TargetPathDescriptor) sectionDir() string {
++	if d.SectionDir != "" {
++		return d.SectionDir
++	}
++	return d.Section.Base()
++}
++
+ // When adding state here, remember to update putPagePathBuilder.
+ type pagePathBuilder struct {
+ 	els []string

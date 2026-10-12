@@ -1,0 +1,29 @@
+All done. Let me summarize.
+
+## Summary
+
+The Caddyfile parser treated any token whose text was `{` or `}` as a block delimiter, even when the token came from a quoted string (or heredoc). This caused `respond "{"` to be parsed as an opening block brace.
+
+### Changes
+
+**`caddyconfig/caddyfile/dispenser.go`**
+- Added two helpers, `isOpenBrace()` / `isCloseBrace()`, which require the token text to be `{`/`}` **and** the token to not be quoted.
+- Replaced the raw `d.Val() == "{"` / `"}"` checks in `NextArg`, `NextBlock`, and `ArgErr` with these helpers.
+
+**`caddyconfig/caddyfile/parse.go`**
+- Replaced all block-delimiter comparisons (`addresses`, `directives`, `doImport` snippet tracking and anonymous-block check, `directive`, `openCurlyBrace`, `closeCurlyBrace`, `blockTokens`) with the quoted-aware helpers, plus guarded the `HasSuffix(value, "{")` site-address error so it ignores quoted tokens.
+- Since `parser` embeds `*Dispenser`, the helpers are available directly on the parser.
+
+Because brace detection is centralized in these two helpers, quoted braces are now consistently ignored during block parsing, while genuinely unquoted braces behave exactly as before.
+
+### Tests added
+- `caddyconfig/caddyfile/dispenser_test.go`: `TestDispenser_QuotedBraces` verifies quoted `{` and `}` are returned as normal arguments.
+- `caddyconfig/caddyfile/parse_test.go`: table cases for `dir1 "{"`, `dir1 "}"`, `dir1 "{" "}"`, and the same inside a braced server block.
+- `caddyconfig/httpcaddyfile/httptype_test.go`: `TestQuotedBraces` adapts `:8080 { respond "{" }` (plus `}`, both, and `"a{b}c"`) end to end.
+
+### Verification
+- `go test -race -short ./caddyconfig/...` — pass
+- `go test -short ./...` — pass (no failures)
+- `go build ./...`, `go vet ./caddyconfig/...`, `gofmt -l` — clean
+
+Note (per project policy): AI-assisted change; disclosed here.

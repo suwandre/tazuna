@@ -1,0 +1,11 @@
+Quoted `"{"` and `"}"` are now ordinary arguments, so `respond "{"` parses.
+
+The `caddyconfig/caddyfile` and `httpcaddyfile` tests pass, as do the `modules/caddyhttp/...` tests. The integration suite (`caddytest/integration`) failed once with a large config dump in the output. A rerun listed no failing tests, but I didn't confirm it passed cleanly, so I'm treating the first failure as unexplained rather than fixed.
+
+The lexer already recorded whether a token was quoted. The parser and dispenser compared only the token text, so a quoted `"{"` still opened a block. I added `Token.isOpenBrace()` and `isCloseBrace()` in `lexer.go`, which require the token to be unquoted, and switched every brace check to them. That covers `parse.go` (addresses, directives, `directive`, `blockTokens`, import snippet nesting) and `dispenser.go` (`NextArg`, `NextBlock`, `ArgErr`). Backtick and heredoc tokens count as quoted.
+
+In `parse.go` I dropped the old "same line after `{`" quoted-token check, since a quoted brace no longer reaches that branch. The existing `dir1 "{" a b "}"` test still passes.
+
+I added cases to `TestParseOneAndImport` in `parse_test.go` for `respond "{"`, `respond "}"`, a backtick-quoted `{`, and a quoted brace inside a nested block.
+
+`.gitignore` also shows a one-line `.empryo` addition that I did not make.

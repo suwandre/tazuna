@@ -1,0 +1,12 @@
+`slug` in the front matter of section, taxonomy and term pages now sets that page's URL segment. It also applies to every descendant URL. The `hugolib` and `resources` tests pass, as did the earlier `tpl` run. I didn't run `./check.sh`.
+
+With your example, the output is now:
+- English: `help/` and `help/how-to-frob/`
+- Spanish: `es/ayuda/` and `es/ayuda/como-frobear/`
+
+- **Code:** I added a `SectionPath` field to `TargetPathDescriptor` in `resources/page/page_paths.go`. The new `sectionPathWithSlugs` in `hugolib/page__paths.go` builds that path from the page's ancestors. It uses each section's slug where set and its directory name otherwise. When no ancestor has a slug it returns an empty string, so existing URLs don't change. The change applies to all section, taxonomy, term and regular pages.
+- **Overrides:** `url` and `[permalinks]` still take precedence over the slug.
+- **`BaseName` change:** A slug on a section, taxonomy or term page no longer feeds `desc.BaseName` (the file base name used for page output). Before this change it only mattered if the slug was literally `index`.
+- **Test:** `TestSectionTaxonomyTermSlug` is in `hugolib/section_slug_test.go`. It covers your example, a slugged taxonomy and term (`es/etiquetas/et1/`), a nested slugged section (`es/ayuda/sub-es/`), and a slugged section between unslugged ones (`docs/mixed-slug/child/p/`).
+
+I didn't update the docs.

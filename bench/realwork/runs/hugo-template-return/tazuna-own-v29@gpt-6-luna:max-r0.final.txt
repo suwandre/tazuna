@@ -1,0 +1,3 @@
+Implemented sentinel-error handling for `return` and registered it as a template function, allowing `return` to exit early from regular templates and return a value from partials. Added an integration test for early return.
+
+Verified with `go test ./tpl/...`; all packages passed.

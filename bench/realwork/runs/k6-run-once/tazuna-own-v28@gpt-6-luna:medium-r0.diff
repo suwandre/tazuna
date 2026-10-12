@@ -1,0 +1,136 @@
+diff --git a/internal/cmd/config.go b/internal/cmd/config.go
+index 617cdec..a1a075c 100644
+--- a/internal/cmd/config.go
++++ b/internal/cmd/config.go
+@@ -317,6 +317,40 @@ func applyDefault(conf Config) Config {
+ 	return conf
+ }
+ 
++func applyOnceMode(flags *pflag.FlagSet, conf *Config) error {
++	for _, flag := range []string{"vus", "iterations", "duration", "stage"} {
++		if flags.Changed(flag) {
++			return fmt.Errorf("--once cannot be combined with --%s", flag)
++		}
++	}
++
++	if len(conf.Scenarios) > 1 {
++		return errors.New("--once can run a single scenario only")
++	}
++
++	var name string
++	var scenario lib.ExecutorConfig
++	for scenarioName, configured := range conf.Scenarios {
++		name, scenario = scenarioName, configured
++	}
++	if scenario == nil {
++		name = lib.DefaultScenarioName
++		scenario = executor.NewSharedIterationsConfig(name)
++	}
++
++	shared := executor.NewSharedIterationsConfig(name)
++	shared.Exec = null.StringFrom(scenario.GetExec())
++	shared.Env = scenario.GetEnv()
++	shared.Tags = scenario.GetTags()
++	shared.Options = scenario.GetScenarioOptions()
++	conf.Scenarios = lib.ScenarioConfigs{name: shared}
++	conf.VUs = null.Int{}
++	conf.Iterations = null.Int{}
++	conf.Duration = types.NullDuration{}
++	conf.Stages = nil
++	return nil
++}
++
+ func deriveAndValidateConfig(
+ 	conf Config, isExecutable func(string) bool, logger logrus.FieldLogger,
+ ) (result Config, err error) {
+diff --git a/internal/cmd/config_consolidation_test.go b/internal/cmd/config_consolidation_test.go
+index 71274f3..1c18571 100644
+--- a/internal/cmd/config_consolidation_test.go
++++ b/internal/cmd/config_consolidation_test.go
+@@ -6,6 +6,7 @@ import (
+ 	"testing"
+ 	"time"
+ 
++	"github.com/spf13/pflag"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+ 	"gopkg.in/guregu/null.v3"
+@@ -641,6 +642,49 @@ func runTestCase(t *testing.T, testCase configConsolidationTestCase, subCmd stri
+ 	}
+ }
+ 
++func TestApplyOnceMode(t *testing.T) {
++	flags := pflag.NewFlagSet("", pflag.ContinueOnError)
++	flags.Bool("once", false, "")
++	conf := Config{Options: lib.Options{Scenarios: lib.ScenarioConfigs{
++		"scenario": executor.ConstantVUsConfig{
++			BaseConfig: executor.BaseConfig{
++				Name: "scenario", Type: "constant-vus", Exec: null.StringFrom("custom"),
++				Env: map[string]string{"KEY": "value"}, Tags: map[string]string{"tag": "value"},
++				Options: &lib.ScenarioOptions{},
++			},
++		},
++	}}}
++
++	require.NoError(t, applyOnceMode(flags, &conf))
++	require.Len(t, conf.Scenarios, 1)
++	scenario := conf.Scenarios["scenario"]
++	assert.Equal(t, "custom", scenario.GetExec())
++	assert.Equal(t, map[string]string{"KEY": "value"}, scenario.GetEnv())
++	assert.Equal(t, map[string]string{"tag": "value"}, scenario.GetTags())
++	assert.NotNil(t, scenario.GetScenarioOptions())
++	assert.Equal(t, "shared-iterations", scenario.GetType())
++}
++
++func TestApplyOnceModeErrors(t *testing.T) {
++	t.Run("multiple scenarios", func(t *testing.T) {
++		flags := pflag.NewFlagSet("", pflag.ContinueOnError)
++		conf := Config{Options: lib.Options{Scenarios: lib.ScenarioConfigs{
++			"one": executor.NewSharedIterationsConfig("one"),
++			"two": executor.NewSharedIterationsConfig("two"),
++		}}}
++		err := applyOnceMode(flags, &conf)
++		require.EqualError(t, err, "--once can run a single scenario only")
++	})
++
++	t.Run("shortcut option", func(t *testing.T) {
++		flags := pflag.NewFlagSet("", pflag.ContinueOnError)
++		flags.Int64("iterations", 0, "")
++		require.NoError(t, flags.Set("iterations", "2"))
++		err := applyOnceMode(flags, &Config{})
++		require.EqualError(t, err, "--once cannot be combined with --iterations")
++	})
++}
++
+ func TestConfigConsolidation(t *testing.T) {
+ 	t.Parallel()
+ 
+diff --git a/internal/cmd/options.go b/internal/cmd/options.go
+index 5dd9e55..6149197 100644
+--- a/internal/cmd/options.go
++++ b/internal/cmd/options.go
+@@ -27,6 +27,7 @@ func optionFlagSet() *pflag.FlagSet {
+ 	flags.Int64P("vus", "u", 1, "number of virtual users")
+ 	flags.DurationP("duration", "d", 0, "test duration limit")
+ 	flags.Int64P("iterations", "i", 0, "script total iteration limit (among all VUs)")
++	flags.Bool("once", false, "run a single iteration of a single scenario")
+ 	flags.StringSliceP("stage", "s", nil, "add a `stage`, as `[duration]:[target]`")
+ 	flags.String("execution-segment", "", "limit execution to the specified segment, e.g. 10%, 1/3, 0.2:2/3")
+ 	flags.String("execution-segment-sequence", "", "the execution segment sequence") // TODO better description
+diff --git a/internal/cmd/test_load.go b/internal/cmd/test_load.go
+index bfc6337..56d3116 100644
+--- a/internal/cmd/test_load.go
++++ b/internal/cmd/test_load.go
+@@ -568,6 +568,12 @@ func (lt *loadedTest) consolidateDeriveAndValidateConfig(
+ 		}
+ 	}
+ 
++	if cmd.Flags().Changed("once") {
++		if err := applyOnceMode(cmd.Flags(), &consolidatedConfig); err != nil {
++			return nil, err
++		}
++	}
++
+ 	derivedConfig, err := deriveAndValidateConfig(consolidatedConfig, lt.initRunner.IsExecutable, gs.Logger)
+ 	if err != nil {
+ 		return nil, err

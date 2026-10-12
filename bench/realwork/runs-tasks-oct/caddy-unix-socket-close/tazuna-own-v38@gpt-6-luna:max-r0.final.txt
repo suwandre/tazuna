@@ -1,0 +1,10 @@
+Implemented Unix socket lifecycle fixes:
+
+- Close temporary duplicated FDs and unlink filesystem sockets using the actual Unix address, only after the last holder closes.
+- Synchronize close and relisten operations, keep an active holder available for reuse, and count reused sockets in `ListenerUsage`.
+- Make repeated closes return `net.ErrClosed`; avoid unlinking filesystem paths for Linux abstract sockets.
+- Add coverage for Unix and unixgram sharing, out-of-order and repeated closes, close/listen races, and abstract socket paths.
+
+**Verification:** `go test -race -count=1 ./`, `go test -short ./...`, and `golangci-lint run --timeout 10m` passed. Linux and Windows test binaries cross-compiled. The Linux-only abstract socket test was compiled but not run on this macOS host. A non-short `go test ./...` run exceeded the environment’s 120-second limit.
+
+AI-assisted by GPT-6 Luna; please review the changes before submission.
