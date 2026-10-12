@@ -163,13 +163,13 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
         let mark = if i == p.selected { "›" } else { " " };
         let age = if r.secs >= 60 { format!("{}m{:02}s", r.secs / 60, r.secs % 60) } else { format!("{}s", r.secs) };
         let colour = if r.status == "running" { th.accent } else if r.status == "completed" { th.faint } else { th.warn };
-        let row = format!("{mark} {:<10} {:>7}  {:<11} {}", r.status, age, r.kind, r.description);
+        let row = format!("{mark} {:<10} {:>7}  {:<11} {}", plain(&r.status), age, plain(&r.kind), plain(&r.description).replace('\n', " "));
         let style = if i == p.selected { st(colour).add_modifier(Modifier::BOLD) } else { st(colour) };
         lines.push(Line::from(Span::styled(row.chars().take(inner.width as usize).collect::<String>(), style)));
     }
     if let Some(r) = p.rows.get(p.selected) {
         lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(format!("── output of: {} ──", r.description).chars().take(inner.width as usize).collect::<String>(), st(th.faint))));
+        lines.push(Line::from(Span::styled(format!("── output of: {} ──", plain(&r.description).replace('\n', " ")).chars().take(inner.width as usize).collect::<String>(), st(th.faint))));
         let text = plain(&r.output);
         let room = (inner.height as usize).saturating_sub(lines.len());
         let out: Vec<&str> = text.lines().collect();
@@ -181,26 +181,40 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-/// Command output as plain text: escape sequences (colours, cursor moves) and carriage returns removed.
+/// Command output (untrusted: whatever a command printed) as plain text for the screen. Escape sequences go entirely:
+/// CSI (colours, cursor moves), OSC up to BEL or ST (window titles, clipboard writes), DCS/APC/PM/SOS strings and
+/// two-character ones. Carriage returns go; any other control or invisible character (C1 controls such as U+009B, BEL,
+/// backspace, bidi overrides) becomes a visible `�`, as in permission questions (`session::shown`).
 pub fn plain(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut it = s.chars().peekable();
     while let Some(c) = it.next() {
         match c {
-            '\x1b' => {
-                if it.peek() == Some(&'[') {
-                    it.next();
-                    while let Some(&n) = it.peek() {
-                        it.next();
-                        if n.is_ascii_alphabetic() || n == '~' {
+            '\x1b' => match it.next() {
+                Some('[') => {
+                    // parameters and intermediates, up to the final byte @ ... ~
+                    while let Some(n) = it.next() {
+                        if ('@'..='~').contains(&n) {
                             break;
                         }
                     }
-                } else {
-                    it.next();
                 }
-            }
+                Some(']' | 'P' | '_' | '^' | 'X') => {
+                    while let Some(n) = it.next() {
+                        if n == '\x07' {
+                            break;
+                        }
+                        if n == '\x1b' && it.peek() == Some(&'\\') {
+                            it.next();
+                            break;
+                        }
+                    }
+                }
+                _ => {} // a two-character sequence: both dropped
+            },
             '\r' => {}
+            '\n' | '\t' => out.push(c),
+            c if c.is_control() || crate::session::invisible(c) => out.push('\u{FFFD}'),
             c => out.push(c),
         }
     }
@@ -986,6 +1000,12 @@ mod tests {
     #[test]
     fn task_output_is_shown_as_plain_text() {
         assert_eq!(plain("\x1b[32mok\x1b[0m 3 passed\r\n\x1b[2Kdone"), "ok 3 passed\ndone");
+        // untrusted output cannot drive the terminal: OSC (clipboard write, title) with either terminator, DCS, C1 CSI,
+        // BEL, backspace and a bidi override are gone or visible
+        assert_eq!(plain("a\x1b]52;c;cm0gLXJm\x07b\x1b]0;title\x1b\\c"), "abc");
+        assert_eq!(plain("\x1bPq#0;2;0;0;0\x1b\\x"), "x");
+        assert_eq!(plain("\u{9b}31m\x07\x08\u{202e}rm"), "\u{FFFD}31m\u{FFFD}\u{FFFD}\u{FFFD}rm");
+        assert!(!plain("\x1b[?1049h\x1b(0\x1b=x").chars().any(|c| c.is_control()));
     }
 
     #[test]

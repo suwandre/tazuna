@@ -514,7 +514,7 @@ pub fn shown(text: &str, max: usize) -> String {
 
 /// Characters that change how text around them looks without showing themselves: bidirectional overrides (which can
 /// make "rm" read as "mr"), zero-width characters, line and paragraph separators.
-fn invisible(c: char) -> bool {
+pub fn invisible(c: char) -> bool {
     matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2069}' | '\u{2028}' | '\u{2029}' | '\u{FEFF}' | '\u{061C}' | '\u{180E}')
 }
 

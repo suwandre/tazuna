@@ -24,7 +24,10 @@ run goes on. While one runs, the composer shows `[N background · ctrl-b]`. Buil
 `task_updated` and `task_notification` events, and the `get_task_output` and `stop_task` control requests (the same data as
 Claude Code's `/tasks` view). Checked in a pseudo-terminal against Haiku: a 60-second loop showed as running with its
 output ticking, and `x` stopped it. Only with Claude Code's own tools (repo profile); the lean profile's bash and the own
-loop run every command to its end.
+loop run every command to its end. Task output and descriptions pass through the same filter as permission questions: every
+escape sequence is dropped whole (CSI, OSC up to BEL or ST, DCS/APC/PM/SOS) and any other control or invisible character
+shows as `�`, so a command's output cannot set the window title, write the clipboard or move the cursor (a security
+review caught the first version, which only removed colour codes).
 
 ## 0.0.43 (2026-10-12)
 
