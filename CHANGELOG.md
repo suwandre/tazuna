@@ -21,6 +21,8 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 **`ctrl-g` opens the message in your editor** (`$VISUAL`, else `$EDITOR`, else `vi`; a command like `code --wait` works).
 tazuna steps out of the screen while the editor runs; what you save comes back into the composer, and a failing editor
 leaves the message as it was. Checked in a pseudo-terminal: the edited text is back in the composer and the screen redraws.
+The temporary file is created exclusively with mode 0600 under an unguessable name (a security review flagged the first
+version's predictable name: in a shared /tmp a planted symlink could have redirected the write).
 
 ## 0.0.42 (2026-10-12)
 

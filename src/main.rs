@@ -753,8 +753,18 @@ fn previous_session(base: &std::path::Path, cwd: &std::path::Path, id: Option<&s
 /// Opens `text` in `editor` (a shell command such as `vim` or `code --wait`; the file is its last argument) and returns
 /// what was saved, without the final newline editors add. A failing editor leaves the message as it was.
 fn edit_in(editor: &str, text: &str) -> Result<String> {
-    let path = std::env::temp_dir().join(format!("tazuna-message-{}.md", std::process::id()));
-    std::fs::write(&path, text)?;
+    // created exclusively and private: in a shared /tmp a planted file or symlink at a guessable name could otherwise
+    // redirect the write or expose the message
+    let (path, mut file) = (0..16)
+        .find_map(|i| {
+            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+            let path = std::env::temp_dir().join(format!("tazuna-message-{}-{nanos:x}-{i}.md", std::process::id()));
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path).ok().map(|f| (path, f))
+        })
+        .context("could not create a private temporary file")?;
+    std::io::Write::write_all(&mut file, text.as_bytes())?;
+    drop(file);
     let status = std::process::Command::new("sh").arg("-c").arg(format!("{editor} \"$1\"")).arg("sh").arg(&path).status();
     let saved = std::fs::read_to_string(&path);
     let _ = std::fs::remove_file(&path);
@@ -1073,6 +1083,9 @@ mod tests {
         assert_eq!(super::edit_in("printf 'edited\\n' >", "draft").unwrap(), "edited");
         assert_eq!(super::edit_in("true", "keep me").unwrap(), "keep me");
         assert!(super::edit_in("false", "x").is_err());
+        // the file the editor gets is private to the user (macOS stat syntax, like the rest of the UI's helpers)
+        let mode = super::edit_in("sh -c 'stat -f %Lp \"$0\" > \"$0.mode\"; cp \"$0.mode\" \"$0\"; rm \"$0.mode\"'", "x").unwrap();
+        assert_eq!(mode, "600");
     }
 
     #[test]
