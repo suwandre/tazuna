@@ -38,7 +38,9 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
   per dollar measured in every set where it is allowed. Other cheap models (GPT-6 Luna, Qwen3.8 Flash, GLM-5.3 Flash) and
   own-loop ideas (elision, plan tool, few-turns prompt) did not beat it.
 - **Footprint:** binary 3.9 MB (system TLS for the own loop); UI 7 MB RAM, 6 ms to first frame, ~1.5% CPU (Tier 0 at
-  0.0.20, not re-measured since). The own loop runs without the ~200 MB `claude` process; its footprint is not measured yet.
+  0.0.20). A whole agent run (`bench/agent_footprint.py`, one small fix): **own loop 27 MB peak RAM** (engine 19 MB, UI
+  7 MB), 0.1 s CPU; **claude path 262-282 MB** (the `claude` CLI 248-267 MB, tazuna 7 MB, tool server 7 MB), 0.6-0.7 s CPU.
+  The own loop needs ~10x less memory; on that task it took 29-69 s against 5-6 s, all of it waiting for the provider.
 - **Measurement:** the benchmark kit lives in `bench/` (runner, blind Opus judge with and without reference, usage guard,
   cheap-judge calibration). Judge rounds run one pass by default and print their call count first; the guard blocks judging
   without a fresh meter reading after a chained judge round spent extra usage (2026-10-12).
@@ -228,6 +230,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   suite intact, $0.63; high 0/3, suite broken, $6.12. Telegraf: judge 6 both (medium broke the suite, high added an
   unrelated change), $0.44 vs $1.42. Lazygit: DeepSeek solved it alone in the high run. Medium stays: high costs 3-10x for
   no gain here.
+- 2026-10-12: footprint of a whole agent run measured for the first time (`bench/agent_footprint.py`): own loop 27 MB peak
+  RAM and 0.1 s CPU vs the claude path 262-282 MB and 0.6-0.7 s, on the same small fix. Goal 1's "real footprint wins come
+  with the own loop" holds: ~10x less memory. Wall time goes the other way (provider wait), so speed is the own loop's gap.
 - 2026-10-12: the benchmark kit moved into the repo (`bench/`: run, judge, guard, calibration, task definitions, results and
   diffs). Company tickets and cloned plugins stay out.
 - 2026-10-11: clean benchmark (7 tasks merged after DeepSeek's release, 2 runs, judged without reference): cascade +0.7

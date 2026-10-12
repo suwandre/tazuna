@@ -1,6 +1,8 @@
 # Benchmarks
 
 - `tier0.sh`: every change. Binary size, replay render time, tokens per turn, startup, UI CPU and memory.
+- `agent_footprint.py <binary> [flags]`: peak RAM and CPU of a whole headless agent run (tazuna plus the claude CLI or the
+  own loop's engine), on one small fix; compares the claude path with the own loop.
 - `realwork/`: real-work tasks with hidden tests from the merged PR. `tasks/` (6 Go fixes), `tasks-hard/` (4), `tasks-oct/`
   (7 merged 1-10 October 2026, after DeepSeek V4.1's release). Each task: `prompt.txt`, `git.json` (repo and base commit,
   cloned at run time), `hidden/` tests, `solution.patch` (the reference fix).
