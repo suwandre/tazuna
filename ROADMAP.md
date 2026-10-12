@@ -124,6 +124,13 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Parked (not tested yet)
 
+- **Monthly API credits on Max/Team plans** (Anthropic, 2026-10-07: $100 Max 5x, $200 Max 20x, up to $500 Team; Claude
+  API, Agent SDK and `claude -p` with an API key; not Claude Code). Usage with a key from the linked Console organization
+  draws from the credits, not the 5h/weekly limits, and stops when they run out (never extra usage). Uses: benchmarks and
+  the judge on credits; the claude path on an API key as an option; later Claude in the own loop through the Messages API
+  (27 MB instead of ~270 MB). The impersonation rule is unchanged: the update allows the official channels, not reusing
+  Claude Code's OAuth token. Waiting on the user (plan, claimed credits, key in `~/.anthropic-key`).
+
 - Hand-off to a fresh session with a structured summary instead of compaction (Amp, pi).
 - Checkpoints and rewind (OMP).
 - A careful lane (phased effort): 7.17 vs 6.33 judge at 2.5-3× the cost of Opus medium, in an early test.
