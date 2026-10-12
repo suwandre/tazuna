@@ -21,20 +21,32 @@ flags, system prompt, tools, MCP, settings, hooks. Other providers get tazuna's 
 **Limits to keep in mind.** On Claude, the `claude` CLI underneath (~200 MB, ~1 s start) sets the floor for footprint;
 tazuna's own part is small (2.4 MB binary, ~7 MB RAM, ~1% CPU). Real footprint wins come with tazuna's own loop.
 
-## Where we stand (2026-10-08, v0.0.17)
+## Where we stand (2026-10-12, v0.0.41)
 
-- **Quality: at or above stock Claude Code, never proven below.** Go tasks, all harnesses at current versions judged
-  together: tazuna default 6.67 (1st of 8; OMP 6.54, stock 6.38). Company tickets (5 tickets, Opus medium): tazuna lean 5.95,
-  repo profile 5.95, stock 6.00 (same day); in the latest two-ticket pool the default (repo + diagnostics) 7.12 vs stock
-  6.62. All within noise.
-- **Cost:** default −5% vs stock on Go tasks, −2% on the company tickets; lean −19% to −28% (no repo hooks or skills);
-  diagnostics −11% vs without. Cheaper than OMP and Hermes by 20-25%.
-- **Footprint:** UI 7 MB and 6 ms to first frame vs Claude Code's 190 MB and 0.45 s; the `claude` process underneath is
-  the same size as Claude Code's own, so the total only shrinks with tazuna's own loop.
-- **Shipped:** live UI (four designs, Cockpit default), headless `--run`, recordings and replay, run log and labels,
-  router (tiny repos to Sonnet), repo / repo-lean / lean profiles with trust, verification (tests + type check, new errors
-  only), diagnostics after each edit (default), `--self-review`, `--review-model`, background-command handling,
-  multi-line input, select mode, cache-miss display, Tier 0 footprint metrics.
+Two paths, chosen by where the code may go (`--data trusted|any`):
+
+- **Claude path (default; code that must stay with Anthropic, e.g. company work).** Official `claude` CLI on the
+  subscription; router (tiny repos Sonnet, else Opus 5.5 medium), Haiku explorer, diagnostics after edits, verification
+  (tests + type check, two fix rounds). Company tickets, one judge pool: stock Claude Code 6.15 at $2.67 per ticket, tazuna
+  default 5.70 at $2.18, `--preset boss` 5.79 at $1.56 (7 of 10 runs; candidate default). Go tasks: tazuna default 7.46
+  (judge without reference) at $3.97 for 6 tasks vs stock 7.58 at $5.46; boss 7.33 at $2.70. No plugin (ECC, superpowers,
+  caveman, graphify, GStack) beat stock; the Sonnet + Opus advisor stays opt-in (−0.6 judge on tickets).
+- **Cascade (code that may leave the machine; `--preset cascade`, or any `--provider`).** tazuna's own loop with DeepSeek
+  V4.1 Flash at max effort on CheaperInference, no time limit, $1 per task; a task it cannot finish goes to Opus 5.5 medium
+  on claude (high measured: 3-10x the cost, no gain). October tasks (merged after DeepSeek's release, 14 runs): 13/14 fully
+  solved, judge 7.79 / 8.32 (without / with reference), $8.36, vs tazuna on Opus 9/14, 6.79 / 6.93, $38.90. Best quality
+  per dollar measured in every set where it is allowed. Other cheap models (GPT-6 Luna, Qwen3.8 Flash, GLM-5.3 Flash) and
+  own-loop ideas (elision, plan tool, few-turns prompt) did not beat it.
+- **Footprint:** binary 3.9 MB (system TLS for the own loop); UI 7 MB RAM, 6 ms to first frame, ~1.5% CPU (Tier 0 at
+  0.0.20, not re-measured since). The own loop runs without the ~200 MB `claude` process; its footprint is not measured yet.
+- **Measurement:** the benchmark kit lives in `bench/` (runner, blind Opus judge with and without reference, usage guard,
+  cheap-judge calibration). Judge rounds run one pass by default and print their call count first; the guard blocks judging
+  without a fresh meter reading after a chained judge round spent extra usage (2026-10-12).
+- **Shipped:** live UI (four designs), headless `--run`, recordings and replay, run log and labels (`/good`, `/bad`,
+  `--label-git`), router, repo / repo-lean / lean profiles, verification, diagnostics, `--self-review`, `--review-model`,
+  permission modes and plan mode, resume, slash commands, `@` files, images, `!` shell mode, explorer/tester/boss subagents,
+  `--advisor`, presets, data policy with a trusted-provider list, own loop for OpenAI-compatible providers (Chat Completions
+  and Responses; CheaperInference and Experiential Labs price lists), cascade hand-over.
 
 ## Done
 
