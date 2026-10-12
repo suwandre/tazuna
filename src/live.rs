@@ -156,7 +156,7 @@ fn always_key(req: &Value) -> String {
 
 /// How far "always" reaches for a tool, as the question shows it.
 fn always_scope(tool: &str) -> &'static str {
-    if matches!(tool, "Bash" | "mcp__lean__bash" | "PowerShell") { "this command" } else { "this tool" }
+    if matches!(tool, "Bash" | "mcp__lean__bash" | "PowerShell" | "bash") { "this command" } else { "this tool" }
 }
 
 /// The run-log prompt of a run claude started on its own.
@@ -488,8 +488,8 @@ impl Live {
 
     /// Switches the permission mode (also mid-run). Before the process starts it only sets the starting mode.
     pub fn set_mode(&mut self, mode: &str) -> (f64, Value) {
-        if self.provider.is_some() && mode != "bypassPermissions" {
-            return self.record(json!({"type": "harness_notice", "text": "the own loop (--provider) runs in the auto mode only for now", "error": true}));
+        if self.provider.is_some() && mode == "plan" {
+            return self.record(json!({"type": "harness_notice", "text": "the own loop (--provider) has no plan mode yet: auto, ask or edits", "error": true}));
         }
         self.permission_mode = mode.to_string();
         if let Some(stdin) = self.stdin.as_mut() {
@@ -848,9 +848,9 @@ impl Live {
 
     fn spawn(&mut self) -> Result<()> {
         if let Some((url, key_env)) = self.provider.clone() {
-            // the engine never asks before a tool runs: starting it in ask/edits/plan would skip the approvals the user chose
-            if self.permission_mode != "bypassPermissions" {
-                bail!("--provider runs in the auto mode only for now (no ask, edits or plan mode yet)");
+            // the engine asks before commands (ask, edits) and edits (ask); it has no plan mode yet
+            if self.permission_mode == "plan" {
+                bail!("--provider has no plan mode yet (auto, ask or edits)");
             }
             // the own loop: lean prompt and tools, the repo's instructions in the prompt
             let mut prompt = self.mid_prompt();
@@ -860,7 +860,7 @@ impl Live {
                 self.instructions_used = (bytes, sources);
             }
             let mut cmd = Command::new(std::env::current_exe().context("locating the tazuna binary")?);
-            cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--system-prompt", &prompt])
+            cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--system-prompt", &prompt, "--permission-mode", &self.permission_mode])
                 .env("LEAN_BASH_CAP", self.bash_cap.to_string());
             return self.start(cmd);
         }

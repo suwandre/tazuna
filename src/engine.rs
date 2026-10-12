@@ -31,6 +31,7 @@ pub fn serve(args: &[String]) -> Result<()> {
     let key_env = flag("--key-env").context("--key-env")?;
     let model = flag("--model").context("--model")?;
     let effort = flag("--effort");
+    let mode = flag("--permission-mode").unwrap_or_else(|| "bypassPermissions".into());
     let mut system = flag("--system-prompt").unwrap_or_default();
     if std::env::var_os("TAZUNA_BATCH").is_some() {
         system.push_str(BATCH_RULE);
@@ -80,6 +81,8 @@ pub fn serve(args: &[String]) -> Result<()> {
         cost: 0.0,
         task: (std::time::Instant::now(), 0.0),
         queued: VecDeque::new(),
+        mode,
+        asked: 0,
         out: Box::new(|e: &Value| emit(e)),
     };
     loop {
@@ -93,7 +96,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         if msg["type"] == "user" {
             loop_.run(&msg["message"]["content"], msg["tazuna_followup"] == true, &rx);
         }
-        // control requests while idle (interrupt, permission mode): nothing to do; the auto mode never asks
+        loop_.set_mode(&msg); // a mode switch while idle; an interrupt while idle has nothing to stop
     }
 }
 
@@ -118,6 +121,11 @@ struct Loop {
     task: (std::time::Instant, f64),
     /// User messages that arrived during a run.
     queued: VecDeque<Value>,
+    /// Permission mode in claude's names: bypassPermissions (auto: never asks), default (ask before commands and edits),
+    /// acceptEdits (ask before commands). Plan mode is not offered for the own loop.
+    mode: String,
+    /// Permission questions asked so far (their request ids).
+    asked: u32,
     out: Box<dyn FnMut(&Value)>,
 }
 
@@ -141,7 +149,7 @@ impl Loop {
                         return end(self, "error_during_execution", "[interrupted]".into(), turns, usage);
                     }
                     Ok(m) if m["type"] == "user" => self.queued.push_back(m),
-                    Ok(_) => {}
+                    Ok(m) => self.set_mode(&m),
                     Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
                 }
             }
@@ -236,9 +244,13 @@ impl Loop {
             for (id, name, input) in parsed {
                 let (text, is_error) = match input {
                     None => ("the arguments were not valid JSON; call the tool again with a JSON object".to_string(), true),
-                    Some(input) => match self.server.call(&json!({"name": name, "arguments": input})) {
-                        Ok(r) => (r["content"][0]["text"].as_str().unwrap_or_default().to_string(), r["isError"] == true),
-                        Err((_, e)) => (e, true),
+                    Some(input) => match self.permit(&name, &input, rx) {
+                        Permit::Allow(input) => match self.server.call(&json!({"name": name, "arguments": input})) {
+                            Ok(r) => (r["content"][0]["text"].as_str().unwrap_or_default().to_string(), r["isError"] == true),
+                            Err((_, e)) => (e, true),
+                        },
+                        Permit::Deny(why) => (why, true),
+                        Permit::Stop => return end(self, "error_during_execution", "[interrupted]".into(), turns, usage),
                     },
                 };
                 self.msgs.push(if self.responses {
@@ -249,6 +261,55 @@ impl Loop {
                 results.push(json!({"type": "tool_result", "tool_use_id": id, "content": text, "is_error": is_error}));
             }
             (self.out)(&json!({"type": "user", "message": {"role": "user", "content": results}}));
+        }
+    }
+}
+
+/// The user's answer to a permission question.
+enum Permit {
+    Allow(Value),
+    Deny(String),
+    Stop,
+}
+
+impl Loop {
+    fn set_mode(&mut self, m: &Value) {
+        if m["type"] == "control_request" && m["request"]["subtype"] == "set_permission_mode" {
+            if let Some(mode) = m["request"]["mode"].as_str() {
+                self.mode = mode.to_string();
+            }
+        }
+    }
+
+    /// Asks the user before a command or an edit when the mode says so, in claude's protocol (a `can_use_tool` control
+    /// request, answered by a `control_response`), so tazuna's existing question UI and "always" answers work unchanged.
+    fn permit(&mut self, tool: &str, input: &Value, rx: &Receiver<Value>) -> Permit {
+        let ask = match self.mode.as_str() {
+            "default" => matches!(tool, "bash" | "write" | "edit"),
+            "acceptEdits" => tool == "bash",
+            _ => false,
+        };
+        if !ask {
+            return Permit::Allow(input.clone());
+        }
+        self.asked += 1;
+        let id = format!("perm-{}", self.asked);
+        (self.out)(&json!({"type": "control_request", "request_id": id, "request": {"subtype": "can_use_tool", "tool_name": tool, "input": input}}));
+        loop {
+            let Ok(m) = rx.recv() else { return Permit::Stop }; // tazuna is gone: nobody can answer
+            if m["type"] == "control_response" && m["response"]["request_id"] == id.as_str() {
+                let r = &m["response"]["response"];
+                return if r["behavior"] == "allow" {
+                    Permit::Allow(if r["updatedInput"].is_object() { r["updatedInput"].clone() } else { input.clone() })
+                } else {
+                    Permit::Deny(r["message"].as_str().unwrap_or("The user declined this.").to_string())
+                };
+            }
+            match (m["type"].as_str(), m["request"]["subtype"].as_str()) {
+                (Some("control_request"), Some("interrupt")) => return Permit::Stop,
+                (Some("user"), _) => self.queued.push_back(m),
+                _ => self.set_mode(&m),
+            }
         }
     }
 }
@@ -359,6 +420,8 @@ mod tests {
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -398,6 +461,8 @@ mod tests {
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -418,5 +483,83 @@ mod tests {
         let ((i, c, o), openai) = parse_price(&el).unwrap();
         assert!(((i * 1e6) - 0.1).abs() < 1e-12 && ((c * 1e6) - 0.01).abs() < 1e-12 && ((o * 1e6) - 0.5).abs() < 1e-12 && openai);
         assert!(parse_price(&json!({"id": "x", "pricing": {}})).is_err());
+    }
+
+    /// A loop whose model wants `write` once, then answers; `mode` decides whether that asks. A question is answered with
+    /// `reply` (sent to the loop's input) when it is asked, as tazuna would.
+    fn asking_loop(mode: &str, dir: &std::path::Path, events: Rc<RefCell<Vec<Value>>>, reply: Option<(std::sync::mpsc::Sender<Value>, Value)>) -> Loop {
+        let replies = RefCell::new(VecDeque::from([
+            json!({"choices": [{"message": {"content": null, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "write", "arguments": "{\"path\":\"b.txt\",\"content\":\"hi\\n\"}"}}]}}], "usage": {}}),
+            json!({"choices": [{"message": {"content": "done"}}], "usage": {}}),
+        ]));
+        Loop {
+            call: Box::new(move |_: &Value| Ok(replies.borrow_mut().pop_front().unwrap())),
+            responses: false,
+            system: String::new(),
+            model: "m".into(),
+            effort: None,
+            price: (0.0, 0.0, 0.0),
+            tools: vec![],
+            msgs: vec![],
+            server: crate::mcp::Server::new(dir.to_path_buf()),
+            session: "s".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: mode.into(),
+            asked: 0,
+            out: Box::new(move |e: &Value| {
+                if e["type"] == "control_request" {
+                    if let Some((tx, r)) = &reply {
+                        tx.send(r.clone()).unwrap();
+                    }
+                }
+                events.borrow_mut().push(e.clone());
+            }),
+        }
+    }
+
+    #[test]
+    fn ask_mode_asks_before_an_edit_and_honours_the_answer() {
+        let dir = std::env::temp_dir().join(format!("tazuna-ask-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let answer = |behavior: &str| json!({"type": "control_response", "response": {"subtype": "success", "request_id": "perm-1",
+            "response": {"behavior": behavior, "message": "not now"}}});
+        // denied: nothing written, the model hears why
+        let ev = Rc::new(RefCell::new(vec![]));
+        let (tx, rx) = std::sync::mpsc::channel();
+        asking_loop("default", &dir, ev.clone(), Some((tx, answer("deny")))).run(&json!("write b.txt"), false, &rx);
+        let asked: Vec<_> = ev.borrow().iter().filter(|e| e["type"] == "control_request").cloned().collect();
+        assert_eq!((asked.len(), asked[0]["request"]["tool_name"].as_str()), (1, Some("write")));
+        assert!(!dir.join("b.txt").exists());
+        let result = ev.borrow().iter().find(|e| e["type"] == "user").cloned().unwrap();
+        assert_eq!(result["message"]["content"][0]["content"], "not now");
+        // allowed: written
+        let (tx, rx) = std::sync::mpsc::channel();
+        asking_loop("default", &dir, Rc::new(RefCell::new(vec![])), Some((tx, answer("allow")))).run(&json!("write b.txt"), false, &rx);
+        assert_eq!(std::fs::read_to_string(dir.join("b.txt")).unwrap(), "hi\n");
+        // edits mode: an edit goes ahead without a question
+        std::fs::remove_file(dir.join("b.txt")).unwrap();
+        let ev = Rc::new(RefCell::new(vec![]));
+        let (_tx, rx) = std::sync::mpsc::channel();
+        asking_loop("acceptEdits", &dir, ev.clone(), None).run(&json!("write b.txt"), false, &rx);
+        assert!(dir.join("b.txt").exists() && !ev.borrow().iter().any(|e| e["type"] == "control_request"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_interrupt_while_asking_ends_the_run() {
+        let dir = std::env::temp_dir().join(format!("tazuna-ask-stop-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ev = Rc::new(RefCell::new(vec![]));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let stop = json!({"type": "control_request", "request_id": "i1", "request": {"subtype": "interrupt"}});
+        asking_loop("default", &dir, ev.clone(), Some((tx, stop))).run(&json!("write b.txt"), false, &rx);
+        let asked = ev.borrow().iter().any(|e| e["type"] == "control_request");
+        let last = ev.borrow().last().cloned().unwrap();
+        assert!(asked); // the stop came while the question was open
+        assert_eq!((last["type"].as_str(), last["result"].as_str()), (Some("result"), Some("[interrupted]")));
+        assert!(!dir.join("b.txt").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

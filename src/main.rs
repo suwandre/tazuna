@@ -471,6 +471,9 @@ fn host_of(url: &str) -> String {
 
 fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     let prompt = std::fs::read_to_string(prompt_file).with_context(|| format!("reading {}", prompt_file.display()))?;
+    if a.mode != "bypassPermissions" {
+        eprintln!("--mode does not apply to --run: nobody is there to answer questions, so headless runs never ask");
+    }
     let mut live = live::Live::new("", "")?;
     live.user_settings = a.user_settings;
     live.set_lane(lane(&a, false)?);
@@ -886,7 +889,7 @@ fn run_live(
                 let next = match live.permission_mode.as_str() {
                     "bypassPermissions" => "default",
                     "default" => "acceptEdits",
-                    "acceptEdits" => "plan",
+                    "acceptEdits" if live.provider.is_none() => "plan", // the own loop has no plan mode
                     _ => "bypassPermissions",
                 };
                 let (t, e) = live.set_mode(next);

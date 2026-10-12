@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.42 (2026-10-12)
+
+**The own loop asks before commands and edits.** With `--provider`, the ask mode now asks before every `bash`, `write` and
+`edit` (reading stays free) and the edits mode before `bash`; shift-tab switches mid-run. The engine sends claude's own
+`can_use_tool` request, so tazuna's question UI, "always" answers and an interrupt while a question is open work as on
+claude. Checked against DeepSeek over the engine's protocol: it read the file, asked before its edit, the answer "no" left the
+file unchanged, and the model explained the fix instead. Plan mode stays claude-only (it needs claude's plan approval);
+shift-tab skips it with `--provider`. `--run` now says that `--mode` does not apply to headless runs instead of ignoring it.
+
 ## 0.0.41 (2026-10-12)
 
 **The cascade is the own loop's default.** With `--provider`, a task the own loop cannot finish (tests still failing, an
