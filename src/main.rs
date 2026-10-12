@@ -579,7 +579,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, vim: "" }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -814,6 +814,10 @@ fn run_live(
     let (mut tasks_open, mut task_sel, mut outputs_read) = (false, 0usize, Instant::now());
     // /rewind: the picker's selected message, while it is open
     let mut rewind_sel: Option<usize> = None;
+    // /vim: modal editing in the composer (remembered across sessions); `normal` and a pending operator (d, c)
+    let vim_flag = labels::dir().map(|d| d.join("vim")).ok();
+    let mut vim = vim_flag.as_ref().is_some_and(|f| f.exists());
+    let (mut normal, mut vim_op) = (false, None::<char>);
     // `@` completion: the repo's tracked files (ponytail: read once per session; new files show up next session)
     let files: Vec<String> = std::process::Command::new("git")
         .args(["ls-files"])
@@ -850,6 +854,7 @@ fn run_live(
                 output: t.output.clone(),
             }).collect(),
         });
+        v.vim = if !vim { "" } else if normal { "NORMAL" } else { "INSERT" };
         v.rewind = rewind_sel.map(|i| ui::RewindPanel { items: live.checkpoints.iter().map(|c| c.text.clone()).collect(), selected: i });
         let dt = last.elapsed();
         last = Instant::now();
@@ -986,6 +991,34 @@ fn run_live(
             continue;
         }
         asked_at = None;
+        // vim mode: esc leaves insert mode; normal mode takes plain keys (enter still sends, ctrl keys work as always)
+        if vim && !ctrl && !alt {
+            if !normal && key.code == KeyCode::Esc {
+                (normal, vim_op) = (true, None);
+                ed.left();
+                continue;
+            }
+            if normal {
+                match key.code {
+                    KeyCode::Char(c) => {
+                        if ed.vim_normal(c, &mut vim_op) {
+                            normal = false;
+                        }
+                        continue;
+                    }
+                    // esc in normal mode: stop the run when nothing is typed (never clears the text)
+                    KeyCode::Esc => {
+                        if ed.text.is_empty() {
+                            if let Some((t, e)) = busy(&s).then(|| live.interrupt()).flatten() {
+                                s.apply(&e, t);
+                            }
+                        }
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+        }
         match key.code {
             KeyCode::BackTab => {
                 let next = match live.permission_mode.as_str() {
@@ -1025,6 +1058,10 @@ fn run_live(
                     "select mode: drag to select and copy text; ctrl-s again for mouse scrolling"
                 };
                 s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
+            }
+            KeyCode::Char('x') if ctrl => {
+                let msg = ed.toggle_stash();
+                s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
             }
             KeyCode::Char('b') if ctrl => {
                 (tasks_open, task_sel) = (true, live.bg.iter().rposition(|t| t.ended.is_none()).unwrap_or(live.bg.len().saturating_sub(1)));
@@ -1080,6 +1117,16 @@ fn run_live(
                     continue;
                 }
                 let text = ed.take().trim().to_string();
+                if text == "/vim" {
+                    vim = !vim;
+                    (normal, vim_op) = (false, None);
+                    if let Some(f) = &vim_flag {
+                        let _ = if vim { std::fs::write(f, "") } else { std::fs::remove_file(f) };
+                    }
+                    let msg = if vim { "vim mode on: esc for normal mode, i/a/o to type (/vim again turns it off)" } else { "vim mode off" };
+                    s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
+                    continue;
+                }
                 if text == "/rewind" {
                     if live.checkpoints.is_empty() {
                         s.apply(&json!({"type": "harness_info", "text": "nothing to rewind yet: no message sent in this conversation"}), live.elapsed_ms());
@@ -1114,6 +1161,7 @@ fn run_live(
                     }
                     None => text,
                 };
+                normal = false; // the next message starts in insert mode
                 match if typed { live.send_typed(&text) } else { live.send(&text) } {
                     Ok((t, e)) => s.apply(&e, t),
                     Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),

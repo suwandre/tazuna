@@ -106,6 +106,8 @@ pub struct View {
     pub tasks: Option<TasksPanel>,
     /// The /rewind picker, when open.
     pub rewind: Option<RewindPanel>,
+    /// Vim mode's state for the composer ("NORMAL", "INSERT"); empty when vim mode is off.
+    pub vim: &'static str,
 }
 
 pub struct RewindPanel {
@@ -891,7 +893,7 @@ pub fn wrap(mut line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Ve
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · /rewind · ↑↓ history · esc stop · drag to copy · ctrl-t design · ctrl-o expand";
+const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · ctrl-x stash · /rewind · /vim · ↑↓ history · esc stop · drag to copy · ctrl-t design · ctrl-o expand";
 
 /// The composer row: typed text with a cursor in live mode, a placeholder and key hints otherwise.
 pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Line<'static> {
@@ -902,6 +904,9 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
         let room = (width as usize).saturating_sub(6);
         let shown: String = text.chars().rev().take(room).collect::<Vec<_>>().into_iter().rev().collect();
         spans.push(Span::styled(shown, st(th.text)));
+        if !v.vim.is_empty() {
+            spans.push(Span::styled(format!("  -- {} --", v.vim), st(th.accent)));
+        }
     } else {
         if v.live {
             spans.push(Span::styled("▍", st(th.accent)));
@@ -909,6 +914,9 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
         spans.push(Span::styled(placeholder.to_string(), st(th.faint)));
         if v.live && v.mode != "auto" {
             spans.push(Span::styled(format!("  [{}]", v.mode), st(th.warn)));
+        }
+        if !v.vim.is_empty() {
+            spans.push(Span::styled(format!("  [{}]", v.vim), st(th.accent)));
         }
         if v.bg_running > 0 {
             spans.push(Span::styled(format!("  [{} background · ctrl-b]", v.bg_running), st(th.accent)));
@@ -967,6 +975,10 @@ pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
             for rest in parts {
                 spans.push(Span::styled(CURSOR.to_string(), st(th.accent)));
                 spans.push(Span::styled(rest.to_string(), st(th.text)));
+            }
+            // vim mode's state stays in sight while typing
+            if i == skip && !v.vim.is_empty() {
+                spans.push(Span::styled(format!("  -- {} --", v.vim), st(th.accent)));
             }
             Line::from(spans)
         })
@@ -1051,7 +1063,7 @@ mod tests {
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, vim: "" };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();

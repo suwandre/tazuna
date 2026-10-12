@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.46 (2026-10-12)
+
+**`ctrl-x` stashes the message:** it goes aside and the composer clears; after the next message is sent it comes back by
+itself, and `ctrl-x` on an empty composer brings it back at once (with both, they swap). **`/vim`: modal editing in the
+composer**, remembered across sessions: esc for normal mode (`h l w b e 0 ^ $ x X D C dd cc dw cw j k`), `i a I A o` to type
+again; enter still sends, ctrl keys work as always, and esc in normal mode with nothing typed stops the run (it never clears
+the text). The composer shows `-- NORMAL --` / `-- INSERT --` while typing. Checked in a pseudo-terminal: stash and unstash,
+`/vim` on and off, and "fix the parser bug" + esc `0 w dw` became "fix parser bug" in normal mode.
+
 ## 0.0.45 (2026-10-12)
 
 **`/rewind`: undo a message and everything after it.** It lists the messages sent so far; enter rewinds files and

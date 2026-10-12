@@ -14,6 +14,8 @@ pub struct Editor {
     browsing: Option<usize>,
     draft: String,
     file: Option<PathBuf>,
+    /// A message put aside with ctrl-x.
+    stash: Option<String>,
 }
 
 impl Editor {
@@ -154,6 +156,165 @@ impl Editor {
         self.cursor = start + with.len();
     }
 
+    /// Ctrl-X: puts the message aside and clears the composer, or brings a stashed message back when the composer is
+    /// empty (with both, they swap). A stash also comes back by itself after the next message is sent.
+    pub fn toggle_stash(&mut self) -> &'static str {
+        match (self.text.is_empty(), self.stash.take()) {
+            (true, Some(s)) => {
+                self.set(s);
+                "unstashed"
+            }
+            (true, None) => "nothing to stash",
+            (false, old) => {
+                let text = std::mem::take(&mut self.text);
+                self.clear();
+                self.stash = Some(text);
+                if let Some(o) = old {
+                    self.set(o);
+                    "swapped with the stash"
+                } else {
+                    "stashed: it comes back after you send the next message (ctrl-x brings it back now)"
+                }
+            }
+        }
+    }
+
+    fn is_word(c: char) -> bool {
+        c.is_alphanumeric() || c == '_'
+    }
+
+    /// Vim `w`: to the start of the next word.
+    pub fn word_right(&mut self) {
+        let rest = &self.text[self.cursor..];
+        let mut it = rest.char_indices().peekable();
+        let first = it.peek().map(|&(_, c)| Self::is_word(c));
+        while let Some(&(_, c)) = it.peek() {
+            if Some(Self::is_word(c)) != first || c.is_whitespace() {
+                break;
+            }
+            it.next();
+        }
+        while let Some(&(_, c)) = it.peek() {
+            if !c.is_whitespace() {
+                break;
+            }
+            it.next();
+        }
+        self.cursor += it.peek().map_or(rest.len(), |&(i, _)| i);
+    }
+
+    /// Vim `b`: to the start of this or the previous word.
+    pub fn word_left(&mut self) {
+        let before: Vec<(usize, char)> = self.text[..self.cursor].char_indices().collect();
+        let mut i = before.len();
+        while i > 0 && before[i - 1].1.is_whitespace() {
+            i -= 1;
+        }
+        if i > 0 {
+            let kind = Self::is_word(before[i - 1].1);
+            while i > 0 && !before[i - 1].1.is_whitespace() && Self::is_word(before[i - 1].1) == kind {
+                i -= 1;
+            }
+        }
+        self.cursor = before.get(i).map_or(if i == 0 { 0 } else { self.cursor }, |&(b, _)| b);
+    }
+
+    /// Vim `e`: to the end of this or the next word.
+    pub fn word_end(&mut self) {
+        self.right();
+        let rest = &self.text[self.cursor..];
+        let mut last = None;
+        let mut started = false;
+        let mut kind = None;
+        for (i, c) in rest.char_indices() {
+            if c.is_whitespace() {
+                if started {
+                    break;
+                }
+                continue;
+            }
+            if started && Some(Self::is_word(c)) != kind {
+                break;
+            }
+            (started, kind, last) = (true, Some(Self::is_word(c)), Some(i));
+        }
+        if let Some(i) = last {
+            self.cursor += i;
+        }
+    }
+
+    /// Vim `dd`: deletes the line the cursor is on (with its line break).
+    pub fn delete_line(&mut self) {
+        let (s, e) = (self.line_start(), self.line_end());
+        let (s, e) = if e < self.text.len() { (s, e + 1) } else if s > 0 { (s - 1, e) } else { (s, e) };
+        self.text.replace_range(s..e, "");
+        self.cursor = s.min(self.text.len());
+        self.cursor = self.line_start();
+    }
+
+    /// One key in vim's normal mode. `op` holds a pending operator (`d`, `c`) across keys. Returns true when the key
+    /// switches to insert mode.
+    pub fn vim_normal(&mut self, c: char, op: &mut Option<char>) -> bool {
+        if let Some(o) = op.take() {
+            match (o, c) {
+                ('d', 'd') => self.delete_line(),
+                ('c', 'c') => {
+                    self.home();
+                    self.kill_to_end();
+                    return true;
+                }
+                ('d' | 'c', 'w') => {
+                    let s = self.cursor;
+                    self.word_right();
+                    self.text.replace_range(s..self.cursor, "");
+                    self.cursor = s;
+                    return o == 'c';
+                }
+                _ => {}
+            }
+            return false;
+        }
+        match c {
+            'h' => self.left(),
+            'l' => self.right(),
+            '0' | '^' => self.home(),
+            '$' => self.end(),
+            'w' => self.word_right(),
+            'b' => self.word_left(),
+            'e' => self.word_end(),
+            'x' => self.delete(),
+            'X' => self.backspace(),
+            'D' => self.kill_to_end(),
+            'j' => self.down(),
+            'k' => self.up(),
+            'd' | 'c' => *op = Some(c),
+            'C' => {
+                self.kill_to_end();
+                return true;
+            }
+            'i' => return true,
+            'a' => {
+                self.right();
+                return true;
+            }
+            'I' => {
+                self.home();
+                return true;
+            }
+            'A' => {
+                self.end();
+                return true;
+            }
+            'o' => {
+                self.end();
+                self.insert("\n");
+                return true;
+            }
+            _ => {}
+        }
+        false
+    }
+
     /// Replaces the whole text (back from the external editor), cursor at the end.
     pub fn set(&mut self, text: String) {
         self.cursor = text.len();
@@ -171,6 +332,9 @@ impl Editor {
     pub fn take(&mut self) -> String {
         let text = std::mem::take(&mut self.text);
         self.clear();
+        if let Some(stashed) = self.stash.take() {
+            self.set(stashed); // a stashed message comes back once this one is sent
+        }
         let t = text.trim().to_string();
         if !t.is_empty() && self.history.last() != Some(&t) {
             self.history.push(t.clone());
@@ -214,6 +378,45 @@ fn column(text: &str, start: usize, end: usize, col: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn stash_sets_the_message_aside_and_brings_it_back_after_sending() {
+        let mut e = Editor::default();
+        e.insert("long draft");
+        e.toggle_stash();
+        assert!(e.text.is_empty());
+        e.insert("quick question");
+        assert_eq!(e.take(), "quick question");
+        assert_eq!(e.text, "long draft"); // back by itself after sending
+        e.toggle_stash();
+        assert_eq!(e.toggle_stash(), "unstashed");
+        assert_eq!(e.text, "long draft");
+    }
+
+    #[test]
+    fn vim_normal_mode_moves_and_edits() {
+        let mut e = Editor::default();
+        e.insert("fix the parser bug");
+        let mut op = None;
+        e.vim_normal('0', &mut op);
+        e.vim_normal('w', &mut op);
+        assert_eq!(&e.text[e.cursor..], "the parser bug");
+        e.vim_normal('d', &mut op);
+        e.vim_normal('w', &mut op);
+        assert_eq!(e.text, "fix parser bug");
+        e.vim_normal('e', &mut op);
+        assert_eq!(&e.text[e.cursor..], "r bug");
+        e.vim_normal('b', &mut op);
+        assert_eq!(&e.text[e.cursor..], "parser bug");
+        assert!(e.vim_normal('A', &mut op));
+        assert_eq!(e.cursor, e.text.len());
+        e.insert("\nsecond line");
+        e.vim_normal('d', &mut op);
+        e.vim_normal('d', &mut op);
+        assert_eq!(e.text, "fix parser bug");
+        assert!(e.vim_normal('c', &mut op) == false && e.vim_normal('c', &mut op));
+        assert!(e.text.is_empty());
+    }
+
     use super::*;
 
     #[test]
