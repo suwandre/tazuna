@@ -752,7 +752,7 @@ pub fn wrap(line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Vec<Li
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ↑↓ history · esc stop · drag to copy · ctrl-t design · ctrl-o expand";
+const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ↑↓ history · esc stop · drag to copy · ctrl-t design · ctrl-o expand";
 
 /// The composer row: typed text with a cursor in live mode, a placeholder and key hints otherwise.
 pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Line<'static> {

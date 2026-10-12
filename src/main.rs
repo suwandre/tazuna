@@ -750,6 +750,24 @@ fn previous_session(base: &std::path::Path, cwd: &std::path::Path, id: Option<&s
     })
 }
 
+/// Opens `text` in `editor` (a shell command such as `vim` or `code --wait`; the file is its last argument) and returns
+/// what was saved, without the final newline editors add. A failing editor leaves the message as it was.
+fn edit_in(editor: &str, text: &str) -> Result<String> {
+    let path = std::env::temp_dir().join(format!("tazuna-message-{}.md", std::process::id()));
+    std::fs::write(&path, text)?;
+    let status = std::process::Command::new("sh").arg("-c").arg(format!("{editor} \"$1\"")).arg("sh").arg(&path).status();
+    let saved = std::fs::read_to_string(&path);
+    let _ = std::fs::remove_file(&path);
+    match status {
+        Ok(s) if s.success() => {
+            let saved = saved?;
+            Ok(saved.strip_suffix('\n').unwrap_or(&saved).to_string())
+        }
+        Ok(s) => bail!("`{editor}` exited with {s}"),
+        Err(e) => bail!("could not start `{editor}`: {e}"),
+    }
+}
+
 fn run_live(
     term: &mut ratatui::DefaultTerminal,
     live: &mut live::Live,
@@ -924,6 +942,25 @@ fn run_live(
                 };
                 s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
             }
+            // ctrl-g: the message so far in $VISUAL / $EDITOR (vi without either); what is saved comes back here
+            KeyCode::Char('g') if ctrl => {
+                let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "vi".into());
+                let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags, DisableBracketedPaste, DisableMouseCapture);
+                ratatui::restore();
+                let edited = edit_in(&editor, &ed.text);
+                *term = ratatui::init();
+                let _ = execute!(std::io::stdout(), EnableBracketedPaste);
+                if mouse {
+                    let _ = execute!(std::io::stdout(), EnableMouseCapture);
+                }
+                if supports_keyboard_enhancement().unwrap_or(false) {
+                    let _ = execute!(std::io::stdout(), PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES));
+                }
+                match edited {
+                    Ok(text) => ed.set(text),
+                    Err(e) => s.apply(&json!({"type": "harness_info", "text": format!("editor: {e:#} (the message is unchanged)")}), live.elapsed_ms()),
+                }
+            }
             // ctrl-v: an image on the clipboard becomes a file the message names (sent as an image with it)
             KeyCode::Char('v') if ctrl => match paste_image() {
                 Ok(path) => ed.insert(&format!("@{} ", path.display())),
@@ -1029,6 +1066,13 @@ mod tests {
         assert_eq!(out, v(&["--model", "claude-opus-5-5", "--effort", "max", "--run", "t.txt", "--effort", "high"]));
         assert_eq!(super::with_preset(v(&["--run", "t.txt"])).unwrap(), v(&["--run", "t.txt"]));
         assert!(super::with_preset(v(&["--preset", "nope"])).is_err());
+    }
+
+    #[test]
+    fn the_external_editor_round_trips_the_message() {
+        assert_eq!(super::edit_in("printf 'edited\\n' >", "draft").unwrap(), "edited");
+        assert_eq!(super::edit_in("true", "keep me").unwrap(), "keep me");
+        assert!(super::edit_in("false", "x").is_err());
     }
 
     #[test]

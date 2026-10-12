@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.43 (2026-10-12)
+
+**`ctrl-g` opens the message in your editor** (`$VISUAL`, else `$EDITOR`, else `vi`; a command like `code --wait` works).
+tazuna steps out of the screen while the editor runs; what you save comes back into the composer, and a failing editor
+leaves the message as it was. Checked in a pseudo-terminal: the edited text is back in the composer and the screen redraws.
+
 ## 0.0.42 (2026-10-12)
 
 **The own loop asks before commands and edits.** With `--provider`, the ask mode now asks before every `bash`, `write` and

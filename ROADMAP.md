@@ -67,8 +67,8 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
    mode, input editing and history, resume, subagents under their call. Done after 0.0.18: slash commands (claude runs
    them in stream mode; tazuna shows their output, marks /clear and /compact, completes them with tab), `@` file
    completion, the to-do list as a checklist, images (`@shot.png`, dragged paths, `ctrl-v`), `!` shell mode. Left (nice to
-   have): external editor, stash, vim mode, a background-task view, rewind. Own loop: ask and edits modes since 0.0.42
-   (plan mode claude-only).
+   have): stash, vim mode, a background-task view, rewind. Done: own loop ask and edits modes (0.0.42; plan mode
+   claude-only), `ctrl-g` external editor (0.0.43).
 2. **Cheap `claude` levers** before the own loop: ~~5-minute prompt cache~~ (v0.0.20: −10%, same judge; headless default),
    ~~a lower Bash output limit~~ (+30%: ruled out), ~~repo map~~ (v0.0.21: no gain, the agent reads as much),
    ~~Sonnet explorer subagent~~ (v0.0.23: −35% turns but +12% cost), ~~Haiku explorer~~ (v0.0.24: −28% cost, judge −0.25;

@@ -154,6 +154,13 @@ impl Editor {
         self.cursor = start + with.len();
     }
 
+    /// Replaces the whole text (back from the external editor), cursor at the end.
+    pub fn set(&mut self, text: String) {
+        self.cursor = text.len();
+        self.text = text;
+        self.browsing = None;
+    }
+
     pub fn clear(&mut self) {
         self.text.clear();
         self.cursor = 0;
