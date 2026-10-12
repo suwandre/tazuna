@@ -205,6 +205,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   DeepSeek on CheaperInference on price or speed. A "few turns" prompt cut DeepSeek's turns 21% and tokens 38% but not cost
   (more output). DeepSeek on CheaperInference stays the cheap step. Judge rounds now skip empty tasks and need the guard
   after a chained judge round spent extra usage.
+- 2026-10-12: judge rounds cost less: one pass by default (two only for results a default rests on), with reference only,
+  and `--dry-run` prints the number of Opus calls first. A cheap judge (GPT-6 Luna max, 51 patches Opus had graded): r 0.89,
+  88% within one point, but the same order as Opus for two patches of one task only 64% of the time (high 66%, xhigh 62%).
+  Luna max screens out clear losers (2+ points behind); Opus stays the judge for decisions.
 - 2026-10-11: clean benchmark (7 tasks merged after DeepSeek's release, 2 runs, judged without reference): cascade +0.7
   judge at ~1/8 the cost of tazuna on Opus. The earlier ~2.4-point lead on older tasks was mostly the judge's reference
   anchoring; the real lead is smaller but holds. Cascade stays the plan for code that may leave the machine (`--data any`).
