@@ -209,6 +209,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   and `--dry-run` prints the number of Opus calls first. A cheap judge (GPT-6 Luna max, 51 patches Opus had graded): r 0.89,
   88% within one point, but the same order as Opus for two patches of one task only 64% of the time (high 66%, xhigh 62%).
   Luna max screens out clear losers (2+ points behind); Opus stays the judge for decisions.
+- 2026-10-12: cascade by default with `--provider` (0.0.41). Open: the hand-over runs Opus 5.5 at medium, a default never
+  measured; it only sees the tasks the cheap model failed, where effort matters most (terraform: medium 1/3 in every
+  harness, max 3/3). Next with weekly headroom: the October hand-over tasks (prometheus, lazygit, telegraf) at high vs medium.
 - 2026-10-11: clean benchmark (7 tasks merged after DeepSeek's release, 2 runs, judged without reference): cascade +0.7
   judge at ~1/8 the cost of tazuna on Opus. The earlier ~2.4-point lead on older tasks was mostly the judge's reference
   anchoring; the real lead is smaller but holds. Cascade stays the plan for code that may leave the machine (`--data any`).
