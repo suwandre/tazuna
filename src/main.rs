@@ -25,7 +25,9 @@
 //!          [--data trusted|any]   # trusted (default): --provider only for hosts in ~/.config/tazuna/trusted-providers;
 //!                                 # any: also providers that may store or use the code
 //!          [--provider URL [--key-env VAR]]   # tazuna's own loop on an OpenAI-compatible API instead of claude; --model
-//!                                             # is the provider's model id; key from VAR (default OPENAI_API_KEY)
+//!                                             # is the provider's model id; key from VAR (default OPENAI_API_KEY);
+//!                                             # a task it fails goes to Opus 5.5 medium on claude (the cascade)
+//!          [--no-escalate]   # with --provider: no hand-over, the own loop's result stands
 //!          [--max-minutes N]   # own loop: stop (or with --escalate, hand over) after N minutes per task; default: no
 //!                              # time limit, only the $1 cap per task (TAZUNA_MAX_USD; cheap models are slow but
 //!                              # cost cents)
@@ -117,6 +119,7 @@ struct Args {
     boss: Option<String>,
     advisor: Option<String>,
     escalate: Option<(String, String)>,
+    no_escalate: bool,
     /// `--data trusted|any`: with `trusted` (default) only providers on the trusted list may see the code.
     data_any: bool,
     review_effort: String,
@@ -136,10 +139,22 @@ const PRESETS: [(&str, &str); 4] = [
     ("default", ""),
     ("boss", "--boss haiku"),
     ("max", "--model claude-opus-5-5 --effort max"),
-    ("cascade", "--data any --provider https://api.cheaperinference.com/v1 --key-env CHEAPER_INFERENCE_API_KEY --model deepseek-v4.1-flash --effort max --escalate claude-opus-5-5:medium"),
+    ("cascade", "--data any --provider https://api.cheaperinference.com/v1 --key-env CHEAPER_INFERENCE_API_KEY --model deepseek-v4.1-flash --effort max"),
 ];
 
 /// Replaces `--preset NAME` with the preset's flags, placed first so the user's own flags override them.
+/// The cascade's strong model: where a task goes that the own loop could not finish.
+const CASCADE_TO: (&str, &str) = ("claude-opus-5-5", "medium");
+
+/// The own loop hands a failed task to Opus on claude by default (the cascade: 13 of 14 October runs solved at about a
+/// fifth of tazuna-on-Opus's cost); `--no-escalate` keeps the own loop's result as it is.
+fn escalation(provider: bool, escalate: Option<(String, String)>, no_escalate: bool) -> Option<(String, String)> {
+    if no_escalate {
+        return None;
+    }
+    escalate.or_else(|| provider.then(|| (CASCADE_TO.0.to_string(), CASCADE_TO.1.to_string())))
+}
+
 fn with_preset(args: Vec<String>) -> Result<Vec<String>> {
     let Some(i) = args.iter().position(|a| a == "--preset") else { return Ok(args) };
     let name = args.get(i + 1).context("--preset needs a name")?.clone();
@@ -185,6 +200,7 @@ fn args() -> Result<Args> {
         boss: None,
         advisor: None,
         escalate: None,
+        no_escalate: false,
         data_any: false,
         review_effort: "medium".into(),
         project_instructions: true,
@@ -238,6 +254,7 @@ fn args() -> Result<Args> {
                 // SAFETY: flags are parsed before any thread starts; the own loop (a child process) reads it
                 unsafe { std::env::set_var("TAZUNA_MAX_MINUTES", n) };
             }
+            "--no-escalate" => a.no_escalate = true,
             "--escalate" => {
                 let v = val()?;
                 let (m, e) = v.split_once(':').unwrap_or((&v, "medium"));
@@ -289,6 +306,7 @@ fn args() -> Result<Args> {
             _ => a.path = Some(arg.into()),
         }
     }
+    a.escalate = escalation(a.provider.is_some(), a.escalate.take(), a.no_escalate);
     Ok(a)
 }
 
@@ -1008,6 +1026,17 @@ mod tests {
         assert_eq!(out, v(&["--model", "claude-opus-5-5", "--effort", "max", "--run", "t.txt", "--effort", "high"]));
         assert_eq!(super::with_preset(v(&["--run", "t.txt"])).unwrap(), v(&["--run", "t.txt"]));
         assert!(super::with_preset(v(&["--preset", "nope"])).is_err());
+    }
+
+    #[test]
+    fn the_own_loop_escalates_unless_told_not_to() {
+        let opus = Some(("claude-opus-5-5".to_string(), "medium".to_string()));
+        let mine = Some(("claude-sonnet-5-5".to_string(), "high".to_string()));
+        assert_eq!(super::escalation(true, None, false), opus);
+        assert_eq!(super::escalation(true, mine.clone(), false), mine);
+        assert_eq!(super::escalation(true, None, true), None);
+        assert_eq!(super::escalation(false, None, false), None); // claude alone: no default hand-over
+        assert_eq!(super::escalation(false, mine.clone(), false), mine);
     }
 
     #[test]

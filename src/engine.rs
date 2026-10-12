@@ -41,8 +41,9 @@ pub fn serve(args: &[String]) -> Result<()> {
     let http: ureq::Agent = ureq::Agent::config_builder()
         // the system's TLS (macOS Security framework): ~1 MB less binary than rustls
         .tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build())
-        // a normal call answers in 15-60 s, a long reasoning one in a few minutes
-        .timeout_global(Some(Duration::from_secs(300))).http_status_as_error(false).build().into();
+        // a normal call answers in 15-60 s, a long reasoning one in a minute or two; 300 s let a provider that accepted a
+        // call and never answered stall a run for an hour across the retries (GLM on Experiential Labs, 2026-10-12)
+        .timeout_global(Some(Duration::from_secs(180))).http_status_as_error(false).build().into();
     // retried like model calls: one benchmark run died at startup on a model-list request that never answered
     let (price, responses) = [2, 8, 30].iter().find_map(|w| price(&http, &url, &key, &model).map_err(|e| {
         eprintln!("model list failed ({e:#}); retrying in {w}s");

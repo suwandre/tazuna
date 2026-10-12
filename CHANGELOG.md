@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.41 (2026-10-12)
+
+**The cascade is the own loop's default.** With `--provider`, a task the own loop cannot finish (tests still failing, an
+error, no change, the budget spent) goes to Opus 5.5 medium on claude without `--escalate`; `--no-escalate` keeps the own
+loop's result. The `cascade` preset no longer needs the flag. **Model calls time out after 180 s** (was 300): of 15,505
+recorded DeepSeek and Luna calls, the median took 15 s, 99% under 83 s and 0.1% over 180 s, while a provider that accepts a
+call and never answers stalled a run for an hour across the retries.
+
 ## 0.0.40 (2026-10-12)
 
 **Own loop on Experiential Labs** (`--provider https://api.experientiallabs.ai/v1`): its model list gives prices in nano-USD
