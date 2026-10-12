@@ -26,6 +26,9 @@
 //!                                 # any: also providers that may store or use the code
 //!          [--provider URL [--key-env VAR]]   # tazuna's own loop on an OpenAI-compatible API instead of claude; --model
 //!                                             # is the provider's model id; key from VAR (default OPENAI_API_KEY)
+//!          [--max-minutes N]   # own loop: stop (or with --escalate, hand over) after N minutes per task; default: no
+//!                              # time limit, only the $1 cap per task (TAZUNA_MAX_USD; cheap models are slow but
+//!                              # cost cents)
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
 //!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
 //!          [--trust] [--user-settings]   # trust the repo's hooks/skills without asking; also load your ~/.claude settings
@@ -228,6 +231,12 @@ fn args() -> Result<Args> {
                     "trusted" => false,
                     v => bail!("--data takes trusted or any, not {v}"),
                 }
+            }
+            "--max-minutes" => {
+                let n = val()?;
+                n.parse::<u64>().with_context(|| format!("--max-minutes takes a number, not {n}"))?;
+                // SAFETY: flags are parsed before any thread starts; the own loop (a child process) reads it
+                unsafe { std::env::set_var("TAZUNA_MAX_MINUTES", n) };
             }
             "--escalate" => {
                 let v = val()?;

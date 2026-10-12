@@ -11,16 +11,12 @@ use std::{
     time::Duration,
 };
 
-/// A backstop against loops: the dollar cap is the real limit, so cheap models get proportionally more turns.
-const MAX_TURNS: usize = 200;
+/// A backstop against loops: the dollar cap is the real limit, so cheap models get proportionally more turns. 200 cut
+/// DeepSeek off after ~75 minutes (180 turns cost it $0.09); 2000 stays above where its $1 cap lands.
+const MAX_TURNS: usize = 2000;
 /// Dollar cap per task, tazuna's follow-ups included; `TAZUNA_MAX_USD` overrides it (an expensive model on the own loop
-/// needs more).
-const MAX_USD: f64 = 0.50;
-/// Time budget per task, tazuna's follow-ups included: a cheap model that is still going after an hour hands over (with
-/// `--escalate`) instead of running for hours (DeepSeek on the prometheus tasks: 3 h and more at 15-24 s provider wait per
-/// call).
-/// `TAZUNA_MAX_MINUTES` overrides it.
-const MAX_RUN: Duration = Duration::from_secs(3600);
+/// needs more). $0.50 ended DeepSeek after ~2 hours on hard tasks (lazygit, prometheus: 230-320 calls), before it was done.
+const MAX_USD: f64 = 1.0;
 
 /// USD per token: input, cached input, output.
 type Price = (f64, f64, f64);
@@ -40,7 +36,11 @@ pub fn serve(args: &[String]) -> Result<()> {
         .tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build())
         // a normal call answers in 15-60 s, a long reasoning one in a few minutes
         .timeout_global(Some(Duration::from_secs(300))).http_status_as_error(false).build().into();
-    let (price, responses) = price(&http, &url, &key, &model)?;
+    // retried like model calls: one benchmark run died at startup on a model-list request that never answered
+    let (price, responses) = [2, 8, 30].iter().find_map(|w| price(&http, &url, &key, &model).map_err(|e| {
+        eprintln!("model list failed ({e:#}); retrying in {w}s");
+        std::thread::sleep(Duration::from_secs(*w));
+    }).ok()).map_or_else(|| price(&http, &url, &key, &model), Ok)?;
 
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -140,9 +140,11 @@ impl Loop {
             if turns >= MAX_TURNS {
                 return end(self, "error_max_turns", format!("[stopped: {MAX_TURNS} turns]"), turns, usage);
             }
-            let budget = std::env::var("TAZUNA_MAX_MINUTES").ok().and_then(|v| v.parse::<u64>().ok()).map_or(MAX_RUN, |m| Duration::from_secs(m * 60));
-            if began.elapsed() >= budget {
-                return end(self, "error_max_time", format!("[stopped: {} min]", budget.as_secs() / 60), turns, usage);
+            // `--max-minutes`, opt-in: no time limit by default, since a cheap model's extra hour costs cents
+            if let Some(m) = std::env::var("TAZUNA_MAX_MINUTES").ok().and_then(|v| v.parse::<u64>().ok()) {
+                if began.elapsed() >= Duration::from_secs(m * 60) {
+                    return end(self, "error_max_time", format!("[stopped: {m} min]"), turns, usage);
+                }
             }
             let cap = std::env::var("TAZUNA_MAX_USD").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(MAX_USD);
             if self.cost - start >= cap {
@@ -357,7 +359,7 @@ mod tests {
         let mut l = Loop {
             call: Box::new(move |_: &Value| {
                 *c.borrow_mut() += 1;
-                Ok(json!({"choices": [{"message": {"content": "done"}}], "usage": {"cost": 0.6}}))
+                Ok(json!({"choices": [{"message": {"content": "done"}}], "usage": {"cost": 1.2}}))
             }),
             responses: false,
             system: String::new(),
@@ -374,7 +376,7 @@ mod tests {
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
-        l.run(&json!("task"), false, &rx); // spends $0.60, past the $0.50 cap
+        l.run(&json!("task"), false, &rx); // spends $1.20, past the $1 cap
         l.run(&json!("tests fail"), true, &rx); // a follow-up: the cap is used up, no call
         assert_eq!(*calls.borrow(), 1);
         l.run(&json!("next task"), false, &rx); // a new task: a fresh budget

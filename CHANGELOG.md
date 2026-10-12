@@ -16,6 +16,33 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.39 (2026-10-12)
+
+**Own loop: no time limit by default, $1 per task.** A cheap model's extra hour costs cents, so the own loop now runs until
+it is done or has spent $1 on the task (was 60 minutes and $0.50: on lazygit and prometheus, DeepSeek reached $0.28-0.49
+after about 2 hours, still working). `--max-minutes N` brings a time limit back for whoever wants it fast (with
+`--escalate`, the hand-over comes after N minutes); `TAZUNA_MAX_USD` still overrides the dollar cap. The turn backstop rises
+to 2000 (200 had cut DeepSeek off after ~75 minutes). The provider's model list at startup is retried like model calls:
+one run died when that request hung.
+
+**Benchmark: cascade on the 7 October tasks** (DeepSeek V4.1 Flash max first, Opus 5.5 medium on failure; 2 runs; Opus
+5.5 xhigh judge with / without reference):
+
+| | fully solved | judge without ref | with ref | cost (14 runs) | hours (sum / longest run) | Opus hand-overs |
+|---|---|---|---|---|---|---|
+| tazuna on Opus 5.5 medium (0.0.34) | 9/14 | 6.79 | 6.93 | $38.90 | 16.8 / 8.6 | - |
+| cascade 0.0.34 (60 min, reset by each follow-up) | 12/14 | 7.47 | 7.97 | $5.04 | 12.3 / 2.1 | 6 |
+| cascade 0.0.38 (no time limit, $0.50) | 13/14 | 7.79 | 8.32 | $8.36 | 14.1 / 2.7 | 5 |
+| cascade 0.0.39 ($1), lazygit and prometheus only | 3/4 | 5.50 / 8.00 | 6.25 / 8.25 | $0.85 (4 runs) | 4.1 / 2.0 | 0 |
+| GPT-6 Luna max, own loop, no fallback (1 run) | 5/7 | 6.79 | 6.14 | $0.85 (7 runs) | 3.7 / 1.4 | - |
+
+Without the time limit, quality and solved runs move within noise (+0.3 judge, +1 solved) and the sum of hours by +15%;
+cost rose 65%, nearly all from one prometheus hand-over ($3.79). The $1 cap is untested so far: none of its four runs got
+near $0.50. DeepSeek solved lazygit in 10-17 minutes in both runs here and needed 2.7 hours in both runs at 0.0.38, so a
+single task's time swings far more than any setting does. One prometheus run claimed success with the visible tests green
+and failed the hidden ones, a miss the cascade cannot catch: it hands over only on visible failures. Luna is quick (5 tasks
+under 30 minutes) but judged ~1 point below the cascade, which has Opus behind it.
+
 ## 0.0.38 (2026-10-11)
 
 **Own loop: the time and dollar budget count per task.** tazuna's follow-ups (test failures, review) used to start a fresh
