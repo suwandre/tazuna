@@ -167,6 +167,26 @@ fn starts_turn(e: &Value) -> bool {
     (e["type"] == "stream_event" && e["event"]["type"] == "message_start") || e["type"] == "assistant"
 }
 
+/// A message the user sent, as a point /rewind can go back to.
+#[derive(Clone)]
+pub struct Checkpoint {
+    /// The id tazuna gave the message (claude keeps it): what `rewind_files` takes.
+    pub uuid: String,
+    pub text: String,
+    /// The last reply before the message: a conversation rewind resumes there (None: before the first message).
+    pub before: Option<String>,
+}
+
+/// A random version-4 UUID (claude takes the message ids it is given, and they must be UUIDs).
+fn new_uuid() -> String {
+    let mut b = [0u8; 16];
+    let _ = std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    format!("{}-{}-{}-{}-{}", &h[0..8], &h[8..12], &h[12..16], &h[16..20], &h[20..32])
+}
+
 /// A background task claude runs (a shell command, a Monitor, a subagent), for the ctrl-b view.
 #[derive(Clone)]
 pub struct BgTask {
@@ -256,6 +276,14 @@ pub struct Live {
     tasks: std::collections::HashSet<String>,
     /// Every background task of this session, oldest first: the ctrl-b view.
     pub bg: Vec<BgTask>,
+    /// The messages the user sent in this process's conversation, oldest first: what /rewind offers.
+    pub checkpoints: Vec<Checkpoint>,
+    /// The uuid of claude's latest top-level reply.
+    last_assistant: Option<String>,
+    /// A conversation rewind waiting for the file rewind's answer: where to resume (None inside: start fresh).
+    pending_resume: Option<Option<String>>,
+    /// The next spawn resumes the session at this message (`--resume-session-at`, in a fork).
+    resume_at: Option<String>,
     /// When the last of `tasks` finished.
     tasks_done: Option<Instant>,
     /// Independent reviewer: model and effort (`--review-model`, `--review-effort`).
@@ -341,6 +369,10 @@ impl Live {
             task_reviewed: false,
             tasks: Default::default(),
             bg: Vec::new(),
+            checkpoints: Vec::new(),
+            last_assistant: None,
+            pending_resume: None,
+            resume_at: None,
             permission_mode: "bypassPermissions".into(),
             pending: VecDeque::new(),
             outbox: Vec::new(),
@@ -408,7 +440,12 @@ impl Live {
             None
         };
         let sent = first.as_deref().unwrap_or(text);
-        self.write_content(if attach { user_content(sent, &self.cwd) } else { json!(sent) }, false)?;
+        // a typed message is a point /rewind can go back to (claude keeps the id we give it)
+        let uuid = (self.provider.is_none()).then(new_uuid);
+        if let Some(u) = &uuid {
+            self.checkpoints.push(Checkpoint { uuid: u.clone(), text: text.to_string(), before: self.last_assistant.clone() });
+        }
+        self.write_content(if attach { user_content(sent, &self.cwd) } else { json!(sent) }, false, uuid.as_deref())?;
         let mut run = Run::new(text, self.elapsed_ms(), &self.cwd);
         run.types_before = types_before;
         (self.task, self.task_reviewed) = (text.to_string(), false);
@@ -418,16 +455,19 @@ impl Live {
 
     /// tazuna's own messages to claude (feedback, review): plain text, never attachments.
     fn write_user(&mut self, text: &str) -> Result<()> {
-        self.write_content(json!(text), true)
+        self.write_content(json!(text), true, None)
     }
 
     /// `followup`: tazuna's own message about the current task, which the own loop counts against the task's time and
     /// dollar budget instead of starting a new one (claude never sees the field).
-    fn write_content(&mut self, content: Value, followup: bool) -> Result<()> {
+    fn write_content(&mut self, content: Value, followup: bool, uuid: Option<&str>) -> Result<()> {
         if self.child.is_none() {
             self.spawn()?;
         }
         let mut line = json!({"type": "user", "message": {"role": "user", "content": content}});
+        if let Some(u) = uuid {
+            line["uuid"] = json!(u);
+        }
         if followup && self.provider.is_some() {
             line["tazuna_followup"] = json!(true);
         }
@@ -518,6 +558,63 @@ impl Live {
         self.record(json!({"type": "harness_mode", "mode": mode}))
     }
 
+    /// Rewinds to just before the user message `checkpoints[i]`: the file changes made since (`files`, claude's
+    /// `rewind_files`) and/or the conversation from there on (`conversation`: claude resumes at the last reply before
+    /// it, in a forked session). Only while idle and on claude; the own loop keeps no checkpoints.
+    pub fn rewind(&mut self, i: usize, files: bool, conversation: bool) -> Result<(f64, Value)> {
+        if self.provider.is_some() {
+            bail!("rewind needs claude's checkpoints; the own loop (--provider) has none yet");
+        }
+        if !self.idle() {
+            bail!("wait until the run has finished (or stop it with esc), then rewind");
+        }
+        let cp = self.checkpoints.get(i).cloned().context("no such message")?;
+        if files {
+            if self.child.is_none() {
+                self.spawn()?;
+            }
+            let stdin = self.stdin.as_mut().context("claude stdin closed")?;
+            // a dry run first: its answer names the files (the real rewind's answer does not)
+            for (dry, tag) in [(true, "rewind-dry"), (false, "rewind")] {
+                self.requests_sent += 1;
+                let req = json!({"type": "control_request", "request_id": format!("{tag}-{}", self.requests_sent),
+                    "request": {"subtype": "rewind_files", "user_message_id": cp.uuid, "dry_run": dry}});
+                writeln!(stdin, "{req}")?;
+                stdin.flush()?;
+            }
+        }
+        if conversation {
+            self.checkpoints.truncate(i);
+            self.pending_resume = Some(cp.before.clone());
+            if !files {
+                self.resume_before();
+            } // with files: once claude has answered the file rewind (its checkpoints live in that process)
+        }
+        let what = match (files, conversation) {
+            (true, true) => "files and conversation",
+            (true, false) => "files",
+            _ => "conversation",
+        };
+        Ok(self.record(json!({"type": "harness_notice", "text": format!("── rewound {what} to before: {} ──", crate::session::shown(&cp.text, 60)), "error": false})))
+    }
+
+    /// Ends the process so the next message resumes the conversation at the reply `pending_resume` names (or starts a
+    /// fresh one when the rewind went back before the first message).
+    fn resume_before(&mut self) {
+        let Some(before) = self.pending_resume.take() else { return };
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+        self.stdin = None;
+        self.generation += 1;
+        match before {
+            Some(at) => self.resume_at = Some(at),
+            None => self.session_id = None,
+        }
+        self.last_assistant = None;
+    }
+
     /// Asks claude for the latest output of shell and Monitor tasks still running, and once more right after one ends
     /// (subagents have no output to read). The answers arrive through `poll`.
     pub fn read_task_outputs(&mut self) {
@@ -603,6 +700,36 @@ impl Live {
                             self.pending.push_back(e);
                         }
                         continue;
+                    }
+                    if e["type"] == "assistant" && e["parent_tool_use_id"].is_null() {
+                        if let Some(u) = e["uuid"].as_str() {
+                            self.last_assistant = Some(u.to_string()); // where a conversation rewind resumes
+                        }
+                    }
+                    // answers to /rewind's file requests
+                    if e["type"] == "control_response" {
+                        let rid = e["response"]["request_id"].as_str().unwrap_or_default();
+                        let r = &e["response"]["response"];
+                        if rid.starts_with("rewind-dry-") {
+                            let files: Vec<String> = r["filesChanged"].as_array().into_iter().flatten()
+                                .filter_map(|f| f.as_str()).map(|f| f.rsplit('/').next().unwrap_or(f).to_string()).collect();
+                            let text = if r["canRewind"] == true && files.is_empty() {
+                                "no file changes recorded since that message (claude checkpoints only its own edit tools; the lean profile edits through tazuna's)".to_string()
+                            } else if r["canRewind"] == true {
+                                format!("restoring {} file(s): {} (+{} −{})", files.len(), files.join(", "), r["insertions"].as_i64().unwrap_or(0), r["deletions"].as_i64().unwrap_or(0))
+                            } else {
+                                format!("files cannot be rewound: {}", r["error"].as_str().or(e["response"]["error"].as_str()).unwrap_or("no checkpoint"))
+                            };
+                            out.push(self.record(json!({"type": "harness_info", "text": text})));
+                            continue;
+                        }
+                        if rid.starts_with("rewind-") {
+                            let ok = e["response"]["subtype"] == "success" && r["canRewind"] == true;
+                            let text = if ok { "files restored".to_string() } else { format!("file rewind failed: {}", r["error"].as_str().or(e["response"]["error"].as_str()).unwrap_or("unknown")) };
+                            out.push(self.record(json!({"type": "harness_info", "text": text})));
+                            self.resume_before();
+                            continue;
+                        }
                     }
                     // a background task's output, asked for by the ctrl-b view: no event of its own
                     if e["type"] == "control_response" {
@@ -1022,6 +1149,13 @@ impl Live {
         }
         if let Some(id) = &self.session_id {
             cmd.args(["--resume", id]);
+            // after a conversation rewind: the session up to that reply, as a fork (the original stays as it was)
+            if let Some(at) = self.resume_at.take() {
+                cmd.args(["--resume-session-at", &at, "--fork-session"]);
+            }
+        }
+        if self.mode != "headless" {
+            cmd.env("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "1"); // /rewind's file checkpoints
         }
         self.start(cmd)
     }
@@ -1135,6 +1269,16 @@ pub fn in_git_repo() -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn message_ids_are_version_4_uuids() {
+        let (a, b) = (super::new_uuid(), super::new_uuid());
+        assert_ne!(a, b);
+        let parts: Vec<&str> = a.split('-').collect();
+        assert_eq!(parts.iter().map(|p| p.len()).collect::<Vec<_>>(), [8, 4, 4, 4, 12]);
+        assert!(parts[2].starts_with('4') && "89ab".contains(&parts[3][..1]));
+    }
+
     use super::*;
 
     #[test]

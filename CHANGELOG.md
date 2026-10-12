@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.45 (2026-10-12)
+
+**`/rewind`: undo a message and everything after it.** It lists the messages sent so far; enter rewinds files and
+conversation, `f` files only, `c` the conversation only. Files: claude's own file checkpoints
+(`CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING`, live sessions only) and its `rewind_files` request, with a dry run first that
+names the files. Conversation: claude restarts at the last reply before that message (`--resume-session-at`, as a fork of
+the session), and the message comes back into the composer to edit and send again. Each typed message carries an id
+tazuna gives it, which is what both take. Checked in a pseudo-terminal against Haiku: after "create a.txt with one" and
+"append two", `/rewind` + enter reported "restoring 1 file(s): a.txt (+1 −2)", a.txt held only "one" again, the second
+message was back in the composer, and asked about its previous message claude named only the first. Limits: claude
+checkpoints only its own edit tools, so in the lean profile there is nothing to restore (tazuna says so); not on the own
+loop yet.
+
 ## 0.0.44 (2026-10-12)
 
 **`ctrl-b`: the background tasks of a session** (commands claude runs with `run_in_background`, Monitors, background

@@ -579,7 +579,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -812,6 +812,8 @@ fn run_live(
     let (mut copy_now, mut copied) = (false, None::<String>);
     // ctrl-b: the background-task view (which row is selected, when its output was last asked for)
     let (mut tasks_open, mut task_sel, mut outputs_read) = (false, 0usize, Instant::now());
+    // /rewind: the picker's selected message, while it is open
+    let mut rewind_sel: Option<usize> = None;
     // `@` completion: the repo's tracked files (ponytail: read once per session; new files show up next session)
     let files: Vec<String> = std::process::Command::new("git")
         .args(["ls-files"])
@@ -848,6 +850,7 @@ fn run_live(
                 output: t.output.clone(),
             }).collect(),
         });
+        v.rewind = rewind_sel.map(|i| ui::RewindPanel { items: live.checkpoints.iter().map(|c| c.text.clone()).collect(), selected: i });
         let dt = last.elapsed();
         last = Instant::now();
         for (t, e) in live.poll() {
@@ -912,6 +915,42 @@ fn run_live(
         // ignored, and keys in the first moment after it appears count for nothing (typing must not approve by accident)
         // ctrl-c and ctrl-d still stop or quit: stopping answers every open question with no
         let stop_key = ctrl && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'));
+        // the /rewind picker owns the keyboard while open
+        if let (Some(i), false) = (rewind_sel, stop_key) {
+            let last = live.checkpoints.len().saturating_sub(1);
+            let choice = match key.code {
+                KeyCode::Up => {
+                    rewind_sel = Some(i.saturating_sub(1));
+                    None
+                }
+                KeyCode::Down => {
+                    rewind_sel = Some((i + 1).min(last));
+                    None
+                }
+                KeyCode::Enter => Some((true, true)),
+                KeyCode::Char('f') => Some((true, false)),
+                KeyCode::Char('c') => Some((false, true)),
+                KeyCode::Esc => {
+                    rewind_sel = None;
+                    None
+                }
+                _ => None,
+            };
+            if let Some((files, conversation)) = choice {
+                rewind_sel = None;
+                let text = live.checkpoints.get(i).map(|c| c.text.clone()).unwrap_or_default();
+                match live.rewind(i, files, conversation) {
+                    Ok((t, e)) => {
+                        s.apply(&e, t);
+                        if conversation {
+                            ed.set(text); // the message comes back to edit and send again
+                        }
+                    }
+                    Err(e) => s.apply(&json!({"type": "harness_info", "text": format!("rewind: {e:#}")}), live.elapsed_ms()),
+                }
+            }
+            continue;
+        }
         // the background-task view owns the keyboard while open: select, stop, close
         if tasks_open && !stop_key && live.pending.is_empty() {
             match key.code {
@@ -1041,6 +1080,14 @@ fn run_live(
                     continue;
                 }
                 let text = ed.take().trim().to_string();
+                if text == "/rewind" {
+                    if live.checkpoints.is_empty() {
+                        s.apply(&json!({"type": "harness_info", "text": "nothing to rewind yet: no message sent in this conversation"}), live.elapsed_ms());
+                    } else {
+                        rewind_sel = Some(live.checkpoints.len() - 1);
+                    }
+                    continue;
+                }
                 if let Some(rest) = text.strip_prefix("/good").or_else(|| text.strip_prefix("/bad")) {
                     // rate the last run locally; never sent to claude
                     let verdict = if text.starts_with("/good") { "good" } else { "bad" };

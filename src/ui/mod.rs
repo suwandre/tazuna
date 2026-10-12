@@ -104,6 +104,14 @@ pub struct View {
     pub bg_running: usize,
     /// The ctrl-b view of background tasks, when open.
     pub tasks: Option<TasksPanel>,
+    /// The /rewind picker, when open.
+    pub rewind: Option<RewindPanel>,
+}
+
+pub struct RewindPanel {
+    /// The messages sent so far, oldest first.
+    pub items: Vec<String>,
+    pub selected: usize,
 }
 
 pub struct TasksPanel {
@@ -141,6 +149,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
     if let Some(p) = &v.tasks {
         draw_tasks(f, p, th);
     }
+    if let Some(p) = &v.rewind {
+        draw_rewind(f, p, th);
+    }
     areas
 }
 
@@ -177,6 +188,29 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
         for l in shown {
             lines.push(Line::from(Span::styled(l.chars().take(inner.width as usize).collect::<String>(), st(th.text))));
         }
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// /rewind: the messages sent so far; the chosen one and everything after it can be undone.
+fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme) {
+    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+    let full = f.area();
+    let (w, h) = ((full.width * 9 / 10).max(20).min(full.width), ((p.items.len() as u16 + 6).min(full.height * 8 / 10)).max(8).min(full.height));
+    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
+    f.render_widget(Clear, area);
+    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
+        .title(Span::styled(" rewind to before · ↑↓ select · enter files + conversation · f files · c conversation · esc ", st(th.accent).add_modifier(Modifier::BOLD)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let room = inner.height.saturating_sub(2) as usize;
+    let first = p.selected.saturating_sub(room.saturating_sub(1));
+    let mut lines: Vec<Line<'static>> = vec![Line::from(Span::styled("Undo the chosen message and everything after it.", st(th.faint))), Line::from("")];
+    for (i, text) in p.items.iter().enumerate().skip(first).take(room) {
+        let mark = if i == p.selected { "›" } else { " " };
+        let row = format!("{mark} {:>2}. {}", i + 1, plain(text).replace('\n', " ⏎ "));
+        let style = if i == p.selected { st(th.accent).add_modifier(Modifier::BOLD) } else { st(th.text) };
+        lines.push(Line::from(Span::styled(row.chars().take(inner.width as usize).collect::<String>(), style)));
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -850,7 +884,7 @@ pub fn wrap(line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Vec<Li
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · ↑↓ history · esc stop · drag to copy · ctrl-t design · ctrl-o expand";
+const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · /rewind · ↑↓ history · esc stop · drag to copy · ctrl-t design · ctrl-o expand";
 
 /// The composer row: typed text with a cursor in live mode, a placeholder and key hints otherwise.
 pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Line<'static> {
@@ -1010,7 +1044,7 @@ mod tests {
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();
