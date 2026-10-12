@@ -1,0 +1,16 @@
+Fixed: the build failure was in the test file, and `go test ./tsdb/...` now passes for every package (`tsdb` itself in about 294s).
+
+**Cause:** the AppenderV2 test at `tsdb/exemplar_retention_test.go:205` called `AppendExemplars` on a plain `storage.AppenderV2`. That method belongs to the optional `storage.ExemplarAppenderV2` interface. The test now converts the appender to that interface (asserting that the conversion works) before calling it. The non-test code built fine before this change.
+
+**How the fix in `tsdb/head.go` and `tsdb/exemplar.go` works** (from the previous attempt, kept as is):
+- **Keeping the series:** `CircularExemplarStorage.HasExemplarAtOrAfter` checks whether a series has an exemplar at or after the head's minimum valid time, which is the WAL replay cutoff. Zero and negative timestamps count as real timestamps.
+- **Normal head compaction:** head GC keeps a series with no chunks left if it still has such an exemplar. The series stays in the head, so the WAL checkpoint keeps its series record. Once the cutoff passes the exemplar, the series is removed as before.
+- **Selected and stale compaction:** these keep the same in-memory series and series reference, but release its chunks and appender through `memSeries.releaseChunks`. The `prometheus_tsdb_head_chunks` and `prometheus_tsdb_head_chunks_removed_total` metrics are counted once, and the empty series doesn't hold back the head's minimum time.
+- **Concurrent appends:** the existing checks for pending commits, newer samples and changes since the snapshot still run before any of this, so concurrently appended samples keep their chunks.
+
+**Test added:** `TestHeadCompaction_ExemplarKeepsSeriesIdentityAcrossRestart` now runs with the memory snapshot on shutdown both off and on, since the task requires the protection to survive both kinds of restart.
+
+**Gaps:**
+- There is no dedicated test for samples (in-order or out-of-order) appended during a compaction. That protection relies on the existing checks, which the existing suite exercises.
+- `go vet ./tsdb/` still reports `stdmethods` warnings about `Seek` methods in `head_read.go`, `querier.go` and `querier_test.go`. That code isn't touched by this change.
+- `make lint` hasn't been run, and nothing is committed yet.

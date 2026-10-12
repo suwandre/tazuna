@@ -212,6 +212,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: cascade by default with `--provider` (0.0.41). Open: the hand-over runs Opus 5.5 at medium, a default never
   measured; it only sees the tasks the cheap model failed, where effort matters most (terraform: medium 1/3 in every
   harness, max 3/3). Next with weekly headroom: the October hand-over tasks (prometheus, lazygit, telegraf) at high vs medium.
+- 2026-10-12: hand-over effort measured (DeepSeek hands over after 30 min; 1 run each): prometheus medium 2/3 hidden tests,
+  suite intact, $0.63; high 0/3, suite broken, $6.12. Telegraf: judge 6 both (medium broke the suite, high added an
+  unrelated change), $0.44 vs $1.42. Lazygit: DeepSeek solved it alone in the high run. Medium stays: high costs 3-10x for
+  no gain here.
 - 2026-10-12: the benchmark kit moved into the repo (`bench/`: run, judge, guard, calibration, task definitions, results and
   diffs). Company tickets and cloned plugins stay out.
 - 2026-10-11: clean benchmark (7 tasks merged after DeepSeek's release, 2 runs, judged without reference): cascade +0.7

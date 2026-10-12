@@ -1,0 +1,9 @@
+The full `go test ./tsdb/` run now passes (`ok`, 410 s), with a 25-minute `-timeout` flag; the run before it used the default limit.
+
+That earlier run exceeded Go's default 10-minute limit. Its output was filtered, so I don't have the stack trace and can't say which test was slow. Complete runs on this machine took 305 s and 410 s. My reload-test change finishes as soon as the 5th reload arrives, about 4 s as before, so it's unlikely to be the cause, but I can't rule it out. If the verifier runs with the default timeout on a loaded machine, it could hit the limit again.
+
+The reload-test fix, in `tsdb/db_test.go`:
+- **Before:** `TestBlockReloadInterval` required exactly 5 reloads within 5 s, ticking once a second, so a single late tick failed it.
+- **Now:** it waits up to 30 s for at least 5 reloads. It still checks that reloads aren't more frequent than the configured interval, so the "1 ms is raised to 1 s" case still catches a missing clamp.
+
+It passed 3 out of 3 runs on its own, and `golangci-lint` on `tsdb` is clean. It's unrelated to the exemplar fix, so it belongs in a separate commit. The exemplar fix and its test are unchanged from before.
