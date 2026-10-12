@@ -11,10 +11,16 @@
   - `judge.py`: blind Opus 5.5 xhigh judge over the saved diffs. One pass by default; `--passes 2` for results a default
     rests on. `--dry-run` first: it prints the number of judge calls. `JUDGE_ONLY=harness[-rN]`, `JUDGE_NOREF=1`.
   - `calibrate.py`: does a cheap judge rank like Opus (Experiential Labs balance, no Claude usage).
-- `model_check.py`: the weekly model check (ROADMAP Next 5). `roles.json` holds who does what and why; the check flags a
-  model our providers serve that beats a pick on its metric (Artificial Analysis data, attribution required; key in
-  `ARTIFICIAL_ANALYSIS_API_KEY`). A flag starts a gauge run on our benchmark; only that may change a pick.
-  `test_model_check.py` checks the flag logic offline.
+- `model_check.py`: the daily model check (ROADMAP Next 5). `roles.json` holds who does what, why, and how each kind of
+  role weighs benchmark categories. Sources: Artificial Analysis (key in `ARTIFICIAL_ANALYSIS_API_KEY`) and Epoch AI (no
+  key, CC BY 4.0), ~1,000 models and ~80 benchmarks; each benchmark is scaled from random (0) to ceiling (1) and put in a
+  category (agentic coding, coding, tool use, instruction following, long context, reasoning, math, knowledge; saturated
+  or unrelated ones are ignored on purpose). A candidate is compared with the pick only on shared benchmarks, at the
+  pick's effort (cheap models at max), at most 10% dearer; a flag needs 3 shared benchmarks and a lead over 0.03. A flag
+  starts a gauge run on our benchmark; only that may change a pick. `--why NAME` shows a model's scores.
+  `model_check_daily.sh install` runs it daily at 9:00 (launchd, from a copy in `~/.local/share/tazuna/model-check`,
+  since macOS keeps background jobs out of ~/Desktop; rerun install after changes) with a notification on new flags.
+  `test_model_check.py` checks the scoring offline.
 - `guard.py`: start it before any run. It polls the subscription meter, pauses new runs at `GUARD_PAUSE_AT`, kills agents
   at `GUARD_KILL_AT` and on any rise in extra-usage credits. The judge refuses to run without a fresh guard reading.
 

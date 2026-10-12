@@ -1,54 +1,97 @@
 {
-  "_about": "Who does what in tazuna, and why. bench/model_check.py flags a candidate that beats a pick on its metric (Artificial Analysis data); a flag starts a gauge run (our benchmark, usage guard), and only that decides. Picks change by hand, with a CHANGELOG line.",
+  "_about": "Who does what in tazuna, and why. bench/model_check.py scores models per role from public benchmarks (Artificial Analysis, Epoch AI) and flags a candidate that beats a pick; a flag starts a gauge run on our benchmark (usage guard), and only that decides. Picks change by hand, with a CHANGELOG line.",
   "roles": [
     {
       "role": "main (claude path)",
-      "pick": "claude-opus-5-5", "effort": "medium",
+      "pick": "claude-opus-5-5",
+      "effort": "medium",
       "why": "router default; tazuna default 7.46 / 7.13 judge on Go tasks, 5.70 on company tickets (0.0.37)",
-      "pool": "anthropic", "metric": "coding_index"
+      "pool": "anthropic",
+      "profile": "implementer"
     },
     {
       "role": "small repos (router lane)",
-      "pick": "claude-sonnet-5-5", "effort": "medium",
+      "pick": "claude-sonnet-5-5",
+      "effort": "medium",
       "why": "tiny repos; escalates to Opus high when tests fail (0.0.6)",
-      "pool": "anthropic", "metric": "coding_index"
+      "pool": "anthropic",
+      "profile": "implementer"
     },
     {
       "role": "explorer and boss subagents",
-      "pick": "claude-haiku-5-5", "effort": "default",
-      "why": "-28% cost, judge -0.25 as explorer (0.0.24); boss: same quality at -28 to -32% (0.0.32, 0.0.37)",
-      "pool": "anthropic", "metric": "coding_index"
+      "pick": "claude-haiku-5-5",
+      "effort": "medium",
+      "why": "-28% cost, judge -0.25 as explorer (0.0.24); boss: same quality at -28 to -32% (0.0.32, 0.0.37); effort: Claude Code's default for the subagent",
+      "pool": "anthropic",
+      "profile": "explorer"
     },
     {
       "role": "cascade cheap step",
-      "pick": "deepseek-v4.1-flash", "effort": "max",
+      "pick": "deepseek-v4.1-flash",
+      "effort": "max",
       "why": "October tasks: cascade 13/14 solved, judge 7.79 / 8.32 at $8.36 vs Opus 9/14, $38.90 (0.0.39); Luna, Qwen3.8 Flash, GLM-5.3 Flash did not beat it (0.0.40)",
-      "pool": "cheap", "metric": "coding_index", "max_blended_usd_per_m": 1.0
+      "pool": "cheap",
+      "max_blended_usd_per_m": 1.0,
+      "profile": "implementer"
     },
     {
       "role": "cascade hand-over",
-      "pick": "claude-opus-5-5", "effort": "medium",
+      "pick": "claude-opus-5-5",
+      "effort": "medium",
       "why": "high: 3-10x the cost, no gain on prometheus and telegraf (2026-10-12)",
-      "pool": "anthropic", "metric": "coding_index"
+      "pool": "anthropic",
+      "profile": "implementer"
     },
     {
       "role": "benchmark judge",
-      "pick": "claude-opus-5-5", "effort": "xhigh",
+      "pick": "claude-opus-5-5",
+      "effort": "xhigh",
       "why": "blind judge; one pass for screening, two for decisions (2026-10-12)",
-      "pool": "anthropic", "metric": "intelligence_index"
+      "pool": "anthropic",
+      "profile": "judge"
     },
     {
       "role": "screening judge",
-      "pick": "gpt-6-luna", "effort": "max",
+      "pick": "gpt-6-luna",
+      "effort": "max",
       "why": "r 0.89 with Opus on 51 patches, but same order only 64% of the time: screens out clear losers only (2026-10-12)",
-      "pool": "cheap", "metric": "intelligence_index", "max_blended_usd_per_m": 1.0
+      "pool": "cheap",
+      "max_blended_usd_per_m": 1.0,
+      "profile": "judge"
     }
   ],
   "providers": {
-    "cheaperinference": {"url": "https://api.cheaperinference.com/v1", "key_env": "CHEAPER_INFERENCE_API_KEY"},
-    "experientiallabs": {"url": "https://api.experientiallabs.ai/v1", "key_env": "EXPERIENTIAL_API_KEY"}
+    "cheaperinference": {
+      "url": "https://api.cheaperinference.com/v1",
+      "key_env": "CHEAPER_INFERENCE_API_KEY"
+    },
+    "experientiallabs": {
+      "url": "https://api.experientiallabs.ai/v1",
+      "key_env": "EXPERIENTIAL_API_KEY"
+    }
   },
-  "aa_names": {
-    "_about": "provider model id -> Artificial Analysis slug, for names the automatic match misses"
+  "profiles": {
+    "_about": "category weights per kind of role; categories come from bench/model_check.py's CATEGORY table",
+    "implementer": {
+      "agentic_coding": 0.5,
+      "coding": 0.2,
+      "tool_use": 0.1,
+      "instruction": 0.1,
+      "long_context": 0.05,
+      "reasoning": 0.05
+    },
+    "judge": {
+      "reasoning": 0.35,
+      "coding": 0.3,
+      "agentic_coding": 0.15,
+      "instruction": 0.1,
+      "long_context": 0.1
+    },
+    "explorer": {
+      "long_context": 0.35,
+      "instruction": 0.2,
+      "agentic_coding": 0.25,
+      "coding": 0.2
+    }
   }
 }

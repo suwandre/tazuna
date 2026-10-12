@@ -92,8 +92,12 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
      here: Fable 5.1 xhigh as reviewer (3.4× cost, same judge), Sonnet explorer (+12% cost), Haiku + Opus reviewer.
    - **Real use refines it:** labels (Next 4) adjust the per-role pick.
    First step: a hand-written role table and a weekly Artificial Analysis check that flags a whitelisted model beating the
-   current pick; the flag starts the gauge. Built (2026-10-12): `bench/roles.json` and `bench/model_check.py`, flag logic
-   tested offline; waiting for an Artificial Analysis key for the first real run and a weekly schedule. Scraping more sites waits until that loop proves useful (check their terms).
+   current pick; the flag starts the gauge. Built (2026-10-12): `bench/roles.json` and `bench/model_check.py` over
+   Artificial Analysis and Epoch AI (~1,000 models, ~80 benchmarks, scaled and weighted per role, compared at the pick's
+   effort and price), daily at 9:00 with a notification. First run: 7 flags, the strongest for the cascade's cheap step
+   MiMo V2.6 Pro (+0.08), Ling 3.1 Flash and Haiku 5.5 max (all on Experiential Labs); not yet gauged. Other sources
+   checked: SWE-bench's and Aider's own leaderboards stopped in Feb 2026 / Oct 2025 (Epoch carries current SWE-bench
+   and Aider numbers); LMArena, vals.ai and tbench.ai offer HTML only (Terminal-Bench is in both sources). Scraping more sites waits until that loop proves useful (check their terms).
 8. ~~**Profiles with a model and effort per role**~~ (0.0.36 `--preset`; 0.0.35 `--data trusted|any`) (user, 2026-10-10): main model, explorer, implementer, tester and the
    cascade's cheap and strong model each set per profile (for example a cheap default, an expensive "max" profile with Opus
    at max effort, a ZDR-only profile), overridable by hand. The model picker (5) fills them later.

@@ -1,34 +1,45 @@
-"""python3 bench/test_model_check.py: the flag logic of model_check.py on made-up data (no network)."""
+"""python3 bench/test_model_check.py: model_check.py's scoring and flags on made-up data (no network)."""
 import model_check as mc
 
+# names as each source spells them
+assert mc.split_effort("glm-5.3_max") == ("glm53", "max")
+assert mc.split_effort("claude-opus-5-5-medium") == ("claudeopus55", "medium")
+assert mc.split_effort("claude-fable-5-1_xhigh") == ("claudefable51", "xhigh")
+assert mc.split_effort("DeepSeek V4.1 Flash (Max)") == ("deepseekv41flash", "max")
+assert mc.split_effort("minimax-m3") == ("minimaxm3", "default")
+assert mc.category("SWE-bench Verified") == "agentic_coding" and mc.category("terminalbench_v4_0") == "agentic_coding"
+assert mc.category("HellaSwag") is None and mc.category("brand-new-agent-bench") == "agentic_coding"
 
-def m(name, slug, creator, coding, intel, price):
-    return {"name": name, "slug": slug, "model_creator": {"slug": creator},
-            "evaluations": {"artificial_analysis_coding_index": coding, "artificial_analysis_intelligence_index": intel},
-            "pricing": {"price_1m_blended_3_to_1": price}}
-
-
-AA = [
-    m("DeepSeek V4.1 Flash (max)", "deepseek-v4-1-flash-max", "deepseek", 40, 39, 0.12),
-    m("DeepSeek V4.1 Flash (low)", "deepseek-v4-1-flash-low", "deepseek", 30, 31, 0.12),  # a weaker variant of the pick
-    m("MiniMax M3", "minimax-m3", "minimax", 44, 41, 0.40),        # better, cheap, served: a flag
-    m("Kimi K3", "kimi-k3", "moonshot", 55, 52, 5.20),             # better but over the price cap
-    m("Mystery 9", "mystery-9", "other", 60, 60, 0.10),            # better and cheap, but none of our providers serves it
-    m("Claude Opus 5.5", "claude-opus-5-5", "anthropic", 51, 51, 9.0),
-    m("Claude Opus 6", "claude-opus-6", "anthropic", 58, 57, 9.0),  # a stronger Anthropic model
+PROFILES = {"implementer": {"agentic_coding": 0.5, "coding": 0.2, "reasoning": 0.3}}
+rows = [
+    # pick: deepseek at max (and a weaker low variant that must not be what we compare against)
+    ("deepseekv41flash", "max", "SWE-bench Verified", 0.60, "deepseek", 0.5),
+    ("deepseekv41flash", "max", "livecodebench", 0.50, "deepseek", 0.5),
+    ("deepseekv41flash", "max", "hle", 0.30, "deepseek", 0.5),
+    ("deepseekv41flash", "low", "SWE-bench Verified", 0.20, "deepseek", 0.5),
+    # better, cheap, served: a flag
+    ("mimov26pro", "default", "SWE-bench Verified", 0.70, "xiaomi", 0.4),
+    ("mimov26pro", "default", "livecodebench", 0.55, "xiaomi", 0.4),
+    ("mimov26pro", "default", "hle", 0.35, "xiaomi", 0.4),
+    # better but far dearer: no flag
+    ("kimik3", "max", "SWE-bench Verified", 0.80, "moonshot", 6.0),
+    ("kimik3", "max", "livecodebench", 0.70, "moonshot", 6.0),
+    ("kimik3", "max", "hle", 0.50, "moonshot", 6.0),
+    # better and cheap, but only two shared benchmarks: too little evidence
+    ("thin", "max", "SWE-bench Verified", 0.90, "x", 0.1),
+    ("thin", "max", "hle", 0.90, "x", 0.1),
+    # worse: no flag
+    ("weak", "max", "SWE-bench Verified", 0.40, "x", 0.1),
+    ("weak", "max", "livecodebench", 0.40, "x", 0.1),
+    ("weak", "max", "hle", 0.20, "x", 0.1),
 ]
-ROLES = [
-    {"role": "cheap", "pick": "deepseek-v4.1-flash", "pool": "cheap", "metric": "coding_index", "max_blended_usd_per_m": 1.0},
-    {"role": "main", "pick": "claude-opus-5-5", "pool": "anthropic", "metric": "coding_index"},
-    {"role": "gone", "pick": "no-such-model", "pool": "anthropic", "metric": "coding_index"},
-]
-SERVED = {"cheaperinference": ["deepseek-v4.1-flash", "minimax-m3", "kimi-k3"]}
-
-assert mc.norm("DeepSeek V4.1 Flash (max)") == mc.norm("deepseek-v4.1-flash") == "deepseekv41flash"
-assert mc.best_variant(AA, mc.norm("deepseek-v4.1-flash"), "coding_index")["name"] == "DeepSeek V4.1 Flash (max)"
-flags = mc.check(ROLES, AA, SERVED, {})
-got = {(f[0], f[1]) for f in flags}
-assert got == {("cheap", "MiniMax M3"), ("main", "Claude Opus 6"), ("gone", "(no data for no-such-model)")}, got
-# an override maps a provider id the automatic match misses
-assert mc.check(ROLES[:1], AA, {"x": ["mm3"]}, {"mm3": "minimax-m3"})[0][5] == "x:mm3"
+scores, info = mc.table(rows)
+assert mc.at_effort(scores, "deepseekv41flash", "max")[1] == "max"
+assert mc.at_effort(scores, "mimov26pro", "max")[1] == "default"  # measured only at its default
+ROLES = [{"role": "cheap", "pick": "deepseek-v4.1-flash", "effort": "max", "pool": "cheap", "max_blended_usd_per_m": 1.0, "profile": "implementer"}]
+SERVED = {"el": ["deepseek-v4.1-flash", "mimo-v2.6-pro", "kimi-k3", "thin", "weak"]}
+flags = mc.check(ROLES, PROFILES, scores, info, SERVED)
+assert [f[1] for f in flags] == ["mimov26pro"], flags
+lead = flags[0][3]
+assert abs(lead - (0.5 * 0.10 + 0.2 * 0.05 + 0.3 * 0.05)) < 1e-9, lead
 print("model_check: ok")
