@@ -100,6 +100,23 @@ pub struct View {
     pub mode: String,
     /// Tab completions for the word at the cursor (slash commands, `@` files).
     pub hints: Vec<String>,
+    /// Background tasks still running (shown by the composer).
+    pub bg_running: usize,
+    /// The ctrl-b view of background tasks, when open.
+    pub tasks: Option<TasksPanel>,
+}
+
+pub struct TasksPanel {
+    pub rows: Vec<TaskRow>,
+    pub selected: usize,
+}
+
+pub struct TaskRow {
+    pub kind: String,
+    pub description: String,
+    pub status: String,
+    pub secs: u64,
+    pub output: String,
 }
 
 /// Screen regions the effects target.
@@ -115,12 +132,79 @@ pub struct Areas {
 pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
     let th = v.design.theme();
     f.render_widget(ratatui::widgets::Block::new().style(Style::new().bg(th.bg)), f.area());
-    match v.design {
+    let areas = match v.design {
         Design::Aurora => aurora::draw(f, s, v, th),
         Design::Cockpit => cockpit::draw(f, s, v, th),
         Design::Zen => zen::draw(f, s, v, th),
         Design::Timeline => timeline::draw(f, s, v, th),
+    };
+    if let Some(p) = &v.tasks {
+        draw_tasks(f, p, th);
     }
+    areas
+}
+
+/// The ctrl-b view: background tasks with status and age, and the latest output of the selected one.
+fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
+    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+    let full = f.area();
+    let (w, h) = ((full.width * 9 / 10).max(20).min(full.width), (full.height * 8 / 10).max(8).min(full.height));
+    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
+    f.render_widget(Clear, area);
+    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
+        .title(Span::styled(" background tasks · ↑↓ select · x stop · esc close ", st(th.accent).add_modifier(Modifier::BOLD)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if p.rows.is_empty() {
+        lines.push(Line::from(Span::styled("No background tasks in this session yet.", st(th.faint))));
+    }
+    for (i, r) in p.rows.iter().enumerate() {
+        let mark = if i == p.selected { "›" } else { " " };
+        let age = if r.secs >= 60 { format!("{}m{:02}s", r.secs / 60, r.secs % 60) } else { format!("{}s", r.secs) };
+        let colour = if r.status == "running" { th.accent } else if r.status == "completed" { th.faint } else { th.warn };
+        let row = format!("{mark} {:<10} {:>7}  {:<11} {}", r.status, age, r.kind, r.description);
+        let style = if i == p.selected { st(colour).add_modifier(Modifier::BOLD) } else { st(colour) };
+        lines.push(Line::from(Span::styled(row.chars().take(inner.width as usize).collect::<String>(), style)));
+    }
+    if let Some(r) = p.rows.get(p.selected) {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(format!("── output of: {} ──", r.description).chars().take(inner.width as usize).collect::<String>(), st(th.faint))));
+        let text = plain(&r.output);
+        let room = (inner.height as usize).saturating_sub(lines.len());
+        let out: Vec<&str> = text.lines().collect();
+        let shown = if r.kind == "local_agent" { vec!["(a subagent: no command output to show)"] } else if out.is_empty() { vec!["(no output yet)"] } else { out[out.len().saturating_sub(room)..].to_vec() };
+        for l in shown {
+            lines.push(Line::from(Span::styled(l.chars().take(inner.width as usize).collect::<String>(), st(th.text))));
+        }
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// Command output as plain text: escape sequences (colours, cursor moves) and carriage returns removed.
+pub fn plain(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut it = s.chars().peekable();
+    while let Some(c) = it.next() {
+        match c {
+            '\x1b' => {
+                if it.peek() == Some(&'[') {
+                    it.next();
+                    while let Some(&n) = it.peek() {
+                        it.next();
+                        if n.is_ascii_alphabetic() || n == '~' {
+                            break;
+                        }
+                    }
+                } else {
+                    it.next();
+                }
+            }
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------- effects
@@ -752,7 +836,7 @@ pub fn wrap(line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Vec<Li
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ↑↓ history · esc stop · drag to copy · ctrl-t design · ctrl-o expand";
+const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · ↑↓ history · esc stop · drag to copy · ctrl-t design · ctrl-o expand";
 
 /// The composer row: typed text with a cursor in live mode, a placeholder and key hints otherwise.
 pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Line<'static> {
@@ -770,6 +854,9 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
         spans.push(Span::styled(placeholder.to_string(), st(th.faint)));
         if v.live && v.mode != "auto" {
             spans.push(Span::styled(format!("  [{}]", v.mode), st(th.warn)));
+        }
+        if v.bg_running > 0 {
+            spans.push(Span::styled(format!("  [{} background · ctrl-b]", v.bg_running), st(th.accent)));
         }
         spans.push(Span::styled(format!("   {}", if v.live { LIVE_KEYS } else { REPLAY_KEYS }), st(th.faint)));
     }
@@ -897,8 +984,13 @@ mod tests {
     }
 
     #[test]
+    fn task_output_is_shown_as_plain_text() {
+        assert_eq!(plain("\x1b[32mok\x1b[0m 3 passed\r\n\x1b[2Kdone"), "ok 3 passed\ndone");
+    }
+
+    #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new() };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();

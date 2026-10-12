@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.44 (2026-10-12)
+
+**`ctrl-b`: the background tasks of a session** (commands claude runs with `run_in_background`, Monitors, background
+subagents): status, age and the latest output of the selected one, refreshed every second; `x` stops the selected task, the
+run goes on. While one runs, the composer shows `[N background · ctrl-b]`. Built on claude's own stream: `task_started`,
+`task_updated` and `task_notification` events, and the `get_task_output` and `stop_task` control requests (the same data as
+Claude Code's `/tasks` view). Checked in a pseudo-terminal against Haiku: a 60-second loop showed as running with its
+output ticking, and `x` stopped it. Only with Claude Code's own tools (repo profile); the lean profile's bash and the own
+loop run every command to its end.
+
 ## 0.0.43 (2026-10-12)
 
 **`ctrl-g` opens the message in your editor** (`$VISUAL`, else `$EDITOR`, else `vi`; a command like `code --wait` works).

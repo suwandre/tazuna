@@ -579,7 +579,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new() }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -810,6 +810,8 @@ fn run_live(
     let mut transcript = ratatui::layout::Rect::default();
     let mut sel: Option<select::Selection> = None;
     let (mut copy_now, mut copied) = (false, None::<String>);
+    // ctrl-b: the background-task view (which row is selected, when its output was last asked for)
+    let (mut tasks_open, mut task_sel, mut outputs_read) = (false, 0usize, Instant::now());
     // `@` completion: the repo's tracked files (ponytail: read once per session; new files show up next session)
     let files: Vec<String> = std::process::Command::new("git")
         .args(["ls-files"])
@@ -830,6 +832,22 @@ fn run_live(
         // the question on screen is the one an answer applies to: the front of live's queue
         v.asking = live.pending.front().map(|req| question(req));
         v.mode = s.mode.clone();
+        v.bg_running = live.bg.iter().filter(|t| t.ended.is_none()).count();
+        if tasks_open && outputs_read.elapsed() > Duration::from_secs(1) {
+            live.read_task_outputs();
+            outputs_read = Instant::now();
+        }
+        task_sel = task_sel.min(live.bg.len().saturating_sub(1));
+        v.tasks = tasks_open.then(|| ui::TasksPanel {
+            selected: task_sel,
+            rows: live.bg.iter().map(|t| ui::TaskRow {
+                kind: t.kind.clone(),
+                description: t.description.clone(),
+                status: t.status.clone(),
+                secs: t.ended.unwrap_or_else(Instant::now).duration_since(t.started).as_secs(),
+                output: t.output.clone(),
+            }).collect(),
+        });
         let dt = last.elapsed();
         last = Instant::now();
         for (t, e) in live.poll() {
@@ -894,6 +912,23 @@ fn run_live(
         // ignored, and keys in the first moment after it appears count for nothing (typing must not approve by accident)
         // ctrl-c and ctrl-d still stop or quit: stopping answers every open question with no
         let stop_key = ctrl && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'));
+        // the background-task view owns the keyboard while open: select, stop, close
+        if tasks_open && !stop_key && live.pending.is_empty() {
+            match key.code {
+                KeyCode::Up => task_sel = task_sel.saturating_sub(1),
+                KeyCode::Down => task_sel = (task_sel + 1).min(live.bg.len().saturating_sub(1)),
+                KeyCode::Char('x') => {
+                    let id = live.bg.get(task_sel).filter(|t| t.ended.is_none()).map(|t| t.id.clone());
+                    if let Some((t, e)) = id.and_then(|id| live.stop_task(&id)) {
+                        s.apply(&e, t);
+                    }
+                }
+                KeyCode::Esc => tasks_open = false,
+                KeyCode::Char('b') if ctrl => tasks_open = false,
+                _ => {}
+            }
+            continue;
+        }
         if !live.pending.is_empty() && !stop_key {
             let shown_for = asked_at.get_or_insert_with(Instant::now).elapsed();
             let answer = match key.code {
@@ -951,6 +986,11 @@ fn run_live(
                     "select mode: drag to select and copy text; ctrl-s again for mouse scrolling"
                 };
                 s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
+            }
+            KeyCode::Char('b') if ctrl => {
+                (tasks_open, task_sel) = (true, live.bg.iter().rposition(|t| t.ended.is_none()).unwrap_or(live.bg.len().saturating_sub(1)));
+                live.read_task_outputs();
+                outputs_read = Instant::now();
             }
             // ctrl-g: the message so far in $VISUAL / $EDITOR (vi without either); what is saved comes back here
             KeyCode::Char('g') if ctrl => {

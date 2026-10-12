@@ -14,7 +14,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
     sync::mpsc::{Receiver, Sender, channel},
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 const MID_PROMPT: &str = "You are a coding agent working in {cwd}. Today is {date}.
@@ -167,6 +167,21 @@ fn starts_turn(e: &Value) -> bool {
     (e["type"] == "stream_event" && e["event"]["type"] == "message_start") || e["type"] == "assistant"
 }
 
+/// A background task claude runs (a shell command, a Monitor, a subagent), for the ctrl-b view.
+#[derive(Clone)]
+pub struct BgTask {
+    pub id: String,
+    /// claude's task_type: local_bash, local_agent, monitor, ...
+    pub kind: String,
+    pub description: String,
+    /// running, completed, failed, killed, ...
+    pub status: String,
+    pub started: Instant,
+    pub ended: Option<Instant>,
+    /// The end of the output (at most 8 KiB) the last `get_task_output` returned.
+    pub output: String,
+}
+
 enum Msg {
     Line(String),
     /// stderr closed: the process is exiting.
@@ -239,6 +254,8 @@ pub struct Live {
     /// Commands claude started that have not finished: claude wakes up again for background ones, so the session is
     /// not idle until they are done.
     tasks: std::collections::HashSet<String>,
+    /// Every background task of this session, oldest first: the ctrl-b view.
+    pub bg: Vec<BgTask>,
     /// When the last of `tasks` finished.
     tasks_done: Option<Instant>,
     /// Independent reviewer: model and effort (`--review-model`, `--review-effort`).
@@ -323,6 +340,7 @@ impl Live {
             task: String::new(),
             task_reviewed: false,
             tasks: Default::default(),
+            bg: Vec::new(),
             permission_mode: "bypassPermissions".into(),
             pending: VecDeque::new(),
             outbox: Vec::new(),
@@ -500,6 +518,29 @@ impl Live {
         self.record(json!({"type": "harness_mode", "mode": mode}))
     }
 
+    /// Asks claude for the latest output of shell and Monitor tasks still running, and once more right after one ends
+    /// (subagents have no output to read). The answers arrive through `poll`.
+    pub fn read_task_outputs(&mut self) {
+        let ids: Vec<String> = self.bg.iter()
+            .filter(|t| t.kind != "local_agent" && t.ended.map_or(true, |e| e.elapsed() < Duration::from_secs(3)))
+            .map(|t| t.id.clone()).collect();
+        let Some(stdin) = self.stdin.as_mut() else { return };
+        for id in ids {
+            self.requests_sent += 1;
+            let req = json!({"type": "control_request", "request_id": format!("out-{}-{id}", self.requests_sent), "request": {"subtype": "get_task_output", "task_id": id}});
+            let _ = writeln!(stdin, "{req}").and_then(|_| stdin.flush());
+        }
+    }
+
+    /// Stops one background task (claude's `stop_task`); the run and other tasks go on.
+    pub fn stop_task(&mut self, id: &str) -> Option<(f64, Value)> {
+        let stdin = self.stdin.as_mut()?;
+        self.requests_sent += 1;
+        let req = json!({"type": "control_request", "request_id": format!("stop-{}", self.requests_sent), "request": {"subtype": "stop_task", "task_id": id}});
+        writeln!(stdin, "{req}").and_then(|_| stdin.flush()).ok()?;
+        Some(self.record(json!({"type": "harness_info", "text": format!("stopping background task {id}")})))
+    }
+
     pub fn interrupt(&mut self) -> Option<(f64, Value)> {
         // a stop also answers open questions: no
         while let Some(e) = self.answer(false, false) {
@@ -563,13 +604,38 @@ impl Live {
                         }
                         continue;
                     }
+                    // a background task's output, asked for by the ctrl-b view: no event of its own
+                    if e["type"] == "control_response" {
+                        let id = e["response"]["request_id"].as_str().and_then(|r| r.strip_prefix("out-")).and_then(|r| r.split_once('-')).map(|(_, id)| id);
+                        if let Some(t) = id.and_then(|id| self.bg.iter_mut().find(|t| t.id == id)) {
+                            t.output = e["response"]["response"]["output"].as_str().unwrap_or_default().to_string();
+                            continue;
+                        }
+                    }
                     match (e["type"].as_str(), e["subtype"].as_str(), e["task_id"].as_str()) {
                         (Some("system"), Some("task_started"), Some(id)) => {
                             self.tasks.insert(id.to_string());
+                            if !self.bg.iter().any(|t| t.id == id) {
+                                self.bg.push(BgTask { id: id.to_string(), kind: e["task_type"].as_str().unwrap_or("task").to_string(),
+                                    description: e["description"].as_str().unwrap_or_default().to_string(), status: "running".into(),
+                                    started: Instant::now(), ended: None, output: String::new() });
+                            }
+                        }
+                        (Some("system"), Some("task_updated"), Some(id)) => {
+                            if let (Some(t), Some(st)) = (self.bg.iter_mut().find(|t| t.id == id), e["patch"]["status"].as_str()) {
+                                t.status = st.to_string();
+                                if st != "running" {
+                                    t.ended.get_or_insert_with(Instant::now);
+                                }
+                            }
                         }
                         (Some("system"), Some("task_notification"), Some(id)) => {
                             if self.tasks.remove(id) && self.tasks.is_empty() {
                                 self.tasks_done = Some(Instant::now());
+                            }
+                            if let Some(t) = self.bg.iter_mut().find(|t| t.id == id) {
+                                t.status = e["status"].as_str().unwrap_or("ended").to_string();
+                                t.ended.get_or_insert_with(Instant::now);
                             }
                         }
                         _ => {}
@@ -608,6 +674,9 @@ impl Live {
                 Msg::Exited(stderr) => {
                     // the process and its commands are gone
                     self.tasks.clear();
+                    for t in self.bg.iter_mut().filter(|t| t.ended.is_none()) {
+                        (t.status, t.ended) = ("lost".into(), Some(Instant::now())); // the process that ran it is gone
+                    }
                     let code = self.child.take().and_then(|mut c| c.wait().ok()).and_then(|st| st.code());
                     self.stdin = None;
                     self.end_runs();
