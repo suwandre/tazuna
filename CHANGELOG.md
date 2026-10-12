@@ -16,6 +16,39 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.40 (2026-10-12)
+
+**Own loop on Experiential Labs** (`--provider https://api.experientiallabs.ai/v1`): its model list gives prices in nano-USD
+and names the upstream provider in `data_policy`; both are read now, so GPT-6 Luna there goes through the Responses API.
+**Retries span ~15 minutes** (a free model "at capacity" ended all seven runs of a benchmark at 4 minutes), but a 429 that
+waiting cannot fix (`insufficient_quota`, a model locked until a purchase) ends the run at once.
+
+**Cheap models next to DeepSeek V4.1 Flash** (own loop, max effort, October tasks; no judge yet):
+
+| | provider | runs | cache hits | speed | cost vs DeepSeek | result |
+|---|---|---|---|---|---|---|
+| Qwen3.8 Flash | CheaperInference | rclone, gitea (stopped at ~70 min, balance) | 82-95% | 25-40 tok/s | 2-3x | none finished; DeepSeek: 12-26 min |
+| GLM-5.3 Flash | CheaperInference | same | 16-58% | 8-28 tok/s | 4-10x | none finished |
+| GLM-5.3 Flash | Experiential Labs | rclone (call hung 20+ min), gitea (stopped at $0.20, 84 min) | 79-96% | 30-50 tok/s | 5-6x | none finished |
+| Qwen3.8 Flash Next (free) | Experiential Labs | 7 tasks | - | - | free | "at capacity" for free accounts; unusable |
+| Qwen3.8 Flash | Experiential Labs | - | - | - | - | locked until credits are bought |
+| DeepSeek V4.1 Flash | Experiential Labs | rclone | 95% | 76 tok/s | 8-14x (list price 4x, more output) | 3/3, judge 9.5 / 7.5 |
+
+None beats DeepSeek on CheaperInference on price or speed; DeepSeek stays the cascade's first step.
+
+**"Few turns" prompt for the own loop, measured and kept off** (`TAZUNA_BATCH=1`: bundle independent tool calls, read whole
+files, run targeted tests until the end; DeepSeek made 1.14 tool calls per response):
+
+| task | turns | total tokens | cost | hidden tests |
+|---|---|---|---|---|
+| rclone | 39 vs 77 | 1.6M vs 4.5M | $0.010 vs $0.024 | 3/3 both |
+| caddy-unix | 71 vs 60 | 3.7M vs 3.3M | $0.036 vs $0.020 | 7/7 both |
+| telegraf | 100 vs 129 | 5.7M vs 9.9M | $0.051 vs $0.047 | 2/2 both; package suite failed with the prompt |
+| gitea | stopped at 59 vs 99 | 5.0M vs 8.3M | $0.112 (stopped) vs $0.035 | - |
+
+Turns -21% and tokens -38% on the three finished tasks, but cost rose: with fewer turns DeepSeek writes 2-4x more output,
+and its output costs 200x a cache read. Worth retrying only with a model whose input is expensive relative to its output.
+
 ## 0.0.39 (2026-10-12)
 
 **Own loop: no time limit by default, $1 per task.** A cheap model's extra hour costs cents, so the own loop now runs until

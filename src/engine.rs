@@ -18,6 +18,10 @@ const MAX_TURNS: usize = 2000;
 /// needs more). $0.50 ended DeepSeek after ~2 hours on hard tasks (lazygit, prometheus: 230-320 calls), before it was done.
 const MAX_USD: f64 = 1.0;
 
+/// Experiment (`TAZUNA_BATCH=1`): each turn re-sends the whole conversation, so turns drive the token count. DeepSeek made
+/// 1.14 tool calls per response; 70% of its calls were searches and reads, 17% test runs (October tasks, 0.0.38).
+const BATCH_RULE: &str = "\n- Work in few turns: every turn re-sends the whole conversation. When several searches, reads or commands do not depend on each other, make all of those tool calls in one response. Read a whole relevant file once rather than many small slices. While working, run only the tests that cover your change; run the wider suite once at the end.";
+
 /// USD per token: input, cached input, output.
 type Price = (f64, f64, f64);
 
@@ -27,7 +31,10 @@ pub fn serve(args: &[String]) -> Result<()> {
     let key_env = flag("--key-env").context("--key-env")?;
     let model = flag("--model").context("--model")?;
     let effort = flag("--effort");
-    let system = flag("--system-prompt").unwrap_or_default();
+    let mut system = flag("--system-prompt").unwrap_or_default();
+    if std::env::var_os("TAZUNA_BATCH").is_some() {
+        system.push_str(BATCH_RULE);
+    }
     let key = std::env::var(&key_env).with_context(|| format!("{key_env} not set"))?;
     // SAFETY: no other thread runs yet. The agent's commands inherit this environment and must not see the key.
     unsafe { std::env::remove_var(&key_env) };
@@ -259,12 +266,13 @@ fn emit(e: &Value) {
 }
 
 /// One model call (Chat Completions, or Responses for a body with `input`). Rate limits, server errors, timeouts and dropped
-/// connections get five more tries over about 4 minutes: two of 18 benchmark runs hung on a call that never answered, and
-/// a short network outage ended a 38-minute run ("Network is unreachable") when the tries spanned only 40 s.
+/// connections get more tries over about 15 minutes: two of 18 benchmark runs hung on a call that never answered, a short
+/// network outage ended a 38-minute run when the tries spanned only 40 s, and a free model "at capacity" (HTTP 429) ended
+/// all seven runs of a benchmark when they spanned 4 minutes.
 fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value> {
     let path = if body.get("input").is_some() { "responses" } else { "chat/completions" };
     let body = body.to_string();
-    for wait in [2, 8, 30, 60, 120, 0] {
+    for wait in [2, 8, 30, 60, 120, 120, 120, 120, 120, 120, 120, 0] {
         let sent = http.post(format!("{url}/{path}")).header("Authorization", format!("Bearer {key}")).header("Content-Type", "application/json").send(&body)
             .and_then(|mut r| Ok((r.status().as_u16(), r.body_mut().with_config().limit(50 << 20).read_to_string()?)));
         let (status, text) = match sent {
@@ -279,7 +287,9 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value>
         if status == 200 {
             return serde_json::from_str(&text).context("provider reply is not JSON");
         }
-        if wait == 0 || !(status == 429 || status >= 500) {
+        // a 429 for a locked model or an empty balance never clears by waiting (Experiential Labs: "insufficient_quota")
+        let permanent = text.contains("insufficient_quota") || text.contains("requires_purchase");
+        if wait == 0 || permanent || !(status == 429 || status >= 500) {
             bail!("HTTP {status}: {}", text.chars().take(300).collect::<String>());
         }
         std::thread::sleep(Duration::from_secs(wait));
@@ -293,10 +303,24 @@ fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price
     let mut r = http.get(format!("{url}/models")).header("Authorization", format!("Bearer {key}")).call()?;
     let list: Value = serde_json::from_str(&r.body_mut().with_config().limit(50 << 20).read_to_string()?)?;
     let m = list["data"].as_array().into_iter().flatten().find(|m| m["id"] == model).with_context(|| format!("{model} is not in {url}/models"))?;
-    let p = |k: &str| m["pricing"][k].as_str().and_then(|s| s.parse::<f64>().ok()).or(m["pricing"][k].as_f64());
-    let input = p("input_per_million").with_context(|| format!("no input price for {model}: the dollar cap needs one"))?;
-    let price = (input / 1e6, p("cache_read_input_per_million").unwrap_or(input) / 1e6, p("output_per_million").context("no output price")? / 1e6);
-    Ok((price, m["owned_by"] == "OpenAI" || m["provider"] == "OpenAI"))
+    parse_price(m)
+}
+
+/// CheaperInference and OpenRouter-style lists give USD per million (`input_per_million`, as string or number);
+/// Experiential Labs gives nano-USD per million (`input_nano_usd_per_million_tokens`) and names the upstream provider in
+/// `data_policy` instead of `owned_by`.
+fn parse_price(m: &Value) -> Result<(Price, bool)> {
+    let model = &m["id"];
+    let p = |usd: &str, nano: &str| {
+        let v = &m["pricing"][usd];
+        v.as_str().and_then(|s| s.parse::<f64>().ok()).or(v.as_f64()).or(m["pricing"][nano].as_f64().map(|n| n / 1e9))
+    };
+    let input = p("input_per_million", "input_nano_usd_per_million_tokens").with_context(|| format!("no input price for {model}: the dollar cap needs one"))?;
+    let cached = p("cache_read_input_per_million", "cached_input_nano_usd_per_million_tokens").unwrap_or(input);
+    let output = p("output_per_million", "output_nano_usd_per_million_tokens").context("no output price")?;
+    let openai = m["owned_by"] == "OpenAI" || m["provider"] == "OpenAI"
+        || m["data_policy"]["providers"].as_array().is_some_and(|ps| !ps.is_empty() && ps.iter().all(|p| p["provider"] == "openai"));
+    Ok(((input / 1e6, cached / 1e6, output / 1e6), openai))
 }
 
 #[cfg(test)]
@@ -381,5 +405,17 @@ mod tests {
         assert_eq!(*calls.borrow(), 1);
         l.run(&json!("next task"), false, &rx); // a new task: a fresh budget
         assert_eq!(*calls.borrow(), 2);
+    }
+
+    #[test]
+    fn reads_both_price_list_formats() {
+        let ci = json!({"id": "deepseek-v4.1-flash", "owned_by": "DeepSeek", "pricing": {"input_per_million": "0.075", "cache_read_input_per_million": "0.0015", "output_per_million": 0.3}});
+        let ((i, c, o), openai) = parse_price(&ci).unwrap();
+        assert!(((i * 1e6) - 0.075).abs() < 1e-12 && ((c * 1e6) - 0.0015).abs() < 1e-12 && ((o * 1e6) - 0.3).abs() < 1e-12 && !openai);
+        let el = json!({"id": "gpt-6-luna", "owned_by": "exp", "data_policy": {"providers": [{"provider": "openai"}]},
+            "pricing": {"input_nano_usd_per_million_tokens": 100000000, "cached_input_nano_usd_per_million_tokens": 10000000, "output_nano_usd_per_million_tokens": 500000000}});
+        let ((i, c, o), openai) = parse_price(&el).unwrap();
+        assert!(((i * 1e6) - 0.1).abs() < 1e-12 && ((c * 1e6) - 0.01).abs() < 1e-12 && ((o * 1e6) - 0.5).abs() < 1e-12 && openai);
+        assert!(parse_price(&json!({"id": "x", "pricing": {}})).is_err());
     }
 }

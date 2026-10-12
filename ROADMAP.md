@@ -201,6 +201,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: own loop without a time limit by default, $1 per task (0.0.39): cheap models are slow but cost cents;
   `--max-minutes` for speed. Cascade on October tasks: 13/14 solved, judge 7.79 / 8.32, $8.36 for 14 runs vs $38.90 for
   tazuna on Opus (9/14, 6.79 / 6.93). Time per task varies more by run than by setting (lazygit: 10 min or 2.7 h).
+- 2026-10-12: Qwen3.8 Flash, GLM-5.3 Flash (CheaperInference, Experiential Labs) and free Qwen3.8 Flash Next: none beats
+  DeepSeek on CheaperInference on price or speed. A "few turns" prompt cut DeepSeek's turns 21% and tokens 38% but not cost
+  (more output). DeepSeek on CheaperInference stays the cheap step. Judge rounds now skip empty tasks and need the guard
+  after a chained judge round spent extra usage.
 - 2026-10-11: clean benchmark (7 tasks merged after DeepSeek's release, 2 runs, judged without reference): cascade +0.7
   judge at ~1/8 the cost of tazuna on Opus. The earlier ~2.4-point lead on older tasks was mostly the judge's reference
   anchoring; the real lead is smaller but holds. Cascade stays the plan for code that may leave the machine (`--data any`).
