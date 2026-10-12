@@ -141,7 +141,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let rows: Vec<Line> = if files.is_empty() {
         vec![Line::from(Span::styled("none yet", st(th.faint)))]
     } else {
-        files.iter().take(a.height as usize).map(|p| Line::from(Span::styled(fit_path(p, a.width as usize), st(th.dim)))).collect()
+        files.iter().take(a.height as usize).map(|p| Line::from(Span::styled(fit_path(&super::plain(p), a.width as usize), st(th.dim)))).collect()
     };
     f.render_widget(Paragraph::new(rows), a);
 
@@ -172,7 +172,7 @@ fn tool_tally(s: &Session) -> Vec<(String, usize, usize, f64)> {
     let mut out: Vec<(String, usize, usize, f64)> = Vec::new();
     for b in &s.blocks {
         let Block::Tool(t) = b else { continue };
-        let n = short_name(&t.name).to_string();
+        let n = super::plain(short_name(&t.name));
         let i = match out.iter().position(|r| r.0 == n) {
             Some(i) => i,
             None => {

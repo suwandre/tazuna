@@ -843,7 +843,14 @@ fn inline(s: &str, th: &Theme) -> Vec<Span<'static>> {
 }
 
 /// Word-wraps a styled line to `width`, starting continuation rows with `cont`.
-pub fn wrap(line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Vec<Line<'static>> {
+/// Every transcript row passes through here, so this is where text from outside (model replies, tool output, notices with
+/// file names or errors) is made inert: escape sequences dropped, other control characters shown as `�` (`plain`).
+pub fn wrap(mut line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Vec<Line<'static>> {
+    for span in &mut line.spans {
+        if span.content.chars().any(|c| c.is_control() || crate::session::invisible(c)) {
+            span.content = plain(&span.content).replace('\t', "    ").replace('\n', " ").into();
+        }
+    }
     let cont_w: usize = cont.iter().map(|s| s.content.width()).sum();
     let mut out = Vec::new();
     // `start` is the width of the current row's prefix (0 on the first row, `cont_w` after a wrap)
@@ -1066,6 +1073,14 @@ mod tests {
         v.cursor = 0;
         let rows = composer_rows(&v, th, "›", "", 38);
         assert!(rows[0].spans.iter().any(|s| s.content == "1"), "the cursor's row stays visible");
+    }
+
+    #[test]
+    fn transcript_rows_cannot_drive_the_terminal() {
+        let row = Line::from(vec![Span::raw("restoring a\x1b]0;owned\x07.txt"), Span::raw(" \x1b[2J\u{9b}x")]);
+        let text: String = wrap(row, 80, &[]).iter().flat_map(|l| l.spans.iter().map(|s| s.content.to_string())).collect();
+        assert!(!text.chars().any(|c| c.is_control()), "{text:?}");
+        assert!(text.contains("restoring a.txt") && text.contains('\u{FFFD}'));
     }
 
     #[test]

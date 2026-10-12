@@ -29,6 +29,12 @@ message was back in the composer, and asked about its previous message claude na
 checkpoints only its own edit tools, so in the lean profile there is nothing to restore (tazuna says so); not on the own
 loop yet.
 
+**Text from outside cannot drive the terminal.** Every transcript row now passes the same filter as permission questions
+and the task view: escape sequences are dropped whole and other control or invisible characters show as `�`; the Cockpit's
+file list and tool names too. Before, model replies, tool output and notices (a file name in the rewind notice, an error
+text) reached the screen unfiltered, so a crafted file name or command output could have set the window title, written the
+clipboard or cleared the screen (found by a security review of the rewind notice). Replay render time unchanged (9 ms).
+
 ## 0.0.44 (2026-10-12)
 
 **`ctrl-b`: the background tasks of a session** (commands claude runs with `run_in_background`, Monitors, background
