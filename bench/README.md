@@ -11,6 +11,10 @@
   - `judge.py`: blind Opus 5.5 xhigh judge over the saved diffs. One pass by default; `--passes 2` for results a default
     rests on. `--dry-run` first: it prints the number of judge calls. `JUDGE_ONLY=harness[-rN]`, `JUDGE_NOREF=1`.
   - `calibrate.py`: does a cheap judge rank like Opus (Experiential Labs balance, no Claude usage).
+- `model_check.py`: the weekly model check (ROADMAP Next 5). `roles.json` holds who does what and why; the check flags a
+  model our providers serve that beats a pick on its metric (Artificial Analysis data, attribution required; key in
+  `ARTIFICIAL_ANALYSIS_API_KEY`). A flag starts a gauge run on our benchmark; only that may change a pick.
+  `test_model_check.py` checks the flag logic offline.
 - `guard.py`: start it before any run. It polls the subscription meter, pauses new runs at `GUARD_PAUSE_AT`, kills agents
   at `GUARD_KILL_AT` and on any rise in extra-usage credits. The judge refuses to run without a fresh guard reading.
 

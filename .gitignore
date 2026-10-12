@@ -9,3 +9,4 @@
 /bench/**/*.log
 /bench/**/*.log2
 /bench/realwork/DONE*
+/bench/.model-check/

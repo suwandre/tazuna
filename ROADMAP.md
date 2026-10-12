@@ -92,7 +92,8 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
      here: Fable 5.1 xhigh as reviewer (3.4× cost, same judge), Sonnet explorer (+12% cost), Haiku + Opus reviewer.
    - **Real use refines it:** labels (Next 4) adjust the per-role pick.
    First step: a hand-written role table and a weekly Artificial Analysis check that flags a whitelisted model beating the
-   current pick; the flag starts the gauge. Scraping more sites waits until that loop proves useful (check their terms).
+   current pick; the flag starts the gauge. Built (2026-10-12): `bench/roles.json` and `bench/model_check.py`, flag logic
+   tested offline; waiting for an Artificial Analysis key for the first real run and a weekly schedule. Scraping more sites waits until that loop proves useful (check their terms).
 8. ~~**Profiles with a model and effort per role**~~ (0.0.36 `--preset`; 0.0.35 `--data trusted|any`) (user, 2026-10-10): main model, explorer, implementer, tester and the
    cascade's cheap and strong model each set per profile (for example a cheap default, an expensive "max" profile with Opus
    at max effort, a ZDR-only profile), overridable by hand. The model picker (5) fills them later.
