@@ -252,6 +252,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: footprint of a whole agent run measured for the first time (`bench/agent_footprint.py`): own loop 27 MB peak
   RAM and 0.1 s CPU vs the claude path 262-282 MB and 0.6-0.7 s, on the same small fix. Goal 1's "real footprint wins come
   with the own loop" holds: ~10x less memory. Wall time goes the other way (provider wait), so speed is the own loop's gap.
+- 2026-10-14: own-loop speed by provider (DeepSeek V4.1 Flash max, no hand-over, 3 October tasks, both at once).
+  Experiential Labs: rclone 593 s 3/3 $0.086, caddy-unix 2446 s 7/7 $0.204, caddy-retry stopped at the 90-minute bench
+  limit. CheaperInference: caddy-retry 2665 s 2/2 $0.103; rclone and caddy-unix hit an empty balance (earlier runs:
+  rclone 694-1575 s, caddy-unix 578-2644 s, ~$0.02 each). Experiential Labs is not reliably faster (one quick run, one
+  timeout) at 4-10x the cost: CheaperInference stays the cascade's provider. Its balance needs a top-up first.
 - 2026-10-13: Gemini 4 Argon (free for a while on Experiential Labs, 832,500 input tokens per hour; paid $2/$10 per M).
   As own-loop implementer: unusable on the free tier (4 parallel tasks used the hourly allowance in 5 minutes; one task
   needs 1.6-10M tokens; free answers carry an appended ad). As judge, 63 October patches vs Opus: r 0.90, same order
