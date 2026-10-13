@@ -248,6 +248,14 @@ def compare(cand, pick, weights):
     return lead, len(deltas), sorted(deltas, key=lambda x: -x[1])
 
 
+def is_free(m):
+    """A provider's model-list entry priced at zero (Experiential Labs: nano-USD fields; CheaperInference: per million)."""
+    p = m.get("pricing") or {}
+    prices = [p.get(k) for k in ("input_nano_usd_per_million_tokens", "output_nano_usd_per_million_tokens", "input_per_million", "output_per_million")]
+    known = [float(v) for v in prices if v not in (None, "")]
+    return bool(known) and all(v == 0 for v in known)
+
+
 def check(roles, profiles, scores, info, served, costs=None, own=None):
     """Flags: (role, candidate, effort, lead, shared, top evidence, where, cost ratio, cost source)."""
     costs, own = costs or {}, own or {}
@@ -309,7 +317,9 @@ def main():
     for name, p in cfg["providers"].items():
         if k := os.environ.get(p["key_env"]):
             raw = cached(f"models-{name}.json", lambda: fetch(p["url"] + "/models", {"Authorization": f"Bearer {k}"}))
-            served[name] = [m["id"] for m in json.loads(raw)["data"]]
+            # a model listed at $0 is a free tier: throttled so hard for free accounts that agent runs fall over (Qwen3.8
+            # Flash Next, Ling 3.1 Flash on Experiential Labs, 2026-10-12/13), so it is no candidate
+            served[name] = [m["id"] for m in json.loads(raw)["data"] if not is_free(m)]
     if "--why" in sys.argv:
         want = norm(sys.argv[sys.argv.index("--why") + 1])
         for (base, effort), s in sorted(scores.items()):

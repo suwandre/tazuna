@@ -52,4 +52,7 @@ assert abs(r - 1.3) < 1e-9 and src.startswith("Epoch"), (r, src)
 r, src = mc.cost_ratio({}, {}, "mimov26pro", "max", "deepseekv41flash", "max", 0.4, 0.5)
 assert abs(r - 0.8) < 1e-9 and src == "token price", (r, src)
 assert mc.check(ROLES, PROFILES, scores, info, SERVED, {}, own) == []  # 33x per task: no flag for mimo any more
+assert mc.is_free({"pricing": {"input_nano_usd_per_million_tokens": 0, "output_nano_usd_per_million_tokens": 0}})
+assert not mc.is_free({"pricing": {"input_per_million": "0.075", "output_per_million": "0.3"}})
+assert not mc.is_free({"pricing": {}})  # no price listed: not known to be free
 print("model_check: ok")
