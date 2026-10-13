@@ -252,6 +252,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: footprint of a whole agent run measured for the first time (`bench/agent_footprint.py`): own loop 27 MB peak
   RAM and 0.1 s CPU vs the claude path 262-282 MB and 0.6-0.7 s, on the same small fix. Goal 1's "real footprint wins come
   with the own loop" holds: ~10x less memory. Wall time goes the other way (provider wait), so speed is the own loop's gap.
+- 2026-10-13: Gemini 4 Argon (free for a while on Experiential Labs, 832,500 input tokens per hour; paid $2/$10 per M).
+  As own-loop implementer: unusable on the free tier (4 parallel tasks used the hourly allowance in 5 minutes; one task
+  needs 1.6-10M tokens; free answers carry an appended ad). As judge, 63 October patches vs Opus: r 0.90, same order
+  within a task 66% (Luna 64%), ~1 point more lenient. No better than Luna at 20x Luna's price: not adopted.
 - 2026-10-13: reviewer recall test. Ground truth: a peer's round-1 Critical/Major findings on 5 of the user's company PRs
   (19 findings), each reviewer in a fresh repo copy at the reviewed commit, the ticket verbatim, read-only. Caught: the
   user's own reviewer prompt (precision-first, "few high-confidence findings") 4 on Sonnet high ($1.61 for 5 PRs) and 6 on
