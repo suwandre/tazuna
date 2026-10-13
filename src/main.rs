@@ -9,6 +9,9 @@
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
 //!          [-c | --continue | --resume <session-id>]   # pick up this repo's latest (or a given) session
 //!          [--explorer <model> | --no-explorer]   # a subagent on <model> (default haiku) reads and searches code for the main model
+//!          [--explorer MODEL@URL [--explorer-key-env VAR]]   # the reading goes to MODEL on an OpenAI-compatible API instead
+//!                                                          # (tazuna's own loop, read-only; the code leaves the machine,
+//!                                                          # so the host must be trusted or --data any)
 //!          [--advisor <model>]   # Claude Code's advisor: the main model can consult <model> when stuck
 //!          [--boss <model>]   # the main model only directs: explorer, implementer and tester subagents on <model> do
 //!                         # all reading, editing and test runs (a hook blocks those tools for the main model)
@@ -115,6 +118,7 @@ struct Args {
     cache_ttl: Option<String>,
     repo_map: bool,
     explorer: Option<String>,
+    explorer_key_env: String,
     tester: Option<String>,
     boss: Option<String>,
     advisor: Option<String>,
@@ -196,6 +200,7 @@ fn args() -> Result<Args> {
         cache_ttl: None,
         repo_map: false,
         explorer: Some("haiku".into()),
+        explorer_key_env: "OPENAI_API_KEY".into(),
         tester: None,
         boss: None,
         advisor: None,
@@ -238,6 +243,7 @@ fn args() -> Result<Args> {
             "--repo-map" => a.repo_map = true,
             "--explorer" => a.explorer = Some(val()?),
             "--no-explorer" => a.explorer = None,
+            "--explorer-key-env" => a.explorer_key_env = val()?,
             "--tester" => a.tester = Some(val()?),
             "--boss" => a.boss = Some(val()?),
             "--advisor" => a.advisor = Some(val()?),
@@ -320,6 +326,9 @@ fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("engine") {
         return engine::serve(&std::env::args().skip(2).collect::<Vec<_>>());
     }
+    if std::env::args().nth(1).as_deref() == Some("explore-mcp") {
+        return engine::explore_serve(&std::env::args().skip(2).collect::<Vec<_>>());
+    }
     if std::env::args().nth(1).as_deref() == Some("map") {
         // `tazuna map <task-file>`: the repo map --repo-map would send, for checking it by eye
         let task = std::fs::read_to_string(std::env::args().nth(2).context("tazuna map <task-file>")?)?;
@@ -332,6 +341,9 @@ fn main() -> Result<()> {
     let a = args()?;
     if let Some((url, _)) = &a.provider {
         check_data(url, a.data_any)?;
+    }
+    if let Some((_, url)) = a.explorer.as_deref().and_then(|e| e.split_once('@')) {
+        check_data(url, a.data_any)?; // the explorer reads the code, so the code goes to its provider
     }
     let base = labels::dir()?;
     if let Some(v) = &a.verdict {
@@ -383,7 +395,7 @@ fn main() -> Result<()> {
             live.project_instructions = a.project_instructions;
             live.cache_ttl = a.cache_ttl.clone();
             live.repo_map = a.repo_map;
-            live.explorer = a.explorer.clone();
+            set_explorer(&mut live, &a);
             live.tester = a.tester.clone();
             live.boss = a.boss.clone();
             live.advisor = a.advisor.clone();
@@ -452,6 +464,17 @@ fn lane(a: &Args, interactive: bool) -> Result<route::Lane> {
 /// Runs one task without a UI and prints claude's result event, the same JSON `claude -p --output-format json` prints.
 /// Providers allowed under `--data trusted`, one host per line in ~/.config/tazuna/trusted-providers (Anthropic through
 /// the claude CLI is always allowed). Providers that may store or use the code need `--data any` or an entry there.
+/// `--explorer haiku`: a Claude subagent; `--explorer MODEL@URL`: the explore tool on tazuna's own loop.
+fn set_explorer(live: &mut live::Live, a: &Args) {
+    match a.explorer.as_deref().and_then(|e| e.split_once('@')) {
+        Some((model, url)) => {
+            live.explorer = None;
+            live.explorer_provider = Some((url.trim_end_matches('/').to_string(), a.explorer_key_env.clone(), model.to_string()));
+        }
+        None => live.explorer = a.explorer.clone(),
+    }
+}
+
 fn check_data(url: &str, any: bool) -> Result<()> {
     if any {
         return Ok(());
@@ -487,7 +510,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.project_instructions = a.project_instructions;
     live.cache_ttl = a.cache_ttl.clone();
     live.repo_map = a.repo_map;
-    live.explorer = a.explorer.clone();
+    set_explorer(&mut live, &a);
     live.tester = a.tester.clone();
     live.advisor = a.advisor.clone();
     live.boss = a.boss.clone();
@@ -527,8 +550,11 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
         let cost = (sum(&["cost_usd"]) * 1e6).round() / 1e6;
         let last = live.logs.last().unwrap_or(first);
         r["tazuna"] = json!({"verify": first["verify"], "review": first["review"], "stop": last["stop"], "cost_usd": cost, "runs": live.logs.len()});
-        // every round, process and run, the reviewer included (claude's own figure covers one process)
-        r["total_cost_usd"] = json!(cost);
+        // every round, process and run, the reviewer included (claude's own figure covers one process), plus the explorer's
+        // answers when it runs on another provider (`--explorer MODEL@URL`)
+        let explorer = live.explorer_cost();
+        r["explorer_cost_usd"] = json!(explorer);
+        r["total_cost_usd"] = json!(((cost + explorer) * 1e6).round() / 1e6);
     }
     println!("{r}");
     Ok(())

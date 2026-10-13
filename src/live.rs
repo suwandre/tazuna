@@ -35,6 +35,9 @@ const FINISH_RULES: &str = "Finish only when the task is fully done: every requi
 /// rate), so a cheaper subagent reads and answers in short; the main model reads a file only right before editing it.
 const EXPLORER_RULE: &str = "Do not explore the code yourself: no Read, cat, sed, head, tail, grep, rg or find to look around. Send every question about the code to the explorer subagent (Task tool, subagent_type explorer); it reads and searches the repo and answers with file paths, line ranges and the lines that matter. Ask several questions in parallel when they are independent. Read a file yourself only right before you edit it, and only the part you edit.";
 
+/// `--explorer MODEL@URL`: the same rule for the explore tool, a cheap model on tazuna's own loop (`tazuna explore-mcp`).
+const EXPLORE_TOOL_RULE: &str = "Do not explore the code yourself: no Read, cat, sed, head, tail, grep, rg or find to look around. Send every question about the code to the explore tool (mcp__explore__explore); it searches and reads the repo and answers with file paths, line ranges and the lines that matter. Ask several questions in parallel when they are independent. Read a file yourself only right before you edit it, and only the part you edit.";
+
 /// `--tester`: test and type-check output is long and stays in the main model's context for every later turn; a cheaper
 /// subagent runs the checks and reports only what failed.
 const TESTER_RULE: &str = "Do not run tests, type checks, builds or linters yourself. Ask the tester subagent (Task tool, subagent_type tester) to run them, naming the command or the files to check; it reports only the failures, with the lines that explain them. Run independent checks in parallel.";
@@ -246,6 +249,10 @@ pub struct Live {
     mapped: bool,
     /// Model of the explorer subagent (`--explorer sonnet`), repo profile only.
     pub explorer: Option<String>,
+    /// `--explorer MODEL@URL`: (url, key env, model) of the explore tool's provider, instead of a subagent.
+    pub explorer_provider: Option<(String, String, String)>,
+    /// Where the explore tool writes the cost of each answer.
+    explorer_costs: PathBuf,
     /// Model of the tester subagent (`--tester haiku`), repo profile only.
     pub tester: Option<String>,
     /// `--boss MODEL`: the main model only directs; explorer, implementer and tester subagents on MODEL do the work.
@@ -356,6 +363,9 @@ impl Live {
             repo_map: false,
             mapped: false,
             explorer: None,
+            explorer_provider: None,
+            explorer_costs: std::env::temp_dir().join(format!("tazuna-explorer-{}-{:x}.costs", std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0))),
             tester: None,
             boss: None,
             advisor: None,
@@ -613,6 +623,11 @@ impl Live {
             None => self.session_id = None,
         }
         self.last_assistant = None;
+    }
+
+    /// What the explore tool's answers cost so far (`--explorer MODEL@URL`; claude's own figure does not include them).
+    pub fn explorer_cost(&self) -> f64 {
+        std::fs::read_to_string(&self.explorer_costs).unwrap_or_default().lines().filter_map(|l| l.trim().parse::<f64>().ok()).sum()
     }
 
     /// Asks claude for the latest output of shell and Monitor tasks still running, and once more right after one ends
@@ -1086,7 +1101,15 @@ impl Live {
                 // hooks and skills itself. Per-machine prompt sections move to the first message for cross-session caching.
                 cmd.arg("--exclude-dynamic-system-prompt-sections");
                 let boss = self.boss.is_some();
-                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), self.explorer.as_ref().filter(|_| !boss).map(|_| EXPLORER_RULE), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE)]
+                if let Some((url, key_env, model)) = self.explorer_provider.as_ref().filter(|_| !boss) {
+                    let exe = std::env::current_exe().context("locating the tazuna binary")?;
+                    let server = json!({"mcpServers": {"explore": {"type": "stdio", "command": exe,
+                        "args": ["explore-mcp", "--url", url, "--key-env", key_env, "--model", model, "--effort", "max"],
+                        "env": {"TAZUNA_EXPLORER_COSTS": self.explorer_costs}}}});
+                    cmd.arg("--mcp-config").arg(server.to_string());
+                }
+                let explore_rule = self.explorer_provider.as_ref().map(|_| EXPLORE_TOOL_RULE).or(self.explorer.as_ref().map(|_| EXPLORER_RULE));
+                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE)]
                     .into_iter()
                     .flatten()
                     .collect();

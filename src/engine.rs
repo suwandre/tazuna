@@ -39,20 +39,7 @@ pub fn serve(args: &[String]) -> Result<()> {
     if std::env::var_os("TAZUNA_BATCH").is_some() {
         system.push_str(BATCH_RULE);
     }
-    let key = std::env::var(&key_env).with_context(|| format!("{key_env} not set"))?;
-    // SAFETY: no other thread runs yet. The agent's commands inherit this environment and must not see the key.
-    unsafe { std::env::remove_var(&key_env) };
-    let http: ureq::Agent = ureq::Agent::config_builder()
-        // the system's TLS (macOS Security framework): ~1 MB less binary than rustls
-        .tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build())
-        // a normal call answers in 15-60 s, a long reasoning one in a minute or two; 300 s let a provider that accepted a
-        // call and never answered stall a run for an hour across the retries (GLM on Experiential Labs, 2026-10-12)
-        .timeout_global(Some(CALL_TIMEOUT)).http_status_as_error(false).build().into();
-    // retried like model calls: one benchmark run died at startup on a model-list request that never answered
-    let (price, responses) = [2, 8, 30].iter().find_map(|w| price(&http, &url, &key, &model).map_err(|e| {
-        eprintln!("model list failed ({e:#}); retrying in {w}s");
-        std::thread::sleep(Duration::from_secs(*w));
-    }).ok()).map_or_else(|| price(&http, &url, &key, &model), Ok)?;
+    let (call, responses, price) = connect(&url, &key_env, &model)?;
 
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -70,7 +57,7 @@ pub fn serve(args: &[String]) -> Result<()> {
     let names: Vec<&Value> = tools.as_array().into_iter().flatten().map(|t| &t["name"]).collect();
     emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": []}));
     let mut loop_ = Loop {
-        call: Box::new(move |body: &Value| chat(&http, &url, &key, body)),
+        call,
         responses,
         system: system.clone(),
         model,
@@ -248,6 +235,9 @@ impl Loop {
                 let (text, is_error) = match input {
                     None => ("the arguments were not valid JSON; call the tool again with a JSON object".to_string(), true),
                     Some(input) => match self.permit(&name, &input, rx) {
+                        Permit::Allow(input) if self.mode == "explore" && (name == "search" || name == "list") => {
+                            explore_tool(&name, &input, &std::env::current_dir().unwrap_or_default())
+                        }
                         Permit::Allow(input) => match self.server.call(&json!({"name": name, "arguments": input})) {
                             Ok(r) => (r["content"][0]["text"].as_str().unwrap_or_default().to_string(), r["isError"] == true),
                             Err((_, e)) => (e, true),
@@ -268,6 +258,170 @@ impl Loop {
     }
 }
 
+/// A model call through the provider, its prices, and whether it takes the Responses API. Removes the key from this
+/// process's environment: the agent's commands inherit it and must not see the key.
+fn connect(url: &str, key_env: &str, model: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, bool, Price)> {
+    let key = std::env::var(key_env).with_context(|| format!("{key_env} not set"))?;
+    // SAFETY: called before any other thread starts.
+    unsafe { std::env::remove_var(key_env) };
+    let http: ureq::Agent = ureq::Agent::config_builder()
+        // the system's TLS (macOS Security framework): ~1 MB less binary than rustls
+        .tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build())
+        // a normal call answers in 15-60 s, a long reasoning one in a minute or two; 300 s let a provider that accepted a
+        // call and never answered stall a run for an hour across the retries (GLM on Experiential Labs, 2026-10-12)
+        .timeout_global(Some(CALL_TIMEOUT)).http_status_as_error(false).build().into();
+    // retried like model calls: one benchmark run died at startup on a model-list request that never answered
+    let (price, responses) = [2, 8, 30].iter().find_map(|w| price(&http, url, &key, model).map_err(|e| {
+        eprintln!("model list failed ({e:#}); retrying in {w}s");
+        std::thread::sleep(Duration::from_secs(*w));
+    }).ok()).map_or_else(|| price(&http, url, &key, model), Ok)?;
+    let url = url.to_string();
+    Ok((Box::new(move |body: &Value| chat(&http, &url, &key, body)), responses, price))
+}
+
+/// The explorer's own tools instead of bash: no shell, fixed arguments, paths inside the repo only. (A word list over bash
+/// commands was bypassable: `rg --pre`, `git -c core.pager`, `sed 'w file'`, `sort -o` run or write, found by a security
+/// review.)
+fn explore_tools() -> Vec<Value> {
+    vec![
+        json!({"type": "function", "function": {"name": "search",
+            "description": "Search file contents with an extended regular expression (grep -rnIE). Returns path:line:text, at most 200 lines.",
+            "parameters": {"type": "object", "properties": {
+                "pattern": {"type": "string"}, "path": {"type": "string", "description": "directory or file, default ."},
+                "glob": {"type": "string", "description": "only files matching this name pattern, e.g. *.go"}}, "required": ["pattern"]}}}),
+        json!({"type": "function", "function": {"name": "list",
+            "description": "List files and directories under a path (find), at most 500 entries.",
+            "parameters": {"type": "object", "properties": {
+                "path": {"type": "string", "description": "default ."}, "glob": {"type": "string", "description": "only names matching this pattern"},
+                "depth": {"type": "integer", "description": "1-6, default 3"}}}}}),
+    ]
+}
+
+/// A path the explorer may look at: inside the working directory (no `..` out of it, no absolute path elsewhere).
+fn inside(cwd: &std::path::Path, path: &str) -> Option<std::path::PathBuf> {
+    let root = cwd.canonicalize().ok()?;
+    let p = root.join(if path.is_empty() { "." } else { path }).canonicalize().ok()?;
+    p.starts_with(&root).then_some(p)
+}
+
+/// Runs `search` or `list` with fixed arguments (no shell): (text, is_error).
+fn explore_tool(name: &str, input: &Value, cwd: &std::path::Path) -> (String, bool) {
+    let Some(path) = inside(cwd, input["path"].as_str().unwrap_or(".")) else {
+        return ("That path is outside the repository or does not exist.".into(), true);
+    };
+    let glob = input["glob"].as_str().filter(|g| !g.is_empty());
+    let (mut cmd, max) = if name == "search" {
+        let mut c = std::process::Command::new("grep");
+        c.args(["-rnIE", "--exclude-dir=.git", "--exclude-dir=node_modules", "--exclude-dir=vendor"]);
+        if let Some(g) = glob {
+            c.arg(format!("--include={g}"));
+        }
+        c.arg("--").arg(input["pattern"].as_str().unwrap_or_default()).arg(&path);
+        (c, 200)
+    } else {
+        let depth = input["depth"].as_u64().unwrap_or(3).clamp(1, 6).to_string();
+        let mut c = std::process::Command::new("find");
+        c.arg(&path).args(["-maxdepth", &depth, "-not", "-path", "*/.git/*", "-not", "-name", ".git"]);
+        if let Some(g) = glob {
+            c.args(["-name", g]);
+        }
+        (c, 500)
+    };
+    let out = match cmd.current_dir(cwd).output() {
+        Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
+        Err(e) => return (format!("{name} failed: {e}"), true),
+    };
+    let root = cwd.canonicalize().map(|r| format!("{}/", r.display())).unwrap_or_default();
+    let lines: Vec<&str> = out.lines().collect();
+    let mut text = lines.iter().take(max).map(|l| l.replacen(&root, "", 1)).collect::<Vec<_>>().join("\n");
+    if lines.len() > max {
+        text.push_str(&format!("\n[{} more lines: narrow the pattern, path or glob]", lines.len() - max));
+    }
+    (if text.is_empty() { "(nothing found)".into() } else { text }, false)
+}
+
+/// The explorer's instructions: it answers another agent's question about the code, briefly, and never edits.
+const EXPLORE_PROMPT: &str = "You explore a codebase for another agent that will change it. Answer its question with file paths, line numbers and short quotes of the lines that matter: complete, but brief. Use search (grep) and list (find) to locate code, and read to read the parts you need (read takes an offset and limit). You cannot edit anything or run commands.";
+
+/// `tazuna explore-mcp`: an MCP server with one tool, `explore`, answered by a cheap model on tazuna's own loop with
+/// read-only tools. It lets Opus on the claude path hand off reading code (`--explorer MODEL@URL`), the part of a run that
+/// costs most at Opus's rates. Each answer's cost goes to `$TAZUNA_EXPLORER_COSTS` (one number per line) when set.
+pub fn explore_serve(args: &[String]) -> Result<()> {
+    let flag = |name: &str| args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone());
+    let url = flag("--url").context("--url")?.trim_end_matches('/').to_string();
+    let key_env = flag("--key-env").context("--key-env")?;
+    let model = flag("--model").context("--model")?;
+    let effort = flag("--effort").or(Some("max".into()));
+    let (call, responses, price) = connect(&url, &key_env, &model)?;
+    let cwd = std::env::current_dir()?;
+    let mut tools: Vec<Value> = crate::mcp::tools().as_array().into_iter().flatten()
+        .filter(|t| t["name"] == "read")
+        .map(|t| json!({"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["inputSchema"]}}))
+        .collect();
+    tools.extend(explore_tools());
+    let answer = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+    let sink = answer.clone();
+    let mut l = Loop {
+        call,
+        responses,
+        system: EXPLORE_PROMPT.into(),
+        model,
+        effort,
+        price,
+        tools,
+        msgs: vec![],
+        server: crate::mcp::Server::new(cwd),
+        session: format!("explore-{}", std::process::id()),
+        cost: 0.0,
+        task: (std::time::Instant::now(), 0.0),
+        queued: VecDeque::new(),
+        mode: "explore".into(),
+        asked: 0,
+        out: Box::new(move |e: &Value| {
+            if e["type"] == "result" {
+                *sink.borrow_mut() = e["result"].as_str().unwrap_or_default().to_string();
+            }
+        }),
+    };
+    let (_tx, rx) = std::sync::mpsc::channel(); // nothing interrupts an explorer answer
+    let costs = std::env::var_os("TAZUNA_EXPLORER_COSTS");
+    let mut out = std::io::stdout().lock();
+    for line in std::io::stdin().lock().lines() {
+        let Ok(msg) = serde_json::from_str::<Value>(&line?) else { continue };
+        let Some(id) = msg.get("id").cloned() else { continue }; // a notification: no reply
+        let result = match msg["method"].as_str().unwrap_or_default() {
+            "initialize" => json!({"protocolVersion": msg["params"]["protocolVersion"].as_str().unwrap_or("2025-06-18"),
+                "capabilities": {"tools": {}}, "serverInfo": {"name": "explore", "version": env!("CARGO_PKG_VERSION")}}),
+            "tools/list" => json!({"tools": [{"name": "explore",
+                "description": "Ask a cheap explorer model a precise question about this repository's code. It searches and reads the code itself and answers with file paths, line numbers and the lines that matter. Ask several questions in parallel when they are independent.",
+                "inputSchema": {"type": "object", "properties": {"question": {"type": "string", "description": "the question, with any names, paths or symptoms you already know"}}, "required": ["question"]}}]}),
+            "tools/call" => {
+                let question = msg["params"]["arguments"]["question"].as_str().unwrap_or_default().to_string();
+                // a fresh conversation per question: answers stay focused and its context small
+                l.msgs = if l.responses { vec![] } else { vec![json!({"role": "system", "content": l.system})] };
+                let before = l.cost;
+                l.run(&json!(question), false, &rx);
+                if let Some(f) = &costs {
+                    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(f) {
+                        let _ = writeln!(file, "{}", l.cost - before);
+                    }
+                }
+                let text = std::mem::take(&mut *answer.borrow_mut());
+                json!({"content": [{"type": "text", "text": if text.is_empty() { "(the explorer found no answer)".to_string() } else { text }}]})
+            }
+            m => {
+                writeln!(out, "{}", json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": format!("unknown method {m}")}}))?;
+                out.flush()?;
+                continue;
+            }
+        };
+        writeln!(out, "{}", json!({"jsonrpc": "2.0", "id": id, "result": result}))?;
+        out.flush()?;
+    }
+    Ok(())
+}
+
+
 /// The user's answer to a permission question.
 enum Permit {
     Allow(Value),
@@ -287,6 +441,17 @@ impl Loop {
     /// Asks the user before a command or an edit when the mode says so, in claude's protocol (a `can_use_tool` control
     /// request, answered by a `control_response`), so tazuna's existing question UI and "always" answers work unchanged.
     fn permit(&mut self, tool: &str, input: &Value, rx: &Receiver<Value>) -> Permit {
+        if self.mode == "explore" {
+            // the explorer (`tazuna explore-mcp`) only reads: no edits, and bash only for read-only commands
+            // inside the repo only: what the explorer reads goes to its provider, so no key files or other projects
+            let cwd = std::env::current_dir().unwrap_or_default();
+            return match tool {
+                "read" if inside(&cwd, input["path"].as_str().unwrap_or_default()).is_some() => Permit::Allow(input.clone()),
+                "read" => Permit::Deny("That file is outside the repository.".into()),
+                "search" | "list" => Permit::Allow(input.clone()),
+                _ => Permit::Deny("The explorer can only search, list and read.".into()),
+            };
+        }
         let ask = match self.mode.as_str() {
             "default" => matches!(tool, "bash" | "write" | "edit"),
             "acceptEdits" => tool == "bash",
@@ -570,6 +735,26 @@ mod tests {
         assert!(asked); // the stop came while the question was open
         assert_eq!((last["type"].as_str(), last["result"].as_str()), (Some("result"), Some("[interrupted]")));
         assert!(!dir.join("b.txt").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_explorer_searches_and_lists_inside_the_repo_only() {
+        let dir = std::env::temp_dir().join(format!("tazuna-explore-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/a.go"), "package a\nfunc Timeout() {}\n").unwrap();
+        let (hit, err) = super::explore_tool("search", &json!({"pattern": "func Time", "glob": "*.go"}), &dir);
+        assert!(!err && hit.contains("src/a.go:2:func Timeout"), "{hit}");
+        // a pattern that looks like a flag is still a pattern
+        let (none, err) = super::explore_tool("search", &json!({"pattern": "--version"}), &dir);
+        assert!(!err && none == "(nothing found)", "{none}");
+        let (files, _) = super::explore_tool("list", &json!({"glob": "*.go"}), &dir);
+        assert!(files.contains("src/a.go"), "{files}");
+        for out in ["..", "/etc", "../../"] {
+            assert!(super::explore_tool("list", &json!({"path": out}), &dir).1, "{out}");
+        }
+        assert!(super::inside(&dir, "src/a.go").is_some() && super::inside(&dir, "/etc/hosts").is_none());
+        assert!(super::inside(&dir, &format!("{}/../x", dir.display())).is_none());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
