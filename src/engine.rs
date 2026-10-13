@@ -265,8 +265,6 @@ fn connect(url: &str, key_env: &str, model: &str) -> Result<(Box<dyn FnMut(&Valu
     // SAFETY: called before any other thread starts.
     unsafe { std::env::remove_var(key_env) };
     let http: ureq::Agent = ureq::Agent::config_builder()
-        // the system's TLS (macOS Security framework): ~1 MB less binary than rustls
-        .tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build())
         // a normal call answers in 15-60 s, a long reasoning one in a minute or two; 300 s let a provider that accepted a
         // call and never answered stall a run for an hour across the retries (GLM on Experiential Labs, 2026-10-12)
         .timeout_global(Some(CALL_TIMEOUT)).http_status_as_error(false).build().into();

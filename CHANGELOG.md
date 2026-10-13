@@ -16,6 +16,28 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.50 (2026-10-13)
+
+**rustls instead of the system's TLS, and a size-tuned release build (strip, LTO, one codegen unit).** Linking the macOS
+Security framework for the own loop (0.0.28) cost every tazuna process ~4.4 MB of memory at start, used or not: the UI
+went from 7.2 to 11.6 MB and the tool server from 2.1 to 6.4 MB (bisected over 71 commits; 0.0.41's "UI 7 MB" was Tier 0
+at 0.0.20). rustls is plain Rust code that stays out of memory until a provider is called. It made the binary 1.3 MB
+larger; strip and LTO took that back and more.
+
+| Tier 0 | 0.0.49 | 0.0.50 |
+|---|---|---|
+| binary | 4.04 MB | 3.35 MB (−17%) |
+| UI memory (animating) | 11.6 MB | 7.3 MB (−37%) |
+| tool server memory | 6.3 MB | 2.1 MB (−67%) |
+| startup | 9.1 ms | 7.2 ms |
+| UI CPU | 2.0% | 1.2-1.7% |
+| replay render | 10 ms | 8 ms |
+
+Own loop, one small fix (`bench/agent_footprint.py`): fixed on CheaperInference (22.2 MB peak, engine 19.3 MB) and on
+Experiential Labs (20.8 MB), against 27 MB at 0.0.41. Root certificates now come from the bundled Mozilla list
+(webpki-roots), not the system keychain: a provider behind a private CA would need its certificate added there. A clean
+release build takes ~45 s.
+
 ## 0.0.49 (2026-10-13)
 
 **Boss mode is the default for `--run` on Opus on the claude path.** Opus only directs; Haiku subagents read, edit and

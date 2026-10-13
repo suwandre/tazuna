@@ -38,9 +38,9 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
   solved, judge 7.79 / 8.32 (without / with reference), $8.36, vs tazuna on Opus 9/14, 6.79 / 6.93, $38.90. Best quality
   per dollar measured in every set where it is allowed. Other cheap models (GPT-6 Luna, Qwen3.8 Flash, GLM-5.3 Flash) and
   own-loop ideas (elision, plan tool, few-turns prompt) did not beat it.
-- **Footprint:** binary 3.9 MB (system TLS for the own loop); UI 7 MB RAM, 6 ms to first frame, ~1.5% CPU (Tier 0 at
-  0.0.20). A whole agent run (`bench/agent_footprint.py`, one small fix): **own loop 27 MB peak RAM** (engine 19 MB, UI
-  7 MB), 0.1 s CPU; **claude path 262-282 MB** (the `claude` CLI 248-267 MB, tazuna 7 MB, tool server 7 MB), 0.6-0.7 s CPU.
+- **Footprint:** binary 3.35 MB (rustls, strip, LTO); UI 7.3 MB RAM, 7 ms to first frame, ~1.5% CPU; tool server 2.1 MB
+  (Tier 0 at 0.0.50). A whole agent run (`bench/agent_footprint.py`, one small fix): **own loop 21-22 MB peak RAM**
+  (engine 18-19 MB, UI 3 MB; 27 MB at 0.0.41), 0.1 s CPU; **claude path 262-282 MB** (the `claude` CLI 248-267 MB, tazuna 7 MB, tool server 7 MB), 0.6-0.7 s CPU.
   The own loop needs ~10x less memory; on that task it took 29-69 s against 5-6 s, all of it waiting for the provider.
 - **Measurement:** the benchmark kit lives in `bench/` (runner, blind Opus judge with and without reference, usage guard,
   cheap-judge calibration). Judge rounds run one pass by default and print their call count first; the guard blocks judging
@@ -251,6 +251,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: footprint of a whole agent run measured for the first time (`bench/agent_footprint.py`): own loop 27 MB peak
   RAM and 0.1 s CPU vs the claude path 262-282 MB and 0.6-0.7 s, on the same small fix. Goal 1's "real footprint wins come
   with the own loop" holds: ~10x less memory. Wall time goes the other way (provider wait), so speed is the own loop's gap.
+- 2026-10-13: the system's TLS (0.0.28) cost every tazuna process ~4.4 MB at start, unnoticed because the roadmap quoted
+  Tier 0 from 0.0.20. rustls plus a size-tuned release build (0.0.50): UI 11.6 → 7.3 MB, tool server 6.3 → 2.1 MB, binary
+  4.04 → 3.35 MB. Lesson: compare Tier 0 against the last recorded line on every release, not against the roadmap.
 - 2026-10-13: boss mode becomes the default for `--run` on Opus (0.0.49). Company tickets, 10 runs: judge 5.25 vs 5.90
   (−0.65, within the ±0.75 threshold) at $1.38 vs $2.18 (−37%); Go −0.13 at −32%. Quality per dollar decides. Watch:
   the ticket drop is near the threshold and sits in edge cases; a reviewer pass on the boss's diff is the next lever if
