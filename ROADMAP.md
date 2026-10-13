@@ -252,6 +252,15 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: footprint of a whole agent run measured for the first time (`bench/agent_footprint.py`): own loop 27 MB peak
   RAM and 0.1 s CPU vs the claude path 262-282 MB and 0.6-0.7 s, on the same small fix. Goal 1's "real footprint wins come
   with the own loop" holds: ~10x less memory. Wall time goes the other way (provider wait), so speed is the own loop's gap.
+- 2026-10-13: reviewer recall test. Ground truth: a peer's round-1 Critical/Major findings on 5 of the user's company PRs
+  (19 findings), each reviewer in a fresh repo copy at the reviewed commit, the ticket verbatim, read-only. Caught: the
+  user's own reviewer prompt (precision-first, "few high-confidence findings") 4 on Sonnet high ($1.61 for 5 PRs) and 6 on
+  Opus high ($5.78); a five-lens prompt (`bench/review-lens.txt`: each criterion with a counterexample, every other
+  reader/writer of the touched data, partial failure and retries, lifecycle of new state, actors and variants; report
+  everything with a scenario) 7 on Sonnet ($2.58) and 13 on Opus ($11.69). Held-out PRs (prompt not written from
+  them, 8 findings): 1 / 3 / 3 / 5. It also caught several issues the peer only raised in later rounds. Next: the lens
+  prompt as tazuna's `--review-model` prompt, measured on tickets and Go tasks (the earlier generic reviewer added scope,
+  not quality).
 - 2026-10-13: boss + Opus high reviewer on tickets: 5.20, same as boss, at $2.15 (the old default's price). Not adopted.
   The boss gap on tickets held in a second pool (−0.70 vs 5.90): consistent, just inside noise. Boss stays the `--run`
   default; `--no-boss` for tickets where quality matters more than cost.

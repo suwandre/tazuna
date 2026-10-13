@@ -89,7 +89,8 @@ def main():
             elif reset_low and PAUSE.exists():  # only after the window has reset
                 PAUSE.unlink(); log(f"RESUME: 5h at {util}%")
             else:
-                log(f"5h {util}%  extra {extra}  {'paused' if PAUSE.exists() else 'running'}")
+                each = getattr(meter, "each", {})
+                log(f"5h {each.get('five_hour', util)}%  week {each.get('seven_day', util)}%  extra {extra}  {'paused' if PAUSE.exists() else 'running'}")
         except Exception as e:
             log(f"meter read failed: {str(e)[:120]}")
             if time.time() - last_ok > 600 and not PAUSE.exists():
