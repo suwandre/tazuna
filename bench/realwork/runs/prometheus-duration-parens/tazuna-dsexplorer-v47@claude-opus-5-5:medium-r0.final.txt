@@ -1,0 +1,28 @@
+Every case in the issue now prints back with its parentheses. All tests pass (`go test ./promql/...`), and `golangci-lint` reports nothing for `promql/parser`. Nothing is committed yet.
+
+| Input | Before | After |
+|---|---|---|
+| `foo offset (5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset +(5)` | `foo offset 5s` | `foo offset (5)` |
+| `foo offset -(5)` | `foo offset -5s` | `foo offset -(5)` |
+| `foo offset (5m)` | `foo offset 5m` | `foo offset (5m)` |
+| `foo[(5s)]` | `foo[5s]` | `foo[(5s)]` |
+
+A leading `+` is still dropped, matching how `foo offset +(5*2)` already printed as `foo offset (5 * 2)`.
+
+**How it works:** when a plain number sits in parentheses in an offset or range position, the parser now wraps it in a `DurationExpr` (a unary `+` marked `Wrapped: true`) instead of returning the bare number. The printer already knew how to print a wrapped `DurationExpr`, and the evaluator already handled unary `+`, so neither needed changing.
+
+- **Grammar (`generated_parser.y`):** the parenthesised-duration rule now wraps a bare number.
+- **`parse.go`:** the unary `+`/`-` handling does the same when the operand is parenthesised, as in `offset -(5)`. A new helper, `durationLiteralValue`, sees through these wrappers. The parse-time checks use it, so `foo[(0)]`, `foo[-(5)]` and `foo[5s/(0)]` are still rejected when the query is parsed, not later.
+- **`prettier.go`:** the pretty-printer now drops a unary `+` the same way `String()` does. Otherwise it would print `(+5m)`.
+- **Parser file:** I regenerated `generated_parser.y.go` with goyacc v0.6.0. The new grammar has the same number of conflicts as the old one.
+
+**Behaviour change to be aware of:** `foo offset (5)`, `+(5)` and `-(5)` used to set `OriginalOffset` directly when parsed. They now set `OriginalOffsetExpr`, which the engine converts to `OriginalOffset` in `PreprocessExpr`. This is the same path `foo offset (5m + 1m)` already takes. I updated the two existing AST expectations in `parse_test.go` to match. I left the experimental-flag checks alone: `foo offset -(5)` still parses with the flag off, as it did before.
+
+**Tests added:**
+- **Printing:** the issue's cases plus subquery variants, in `printer_test.go`.
+- **Parse errors:** `foo[(0)]`, `foo[-(5)]` and `foo[5s/(0)]`, in `parse_test.go`.
+- **Pretty-printer:** two cases in `prettier_test.go`.
+- **Query results:** `offset (10)`, `offset -(10)` and `[(30s)]` in `duration_expression.test`. I made one of these fail on purpose to confirm they actually run.
+
+Would you like me to commit this (signed off) and draft the PR? Suggested title: `promql/parser: preserve parentheses around plain duration literals`, with `[BUGFIX] PromQL: Preserve parentheses around plain number/duration literals in offset and range duration expressions when printing.` as the release note.

@@ -1,0 +1,20 @@
+Your example Caddyfile now parses. Quoted `{` and `}` (in double quotes, backticks or a heredoc) are treated as ordinary arguments, and only unquoted braces open or close blocks.
+
+**Cause:** The lexer already records whether each token was quoted, but the parser and the `Dispenser` only checked the token's text. So in `respond "{"` the quoted brace raised the block depth, and parsing failed with `wrong argument count or unexpected line ending after 'respond'`.
+
+**Fix** (all in `caddyconfig/caddyfile`):
+- **`lexer.go`:** added two small helpers on `Token`, `isOpenCurlyBrace()` and `isCloseCurlyBrace()`. They match only unquoted braces.
+- **`dispenser.go`:** `NextArg`, `NextBlock` and `ArgErr` now use these helpers. Directive parsing that goes through the `Dispenser` API (all of it, as far as I found) gets the fix automatically.
+- **`parse.go`:** every place that tracks block depth now uses the helpers: site addresses, the end of a site block, snippet detection during import, directive parsing, the open/close brace checks and `blockTokens`. One older quoted-brace special case in directive parsing is no longer needed and was removed.
+
+No module code outside `caddyconfig/caddyfile` compares tokens to `{` or `}` directly.
+
+**One change to existing behaviour:** a quoted brace can no longer open or close a site block, so `localhost "{" … }` is now an error.
+
+**Tests:**
+- **`parse_test.go`:** new cases for `respond "{"`, `respond "}"`, quoted braces inside nested blocks, backtick and heredoc forms, and the two error cases where a quoted brace is used as a site block delimiter.
+- **`dispenser_test.go`:** new `TestDispenser_QuotedBraces`, which checks that `NextArg` and `NextBlock` treat quoted braces as arguments and leave nesting unchanged.
+
+`go test -race -short` passes for `./caddyconfig/...` and `./caddytest/...`, and `go build ./...` and `go vet` are clean. I also ran your example through `caddy adapt`. Before the change it failed with the error above. After it, the output is correct: `respond "{"` returns `{` as the body. `caddy fmt` leaves the file unchanged. I did not run `golangci-lint` or the full `./...` test suite.
+
+Per the project's contribution rules, the PR should say these changes were made with AI assistance (Claude Opus 5.5).

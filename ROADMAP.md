@@ -111,8 +111,8 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
    - **Planner → executor:** Opus plans in plan mode (files, exact changes, how to verify), a cheap model executes the plan
      (DeepSeek on the own loop; Haiku for code that must stay on the subscription), Opus is called again only when
      verification fails. Untested so far; differs from the failed Haiku + Opus *reviewer* run, which reviewed after the fact.
-   - **Cheap explorer for Claude:** an MCP tool backed by a DeepSeek sub-loop, so Opus on the claude CLI can hand off
-     reading to a non-Claude model.
+   - ~~**Cheap explorer for Claude:**~~ an MCP tool backed by a DeepSeek sub-loop (0.0.48, `--explorer MODEL@URL`): +9% cost,
+     same quality, slower; Opus kept reading itself. Opt-in.
 6. **Stock Claude Code with popular efficiency plugins vs tazuna** (user idea, 2026-10-09): caveman, headroom (context
    compression between Claude Code and the API), superpowers, ECC (affaan-m/ECC: discipline hooks, memory), GStack
    (garrytan/gstack: role team, /review, /qa), graphify alone (only tested with ponytail and agent-skills); ponytail + graphify + agent-skills already measured (−1.2
@@ -250,6 +250,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: footprint of a whole agent run measured for the first time (`bench/agent_footprint.py`): own loop 27 MB peak
   RAM and 0.1 s CPU vs the claude path 262-282 MB and 0.6-0.7 s, on the same small fix. Goal 1's "real footprint wins come
   with the own loop" holds: ~10x less memory. Wall time goes the other way (provider wait), so speed is the own loop's gap.
+- 2026-10-13: cheap explorer for Claude measured (DeepSeek V4.1 Flash via `--explorer MODEL@URL`, 6 Go tasks): judge 7.33 vs
+  7.13, cost +9%, runs up to 3x longer. Opus asked 2-3 questions per task and read on its own otherwise; a slow explorer is
+  not worth waiting for. Boss mode remains the claude-path lever ($2.70 vs $3.97 for the same quality).
 - 2026-10-12: the benchmark kit moved into the repo (`bench/`: run, judge, guard, calibration, task definitions, results and
   diffs). Company tickets and cloned plugins stay out.
 - 2026-10-11: clean benchmark (7 tasks merged after DeepSeek's release, 2 runs, judged without reference): cascade +0.7

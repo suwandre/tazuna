@@ -16,6 +16,27 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.48 (2026-10-13)
+
+**`--explorer MODEL@URL` (opt-in): Opus hands code questions to a cheap model on tazuna's own loop.** `tazuna
+explore-mcp` serves one MCP tool, `explore`, answered by MODEL with read-only tools of its own (`read`, `search` = grep,
+`list` = find; no shell, paths inside the repo only, so no key files or other projects reach the provider). The code
+leaves the machine, so the host must be trusted or `--data any`. The explorer's cost lands in the result
+(`explorer_cost_usd`, and in the total). A security review caught the first version, which gave the explorer bash behind a
+word list (`rg --pre`, `git -c core.pager`, `sed 'w file'` and `sort -o` got through) and an unrestricted `read`.
+
+Measured on the 6 Go tasks (Opus 5.5 medium, DeepSeek V4.1 Flash max as explorer, 1 run; judge 1 pass with reference):
+
+| | hidden tests | judge (with ref) | cost (6 tasks) |
+|---|---|---|---|
+| tazuna default (Haiku explorer, 2 runs) | same | 7.13 | $3.97 |
+| Opus + DeepSeek explorer | same (terraform 1/3, hugo-template 7/8, rest full) | 7.33 | $4.31 (+9%) |
+| `--boss haiku` (2 runs) | same | 7.00 | $2.70 |
+
+No saving: Opus asked the explorer 2-3 questions per task and read and searched on its own the rest of the time (25 own
+calls against 2 questions on hugo-template-return); each DeepSeek answer took ~4 minutes on CheaperInference, so runs got
+up to 3x longer. Stays opt-in. Opus only stops paying for reading when it cannot read at all, which is what `--boss` does.
+
 ## 0.0.47 (2026-10-13)
 
 **A model call that times out gets twice the time on the next try** (180 s, then 360, 720, at most 15 minutes). At the

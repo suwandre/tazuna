@@ -1,0 +1,13 @@
+I fixed the bug: every `import` block that targets a different instance of the same resource is now honored, and your example plans `2 to import, 0 to add`. A new regression test fails on the original code and passes with the fix.
+
+**Cause.** In 1.16.0, `FindImportStatements` (`internal/refactoring/import_statement.go`) was added to collect import blocks across modules. It stored them in a map keyed by the resource address alone (e.g. `terraform_data.t`), with no instance key. Each later block for the same resource hit the "already have one" check and was skipped without any warning. That's why only the first-declared block survived. It also affects `count`, not only `for_each`; the test shows the same failure for `b[0]`/`b[1]`.
+
+**Fix (two files):**
+- `internal/refactoring/import_statement.go`: the map now holds a list of import blocks for each resource. All blocks from the same module are kept. The intended rule that a parent module's imports override a child module's for the same resource still holds: if a resource already has imports from a different module (which can only be a parent, since parents are visited first), the child's blocks are skipped. I also corrected the doc comment, which wrongly said multiple import blocks for one resource in a module are an error.
+- `internal/terraform/context_plan.go`: `findImportTargets` now adds every block in each list.
+
+**Test.** `TestContext2Plan_importMultipleBlocksSameResource` in `internal/terraform/context_plan_import_test.go` sets up a `for_each` resource and a `count` resource, each with two separate import blocks. It checks that all four instances are imported with the right IDs. Without the fix it fails on `a["second"]` and `b[1]`.
+
+**Test results.** `go test` passes for `./internal/terraform/...`, `./internal/refactoring/...`, `./internal/backend/local/...` and every `./internal/command/...` subpackage. The `./internal/command` package itself has one failure, `TestInit_providerLockFileReadonly`. It fails the same way with my changes stashed, so it was already broken and isn't caused by this fix.
+
+One thing I left alone: when one resource has several import blocks, the code in `node_resource_plan.go` that generates config for imports still reads only the first block. Config generation only applies to single-instance resources, so it doesn't affect this bug.

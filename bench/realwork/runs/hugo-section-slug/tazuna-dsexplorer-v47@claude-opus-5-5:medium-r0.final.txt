@@ -1,0 +1,12 @@
+Setting `slug` on a section, taxonomy or term page now changes that page's URL and the URLs of everything below it. The example from the issue resolves as proposed: `help/`, `help/how-to-frob/`, `es/ayuda/` and `es/ayuda/como-frobear/`. The new test passes, the `hugolib` and `resources` test suites pass, and `./check.sh ./hugolib/... ./resources/...` passes. I didn't run the full `./check.sh` over the whole repo.
+
+**How it works:**
+- `hugolib/page__paths.go`: the new `sectionBaseWithSlugs` goes up from the page's current section through its parent sections. Each one with a slug has its own folder name in the path replaced by the slug. If the result differs from the plain path, it's stored in a new `TargetPathDescriptor.SectionBase` field.
+- `resources/page/page_paths.go`: a small `sectionDir` helper swaps that slugged path in where URLs are built, for both section pages and regular pages. When no slugs are involved, URLs come out exactly as before.
+- Front-matter `url` and `permalinks` config still take precedence over a section slug.
+
+**Test:** `TestSlugInSectionTaxonomyAndTermPages` in `hugolib/page_permalink_test.go` covers the English/Spanish example from the issue, a nested section with a slug and a page inside it, and a taxonomy and a term that each have a slug. I didn't add an issue reference because I don't know the real issue number.
+
+**Behaviour change:** sites that already set `slug` on an `_index.md` without a matching `permalinks` entry will see those section URLs change. Until now that slug was ignored for the path.
+
+Nothing is committed.

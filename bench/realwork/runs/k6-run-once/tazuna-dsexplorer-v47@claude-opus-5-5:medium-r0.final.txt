@@ -1,0 +1,20 @@
+I added `--once` to `k6 run`, `k6 cloud run` (with or without `--local-execution`), `k6 archive` and `k6 cloud upload`. It runs the script with 1 VU and 1 iteration and keeps the scenario's `exec`, `env`, `tags` and `options`. All tests in `./internal/cmd/...` and `./lib/executor/` pass with `-race`, and `golangci-lint` reports no issues. I haven't committed anything.
+
+**How it works**
+- The flag is added in `internal/cmd/options.go`, next to `--vus`, `--iterations`, `--duration` and `--stage`. That flag set is shared by all the commands above, so they all get it.
+- The rewrite happens in a new function, `applyOnceFlag` in `internal/cmd/config.go`. It runs right after config consolidation, before scenarios are derived from shortcut options, as the issue asked. Because `archive` and `cloud` store the consolidated config, the archive and the cloud test also get the one-iteration version.
+- **No scenarios:** it creates a `default` scenario that runs 1 iteration on 1 VU.
+- **One scenario:** the scenario keeps its name and `exec`, `env`, `tags` and `options`, but its executor becomes `shared-iterations` with 1 VU and 1 iteration. Everything else is dropped (`startTime`, `gracefulStop`, `duration`, `stages`, and so on).
+- **Script-level settings:** `vus`, `iterations`, `duration` and `stages` are cleared.
+- **Errors:** more than one scenario gives `--once can run a single scenario only…`. Combining it with `--vus`/`-u`, `--iterations`, `--duration` or `--stage` gives `--once cannot be combined with --<flag>`. Both exit with the invalid-config code.
+- **`setup()` and `teardown()`** run as usual; a test checks this.
+
+Two behaviours you might not expect:
+- The conflict check only looks at the command-line flags. Shortcut values from environment variables (e.g. `K6_VUS`) or from the script are silently replaced rather than rejected.
+- When a scenario has no `exec`, the rewritten one gets an explicit `exec: "default"`. It runs the same function.
+
+**Tests added**
+- `internal/cmd/config_once_test.go`: flag not set, no scenarios, single scenario (checks which fields are kept and dropped), multiple scenarios, and each conflicting flag.
+- `internal/cmd/tests/cmd_run_once_test.go`: end-to-end `k6 run` tests. One confirms the scenario's `exec` function runs with its env and tag values.
+- `TestArchiveOnce` in `internal/cmd/archive_test.go`: checks that the archive's metadata contains the rewritten scenario.
+- Two `--once` cases added to `TestCloudRunCommandIncompatibleFlags`, one of them with `--local-execution`. These only cover the error path; there's no test of a successful cloud upload with `--once`.

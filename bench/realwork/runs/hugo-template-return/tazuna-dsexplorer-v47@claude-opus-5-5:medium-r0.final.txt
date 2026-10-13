@@ -1,0 +1,29 @@
+`return` now works in every template, including regular layouts, and can sit anywhere, including inside `if`, `with` and `range`. The template rewriting is gone except for one small step. Tests pass apart from two failures that aren't from this change, described at the end.
+
+**How it works**
+- **The function:** `return` is now a real function (`partials.Return`). It returns a sentinel error, `texttemplate.ReturnError`, carrying the optional value, as you suggested.
+- **The executor fork:** the patches are small (in `hugo_template.go` and `exec.go`, marked "Added for Hugo"), so the fork should stay easy to maintain:
+  - When a function returns a `ReturnError`, execution stops with a panic; this is how Go's own templates already handle `break` and `continue`.
+  - That panic is caught at the top of the template and at each `{{ template }}` call. So `return` inside a `define`d template only exits that template.
+  - `try` lets it pass through instead of catching it.
+- **Getting the value out of a partial:** the partial's output buffer receives the returned value from the top-level catch. If a value was returned, the partial returns it; otherwise it returns the rendered output.
+- **What's removed:** the wrapper template, the step that moved `return` to the end of the template, `ParseInfo.HasReturn` and `contextWrapper`.
+- **What's left:** one small rewrite turns `{{ return f a b }}` into `{{ return (f a b) }}`. Without it the documented form `{{ return math.ModBool . 2 }}` breaks.
+
+**Behaviour changes worth checking**
+- A partial runs only the `return` that execution actually reaches. Before, the first `return` in the file always ran, wherever it was.
+- `{{ return }}` with no value stops early, and a partial then returns what it rendered up to that point.
+- A partial that contains `return` but never reaches it returns its rendered output.
+- `{{ return 1 2 }}` now fails with Go's "can't give argument to non-function 1" error.
+- `TestPartialReturnPanicIssue13600` expected an error that came from the old rewrite. The real error (`delimit` called on a Page) now comes through, so I updated what the test checks for.
+
+**Tests and docs**
+- I added `TestReturnEarly` in `hugolib/template_test.go`. It covers returning early from partials, page and home templates, `return` with and without a value, `try`, `partialCached`, and `return` in nested templates and partials. All existing `return` and decorator tests pass.
+- `go test ./hugolib/ ./tpl/...` passes.
+- I rewrote `docs/content/en/functions/go-template/return.md` for the new behaviour.
+
+**Failures not caused by this change**
+- **Full suite (`go test ./...`):** `TestGreet`, `TestGreetParallel` and `TestKatexParallel` in `internal/warpc` fail on the base commit too. `TestCommands` failed once during the full run with no error detail captured. Run on its own it passes every time: twice with my changes, once on the base commit.
+- **`./check.sh`:** gofmt passes, but it stops at staticcheck on findings in files I didn't touch (deprecated `CommonDirs` fields in `config/allconfig/allconfig.go`, and an unused value in `hugolib/integrationtest_builder.go`). Because it stops there, its test step never ran.
+
+Nothing is committed.
