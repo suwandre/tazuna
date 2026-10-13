@@ -16,6 +16,32 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.49 (2026-10-13)
+
+**Boss mode is the default for `--run` on Opus on the claude path.** Opus only directs; Haiku subagents read, edit and
+run the tests (`--boss haiku`, 0.0.32). `--no-boss` turns it off; `--boss MODEL` picks another worker model. Interactive
+sessions, the tiny-repo Sonnet lane and the own loop are unchanged (not measured with boss). Fixed on the way: `--boss`
+switched an untrusted repo from the lean profile to the repo profile, so the repo's hooks and settings ran without trust.
+Boss now turns itself off in an untrusted repo (with a warning when it was asked for).
+
+Company tickets (5 company tickets × 2 runs, Opus 5.5 medium; one judge pool, Opus xhigh with reference; 698 and 870 from
+the 0.0.37 pool with 2 passes, 872, 921 and 946 judged again with 1 pass to include the 3 new boss runs):
+
+| | judge | cost per ticket | turns | time | new type errors / failing unit tests |
+|---|---|---|---|---|---|
+| stock Claude Code (cc) | 6.15 | $2.67 | 49 | 12 min | 0 / 0 |
+| tazuna default until now (repo profile) | 5.90 | $2.18 | 33 | 31 min | 0 / 0 |
+| tazuna `--boss haiku` | 5.25 | $1.38 (−37%) | 14 | 23 min | 0 / 0 |
+
+Judge −0.65 against the old default, within the ±0.75 noise threshold; cost −37%, past it. On the Go tasks boss was −0.13
+at −32% (0.0.48 table). By the quality-per-dollar rule this makes boss the default. The drop is close to the threshold
+and concentrated in the 3 new runs (4, 5 and 2 on 872, 921 and 946, each the lowest on its ticket; the judge named missed
+edge cases, e.g. a removed guard that re-opens T-619). Edge cases: 2.90 vs 3.45. If later tickets confirm a real
+drop, the next lever is a reviewer pass on the boss's diff, not dropping boss. The 3 new boss runs cost $0.94-0.99 each
+and finished in 15-18 minutes.
+
+Benchmark note: `tazuna` harnesses in `bench/` now run with boss unless they pass `--no-boss`.
+
 ## 0.0.48 (2026-10-13)
 
 **`--explorer MODEL@URL` (opt-in): Opus hands code questions to a cheap model on tazuna's own loop.** `tazuna

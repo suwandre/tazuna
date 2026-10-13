@@ -13,8 +13,9 @@
 //!                                                          # (tazuna's own loop, read-only; the code leaves the machine,
 //!                                                          # so the host must be trusted or --data any)
 //!          [--advisor <model>]   # Claude Code's advisor: the main model can consult <model> when stuck
-//!          [--boss <model>]   # the main model only directs: explorer, implementer and tester subagents on <model> do
-//!                         # all reading, editing and test runs (a hook blocks those tools for the main model)
+//!          [--boss <model> | --no-boss]   # the main model only directs: explorer, implementer and tester subagents on
+//!                         # <model> do all reading, editing and test runs (a hook blocks those tools for the main model);
+//!                         # on by default (haiku) for --run on Opus on the claude path
 //!          [--tester <model>]   # a subagent on <model> runs tests and type checks and reports only the failures
 //!          [--repo-map]   # a map of the files that match the task, in front of the first message
 //!          [--cache-ttl 5m|1h]   # prompt cache lifetime (default: 5m for --run, 1h live)
@@ -121,6 +122,7 @@ struct Args {
     explorer_key_env: String,
     tester: Option<String>,
     boss: Option<String>,
+    no_boss: bool,
     advisor: Option<String>,
     escalate: Option<(String, String)>,
     no_escalate: bool,
@@ -177,6 +179,10 @@ fn with_preset(args: Vec<String>) -> Result<Vec<String>> {
 }
 
 fn args() -> Result<Args> {
+    parse(std::env::args().skip(1).collect())
+}
+
+fn parse(argv: Vec<String>) -> Result<Args> {
     let mut a = Args {
         path: None,
         speed: 3.0,
@@ -203,6 +209,7 @@ fn args() -> Result<Args> {
         explorer_key_env: "OPENAI_API_KEY".into(),
         tester: None,
         boss: None,
+        no_boss: false,
         advisor: None,
         escalate: None,
         no_escalate: false,
@@ -217,7 +224,7 @@ fn args() -> Result<Args> {
         run_id: None,
         label_git: false,
     };
-    let mut it = with_preset(std::env::args().skip(1).collect())?.into_iter();
+    let mut it = with_preset(argv)?.into_iter();
     while let Some(arg) = it.next() {
         let mut val = || it.next().context(format!("{arg} needs a value"));
         match arg.as_str() {
@@ -261,6 +268,7 @@ fn args() -> Result<Args> {
                 unsafe { std::env::set_var("TAZUNA_MAX_MINUTES", n) };
             }
             "--no-escalate" => a.no_escalate = true,
+            "--no-boss" => a.no_boss = true,
             "--escalate" => {
                 let v = val()?;
                 let (m, e) = v.split_once(':').unwrap_or((&v, "medium"));
@@ -385,7 +393,8 @@ fn main() -> Result<()> {
             let _ = labels::label_git(&base, Some(&std::env::current_dir()?));
             let mut live = live::Live::new("", "")?;
             live.user_settings = a.user_settings;
-            let route = live.set_lane(lane(&a, true)?);
+            let (lane, boss) = lane(&a, true)?;
+            let route = live.set_lane(lane);
             live.verify = a.verify.clone();
             live.bash_cap = a.bash_cap;
             live.diagnostics = a.diagnostics;
@@ -397,13 +406,10 @@ fn main() -> Result<()> {
             live.repo_map = a.repo_map;
             set_explorer(&mut live, &a);
             live.tester = a.tester.clone();
-            live.boss = a.boss.clone();
+            live.boss = boss;
             live.advisor = a.advisor.clone();
             if let Some((m, e)) = a.escalate.clone() {
                 live.set_escalate(m, e);
-            }
-            if live.boss.is_some() {
-                live.profile = route::Profile::Repo; // subagents and the blocking hook need Claude Code's own tools
             }
             live.permission_mode = a.mode.clone();
             let earlier = match &a.resume {
@@ -436,15 +442,21 @@ fn main() -> Result<()> {
 
 /// The router's lane, unless --model/--effort pin it; then the profile, and trust for repos whose config runs code.
 /// `interactive`: ask about trust on the terminal (live mode); headless needs --trust.
-fn lane(a: &Args, interactive: bool) -> Result<route::Lane> {
+/// Also the boss model, if any: `--boss`, or by default haiku for `--run` on Opus (company tickets: −37% cost, judge
+/// −0.65, within noise; Go: −32%, −0.13; 0.0.49). Boss needs Claude Code's own tools, so the repo profile, and is dropped
+/// when the repo is not trusted (its hooks must stay off).
+fn lane(a: &Args, interactive: bool) -> Result<(route::Lane, Option<String>)> {
     let cwd = std::env::current_dir()?;
     let mut lane = match (&a.model, &a.effort) {
         (None, None) => route::choose(&cwd),
         (m, e) => route::manual(&cwd, m.as_deref().unwrap_or("claude-opus-5-5"), e.as_deref().unwrap_or("medium")),
     };
+    let boss = default_boss(a, interactive, &lane.model);
     if let Some(p) = a.profile {
         lane.profile = p;
         lane.reason.push_str(&format!("; --profile {}", p.name()));
+    } else if boss.is_some() {
+        lane.profile = route::Profile::Repo;
     }
     let config = route::RepoConfig::read(&cwd);
     if matches!(lane.profile, route::Profile::Repo | route::Profile::RepoLean) && config.runs_code() {
@@ -458,7 +470,21 @@ fn lane(a: &Args, interactive: bool) -> Result<route::Lane> {
             lane.reason.push_str("; repo not trusted, so lean (its hooks and skills stay off)");
         }
     }
-    Ok(lane)
+    let boss = boss.filter(|_| lane.profile == route::Profile::Repo);
+    if boss.is_some() {
+        lane.reason.push_str("; boss (the main model directs, subagents do the work)");
+    } else if a.boss.is_some() {
+        eprintln!("--boss needs the repo profile (Claude Code's own tools and a hook), and this repo runs lean: boss is off");
+    }
+    Ok((lane, boss))
+}
+
+fn default_boss(a: &Args, interactive: bool, model: &str) -> Option<String> {
+    if a.no_boss {
+        return None;
+    }
+    let on = !interactive && a.provider.is_none() && model.starts_with("claude-opus");
+    a.boss.clone().or_else(|| on.then(|| "haiku".to_string()))
 }
 
 /// Runs one task without a UI and prints claude's result event, the same JSON `claude -p --output-format json` prints.
@@ -499,7 +525,8 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     }
     let mut live = live::Live::new("", "")?;
     live.user_settings = a.user_settings;
-    live.set_lane(lane(&a, false)?);
+    let (lane, boss) = lane(&a, false)?;
+    live.set_lane(lane);
     live.mode = "headless";
     live.verify = a.verify.clone();
     live.bash_cap = a.bash_cap;
@@ -513,12 +540,9 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     set_explorer(&mut live, &a);
     live.tester = a.tester.clone();
     live.advisor = a.advisor.clone();
-    live.boss = a.boss.clone();
+    live.boss = boss;
     if let Some((m, e)) = a.escalate.clone() {
         live.set_escalate(m, e);
-    }
-    if live.boss.is_some() {
-        live.profile = route::Profile::Repo; // subagents and the blocking hook need Claude Code's own tools
     }
     if let Some(id) = &a.resume {
         let (sid, _) = previous_session(&labels::dir()?, &std::env::current_dir()?, id.as_deref()).context("no earlier tazuna session in this repo to continue")?;
@@ -1230,6 +1254,20 @@ fn run_live(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn boss_by_default_only_for_headless_opus_on_claude() {
+        let p = |a: &[&str]| super::parse(a.iter().map(|s| s.to_string()).collect()).unwrap();
+        let opus = "claude-opus-5-5";
+        assert_eq!(super::default_boss(&p(&["--run", "t.txt"]), false, opus).as_deref(), Some("haiku"));
+        assert_eq!(super::default_boss(&p(&["--run", "t.txt"]), true, opus), None, "live sessions: unmeasured, off");
+        assert_eq!(super::default_boss(&p(&["--run", "t.txt"]), false, "claude-sonnet-5-5"), None, "tiny-repo lane");
+        assert_eq!(super::default_boss(&p(&["--run", "t.txt", "--no-boss"]), false, opus), None);
+        assert_eq!(super::default_boss(&p(&["--preset", "boss", "--no-boss"]), true, opus), None, "--no-boss wins");
+        assert_eq!(super::default_boss(&p(&["--boss", "sonnet"]), true, opus).as_deref(), Some("sonnet"));
+        let own = p(&["--run", "t.txt", "--data", "any", "--provider", "https://x/v1", "--model", "deepseek-v4.1-flash"]);
+        assert_eq!(super::default_boss(&own, false, opus), None, "own loop");
+    }
+
     #[test]
     fn presets_expand_first_so_own_flags_win() {
         let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<_>>();

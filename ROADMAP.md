@@ -27,9 +27,10 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
 
 - **Claude path (default; code that must stay with Anthropic, e.g. company work).** Official `claude` CLI on the
   subscription; router (tiny repos Sonnet, else Opus 5.5 medium), Haiku explorer, diagnostics after edits, verification
-  (tests + type check, two fix rounds). Company tickets, one judge pool: stock Claude Code 6.15 at $2.67 per ticket, tazuna
-  default 5.70 at $2.18, `--preset boss` 5.79 at $1.56 (7 of 10 runs; candidate default). Go tasks: tazuna default 7.46
-  (judge without reference) at $3.97 for 6 tasks vs stock 7.58 at $5.46; boss 7.33 at $2.70. No plugin (ECC, superpowers,
+  (tests + type check, two fix rounds); `--run` on Opus directs from a boss by default (Haiku subagents do the work, 0.0.49).
+  Company tickets, one judge pool, 10 runs each: stock Claude Code 6.15 at $2.67 per ticket, tazuna without boss 5.90 at
+  $2.18, with boss 5.25 at $1.38 (judge within noise, cost −37%). Go tasks: tazuna without boss 7.46 (judge without
+  reference) at $3.97 for 6 tasks vs stock 7.58 at $5.46; boss 7.33 at $2.70. No plugin (ECC, superpowers,
   caveman, graphify, GStack) beat stock; the Sonnet + Opus advisor stays opt-in (−0.6 judge on tickets).
 - **Cascade (code that may leave the machine; `--preset cascade`, or any `--provider`).** tazuna's own loop with DeepSeek
   V4.1 Flash at max effort on CheaperInference, no time limit, $1 per task; a task it cannot finish goes to Opus 5.5 medium
@@ -250,6 +251,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: footprint of a whole agent run measured for the first time (`bench/agent_footprint.py`): own loop 27 MB peak
   RAM and 0.1 s CPU vs the claude path 262-282 MB and 0.6-0.7 s, on the same small fix. Goal 1's "real footprint wins come
   with the own loop" holds: ~10x less memory. Wall time goes the other way (provider wait), so speed is the own loop's gap.
+- 2026-10-13: boss mode becomes the default for `--run` on Opus (0.0.49). Company tickets, 10 runs: judge 5.25 vs 5.90
+  (−0.65, within the ±0.75 threshold) at $1.38 vs $2.18 (−37%); Go −0.13 at −32%. Quality per dollar decides. Watch:
+  the ticket drop is near the threshold and sits in edge cases; a reviewer pass on the boss's diff is the next lever if
+  it holds. Live sessions keep the old default (boss there is unmeasured; `--preset boss` turns it on).
 - 2026-10-13: cheap explorer for Claude measured (DeepSeek V4.1 Flash via `--explorer MODEL@URL`, 6 Go tasks): judge 7.33 vs
   7.13, cost +9%, runs up to 3x longer. Opus asked 2-3 questions per task and read on its own otherwise; a slow explorer is
   not worth waiting for. Boss mode remains the claude-path lever ($2.70 vs $3.97 for the same quality).

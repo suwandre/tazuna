@@ -11,3 +11,4 @@
 /bench/realwork/DONE*
 /bench/.model-check/
 /bench/night-mimo.log
+__pycache__/
