@@ -96,7 +96,9 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
    Artificial Analysis and Epoch AI (~1,000 models, ~80 benchmarks, scaled and weighted per role, compared at the pick's
    effort and price), daily at 9:00 with a notification. First run: 7 flags, the strongest for the cascade's cheap step
    MiMo V2.6 Pro (+0.08), Ling 3.1 Flash and Haiku 5.5 max (all on Experiential Labs). Gauged MiMo (2026-10-13):
-   same 7/7 and judge 9 as DeepSeek on caddy-unix at ~30x the cost; not adopted. Public scores miss tokens per task. Other sources
+   same 7/7 and judge 9 as DeepSeek on caddy-unix at ~30x the cost; not adopted. Public scores miss tokens per task, so
+   the check now compares cost per task: our own runs first (MiMo 33x), then Epoch's cost columns (MiMo 1.3x: public
+   cost data understates it on our loop), then the token price. Other sources
    checked: SWE-bench's and Aider's own leaderboards stopped in Feb 2026 / Oct 2025 (Epoch carries current SWE-bench
    and Aider numbers); LMArena, vals.ai and tbench.ai offer HTML only (Terminal-Bench is in both sources). Scraping more sites waits until that loop proves useful (check their terms).
 8. ~~**Profiles with a model and effort per role**~~ (0.0.36 `--preset`; 0.0.35 `--data trusted|any`) (user, 2026-10-10): main model, explorer, implementer, tester and the

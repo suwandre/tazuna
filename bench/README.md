@@ -16,7 +16,9 @@
   key, CC BY 4.0), ~1,000 models and ~80 benchmarks; each benchmark is scaled from random (0) to ceiling (1) and put in a
   category (agentic coding, coding, tool use, instruction following, long context, reasoning, math, knowledge; saturated
   or unrelated ones are ignored on purpose). A candidate is compared with the pick only on shared benchmarks, at the
-  pick's effort (cheap models at max), at most 10% dearer; a flag needs 3 shared benchmarks and a lead over 0.03. A flag
+  pick's effort (cheap models at max), at most 10% dearer per task (our own runs in `realwork/results*.jsonl` first,
+  then Epoch's cost-per-task columns, then the token price: MiMo V2.6 Pro was 1.3x DeepSeek on Epoch's numbers and 33x
+  on our loop); a flag needs 3 shared benchmarks and a lead over 0.03. A flag
   starts a gauge run on our benchmark; only that may change a pick. `--why NAME` shows a model's scores.
   `model_check_daily.sh install` runs it daily at 9:00 (launchd, from a copy in `~/.local/share/tazuna/model-check`,
   since macOS keeps background jobs out of ~/Desktop; rerun install after changes) with a notification on new flags.

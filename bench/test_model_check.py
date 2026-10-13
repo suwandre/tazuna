@@ -42,4 +42,14 @@ flags = mc.check(ROLES, PROFILES, scores, info, SERVED)
 assert [f[1] for f in flags] == ["mimov26pro"], flags
 lead = flags[0][3]
 assert abs(lead - (0.5 * 0.10 + 0.2 * 0.05 + 0.3 * 0.05)) < 1e-9, lead
+# cost per task: our runs beat Epoch's columns, which beat the token price; a verbose model is dropped though cheap per token
+costs = {("mimov26pro", "max"): {"ale.csv": 1.3}, ("deepseekv41flash", "max"): {"ale.csv": 1.0}}
+own = {"mimov26pro": {"caddy": 0.67}, "deepseekv41flash": {"caddy": 0.02}}
+r, src = mc.cost_ratio(costs, own, "mimov26pro", "max", "deepseekv41flash", "max", 0.4, 0.5)
+assert abs(r - 33.5) < 0.01 and src.startswith("our runs"), (r, src)
+r, src = mc.cost_ratio(costs, {}, "mimov26pro", "max", "deepseekv41flash", "max", 0.4, 0.5)
+assert abs(r - 1.3) < 1e-9 and src.startswith("Epoch"), (r, src)
+r, src = mc.cost_ratio({}, {}, "mimov26pro", "max", "deepseekv41flash", "max", 0.4, 0.5)
+assert abs(r - 0.8) < 1e-9 and src == "token price", (r, src)
+assert mc.check(ROLES, PROFILES, scores, info, SERVED, {}, own) == []  # 33x per task: no flag for mimo any more
 print("model_check: ok")

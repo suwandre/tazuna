@@ -10,7 +10,8 @@ Sources, cached for a day in bench/.model-check/ (attribution required by both):
 - Epoch AI (https://epoch.ai/benchmarks, CC BY 4.0), no key: ~85 benchmark files with random baseline and ceiling.
 Scoring: every benchmark becomes 0 (random) .. 1 (ceiling); benchmarks fall into categories; each role weighs the
 categories (bench/roles.json). A candidate is compared with the pick only on benchmarks both have, at the pick's effort
-(cheap models at max). A flag is a lead, not a decision: it starts a gauge run on our benchmark, and only that may change a
+(cheap models at max), and may cost at most 10% more per task: from our own runs (results*.jsonl), else Epoch's
+cost-per-task columns, else the token price. A flag is a lead, not a decision: it starts a gauge run on our benchmark, and only that may change a
 pick.
 """
 import csv, io, json, os, re, sys, time, urllib.request, zipfile
@@ -56,7 +57,7 @@ CATEGORY.update({
 # not scored on purpose: saturated (no longer separates current models), unrelated to our roles, or content unclear
 IGNORE = {"anli", "bbh", "hellaswag", "lambada", "superglue", "winogrande", "furnitureassembly", "vpct", "geobench",
           "surfaceevolverbench", "lechmazurwriting", "dtbench", "ebrbench", "lmca"}
-# a candidate may cost at most this much more than the pick (blended price): quality per dollar, not quality at any price
+# a candidate may cost at most this much more than the pick per task: quality per dollar, not quality at any price
 MAX_PRICE_RATIO = 1.1
 GUESS = [("swe", "agentic_coding"), ("terminal", "agentic_coding"), ("agent", "agentic_coding"), ("code", "coding"),
          ("frontiermath", "math"), ("math", "math"), ("aime", "math"), ("arc", "reasoning"), ("qa", "knowledge")]
@@ -140,6 +141,78 @@ def load_epoch(raw):
     return out
 
 
+# cost per task: what a run costs, not what a token costs (MiMo V2.6 Pro: cheaper per token than its benchmark lead
+# suggested, 30x DeepSeek per task because it writes 15x the output)
+COST_COLUMNS = ["Cost per task", "Mean cost (USD)", "Average cost (USD)", "Cost", "Cost per run", "Cost per test (USD)",
+                "Total cost (USD)", "Average costs", "Estimated cost (USD)"]
+
+
+def load_epoch_costs(raw):
+    """{(base, effort): {benchmark file: cost per task}} from Epoch's files that report one."""
+    z = zipfile.ZipFile(io.BytesIO(raw))
+    out = {}
+    for n in z.namelist():
+        if not n.endswith(".csv"):
+            continue
+        rows = list(csv.DictReader(io.TextIOWrapper(z.open(n), encoding="utf-8")))
+        col = next((c for c in COST_COLUMNS if rows and c in rows[0]), None)
+        if not col:
+            continue
+        for r in rows:
+            try:
+                cost = float(r.get(col) or "")
+            except ValueError:
+                continue
+            base, effort = split_effort(r.get("Model version") or "")
+            if base and cost > 0:
+                out.setdefault((base, effort), {})[n.rsplit("/", 1)[-1]] = cost
+    return out
+
+
+def load_own_costs(paths):
+    """{base: {task: cost}} from our own benchmark runs (results*.jsonl): the cost on our loop, the strongest evidence."""
+    out = {}
+    for p in paths:
+        for line in open(p):
+            try:
+                r = json.loads(line)
+            except ValueError:
+                continue
+            h = r.get("harness", "")
+            cost = r.get("reported_cost") or r.get("cost")  # reported: what the run cost (`cost` uses one price table)
+            # plain runs of one model only: the cascade mixes two models, prompt experiments are not the default loop
+            if not re.match(r"(tazuna-own|tazuna-ownel|tazuna-repo|cc)(-v\d+)?@", h):
+                continue
+            if isinstance(cost, (int, float)) and cost > 0 and r.get("passed") is not None:
+                base, _ = split_effort(h.split("@", 1)[1].split(":")[0])
+                out.setdefault(base, {}).setdefault(r["task"], []).append(cost)
+    return {b: {t: sum(c) / len(c) for t, c in ts.items()} for b, ts in out.items()}
+
+
+def geo_ratio(a, b):
+    """Geometric mean of a[k] / b[k] over shared keys, and how many."""
+    shared = [k for k in a if k in b]
+    if not shared:
+        return None, 0
+    import math
+    return math.exp(sum(math.log(a[k] / b[k]) for k in shared) / len(shared)), len(shared)
+
+
+def cost_ratio(costs, own, cand_base, cand_eff, pick_base, pick_eff, price, pick_price):
+    """(candidate cost / pick cost per task, source): our runs, else Epoch's cost-per-task columns, else token price."""
+    r, n = geo_ratio(own.get(cand_base, {}), own.get(pick_base, {}))
+    if r is not None:
+        return r, f"our runs, {n} task{'s' if n > 1 else ''}"
+    c, _ = at_effort(costs, cand_base, cand_eff)
+    p, _ = at_effort(costs, pick_base, pick_eff)
+    r, n = geo_ratio(c or {}, p or {})
+    if r is not None:
+        return r, f"Epoch, {n} benchmark{'s' if n > 1 else ''}"
+    if price is not None and pick_price:
+        return price / pick_price, "token price"
+    return None, "no cost data"
+
+
 def table(rows):
     """{(base, effort): {benchmark: score}} plus {base: (creator, price)}; Artificial Analysis wins a name clash."""
     scores, info = {}, {}
@@ -175,8 +248,9 @@ def compare(cand, pick, weights):
     return lead, len(deltas), sorted(deltas, key=lambda x: -x[1])
 
 
-def check(roles, profiles, scores, info, served):
-    """Flags: (role, candidate, effort, lead, shared, top evidence, where)."""
+def check(roles, profiles, scores, info, served, costs=None, own=None):
+    """Flags: (role, candidate, effort, lead, shared, top evidence, where, cost ratio, cost source)."""
+    costs, own = costs or {}, own or {}
     flags = []
     served_keys = {norm(re.sub(r"[_\-]?(max|xhigh|high|medium|low)$", "", mid)): (prov, mid) for prov, ids in served.items() for mid in ids}
     for r in roles:
@@ -185,7 +259,7 @@ def check(roles, profiles, scores, info, served):
         pick, _ = at_effort(scores, pbase, r["effort"])
         pick_price = info.get(pbase, ("", None))[1]
         if pick is None:
-            flags.append((r["role"], f"(no data for {r['pick']})", "", 0, 0, [], ""))
+            flags.append((r["role"], f"(no data for {r['pick']})", "", 0, 0, [], "", None, ""))
             continue
         for base in sorted({b for b, _ in scores}):
             if base == pbase:
@@ -201,14 +275,16 @@ def check(roles, profiles, scores, info, served):
                 eff = "max"
             if not where:
                 continue
-            if price is not None and pick_price is not None and price > pick_price * MAX_PRICE_RATIO:
-                continue  # better but dearer: the pick was chosen for its price
             cand, ceff = at_effort(scores, base, eff)
             if cand is None:
                 continue
             lead, shared, ev = compare(cand, pick, weights)
-            if shared >= MIN_SHARED and lead > MIN_LEAD:
-                flags.append((r["role"], base, ceff, lead, shared, ev[:3], where))
+            if shared < MIN_SHARED or lead <= MIN_LEAD:
+                continue
+            ratio, source = cost_ratio(costs, own, base, ceff, pbase, r["effort"], price, pick_price)
+            if ratio is not None and ratio > MAX_PRICE_RATIO:
+                continue  # better but dearer per task: the pick was chosen for its price
+            flags.append((r["role"], base, ceff, lead, shared, ev[:3], where, ratio, source))
     return flags
 
 
@@ -224,8 +300,11 @@ def main():
         rows += load_aa(cached("aa.json", lambda: fetch(AA_URL, {"x-api-key": key})))
     else:
         print("note: ARTIFICIAL_ANALYSIS_API_KEY not set, Epoch AI data only")
-    rows += load_epoch(cached("epoch.zip", lambda: fetch(EPOCH_URL)))
+    epoch = cached("epoch.zip", lambda: fetch(EPOCH_URL))
+    rows += load_epoch(epoch)
     scores, info = table(rows)
+    costs = load_epoch_costs(epoch)
+    own = load_own_costs(sorted((HERE / "realwork").glob("results*.jsonl")))
     served = {}
     for name, p in cfg["providers"].items():
         if k := os.environ.get(p["key_env"]):
@@ -237,19 +316,20 @@ def main():
             if want in base:
                 print(f"{base} @ {effort}: " + ", ".join(f"{b} {v:.2f}" for b, v in sorted(s.items())))
         return
-    flags = check(cfg["roles"], cfg["profiles"], scores, info, served)
+    flags = check(cfg["roles"], cfg["profiles"], scores, info, served, costs, own)
     seen_file = STATE / "flagged.json"
     seen = set(json.loads(seen_file.read_text())) if seen_file.exists() else set()
     new = [f for f in flags if "--all" in sys.argv or f"{f[0]}|{f[1]}" not in seen]
     print(f"Model check {time.strftime('%Y-%m-%d')}: {len({b for b, _ in scores})} models, "
           f"{len({b for s in scores.values() for b in s})} benchmarks; {len(new)} {'flags' if '--all' in sys.argv else 'new flags'}. "
           "Data: Artificial Analysis (https://artificialanalysis.ai/), Epoch AI (https://epoch.ai/benchmarks, CC BY 4.0).")
-    for role, name, eff, lead, shared, ev, where in new:
+    for role, name, eff, lead, shared, ev, where, ratio, source in new:
         if not where:
             print(f"- {role}: {name}")
             continue
         best = ", ".join(f"{b} {d:+.2f}" for b, d in ev)
-        print(f"- {role}: {name} @ {eff} leads by {lead:+.3f} on {shared} shared benchmarks ({best}); {where} -> gauge run")
+        cost = f"cost per task x{ratio:.2f} ({source})" if ratio is not None else "cost per task unknown"
+        print(f"- {role}: {name} @ {eff} leads by {lead:+.3f} on {shared} shared benchmarks ({best}); {cost}; {where} -> gauge run")
     if "--all" in sys.argv:
         print("unscored benchmarks (no category yet):", ", ".join(unscored(scores)) or "none")
     seen_file.write_text(json.dumps(sorted(f"{f[0]}|{f[1]}" for f in flags)))
