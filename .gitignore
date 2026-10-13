@@ -10,3 +10,4 @@
 /bench/**/*.log2
 /bench/realwork/DONE*
 /bench/.model-check/
+/bench/night-mimo.log

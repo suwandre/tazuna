@@ -1,0 +1,38 @@
+All gates pass and no test processes are left running. Here's a summary:
+
+## Root cause
+
+In `listen_unix.go`, `unixListener.Close()` (and `unixConn.Close()`) did:
+
+```go
+newCount := uln.count.Add(-1)
+if newCount == 0 {
+    file, err := uln.File()   // dups the fd
+    ...file.Name()...         // "unix:/path->" — not the real path
+}
+return uln.UnixListener.Close()
+```
+
+1. **Hang until GC**: `uln.File()` duplicates the fd into an `*os.File` that was **never closed** — only GC's finalizer closed it, so the old socket kept listening until the first GC after the reload (the reported 124–130 s / never with `GOGC=off`).
+2. **File never removed**: `file.Name()` returns the netFD name `"unix:/path->"`, so `syscall.Unlink` targeted a nonexistent path.
+3. **No double-close guard**: a second `Close` decremented the shared reference count again, releasing another holder's reference.
+4. **Abstract sockets**: nothing prevented unlinking a filesystem path named `@name` on Linux.
+5. `reuseUnixSocket` leaked the same dup'd `socketFile` fd on every reload.
+
+## Fix (`listen_unix.go`, +54/−30)
+
+- Added a `closed atomic.Bool` CAS guard to both types — a second `Close` returns `net.ErrClosed` without releasing another reference.
+- `Close` now takes `unixSocketsMu`, reads the correct path from `Addr()`/`LocalAddr()`, **closes the underlying fd first** (socket stops listening immediately → connect refused, no GC wait), then decrements the shared count and unlinks the file only when the last holder closes it.
+- Abstract sockets (`@` prefix on linux/android) are never unlinked — neither on close nor in `reuseUnixSocket`'s pre-bind cleanup.
+- `reuseUnixSocket` now does `defer socketFile.Close()` on the dup'd fd.
+
+## Tests (`listen_unix_test.go`, new, 428 lines)
+
+Covers all review requirements: immediate close + unlink (listener & conn), refcounted reuse (file stays and **accept keeps working** while a sibling holds a reference; unlink only at zero — I added the accept assertions), double-close → `net.ErrClosed` without releasing a second reference, close/relisten race leaves a working socket + file, and abstract sockets never unlink a same-named filesystem path (Linux-only).
+
+## Verification
+
+- `go build ./...`, `go vet`, `go test -race -short ./...` (30 pkgs) ✅, `golangci-lint run --timeout 10m` → 0 issues ✅, `./caddytest/integration/...` ✅, new tests `-count=10` under `-race` ✅
+- End-to-end with a real binary, using the issue's exact repro: after reload the old admin socket **refuses immediately** (curl exit 7, no timeout), the socket file is removed, the new admin endpoint works; site `bind unix/…` → TCP same; moving back to the same path leaves **exactly 1** working listener.
+
+*Note: this fix mirrors upstream caddyserver/caddy PR #8061 (commit `d483d78`) — per `.github/CONTRIBUTING.md`, disclose to reviewers that the `listen_unix.go` change was ported with AI assistance (Codex) and verified by me; the human operator should review every line before merge.*

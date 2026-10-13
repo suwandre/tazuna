@@ -22,6 +22,9 @@ const MAX_USD: f64 = 1.0;
 /// 1.14 tool calls per response; 70% of its calls were searches and reads, 17% test runs (October tasks, 0.0.38).
 const BATCH_RULE: &str = "\n- Work in few turns: every turn re-sends the whole conversation. When several searches, reads or commands do not depend on each other, make all of those tool calls in one response. Read a whole relevant file once rather than many small slices. While working, run only the tests that cover your change; run the wider suite once at the end.";
 
+/// A model call's first time limit; each timeout doubles it for the next try (see `chat`).
+const CALL_TIMEOUT: Duration = Duration::from_secs(180);
+
 /// USD per token: input, cached input, output.
 type Price = (f64, f64, f64);
 
@@ -44,7 +47,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         .tls_config(ureq::tls::TlsConfig::builder().provider(ureq::tls::TlsProvider::NativeTls).build())
         // a normal call answers in 15-60 s, a long reasoning one in a minute or two; 300 s let a provider that accepted a
         // call and never answered stall a run for an hour across the retries (GLM on Experiential Labs, 2026-10-12)
-        .timeout_global(Some(Duration::from_secs(180))).http_status_as_error(false).build().into();
+        .timeout_global(Some(CALL_TIMEOUT)).http_status_as_error(false).build().into();
     // retried like model calls: one benchmark run died at startup on a model-list request that never answered
     let (price, responses) = [2, 8, 30].iter().find_map(|w| price(&http, &url, &key, &model).map_err(|e| {
         eprintln!("model list failed ({e:#}); retrying in {w}s");
@@ -334,12 +337,19 @@ fn emit(e: &Value) {
 fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value> {
     let path = if body.get("input").is_some() { "responses" } else { "chat/completions" };
     let body = body.to_string();
+    // a call that times out is tried again with twice the time (up to 15 minutes): a slow provider's long reasoning answer
+    // (MiMo V2.6 Pro at the official ~30 tok/s) takes over 3 minutes and was cut off at 180 s on every try
+    let mut limit = CALL_TIMEOUT;
     for wait in [2, 8, 30, 60, 120, 120, 120, 120, 120, 120, 120, 0] {
-        let sent = http.post(format!("{url}/{path}")).header("Authorization", format!("Bearer {key}")).header("Content-Type", "application/json").send(&body)
+        let sent = http.post(format!("{url}/{path}")).config().timeout_global(Some(limit)).build()
+            .header("Authorization", format!("Bearer {key}")).header("Content-Type", "application/json").send(&body)
             .and_then(|mut r| Ok((r.status().as_u16(), r.body_mut().with_config().limit(50 << 20).read_to_string()?)));
         let (status, text) = match sent {
             Ok(st) => st,
             Err(e) if wait > 0 => {
+                if matches!(e, ureq::Error::Timeout(_)) {
+                    limit = (limit * 2).min(Duration::from_secs(900));
+                }
                 eprintln!("model call failed ({e}); retrying in {wait}s");
                 std::thread::sleep(Duration::from_secs(wait));
                 continue;

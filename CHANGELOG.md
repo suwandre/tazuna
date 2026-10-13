@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.47 (2026-10-13)
+
+**A model call that times out gets twice the time on the next try** (180 s, then 360, 720, at most 15 minutes). At the
+official speed (~30 tok/s), MiMo V2.6 Pro's reasoning answers take over 3 minutes; every try was cut off at 180 s, and a run
+made 26 calls in 2 hours.
+
+**Gauge run for the model check's first flag** (MiMo V2.6 Pro for the cascade's cheap step: +0.08 over DeepSeek V4.1 Flash
+on public benchmarks). caddy-unix (Opus fails it, DeepSeek solves it), own loop at max, one Opus judge call:
+
+| | hidden tests | judge | cost | time | output tokens |
+|---|---|---|---|---|---|
+| DeepSeek V4.1 Flash, CheaperInference (0.0.38) | 7/7 | 9 | $0.02 | 44 min | 37k |
+| MiMo V2.6 Pro, Experiential Labs (156 tok/s) | 7/7 | 9 | $0.67 | 59 min | 555k |
+
+Same result at ~30x the cost: MiMo writes 15x the output. DeepSeek stays the cheap step. Experiential Labs serves MiMo at
+5x the speed Artificial Analysis measures for the official API, with no quality loss on this task. The other four tasks
+were stopped when the Experiential Labs balance ran low; the CheaperInference run (official speed) hit the timeout above.
+
 ## 0.0.46 (2026-10-12)
 
 **`ctrl-x` stashes the message:** it goes aside and the composer clears; after the next message is sent it comes back by
