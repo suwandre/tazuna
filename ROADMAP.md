@@ -167,6 +167,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | jevgrep in cc-mid | −0.7 to −0.8 judge | no saving on Opus medium |
 | ponytail + graphify + agent-skills | −1.2 judge, 2× slower | always-on skill/memory layers cost quality |
 | Per-turn model switching | rejected | breaks the prompt cache (per subagent is fine) |
+| Boss + Opus high reviewer (tickets) | same judge as boss (5.20), +56% cost | fixes widened the patches (scope −0.4); 0.0.49 follow-up |
 | Impersonating Claude Code | rejected | ban risk; Hermes, OMP, Empryo do it |
 | Multiple agents on sequential tickets | rejected | 39-70% worse in the cited data; ~7× tokens for swarms |
 | xhigh / max effort | rejected | ~4× cost of medium for the same score |
@@ -251,6 +252,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: footprint of a whole agent run measured for the first time (`bench/agent_footprint.py`): own loop 27 MB peak
   RAM and 0.1 s CPU vs the claude path 262-282 MB and 0.6-0.7 s, on the same small fix. Goal 1's "real footprint wins come
   with the own loop" holds: ~10x less memory. Wall time goes the other way (provider wait), so speed is the own loop's gap.
+- 2026-10-13: boss + Opus high reviewer on tickets: 5.20, same as boss, at $2.15 (the old default's price). Not adopted.
+  The boss gap on tickets held in a second pool (−0.70 vs 5.90): consistent, just inside noise. Boss stays the `--run`
+  default; `--no-boss` for tickets where quality matters more than cost.
 - 2026-10-13: the system's TLS (0.0.28) cost every tazuna process ~4.4 MB at start, unnoticed because the roadmap quoted
   Tier 0 from 0.0.20. rustls plus a size-tuned release build (0.0.50): UI 11.6 → 7.3 MB, tool server 6.3 → 2.1 MB, binary
   4.04 → 3.35 MB. Lesson: compare Tier 0 against the last recorded line on every release, not against the roadmap.

@@ -64,6 +64,14 @@ and finished in 15-18 minutes.
 
 Benchmark note: `tazuna` harnesses in `bench/` now run with boss unless they pass `--no-boss`.
 
+Follow-up, same day: **boss + an Opus 5.5 high reviewer** (`--review-model claude-opus-5-5 --review-effort high`, 1 run
+per ticket) to buy the edge cases back. Fresh judge pool over all 5 tickets (1 pass, with reference, 7 candidates each):
+stock 5.90 at $2.67, tazuna without boss 5.90 at $2.18, boss 5.20 at $1.38, boss + reviewer 5.20 at $2.15. The reviewer
+found problems in 4 of 5 patches (review $0.11-1.12, mean $0.63); edge cases rose (3.2 vs 2.8) but scope fell (2.8 vs
+3.2): the fixes it asked for widened the patches. Same score at the old default's price: not adopted. The boss gap held
+in the second pool (−0.70), so on tickets boss is consistently ~0.7 lower; it stays the default for `--run` by the
+quality-per-dollar rule, and `--no-boss` is the choice for a ticket where quality matters more than cost.
+
 ## 0.0.48 (2026-10-13)
 
 **`--explorer MODEL@URL` (opt-in): Opus hands code questions to a cheap model on tazuna's own loop.** `tazuna
