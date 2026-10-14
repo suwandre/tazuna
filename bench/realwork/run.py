@@ -327,6 +327,38 @@ def run_hermes(h, w, prompt):
                 turns=u.get("api_calls", 0), reported_cost=u.get("estimated_cost_usd", 0), final=r.stdout[-4000:])
 
 
+def run_codex(h, w, prompt):
+    """OpenAI's Codex CLI on the user's own ChatGPT plan (its login copied into a clean CODEX_HOME: no user config)."""
+    model, effort = model_effort(h)
+    home = BENCH_HOMES / "codex"
+    r = sh(["codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox",
+            "-m", model, "-c", f'model_reasoning_effort="{effort}"', prompt], w, timeout=TIMEOUT,
+           # only what codex and go need: no provider keys from the parent environment
+           env={"PATH": os.environ["PATH"], "HOME": str(home), **cur_go_env(), "CODEX_HOME": str(home / ".codex")})
+    inp = cached = out = turns = 0
+    final = ""
+    for line in r.stdout.splitlines():
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        u = e.get("usage") or {}
+        if e.get("type") == "turn.completed" and u:
+            inp += u.get("input_tokens", 0)
+            cached += u.get("cached_input_tokens", 0)
+            out += u.get("output_tokens", 0)
+        it = e.get("item") or {}
+        if it.get("type") in ("command_execution", "file_change", "mcp_tool_call"):
+            turns += 1
+        if it.get("type") == "agent_message":
+            final = it.get("text", "")
+        if e.get("type") in ("error", "turn.failed"):
+            raise RuntimeError(f"codex: {str(e)[:800]}")
+    if not final and r.returncode:
+        raise RuntimeError(f"codex rc={r.returncode}: {(r.stdout + r.stderr)[-800:]}")
+    return dict(inp=max(0, inp - cached), cache_r=cached, cache_w=0, out=out, turns=turns, reported_cost=0, final=final)
+
+
 def run_empryo(h, w, prompt):
     cmd = [str(Path.home() / ".empryo/bin/empryo"), "--headless", "--events", "--model", f"subscriptions/{MODEL}",
            "--effort", EFFORT, "--cwd", str(w), prompt]
@@ -468,7 +500,7 @@ def run_plan_exec(h, w, prompt):
                 phase_cost={k: round(v, 4) for k, v in costs.items()})
 
 
-HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "empryo": run_empryo, "pi": run_pi_family, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
+HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "empryo": run_empryo, "pi": run_pi_family, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
              "cc": run_cc, "cc-lean": run_cc, "cc-mid": run_cc, "cc-ecc": run_cc, "cc-superpowers": run_cc, "cc-caveman": run_cc,
              "cc-graphify": run_cc, "cc-gstack": run_cc, "cc-allplugins": run_cc}
 

@@ -130,6 +130,10 @@ Without subscriptions, pay per token:
 2. If tazuna loses: find the cause in the transcripts, then a per-model profile (the tool names and formats the model
    knows, its thinking settings, a tuned prompt).
 3. Model by model: GPT (Codex CLI), GLM and MiniMax (Claude Code), Kimi (Kimi CLI, 1 task: $3/$15 per M).
+First data (0.0.53, rclone): GPT-6 Luna in Codex 3/3, judge 8, 453 s, 4.7M input; in tazuna's own loop 3/3, judge 7,
+1451 s, 14.6M. A gap with GPT: find where the 3x input goes (tool output size, file reads, repeats) before more runs.
+DeepSeek in the own loop: judge 9 (best in the pool). BeatAPI's `deepseek-v4.1-flash-hc` is a second provider on par
+with CheaperInference (3/3, judge 9, $0.027, 641 s).
 
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
 

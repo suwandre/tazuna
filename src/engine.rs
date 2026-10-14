@@ -540,7 +540,7 @@ fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price
     let m = list["data"].as_array().into_iter().flatten().find(|m| m["id"] == model).with_context(|| format!("{model} is not in {url}/models"))?;
     // a provider whose list has no prices (apinex): `TAZUNA_PRICE=input,cached,output` in USD per million
     match std::env::var("TAZUNA_PRICE") {
-        Ok(v) => Ok((price_override(&v)?, false)),
+        Ok(v) => Ok((price_override(&v)?, model.starts_with("gpt-"))),
         Err(_) => parse_price(m),
     }
 }
@@ -563,7 +563,8 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
     let input = p("input_per_million", "input_nano_usd_per_million_tokens").with_context(|| format!("no input price for {model}: the dollar cap needs one"))?;
     let cached = p("cache_read_input_per_million", "cached_input_nano_usd_per_million_tokens").unwrap_or(input);
     let output = p("output_per_million", "output_nano_usd_per_million_tokens").context("no output price")?;
-    let openai = m["owned_by"] == "OpenAI" || m["provider"] == "OpenAI"
+    // gateways that list every model as "openai" (BeatAPI) still serve GPT models on the Responses API
+    let openai = m["owned_by"] == "OpenAI" || m["provider"] == "OpenAI" || model.as_str().is_some_and(|id| id.starts_with("gpt-"))
         || m["data_policy"]["providers"].as_array().is_some_and(|ps| !ps.is_empty() && ps.iter().all(|p| p["provider"] == "openai"));
     Ok(((input / 1e6, cached / 1e6, output / 1e6), openai))
 }

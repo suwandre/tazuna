@@ -16,6 +16,29 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.53 (2026-10-15)
+
+**GPT models use the Responses API on any provider** (by model id `gpt-`; BeatAPI lists every model as "openai").
+**Benchmark kit: Codex CLI as a harness** (`codex@MODEL:EFFORT`, the user's own ChatGPT plan through the official
+client, a clean `CODEX_HOME` with only the login, a minimal environment).
+
+First "own loop vs the model maker's harness" data point, rclone (October set), one run each, one judge pool (Opus xhigh,
+with reference):
+
+| | tests | judge | time | turns | input | cache | cost |
+|---|---|---|---|---|---|---|---|
+| GPT-6 Luna max, **Codex CLI** | 3/3 | **8** | **453 s** | 106 actions | **4.7M** | 96% | plan |
+| GPT-6 Luna max, tazuna own loop, CheaperInference (0.0.38) | 3/3 | 7 | 1451 s | 119 | 14.6M | 99% | $0.133 |
+| GPT-6 Luna max, tazuna own loop, BeatAPI | 2/3 | 5 | 728 s | 72 | 4.4M | 47% | $0.111 |
+| DeepSeek V4.1 Flash max, own loop, CheaperInference | 3/3 | **9** | 1575 s | 77 | 4.4M | 98% | $0.024 |
+| DeepSeek V4.1 Flash **HC** max, own loop, BeatAPI | 3/3 | **9** | 641 s | 58 | 3.2M | 97% | $0.027 |
+| DeepSeek V4.1 Flash max, own loop, BeatAPI (regular) | 1/3 | 1 (no change) | 965 s | 39 | 1.8M | 39% | $0.102 |
+
+With Luna, Codex is a point better at a third of the time and input tokens: the own loop has a real gap with GPT
+models (next: where the 3x tokens go). With DeepSeek the own loop is the best result in the pool. BeatAPI's high-cache
+route (`deepseek-v4.1-flash-hc`, $0.105/$0.0021/$0.42 per M, doubled on weekdays 09-12 and 14-18 Beijing time) matches
+CheaperInference at about the same cost and faster; its regular route caches poorly and its run changed nothing.
+
 ## 0.0.52 (2026-10-14)
 
 **`TAZUNA_PRICE=input,cached,output`** (USD per million tokens) for providers whose model list has no prices: the own
