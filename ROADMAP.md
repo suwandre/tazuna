@@ -167,6 +167,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | jevgrep in cc-mid | −0.7 to −0.8 judge | no saving on Opus medium |
 | ponytail + graphify + agent-skills | −1.2 judge, 2× slower | always-on skill/memory layers cost quality |
 | Per-turn model switching | rejected | breaks the prompt cache (per subagent is fine) |
+| LongHarness (arXiv 2610.13075: open questions steer reading, an evidence ledger) | not tested | document QA, not coding; plan tool and elision (nearby ideas) already failed; its backbones did not finish our tasks |
+| Ouro (a harness that writes its own loop via eval) | rejected | thought experiment without guardrails; self-modifying code is against tazuna's safety rules |
+| LobeHub self-improving harness on Kimi K3 | not adopted | preliminary (selected retries); Kimi K3 is $3/$15 at 41 tok/s with a lower Terminal-Bench than DeepSeek; automated tuning on our few tasks would overfit |
 | Boss + Opus high reviewer (tickets) | same judge as boss (5.20), +56% cost | fixes widened the patches (scope −0.4); 0.0.49 follow-up |
 | Impersonating Claude Code | rejected | ban risk; Hermes, OMP, Empryo do it |
 | Multiple agents on sequential tickets | rejected | 39-70% worse in the cited data; ~7× tokens for swarms |
