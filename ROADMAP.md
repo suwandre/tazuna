@@ -158,6 +158,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   reviewer are untested.
 - `--fallback-model`, `--advisor`; a cross-family judge; real sandboxing; git tags and a fixed scoreboard.
 - A cheaper or stricter review (Sonnet, or acceptance criteria one by one at high effort).
+- In-loop five-lens review (`--review-model`, 0.0.51): first run on 5 company tickets inconclusive (3 of 5 reviews ran
+  before boss mode's subagents finished; fixed). Rerun those 3 with the fix, defect check and a judge pass, after the
+  weekly reset; adopt only if it removes defects at a cost below the no-review run's +65%.
+- The 5 company PRs with a peer's round-1 findings as ground truth (bench/company, t-838/841/842/845/851) are the
+  better ticket set: candidate standard set for Tier 1 on company work.
 - Smaller items: a verification shortcut.
 - sgrep (Context.dev, local ripgrep plus static-embedding rerank; -21% cost claimed on SWE-bench Verified with GPT-6 Luna,
   70 vs 68 of 100): a nearby smart-search tool (jevgrep) cost judge on Opus. If tested, then as the own loop's `search`
