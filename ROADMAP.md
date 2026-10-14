@@ -119,6 +119,18 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
    (garrytan/gstack: role team, /review, /qa), graphify alone (only tested with ponytail and agent-skills); ponytail + graphify + agent-skills already measured (−1.2
    judge, 2× slower). Same Go tasks and company tickets, 2 runs each, Opus xhigh judge; one plugin per 5-hour window.
 
+## Next main item (2026-10-14): beat each model's own harness with that model
+
+Goal (user): tazuna's own loop beats other harnesses, the model maker's own one included, with any model, not only
+DeepSeek. So far the own loop was only measured with DeepSeek, and never against another harness running the same model.
+Without subscriptions, pay per token:
+1. DeepSeek V4.1 Flash: own loop vs Claude Code (official `claude` CLI with `ANTHROPIC_BASE_URL` on the provider's
+   Anthropic-compatible route; DeepSeek, GLM and MiniMax recommend it) vs one open harness (pi or opencode). October
+   tasks, 2 runs each: hidden tests, judge, tokens, time, cost.
+2. If tazuna loses: find the cause in the transcripts, then a per-model profile (the tool names and formats the model
+   knows, its thinking settings, a tuned prompt).
+3. Model by model: GPT (Codex CLI), GLM and MiniMax (Claude Code), Kimi (Kimi CLI, 1 task: $3/$15 per M).
+
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
 
 1. **A router that learns from the user's own outcomes** (`/good`, `/bad`, git kept/discarded): model and effort per kind
