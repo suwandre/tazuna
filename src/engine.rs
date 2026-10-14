@@ -538,7 +538,17 @@ fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price
     let mut r = http.get(format!("{url}/models")).header("Authorization", format!("Bearer {key}")).call()?;
     let list: Value = serde_json::from_str(&r.body_mut().with_config().limit(50 << 20).read_to_string()?)?;
     let m = list["data"].as_array().into_iter().flatten().find(|m| m["id"] == model).with_context(|| format!("{model} is not in {url}/models"))?;
-    parse_price(m)
+    // a provider whose list has no prices (apinex): `TAZUNA_PRICE=input,cached,output` in USD per million
+    match std::env::var("TAZUNA_PRICE") {
+        Ok(v) => Ok((price_override(&v)?, false)),
+        Err(_) => parse_price(m),
+    }
+}
+
+fn price_override(v: &str) -> Result<Price> {
+    let n: Vec<f64> = v.split(',').map(|x| x.trim().parse::<f64>()).collect::<Result<_, _>>().context("TAZUNA_PRICE: three numbers")?;
+    let [i, c, o] = n[..] else { bail!("TAZUNA_PRICE needs input,cached,output (USD per million tokens)") };
+    Ok((i / 1e6, c / 1e6, o / 1e6))
 }
 
 /// CheaperInference and OpenRouter-style lists give USD per million (`input_per_million`, as string or number);
@@ -562,6 +572,13 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 mod tests {
     use super::*;
     use std::{cell::RefCell, rc::Rc};
+
+    #[test]
+    fn price_override_is_usd_per_million() {
+        assert_eq!(price_override("0.3, 0.006,1.2").unwrap(), (0.3 / 1e6, 0.006 / 1e6, 1.2 / 1e6));
+        assert!(price_override("0.3,1.2").is_err());
+        assert!(price_override("a,b,c").is_err());
+    }
 
     #[test]
     fn runs_tools_until_the_model_answers_and_counts_cost() {

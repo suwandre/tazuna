@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.52 (2026-10-14)
+
+**`TAZUNA_PRICE=input,cached,output`** (USD per million tokens) for providers whose model list has no prices: the own
+loop's dollar cap needs one.
+
+First use, apinex (DeepSeek V4.1 Flash max, own loop, rclone from the October set; the provider reports no cached
+tokens and bills two identical requests the same):
+
+| | result | time | turns | cost |
+|---|---|---|---|---|
+| CheaperInference (earlier runs) | 3/3 | 352-1575 s | 39-89 | $0.010-0.026 |
+| Experiential Labs | 3/3 | 593-1119 s | 60-91 | $0.086-0.204 |
+| apinex free tier | stopped: 10M free tokens used up | 2354 s | 84 | $0 |
+| apinex paid (5 requests/minute) | stopped by hand, unfinished | 2120 s | 115 | $0.465 |
+
+About $0.06 per million input tokens, but every re-sent token is billed in full: agent loops cost 20x and more. Not
+used.
+
 ## 0.0.51 (2026-10-14)
 
 **`--review-model` uses the five-lens review prompt** (bench/review-lens.txt: acceptance criteria with a counterexample,

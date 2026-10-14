@@ -263,6 +263,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: footprint of a whole agent run measured for the first time (`bench/agent_footprint.py`): own loop 27 MB peak
   RAM and 0.1 s CPU vs the claude path 262-282 MB and 0.6-0.7 s, on the same small fix. Goal 1's "real footprint wins come
   with the own loop" holds: ~10x less memory. Wall time goes the other way (provider wait), so speed is the own loop's gap.
+- 2026-10-14: providers for the own loop: apinex bills every re-sent token in full (no cache discount) and allows 5
+  requests per minute: rclone unfinished after 115 turns and $0.47 (CheaperInference: done in 39-89 turns for ~$0.02).
+  Ruled out. A provider is only worth a gauge if its usage reports cached tokens; BeatAPI does, OpenGateway (a
+  "ultrafast" DeepSeek route) is unknown until funded.
 - 2026-10-14: tazuna's default against the user's own Claude Code (Opus high, interactive, with the user's guidance) on 5
   of the user's company PRs: same base commit, the ticket text as it was before work started, no review step. A peer's
   round-1 Critical/Major findings on the user's PRs (19): tazuna's versions carry 9 of the 16 that apply (3 concern parts
