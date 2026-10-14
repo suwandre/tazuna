@@ -31,10 +31,13 @@ tokens and bills two identical requests the same):
 | apinex free tier | stopped: 10M free tokens used up | 2354 s | 84 | $0 |
 | apinex paid (5 requests/minute) | stopped by hand, unfinished | 2120 s | 115 | $0.465 |
 | apinex `claude-opus-5.5` medium (own loop) | 2/3 | 391 s | 25 | $0.270 |
+| BeatAPI DeepSeek (cache hits 39%) | 1/3 | 965 s | 39 | $0.102 |
 
 DeepSeek there: about $0.06 per million input tokens, but every re-sent token is billed in full: agent loops cost 20x and
 more. Its Opus 5.5: a flat ~$0.50 per million tokens (about a tenth of Anthropic's list price, so of unclear origin), fast
-and few turns, but 2/3 tests at 10-25x DeepSeek's cost on CheaperInference. Neither is used.
+and few turns, but 2/3 tests at 10-25x DeepSeek's cost on CheaperInference. BeatAPI passes caching through, but only 39%
+of input came from cache (97-99% elsewhere) and the run solved 1 of 3 (CheaperInference: 3 of 3 in every run). None is
+used; CheaperInference stays the cascade's provider.
 
 ## 0.0.51 (2026-10-14)
 

@@ -277,8 +277,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   with the own loop" holds: ~10x less memory. Wall time goes the other way (provider wait), so speed is the own loop's gap.
 - 2026-10-14: providers for the own loop: apinex bills every re-sent token in full (no cache discount) and allows 5
   requests per minute: rclone unfinished after 115 turns and $0.47 (CheaperInference: done in 39-89 turns for ~$0.02).
-  Ruled out. A provider is only worth a gauge if its usage reports cached tokens; BeatAPI does, OpenGateway (a
-  "ultrafast" DeepSeek route) is unknown until funded.
+  Ruled out. BeatAPI caches, but only 39% of a run's input hit the cache and rclone came out 1/3 at $0.10 (5x
+  CheaperInference): ruled out. OpenGateway (an "ultrafast" DeepSeek route) is unknown until funded.
 - 2026-10-14: tazuna's default against the user's own Claude Code (Opus high, interactive, with the user's guidance) on 5
   of the user's company PRs: same base commit, the ticket text as it was before work started, no review step. A peer's
   round-1 Critical/Major findings on the user's PRs (19): tazuna's versions carry 9 of the 16 that apply (3 concern parts
