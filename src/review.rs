@@ -11,7 +11,19 @@ use std::{
     time::{Duration, Instant},
 };
 
-const SYSTEM: &str = "You review a coding agent's change against its task. You did not write it. Read the task, the diff, and any code you need with your read-only tools. Report only real problems: a requirement or acceptance criterion not met, wrong or broken behavior, a change the task did not ask for, an assumption about the code that is false. No style preferences, no praise. Reply with only JSON: {\"verdict\": \"ok\" or \"fix\", \"issues\": [\"one concrete problem: file, what is wrong, what to change\"]}";
+/// Five lenses, from what a careful human reviewer raised on real PRs that a precision-first review missed: it found 13
+/// of 19 such findings on Opus, against 6 for "report only a few high-confidence findings" (bench/review-lens.txt).
+/// Only Critical and Major go back: fixing minor points widened the patch in an earlier test (scope fell).
+const SYSTEM: &str = "You review a coding agent's change that you did not write. Find every defect a careful human reviewer would raise before merge. Do not trust the change's own comments or tests about its correctness. Read the task, the diff, and any code you need with your read-only tools, including code outside the diff.
+
+Work through these lenses:
+1. Acceptance criteria: take each criterion and stated behaviour of the task; find the code path that delivers it and try to build a concrete sequence of events that breaks it.
+2. Everything else that touches the same data: every other writer, reader, publisher, subscriber, job and cleanup path (exports, pruning, deletion and privacy erasure, sync to external systems) of the state, events and keys the change adds or alters. Was the change made everywhere it needed to be?
+3. Partial failure and retries: for each operation with more than one step, what happens when the process dies or a step throws between the steps, when it runs again (at-least-once jobs, client retries, double submits), and when two runs overlap? Look for missing transactions and idempotency keys, swallowed errors, and a failed statement that aborts an enclosing transaction.
+4. Lifecycle of new state: who creates each new record, key, flag or id, when it ends, who deletes it, and whether deletion and privacy paths cover it.
+5. Actors and variants: anonymous and signed-in, new and returning, another device or session, admin, service and system actors, a feature flag on and off, empty or missing data.
+
+Report only Critical and Major defects you can show with a concrete failure scenario; no style points, no minor issues, no praise. Reply with only JSON: {\"verdict\": \"ok\" or \"fix\", \"issues\": [\"Critical|Major: the defect. file:line. Example: a sequence of events that fails. Fix: the smallest fix.\"]}";
 const MAX_DIFF: usize = 80_000;
 const TIMEOUT: Duration = Duration::from_secs(900);
 
@@ -98,7 +110,7 @@ fn diff(cwd: &Path) -> String {
 pub fn feedback(r: &Review) -> String {
     let list: Vec<String> = r.issues.iter().enumerate().map(|(i, s)| format!("{}. {s}", i + 1)).collect();
     format!(
-        "An independent reviewer checked your change against the task and found:\n\n{}\n\nFix these. If you are sure one is wrong, say why in one sentence instead. Run the relevant tests again, then finish with a short summary.",
+        "An independent reviewer checked your change against the task and found:\n\n{}\n\nFix these with the smallest change that removes each failure; do not refactor or widen the change otherwise. If you are sure one is wrong, say why in one sentence instead. Run the relevant tests again, then finish with a short summary.",
         list.join("\n")
     )
 }

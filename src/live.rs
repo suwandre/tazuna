@@ -875,7 +875,9 @@ impl Live {
                 }
             };
         }
-        if let Some((model, effort)) = self.review_model.clone().filter(|_| !self.task_reviewed && !changed.is_empty()) {
+        // not while background tasks still run (boss mode's subagents): claude reports a result each time it waits for
+        // them, and a review then sees half a change; the result after the last task ends triggers it instead
+        if let Some((model, effort)) = self.review_model.clone().filter(|_| !self.task_reviewed && !changed.is_empty() && self.tasks.is_empty()) {
             // the reviewer gets the task and the diff in a fresh context; verification waits for its verdict
             self.task_reviewed = true;
             self.verifying = true;

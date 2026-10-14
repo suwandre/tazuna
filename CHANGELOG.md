@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.51 (2026-10-14)
+
+**`--review-model` uses the five-lens review prompt** (bench/review-lens.txt: acceptance criteria with a counterexample,
+every other reader and writer of the touched data, partial failure and retries, lifecycle of new state, actors and
+variants). Only Critical and Major findings go back, each with a failure example, and the implementer is told to fix
+with the smallest change. **Fixed:** with boss mode the review started at the first result, while subagents were
+still working in the background (3 of 5 runs below), so it saw half a change; it now waits until no background task
+runs.
+
+First measurement (5 of the user's company tickets, boss + Opus 5.5 high reviewer, 1 run; 3 of the 5 reviews hit the
+bug above): the peer's round-1 defects that apply, 9 of 16 with the review as without it; cost $14.68 vs $8.90 (+65%).
+The reviews raised real issues the peer only found in later rounds (a gate a product swap never closes, mismatched
+`anchorStepKey`), which this check does not count. Stays opt-in; a clean rerun of the 3 affected tickets and a judge
+pass decide.
+
 ## 0.0.50 (2026-10-13)
 
 **rustls instead of the system's TLS, and a size-tuned release build (strip, LTO, one codegen unit).** Linking the macOS
