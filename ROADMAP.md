@@ -159,6 +159,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - `--fallback-model`, `--advisor`; a cross-family judge; real sandboxing; git tags and a fixed scoreboard.
 - A cheaper or stricter review (Sonnet, or acceptance criteria one by one at high effort).
 - Smaller items: a verification shortcut.
+- sgrep (Context.dev, local ripgrep plus static-embedding rerank; -21% cost claimed on SWE-bench Verified with GPT-6 Luna,
+  70 vs 68 of 100): a nearby smart-search tool (jevgrep) cost judge on Opus. If tested, then as the own loop's `search`
+  on the long October tasks (turns, tokens, time), after reading its code.
 
 ## Tried or ruled out (do not retry without a new reason)
 
@@ -255,6 +258,13 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-12: footprint of a whole agent run measured for the first time (`bench/agent_footprint.py`): own loop 27 MB peak
   RAM and 0.1 s CPU vs the claude path 262-282 MB and 0.6-0.7 s, on the same small fix. Goal 1's "real footprint wins come
   with the own loop" holds: ~10x less memory. Wall time goes the other way (provider wait), so speed is the own loop's gap.
+- 2026-10-14: tazuna's default against the user's own Claude Code (Opus high, interactive, with the user's guidance) on 5
+  of the user's company PRs: same base commit, the ticket text as it was before work started, no review step. A peer's
+  round-1 Critical/Major findings on the user's PRs (19): tazuna's versions carry 9 of the 16 that apply (3 concern parts
+  tazuna did not build), the user's all 19. Judge against the merged PRs (1 pass, full diffs): tazuna 6.6, user 5.6
+  (better on 3 of 5; the 2 losses are where the merged PR kept a design the ticket did not ask for). No new type errors
+  or failing tests in any tazuna run; $1.78 per ticket, 13-50 minutes. Defects left in both: retries and idempotency,
+  other writers of the same data, erasure of new keys: what the five-lens review catches.
 - 2026-10-14: own-loop speed by provider (DeepSeek V4.1 Flash max, no hand-over, 3 October tasks, both at once).
   Experiential Labs: rclone 593 s 3/3 $0.086, caddy-unix 2446 s 7/7 $0.204, caddy-retry stopped at the 90-minute bench
   limit. CheaperInference: caddy-retry 2665 s 2/2 $0.103; rclone and caddy-unix hit an empty balance (earlier runs:
