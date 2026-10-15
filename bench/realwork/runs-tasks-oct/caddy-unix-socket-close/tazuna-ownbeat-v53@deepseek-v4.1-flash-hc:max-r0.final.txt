@@ -1,0 +1,16 @@
+All checks pass. The two gofmt-listed files are pre-existing and unrelated to my change (untouched per `git status`).
+
+## Summary
+
+**Root cause.** `unixListener.Close()` / `unixConn.Close()` called `uln.File()` (which `dup()`s the listening fd) and never closed the returned `*os.File`. That leaked descriptor kept the kernel socket alive until Go's finalizer ran at the next GC — so the old socket kept listening with nobody accepting (clients hung), and TCP was unaffected because its port genuinely closes. Separately, the code then used `File().Name()` as the unlink path, but on current Go that returns `"unix:<path>->"`, not a path, so `syscall.Unlink` always failed and the file stayed behind. The old reuse logic also replaced the map entry with the most-recently-dup'd holder, which could be closed out from under other holders.
+
+**Fix (`listen_unix.go`).**
+- Replaced the "last-seen holder" map with a stable `unixSocket` shared state holding a private **master** dup. Each `Listen` on an existing path gets a fresh holder dup'd from the master, so a close never breaks reuse.
+- `Close` now closes the holder, then releases its reference under `unixSocketsMu` (the same lock `Listen` takes), and only the **last** holder closes the master and unlinks the file. Double `Close` no longer decrements twice and returns `net.ErrClosed`.
+- Removed the fd leak in both the reuse and new-holder paths (`defer f.Close()` on the `File()` dup).
+- `unlinkUnixSocket` skips abstract (`@`-prefixed) names and ignores `ErrNotExist`; the pre-bind unlink still propagates real errors as before.
+- Made `deleteListener`/`deletePacketConn` idempotent so a second close doesn't double-release the `listenerPool` reference.
+
+**Tests (`listen_unix_test.go`, new).** Cover: file removed + connections refused after last close; reuse keeps socket/file until last close; double close returns `net.ErrClosed` without stealing another's reference; a close interleaved with a new listen leaves a working socket/file; an 8-goroutine concurrent listen/close stress test (race-clean); and the Linux abstract-socket no-unlink guarantee.
+
+**Verification.** Binary-level repro now yields curl exit 7 (refused) and the socket file removed, including moving back to the same path (a single kernel socket, not two). `go build ./...`, `go vet` (linux/windows/darwin/freebsd/solaris), `go test -race -short ./...`, integration tests, and `golangci-lint` all pass.

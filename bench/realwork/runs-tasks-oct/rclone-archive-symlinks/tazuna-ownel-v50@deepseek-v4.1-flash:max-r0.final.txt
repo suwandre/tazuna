@@ -1,0 +1,28 @@
+All checks pass. Final summary of the change:
+
+## What changed
+
+Symlinks stored inside ZIP and squashfs archives are now exposed using the same convention as the local backend, instead of being shown as ordinary files (zip) or dropped (squashfs).
+
+**`backend/archive/zip/zip.go`**
+- Added a `links` field, set from `fs.GetConfig(ctx).Links`.
+- `readZip` detects entries with `os.ModeSymlink` (via `file.Mode()`), which previously became regular objects holding the target path. They are now skipped by default (counted, then reported once with `Skipped N symlinks - use -l/--links to read them`), or with `--links` exposed under `name + .rclonelink` with the exact member size/target content.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Added a `links` field plus `Object.isLink`/`Object.link`.
+- `List` handles `item.Type()&os.ModeSymlink` — skipping when links are off (with the same notice naming `-l/--links`) and returning a `.rclonelink` object when on.
+- `newObjectNative` names entries the same way `List` does (symlinks get the suffix, and are hidden when links are off), so `NewObject` and listing agree on which names exist; a regular file whose name merely ends in `.rclonelink` stays a regular file.
+- `readlink` reads the target from `go-diskfs`'s `*squashfs.StatT`, and `Object.Open` serves the target string honouring offset/limit (clamped to avoid panics) for symlinks.
+
+**Tests** (`backend/archive/archive_internal_test.go`, `backend/archive/zip/zip_internal_test.go`)
+- Zip-level test for skip-by-default, listing with `--links`, size, and target read-back.
+- End-to-end squashfs test using `mksquashfs` covering both flag states and the regular-file-with-suffix case.
+- End-to-end zip escape test: an archive containing a symlink pointing above the root plus a member "inside" it makes `sync.CopyDir` fail and leaves nothing written outside the destination.
+
+**Docs** (`docs/content/archive.md`): new "Symlinks" section documenting the behaviour with the maintainer-notes example.
+
+## Verification
+
+- `go build ./...`, `go vet ./backend/archive/...`, `gofmt`/`goimports`, and `golangci-lint run ./backend/archive/...` (0 issues).
+- `go test -count=1 ./backend/archive/...` and with `-race`; also `./fs/sync/`, `./fs/operations/`, `./backend/local/` — all pass.
+- Manual end-to-end with a built rclone: `lsl --links` shows `src/link.txt.rclonelink` with target-length size and `rclone copy --links` recreates `link.txt -> file.txt`; the default listing emits the notice; hostile zip writes nothing outside the destination; squashfs and zip behave identically; a duplicate `link.txt.rclonelink` regular member is handled as a duplicate rather than taken for a link.

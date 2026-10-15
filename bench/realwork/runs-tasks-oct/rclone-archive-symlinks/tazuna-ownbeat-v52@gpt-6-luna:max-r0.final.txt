@@ -1,0 +1,3 @@
+**Implemented symlink support for ZIP and squashfs archives.** Symlinks are omitted by default with a notice naming `-l/--links`; with `--links`, they appear as `.rclonelink` objects whose contents and size reflect the link target. Lookups match listings, regular files already ending in `.rclonelink` remain regular files, and archive members beneath symlinks are excluded to prevent writes outside the destination.
+
+Verified with `go test ./backend/archive/... ./backend/local` and `git diff --check`.

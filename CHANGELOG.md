@@ -16,6 +16,27 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.57 (2026-10-15)
+
+**Claude models on a gateway's Chat Completions route:** no `reasoning_effort` for `claude-` models (BeatAPI rejects
+Haiku 5.5 with one: "requires adaptive thinking"; the model then runs at the gateway's default effort). **Streamed tool
+calls are keyed by their `index`:** BeatAPI counts indexes across content blocks (text 0, tools 1, 2, ...), which left an
+empty call at index 0 and failed the next request ("custom tool name is invalid").
+
+Haiku 5.5 on rclone (October set; hidden tests, not judged yet):
+
+| | tests | turns | time | input (cached) | output | cost |
+|---|---|---|---|---|---|---|
+| Claude Code through tazuna (subscription, max) | 2/3 | 118 | 3697 s | 47.6M (98%) | 441K | plan ($5.88 reported by the CLI) |
+| own loop, UnoRouter, max | 2/3 | 91 | 2023 s | 6.4M (76%) | 174K | $0.15 billed |
+| own loop, BeatAPI, default effort, 3 runs | 3/3, 1/3, 2/3 | 45, 19, 48 | 873-1353 s | 0.6-2.7M (73-95%) | 50-97K | $0.03-0.06 counted, billed ~1.5x |
+
+On average the own loop matches Claude Code with Haiku at about 1/40 of the cost, but BeatAPI's runs vary. The 1/3 run
+changed nothing: after 17 turns every reply came back empty, through 3 retries and both nudges. Likely cause: the
+OpenAI-format translation drops Claude's thinking blocks, so a turn that ends in thinking alone arrives empty, and asking
+again repeats it. Next: the own loop speaks Anthropic's Messages API for Claude models (thinking kept, effort set, cache
+control).
+
 ## 0.0.56 (2026-10-15)
 
 **The own loop streams its model calls** (`stream: true`; `TAZUNA_STREAM=0` turns it off) and puts the pieces back into a

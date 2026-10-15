@@ -1,0 +1,29 @@
+Done. Here's a summary of the change.
+
+## Summary
+
+The archive backend now reads symlinks out of ZIP and squashfs archives, following the same convention as the local backend.
+
+### `backend/archive/zip/zip.go`
+- Added a `links` field to `Fs`, set from `fs.GetConfig(ctx).Links` in `New`.
+- In `readZip`, entries whose mode has `os.ModeSymlink` are counted as `skippedLinks` and dropped unless `-l/--links` is in use; with the flag the entry is exposed under its name plus `fs.LinkSuffix` (`.rclonelink`), since the zip member already holds the link target.
+- A single per-archive NOTICE names the flag when symlinks are skipped.
+
+### `backend/archive/squashfs/squashfs.go`
+- Added the same `links` field, and an `objectFromLink` helper that builds an `Object` from the target read via the new `readlink` helper (`StatT.LinkTarget` from go-diskfs).
+- `List` exposes symlinks as `.rclonelink` entries when `--links` is on, otherwise skips them with a per-directory NOTICE naming the flag.
+- `newObjectNative` applies the same naming rule so `NewObject` and `List` agree on which names exist.
+- `Object` gained `isLink`/`link`; `Open` serves the target from memory, honouring seek/range options by clamping the offset and applying the limit.
+
+### Tests
+- `TestReadZipSymlink` (zip internals): default listing hides the symlink, `--links` lists it with the suffix, `NewObject` size equals target length, `Open` returns the target.
+- `TestArchiveSquashfsSymlink` (archive internals, needs `mksquashfs`): same behaviour, plus a regular file literally named `note.rclonelink` staying a regular file under the flag.
+- `TestArchiveZipSymlinkEscape`: end-to-end `sync.CopyDir` of a hostile zip (symlink `a -> ../outside` plus member `a/pwned.txt`) errors and writes nothing outside the destination.
+
+### Docs
+- Added a "Symlinks" section to `docs/content/archive.md` with the `lsl`/`cat`/`copy` example and the `.rclonelink` convention.
+
+### Verification
+- `go test ./backend/archive/... ./cmd/archive/... ./fs/sync/... ./fs/operations/... ./vfs/...` pass, including `-race`.
+- `golangci-lint run ./backend/archive/...` reports 0 issues; `gofmt` clean.
+- Manual end-to-end check with a built binary: default `lsl` skips the link and logs `Skipped 1 symlinks - use -l/--links to read them`; `lsl --links` shows `src/link.txt.rclonelink` with size 8; `copy --links` recreates `out/src/link.txt -> file.txt`.

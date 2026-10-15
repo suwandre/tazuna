@@ -1,0 +1,24 @@
+The zip and squashfs archivers now follow the `--links` convention. `go test ./backend/archive/...` passes. A real `rclone copy --links :archive:/tmp/e2e/t.zip` recreated `link.txt -> file.txt` as a symlink.
+
+**Behaviour, both archivers**
+- Without `--links`, symlinks are skipped. A NOTICE says "Can't follow N symlinks … without -l/--links".
+- With `--links`, a symlink is listed as `name.rclonelink`. Its size is the target length. Opening it returns the target, and range and seek options work.
+- `NewObject` and listing agree on which names exist. A symlink is found only as its suffixed name, and only with `--links`.
+- A regular member named `x.rclonelink` stays a regular file.
+
+**Zip** (`backend/archive/zip/zip.go`)
+- Symlink entries are detected through `file.Mode()`.
+- Link targets over 128 KiB are skipped.
+- Any member that sits under a symlink path is skipped. This covers the hostile case: an `evil` symlink pointing above the root plus an `evil/pwned` member. The skipped members are counted in the existing "escape the archive" notice.
+
+**Squashfs** (`backend/archive/squashfs/squashfs.go`)
+- Symlinks used to be dropped silently. They are now read through `StatT.LinkTarget`.
+- I did not add the "member under a symlink" guard here. Squashfs is a real directory tree, so a member can't sit under a symlink in the listing. The hostile test below only checks that the symlink pointing above the root is listed as a plain link object.
+
+**Tests**
+- I added `TestSymlinks` to both archivers' internal test files.
+- They cover skipped and `--links` modes, range and seek reads, a regular `.rclonelink` member, and listing against lookup.
+- The zip test also covers the hostile archive.
+- The squashfs test skips itself if `mksquashfs` isn't installed. It ran here.
+
+I did not run the repo-wide `make quicktest` or the linter.

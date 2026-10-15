@@ -1,0 +1,24 @@
+All done. Let me summarize the changes.
+
+## Summary
+
+I added symbolic link support to the archive backend so ZIP and squashfs behave consistently, following the convention used by the local backend (`.rclonelink` translation driven by `-l`/`--links`).
+
+### Behaviour implemented
+- Symlinks in an archive are **skipped unless `-l/--links`** is set, with a one-per-listing notice naming the flag.
+- With `--links`, a link is listed as its name plus `.rclonelink`, its size is the target length, and opening it reads back the target path (honouring seek/range options).
+- `List` and `NewObject` agree on which names exist.
+- A regular member whose name ends in `.rclonelink` stays a regular file.
+- The symlink target is exposed verbatim and never resolved during listing, and the local backend's existing `os.Root` protections prevent a hostile archive (link pointing above the root plus a member "inside" it) from writing outside the destination.
+
+### Changes
+- **`backend/archive/zip/zip.go`**: Added a `translateSymlinks` field set from `fs.GetConfig(ctx).Links`. In `readZip`, detect `os.ModeSymlink` entries, skip them (counting) when links are off, and otherwise expose them under `name + fs.LinkSuffix`. ZIP stores the target as the member data, so `Size`/`Open` already do the right thing.
+- **`backend/archive/squashfs/squashfs.go`**: Same field. In `List`, expose symlink entries via a new `linkFromFileInfo` helper (reading the target from go-diskfs's `StatT.LinkTarget`), or count them when links are off. `newObjectNative` resolves a symlink to a link object only when links are on. `NewObject` and the single-object root detection now resolve `name + .rclonelink` while still treating a real `.rclonelink` file as a regular file. Link objects read back the target, clamped for seek offsets.
+- **`docs/content/archive.md`**: Documented the symlink behaviour with the example from the issue.
+- **Tests**: Added `zip/zip_internal_test.go` and `squashfs/squashfs_internal_test.go` cases (skip/list/open, numeric/suffix lookup agreement, single-object root, hostile traversal, seek/range) plus end-to-end copy tests in `archive_internal_test.go`, including a squashfs image built with `mksquashfs` and a new `testdata/symlink.sqfs`.
+
+### Verification
+- `go test ./backend/archive/... ./cmd/archive/...` (including `-race`) — all pass.
+- `go test ./fs/operations/... ./fs/sync/...` — pass (no regression in the `--links` copy path).
+- `golangci-lint run backend/archive/...` — 0 issues; `go vet`/`gofmt` clean.
+- Manually built rclone and confirmed `rclone lsl --links :archive:/tmp/zt/test.zip` produces `src/link.txt.rclonelink` and `rclone copy --links` recreates the symlink, matching the issue's expected output, for both ZIP and squashfs.

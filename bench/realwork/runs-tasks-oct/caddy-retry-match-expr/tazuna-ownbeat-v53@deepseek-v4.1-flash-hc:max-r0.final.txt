@@ -1,0 +1,27 @@
+## Summary
+
+Fixed the regression from v2.11.3 where an `lb_retry_match` expression that only tests the request (e.g. `{http.request.method} == "POST"`) made every successful upstream response retryable, causing repeated POSTs with empty bodies and eventual 502s.
+
+### Root cause
+After #7569, the reverse proxy evaluated *any* matcher set containing an expression matcher against the upstream response. A request-only expression matched every response for a matching request, so every response was treated as retryable. The check `matcherSetHasExpressionMatcher` couldn't distinguish response-reading expressions from request-only ones.
+
+### Changes
+
+**`modules/caddyhttp/celmatcher.go`**
+- Added `placeholderNames` / `dynamicPlaceholder` fields to `MatchExpression`, populated during `Provision` by walking the compiled CEL AST (`collectPlaceholders`). It records each `ph(req, "...")` call's placeholder name; if the name isn't a constant (computed at runtime), it marks the expression dynamic.
+- Added the exported `PlaceholderNames() (names []string, dynamic bool)` method.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` with `matcherSetReadsResponse` / `expressionReadsResponse`, which only treat an expression as a response condition when it references response-only data: `{rp.status_code}`, `{rp.status_text}`, `{rp.header.*}` (prefix match), or the upstream latency placeholders. Dynamic placeholder names are conservatively treated as possible response conditions.
+- Works for both `{placeholder}` shorthand (expanded to `ph(...)` before AST analysis) and direct `ph(req, "...")` calls.
+- Requests-only expressions (including `{http.reverse_proxy.upstream.host}`, escaped placeholders inside string literals like `\{http.reverse_proxy.status_code}`, and near-miss names like `{http.reverse_proxy.status_codes}`) are again request conditions and no longer trigger response retries.
+- Updated the `RetryMatchRaw` doc comment.
+
+**Tests**
+- `TestMatchExpressionPlaceholderNames` (celmatcher): verifies placeholder extraction, escaping, near-miss names, and dynamic names.
+- `TestRetryMatchExpressionClassification`, `TestMatcherSetReadsResponse`, `TestRequestOnlyExpressionDoesNotRetryResponses` (reverseproxy): cover shorthand vs. `ph(...)`, status/header/latency placeholders, and all the request-only cases.
+
+### Verification
+- `go build ./...`, `go vet ./modules/caddyhttp/...`, `golangci-lint run ./modules/caddyhttp/...` → 0 issues
+- `go test -short ./...` → all pass
+- `go test -race -short ./...` → all pass

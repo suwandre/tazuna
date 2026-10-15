@@ -1,0 +1,3 @@
+Implemented symlink handling for ZIP and squashfs archives. Symlinks are skipped by default with a notice naming `-l/--links`; with the flag enabled, they appear as `.rclonelink` objects whose content is the link target. Added tests for listing, lookup, range/seek reads, copying symlinks, and blocking writes through a hostile archive symlink.
+
+Verified with `go test ./backend/archive/... -count=1` and `git diff --check`.

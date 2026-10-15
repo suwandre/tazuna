@@ -191,7 +191,9 @@ impl Loop {
                 b
             } else {
                 let mut b = json!({"model": self.model, "messages": self.msgs, "tools": self.tools});
-                if let Some(e) = &self.effort {
+                // Claude models with adaptive thinking (Haiku 5.5) reject an effort in this format on gateways
+                // (BeatAPI: "requires adaptive thinking"); without it they run at the gateway's default effort
+                if let Some(e) = self.effort.as_ref().filter(|_| !self.model.starts_with("claude-")) {
                     b["reasoning_effort"] = json!(e);
                 }
                 b
@@ -619,7 +621,8 @@ fn from_stream(events: &[Value], responses: bool) -> Result<Value> {
         return events.iter().rev().find(|e| e["type"] == "response.completed").map(|e| e["response"].clone())
             .context("stream ended without response.completed");
     }
-    let (mut content, mut usage, mut calls) = (String::new(), Value::Null, Vec::<Value>::new());
+    // calls by their `index`, which some gateways count across content blocks (text 0, tools 1, 2, ...)
+    let (mut content, mut usage, mut calls) = (String::new(), Value::Null, Vec::<(u64, Value)>::new());
     for e in events {
         if let Some(err) = e.get("error") {
             bail!("provider error in stream: {}", err.to_string().chars().take(300).collect::<String>());
@@ -630,11 +633,12 @@ fn from_stream(events: &[Value], responses: bool) -> Result<Value> {
         let d = &e["choices"][0]["delta"];
         content.push_str(d["content"].as_str().unwrap_or_default());
         for t in d["tool_calls"].as_array().into_iter().flatten() {
-            let i = t["index"].as_u64().unwrap_or(calls.len() as u64) as usize;
-            while calls.len() <= i {
-                calls.push(json!({"id": "", "type": "function", "function": {"name": "", "arguments": ""}}));
+            // a piece without an index continues the last call
+            let i = t["index"].as_u64().or(calls.last().map(|c| c.0)).unwrap_or(0);
+            if !calls.iter().any(|c| c.0 == i) {
+                calls.push((i, json!({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})));
             }
-            let c = &mut calls[i];
+            let c = &mut calls.iter_mut().find(|c| c.0 == i).expect("just added").1;
             if let Some(id) = t["id"].as_str() {
                 c["id"] = json!(id);
             }
@@ -646,6 +650,7 @@ fn from_stream(events: &[Value], responses: bool) -> Result<Value> {
             }
         }
     }
+    let calls: Vec<Value> = calls.into_iter().map(|c| c.1).filter(|c| c["function"]["name"].as_str().is_some_and(|n| !n.is_empty())).collect();
     let mut message = json!({"role": "assistant", "content": content});
     if !calls.is_empty() {
         message["tool_calls"] = json!(calls);
@@ -715,6 +720,14 @@ data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":3}}\
         assert_eq!(m["tool_calls"][0]["function"]["name"], "read");
         assert_eq!(m["tool_calls"][0]["function"]["arguments"], "{\"path\":\"a\"}");
         assert_eq!(r["usage"]["prompt_tokens"], 10);
+        let gapped = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"t1\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\"}}]}}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"function\":{\"arguments\":\"}\"}}]}}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"t2\",\"function\":{\"name\":\"read\",\"arguments\":\"{}\"}}]}}]}\n";
+        let g = from_stream(&sse(gapped).unwrap(), false).unwrap();
+        let calls = g["choices"][0]["message"]["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 2, "no empty call for index 0");
+        assert_eq!((calls[0]["function"]["name"].as_str(), calls[0]["function"]["arguments"].as_str()), (Some("bash"), Some("{}")));
+        assert_eq!(calls[1]["id"], "t2");
         let resp = "event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[],\"usage\":{\"input_tokens\":5}}}\n";
         assert_eq!(from_stream(&sse(resp).unwrap(), true).unwrap()["usage"]["input_tokens"], 5);
         assert!(sse("{\"choices\":[]}").is_none(), "a plain JSON reply is used as it is");

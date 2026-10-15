@@ -138,6 +138,9 @@ streamed calls, empty replies asked again. Luna on BeatAPI vs Codex: 8 and 5 vs 
 consistent; more runs and a second judge pass are needed before calling it. Next: the DeepSeek A/B on a steadier
 provider. DeepSeek in the own loop: judge 9 (best in the pool). BeatAPI's `deepseek-v4.1-flash-hc` is a second provider on par
 with CheaperInference (3/3, judge 9, $0.027, 641 s).
+0.0.57, Haiku 5.5 on rclone: Claude Code (subscription) 2/3, 118 turns, 47.6M input; own loop on BeatAPI 3/3, 1/3, 2/3
+at $0.03-0.06 per run (the 1/3 ended in empty replies: thinking lost in the OpenAI format); UnoRouter 2/3. Next: the
+Messages API for Claude models in the own loop; the DeepSeek A/B (0.0.53 vs 0.0.57) on BeatAPI HC off-peak.
 
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
 

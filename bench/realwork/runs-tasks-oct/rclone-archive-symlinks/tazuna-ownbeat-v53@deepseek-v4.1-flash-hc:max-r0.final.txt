@@ -1,0 +1,25 @@
+## Summary
+
+I added symbolic link support to the archive backend, covering both the ZIP and squashfs archivers, following the `.rclonelink` convention used by the local backend and `--links`.
+
+### Behaviour
+
+- **Without `-l/--links`**: symlinks in an archive are skipped, and a notice naming the flag is logged (`Skipped N symbolic links in the archive - use -l/--links to show them`).
+- **With `-l/--links`**: a symlink is listed under its name plus `.rclonelink`, its size is the target length, and `Open` reads the target path back, honouring `SeekOption`/`RangeOption`. `rclone copy --links :archive:test.zip /out` recreates a real symlink on a link-capable destination.
+- Listing and `NewObject` agree on which names exist (including mounting a single link as the root, given either bare or suffixed).
+- A regular archive member ending in `.rclonelink` stays a regular file.
+- Hostile archives (a symlink pointing above the root plus a member "inside" it) reproduce the link faithfully but cannot write through it — verified end-to-end; the local backend's `os.Root` guard rejects the write.
+
+### Changes
+
+- `backend/archive/zip/zip.go`: detect `os.ModeSymlink` from the zip entry mode, expose links with the suffix/target and bounded target reads; root matching accepts bare or suffixed link names.
+- `backend/archive/squashfs/squashfs.go`: same via the go-diskfs `directoryentry.Readlink` interface (the previous code dropped symlinks entirely).
+- `backend/archive/archiver/archiver.go`: shared `MaxLinkTargetSize` and `OpenLink` helpers used by both archivers.
+- Tests: internal tests for each archiver, plus archive-level end-to-end copy and hostile-archive tests. Added `backend/archive/squashfs/testdata/links.sqfs` (generated with `mksquashfs -all-root`) containing a file, a symlink and a regular `.rclonelink` file.
+- `docs/content/archive.md`: documented the symlink convention.
+
+### Verification
+
+- `go test ./backend/archive/...` (including `-race`) passes; new tests cover disabled/enabled modes, seek/range, regular `.rclonelink` files, single-link roots, oversized targets, and the hostile-archive write-through block.
+- `go build ./...`, `go vet ./backend/archive/...`, `gofmt -l`, and `golangci-lint run ./backend/archive/...` are all clean.
+- Manually exercised `rclone lsl --links`, `rclone copy --links`, and the hostile archive with a locally built binary for both zip and squashfs.

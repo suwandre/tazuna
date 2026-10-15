@@ -1,0 +1,3 @@
+Added `-l/--links` support for symbolic links in ZIP and squashfs archives. With links enabled, symlinks are listed with the `.rclonelink` suffix and expose their target as readable content; without it, they’re skipped with a notice. Added tests for listing, lookup, range and seek reads, copying links, and protection against a hostile ZIP member writing outside the destination.
+
+Verified with `go test -count=1 ./backend/archive/...` and `git diff --check`.

@@ -1,0 +1,35 @@
+All gates pass. Here's a summary of what I changed.
+
+## Root cause
+
+In `listen_unix.go`, `unixListener.Close()` and `unixConn.Close()` (on the last reference) called `.File()` to discover the socket's path. Two bugs resulted:
+
+1. **FD leak → socket keeps listening.** `UnixListener.File()` *dups* the fd and returns a new `*os.File` that the code never closed. That duplicate kept the listening socket alive until the GC finalizer ran (the forced 2‑minute GC, or never with `GOGC=off`) — matching the reported symptom exactly.
+2. **File never removed.** `file.Name()` returns `"unix:/path/x.sock->"`, not a filesystem path, so `syscall.Unlink(name)` always failed with `ENOENT`.
+
+`reuseUnixSocket` leaked the same dup'd `*os.File` on every reuse.
+
+## Fix (`listen_unix.go`)
+
+- `Close` now uses the `addr` we already know (stored on the wrapper) instead of calling `.File()`; no more dup'd fd leak. The path is deleted and the underlying listener closed immediately.
+- Extracted `releaseUnixSocket`, which performs the refcount decrement, map removal, and unlink **atomically under `unixSocketsMu`** (the same lock `Listen` holds while reusing/binding). This makes a close racing a new listen safe: a positive refcount keeps the socket and its file intact.
+- Added an `atomic.Bool closed` guard: a second `Close` returns `net.ErrClosed` and does **not** drop another reference.
+- `reuseUnixSocket` now closes the intermediate dup'd file (after `FileListener`/`FilePacketConn` make their own dup).
+- Abstract sockets (`@…`) are never unlinked (Linux has no backing file), guarded via `isAbstractUnixSocket`.
+
+## Tests (`listen_unix_test.go`, new, `//go:build unix && !solaris`)
+
+- `TestUnixSocketCloseRemovesFileAndStopsListening` — regression for the report (connect refused + file gone, no GC delay).
+- `TestUnixSocketSharedReferenceCounting` — shared socket keeps working and file stays until the last holder closes.
+- `TestUnixSocketDoubleClose` — second `Close` reports `net.ErrClosed`, sibling unaffected (listener + packet conn).
+- `TestUnixSocketCloseRacesListen` — 50 iterations of close racing a new listen; end state is a working socket with its file.
+- `TestAbstractUnixSocketCloseDoesNotUnlinkFile` — `@`-named socket never unlinks a same-named filesystem file.
+
+I verified each regression test fails against the old close logic, and the abstract-socket test fails without the guard.
+
+## Verification
+
+- `go build ./...`, `go vet`, cross-compiled `windows/amd64`, `linux/amd64+arm64`, `freebsd/amd64` (build + test compile).
+- `golangci-lint run` → 0 issues; `gofmt` clean on changed files.
+- `go test -race -short ./...` all pass.
+- Manual reproduction (admin unix→tcp, unix→unix, site `bind unix`→tcp, `|0600` mode, and moving back to the same path) now shows the old socket refusing connections with its file removed immediately, and no leftover LISTEN sockets.

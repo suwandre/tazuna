@@ -1,0 +1,26 @@
+Both archive backends now handle symlinks the same way as `local`, and the whole archive test suite passes.
+
+## What changed
+
+**`backend/archive/zip/zip.go`**
+- `New` captures `fs.GetConfig(ctx).Links`; `readZip` uses it to decide how to treat entries with `os.ModeSymlink`.
+- Symlinks are skipped unless `--links` is set, counted, and reported in one notice that names the flag: `Skipped N symlinks in zip archive - use --links to include them`.
+- With `--links`, a symlink is listed as `name.rclonelink`; the target is read once at index time and stored on the `Object`, so `Size()` is the target length and `Open` returns the target bytes honouring `SeekOption`/`RangeOption` (via `linkReader`).
+- Members beneath a symlink, and a directory entry sharing a symlink's name, are skipped so a hostile `symlink -> ../../..` plus an "inside" member can't make `copy --links` write outside the destination.
+- A regular member ending in `.rclonelink` is never converted — only genuinely mode-symlink entries are.
+
+**`backend/archive/squashfs/squashfs.go`** — previously dropped symlinks entirely:
+- Same `--links` gate, notice, `.rclonelink` naming, size and Open semantics (target from `squashfs.StatT.LinkTarget`).
+- `List` and `newObjectNative` agree: an unsuffixed symlink name returns `ErrorObjectNotFound`, the suffixed name resolves only with `--links`.
+- `pathContainsSymlink` rejects lookups whose path components include a symlink before handing the path to the library.
+
+Shared helper `maxLinkTargetSize` (128 KiB, matching the local backend's cap) rejects absurd targets.
+
+**Tests** (`zip_internal_test.go`, `squashfs_internal_test.go`): new `writeZipWithLinks`/`TestReadZipSymlinks`/`TestReadZipSymlinkEscape` and `TestSymlinks` cover both modes, suffix naming, size, full/seek/range reads, the `.rclonelink`-named regular file staying regular, listing/lookup agreement, and the symlink-escape case. Added fixture `squashfs/testdata/symlinks.sqfs` (regular file, symlink, `.rclonelink`-named regular file, escaping symlink).
+
+## Verification
+`gofmt -l backend/archive/` clean, `go vet ./backend/archive/...` clean, `go test -count=1 ./backend/archive/...` passes. I confirmed the skip notices actually print and name `--links`.
+
+Two notes for review:
+- The fixture is binary testdata; it must be committed alongside the test.
+- The escape protection is exercised in zip, where entries are my own data structure. For squashfs I verified with a temporary probe that the go-diskfs library already refuses to traverse a symlink during lookup; `pathContainsSymlink` is defensive, keeping lookup consistent with listing rather than relying on that library behaviour.

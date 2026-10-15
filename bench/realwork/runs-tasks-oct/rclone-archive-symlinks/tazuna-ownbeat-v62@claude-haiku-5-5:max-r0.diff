@@ -1,0 +1,506 @@
+diff --git a/backend/archive/squashfs/squashfs.go b/backend/archive/squashfs/squashfs.go
+index 240a949..823239f 100644
+--- a/backend/archive/squashfs/squashfs.go
++++ b/backend/archive/squashfs/squashfs.go
+@@ -43,6 +43,7 @@ type Fs struct {
+ 	prefixSlash string   // position for objects with a slash on
+ 	root        string   // position to read from within the archive
+ 	file        string   // remote of the single file root points at, if any
++	links       bool     // list symlinks as objects with the fs.LinkSuffix
+ }
+ 
+ // recoverParsePanic converts a panic raised while parsing a squashfs image
+@@ -101,6 +102,7 @@ func New(ctx context.Context, wrappedFs fs.Fs, remote, prefix, root string) (_ f
+ 		root:        strings.Trim(root, "/"),
+ 		prefix:      prefix,
+ 		prefixSlash: prefix + "/",
++		links:       fs.GetConfig(ctx).Links,
+ 	}
+ 	if prefix == "" {
+ 		f.prefixSlash = ""
+@@ -220,6 +222,23 @@ func (f *Fs) objectFromFileInfo(nativeDir string, item os.FileInfo) *Object {
+ 	}
+ }
+ 
++// Convert a symlink FileInfo into an Object from native dir which
++// reads back the link target and has the fs.LinkSuffix appended
++func (f *Fs) linkObjectFromFileInfo(nativeDir string, item os.FileInfo) *Object {
++	target := ""
++	if st, ok := item.Sys().(*squashfs.StatT); ok {
++		target = st.LinkTarget
++	}
++	return &Object{
++		fs:      f,
++		remote:  f.fromNative(nativeDir, item.Name()) + fs.LinkSuffix,
++		size:    int64(len(target)),
++		modTime: item.ModTime(),
++		target:  target,
++		isLink:  true,
++	}
++}
++
+ // List the objects and directories in dir into entries.  The
+ // entries can be returned in any order but should be for a
+ // complete directory.
+@@ -249,6 +268,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
+ 
+ 	entries = make(fs.DirEntries, 0, len(items))
+ 	skipped := 0
++	skippedLinks := 0
+ 	for _, item := range items {
+ 		// fs.Debugf(item.Name(), "entry = %#v", item)
+ 		// Skip entry names that aren't safe
+@@ -271,6 +291,15 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
+ 				return nil, fmt.Errorf("error reading item %q: %w", item.Name(), err)
+ 			}
+ 			entry = f.objectFromFileInfo(nativeDir, info)
++		} else if item.Type()&os.ModeSymlink != 0 && f.links {
++			info, err := item.Info()
++			if err != nil {
++				return nil, fmt.Errorf("error reading item %q: %w", item.Name(), err)
++			}
++			entry = f.linkObjectFromFileInfo(nativeDir, info)
++		} else if item.Type()&os.ModeSymlink != 0 {
++			skippedLinks++
++			continue
+ 		} else {
+ 			fs.Debugf(item.Name(), "FIXME Not regular file - skipping")
+ 			continue
+@@ -286,6 +315,9 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
+ 	if skipped > 0 {
+ 		fs.Logf(f, "Skipped %d squashfs entries in %q whose names escape the archive", skipped, dir)
+ 	}
++	if skippedLinks > 0 {
++		fs.Logf(f, "Skipped %d symlinks in squashfs in %q - use -l/--links to show them", skippedLinks, dir)
++	}
+ 
+ 	// fs.Debugf(f, "dir=%q, entries=%v", dir, entries)
+ 	return entries, nil
+@@ -306,11 +338,15 @@ func (f *Fs) newObjectNative(nativePath string) (o fs.Object, err error) {
+ 		return nil, fs.ErrorObjectNotFound
+ 	}
+ 
++	// A symlink is only visible under its name with fs.LinkSuffix appended,
++	// and only when links are enabled. A regular member whose name already
++	// ends in fs.LinkSuffix is an ordinary file.
++	linkLeaf := strings.TrimSuffix(leaf, fs.LinkSuffix)
+ 	for _, fi := range fis {
+-		if fi.Name() == leaf {
+-			if fi.IsDir() {
+-				return nil, fs.ErrorNotAFile
+-			}
++		if fi.Name() == leaf && fi.IsDir() {
++			return nil, fs.ErrorNotAFile
++		}
++		if fi.Name() == leaf && fi.Type().IsRegular() {
+ 			info, err := fi.Info()
+ 			if err != nil {
+ 				return nil, fmt.Errorf("error reading item %q: %w", fi.Name(), err)
+@@ -318,6 +354,14 @@ func (f *Fs) newObjectNative(nativePath string) (o fs.Object, err error) {
+ 			o = f.objectFromFileInfo(dir, info)
+ 			break
+ 		}
++		if f.links && linkLeaf != leaf && fi.Name() == linkLeaf && fi.Type()&os.ModeSymlink != 0 {
++			info, err := fi.Info()
++			if err != nil {
++				return nil, fmt.Errorf("error reading item %q: %w", fi.Name(), err)
++			}
++			o = f.linkObjectFromFileInfo(dir, info)
++			break
++		}
+ 	}
+ 	if o == nil {
+ 		return nil, fs.ErrorObjectNotFound
+@@ -393,6 +437,8 @@ type Object struct {
+ 	remote  string
+ 	size    int64
+ 	modTime time.Time
++	isLink  bool   // set if the entry is a symlink, exposed with fs.LinkSuffix
++	target  string // symlink target, set if isLink
+ }
+ 
+ // Fs returns read only access to the Fs that this object is part of
+@@ -464,25 +510,34 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (rc io.Read
+ 		}
+ 	}
+ 
+-	remote, err := o.fs.toNative(o.remote)
+-	if err != nil {
+-		return nil, err
+-	}
+-
+-	fs.Debugf(o, "Opening %q", remote)
+-	fh, err := o.fs.sqfs.OpenFile(toIOFS(remote), os.O_RDONLY)
+-	if err != nil {
+-		return nil, err
+-	}
++	if o.isLink {
++		rc = io.NopCloser(strings.NewReader(o.target))
++		if offset > 0 {
++			if _, err = io.CopyN(io.Discard, rc, offset); err != nil {
++				return nil, err
++			}
++		}
++	} else {
++		remote, err := o.fs.toNative(strings.TrimSuffix(o.remote, fs.LinkSuffix))
++		if err != nil {
++			return nil, err
++		}
+ 
+-	// discard data from start as necessary
+-	if offset > 0 {
+-		_, err = fh.Seek(offset, io.SeekStart)
++		fs.Debugf(o, "Opening %q", remote)
++		fh, err := o.fs.sqfs.OpenFile(toIOFS(remote), os.O_RDONLY)
+ 		if err != nil {
+ 			return nil, err
+ 		}
++
++		// discard data from start as necessary
++		if offset > 0 {
++			_, err = fh.Seek(offset, io.SeekStart)
++			if err != nil {
++				return nil, err
++			}
++		}
++		rc = recoveringReadCloser{fh}
+ 	}
+-	rc = recoveringReadCloser{fh}
+ 
+ 	// If limited then don't return everything
+ 	if limit >= 0 {
+diff --git a/backend/archive/squashfs/squashfs_internal_test.go b/backend/archive/squashfs/squashfs_internal_test.go
+index 9b071bf..06fef61 100644
+--- a/backend/archive/squashfs/squashfs_internal_test.go
++++ b/backend/archive/squashfs/squashfs_internal_test.go
+@@ -2,9 +2,11 @@ package squashfs
+ 
+ import (
+ 	"context"
++	"io"
+ 	"testing"
+ 
+ 	_ "github.com/rclone/rclone/backend/local"
++	"github.com/rclone/rclone/fs"
+ 	fscache "github.com/rclone/rclone/fs/cache"
+ 	"github.com/stretchr/testify/assert"
+ 	"github.com/stretchr/testify/require"
+@@ -30,3 +32,63 @@ func TestBackslashInName(t *testing.T) {
+ 	require.NoError(t, err)
+ 	assert.Equal(t, int64(6), o.Size())
+ }
++
++// Symlinks in an image are hidden unless --links is set, and then they are
++// listed and looked up under the fs.LinkSuffix name, reading back the target.
++func TestSymlinks(t *testing.T) {
++	ctx := context.Background()
++	localFs, err := fscache.Get(ctx, "testdata")
++	require.NoError(t, err)
++
++	t.Run("NoLinks", func(t *testing.T) {
++		ctx, ci := fs.AddConfig(ctx)
++		ci.Links = false
++		f, err := New(ctx, localFs, "symlink.sqfs", "", "")
++		require.NoError(t, err)
++
++		entries, err := f.List(ctx, "")
++		require.NoError(t, err)
++		require.Len(t, entries, 1)
++		assert.Equal(t, "file.txt", entries[0].Remote())
++
++		_, err = f.NewObject(ctx, "link.txt"+fs.LinkSuffix)
++		assert.ErrorIs(t, err, fs.ErrorObjectNotFound)
++		_, err = f.NewObject(ctx, "link.txt")
++		assert.ErrorIs(t, err, fs.ErrorObjectNotFound)
++	})
++
++	t.Run("Links", func(t *testing.T) {
++		ctx, ci := fs.AddConfig(ctx)
++		ci.Links = true
++		f, err := New(ctx, localFs, "symlink.sqfs", "", "")
++		require.NoError(t, err)
++
++		entries, err := f.List(ctx, "")
++		require.NoError(t, err)
++		var remotes []string
++		for _, e := range entries {
++			remotes = append(remotes, e.Remote())
++		}
++		assert.ElementsMatch(t, []string{"file.txt", "link.txt" + fs.LinkSuffix}, remotes)
++
++		o, err := f.NewObject(ctx, "link.txt"+fs.LinkSuffix)
++		require.NoError(t, err)
++		assert.Equal(t, int64(len("file.txt")), o.Size())
++		rc, err := o.Open(ctx)
++		require.NoError(t, err)
++		got, err := io.ReadAll(rc)
++		require.NoError(t, err)
++		require.NoError(t, rc.Close())
++		assert.Equal(t, "file.txt", string(got))
++
++		rc, err = o.Open(ctx, &fs.RangeOption{Start: 5, End: -1})
++		require.NoError(t, err)
++		got, err = io.ReadAll(rc)
++		require.NoError(t, err)
++		require.NoError(t, rc.Close())
++		assert.Equal(t, "txt", string(got))
++
++		_, err = f.NewObject(ctx, "link.txt")
++		assert.ErrorIs(t, err, fs.ErrorObjectNotFound)
++	})
++}
+diff --git a/backend/archive/squashfs/testdata/symlink.sqfs b/backend/archive/squashfs/testdata/symlink.sqfs
+new file mode 100644
+index 0000000..e841fe6
+Binary files /dev/null and b/backend/archive/squashfs/testdata/symlink.sqfs differ
+diff --git a/backend/archive/zip/zip.go b/backend/archive/zip/zip.go
+index 129ce01..c07e0bb 100644
+--- a/backend/archive/zip/zip.go
++++ b/backend/archive/zip/zip.go
+@@ -43,6 +43,7 @@ type Fs struct {
+ 	prefix      string          // position for objects
+ 	prefixSlash string          // position for objects with a slash on
+ 	root        string          // position to read from within the archive
++	links       bool            // list symlinks as objects with the fs.LinkSuffix
+ 	dt          dirtree.DirTree // read from zipfile
+ }
+ 
+@@ -69,6 +70,7 @@ func New(ctx context.Context, wrappedFs fs.Fs, remote, prefix, root string) (fs.
+ 		root:        root,
+ 		prefix:      prefix,
+ 		prefixSlash: prefix + "/",
++		links:       fs.GetConfig(ctx).Links,
+ 	}
+ 
+ 	// Read the contents of the zip file
+@@ -138,6 +140,7 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 	}
+ 	dt := dirtree.New()
+ 	skipped := 0
++	skippedLinks := 0
+ 	for _, file := range zr.File {
+ 		// Skip entries whose name escapes the archive's own namespace
+ 		remote, err := sanitize.Path(file.Name)
+@@ -152,6 +155,7 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 			skipped++
+ 			continue
+ 		}
++		isLink := !isDir && file.Mode()&os.ModeSymlink != 0
+ 		remote = path.Join(f.prefix, remote)
+ 		if f.root != "" {
+ 			// Ignore all files outside the root, requiring a path
+@@ -166,6 +170,19 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 				remote = strings.TrimPrefix(remote, f.root+"/")
+ 			}
+ 		}
++		var target string
++		if isLink {
++			if !f.links {
++				skippedLinks++
++				continue
++			}
++			target, err = readLinkTarget(file)
++			if err != nil {
++				fs.Errorf(f, "Skipping symlink %q: %v", file.Name, err)
++				skipped++
++				continue
++			}
++		}
+ 		if isDir {
+ 			dir := fs.NewDir(remote, file.Modified)
+ 			dt.AddDir(dir)
+@@ -176,11 +193,16 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 				singleObject = true
+ 				dt = dirtree.New()
+ 			}
++			if isLink {
++				remote += fs.LinkSuffix
++			}
+ 			o := &Object{
+ 				f:      f,
+ 				remote: remote,
+ 				fh:     &file.FileHeader,
+ 				file:   file,
++				isLink: isLink,
++				target: target,
+ 			}
+ 			dt.Add(o)
+ 			if singleObject {
+@@ -191,6 +213,9 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 	if skipped > 0 {
+ 		fs.Logf(f, "Skipped %d zip entries which escape the archive", skipped)
+ 	}
++	if skippedLinks > 0 {
++		fs.Logf(f, "Skipped %d symlinks in zip file - use -l/--links to show them", skippedLinks)
++	}
+ 	dt.CheckParents("")
+ 	dt.Sort()
+ 	f.dt = dt
+@@ -198,6 +223,26 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 	return singleObject, nil
+ }
+ 
++// maxLinkTargetSize bounds the target of a symlink read from the archive
++const maxLinkTargetSize = 4096
++
++// readLinkTarget returns the target stored in the symlink entry file
++func readLinkTarget(file *zip.File) (target string, err error) {
++	rc, err := file.Open()
++	if err != nil {
++		return "", err
++	}
++	defer fs.CheckClose(rc, &err)
++	data, err := io.ReadAll(io.LimitReader(rc, maxLinkTargetSize+1))
++	if err != nil {
++		return "", err
++	}
++	if len(data) > maxLinkTargetSize {
++		return "", errors.New("symlink target too long")
++	}
++	return string(data), nil
++}
++
+ // List the objects and directories in dir into entries.  The
+ // entries can be returned in any order but should be for a
+ // complete directory.
+@@ -293,6 +338,8 @@ type Object struct {
+ 	remote string
+ 	fh     *zip.FileHeader
+ 	file   *zip.File
++	isLink bool   // set if the entry is a symlink, exposed with fs.LinkSuffix
++	target string // symlink target, set if isLink
+ }
+ 
+ // Fs returns read only access to the Fs that this object is part of
+@@ -315,6 +362,9 @@ func (o *Object) Remote() string {
+ 
+ // Size returns the size of the file
+ func (o *Object) Size() int64 {
++	if o.isLink {
++		return int64(len(o.target))
++	}
+ 	return int64(o.fh.UncompressedSize64)
+ }
+ 
+@@ -365,9 +415,13 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (rc io.Read
+ 		}
+ 	}
+ 
+-	rc, err = o.file.Open()
+-	if err != nil {
+-		return nil, err
++	if o.isLink {
++		rc = io.NopCloser(strings.NewReader(o.target))
++	} else {
++		rc, err = o.file.Open()
++		if err != nil {
++			return nil, err
++		}
+ 	}
+ 
+ 	// discard data from start as necessary
+diff --git a/backend/archive/zip/zip_internal_test.go b/backend/archive/zip/zip_internal_test.go
+index 6aff03c..40dbf5c 100644
+--- a/backend/archive/zip/zip_internal_test.go
++++ b/backend/archive/zip/zip_internal_test.go
+@@ -5,6 +5,7 @@ import (
+ 	"bytes"
+ 	"context"
+ 	"fmt"
++	"io"
+ 	"os"
+ 	"path/filepath"
+ 	"sort"
+@@ -170,3 +171,92 @@ func TestListCacheNotAliased(t *testing.T) {
+ 	}
+ 	assert.Equal(t, []string{"a.txt", "b.txt", "c.txt"}, remotes)
+ }
++
++// writeZipWithLinks builds a zip file in dir containing a regular file
++// "file.txt", a symlink "link.txt" pointing at "file.txt", and a regular
++// file "other.txt.rclonelink" whose name merely looks like a link.
++func writeZipWithLinks(t *testing.T, dir, name string) string {
++	var buf bytes.Buffer
++	zw := zip.NewWriter(&buf)
++	w, err := zw.Create("file.txt")
++	require.NoError(t, err)
++	_, err = w.Write([]byte("data"))
++	require.NoError(t, err)
++	hdr := &zip.FileHeader{Name: "link.txt", Method: zip.Store}
++	hdr.SetMode(os.ModeSymlink | 0777)
++	w, err = zw.CreateHeader(hdr)
++	require.NoError(t, err)
++	_, err = w.Write([]byte("file.txt"))
++	require.NoError(t, err)
++	w, err = zw.Create("other.txt.rclonelink")
++	require.NoError(t, err)
++	_, err = w.Write([]byte("regular"))
++	require.NoError(t, err)
++	require.NoError(t, zw.Close())
++	require.NoError(t, os.WriteFile(filepath.Join(dir, name), buf.Bytes(), 0600))
++	return name
++}
++
++// Symlinks in a zip are skipped unless --links is set, and then they are
++// listed and looked up under the fs.LinkSuffix name with the target as content.
++func TestReadZipSymlinks(t *testing.T) {
++	ctx := context.Background()
++	dir := t.TempDir()
++	name := writeZipWithLinks(t, dir, "links.zip")
++
++	localFs, err := cache.Get(ctx, dir)
++	require.NoError(t, err)
++
++	t.Run("NoLinks", func(t *testing.T) {
++		ctx, ci := fs.AddConfig(ctx)
++		ci.Links = false
++		f, err := New(ctx, localFs, name, "", "")
++		require.NoError(t, err)
++		assert.Equal(t, []string{"file.txt", "other.txt.rclonelink"}, allRemotes(t, f))
++		_, err = f.NewObject(ctx, "link.txt"+fs.LinkSuffix)
++		assert.ErrorIs(t, err, fs.ErrorObjectNotFound)
++	})
++
++	t.Run("Links", func(t *testing.T) {
++		ctx, ci := fs.AddConfig(ctx)
++		ci.Links = true
++		f, err := New(ctx, localFs, name, "", "")
++		require.NoError(t, err)
++		assert.Equal(t, []string{"file.txt", "link.txt.rclonelink", "other.txt.rclonelink"}, allRemotes(t, f))
++
++		entries, err := f.List(ctx, "")
++		require.NoError(t, err)
++		var sizes = map[string]int64{}
++		for _, e := range entries {
++			sizes[e.Remote()] = e.(fs.ObjectInfo).Size()
++		}
++		assert.Equal(t, int64(len("file.txt")), sizes["link.txt.rclonelink"])
++
++		o, err := f.NewObject(ctx, "link.txt"+fs.LinkSuffix)
++		require.NoError(t, err)
++		assert.Equal(t, int64(len("file.txt")), o.Size())
++		rc, err := o.Open(ctx)
++		require.NoError(t, err)
++		got, err := io.ReadAll(rc)
++		require.NoError(t, err)
++		require.NoError(t, rc.Close())
++		assert.Equal(t, "file.txt", string(got))
++
++		rc, err = o.Open(ctx, &fs.RangeOption{Start: 5, End: -1})
++		require.NoError(t, err)
++		got, err = io.ReadAll(rc)
++		require.NoError(t, err)
++		require.NoError(t, rc.Close())
++		assert.Equal(t, "txt", string(got))
++
++		// A regular member named like a link stays a regular file
++		o, err = f.NewObject(ctx, "other.txt.rclonelink")
++		require.NoError(t, err)
++		rc, err = o.Open(ctx)
++		require.NoError(t, err)
++		got, err = io.ReadAll(rc)
++		require.NoError(t, err)
++		require.NoError(t, rc.Close())
++		assert.Equal(t, "regular", string(got))
++	})
++}

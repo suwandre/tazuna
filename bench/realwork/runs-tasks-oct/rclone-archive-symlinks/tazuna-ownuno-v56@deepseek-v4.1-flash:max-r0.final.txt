@@ -1,0 +1,23 @@
+Done. The archive backend now exposes symbolic links following the convention used by other rclone backends.
+
+## Changes
+
+**`backend/archive/zip/zip.go`**
+- Added a `links` field to the `Fs`, set from `fs.GetConfig(ctx).Links`.
+- In `readZip()`, entries whose mode has `os.ModeSymlink` are now skipped unless `-l/--links` is in use; with the flag the entry is exposed under its name plus `.rclonelink` (the member body already holds the target, so it reads back like any translated link). A notice naming the flag is logged when any are skipped.
+- Listing and `NewObject` agree automatically since both are served from the same dirtree, and a regular member ending in `.rclonelink` is untouched (only the symlink bit decides).
+
+**`backend/archive/squashfs/squashfs.go`**
+- Same `links` gating in `List()`; symlink entries (previously dropped entirely) are now exposed as `.rclonelink` objects carrying the target read via the inode's `StatT.LinkTarget`.
+- `newObjectNative()` names entries exactly as `List()` does (suffix for links, skipped without the flag) so listing and single-object lookup agree.
+- `Object.Open()` serves the target string honouring offset/limit (range/seek), clamped to avoid panics.
+
+**Tests**
+- `zip_internal_test.go`: `TestReadZipSymlink` — skipped by default, listed as `link.txt.rclonelink` with `--links`, correct size and target read back.
+- `archive_internal_test.go`: `TestArchiveSquashfsSymlink` (real `mksquashfs` image: symlink listed/read with the flag, regular `note.rclonelink` stays regular) and `TestArchiveZipSymlinkEscape` (hostile zip with a symlink pointing above the root plus a member inside it: the copy fails and nothing lands outside the destination).
+
+**Docs**: `docs/content/archive.md` gained a "Symlinks" section.
+
+## Verification
+- `go test ./backend/archive/...` (including `-race`), `go vet`, `gofmt` all clean; `fs/operations` tests pass too.
+- End-to-end with a built binary: `rclone lsl --links :archive:/tmp/test.zip` shows `link.txt.rclonelink` (size = target length); without `--links` the notice "Skipped 1 symlinks - use -l/--links to read them" appears; `rclone copy --links ... /tmp/out` recreates real symlinks (`link.txt -> file.txt`); range/seek reads return the correct target slices; the hostile archive errors with "path escapes from parent" and writes nothing outside.

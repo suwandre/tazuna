@@ -1,0 +1,16 @@
+The zip and squashfs archive backends now expose symlinks the same way `local` does. Tests pass, and I verified the behaviour end to end with the built binary.
+
+**Changes**
+- **`backend/archive/zip/zip.go`**: zip entries with `ModeSymlink` are detected. Without `--links` they're skipped and a notice names the flag. With `--links` they're listed as `name.rclonelink`, with size equal to the target length. `Open` returns the target, honouring range and seek options. Target reads are capped at 4096 bytes.
+- **`backend/archive/squashfs/squashfs.go`**: the same rules. `List` and `NewObject` share the lookup logic, so they agree. A regular member whose name ends in `.rclonelink` stays a regular file.
+- **Tests**: zip tests cover the links on/off cases, the size, the target read with range, and a regular `.rclonelink` member. Squashfs gets a new `symlink.sqfs` fixture, built with `mksquashfs`, with tests for the same cases.
+
+**Verification**
+- `go vet` and `gofmt` are clean. `go test ./backend/archive/... ./backend/local/ ./fs/... ./vfs/...` passes.
+- Built the binary and ran `lsl` and `copy --links` on a zip and on the squashfs image. Without the flag, the symlink is skipped with a notice. With it, `lsl` lists `link.txt.rclonelink` at size 8, and `copy` recreates a real symlink.
+- Hostile archive: a symlink `dir/up -> ../../../..` plus a member `dir/up/pwned.txt`. Nothing was written outside the destination (`/tmp/pwned.txt` does not exist). The copy fails on the colliding path instead, which is a safe failure. The escape check is done by the existing destination write path, which goes through `os.Root`.
+
+**Not done**
+- I did not add an explicit test for the hostile-archive case in the test suite. It was verified manually only.
+- I did not run the full `fstest/test_all` integration suite, which needs remotes.
+- I did not commit. `symlink.sqfs` is a new untracked fixture and needs to be included in the commit.

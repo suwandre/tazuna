@@ -1,0 +1,22 @@
+Zip and squashfs archives now handle symlinks the same way local does with `--links`. Everything is verified, and the archive and local tests pass.
+
+**Behaviour**
+- **Without `--links`:** symlinks are skipped and a NOTICE names the flag.
+- **With `--links`:** a symlink is listed as `name.rclonelink`, its size is the target length, and opening it returns the target, honouring seek and range options.
+- **Listing and `NewObject` agree:** both use the same rule, so `link.txt` is not found and `link.txt.rclonelink` is.
+- **Regular members** named `*.rclonelink` stay regular files.
+- **Hostile archive:** a symlink pointing above the root plus a member inside it makes the copy fail with `path escapes from parent`, and nothing is written outside the destination.
+
+**Changes**
+- `backend/archive/zip/zip.go`: the `links` flag comes from `fs.GetConfig(ctx).Links`. `readZip` skips symlink entries or names them `.rclonelink`, and the skip NOTICE is logged.
+- `backend/archive/squashfs/squashfs.go`: the same rule in `objectFromFileInfo`, `List`, and `newObjectNative`. Symlink content comes from `squashfs.StatT.LinkTarget`, read back via a new `openLinkTarget`.
+- Tests: `TestReadZipSymlinks` in the zip package and `TestSymlinks` in the squashfs package. The squashfs fixture is `testdata/links.sqfs`, generated with `mksquashfs`.
+
+**Verification**
+- `go test ./backend/archive/... ./backend/local/` passes, and `gofmt` and `go vet` are clean.
+- End-to-end: `rclone lsl --links` showed `link.txt.rclonelink` with size 8, and `rclone copy --links` recreated a real symlink.
+
+**Notes**
+- The squashfs NOTICE path was checked only through the unit test, not through a live mount.
+- `testdata/links.sqfs` is a new untracked file and will need to be added with the change.
+- I did not commit.

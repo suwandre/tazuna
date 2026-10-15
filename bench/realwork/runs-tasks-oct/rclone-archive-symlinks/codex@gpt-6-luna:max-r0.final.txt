@@ -1,0 +1,5 @@
+Implemented symlink support in the ZIP and squashfs archive backends. Without `-l/--links`, links are skipped with a notice. With it, they appear as `.rclonelink` objects whose size and contents match the target; seek and range reads are supported. `NewObject` follows the same naming rules, and regular files already ending in `.rclonelink` remain regular files.
+
+Added tests for listing, lookup, target reads, local symlink recreation, and a hostile archive copy that leaves an outside sentinel unchanged. Changes are in [zip.go](/private/var/folders/9c/yftw74s95b1gm6rfjtjql9_40000gn/T/rw-rclone-archive-symlinks-codex@gpt-6-luna:max-k26l1n5r/backend/archive/zip/zip.go:151), [squashfs.go](/private/var/folders/9c/yftw74s95b1gm6rfjtjql9_40000gn/T/rw-rclone-archive-symlinks-codex@gpt-6-luna:max-k26l1n5r/backend/archive/squashfs/squashfs.go:224), and the archive tests.
+
+Verified with `go test ./backend/archive/... ./backend/local -count=1`; all passed.

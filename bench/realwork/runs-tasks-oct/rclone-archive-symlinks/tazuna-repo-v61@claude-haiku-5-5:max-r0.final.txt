@@ -1,0 +1,38 @@
+The review found real problems. I reproduced the worst one, and it changed the design. A `--links` copy turned a regular `.rclonelink` member with an absolute target into a symlink. A later plain copy into the same destination then wrote a file outside it. Under `--links`, the zip and squashfs listings now leave out regular `.rclonelink` members whose contents are unsafe targets. Nothing is committed.
+
+**Decision for you**
+
+Your spec says a regular member ending in `.rclonelink` "stays a regular file", but the escape requirement conflicts with that. I kept the escape requirement, and only for unsafe contents. Benign ones still stay regular. The alternative is to have the local destination refuse unsafe translated links. That changes `rclone copy --links` for every source, so I didn't make that change. Tell me if you want it instead.
+
+**Review findings**
+
+- **Escape (medium, actually worse than reported):** fixed as above. Before the fix, the plain copy wrote `pwned-reg` outside the destination. After it, `outside/` stayed empty across both runs.
+- **Link clashing with a directory or plain file of the same bare name:** a listed link is now dropped when another entry takes its name. Tested for zip.
+- **Zip memory:** link targets are no longer held in memory. Re-reading happens on open. With `--links` and 200k links in an uncompressed 839 MB archive, peak RSS was 264 MB, against 126 MB without the flag. The reviewer measured 1.45 GB for the earlier version on a different archive.
+- **Single-file root:** a regular member now wins over a link with the same name. Tested for zip and squashfs.
+- **Squashfs notice:** logged once per archive, with wording that no longer has a count.
+- **Squashfs `NewObject`:** FIFOs and other special files are no longer returned, which matches `List`.
+
+**Verified**
+
+- `go test ./backend/archive/...` passes, and so does `-race`.
+- `golangci-lint` reports 0 issues. `gofmt` and `go vet` are clean.
+- End-to-end, using a built binary: listings, copies, and direct reads with range options all behave as intended.
+- I ran the archive packages only, not the whole repo suite.
+- Windows and case-insensitive destinations are untested.
+
+**Behaviour changes**
+
+- Zip symlinks no longer show up as regular files unless you pass `--links`. This is the intended change.
+- Squashfs `NewObject` no longer returns symlinks without `--links`, which matches `List`.
+- The skip notices now say "Skipped symbolic links, use -l/--links to list them" and carry no count.
+
+**Left alone**
+
+- Pre-existing: a symlinked archive file fails to open, with or without `--links`. The base commit does the same.
+- Pre-existing: a directory with many entries is slow to list. 50k plain files take about 15 s on base, and the new code is no slower. The 200k-in-one-directory case took 241 s because it scales the same way.
+- Residual: a regular `a.rclonelink` next to a plain `a` collides on a local destination. In one run the plain file won. The order isn't fixed, and no link escapes, because the link's target is validated.
+
+**Files**
+
+Modified: `archiver/archiver.go`, `zip/zip.go`, `zip/zip_internal_test.go`, `squashfs/squashfs.go`, `squashfs/squashfs_internal_test.go`, `docs/content/archive.md`. New: `archiver/archiver_test.go`, and the fixture `squashfs/testdata/symlinks.sqfs`, which I built with mksquashfs.

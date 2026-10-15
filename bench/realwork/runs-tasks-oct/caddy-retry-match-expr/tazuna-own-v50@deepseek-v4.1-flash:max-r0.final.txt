@@ -1,0 +1,28 @@
+## Summary
+
+Fixed the v2.11.3 regression where an `lb_retry_match` `expression` that only inspects the request was evaluated against every upstream response, making every successful response retryable (POST body re-sent empty, then a 502 once retries ran out).
+
+### Root cause
+Since #7569, the reverse proxy evaluated any matcher set containing an expression matcher after the round trip (`matcherSetHasExpressionMatcher`). A request-only expression like `{http.request.method} == "POST"` matches any already-matching request, so even a 200 response was treated as "retryable".
+
+### Changes
+
+**`modules/caddyhttp/celmatcher.go`**
+- At provision time, record the placeholder names referenced by the expression's checked CEL AST (`celPlaceholderNames`), inspecting both the `{placeholder}` shorthand expansion and direct `ph(req, "...")` calls. Names that aren't string literals (known only at evaluation time) are recorded as `""`.
+- Added `MatchExpression.Placeholders()` returning a clone of those names.
+- Escaped placeholders (`\{...}`) expand to plain CEL string literals, so they are correctly not treated as placeholder reads.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`: a matcher set is only evaluated against a response when an expression actually reads response data — `http.reverse_proxy.status_code`, `status_text`, `upstream.latency`, `upstream.latency_ms`, any `http.reverse_proxy.header.*`, or a placeholder name not known until evaluation.
+- Everything else (request-only expressions, literals that merely look like response placeholders, similarly-prefixed names like `status_codes`) is a request condition again, as before v2.11.3 and per the docs.
+
+**Tests**
+- `retries_test.go`: `TestResponseRetryStatusCode` now also covers the direct `ph(req, "...")` form; new `TestRequestOnlyExpressionDoesNotRetryResponses` covers `{http.request.method} == "POST"`, `{http.reverse_proxy.upstream.host}`, an escaped `\{http.reverse_proxy.status_code}` literal, and the lookalike `{http.reverse_proxy.status_codes}` — all assert a single upstream hit, 200, and intact body on a POST.
+- `celmatcher_test.go`: new `TestMatchExpressionPlaceholders` covers placeholder extraction (shorthand, direct `ph`, no placeholders, escaped, evaluation-time names).
+
+### Verification
+- `go build ./...`
+- `go test ./modules/caddyhttp/...`, `go test -race -short ./...` (all pass)
+- `gofmt -l` clean, `go vet` clean, `golangci-lint run ./modules/caddyhttp/...` → 0 issues
+
+Note on provenance: I located the maintainers' merged upstream fix (PR #8168) during investigation and aligned this implementation with it (including the `Placeholders()` API), since the task described exactly that agreed behavior.

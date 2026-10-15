@@ -1,0 +1,273 @@
+Now let me understand the requirements clearly:
+
+1. **ZIP backend** should detect symlink entries (mode `os.ModeSymlink`) and expose them.
+2. **Squashfs backend** should behave the same way (symlinks currently dropped entirely).
+3. Convention:
+   - Without `--links` (`-l`): symlinks in an archive are **skipped**. When some are skipped, log a notice that names the flag.
+   - With `--links`: a symlink is listed under its name plus `.rclonelink` suffix, size = length of target, opening reads back the target path (honoring range/seek).
+   - Listing and NewObject must agree on which names exist.
+   - A regular archive member whose name happens to end in `.rclonelink` stays a regular file.
+   - Hostile archive (symlink pointing above root plus member "inside" it) must not allow copy to write outside destination.
+
+Let me understand how `--links` gets to the archive backend: `fs.GetConfig(ctx).Links` is the global config flag. The archive Fs needs to know whether links are enabled. The `New` function of archiver gets `ctx` so it can read `fs.GetConfig(ctx).Links`.
+
+Now for zip: ZIP format stores Unix external attributes in the file header. `zip.FileHeader` has `NonUTF8 bool`, and the mode bits are in `FileHeader.ExternalAttrs` (high 16 bits contain Unix mode) - actually Go's archive/zip `FileHeader` has field `ExternalAttrs uint32` and there's `FileHeader.Mode()` method? Let me check. In Go's archive/zip package, `zip.File` has `Mode()` method? Actually `zip.FileHeader` doesn't have a Mode() method directly... Let me check the Go source.
+
+In Go's archive/zip package (`zip/struct.go`), `FileHeader` has:
+- `CreatorVersion uint16`
+- `ReaderVersion uint16`
+- `Flags uint16`
+- `Method uint16`
+- `Modified time.Time`
+- `ModifiedTime uint16`
+- `ModifiedDate uint16`
+- `CRC32 uint32`
+- `CompressedSize uint32`
+- `UncompressedSize uint32`
+- `CompressedSize64 uint64`
+- `UncompressedSize64 uint64`
+- `Extra []byte`
+- `ExternalAttrs uint32`
+- `Comment string`
+
+And there's a `Mode()` method on `*File`:
+
+```go
+// Mode returns the permission bits in fh.ExternalAttrs.
+func (fh *FileHeader) Mode() (mode os.FileMode) {
+    switch fh.CreatorVersion >> 8 {
+    case creatorUnix, creatorMacOSX:
+        mode = unixModeToFileMode(fh.ExternalAttrs >> 16)
+    case creatorNTFS, creatorVFAT, creatorFAT:
+        mode = msdosModeToFileMode(fh.ExternalAttrs)
+    }
+    if len(fh.Extra) > 0 {
+        if _, extra, ok := findExtraField(fh.Extra, extraZip64); ok {
+            ...
+        }
+    }
+    return
+}
+```
+
+Let me verify in the Go standard library version installed. Let me check.
+
+Actually, let me check what the std lib provides for reading symlinks from zip files. `zip.File.Mode()`. For a symlink, `ExternalAttrs >> 16` contains the Unix mode with `S_IFLNK` (0120000), and `unixModeToFileMode` maps that to `os.ModeSymlink`. So `file.Mode()&os.ModeSymlink != 0` will detect symlinks.
+
+Also, the file content of a symlink entry in zip is the target path (the link target is stored as the file data). So for exposing:
+- Size: In zip, symlink entries store file data = target path. `UncompressedSize64` = len(target). Actually we want size = length of the target. That matches `UncompressedSize64` for a symlink entry. But be careful: we want to compute size from the file data? For zip, the target is stored as content so `UncompressedSize64` is fine. But safest is to read the data... For the rclone convention, size = len(link target). For zip, `o.Size()` currently returns `UncompressedSize64` which is the stored content length = target length for symlinks. Good.
+
+But wait - the maintainer note says: "its size is the length of the target, and opening it reads back the target path (honouring range/seek options)". So opening should return the target path and honor range/seek. For zip, opening the raw file returns the target bytes already, and the current Open with range/seek handles it. So the zip case is mostly about handling the suffix renaming and skipping without --links.
+
+For symlinks in zip where the target is the content, we need to:
+- Without `--links`: skip symlink entries, counting them, and log a notice naming the flag.
+- With `--links`: rename the entry to `name + .rclonelink` in the dirtree, keep size = len(target) (it already is the content length), and opening reads back the target (already works since content = target).
+
+For squashfs: symlinks are NOT stored as files with content. The target is in the inode. go-diskfs `directoryEntry` has `Readlink() (string, error)`. But `ReadDir` returns `[]iofs.DirEntry` — the concrete type is `*directoryEntry` (unexported) but it implements `Readlink()`? Wait, `Readlink` is defined on `*directoryEntry` (unexported type), but the interface `iofs.DirEntry` doesn't include it. However, since the concrete type is `*directoryEntry`, we can't type-assert to it from outside the package. But we can use `item.Info().Sys().(*squashfs.StatT)` — the `StatT` struct has `LinkTarget string` and `InodeType string`, and it's exported (`type StatT struct` in fileinfo.go). So `info.Sys()` returns `interface{}` which is `*StatT` with `LinkTarget`. That gives us the target!
+
+So for squashfs:
+- Without `--links`: skip symlink entries (in List and NewObject), logging notice naming the flag.
+- With `--links`: expose object with name + `.rclonelink`, size = len(target), and Open returns the target (honor range/seek).
+
+Now, how do the archiver Fs know about `--links`? They get `ctx` in `New`. We can check `fs.GetConfig(ctx).Links` in `readZip` / in `New`. But wait — the archive `Fs` for zip is created when the archive is opened, which happens lazily. `New` gets the context passed to the operation - the context should carry the config from the command line. Let me check how config flows: `fs.GetConfig(ctx)` with ctx from the command. Should be fine.
+
+However, there's a subtlety: `archive.Fs.List` finds archives via `f.findArchive(remote)` and creates the archiver via `a.init(ctx, f.f)` where ctx is from the List call, so the Links flag from the command line should be present.
+
+Now the hostile archive requirement: "A hostile archive (a symlink pointing above the root plus a member "inside" it) must not be able to make a copy write outside the destination." This is handled at the local backend level (write-through prevention) as shown in the local tests — local backend with os.Root. The archive backend just exports `pwn.rclonelink` with target `../../evil` and `pwn/authkeys`. When copying with `--links` to local destination, local's `symlink()` creates the link faithfully pointing outside, but `openFile`/`mkdirAll` through os.Root refuse to write through it. That's already implemented. So the archive side just needs to not do anything weird like resolving symlink targets internally. Good - our implementation should expose the target as content of the .rclonelink object verbatim, which is what local's protection handles.
+
+Now regarding "Listing and looking up a single object (NewObject) must agree on which names exist." For zip:
+- In `readZip`, when `Links` is enabled, symlink entries are renamed to `name + .rclonelink`.
+- `NewObject` uses `f.dt.Find(remote)` so it agrees automatically.
+- When Links disabled, symlinks are skipped in readZip so NewObject won't find them either. 
+
+For squashfs:
+- `List` uses `item.Type()` / `item.Info()` to detect symlinks. Need to skip or rename.
+- `newObjectNative` needs the same treatment. It looks up by leaf name — must skip symlinks when links disabled, and when enabled, it needs to handle the `.rclonelink` suffix: look for entry named X -> expose as X.rclonelink.
+
+Wait, but there's a subtlety in the zip backend with `.rclonelink` suffix collisions: "A regular archive member whose name happens to end in `.rclonelink` stays a regular file." So if a zip has `foo.rclonelink` (regular file) and `foo` (symlink), with `--links`, the symlink becomes `foo.rclonelink` which collides with the regular file. Hmm. In the local backend, this collision is handled: "In case both .rclonelink file AND symlink file exists, the first will be used." Actually for local listing, if both exist, the local backend would list both `foo.rclonelink` as the regular file entry and the symlink as... wait let me check. In local backend List: for each item, if TranslateSymlinks and mode&symlinkFlag != 0, newRemote += LinkSuffix. So a symlink `foo` -> `foo.rclonelink` entry. And a regular file `foo.rclonelink` -> `foo.rclonelink` entry. Both map to the same remote! Actually the local backend list would produce duplicate entries? Let me check... `newObjectWithInfo` translates... hmm, that's an edge case. rclone docs say "Note that a file that is a symlink to a file whose name ends in .rclonelink..." Not sure. Let's not worry too much; we can decide: a regular member with .rclonelink suffix stays regular, and a symlink named `foo` becomes `foo.rclonelink`. If both exist in the same directory, the dirtree would have both entries with the same remote. Hmm, but the `dirtree.Add` would just add both. For a remote with duplicates, rclone usually handles it. Actually for non-duplicate backend (DuplicateFiles: false), there shouldn't be duplicates.
+
+Let's think about what makes sense: the maintainer note says a regular member whose name ends in `.rclonelink` stays a regular file. This is about the case where the archive contains `foo.rclonelink` as a *regular file* - it stays as-is. And a symlink `foo` becomes `foo.rclonelink`. If both exist... they'd collide. The local backend has the same behavior (both get remote `foo.rclonelink`) — actually wait, no. Local backend: regular file `foo.rclonelink` exists -> listed as `foo.rclonelink`. Symlink `foo` exists -> translated to `foo.rclonelink`. Both listed as the same name. That's a known local backend quirk / incompatibility. For the archive, we should probably just follow the same convention: whatever, the test in the issue likely tests only that a regular `x.rclonelink` stays regular.
+
+Let me now look at how tests set `fs.ConfigInfo.Links` in context - we need to write tests. `fs.AddConfig(ctx)` returns ctx with a mutable copy.
+
+Now let's design the zip changes:
+
+In `readZip`:
+```go
+links := fs.GetConfig(ctx).Links  // need ctx - readZip doesn't take ctx now
+```
+
+Actually `readZip` is called from `New` with ctx. Let me pass ctx to readZip.
+
+For each file:
+```go
+isSymlink := file.Mode()&os.ModeSymlink != 0
+```
+`file.Mode()` — zip.File has `Mode()` method. Yes: `func (f *File) Mode() os.FileMode`. Let me verify in the installed Go version.
+
+Then:
+```go
+if isSymlink {
+    if !links {
+        skipped++  // or a separate counter for symlinks
+        continue
+    }
+    remote = remote + fs.LinkSuffix
+}
+```
+
+Wait, but need to make sure we don't add the suffix before checking the root boundary stuff. Let's think about order:
+
+1. sanitize path
+2. isDir check
+3. remote = path.Join(f.prefix, remote)
+4. root filtering
+5. if isDir -> dir; else if isSymlink -> rename with suffix (if links), else skip
+6. Add object
+
+For the suffix, apply after root filtering so the name passed to entries is the one visible. Note what happens with `remote == ""` for a single file: `remote = path.Base(f.root)` and singleObject = true. If the archive member f.root points at is a symlink and links enabled, we'd have `remote = path.Base(f.root) + .rclonelink`? Hmm, what should single-file mounting do? `:archive:file.zip/link` with links? The local backend requires the `.rclonelink` suffix to refer to a symlink: `NewFs` with root `link` errors with `errLinksNeedsSuffix` unless you give `link.rclonelink`. For the archive zip backend, similar behavior would be expected — mounting `:archive:test.zip/link` in links mode should fail or look for `link`? Local backend: `NewFs` checks if root has link suffix; if not and the path is a symlink, returns `errLinksNeedsSuffix`. 
+
+For zip `readZip`, if f.root points to a symlink and links mode: the object would be named `path.Base(f.root)` currently. If we rename to `path.Base(f.root)+.rclonelink`, then the single-object Fs would list `link.rclonelink` but NewObject("link") fails — and operations would copy... The user asked for `rclone copy --links :archive:/tmp/test.zip /tmp/out` to recreate symlinks. For a single file `:archive:test.zip/link.rclonelink`, the root in archive.NewFs: `remote = "test.zip/link.rclonelink"`, subArchive finds archive `test.zip`, root = "link.rclonelink". Then `readZip` with root="link.rclonelink": the member is `link` (symlink), remote after prefix = "link", root check: remote != f.root ("link.rclonelink") so it won't match! Hmm, that breaks single-file access with the suffix.
+
+For the local backend, `NewFs` handles the suffix: `hasLinkSuffix && opt.TranslateSymlinks && os.IsNotExist(err)` then tries `strings.TrimSuffix(f.root, fs.LinkSuffix)`. So for archive we need similar handling: when root ends with `.rclonelink`, maybe strip it for lookup purposes but expose under original name.
+
+This is getting complex. Let me check what the maintainer notes actually require:
+- "Listing and looking up a single object (NewObject) must agree on which names exist." — they mention NewObject, not NewFs/root.
+- The example only shows `rclone lsl --links :archive:/tmp/test.zip` (full archive) and `rclone copy --links :archive:/tmp/test.zip /tmp/out` (full archive).
+
+I think we should also handle single-file access for completeness but the minimal change should follow the notes. Let's see how squashfs handles a single file: `f.root` points to file, `f.file` set. For symlink single file, in links mode the user would do `:archive:test.sqfs/link.rclonelink`? The current `newObjectNative` looks up the leaf `link.rclonelink` which doesn't exist in the fs (the symlink is named `link`). So we'd need suffix handling in the root too for full consistency. Hmm.
+
+Let me reconsider. Maybe simpler: in `New` for zip, when root points to a symlink and links mode, if the root ends with `.rclonelink`, treat it as referring to the symlink `link` and expose the object as `link.rclonelink`... Actually for single-object mode the "remote" of the object is `path.Base(f.root)` (in readZip). If root = "link.rclonelink", then remote would need to become "link.rclonelink".
+
+Let me implement in readZip:
+- After computing the root match: when it's a symlink with links mode, the visible name is `path.Base(f.root)` — but if the user asked for `.../link.rclonelink` and f.root is "link.rclonelink", we need to strip `.rclonelink` when comparing against the member name `link`.
+
+Hmm wait. Actually let's trace `readZip`:
+```go
+remote = path.Join(f.prefix, remote)   // e.g. "link" (member name), or "src/link"
+if f.root != "" {
+    if remote != f.root && !strings.HasPrefix(remote, f.root+"/") { continue }
+    if remote == f.root { remote = "" } else { remote = strings.TrimPrefix(...) }
+}
+if remote == "" {
+    remote = path.Base(f.root)   // single object name
+    singleObject = true
+}
+```
+
+So for single-object access, the object gets remote = path.Base(f.root). If f.root = "link.rclonelink" and member is "link" (symlink), the match `remote != f.root` fails.
+
+Option: In archive.NewFs or zip.New, when `--links` is set, if root ends with `.rclonelink`, check if stripping the suffix finds the member. Actually, maybe simpler: in `readZip`, when links enabled and isSymlink, set the visible remote (after suffixing) and compare root against *both* the symlink name and the suffixed name.
+
+Let's structure readZip per file:
+
+```go
+remote := sanitized name
+isDir := ...
+isSymlink := !isDir && file.Mode()&os.ModeSymlink != 0
+
+remote = path.Join(f.prefix, remote)
+// root boundary check on the unsuffixed remote
+if f.root != "" {
+    ... root filtering using remote (unsuffixed)
+}
+if isSymlink && links {
+    remote += fs.LinkSuffix
+}
+if isDir { AddDir } else {
+    if remote == "" { ... single object ... } // remote "" happens when remote==f.root
+    ...
+}
+```
+
+But the `remote == ""` case: when root points directly at the file member, remote becomes "". Then object remote = path.Base(f.root). If f.root = "link.rclonelink", object remote = "link.rclonelink" which is right for the visible name! The issue is only the root boundary check: `remote != f.root` where f.root = "link.rclonelink" vs member remote "link" fails.
+
+So handle: if links && isSymlink && strings.HasSuffix(f.root, fs.LinkSuffix) && remote == strings.TrimSuffix(f.root, fs.LinkSuffix) -> match. Hmm, this could also affect directories... messy.
+
+Alternatively, treat the root check with a helper that considers the link suffix:
+```go
+rootMatches := remote == f.root || strings.HasPrefix(remote, f.root+"/")
+if links && isSymlink && strings.HasSuffix(f.root, fs.LinkSuffix) && remote == strings.TrimSuffix(f.root, fs.LinkSuffix) {
+    rootMatches = true
+}
+```
+
+Wait, but also if root is "link" (no suffix) and member is symlink "link" with links enabled — should that work? Local backend requires the suffix for symlink access (errLinksNeedsSuffix). But it's less critical; the maintainer notes don't mention single-file access explicitly. Let me keep focused but do a reasonable job.
+
+Actually let me simplify: For the single object case, I'll allow both root forms to work when links are enabled and the target is a symlink. That means:
+- root "link" matches symlink member "link" → object named "link.rclonelink" (visible under suffix)
+- root "link.rclonelink" matches symlink member "link" → object named "link.rclonelink" (visible under suffix)
+
+Hmm, but actually wait: after remote == "" (matched), we set `remote = path.Base(f.root)`. Then for symlink with links, apply suffix: remote = "link.rclonelink". In the second case that's what we want. In the first case f.root = "link" → base = "link" → +suffix = "link.rclonelink" also fine.
+
+Now NewObject agreement: with links mode, `NewObject(ctx, "link.rclonelink")` → dir = "" → findFs / dt.Find("link.rclonelink") → found. `NewObject(ctx, "link")` → not found (since dt only has the .rclonelink name). Good, agrees with listing.
+
+Without links: symlink skipped, so neither listing nor NewObject sees "link". Good.
+
+Now for the zip `Object.Open`: for symlinks, the content is the target, so current Open works. But hmm — one subtlety: the size used by Open for RangeOption decode is `o.Size()` = `UncompressedSize64`, which equals target length. Good.
+
+Hash: CRC32 of the content (target) — that's consistent since content = target. Fine.
+
+Now the squashfs side.
+
+In `List`:
+```go
+if item.IsDir() { ... }
+else if item.Type().IsRegular() { ... }
+else if isSymlink {
+    if !links { skipped++; continue }
+    info := item.Info()
+    target := get target via info.Sys().(*squashfs.StatT).LinkTarget
+    entry = &Object{... remote: f.fromNative(nativeDir, item.Name()) + fs.LinkSuffix, size: int64(len(target)), modTime: info.ModTime(), linkTarget: target}
+}
+```
+
+But careful: `item.Type()` — is it `Mode().Type()`? From directoryentry.go: `func (d *directoryEntry) Type() fs.FileMode { return d.Mode().Type() }`. Mode() includes os.ModeSymlink for symlink entries. But Mode() is computed only from inode type... but wait, there's a problem: `Mode()` reads `d.mode` and modifies per inode type. For symlinks, `Mode()` = perm bits | ModeSymlink. Type() = ModeSymlink. Good.
+
+Actually, `item.Info()` returns `d` itself (the directoryEntry), `info.Sys()` returns `*StatT` with `LinkTarget`. 
+
+For `Open`: Object needs to know it's a symlink and read the target. Add fields to Object: `linkTarget string` maybe. Then Open:
+```go
+if o.linkTarget != "" ... hmm but empty target links? A symlink with empty target is possible but unusual.
+```
+Better: use `isLink bool` or `linkTarget *string`. Let's add `linkTarget string` and `isLink bool`. Or set linkTarget="" for regular. Since an empty target is a valid symlink (points to nothing), use bool.
+
+Actually for zip, the Object already has `file`; opening reads content = target, no code change needed except maybe the size. Wait — should zip symlink Object.Size() return target length? `UncompressedSize64` already is target length because the data stored is the target. Fine.
+
+But hold on, what about ZIP symlinks whose data doesn't match... whatever, it's the same.
+
+Now what about `newObjectNative` in squashfs - it finds by name. With links mode, we need:
+```go
+leaf := strings.Trim(leaf, "/")
+if links && strings.HasSuffix(leaf, fs.LinkSuffix) && fi.Name() == strings.TrimSuffix(leaf, fs.LinkSuffix) && fi is symlink → object with remote as given (leaf), link target from fi
+```
+And regular `fi.Name() == leaf` for regular files.
+
+Also `f.file` single-file path in New: `f.newObjectNative(native)` where native is built from f.root. If root is "link.rclonelink" and the member is symlink "link", need suffix-stripping there too. Let me look at how `f.file` is set: `f.file = f.prefixSlash + path.Base(native)`. So for single object, `NewObject(ctx, remote)` requires `remote == f.file`. If f.root = "link.rclonelink", native = path... then f.file = "link.rclonelink". newObjectNative(native="...link.rclonelink") must find the symlink "link". Handle with suffix lookup.
+
+Similarly if f.root = "link" and member is symlink: newObjectNative("link") — should find symlink but expose as link.rclonelink, and f.file = "link" mismatch with object remote "link.rclonelink"... For consistency, I could set f.file to include the suffix for symlinks: f.file = f.prefixSlash + path.Base(native) + fs.LinkSuffix. But NewObject would then require "link.rclonelink" and single-file listing shows "link.rclonelink". That seems right.
+
+Hmm wait, but what does `New` do: it tries `newObjectNative` to determine if root points to a file (single object mode). If root is "link.rclonelink" and we want single-file mode, we need newObjectNative to succeed. Then f.file = "link.rclonelink"... but then List with f.file filter: `entry.Remote() != f.file` — entry remote would be "link.rclonelink" (with suffix) → matches.
+
+OK. Let me now also check the "hostile archive" aspect for squashfs: symlink target could be "../../evil". With links mode, object exposes target as content; local backend protection prevents write-through. Nothing needed in archive backend beyond not resolving targets.
+
+Another consideration: The archive Fs (the wrapping `backend/archive/archive.go`) also needs to consider links? The archive wrapper iterates entries from subFs (zip/squashfs Fs) and builds directories. It doesn't do anything special. The `isDirectChild` guard still applies.
+
+Wait, one more: `archive.Fs.List` has the special handling: if an entry is an object whose remote is an archive (ends with .zip etc.), it converts to a directory. If a symlink points to a zip... not a concern.
+
+Now, how does the `--links` flag reach the archivers? `fs.GetConfig(ctx).Links`. But when the archive Fs is created via `cache.Get`, the ctx is from the operation. Let's check that the archive Fs caches per remote... The Fs is cached by remote path. If the same archive is first opened without --links then with --links, the cached zip Fs might be reused. Hmm, actually `cache.Get(ctx, remotePath)` gets the wrapped fs (the local/memory fs), not the archive Fs. The archive Fs is created fresh in `NewFs` each time? `cache.Get` returns the wrappedFs (cached), and `NewFs` creates a new `archive.Fs` each time. And `archive.Fs.findFs` -> `a.init(ctx, f.f)` -> `a.archiver.New(...)` which creates the zip Fs. `a.f` is cached on the `archive` struct which is per `Fs` (created in NewFs). So each operation creates a fresh zip Fs? Actually `archive.Fs` is created per path via `cache.Get`? Let me look: in `archive.NewFs` returns `f` (the archive.Fs) — the caching of archive Fs: `cache.PinUntilFinalized(f.f, f)`. But does the archive Fs itself get cached? There's `fstest`... The Fs cache caches by remote name; `:archive:` remotes would be cached by their full remote path. So the same `:archive:/path/test.zip` might be cached and reused across calls, meaning `a.f` might be created with the first ctx's Links value. Hmm.
+
+Actually wait: `fs/cache` caches Fs objects. Let me check how NewFs interacts with cache. In `NewFs`, `cache.Get(ctx, remotePath)` is called for the wrapped fs. The archive Fs itself — where is it cached? Let me search.
+
+Actually I recall `cache.PinUntilFinalized(f.f, f)` pins the wrapped fs. The archive Fs is returned by NewFs and then... let me check if `fs.Fs` from NewFs is cached anywhere in `fs/cache`. Let me grep for how NewFs results get cached — in `fs/config/configmap`... Actually, `cache.Get` takes a path and a `fs.Fs` factory? Let me read the cache package.
+
+Let me look at `fs/cache/cache.go`.</think>
+
+<｜DSML｜tool_calls>
+<｜DSML｜invoke name="bash">
+<｜DSML｜parameter name="arguments" string="false">{"command": "grep -rn \"func Get\\|func PinUntilFinalized\" fs/cache/cache.go | head; sed -n 1,120p fs/cache/cache.go"}</｜DSML｜parameter>
+</｜DSML｜invoke>
+<｜DSML｜invoke name="bash">
+<｜DSML｜parameter name="arguments" string="false">{"command": "ls $(go env GOROOT)/src/archive/zip/ | head -30; grep -n \"func (f \\\\*File) Mode\\|func (h \\\\*FileHeader) Mode\" $(go env GOROOT)/src/archive/zip/struct.go"}</｜DSML｜parameter>
+</｜DSML｜invoke>
+</｜DSML｜tool_calls>

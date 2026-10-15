@@ -1,0 +1,26 @@
+The fix is complete and verified. Here's a summary:
+
+## Root cause
+
+In `unixListener.Close()`/`unixConn.Close()` (and `reuseUnixSocket`), the code used `File()` to obtain the socket path. Two bugs resulted:
+
+1. **Leaked fd kept the socket listening.** `File()` does a `dup()` of the listening descriptor, and the returned `*os.File` was never closed. The kernel socket stays in `LISTEN` (accepting into the backlog, but nobody accepting) until the leaked `os.File` finalizer runs at the next GC — exactly the observed ~2-minute GC-triggered cleanup and the `GOGC=off` non-recovery.
+2. **Unlink never worked.** `os.File.Name()` for a Unix listener is `"unix:/path->"`, not a path, so `syscall.Unlink(name)` silently failed and the socket file was left on disk.
+
+Double-`Close` also decremented the reference count twice (releasing another holder's reference), and a close racing a relisten on the same path could unlink the newly bound socket's file.
+
+## Changes
+
+**`listen_unix.go`** (matches the fix in upstream v2.11.7):
+- `unixListener.Close()`/`unixConn.Close()` now derive the path from `Addr()`/`LocalAddr()`, close the underlying socket first, and only unlink/delete from `unixSockets` when the reference count reaches zero.
+- Close is serialized under `unixSocketsMu`, and a new `closed atomic.Bool` makes it idempotent: a second `Close` returns `net.ErrClosed` without touching the refcount or the pool. Holding the lock during close+unlink ensures a concurrent relisten either reuses the old socket or binds and keeps its file.
+- Abstract sockets (`@name` on Linux/Android) are never unlinked, and `reuseUnixSocket` doesn't try to unlink them either; `isAbstractUnixSocket` is platform-gated so `@name` remains a literal path on other Unixes.
+- `reuseUnixSocket` now `defer socketFile.Close()` — the same leaked-dup bug for the reuse path.
+
+**`listen_unix_test.go`** (new, Unix-only): covers immediate close+unlink and refused dialing for both `unix` and `unixgram`, refcounted reuse (file must remain until the last holder closes), double-close returning `net.ErrClosed` without releasing the sibling's reference, concurrent close/relisten loops leaving a live socket + file, and abstract sockets not unlinking a filesystem sentinel.
+
+## Verification
+
+- New tests **fail on the base code** (leaked listener/file, refcount 0 after double-close) and **pass with the fix**, including under `-race -count=20`.
+- `go test -race -short ./...` passes; `golangci-lint run` reports 0 issues; builds cleanly for darwin/linux/freebsd/windows.
+- End-to-end repro with a built binary: after reload off a Unix admin socket, the old socket refuses immediately (`curl exit 7`, no file), the new TCP admin works, and the site continues serving. Same for admin unix→unix and `bind unix/...`→TCP. (The lone `caddytest` ACME failure is a pre-existing port-9443 conflict from another workspace's processes — it fails identically on the unmodified base.)
