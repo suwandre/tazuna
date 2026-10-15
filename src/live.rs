@@ -1075,6 +1075,9 @@ impl Live {
             let mut cmd = Command::new(std::env::current_exe().context("locating the tazuna binary")?);
             cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--system-prompt", &prompt, "--permission-mode", &self.permission_mode])
                 .env("LEAN_BASH_CAP", self.bash_cap.to_string());
+            if self.mode == "headless" {
+                cmd.env("TAZUNA_HEADLESS", "1"); // a task, not a conversation: stopping without a change gets a nudge
+            }
             return self.start(cmd);
         }
         let mut cmd = Command::new("claude");

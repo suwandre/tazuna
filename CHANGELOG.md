@@ -16,6 +16,22 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.55 (2026-10-15)
+
+**A headless own-loop task no longer ends the moment the model answers without a tool call while nothing has changed.**
+It gets up to two nudges ("you stopped without changing any file; continue, or reply DONE and say why"); an empty reply
+is nudged in chats too. Before, any reply without a tool call counted as done: two rclone runs (BeatAPI's regular
+DeepSeek route, UnoRouter) stopped after a plan or an empty reply, changed nothing, and were reported as successes; the
+repo's own tests could not catch it, since they still pass with no change. Nudges show in the transcript.
+
+**Luna vs Codex, again** (rclone, one judge pool, Opus xhigh with reference): Codex 8; tazuna 0.0.54 8 (input 6.3M vs
+4.7M); 0.0.53 8; 0.0.52 (BeatAPI) 5; 0.0.38 (CheaperInference) 7. Quality equal now; input 1.3x Codex's.
+
+**UnoRouter** (named German operator, OpenAI-compatible, `https://api.unorouter.com/v1`), DeepSeek V4.1 Flash max,
+unpinned (`owned_by: openrouter`), rclone: before the fix 1/3 (stopped on an empty reply after 35 turns, no change,
+$0.037); with it 3/3, 83 turns, 1138 s, 4.3M input, $0.16. No cached tokens reported; input $0.01/M, output $1.20/M:
+6-8x CheaperInference (~$0.02) and BeatAPI HC ($0.027) for this task. Not used.
+
 ## 0.0.54 (2026-10-15)
 
 **`read` returns at most 250 lines unless the model gives a limit,** with a note on the rest ("lines 1-250 of 900; read

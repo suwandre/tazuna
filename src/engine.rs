@@ -120,6 +120,19 @@ struct Loop {
     out: Box<dyn FnMut(&Value)>,
 }
 
+const NUDGE: &str = "You stopped without changing any file. If the task needs no change, reply DONE and say why. \
+Otherwise continue now and make the change with the tools.";
+
+fn headless() -> bool {
+    std::env::var_os("TAZUNA_HEADLESS").is_some()
+}
+
+/// Uncommitted changes in the working tree (outside a git repo: assume yes, so nothing is nudged).
+fn repo_changed() -> bool {
+    std::process::Command::new("git").args(["status", "--porcelain"]).output()
+        .map_or(true, |o| !o.status.success() || !o.stdout.is_empty())
+}
+
 impl Loop {
     /// One user message: model calls and tool runs until the model answers without tools, or a cap or interrupt ends it.
     fn run(&mut self, content: &Value, followup: bool, rx: &Receiver<Value>) {
@@ -128,6 +141,7 @@ impl Loop {
             self.task = (std::time::Instant::now(), self.cost);
         }
         let ((began, start), mut turns, mut usage) = (self.task, 0, [0u64; 3]);
+        let mut nudges = 0;
         let end = |s: &mut Self, subtype: &str, text: String, turns: usize, usage: [u64; 3]| {
             (s.out)(&json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "result": text,
                 "num_turns": turns, "total_cost_usd": s.cost, "session_id": s.session,
@@ -229,6 +243,14 @@ impl Loop {
             }
             (self.out)(&json!({"type": "assistant", "message": {"role": "assistant", "model": self.model, "content": blocks}}));
             if parsed.is_empty() {
+                // a headless task that stops before changing anything gets up to two nudges: some models and routes
+                // stop after a plan or with an empty reply (two rclone runs on two gateways ended with no change at all)
+                if nudges < 2 && !followup && (text.trim().is_empty() || (headless() && !repo_changed())) {
+                    nudges += 1;
+                    self.msgs.push(json!({"role": "user", "content": NUDGE}));
+                    (self.out)(&json!({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": NUDGE}]}}));
+                    continue;
+                }
                 return end(self, "success", text, turns, usage);
             }
             let mut results = vec![];
@@ -580,6 +602,45 @@ mod tests {
         assert_eq!(price_override("0.3, 0.006,1.2").unwrap(), (0.3 / 1e6, 0.006 / 1e6, 1.2 / 1e6));
         assert!(price_override("0.3,1.2").is_err());
         assert!(price_override("a,b,c").is_err());
+    }
+
+    #[test]
+    fn an_empty_reply_gets_a_nudge_instead_of_ending_the_task() {
+        let replies = Rc::new(RefCell::new(VecDeque::from([
+            json!({"choices": [{"message": {"content": ""}}], "usage": {}}),
+            json!({"choices": [{"message": {"content": ""}}], "usage": {}}),
+            json!({"choices": [{"message": {"content": ""}}], "usage": {}}),
+        ])));
+        let sent = Rc::new(RefCell::new(vec![]));
+        let events = Rc::new(RefCell::new(vec![]));
+        let (r, s, ev) = (replies.clone(), sent.clone(), events.clone());
+        let mut l = Loop {
+            call: Box::new(move |b: &Value| {
+                s.borrow_mut().push(b.clone());
+                Ok(r.borrow_mut().pop_front().unwrap())
+            }),
+            responses: false,
+            system: "sys".into(),
+            model: "m".into(),
+            effort: None,
+            price: (0.0, 0.0, 0.0),
+            tools: vec![],
+            msgs: vec![json!({"role": "system", "content": "sys"})],
+            server: crate::mcp::Server::new(std::env::temp_dir()),
+            session: "s".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
+            out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("fix the bug"), false, &rx);
+        assert_eq!(sent.borrow().len(), 3, "two nudges, then the task ends");
+        let last = sent.borrow()[2]["messages"].as_array().unwrap().last().unwrap().clone();
+        assert_eq!((last["role"].as_str(), last["content"].as_str()), (Some("user"), Some(NUDGE)));
+        assert_eq!(events.borrow().last().unwrap()["num_turns"].as_u64(), Some(3));
     }
 
     #[test]
