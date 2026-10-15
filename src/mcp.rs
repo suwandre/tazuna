@@ -57,11 +57,87 @@ pub(crate) struct Server {
     saved: usize,
     /// Private directory for saved outputs, created on first use.
     out_dir: Option<PathBuf>,
+    /// Own loop only: reads already returned, by (file, offset, limit) -> (hash of the text, read number). The own loop
+    /// keeps every earlier result in the conversation, so a repeat of an unchanged read can point back to it instead of
+    /// sending the text again. (Claude Code may compact the conversation, so the claude path does not use this.)
+    seen: Option<std::collections::HashMap<(PathBuf, u64, u64), (u64, usize)>>,
+    reads: usize,
+    /// Processes a command left running in the background (`server &`): (pid, start time). Killed when the server
+    /// ends; also kept in a file, so the next tazuna start can kill them if this one was killed outright.
+    left: Vec<(u32, String)>,
+    /// This server's file for `left` (one engine can run several servers).
+    left_at: PathBuf,
 }
+
+static SERVERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        kill_matching(&self.left);
+        let _ = std::fs::remove_file(&self.left_at);
+    }
+}
+
+/// `pid lstart` for every process, to tell a live process from a later one that got the same pid.
+fn processes() -> Vec<(u32, u32, String)> {
+    let out = Command::new("ps").args(["-axo", "pid=,pgid=,lstart="]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    out.lines().filter_map(|l| {
+        let mut f = l.split_whitespace();
+        Some((f.next()?.parse().ok()?, f.next()?.parse().ok()?, f.collect::<Vec<_>>().join(" ")))
+    }).collect()
+}
+
+fn kill_matching(left: &[(u32, String)]) {
+    for (pid, _, start) in processes() {
+        if left.iter().any(|(p, s)| *p == pid && *s == start) {
+            let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).status();
+        }
+    }
+}
+
+/// Owner-only, under the user's own data directory: never a shared /tmp, where another user could plant a list or a
+/// symlink.
+fn left_dir() -> PathBuf {
+    let d = crate::labels::dir().unwrap_or_else(|_| std::env::temp_dir()).join("left");
+    if std::fs::create_dir_all(&d).is_ok() {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700));
+    }
+    d
+}
+
+fn left_file(owner: u32) -> PathBuf {
+    let n = SERVERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    left_dir().join(format!("{owner}-{n}.txt"))
+}
+
+/// Kills what an earlier tazuna, killed before it could clean up, left running (its file names a dead pid).
+pub(crate) fn reap_left() {
+    let Ok(dir) = std::fs::read_dir(left_dir()) else { return };
+    let alive: Vec<u32> = processes().iter().map(|p| p.0).collect();
+    for f in dir.flatten() {
+        let name = f.file_name().to_string_lossy().into_owned();
+        // only plain files: a symlink is never followed
+        if !f.path().symlink_metadata().is_ok_and(|m| m.is_file()) {
+            continue;
+        }
+        let Some(owner) = name.split('-').next().and_then(|n| n.parse::<u32>().ok()) else { continue };
+        if alive.contains(&owner) {
+            continue;
+        }
+        let left: Vec<(u32, String)> = std::fs::read_to_string(f.path()).unwrap_or_default().lines()
+            .filter_map(|l| l.split_once(' ').and_then(|(p, s)| Some((p.parse().ok()?, s.to_string())))).collect();
+        kill_matching(&left);
+        let _ = std::fs::remove_file(f.path());
+    }
+}
+
+/// `read` without a limit returns this many lines and says how to get the rest.
+const READ_WINDOW: u64 = 250;
 
 impl Server {
     pub(crate) fn new(cwd: PathBuf) -> Self {
-        Server { cwd, max: max_output(), cap: bash_cap(), saved: 0, out_dir: None }
+        Server { cwd, max: max_output(), cap: bash_cap(), saved: 0, out_dir: None, seen: None, reads: 0, left: vec![], left_at: left_file(std::process::id()) }
     }
 
     /// One JSON-RPC message in, at most one reply out (notifications get none).
@@ -95,7 +171,7 @@ impl Server {
         let s = |k: &str| a[k].as_str().unwrap_or_default();
         let out: Result<String, String> = match name {
             "bash" => Ok(self.bash(s("command"), BASH_TIMEOUT)),
-            "read" => read(&path.unwrap_or_default(), a["offset"].as_u64().unwrap_or(1), a["limit"].as_u64()).map(|t| cap(&t, self.max)),
+            "read" => self.read(path.unwrap_or_default(), a["offset"].as_u64().unwrap_or(1), a["limit"].as_u64()),
             "write" => write(&path.unwrap_or_default(), s("content")),
             "edit" => edit(&path.unwrap_or_default(), s("old"), s("new")),
             _ => return Err((-32000, format!("unknown tool {name}"))),
@@ -104,6 +180,30 @@ impl Server {
             Ok(text) => json!({"content": [{"type": "text", "text": text}]}),
             Err(e) => json!({"content": [{"type": "text", "text": e}], "isError": true}),
         })
+    }
+
+    pub(crate) fn with_read_dedupe(mut self) -> Self {
+        self.seen = Some(Default::default());
+        self
+    }
+
+    fn read(&mut self, path: PathBuf, offset: u64, limit: Option<u64>) -> Result<String, String> {
+        let text = cap(&read(&path, offset, Some(limit.unwrap_or(READ_WINDOW)))?, self.max);
+        self.reads += 1;
+        if let Some(seen) = self.seen.as_mut() {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            text.hash(&mut h);
+            let key = (path, offset, limit.unwrap_or(READ_WINDOW));
+            match seen.get(&key) {
+                Some(&(hash, n)) if hash == h.finish() => return Ok(format!("[unchanged since read #{n} above: same lines, same content]")),
+                _ => {
+                    seen.insert(key, (h.finish(), self.reads));
+                }
+            }
+        }
+        // the number lets a later repeat point back to this result
+        Ok(if self.seen.is_some() { format!("[read #{}]\n{text}", self.reads) } else { text })
     }
 
     fn resolve(&self, p: &str) -> PathBuf {
@@ -128,8 +228,9 @@ impl Server {
             Err(e) => return cap(&format!("\n[{e}]"), self.max),
         };
         let (mut so, mut se) = (child.stdout.take().expect("piped"), child.stderr.take().expect("piped"));
-        let t_out = std::thread::spawn(move || read_all(&mut so));
-        let t_err = std::thread::spawn(move || read_all(&mut se));
+        let (b_out, b_err) = (std::sync::Arc::new(std::sync::Mutex::new(Vec::new())), std::sync::Arc::new(std::sync::Mutex::new(Vec::new())));
+        let t_out = { let b = b_out.clone(); std::thread::spawn(move || read_into(&mut so, &b)) };
+        let t_err = { let b = b_err.clone(); std::thread::spawn(move || read_into(&mut se, &b)) };
         let t0 = Instant::now();
         let status = loop {
             match child.try_wait() {
@@ -143,11 +244,31 @@ impl Server {
                 Err(_) => break None,
             }
         };
-        let stdout = t_out.join().unwrap_or_default();
-        let mut stderr = t_err.join().unwrap_or_default();
+        if status.is_some() {
+            // the command finished; anything still in its process group was started in the background
+            let group = child.id();
+            let before = self.left.len();
+            self.left.extend(processes().into_iter().filter(|p| p.1 == group).map(|p| (p.0, p.2)));
+            if self.left.len() > before {
+                let lines: String = self.left.iter().map(|(p, s)| format!("{p} {s}\n")).collect();
+                let _ = std::fs::write(&self.left_at, lines);
+            }
+        }
+        // a background process started without redirecting its output keeps the pipes open: do not wait for it
+        let t1 = Instant::now();
+        while !(t_out.is_finished() && t_err.is_finished()) && t1.elapsed() < Duration::from_secs(2) {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let held = !(t_out.is_finished() && t_err.is_finished());
+        let text = |b: &std::sync::Arc<std::sync::Mutex<Vec<u8>>>| String::from_utf8_lossy(&b.lock().map(|v| v.clone()).unwrap_or_default()).into_owned();
+        let stdout = text(&b_out);
+        let mut stderr = text(&b_err);
         if let Some(i) = stderr.rfind(CWD_MARK) {
             self.cwd = PathBuf::from(&stderr[i + CWD_MARK.len()..]);
             stderr.truncate(i);
+        }
+        if held {
+            stderr.push_str("\n[a background process still holds this output; redirect it, e.g. `cmd > log 2>&1 &`]");
         }
         let tail = match status {
             Some(st) => st.code().filter(|&c| c != 0).map(|c| format!("\n[exit {c}]")).unwrap_or_default(),
@@ -198,10 +319,16 @@ impl Server {
     }
 }
 
-fn read_all(r: &mut impl Read) -> String {
-    let mut buf = Vec::new();
-    let _ = r.read_to_end(&mut buf);
-    String::from_utf8_lossy(&buf).into_owned()
+fn read_into(r: &mut impl Read, buf: &std::sync::Mutex<Vec<u8>>) {
+    let mut chunk = [0u8; 8192];
+    while let Ok(n) = r.read(&mut chunk) {
+        if n == 0 {
+            break;
+        }
+        if let Ok(mut b) = buf.lock() {
+            b.extend_from_slice(&chunk[..n]);
+        }
+    }
 }
 
 pub(crate) fn tools() -> Value {
@@ -209,7 +336,7 @@ pub(crate) fn tools() -> Value {
     json!([
         {"name": "bash", "description": "Run shell command. Working directory persists between calls.",
          "inputSchema": {"type": "object", "properties": {"command": s}, "required": ["command"]}},
-        {"name": "read", "description": "Read file. Optional 1-based line offset/limit.",
+        {"name": "read", "description": "Read file: up to 250 lines from the 1-based offset unless you give a limit.",
          "inputSchema": {"type": "object", "properties": {"path": s, "offset": i, "limit": i}, "required": ["path"]}},
         {"name": "write", "description": "Write file, creating dirs.",
          "inputSchema": {"type": "object", "properties": {"path": s, "content": s}, "required": ["path", "content"]}},
@@ -225,12 +352,17 @@ fn io_err(path: &Path, e: std::io::Error) -> String {
 fn read(path: &Path, offset: u64, limit: Option<u64>) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| io_err(path, e))?;
     let text = String::from_utf8_lossy(&bytes);
+    let mut all: Vec<&str> = text.split('\n').collect();
+    if text.ends_with('\n') {
+        all.pop(); // the final newline ends the last line; it does not start another
+    }
     let start = offset.max(1) as usize - 1;
-    let lines = text.split('\n').skip(start);
-    Ok(match limit {
-        Some(n) => lines.take(n as usize).collect::<Vec<_>>().join("\n"),
-        None => lines.collect::<Vec<_>>().join("\n"),
-    })
+    let end = limit.map_or(all.len(), |n| (start + n as usize).min(all.len()));
+    let mut out = all.get(start..end.max(start)).unwrap_or_default().join("\n");
+    if end < all.len() {
+        out.push_str(&format!("\n[lines {}-{end} of {}; read with offset={} for more]", start + 1, all.len(), end + 1));
+    }
+    Ok(out)
 }
 
 fn write(path: &Path, content: &str) -> Result<String, String> {
@@ -265,13 +397,50 @@ fn cap(s: &str, max: usize) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn background_processes_neither_block_nor_outlive_the_server() {
+        let mut s = Server::new(std::env::temp_dir());
+        let t0 = Instant::now();
+        let out = s.bash("sleep 300 & echo started", BASH_TIMEOUT);
+        assert!(t0.elapsed() < Duration::from_secs(10), "returned without waiting for the background sleep");
+        assert!(out.contains("started") && out.contains("still holds this output"), "{out}");
+        assert_eq!(s.left.len(), 1, "the sleep is remembered");
+        let pid = s.left[0].0;
+        let file = s.left_at.clone();
+        assert!(file.exists());
+        drop(s);
+        std::thread::sleep(Duration::from_millis(300));
+        assert!(!processes().iter().any(|p| p.0 == pid), "killed when the server ended");
+        assert!(!file.exists());
+    }
+
+    #[test]
+    fn reads_a_window_and_points_back_to_unchanged_repeats() {
+        let dir = std::env::temp_dir().join(format!("tazuna-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let body: String = (1..=300).map(|i| format!("line {i}\n")).collect();
+        std::fs::write(dir.join("f.txt"), &body).unwrap();
+        let call = |s: &mut Server, a: Value| s.call(&json!({"name": "read", "arguments": a})).unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let mut lean = Server::new(dir.clone());
+        let t = call(&mut lean, json!({"path": "f.txt"}));
+        assert!(t.starts_with("line 1\n") && t.contains("line 250\n[lines 1-250 of 300; read with offset=251 for more]"), "{t}");
+        assert!(!t.contains("line 251"));
+        assert_eq!(call(&mut lean, json!({"path": "f.txt"})), t, "the claude path never shortens a repeat");
+        let mut own = Server::new(dir.clone()).with_read_dedupe();
+        assert!(call(&mut own, json!({"path": "f.txt", "offset": 290})).starts_with("[read #1]\nline 290"));
+        assert_eq!(call(&mut own, json!({"path": "f.txt", "offset": 290})), "[unchanged since read #1 above: same lines, same content]");
+        std::fs::write(dir.join("f.txt"), body.replace("line 295", "changed")).unwrap();
+        assert!(call(&mut own, json!({"path": "f.txt", "offset": 290})).contains("changed"), "a changed file is sent again");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// Replays the requests captured from the Node server and expects the same replies.
     #[test]
     fn matches_the_node_server() {
         let dir = std::env::temp_dir().join(format!("tazuna-mcp-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("f.txt"), "line1\nline2\nline3\n").unwrap();
-        let mut s = Server { cwd: dir.canonicalize().unwrap(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None };
+        let mut s = Server { cwd: dir.canonicalize().unwrap(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, left: vec![], left_at: left_file(std::process::id()) };
         let ask = |s: &mut Server, req: &str| s.handle(req);
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).unwrap(),
@@ -280,11 +449,11 @@ mod tests {
         assert_eq!(ask(&mut s, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#), None);
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).unwrap(),
-            r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"bash","description":"Run shell command. Working directory persists between calls.","inputSchema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}},{"name":"read","description":"Read file. Optional 1-based line offset/limit.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},{"name":"write","description":"Write file, creating dirs.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},{"name":"edit","description":"Replace exact unique text in file.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}},"required":["path","old","new"]}}]}}"#
+            r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"bash","description":"Run shell command. Working directory persists between calls.","inputSchema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}},{"name":"read","description":"Read file: up to 250 lines from the 1-based offset unless you give a limit.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},{"name":"write","description":"Write file, creating dirs.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},{"name":"edit","description":"Replace exact unique text in file.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}},"required":["path","old","new"]}}]}}"#
         );
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read","arguments":{"path":"f.txt","offset":2,"limit":1}}}"#).unwrap(),
-            r#"{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"line2"}]}}"#
+            r#"{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"line2\n[lines 2-2 of 3; read with offset=3 for more]"}]}}"#
         );
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"bash","arguments":{"command":"mkdir -p sub && cd sub && echo hi; echo err >&2; false"}}}"#).unwrap(),
@@ -321,7 +490,7 @@ mod tests {
 
     #[test]
     fn shrinks_long_output_and_saves_it() {
-        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: 2000, saved: 0, out_dir: None };
+        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: 2000, saved: 0, out_dir: None, seen: None, reads: 0, left: vec![], left_at: left_file(std::process::id()) };
         let out = s.bash("for i in $(seq 1 400); do echo \"=== RUN   TestN$i\"; echo \"--- PASS: TestN$i\"; done; echo '--- FAIL: TestBroken'; echo '    x_test.go:3: boom'; seq 1 500; exit 1", Duration::from_secs(30));
         assert!(out.chars().count() < 2600, "shrunk to about the cap: {}", out.chars().count());
         assert!(out.contains("--- FAIL: TestBroken") || out.contains("800 lines of passing-test output removed"), "{out}");
@@ -333,14 +502,14 @@ mod tests {
         let dir = Path::new(file).parent().unwrap();
         assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700, "owner-only directory");
         assert!(saved.contains("=== RUN   TestN1\n") && saved.contains("TestBroken"), "the full output is kept");
-        let mut off = Server { cwd: std::env::temp_dir(), max: 30000, cap: 0, saved: 0, out_dir: None };
+        let mut off = Server { cwd: std::env::temp_dir(), max: 30000, cap: 0, saved: 0, out_dir: None, seen: None, reads: 0, left: vec![], left_at: left_file(std::process::id()) };
         assert_eq!(off.bash("seq 1 3000 | wc -l", Duration::from_secs(10)).trim(), "3000");
         assert!(off.bash("seq 1 3000", Duration::from_secs(10)).chars().count() > 13000, "cap 0 leaves output alone");
     }
 
     #[test]
     fn timeout_kills_the_whole_command() {
-        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None };
+        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, left: vec![], left_at: left_file(std::process::id()) };
         let t0 = Instant::now();
         // the background sleep would outlive a plain kill of bash
         let out = s.bash("sleep 30 & echo started; wait", Duration::from_millis(500));

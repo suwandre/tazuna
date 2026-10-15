@@ -29,6 +29,7 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(180);
 type Price = (f64, f64, f64);
 
 pub fn serve(args: &[String]) -> Result<()> {
+    crate::mcp::reap_left(); // background processes an earlier, killed engine left running
     let flag = |name: &str| args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone());
     let url = flag("--url").context("--url")?.trim_end_matches('/').to_string();
     let key_env = flag("--key-env").context("--key-env")?;
@@ -66,7 +67,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         tools: tools.as_array().into_iter().flatten().map(|t| json!({"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["inputSchema"]}})).collect(),
         // Responses keeps the system prompt in `instructions`
         msgs: if responses { vec![] } else { vec![json!({"role": "system", "content": system})] },
-        server: crate::mcp::Server::new(cwd),
+        server: crate::mcp::Server::new(cwd).with_read_dedupe(),
         session,
         cost: 0.0,
         task: (std::time::Instant::now(), 0.0),

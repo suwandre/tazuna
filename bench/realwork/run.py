@@ -53,9 +53,35 @@ def env_for(harness, **extra):
     return env
 
 
+def descendants(root):
+    rows = subprocess.run(["ps", "-axo", "pid=,ppid="], capture_output=True, text=True).stdout.split()
+    kids = {}
+    for pid, ppid in zip(rows[::2], rows[1::2]):
+        kids.setdefault(int(ppid), []).append(int(pid))
+    out, todo = [], [root]
+    while todo:
+        for k in kids.get(todo.pop(), []):
+            out.append(k)
+            todo.append(k)
+    return out
+
+
 def sh(cmd, cwd, timeout=900, env=None, shell=False):
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
-                          env=env or {**os.environ, **cur_go_env()}, shell=shell, stdin=subprocess.DEVNULL)
+    # own session: on a timeout the whole tree goes (the harness, its engine, servers the agent left running), not only
+    # the direct child; an orphaned engine once kept running for a day and a half
+    p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
+                         env=env or {**os.environ, **cur_go_env()}, shell=shell, start_new_session=True)
+    try:
+        out, err = p.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        for pid in [p.pid, *descendants(p.pid)]:  # the agent's commands run in process groups of their own
+            try:
+                os.kill(pid, 9)
+            except ProcessLookupError:
+                pass
+        p.communicate()
+        raise
+    return subprocess.CompletedProcess(cmd, p.returncode, out, err)
 
 
 # ---------------------------------------------------------------- task plumbing
@@ -384,7 +410,7 @@ def run_empryo(h, w, prompt):
                 turns=calls, reported_cost=last.get("costUSD", 0), final=final)
 
 
-HARNESS_BIN = HERE.parent.parent / "target/release/tazuna"  # this repo's release build
+HARNESS_BIN = Path(os.environ.get("HARNESS_BIN") or HERE.parent.parent / "target/release/tazuna")  # this repo's release build, or an older one for an A/B
 
 
 def run_harness(h, w, prompt):

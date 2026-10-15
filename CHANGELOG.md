@@ -16,6 +16,30 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.54 (2026-10-15)
+
+**`read` returns at most 250 lines unless the model gives a limit,** with a note on the rest ("lines 1-250 of 900; read
+with offset=251 for more"). **On the own loop, a repeat of an unchanged read points back to the earlier result** instead of
+sending it again (nothing leaves the conversation, unlike the elision tried in 0.0.38). **Background processes no longer
+outlive a task:** what a command leaves running (`server &`) is recorded (pid and start time) and killed when the task
+ends, or by the next engine if this one was killed; a background process holding the output pipe no longer blocks the
+tool call (2 s, then a hint to redirect). The benchmark runner kills the whole process tree at its time limit. Found
+because timed-out runs had left a Caddy server, two test backends and an engine running for a day and a half.
+
+A/B on BeatAPI, old (0.0.53) vs new, same time, one run each:
+
+| | old: tests | old: turns / input | new: tests | new: turns / input |
+|---|---|---|---|---|
+| GPT-6 Luna max, rclone | 3/3 | 127 / 10.1M | 3/3 | **100 / 6.3M (-37%)** |
+| DeepSeek V4.1 Flash HC max, caddy-retry | 2/2 | 90 / 5.3M | 1/2 | 31 / 0.8M |
+| DeepSeek HC, caddy-unix | 0/7 | 139 / 8.4M | **7/7** | 133 / 7.9M |
+| DeepSeek HC, rclone | 3/3 | 195 / 19.0M | 3/3 | 240 / 25.0M |
+
+Luna: a third less input at the same result (Codex used 4.7M on this task). DeepSeek: tests 11/12 vs 5/12, tokens about
+equal; BeatAPI was slow and erratic that day (rclone took 195-240 turns, 58 the night before), so the DeepSeek pairs are
+noisy. In the failed caddy-retry run every read had an explicit range: the window was not the cause. No process was
+left behind after these runs.
+
 ## 0.0.53 (2026-10-15)
 
 **GPT models use the Responses API on any provider** (by model id `gpt-`; BeatAPI lists every model as "openai").
