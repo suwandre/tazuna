@@ -120,6 +120,15 @@ struct Loop {
     out: Box<dyn FnMut(&Value)>,
 }
 
+fn empty_reply(reply: &Value, responses: bool) -> bool {
+    if responses {
+        !reply["output"].as_array().is_some_and(|items| items.iter().any(|i| i["type"] == "function_call" || i["type"] == "message"))
+    } else {
+        let m = &reply["choices"][0]["message"];
+        m["content"].as_str().is_none_or(|t| t.trim().is_empty()) && m["tool_calls"].as_array().is_none_or(|c| c.is_empty())
+    }
+}
+
 const NUDGE: &str = "You stopped without changing any file. If the task needs no change, reply DONE and say why. \
 Otherwise continue now and make the change with the tools.";
 
@@ -187,13 +196,29 @@ impl Loop {
                 }
                 b
             };
-            let reply = match (self.call)(&body) {
+            let mut reply = match (self.call)(&body) {
                 Ok(r) => r,
                 Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
             };
+            // an empty reply (no text, no call) is a provider hiccup, not an answer: the same request again, up to 3
+            // times (a saturated gateway sent three in a row, and the task ended on them)
+            for wait in [5, 15, 30] {
+                if !empty_reply(&reply, self.responses) {
+                    break;
+                }
+                std::thread::sleep(Duration::from_secs(if cfg!(test) { 0 } else { wait }));
+                reply = match (self.call)(&body) {
+                    Ok(r) => r,
+                    Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
+                };
+            }
             turns += 1;
             let u = &reply["usage"];
-            let n = |chat: &Value, resp: &Value| if self.responses { resp } else { chat }.as_u64().unwrap_or(0);
+            // either API's field names: some gateways answer the Responses API with Chat Completions usage (UnoRouter)
+            let n = |chat: &Value, resp: &Value| {
+                let (a, b) = if self.responses { (resp, chat) } else { (chat, resp) };
+                a.as_u64().or(b.as_u64()).unwrap_or(0)
+            };
             let (prompt, out) = (n(&u["prompt_tokens"], &u["input_tokens"]), n(&u["completion_tokens"], &u["output_tokens"]));
             let cached = n(&u["prompt_tokens_details"]["cached_tokens"], &u["input_tokens_details"]["cached_tokens"]).min(prompt);
             // the billed cost when the provider reports it (CheaperInference, OpenRouter), else the price list
@@ -521,7 +546,18 @@ fn emit(e: &Value) {
 /// network outage ended a 38-minute run when the tries spanned only 40 s, and a free model "at capacity" (HTTP 429) ended
 /// all seven runs of a benchmark when they spanned 4 minutes.
 fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value> {
-    let path = if body.get("input").is_some() { "responses" } else { "chat/completions" };
+    let responses = body.get("input").is_some();
+    let path = if responses { "responses" } else { "chat/completions" };
+    // streamed by default: gateways cap a reply that is not streamed (UnoRouter: complete within 90 s, which a 130K-token
+    // prompt cannot meet, and the task ended with a 413); the answer itself is the same. TAZUNA_STREAM=0 turns it off.
+    let stream = std::env::var("TAZUNA_STREAM").map_or(true, |v| v != "0");
+    let mut body = body.clone();
+    if stream {
+        body["stream"] = json!(true);
+        if !responses {
+            body["stream_options"] = json!({"include_usage": true});
+        }
+    }
     let body = body.to_string();
     // a call that times out is tried again with twice the time (up to 15 minutes): a slow provider's long reasoning answer
     // (MiMo V2.6 Pro at the official ~30 tok/s) takes over 3 minutes and was cut off at 180 s on every try
@@ -543,7 +579,16 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value>
             Err(e) => return Err(e.into()),
         };
         if status == 200 {
-            return serde_json::from_str(&text).context("provider reply is not JSON");
+            match sse(&text).map(|events| from_stream(&events, responses)) {
+                // an error inside a stream (a gateway's upstream failed after the headers) is retried like a 5xx
+                Some(Err(e)) if wait > 0 => {
+                    eprintln!("model call failed ({e:#}); retrying in {wait}s");
+                    std::thread::sleep(Duration::from_secs(wait));
+                    continue;
+                }
+                Some(r) => return r,
+                None => return serde_json::from_str(&text).context("provider reply is not JSON"),
+            }
         }
         // a 429 for a locked model or an empty balance never clears by waiting (Experiential Labs: "insufficient_quota")
         let permanent = text.contains("insufficient_quota") || text.contains("requires_purchase");
@@ -553,6 +598,59 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value>
         std::thread::sleep(Duration::from_secs(wait));
     }
     unreachable!()
+}
+
+/// The `data:` payloads of a server-sent-event body, or None when the body is plain JSON (a provider that ignores `stream`).
+fn sse(text: &str) -> Option<Vec<Value>> {
+    if !text.trim_start().starts_with("data:") && !text.trim_start().starts_with("event:") && !text.trim_start().starts_with(':') {
+        return None;
+    }
+    Some(text.lines().filter_map(|l| l.strip_prefix("data:")).map(str::trim).filter(|d| *d != "[DONE]")
+        .filter_map(|d| serde_json::from_str(d).ok()).collect())
+}
+
+/// A streamed reply put back into the shape of a reply that was not streamed.
+fn from_stream(events: &[Value], responses: bool) -> Result<Value> {
+    if responses {
+        // the closing event carries the whole response
+        if let Some(e) = events.iter().find(|e| e["type"] == "error" || e["type"] == "response.failed") {
+            bail!("provider error in stream: {}", e.to_string().chars().take(300).collect::<String>());
+        }
+        return events.iter().rev().find(|e| e["type"] == "response.completed").map(|e| e["response"].clone())
+            .context("stream ended without response.completed");
+    }
+    let (mut content, mut usage, mut calls) = (String::new(), Value::Null, Vec::<Value>::new());
+    for e in events {
+        if let Some(err) = e.get("error") {
+            bail!("provider error in stream: {}", err.to_string().chars().take(300).collect::<String>());
+        }
+        if !e["usage"].is_null() {
+            usage = e["usage"].clone();
+        }
+        let d = &e["choices"][0]["delta"];
+        content.push_str(d["content"].as_str().unwrap_or_default());
+        for t in d["tool_calls"].as_array().into_iter().flatten() {
+            let i = t["index"].as_u64().unwrap_or(calls.len() as u64) as usize;
+            while calls.len() <= i {
+                calls.push(json!({"id": "", "type": "function", "function": {"name": "", "arguments": ""}}));
+            }
+            let c = &mut calls[i];
+            if let Some(id) = t["id"].as_str() {
+                c["id"] = json!(id);
+            }
+            for k in ["name", "arguments"] {
+                if let Some(part) = t["function"][k].as_str() {
+                    let joined = format!("{}{part}", c["function"][k].as_str().unwrap_or_default());
+                    c["function"][k] = json!(joined);
+                }
+            }
+        }
+    }
+    let mut message = json!({"role": "assistant", "content": content});
+    if !calls.is_empty() {
+        message["tool_calls"] = json!(calls);
+    }
+    Ok(json!({"choices": [{"message": message}], "usage": usage}))
 }
 
 /// The model's prices from the provider's model list (per million tokens there, per token here), and whether it is an
@@ -605,12 +703,28 @@ mod tests {
     }
 
     #[test]
+    fn streamed_replies_become_whole_replies() {
+        let chat = "data: {\"choices\":[{\"delta\":{\"content\":\"Let me \"}}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"content\":\"look.\",\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"pa\"}}]}}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"th\\\":\\\"a\\\"}\"}}]}}]}\n\n\
+data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":3}}\n\ndata: [DONE]\n";
+        let r = from_stream(&sse(chat).unwrap(), false).unwrap();
+        let m = &r["choices"][0]["message"];
+        assert_eq!(m["content"], "Let me look.");
+        assert_eq!(m["tool_calls"][0]["id"], "c1");
+        assert_eq!(m["tool_calls"][0]["function"]["name"], "read");
+        assert_eq!(m["tool_calls"][0]["function"]["arguments"], "{\"path\":\"a\"}");
+        assert_eq!(r["usage"]["prompt_tokens"], 10);
+        let resp = "event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[],\"usage\":{\"input_tokens\":5}}}\n";
+        assert_eq!(from_stream(&sse(resp).unwrap(), true).unwrap()["usage"]["input_tokens"], 5);
+        assert!(sse("{\"choices\":[]}").is_none(), "a plain JSON reply is used as it is");
+    }
+
+    #[test]
     fn an_empty_reply_gets_a_nudge_instead_of_ending_the_task() {
-        let replies = Rc::new(RefCell::new(VecDeque::from([
-            json!({"choices": [{"message": {"content": ""}}], "usage": {}}),
-            json!({"choices": [{"message": {"content": ""}}], "usage": {}}),
-            json!({"choices": [{"message": {"content": ""}}], "usage": {}}),
-        ])));
+        let empty = json!({"choices": [{"message": {"content": ""}}], "usage": {}});
+        // each empty reply is first asked again three times (a provider hiccup), then nudged
+        let replies = Rc::new(RefCell::new(VecDeque::from(vec![empty; 12])));
         let sent = Rc::new(RefCell::new(vec![]));
         let events = Rc::new(RefCell::new(vec![]));
         let (r, s, ev) = (replies.clone(), sent.clone(), events.clone());
@@ -637,8 +751,9 @@ mod tests {
         };
         let (_tx, rx) = std::sync::mpsc::channel();
         l.run(&json!("fix the bug"), false, &rx);
-        assert_eq!(sent.borrow().len(), 3, "two nudges, then the task ends");
-        let last = sent.borrow()[2]["messages"].as_array().unwrap().last().unwrap().clone();
+        assert_eq!(sent.borrow().len(), 12, "three turns of four calls each: two nudges, then the task ends");
+        assert_eq!(sent.borrow()[3], sent.borrow()[0], "a retry sends the same request");
+        let last = sent.borrow()[8]["messages"].as_array().unwrap().last().unwrap().clone();
         assert_eq!((last["role"].as_str(), last["content"].as_str()), (Some("user"), Some(NUDGE)));
         assert_eq!(events.borrow().last().unwrap()["num_turns"].as_u64(), Some(3));
     }

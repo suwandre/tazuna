@@ -16,6 +16,29 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.56 (2026-10-15)
+
+**The own loop streams its model calls** (`stream: true`; `TAZUNA_STREAM=0` turns it off) and puts the pieces back into a
+whole reply. The answer is the same; gateways cap replies that are not streamed (UnoRouter: complete within 90 s, which a
+130K-token prompt cannot meet: HTTP 413, and the task ended). Checked live on BeatAPI, Experiential Labs and UnoRouter.
+**An empty reply (no text, no call) is asked again** up to 3 times (5, 15, 30 s) before the nudge; an error inside a
+stream is retried like a 5xx. **Usage in either API's field names** (UnoRouter answers the Responses API with Chat
+Completions usage).
+
+GPT-6 Luna max on rclone, one judge pool (Opus xhigh with reference, 1 pass):
+
+| | tests | judge | cost per run |
+|---|---|---|---|
+| Codex CLI (ChatGPT plan) | 3/3 | **8** (8 in the earlier pool too) | plan |
+| tazuna own loop, BeatAPI, 0.0.55, 2 runs | 3/3, 2/3 | 8, 5 | $0.19 |
+| tazuna own loop, BeatAPI, 0.0.54 | 3/3 | 6 (8 in the earlier pool) | |
+| tazuna own loop, UnoRouter, 0.0.55, 2 runs | 1/3 (three empty replies), 2/3 | 1, 4 | $0.05 |
+
+Codex is consistently at 8; tazuna with Luna reaches 8 but varies (5-8), and the same patch scored 6 and 8 in two pools,
+so one judge pass swings by about 2 points. UnoRouter's Luna route returned empty replies and failed with "All accounts
+failed. Tried 3 accounts": it pools accounts, so its GPT models are of the same unclear origin as apinex's. Not used for
+GPT or Claude models.
+
 ## 0.0.55 (2026-10-15)
 
 **A headless own-loop task no longer ends the moment the model answers without a tool call while nothing has changed.**
