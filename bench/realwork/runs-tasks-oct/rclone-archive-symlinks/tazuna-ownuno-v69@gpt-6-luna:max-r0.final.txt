@@ -1,0 +1,1 @@
+Added symlink support to the ZIP and squashfs archive backends. Symlinks are skipped by default with a notice; with `--links`, they appear as `.rclonelink` objects whose contents and size match the link target. ZIP tests cover listing, lookup, and range/seek reads. **Verified:** `go test ./backend/archive/...` and `git diff --check` pass.

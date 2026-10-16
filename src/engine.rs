@@ -617,29 +617,30 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
         Api::Messages => "messages",
     };
     // streamed by default: gateways cap a reply that is not streamed (UnoRouter: complete within 90 s, which a 130K-token
-    // prompt cannot meet, and the task ended with a 413); the answer itself is the same. TAZUNA_STREAM=0 turns it off.
-    let stream = std::env::var("TAZUNA_STREAM").map_or(true, |v| v != "0");
+    // prompt cannot meet, and the task ended with a 413), and a started stream is not cut by the time limit. UnoRouter
+    // alone caches only calls that are not streamed (Luna on its si group: 0% streamed, 92% over a run not streamed), so
+    // there a call starts unstreamed and is streamed after a 413. TAZUNA_STREAM=0 or 1 decides for any provider.
+    let mut stream = std::env::var("TAZUNA_STREAM").map_or(!url.contains("unorouter.com"), |v| v != "0");
     let mut body = body.clone();
-    if stream {
-        body["stream"] = json!(true);
-        if api == Api::Chat {
-            body["stream_options"] = json!({"include_usage": true});
-        }
-    }
-    let body = body.to_string();
     // a call that times out is tried again with twice the time (up to 15 minutes): a slow provider's long reasoning answer
     // (MiMo V2.6 Pro at the official ~30 tok/s) takes over 3 minutes and was cut off at 180 s on every try. The limit is on
     // the reply's start; a stream that has started may run 15 minutes: cut at 180 s, UnoRouter's slow Luna calls were
     // billed anyway (with the input twice) and then sent again.
     let mut limit = CALL_TIMEOUT;
     for wait in [2, 8, 30, 60, 120, 120, 120, 120, 120, 120, 120, 0] {
+        if stream {
+            body["stream"] = json!(true);
+            if api == Api::Chat {
+                body["stream_options"] = json!({"include_usage": true});
+            }
+        }
         let req = http.post(format!("{url}/{path}")).config().timeout_recv_response(Some(limit))
             .timeout_global(Some(Duration::from_secs(900))).build().header("Content-Type", "application/json");
         let req = match api {
             Api::Messages => req.header("x-api-key", key).header("anthropic-version", "2023-06-01"),
             _ => req.header("Authorization", format!("Bearer {key}")),
         };
-        let sent = req.send(&body)
+        let sent = req.send(&body.to_string())
             .and_then(|mut r| Ok((r.status().as_u16(), r.body_mut().with_config().limit(50 << 20).read_to_string()?)));
         let (status, text) = match sent {
             Ok(st) => st,
@@ -663,6 +664,24 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
                 }
                 Some(r) => return r,
                 None => return serde_json::from_str(&text).context("provider reply is not JSON"),
+            }
+        }
+        if status == 413 && !stream && wait > 0 {
+            stream = true;
+            continue;
+        }
+        // an upstream that tops out at xhigh rejects max (one of UnoRouter's si upstreams, HTTP 400, which ended a run):
+        // that call goes again at xhigh
+        if status == 400 && text.contains("'max'") && wait > 0 {
+            let mut lowered = false;
+            for p in ["/reasoning/effort", "/reasoning_effort", "/output_config/effort"] {
+                if let Some(e) = body.pointer_mut(p).filter(|e| **e == "max") {
+                    *e = json!("xhigh");
+                    lowered = true;
+                }
+            }
+            if lowered {
+                continue;
             }
         }
         // a 429 for a locked model or an empty balance never clears by waiting (Experiential Labs: "insufficient_quota")
@@ -899,6 +918,43 @@ data: {\"type\":\"message_stop\"}\n";
         let want = 10.0 * 1e-6 + 90.0 * 1.25e-6 + 900.0 * 1e-7 + 40.0 * 4e-6 + 5.0 * 1e-6;
         assert!((l.cost - want).abs() < 1e-12, "{}", l.cost);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_call_rejected_for_max_effort_goes_again_at_xhigh() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", server.local_addr().unwrap());
+        let got = std::thread::spawn(move || {
+            let mut bodies = vec![];
+            for reply in ["400 Bad Request\r\n\r\n{\"error\":\"'reasoning_effort' does not support 'max'\"}",
+                "200 OK\r\nContent-Type: application/json\r\n\r\n{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"] {
+                let (mut c, _) = server.accept().unwrap();
+                let mut req = vec![];
+                let mut buf = [0u8; 4096];
+                // headers, then a body of Content-Length bytes
+                let body = loop {
+                    let n = c.read(&mut buf).unwrap();
+                    req.extend_from_slice(&buf[..n]);
+                    let t = String::from_utf8_lossy(&req).to_string();
+                    if let Some((head, body)) = t.split_once("\r\n\r\n") {
+                        let len: usize = head.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap())).unwrap();
+                        if body.len() >= len {
+                            break body.to_string();
+                        }
+                    }
+                };
+                bodies.push(body);
+                let reply = format!("HTTP/1.1 {}", reply.replacen("\r\n\r\n", "\r\nConnection: close\r\n\r\n", 1));
+                c.write_all(reply.as_bytes()).unwrap();
+            }
+            bodies
+        });
+        let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+        let r = chat(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": [], "reasoning_effort": "max"})).unwrap();
+        assert_eq!(r["choices"][0]["message"]["content"], "ok");
+        let bodies = got.join().unwrap();
+        assert!(bodies[0].contains("\"max\"") && bodies[1].contains("\"xhigh\""), "{bodies:?}");
     }
 
     #[test]

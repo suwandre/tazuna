@@ -16,6 +16,29 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.63 (2026-10-16)
+
+**UnoRouter calls are no longer streamed** (a 413 for a long call switches that call to a stream): UnoRouter caches only
+calls that are not streamed. Same conversation on its si group: streamed 0 / 0 / 0 tokens cached on calls 2-4, not
+streamed everything before the new text; the billing log never showed a cache read for a streamed call. This explains
+every UnoRouter GPT run so far (0-35% cached). BeatAPI caches streamed calls (97%), so streaming stays the default
+elsewhere; `TAZUNA_STREAM=0/1` decides for any provider. **A call rejected for `max` effort goes again at `xhigh`**
+instead of ending the task (one of si's upstreams accepts none ... xhigh only; the 400 is free and takes 1 s).
+
+GPT-6 Luna, rclone, UnoRouter's si group (today's cheapest, $0.021 / $0.0021 cached / $0.105 per M):
+
+| | tests | turns | time | input | cached | billed |
+|---|---|---|---|---|---|---|
+| 0.0.61, streamed, max | stopped by the 400 after 10 calls | | | | 0% | |
+| 0.0.61, `TAZUNA_STREAM=0`, xhigh | 3/3 | 122 | 404 s | 3.7M | 92% | 1.6 cents |
+| 0.0.63 defaults, max | 2/3 | 130 | 515 s | 5.9M | 96% | 1.9 cents |
+| BeatAPI, cache key, max (0.0.60, 2 runs) | 3/3, 3/3 | 70, 102 | 17-19 min | 4.5-7.1M | 97% | 8-11 cents |
+
+The fastest and cheapest Luna runs so far (not judged yet). UnoRouter reports few output tokens (12-16K per run against
+42-50K on BeatAPI), though the model reasons. Group prices change by the hour (si was the dearest group the night
+before): **`bench/uno_route.py MODEL`** lists a model's groups by today's price (UnoRouter's public `/api/pricing`) and
+tests caching on the cheapest few with a growing conversation, through the `X-Group` header (no key per group).
+
 ## 0.0.62 (2026-10-16)
 
 **The server-side clearing of old tool results (0.0.60) is removed.** Haiku 5.5 lost code it had read, read it again and

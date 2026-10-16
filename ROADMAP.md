@@ -144,8 +144,9 @@ at $0.03-0.06 per run (the 1/3 ended in empty replies: thinking lost in the Open
 with `prompt_cache_key` (BeatAPI cache 18-47% -> 96-97%: Sol 3/3 $0.39, Luna 3/3 twice at $0.08-0.11), server-side
 clearing of old tool results for Claude, no more cut streams. DeepSeek 0.0.57 beats 0.0.53 (tests 23/24 vs 17/24, cost
 -42%). Server-side clearing of tool results removed again in 0.0.62 (Haiku re-read and looped: 163 turns, 0 edits).
-Next: one judge pool for all of it after the weekly reset; Luna on UnoRouter's caching group (a7-5053, running); Haiku
-at high effort without clearing once BeatAPI is topped up.
+0.0.63: UnoRouter caches only unstreamed calls; with that, Luna on its si group ran rclone in 7-9 minutes at 92-96%
+cached for ~2 cents (3/3, 2/3). Next: one judge pool for all of it after the weekly reset; Haiku at high effort without
+clearing once BeatAPI is topped up.
 
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
 
@@ -314,7 +315,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-16: gateways pool upstream accounts (BeatAPI full cache misses seconds after a hit; UnoRouter names its
   account groups). Prompt caches and Haiku/Sonnet 5.5 thinking are bound to one account, so a gateway's cache rate and
   thinking continuity are the gateway's property: probe a few calls before a paid run. UnoRouter is used only through a
-  group that caches, and only for open-source tasks.
+  group that caches, and only for open-source tasks. Its groups change price by the hour: `bench/uno_route.py` picks.
+- 2026-10-16: UnoRouter caches only calls that are not streamed, so tazuna does not stream there (0.0.63).
 - 2026-10-13: Gemini 4 Argon (free for a while on Experiential Labs, 832,500 input tokens per hour; paid $2/$10 per M).
   As own-loop implementer: unusable on the free tier (4 parallel tasks used the hourly allowance in 5 minutes; one task
   needs 1.6-10M tokens; free answers carry an appended ad). As judge, 63 October patches vs Opus: r 0.90, same order
