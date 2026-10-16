@@ -1,0 +1,27 @@
+All checks pass. Here's the summary.
+
+## What the verification failure was
+
+The verification command ran the full (non-`-short`) integration suite, which surfaced `TestReverseProxyReloadStressUpgradedStreamsHeapProfiles`. It fails deterministically on the pristine base commit too (I confirmed in a clean worktree), so it's unrelated to the retry-match change — but the command must pass, so I fixed its root cause.
+
+**Root cause:** `DetachResponseWriterAfterHijack` (used by `stream_detached`) requires at least one writer in the response-writer chain to implement `DetachAfterHijack`. Caddy always installs `IdleTimeoutWriter` around the connection, but it didn't implement that interface. Detachment therefore only worked when access logging happened to add a `responseRecorder` to the chain. The stress test config has no `log` directive, so `stream_detached` silently fell back to "keeping stream attached" and the upgraded streams were closed on reload. (I verified the fix both ways: adding `log {}` made the test pass pre-fix; the debug log showed `detaching connection failed`.)
+
+**Fix** (`modules/caddyhttp/idletimeout.go`):
+- Added `DetachAfterHijack(bool) bool` to `IdleTimeoutWriter` so it participates in the detach contract.
+- Once detached, `resetDeadline` no longer arms a write deadline on the hijacked connection's behalf, so a detached tunnel isn't killed by the handler's idle timeout.
+- Added `TestIdleTimeoutWriterSupportsDetachment`, which asserts the writer is discoverable via `DetachResponseWriterAfterHijack` and that no write deadline is set after detachment.
+
+## Retry-match fix (unchanged from before)
+
+- `MatchExpression` now records, during `Provision`, which Caddy placeholders the expression references (via `{placeholder}` shorthand or `ph(req, "...")`) and whether any name is only known at evaluation time. Exposed as `PlaceholderNames() ([]string, bool)`.
+- `reverseproxy.go` replaced `matcherSetHasExpressionMatcher` with `matcherSetUsesResponsePlaceholders`, which treats only true response data (`{rp.status_code}`, `{rp.status_text}`, `{rp.header.*}`, upstream latency placeholders) as response conditions; everything else is a request condition again, and dynamic placeholder names conservatively count as possible response conditions.
+- Tests added in `celmatcher_test.go`, `reverseproxy/retries_test.go`, and `caddytest/integration/reverseproxy_test.go`.
+
+## Verification
+
+- `go test -count=1 ./caddytest/integration/ ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/` → all pass.
+- Stress test ran 5× consecutively and under `-race` → stable.
+- `go test -race -short ./...` → pass.
+- `go build ./...`, `go vet`, and `golangci-lint run ./caddytest/... ./modules/caddyhttp/...` → clean, `gofmt` clean.
+
+Note per the repo's AI contribution rules: this work is AI-assisted and should be disclosed and reviewed by a human operator before submission.

@@ -1,0 +1,33 @@
+All tests pass across the whole repo. Here's my summary.
+
+## Summary
+
+Fixed the Unix socket listener leak where a reload that moved off a Unix socket left the old socket accepting connections (clients hung instead of getting "connection refused") and left the socket file on disk until the next GC.
+
+### Root cause (`listen_unix.go`)
+
+1. **Leaked duplicated fd.** `unixListener.Close()` / `unixConn.Close()` called `File()` — which `dup()`s the listening descriptor — only to derive a name, but never closed that dup. The extra open fd kept the socket listening until Go's GC finalized the leaked `*os.File` (or forever with `GOGC=off`). This is exactly the "clears at the next GC" symptom.
+2. **Wrong unlink path.** The name came from `file.Name()`, which returns `"unix:/path->"`, not the filesystem path, so `syscall.Unlink` never removed the actual file.
+3. **Unconditional refcount decrement.** Closing the same holder twice released a second reference.
+4. **No serialization with listen.** The refcount/unlink races with a concurrent `reuseUnixSocket` on the same path.
+5. **Abstract sockets.** Nothing prevented unlinking a filesystem entry with the same `@name`.
+
+### Changes (`listen_unix.go`)
+
+- `reuseUnixSocket` now closes the temporary `socketFile` dup (`defer socketFile.Close()`), eliminating the fd leak.
+- `Close()` on both `unixListener` and `unixConn` now:
+  - guards with an `atomic.Bool` so a second close returns `net.ErrClosed` without releasing another reference;
+  - takes `unixSocketsMu` (the same lock `NetworkAddress.Listen` holds around reuse/create), so a close racing a new listen serializes correctly — the new listener either reuses the still-open socket (bumping the count) or binds a fresh file after the old one is unlinked;
+  - derives the path from `Addr()`/`LocalAddr()` (the real path) instead of `File().Name()`, and unlinks it only when the count reaches zero;
+  - skips unlinking for abstract sockets via the new `isAbstractUnixSocket` guard (Linux/Android `@`-prefixed names).
+- `reuseUnixSocket` short-circuits for abstract sockets so their (non-existent) files are never unlinked.
+
+### Tests (`listen_unix_test.go`, new)
+
+Covers all review requirements: reference-counted sharing keeps the file and socket alive until the last close; double close returns `net.ErrClosed` and doesn't release an extra reference; concurrent close/relisten leaves a working socket and file; abstract sockets never unlink a same-named filesystem path; plus immediate close-and-unlink for both stream and datagram sockets.
+
+### Verification
+
+- `go test -race -short ./...` passes (Unix tests also with `-count=5`).
+- `go build ./...` and cross-builds for linux/windows/darwin pass; `go vet` and `golangci-lint` clean.
+- Reproduced the issue's scenarios end-to-end with a built binary: moving the admin endpoint and a site `bind` off a Unix socket now removes the file immediately and returns connection-refused (`curl` exit 7, previously 28), and the new TCP/Unix listener serves normally.

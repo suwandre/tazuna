@@ -139,8 +139,12 @@ consistent; more runs and a second judge pass are needed before calling it. Next
 provider. DeepSeek in the own loop: judge 9 (best in the pool). BeatAPI's `deepseek-v4.1-flash-hc` is a second provider on par
 with CheaperInference (3/3, judge 9, $0.027, 641 s).
 0.0.57, Haiku 5.5 on rclone: Claude Code (subscription) 2/3, 118 turns, 47.6M input; own loop on BeatAPI 3/3, 1/3, 2/3
-at $0.03-0.06 per run (the 1/3 ended in empty replies: thinking lost in the OpenAI format); UnoRouter 2/3. Next: the
-Messages API for Claude models in the own loop; the DeepSeek A/B (0.0.53 vs 0.0.57) on BeatAPI HC off-peak.
+at $0.03-0.06 per run (the 1/3 ended in empty replies: thinking lost in the OpenAI format); UnoRouter 2/3.
+0.0.58-0.0.61 (see CHANGELOG): Claude on the Messages API (no more empty replies; costly at max effort on BeatAPI), GPT
+with `prompt_cache_key` (BeatAPI cache 18-47% -> 96-97%: Sol 3/3 $0.39, Luna 3/3 twice at $0.08-0.11), server-side
+clearing of old tool results for Claude, no more cut streams. DeepSeek 0.0.57 beats 0.0.53 (tests 23/24 vs 17/24, cost
+-42%). Next: one judge pool for all of it after the weekly reset; Luna on UnoRouter's caching group (a7-5053); Haiku at
+high effort instead of max.
 
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
 
@@ -302,6 +306,13 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   limit. CheaperInference: caddy-retry 2665 s 2/2 $0.103; rclone and caddy-unix hit an empty balance (earlier runs:
   rclone 694-1575 s, caddy-unix 578-2644 s, ~$0.02 each). Experiential Labs is not reliably faster (one quick run, one
   timeout) at 4-10x the cost: CheaperInference stays the cascade's provider. Its balance needs a top-up first.
+- 2026-10-16: Claude models on the own loop speak Anthropic's Messages API (thinking kept, effort set). Stripping older
+  thinking to keep the context small was ruled out: Anthropic requires every thinking block of a tool-use turn, and an
+  edit before a block invalidates it. Server-side context editing is the sanctioned trim (0.0.60).
+- 2026-10-16: gateways pool upstream accounts (BeatAPI full cache misses seconds after a hit; UnoRouter names its
+  account groups). Prompt caches and Haiku/Sonnet 5.5 thinking are bound to one account, so a gateway's cache rate and
+  thinking continuity are the gateway's property: probe a few calls before a paid run. UnoRouter is used only through a
+  group that caches, and only for open-source tasks.
 - 2026-10-13: Gemini 4 Argon (free for a while on Experiential Labs, 832,500 input tokens per hour; paid $2/$10 per M).
   As own-loop implementer: unusable on the free tier (4 parallel tasks used the hourly allowance in 5 minutes; one task
   needs 1.6-10M tokens; free answers carry an appended ad). As judge, 63 October patches vs Opus: r 0.90, same order

@@ -16,6 +16,53 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.61 (2026-10-16)
+
+Four own-loop changes, each measured on rclone (October set) with the build named; not judged yet (weekly limit).
+
+**0.0.58: Claude models (`claude-`) use Anthropic's Messages API.** Thinking goes back with the history (signature and
+all, as Anthropic requires during tool use), `thinking: adaptive` with `output_config.effort` (so max works), a top-level
+`cache_control` breakpoint that moves with the conversation, and all tool results of a turn in one user message. Through
+a gateway's Chat Completions the thinking was dropped and effort rejected: one of three Haiku runs ended in nothing but
+empty replies. Haiku 5.5 max on BeatAPI, 3 runs: no empty reply and no nudge in 139 calls, but kept thinking grew the
+context to 143-334K, past BeatAPI's 100K line where Haiku costs 5x; 16 calls missed the cache entirely (after calls held
+by BeatAPI's limit of 15 requests per minute per key, and some 12-22 s after a hit). About $3 billed for the three;
+stopped at 43-48 turns.
+
+**0.0.59: GPT models send `prompt_cache_key`** (the session id) on the Responses API. Probe on BeatAPI, same 10K-token
+prompt 4 times: without it 31% cached and ~3,800 more input tokens per call; with it 99.97% from the second call.
+
+| rclone, own loop, BeatAPI | tests | turns | input | cached | billed |
+|---|---|---|---|---|---|
+| GPT-6.1 Sol max, 0.0.58 | stopped | 29 | ~1.7M | 18% | $1.35 |
+| GPT-6.1 Sol max, 0.0.59 | 3/3 | 42 | 3.1M | 96.5% | $0.39 |
+| GPT-6 Luna max, 0.0.55, 2 runs | 3/3, 2/3 | | | 47% | ~$0.19 each |
+| GPT-6 Luna max, 0.0.60, 2 runs | 3/3, 3/3 | 70, 102 | 4.5M, 7.1M | 97% | $0.08, $0.11 counted |
+
+**0.0.60: Claude models clear old tool results on the server** (context editing, `clear_tool_uses_20250919`): above 80K
+input tokens the oldest go, the last 5 stay, at least 20K at a time. The context fell from 80K back to ~22K each time,
+but BeatAPI served 3 of the first 62 calls uncleared (106-198K): its upstreams differ. Haiku max still thought a lot
+(1.23M output tokens in 146 turns) and hit the 3-hour limit without finishing: ~$0.8 billed, no result. Max effort is
+not worth it for Haiku on this route.
+
+**0.0.61: the 180 s call limit is on the reply's start only;** a started stream may run 15 minutes. Cut at 180 s,
+UnoRouter's slow Luna calls (100-500 s) were billed anyway, with the input counted twice, and then sent again. Luna max
+on UnoRouter's default group with the fix, 2 runs: both hit the 3-hour limit without finishing (~100 turns in the first 2
+hours, 0% cached, calls of 100-500 s), $1.00 billed. BeatAPI did the same task in 17-19 minutes.
+
+Also measured:
+- **DeepSeek V4.1 Flash HC, 0.0.53 vs 0.0.57** (BeatAPI, same time, 3 tasks): tests 12/12 both, turns 528 vs 332,
+  input 48.4M vs 21.8M, $0.68 vs $0.30. With the round before (0.0.53 vs 0.0.55): tests 17/24 vs 23/24, input -32%, cost
+  -42%. Times not comparable (rate limit).
+- **GPT-6.1 Sol on UnoRouter** (0.0.58): 3/3, 70 turns, 4.3M input, 95% cached, $0.11 billed.
+- **UnoRouter** routes each model through groups of upstream accounts, set per API key. Luna probe, same 9K prompt 4
+  times per group key: a7-5053 and ih-cx hit the cache on every repeat (~$0.010 and ~$0.012 per M input effective);
+  CX-Sale-duck (the default) 1 in 3 (~$0.017); si (list price) 2 in 3 (~$0.068); a7-hlgbao1908-3844 never, and adds
+  ~2,500 prompt tokens per call. Its Luna reasons (77-322 output tokens for a two-character answer) but reports no
+  reasoning tokens; its Haiku returns no thinking at all.
+- **BeatAPI:** 15 requests per minute per key across all models; more than 2-3 runs at once only add waiting. It bills
+  cache writes at the 1-hour rate and settles minutes late.
+
 ## 0.0.57 (2026-10-15)
 
 **Claude models on a gateway's Chat Completions route:** no `reasoning_effort` for `claude-` models (BeatAPI rejects

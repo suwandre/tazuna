@@ -1,0 +1,25 @@
+All quality gates pass. Here's a summary of the change.
+
+## Summary
+
+**Root cause:** In `reuseUnixSocket` (`listen_unix.go`), when reusing an existing Unix socket, the code called `socket.File()` to obtain a duplicated file descriptor, then wrapped it in a new listener via `net.FileListener`/`net.FilePacketConn`. The `*os.File` returned by `File()` was never closed, so the dup'd fd stayed open. That extra fd kept the socket **listening** (with no one accepting) after the real listener was closed, and also kept the socket file on disk. The fd was finally released only when the `*os.File` was garbage-collected — matching the 2-minute forced-GC observation (and never, with `GOGC=off`).
+
+A secondary bug: `unixListener.Close()`/`unixConn.Close()` used `uln.File()` (another dup) merely to learn the socket path, and the unlink was conditional on `File()` succeeding; a second `Close()` decremented the reference count again, corrupting refcounting.
+
+**Fix** (`listen_unix.go`):
+1. `defer socketFile.Close()` in `reuseUnixSocket` — closes the dup'd fd so the socket is released immediately when the last holder closes it.
+2. `unixListener.Close()`/`unixConn.Close()` now use `Addr()`/`LocalAddr()` for the path (no dup), close the underlying listener *before* unlinking, and hold `unixSocketsMu` across counting + unlink so a concurrent re-listen on the same path can't be unlinked out from under.
+3. Added a `closed atomic.Bool` to both wrappers: a second `Close()` returns `net.ErrClosed` without releasing another reference.
+4. Added `isAbstractUnixSocket` (Linux/Android `@` prefix); abstract sockets are never unlinked, and `reuseUnixSocket` skips the pre-bind unlink for them.
+5. Struct literals converted to keyed fields (also resolves `govet` composite-literal concerns).
+
+**Tests** (`listen_unix_test.go`, new): cover immediate close+unlink for listeners and datagram conns, double-close returning `net.ErrClosed` without disturbing a sibling reference, reuse/unlink only at zero count, concurrent close racing a re-listen (leaving a working socket and file), and abstract sockets not unlinking a same-named filesystem path.
+
+**Verification:**
+- `go test -race -count=10 -run 'TestUnix|TestAbstract' .` — pass (all 8 new tests; they fail on the unpatched base, confirming the repro).
+- `go test -race -short ./...` — pass; `go test -count=1 ./caddytest/integration/...` — pass.
+- `go build ./...`, `go vet .`, and cross-compile/vet for `linux`, `windows`, `freebsd` — clean.
+- `golangci-lint run` — 0 issues.
+- Manual end-to-end repro: after reloading the admin endpoint off the Unix socket, `ls` shows `admin.sock` removed (no lingering `LISTEN`) rather than the client hanging.
+
+Note: I did not commit anything, and no issue/PR was created.

@@ -1,0 +1,13 @@
+Implemented symlink support for both ZIP and SquashFS archives.
+
+- Links are skipped by default, with a notice naming `-l/--links`.
+- With `--links`, links appear as `.rclonelink` objects with the target’s byte length and range/seek-aware reads.
+- Listings and `NewObject` agree, while regular `.rclonelink` members remain unchanged.
+- Added documentation and regression tests, including local symlink recreation and hostile-archive copy safety.
+
+Verified with a full build, direct CLI listing/copy checks, and:
+```sh
+go test ./backend/archive/... ./backend/local ./cmd/archive ./fs/sync ./vfs
+go test -race ./backend/archive/... ./backend/local ./cmd/archive
+```
+The existing ZIP and SquashFS integration tests also passed using the newly built binary.

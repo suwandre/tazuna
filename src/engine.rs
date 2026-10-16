@@ -1,6 +1,6 @@
-//! `tazuna engine`: tazuna's own agent loop for OpenAI-compatible providers (docs/OWN_LOOP.md, first slice). It reads and
-//! writes claude's stream-json on stdin/stdout, so `Live` drives it like the `claude` process: the run log, verification
-//! and the reviewer work unchanged. No streaming yet: each turn is one Chat Completions call.
+//! `tazuna engine`: tazuna's own agent loop for API providers (docs/OWN_LOOP.md). It reads and writes claude's stream-json
+//! on stdin/stdout, so `Live` drives it like the `claude` process: the run log, verification and the reviewer work
+//! unchanged. Each turn is one streamed call: Chat Completions, OpenAI's Responses or Anthropic's Messages API (see `Api`).
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
@@ -28,6 +28,28 @@ const CALL_TIMEOUT: Duration = Duration::from_secs(180);
 /// USD per token: input, cached input, output.
 type Price = (f64, f64, f64);
 
+/// Room for a Claude model's thinking and answer in one turn (the Messages API requires a limit).
+const MAX_OUTPUT: u32 = 64000;
+
+/// Claude models: above this many input tokens the server clears the oldest tool results (Anthropic's context editing),
+/// at least 20K at a time since each clearing rewrites the cache from that point. Below 100K, where BeatAPI's Haiku 5.5
+/// costs 5x: kept thinking grew one rclone run to 334K, and the calls above 100K were most of its cost.
+/// ponytail: one threshold for every Claude model; a per-model or per-provider value if a long-context model needs it
+const CLEAR_TOOLS_AT: u32 = 80000;
+
+/// The API a model is called through.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Api {
+    Chat,
+    /// OpenAI models: through Chat Completions with tools they do not reason at all (GPT-6 Luna: 0 reasoning tokens at any
+    /// effort; Responses: 54-98).
+    Responses,
+    /// Claude models (`claude-`): their thinking goes back with the history, as Anthropic requires during tool use, and
+    /// effort is set. Through a gateway's Chat Completions the thinking is dropped and effort rejected: Haiku 5.5 on BeatAPI
+    /// ended one rclone run in nothing but empty replies.
+    Messages,
+}
+
 pub fn serve(args: &[String]) -> Result<()> {
     crate::mcp::reap_left(); // background processes an earlier, killed engine left running
     let flag = |name: &str| args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone());
@@ -40,7 +62,7 @@ pub fn serve(args: &[String]) -> Result<()> {
     if std::env::var_os("TAZUNA_BATCH").is_some() {
         system.push_str(BATCH_RULE);
     }
-    let (call, responses, price) = connect(&url, &key_env, &model)?;
+    let (call, api, price) = connect(&url, &key_env, &model)?;
 
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
@@ -59,14 +81,14 @@ pub fn serve(args: &[String]) -> Result<()> {
     emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": []}));
     let mut loop_ = Loop {
         call,
-        responses,
+        api,
         system: system.clone(),
         model,
         effort,
         price,
         tools: tools.as_array().into_iter().flatten().map(|t| json!({"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["inputSchema"]}})).collect(),
-        // Responses keeps the system prompt in `instructions`
-        msgs: if responses { vec![] } else { vec![json!({"role": "system", "content": system})] },
+        // Responses and Messages keep the system prompt outside the history
+        msgs: if api == Api::Chat { vec![json!({"role": "system", "content": system})] } else { vec![] },
         server: crate::mcp::Server::new(cwd).with_read_dedupe(),
         session,
         cost: 0.0,
@@ -93,9 +115,7 @@ pub fn serve(args: &[String]) -> Result<()> {
 
 struct Loop {
     call: Box<dyn FnMut(&Value) -> Result<Value>>,
-    /// OpenAI models use the Responses API: through Chat Completions with tools they do not reason at all (GPT-6 Luna:
-    /// 0 reasoning tokens at any effort; Responses: 54-98).
-    responses: bool,
+    api: Api,
     system: String,
     model: String,
     /// `reasoning_effort` (low ... max); without it the provider's default, which can be far lower.
@@ -120,12 +140,15 @@ struct Loop {
     out: Box<dyn FnMut(&Value)>,
 }
 
-fn empty_reply(reply: &Value, responses: bool) -> bool {
-    if responses {
-        !reply["output"].as_array().is_some_and(|items| items.iter().any(|i| i["type"] == "function_call" || i["type"] == "message"))
-    } else {
-        let m = &reply["choices"][0]["message"];
-        m["content"].as_str().is_none_or(|t| t.trim().is_empty()) && m["tool_calls"].as_array().is_none_or(|c| c.is_empty())
+fn empty_reply(reply: &Value, api: Api) -> bool {
+    match api {
+        Api::Responses => !reply["output"].as_array().is_some_and(|items| items.iter().any(|i| i["type"] == "function_call" || i["type"] == "message")),
+        // thinking alone is empty: nothing to show and nothing to run
+        Api::Messages => !reply["content"].as_array().is_some_and(|bs| bs.iter().any(|b| b["type"] == "tool_use" || b["text"].as_str().is_some_and(|t| !t.trim().is_empty()))),
+        Api::Chat => {
+            let m = &reply["choices"][0]["message"];
+            m["content"].as_str().is_none_or(|t| t.trim().is_empty()) && m["tool_calls"].as_array().is_none_or(|c| c.is_empty())
+        }
     }
 }
 
@@ -181,22 +204,43 @@ impl Loop {
                 return end(self, "error_max_budget_usd", format!("[stopped: ${cap:.2} spent]"), turns, usage);
             }
             (self.out)(&json!({"type": "stream_event", "event": {"type": "message_start"}}));
-            let body = if self.responses {
-                // stateless (store: false): earlier reasoning comes back encrypted and is sent again with the history
-                let tools: Vec<Value> = self.tools.iter().map(|t| json!({"type": "function", "name": t["function"]["name"], "description": t["function"]["description"], "parameters": t["function"]["parameters"]})).collect();
-                let mut b = json!({"model": self.model, "instructions": self.system, "input": self.msgs, "tools": tools, "store": false, "include": ["reasoning.encrypted_content"]});
-                if let Some(e) = &self.effort {
-                    b["reasoning"] = json!({"effort": e});
+            let body = match self.api {
+                Api::Responses => {
+                    // stateless (store: false): earlier reasoning comes back encrypted and is sent again with the history.
+                    // The cache key keeps a conversation on one cache: without it BeatAPI cached 18-47% of GPT input
+                    // (99.97% with it, from the second call on)
+                    let tools: Vec<Value> = self.tools.iter().map(|t| json!({"type": "function", "name": t["function"]["name"], "description": t["function"]["description"], "parameters": t["function"]["parameters"]})).collect();
+                    let mut b = json!({"model": self.model, "instructions": self.system, "input": self.msgs, "tools": tools, "store": false,
+                        "include": ["reasoning.encrypted_content"], "prompt_cache_key": self.session});
+                    if let Some(e) = &self.effort {
+                        b["reasoning"] = json!({"effort": e});
+                    }
+                    b
                 }
-                b
-            } else {
-                let mut b = json!({"model": self.model, "messages": self.msgs, "tools": self.tools});
-                // Claude models with adaptive thinking (Haiku 5.5) reject an effort in this format on gateways
-                // (BeatAPI: "requires adaptive thinking"); without it they run at the gateway's default effort
-                if let Some(e) = self.effort.as_ref().filter(|_| !self.model.starts_with("claude-")) {
-                    b["reasoning_effort"] = json!(e);
+                Api::Messages => {
+                    let tools: Vec<Value> = self.tools.iter().map(|t| json!({"name": t["function"]["name"], "description": t["function"]["description"], "input_schema": t["function"]["parameters"]})).collect();
+                    // adaptive is the only thinking mode from Claude 4.7 on; the top-level cache breakpoint moves to the
+                    // end of the conversation on each call
+                    let mut b = json!({"model": self.model, "max_tokens": MAX_OUTPUT, "messages": self.msgs, "tools": tools,
+                        "thinking": {"type": "adaptive"}, "cache_control": {"type": "ephemeral"},
+                        "context_management": {"edits": [{"type": "clear_tool_uses_20250919",
+                            "trigger": {"type": "input_tokens", "value": CLEAR_TOOLS_AT}, "keep": {"type": "tool_uses", "value": 5},
+                            "clear_at_least": {"type": "input_tokens", "value": 20000}}]}});
+                    if !self.system.is_empty() {
+                        b["system"] = json!(self.system);
+                    }
+                    if let Some(e) = &self.effort {
+                        b["output_config"] = json!({"effort": e});
+                    }
+                    b
                 }
-                b
+                Api::Chat => {
+                    let mut b = json!({"model": self.model, "messages": self.msgs, "tools": self.tools});
+                    if let Some(e) = &self.effort {
+                        b["reasoning_effort"] = json!(e);
+                    }
+                    b
+                }
             };
             let mut reply = match (self.call)(&body) {
                 Ok(r) => r,
@@ -205,7 +249,7 @@ impl Loop {
             // an empty reply (no text, no call) is a provider hiccup, not an answer: the same request again, up to 3
             // times (a saturated gateway sent three in a row, and the task ended on them)
             for wait in [5, 15, 30] {
-                if !empty_reply(&reply, self.responses) {
+                if !empty_reply(&reply, self.api) {
                     break;
                 }
                 std::thread::sleep(Duration::from_secs(if cfg!(test) { 0 } else { wait }));
@@ -216,15 +260,24 @@ impl Loop {
             }
             turns += 1;
             let u = &reply["usage"];
-            // either API's field names: some gateways answer the Responses API with Chat Completions usage (UnoRouter)
-            let n = |chat: &Value, resp: &Value| {
-                let (a, b) = if self.responses { (resp, chat) } else { (chat, resp) };
-                a.as_u64().or(b.as_u64()).unwrap_or(0)
+            let (prompt, out, cached, written) = if self.api == Api::Messages {
+                // Anthropic's input_tokens leaves out cache reads and writes
+                let n = |k: &str| u[k].as_u64().unwrap_or(0);
+                let (read, written) = (n("cache_read_input_tokens"), n("cache_creation_input_tokens"));
+                (n("input_tokens") + read + written, n("output_tokens"), read, written)
+            } else {
+                // either API's field names: some gateways answer the Responses API with Chat Completions usage (UnoRouter)
+                let n = |chat: &Value, resp: &Value| {
+                    let (a, b) = if self.api == Api::Responses { (resp, chat) } else { (chat, resp) };
+                    a.as_u64().or(b.as_u64()).unwrap_or(0)
+                };
+                let prompt = n(&u["prompt_tokens"], &u["input_tokens"]);
+                (prompt, n(&u["completion_tokens"], &u["output_tokens"]), n(&u["prompt_tokens_details"]["cached_tokens"], &u["input_tokens_details"]["cached_tokens"]).min(prompt), 0)
             };
-            let (prompt, out) = (n(&u["prompt_tokens"], &u["input_tokens"]), n(&u["completion_tokens"], &u["output_tokens"]));
-            let cached = n(&u["prompt_tokens_details"]["cached_tokens"], &u["input_tokens_details"]["cached_tokens"]).min(prompt);
-            // the billed cost when the provider reports it (CheaperInference, OpenRouter), else the price list
-            self.cost += u["cost"].as_f64().unwrap_or((prompt - cached) as f64 * self.price.0 + cached as f64 * self.price.1 + out as f64 * self.price.2);
+            // the billed cost when the provider reports it (CheaperInference, OpenRouter), else the price list; a cache write
+            // costs 1.25x input (Anthropic, 5 minutes)
+            self.cost += u["cost"].as_f64().unwrap_or((prompt - cached) as f64 * self.price.0 + written as f64 * self.price.0 * 0.25
+                + cached as f64 * self.price.1 + out as f64 * self.price.2);
             for (sum, n) in usage.iter_mut().zip([prompt - cached, cached, out]) {
                 *sum += n;
             }
@@ -232,25 +285,41 @@ impl Loop {
                 "usage": {"input_tokens": prompt - cached, "cache_creation_input_tokens": 0, "cache_read_input_tokens": cached, "output_tokens": out}}}));
 
             // text and calls as (id, name, arguments), in Chat Completions' shape for both APIs
-            let (text, calls): (String, Vec<Value>) = if self.responses {
-                let items = reply["output"].as_array().cloned().unwrap_or_default();
-                let text = items.iter().filter(|i| i["type"] == "message").flat_map(|i| i["content"].as_array().cloned().unwrap_or_default())
-                    .filter_map(|c| c["text"].as_str().map(String::from)).collect::<Vec<_>>().join("\n");
-                let calls = items.iter().filter(|i| i["type"] == "function_call")
-                    .map(|i| json!({"id": i["call_id"], "function": {"name": i["name"], "arguments": i["arguments"]}})).collect();
-                self.msgs.extend(items); // reasoning, messages and calls go back as they came
-                (text, calls)
-            } else {
-                let m = &reply["choices"][0]["message"];
-                let text = m["content"].as_str().unwrap_or_default().to_string();
-                let calls: Vec<Value> = m["tool_calls"].as_array().cloned().unwrap_or_default();
-                // only what the next call needs; reasoning fields are not sent back (some providers reject them)
-                let mut keep = json!({"role": "assistant", "content": text});
-                if !calls.is_empty() {
-                    keep["tool_calls"] = json!(calls);
+            let (text, calls): (String, Vec<Value>) = match self.api {
+                Api::Responses => {
+                    let items = reply["output"].as_array().cloned().unwrap_or_default();
+                    let text = items.iter().filter(|i| i["type"] == "message").flat_map(|i| i["content"].as_array().cloned().unwrap_or_default())
+                        .filter_map(|c| c["text"].as_str().map(String::from)).collect::<Vec<_>>().join("\n");
+                    let calls = items.iter().filter(|i| i["type"] == "function_call")
+                        .map(|i| json!({"id": i["call_id"], "function": {"name": i["name"], "arguments": i["arguments"]}})).collect();
+                    self.msgs.extend(items); // reasoning, messages and calls go back as they came
+                    (text, calls)
                 }
-                self.msgs.push(keep);
-                (text, calls)
+                Api::Messages => {
+                    // thinking (with its signature), text and calls go back as they came; empty text blocks are rejected
+                    let blocks: Vec<Value> = reply["content"].as_array().cloned().unwrap_or_default().into_iter()
+                        .filter(|b| b["type"] != "text" || b["text"].as_str().is_some_and(|t| !t.is_empty())).collect();
+                    let text = blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n");
+                    let calls = blocks.iter().filter(|b| b["type"] == "tool_use")
+                        .map(|b| json!({"id": b["id"], "function": {"name": b["name"], "arguments": b["input"]}})).collect();
+                    // a turn of thinking alone is not kept: the nudge that follows is the next user turn
+                    if blocks.iter().any(|b| b["type"] == "text" || b["type"] == "tool_use") {
+                        self.msgs.push(json!({"role": "assistant", "content": blocks}));
+                    }
+                    (text, calls)
+                }
+                Api::Chat => {
+                    let m = &reply["choices"][0]["message"];
+                    let text = m["content"].as_str().unwrap_or_default().to_string();
+                    let calls: Vec<Value> = m["tool_calls"].as_array().cloned().unwrap_or_default();
+                    // only what the next call needs; reasoning fields are not sent back (some providers reject them)
+                    let mut keep = json!({"role": "assistant", "content": text});
+                    if !calls.is_empty() {
+                        keep["tool_calls"] = json!(calls);
+                    }
+                    self.msgs.push(keep);
+                    (text, calls)
+                }
             };
             let mut blocks = vec![];
             if !text.is_empty() {
@@ -296,21 +365,24 @@ impl Loop {
                         Permit::Stop => return end(self, "error_during_execution", "[interrupted]".into(), turns, usage),
                     },
                 };
-                self.msgs.push(if self.responses {
-                    json!({"type": "function_call_output", "call_id": id, "output": text})
-                } else {
-                    json!({"role": "tool", "tool_call_id": id, "content": text})
-                });
+                match self.api {
+                    Api::Responses => self.msgs.push(json!({"type": "function_call_output", "call_id": id, "output": text})),
+                    Api::Chat => self.msgs.push(json!({"role": "tool", "tool_call_id": id, "content": text})),
+                    Api::Messages => {} // all results in one user turn, below
+                }
                 results.push(json!({"type": "tool_result", "tool_use_id": id, "content": text, "is_error": is_error}));
+            }
+            if self.api == Api::Messages {
+                self.msgs.push(json!({"role": "user", "content": results}));
             }
             (self.out)(&json!({"type": "user", "message": {"role": "user", "content": results}}));
         }
     }
 }
 
-/// A model call through the provider, its prices, and whether it takes the Responses API. Removes the key from this
-/// process's environment: the agent's commands inherit it and must not see the key.
-fn connect(url: &str, key_env: &str, model: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, bool, Price)> {
+/// A model call through the provider, the API it takes, and its prices. Removes the key from this process's environment:
+/// the agent's commands inherit it and must not see the key.
+fn connect(url: &str, key_env: &str, model: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, Api, Price)> {
     let key = std::env::var(key_env).with_context(|| format!("{key_env} not set"))?;
     // SAFETY: called before any other thread starts.
     unsafe { std::env::remove_var(key_env) };
@@ -319,12 +391,12 @@ fn connect(url: &str, key_env: &str, model: &str) -> Result<(Box<dyn FnMut(&Valu
         // call and never answered stall a run for an hour across the retries (GLM on Experiential Labs, 2026-10-12)
         .timeout_global(Some(CALL_TIMEOUT)).http_status_as_error(false).build().into();
     // retried like model calls: one benchmark run died at startup on a model-list request that never answered
-    let (price, responses) = [2, 8, 30].iter().find_map(|w| price(&http, url, &key, model).map_err(|e| {
+    let (price, api) = [2, 8, 30].iter().find_map(|w| price(&http, url, &key, model).map_err(|e| {
         eprintln!("model list failed ({e:#}); retrying in {w}s");
         std::thread::sleep(Duration::from_secs(*w));
     }).ok()).map_or_else(|| price(&http, url, &key, model), Ok)?;
     let url = url.to_string();
-    Ok((Box::new(move |body: &Value| chat(&http, &url, &key, body)), responses, price))
+    Ok((Box::new(move |body: &Value| chat(&http, &url, &key, api, body)), api, price))
 }
 
 /// The explorer's own tools instead of bash: no shell, fixed arguments, paths inside the repo only. (A word list over bash
@@ -400,7 +472,7 @@ pub fn explore_serve(args: &[String]) -> Result<()> {
     let key_env = flag("--key-env").context("--key-env")?;
     let model = flag("--model").context("--model")?;
     let effort = flag("--effort").or(Some("max".into()));
-    let (call, responses, price) = connect(&url, &key_env, &model)?;
+    let (call, api, price) = connect(&url, &key_env, &model)?;
     let cwd = std::env::current_dir()?;
     let mut tools: Vec<Value> = crate::mcp::tools().as_array().into_iter().flatten()
         .filter(|t| t["name"] == "read")
@@ -411,7 +483,7 @@ pub fn explore_serve(args: &[String]) -> Result<()> {
     let sink = answer.clone();
     let mut l = Loop {
         call,
-        responses,
+        api,
         system: EXPLORE_PROMPT.into(),
         model,
         effort,
@@ -446,7 +518,7 @@ pub fn explore_serve(args: &[String]) -> Result<()> {
             "tools/call" => {
                 let question = msg["params"]["arguments"]["question"].as_str().unwrap_or_default().to_string();
                 // a fresh conversation per question: answers stay focused and its context small
-                l.msgs = if l.responses { vec![] } else { vec![json!({"role": "system", "content": l.system})] };
+                l.msgs = if l.api == Api::Chat { vec![json!({"role": "system", "content": l.system})] } else { vec![] };
                 let before = l.cost;
                 l.run(&json!(question), false, &rx);
                 if let Some(f) = &costs {
@@ -543,30 +615,41 @@ fn emit(e: &Value) {
     let _ = writeln!(out, "{e}").and_then(|_| out.flush());
 }
 
-/// One model call (Chat Completions, or Responses for a body with `input`). Rate limits, server errors, timeouts and dropped
+/// One model call through `api`. Rate limits, server errors, timeouts and dropped
 /// connections get more tries over about 15 minutes: two of 18 benchmark runs hung on a call that never answered, a short
 /// network outage ended a 38-minute run when the tries spanned only 40 s, and a free model "at capacity" (HTTP 429) ended
 /// all seven runs of a benchmark when they spanned 4 minutes.
-fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value> {
-    let responses = body.get("input").is_some();
-    let path = if responses { "responses" } else { "chat/completions" };
+fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Result<Value> {
+    let path = match api {
+        Api::Chat => "chat/completions",
+        Api::Responses => "responses",
+        Api::Messages => "messages",
+    };
     // streamed by default: gateways cap a reply that is not streamed (UnoRouter: complete within 90 s, which a 130K-token
     // prompt cannot meet, and the task ended with a 413); the answer itself is the same. TAZUNA_STREAM=0 turns it off.
     let stream = std::env::var("TAZUNA_STREAM").map_or(true, |v| v != "0");
     let mut body = body.clone();
     if stream {
         body["stream"] = json!(true);
-        if !responses {
+        if api == Api::Chat {
             body["stream_options"] = json!({"include_usage": true});
         }
     }
     let body = body.to_string();
     // a call that times out is tried again with twice the time (up to 15 minutes): a slow provider's long reasoning answer
-    // (MiMo V2.6 Pro at the official ~30 tok/s) takes over 3 minutes and was cut off at 180 s on every try
+    // (MiMo V2.6 Pro at the official ~30 tok/s) takes over 3 minutes and was cut off at 180 s on every try. The limit is on
+    // the reply's start; a stream that has started may run 15 minutes: cut at 180 s, UnoRouter's slow Luna calls were
+    // billed anyway (with the input twice) and then sent again.
     let mut limit = CALL_TIMEOUT;
     for wait in [2, 8, 30, 60, 120, 120, 120, 120, 120, 120, 120, 0] {
-        let sent = http.post(format!("{url}/{path}")).config().timeout_global(Some(limit)).build()
-            .header("Authorization", format!("Bearer {key}")).header("Content-Type", "application/json").send(&body)
+        let req = http.post(format!("{url}/{path}")).config().timeout_recv_response(Some(limit))
+            .timeout_global(Some(Duration::from_secs(900))).build().header("Content-Type", "application/json");
+        let req = match api {
+            Api::Messages => req.header("x-api-key", key).header("anthropic-version", "2023-06-01")
+                .header("anthropic-beta", "context-management-2025-06-27"),
+            _ => req.header("Authorization", format!("Bearer {key}")),
+        };
+        let sent = req.send(&body)
             .and_then(|mut r| Ok((r.status().as_u16(), r.body_mut().with_config().limit(50 << 20).read_to_string()?)));
         let (status, text) = match sent {
             Ok(st) => st,
@@ -581,7 +664,7 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, body: &Value) -> Result<Value>
             Err(e) => return Err(e.into()),
         };
         if status == 200 {
-            match sse(&text).map(|events| from_stream(&events, responses)) {
+            match sse(&text).map(|events| from_stream(&events, api)) {
                 // an error inside a stream (a gateway's upstream failed after the headers) is retried like a 5xx
                 Some(Err(e)) if wait > 0 => {
                     eprintln!("model call failed ({e:#}); retrying in {wait}s");
@@ -612,8 +695,38 @@ fn sse(text: &str) -> Option<Vec<Value>> {
 }
 
 /// A streamed reply put back into the shape of a reply that was not streamed.
-fn from_stream(events: &[Value], responses: bool) -> Result<Value> {
-    if responses {
+fn from_stream(events: &[Value], api: Api) -> Result<Value> {
+    if api == Api::Messages {
+        // blocks start whole and grow by deltas: text, thinking, signature, and a tool's input as pieces of JSON
+        let (mut blocks, mut usage) = (Vec::<Value>::new(), json!({}));
+        for e in events {
+            match e["type"].as_str().unwrap_or_default() {
+                "error" => bail!("provider error in stream: {}", e.to_string().chars().take(300).collect::<String>()),
+                "message_start" => usage = e["message"]["usage"].clone(),
+                "content_block_start" => blocks.push(e["content_block"].clone()),
+                "content_block_delta" => {
+                    let i = e["index"].as_u64().map_or(blocks.len().saturating_sub(1), |i| i as usize);
+                    let Some(b) = blocks.get_mut(i) else { continue };
+                    for k in ["text", "thinking", "signature", "partial_json"] {
+                        if let Some(part) = e["delta"][k].as_str() {
+                            b[k] = json!(format!("{}{part}", b[k].as_str().unwrap_or_default()));
+                        }
+                    }
+                }
+                // the final output count, and on some servers the input counts again
+                "message_delta" => usage.as_object_mut().into_iter().for_each(|u| u.extend(e["usage"].as_object().cloned().unwrap_or_default())),
+                _ => {}
+            }
+        }
+        for b in blocks.iter_mut().filter(|b| b["type"] == "tool_use") {
+            let input = b.as_object_mut().and_then(|o| o.remove("partial_json")).and_then(|j| j.as_str().map(String::from));
+            if let Some(j) = input.filter(|j| !j.trim().is_empty()) {
+                b["input"] = serde_json::from_str(&j).unwrap_or(json!({}));
+            }
+        }
+        return Ok(json!({"content": blocks, "usage": usage}));
+    }
+    if api == Api::Responses {
         // the closing event carries the whole response
         if let Some(e) = events.iter().find(|e| e["type"] == "error" || e["type"] == "response.failed") {
             bail!("provider error in stream: {}", e.to_string().chars().take(300).collect::<String>());
@@ -658,17 +771,17 @@ fn from_stream(events: &[Value], responses: bool) -> Result<Value> {
     Ok(json!({"choices": [{"message": message}], "usage": usage}))
 }
 
-/// The model's prices from the provider's model list (per million tokens there, per token here), and whether it is an
-/// OpenAI model (Responses API).
-fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price, bool)> {
+/// The model's prices from the provider's model list (per million tokens there, per token here), and the API it takes.
+fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price, Api)> {
     let mut r = http.get(format!("{url}/models")).header("Authorization", format!("Bearer {key}")).call()?;
     let list: Value = serde_json::from_str(&r.body_mut().with_config().limit(50 << 20).read_to_string()?)?;
     let m = list["data"].as_array().into_iter().flatten().find(|m| m["id"] == model).with_context(|| format!("{model} is not in {url}/models"))?;
     // a provider whose list has no prices (apinex): `TAZUNA_PRICE=input,cached,output` in USD per million
-    match std::env::var("TAZUNA_PRICE") {
-        Ok(v) => Ok((price_override(&v)?, model.starts_with("gpt-"))),
-        Err(_) => parse_price(m),
-    }
+    let (p, openai) = match std::env::var("TAZUNA_PRICE") {
+        Ok(v) => (price_override(&v)?, model.starts_with("gpt-")),
+        Err(_) => parse_price(m)?,
+    };
+    Ok((p, if model.starts_with("claude-") { Api::Messages } else if openai { Api::Responses } else { Api::Chat }))
 }
 
 fn price_override(v: &str) -> Result<Price> {
@@ -713,7 +826,7 @@ mod tests {
 data: {\"choices\":[{\"delta\":{\"content\":\"look.\",\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"pa\"}}]}}]}\n\n\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"th\\\":\\\"a\\\"}\"}}]}}]}\n\n\
 data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":3}}\n\ndata: [DONE]\n";
-        let r = from_stream(&sse(chat).unwrap(), false).unwrap();
+        let r = from_stream(&sse(chat).unwrap(), Api::Chat).unwrap();
         let m = &r["choices"][0]["message"];
         assert_eq!(m["content"], "Let me look.");
         assert_eq!(m["tool_calls"][0]["id"], "c1");
@@ -723,14 +836,80 @@ data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":3}}\
         let gapped = "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":1,\"id\":\"t1\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\"}}]}}]}\n\n\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"function\":{\"arguments\":\"}\"}}]}}]}\n\n\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"t2\",\"function\":{\"name\":\"read\",\"arguments\":\"{}\"}}]}}]}\n";
-        let g = from_stream(&sse(gapped).unwrap(), false).unwrap();
+        let g = from_stream(&sse(gapped).unwrap(), Api::Chat).unwrap();
         let calls = g["choices"][0]["message"]["tool_calls"].as_array().unwrap();
         assert_eq!(calls.len(), 2, "no empty call for index 0");
         assert_eq!((calls[0]["function"]["name"].as_str(), calls[0]["function"]["arguments"].as_str()), (Some("bash"), Some("{}")));
         assert_eq!(calls[1]["id"], "t2");
         let resp = "event: response.created\ndata: {\"type\":\"response.created\"}\n\nevent: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[],\"usage\":{\"input_tokens\":5}}}\n";
-        assert_eq!(from_stream(&sse(resp).unwrap(), true).unwrap()["usage"]["input_tokens"], 5);
+        assert_eq!(from_stream(&sse(resp).unwrap(), Api::Responses).unwrap()["usage"]["input_tokens"], 5);
         assert!(sse("{\"choices\":[]}").is_none(), "a plain JSON reply is used as it is");
+    }
+
+    #[test]
+    fn messages_api_keeps_thinking_and_sends_results_in_one_turn() {
+        let stream = "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"cache_read_input_tokens\":900,\"cache_creation_input_tokens\":90,\"output_tokens\":1}}}\n\n\
+data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"\"}}\n\n\
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"read both\"}}\n\n\
+data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"signature_delta\",\"signature\":\"sig\"}}\n\n\
+data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n\
+data: {\"type\":\"content_block_start\",\"index\":2,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t1\",\"name\":\"read\",\"input\":{}}}\n\n\
+data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\"}}\n\n\
+data: {\"type\":\"content_block_delta\",\"index\":2,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\\\"a.txt\\\"}\"}}\n\n\
+data: {\"type\":\"content_block_start\",\"index\":3,\"content_block\":{\"type\":\"tool_use\",\"id\":\"t2\",\"name\":\"read\",\"input\":{}}}\n\n\
+data: {\"type\":\"content_block_delta\",\"index\":3,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"{\\\"path\\\":\\\"b.txt\\\"}\"}}\n\n\
+data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"tool_use\"},\"usage\":{\"output_tokens\":40}}\n\n\
+data: {\"type\":\"message_stop\"}\n";
+        let first = from_stream(&sse(stream).unwrap(), Api::Messages).unwrap();
+        assert_eq!(first["content"][0], json!({"type": "thinking", "thinking": "read both", "signature": "sig"}));
+        assert_eq!(first["content"][2], json!({"type": "tool_use", "id": "t1", "name": "read", "input": {"path": "a.txt"}}));
+        assert_eq!((first["usage"]["input_tokens"].as_u64(), first["usage"]["output_tokens"].as_u64()), (Some(10), Some(40)));
+        assert!(from_stream(&sse("data: {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\"}}\n").unwrap(), Api::Messages).is_err());
+
+        let dir = std::env::temp_dir().join(format!("tazuna-messages-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        let replies = Rc::new(RefCell::new(VecDeque::from([first, json!({"content": [{"type": "text", "text": "done"}], "usage": {"input_tokens": 5}})])));
+        let sent = Rc::new(RefCell::new(vec![]));
+        let (r, s) = (replies.clone(), sent.clone());
+        let mut l = Loop {
+            call: Box::new(move |b: &Value| {
+                s.borrow_mut().push(b.clone());
+                Ok(r.borrow_mut().pop_front().unwrap())
+            }),
+            api: Api::Messages,
+            system: "sys".into(),
+            model: "claude-haiku-5-5".into(),
+            effort: Some("max".into()),
+            price: (1e-6, 1e-7, 4e-6),
+            tools: vec![],
+            msgs: vec![],
+            server: crate::mcp::Server::new(dir.clone()),
+            session: "s".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
+            out: Box::new(|_: &Value| {}),
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("read a and b"), false, &rx);
+        let sent = sent.borrow();
+        assert_eq!((sent[0]["system"].as_str(), sent[0]["output_config"]["effort"].as_str()), (Some("sys"), Some("max")));
+        assert_eq!(sent[0]["context_management"]["edits"][0]["trigger"]["value"], CLEAR_TOOLS_AT);
+        let msgs = sent[1]["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 3, "user, assistant, one user turn with both results");
+        assert_eq!(msgs[1]["content"][0]["signature"], "sig", "thinking goes back with its signature");
+        assert_eq!(msgs[1]["content"].as_array().unwrap().len(), 3, "the empty text block is dropped");
+        let results = msgs[2]["content"].as_array().unwrap();
+        assert_eq!((results.len(), results[0]["tool_use_id"].as_str(), results[1]["tool_use_id"].as_str()), (2, Some("t1"), Some("t2")));
+        assert_eq!(results[1]["content"].as_str().unwrap().trim_end(), "b");
+        // 10 in + 90 written at 1.25x + 900 read + 40 out, then 5 in
+        let want = 10.0 * 1e-6 + 90.0 * 1.25e-6 + 900.0 * 1e-7 + 40.0 * 4e-6 + 5.0 * 1e-6;
+        assert!((l.cost - want).abs() < 1e-12, "{}", l.cost);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -746,7 +925,7 @@ data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"t2\",\"fun
                 s.borrow_mut().push(b.clone());
                 Ok(r.borrow_mut().pop_front().unwrap())
             }),
-            responses: false,
+            api: Api::Chat,
             system: "sys".into(),
             model: "m".into(),
             effort: None,
@@ -789,7 +968,7 @@ data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"t2\",\"fun
                 s.borrow_mut().push(b.clone());
                 Ok(r.borrow_mut().pop_front().unwrap())
             }),
-            responses: false,
+            api: Api::Chat,
             system: "sys".into(),
             model: "m".into(),
             effort: None,
@@ -830,7 +1009,7 @@ data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"t2\",\"fun
                 *c.borrow_mut() += 1;
                 Ok(json!({"choices": [{"message": {"content": "done"}}], "usage": {"cost": 1.2}}))
             }),
-            responses: false,
+            api: Api::Chat,
             system: String::new(),
             model: "m".into(),
             effort: None,
@@ -875,7 +1054,7 @@ data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":2,\"id\":\"t2\",\"fun
         ]));
         Loop {
             call: Box::new(move |_: &Value| Ok(replies.borrow_mut().pop_front().unwrap())),
-            responses: false,
+            api: Api::Chat,
             system: String::new(),
             model: "m".into(),
             effort: None,

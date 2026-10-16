@@ -1,0 +1,23 @@
+I've completed the implementation. Here's a summary of what changed:
+
+## Summary
+
+The archive backend now exposes symbolic links from both ZIP and squashfs archives, following the convention used by the local backend.
+
+### Behavior
+- **Without `-l/--links`**: symlinks are skipped, and a notice naming the flag is logged (once per archive, so a crafted archive can't flood the log).
+- **With `--links`**: a symlink is listed under its name plus the `.rclonelink` suffix, with size = length of the target. Opening it (including `SeekOption`/`RangeOption`) reads back the target path, so `rclone copy --links :archive:...` recreates it on a destination that supports symlinks.
+- List and `NewObject` agree: a symlink is only found under its suffixed name; a regular member whose name ends in `.rclonelink` stays a regular file and matches literally.
+
+### Source changes
+- **`backend/archive/zip/zip.go`**: detect `file.Mode()&os.ModeSymlink`, apply the `.rclonelink` suffix before root matching, skip symlinks without `--links` with a notice, and record the `links` config on the Fs.
+- **`backend/archive/squashfs/squashfs.go`**: recognise `os.ModeSymlink` entries, read the target via a `readlinker` interface (`directoryEntry.Readlink`), and expose them as translated-link Objects. `NewObject`/`newObjectNative` now match the suffixed symlink name and skip symlinks when `--links` is off. Added `openTranslatedLink` to serve targets honouring offset/limit.
+
+### Tests
+- **zip** (`zip_internal_test.go`): listing/lookup with and without `--links`, target reads, seek/range, regular `.rclonelink` member, and a hostile-archive copy test (absolute and relative escaping symlink + member "inside" it) asserting nothing escapes the destination.
+- **squashfs** (`squashfs_internal_test.go` + new committed `testdata/links.sqfs` image with a symlink, an absolute symlink, and a regular `.rclonelink` file): same coverage.
+- **docs/content/archive.md**: documented the new symlink handling.
+
+### Verification
+- `go build ./...`, `gofmt`, `golangci-lint run ./backend/archive/...` (0 issues), `go test -race ./backend/archive/...` all pass.
+- Manually verified with real `zip`/`mksquashfs` archives that `rclone lsl --links` shows `.rclonelink` entries, plain listing skips them with a notice, and `rclone copy --links` recreates correct symlinks. A hostile archive does not write outside the destination (the local backend's `os.Root` handling blocks write-through).

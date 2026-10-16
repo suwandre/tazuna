@@ -1,0 +1,30 @@
+All changes are complete and verified. Here's a summary of what I changed:
+
+## Summary
+
+Added symbolic link support to both archivers in the archive backend, following the convention used by the local backend's `-l/--links` mode.
+
+### `backend/archive/zip/zip.go`
+- Added a `links` field set from `fs.GetConfig(ctx).Links` in `New`.
+- In `readZip`, an entry whose `zip.FileHeader.Mode()` has `os.ModeSymlink` is:
+  - skipped (with a notice naming `-l/--links`) when `--links` is off;
+  - exposed as `<name>.rclonelink` when `--links` is on. Its size is the entry's uncompressed size (which ZIP stores as the target length) and `Object.Open` already reads back the stored target, honouring range/seek.
+- `NewObject` and `List` agree automatically since both are served from the same dirtree. A regular member named `*.rclonelink` is untouched.
+
+### `backend/archive/squashfs/squashfs.go`
+- Added a `links` field and an `exposedName` helper that appends `fs.LinkSuffix` for symlinks (and hides them when `links` is off).
+- `objectFromFileInfo` now records the link target (via the entry's `Readlink`), sets the object size to the target length, and `Open` reads back the target via a new `openLink` helper that honours range/seek.
+- `List` and `newObjectNative` use `exposedName`, so they agree on which names exist; `newObjectNative` no longer calls `Info()` for every entry.
+- Fixed the single-file-root bookkeeping to use the exposed name (`f.file`), so a `.rclonelink` root resolves correctly.
+
+### Tests
+- `zip_internal_test.go`: `writeZipEntries` helper plus tests for skipping without links, listing/size/range/seek with links, regular `*.rclonelink` staying a file, and a hostile symlink-plus-member archive not escaping the destination.
+- `squashfs_internal_test.go`: new `symlinks.sqfs` fixture and matching tests for skip/with-links behaviour and `NewObject`/`List` agreement.
+
+### Docs
+- Added a "Symlinks" section to `docs/content/archive.md` describing the `--links` behaviour.
+
+### Verification
+- `gofmt`, `go vet`, and `golangci-lint` are clean on `backend/archive/...`.
+- `RCLONE_CONFIG=/notfound go test ./backend/archive/... ./fs/operations/ ./fs/sync/ ./backend/local/` passes (including `-race`).
+- Manually confirmed end-to-end with a built binary that `rclone lsl --links` shows `.rclonelink` entries and `rclone copy --links` recreates real symlinks, both for ZIP and squashfs, including the hostile escape case which is blocked.

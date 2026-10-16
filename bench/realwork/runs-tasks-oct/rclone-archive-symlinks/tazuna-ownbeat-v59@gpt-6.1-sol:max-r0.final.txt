@@ -1,0 +1,12 @@
+Implemented ZIP and SquashFS symlink support.
+
+- Symlinks are skipped by default with a notice naming `--links`.
+- With `--links`, they use `.rclonelink` names, target-path sizes, and range/seek-aware reads.
+- Listings and `NewObject` agree; regular suffix-named members remain readable normally.
+- Added documentation and regression tests, including copy round trips and protection against writes through escaping symlinks.
+
+Verified with:
+- Build and relevant archive, local, VFS, operations, and sync tests
+- Archive race tests
+- Existing ZIP/SquashFS integration tests
+- Targeted lint: 0 issues
