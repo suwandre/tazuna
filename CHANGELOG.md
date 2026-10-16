@@ -39,6 +39,13 @@ The fastest and cheapest Luna runs so far (not judged yet). UnoRouter reports fe
 before): **`bench/uno_route.py MODEL`** lists a model's groups by today's price (UnoRouter's public `/api/pricing`) and
 tests caching on the cheapest few with a growing conversation, through the `X-Group` header (no key per group).
 
+Other models through UnoRouter's cheapest group (probe, then one rclone run at max):
+- **MiMo V2.6 Flash:** UnoRouter 3/3, 211 turns, 105 minutes, 20.5M input, 98.5% cached, ~2.8 cents billed. BeatAPI
+  ($0.098 / $0.00196 / $0.196 per M, caches streamed calls): 147 calls in 99 minutes without changing a file (searching
+  and printing code only), stopped at ~15 cents. The UnoRouter probe had shown 0% cached (two calls of the same prompt
+  came back with different input counts), so a probe only rules out the obvious; a short real run decides.
+- **DeepSeek V4.1 Flash:** 0% cached in the probe on its two cheapest groups. **GLM 5.3** (si, $0.011 per M): 37%.
+
 ## 0.0.62 (2026-10-16)
 
 **The server-side clearing of old tool results (0.0.60) is removed.** Haiku 5.5 lost code it had read, read it again and

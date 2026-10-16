@@ -10,6 +10,8 @@ before went to another upstream (each adds its own hidden prompt).
     UNOROUTER_API_KEY=... ./uno_route.py gpt-6-luna [groups to test, default 3] [calls per group, default 8]
 
 Uses the key's own access with an `X-Group` header per group. Cost: about a cent per group at Luna's prices.
+A probe narrows the choice, a short real run decides: it was wrong both ways (a7-5053 passed and then missed most of a
+run; MiMo V2.6 Flash failed and then cached 98% of a run).
 """
 import json, os, random, sys, time, urllib.error, urllib.request
 
@@ -42,16 +44,21 @@ def probe(model, group, calls):
     for i in range(calls):
         chunk = TEXT[start + i * 4000: start + (i + 1) * 4000] if i else f"[{nonce}]\n" + TEXT[start: start + 24000]
         msgs.append({"role": "user", "content": chunk + "\n\nReply with OK only."})
-        body = {"model": model, "input": msgs, "store": False, "reasoning": {"effort": "low"}, "max_output_tokens": 64,
-                "prompt_cache_key": f"tz-route-{nonce}"}
+        # the API tazuna uses: Responses for GPT models, Chat Completions for the rest
+        if model.startswith("gpt-"):
+            path, body = "/v1/responses", {"model": model, "input": msgs, "store": False, "reasoning": {"effort": "low"},
+                                           "max_output_tokens": 64, "prompt_cache_key": f"tz-route-{nonce}"}
+        else:
+            path, body = "/v1/chat/completions", {"model": model, "messages": msgs, "max_tokens": 64}
         t = time.time()
         try:
-            r = get("/v1/responses", KEY, body, group)
+            r = get(path, KEY, body, group)
         except urllib.error.HTTPError as e:
             rows.append((None, None, f"HTTP {e.code}: {e.read().decode()[:80]}"))
             break
         u = r.get("usage", {})
-        rows.append((u.get("input_tokens", 0), (u.get("input_tokens_details") or {}).get("cached_tokens") or 0, f"{time.time() - t:.0f}s"))
+        det = u.get("input_tokens_details") or u.get("prompt_tokens_details") or {}
+        rows.append((u.get("input_tokens", u.get("prompt_tokens", 0)), det.get("cached_tokens") or u.get("prompt_cache_hit_tokens") or 0, f"{time.time() - t:.0f}s"))
         msgs.append({"role": "assistant", "content": "OK"})
         time.sleep(15)  # an agent's tool run between calls
     ok = [r for r in rows if r[0] is not None]

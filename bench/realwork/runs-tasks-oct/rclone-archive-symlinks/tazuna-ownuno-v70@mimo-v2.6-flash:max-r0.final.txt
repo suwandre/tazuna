@@ -1,0 +1,25 @@
+All tests pass. Here's a summary of the changes:
+
+## Summary
+
+Both archivers inside the `archive` backend (`zip` and `squashfs`) now handle symlinks the same way the local backend does, following the `-l/--links` (`.rclonelink`) convention.
+
+### `backend/archive/zip/zip.go`
+- Reads `ci.Links` from the context in `New` (stored on the Fs).
+- In `readZip`, entries with `os.ModeSymlink` are skipped unless `-l/--links` is set (counting them); when the flag is set they're exposed under `name + fs.LinkSuffix`. The size (`UncompressedSize64`) and the zip entry body already are the link target length/content, so `Open` (which honours seek/range) reads back the target unchanged.
+- Logs one notice when symlinks were skipped, naming `-l/--links`.
+- A regular member whose name happens to end in `.rclonelink` stays a regular file — the suffix is only *added* to symlink names, never stripped from regular ones, so `List` and `NewObject` agree.
+- Symlink targets aren't resolved, so a hostile link can't make a copy escape the destination (the local backend's `os.Root` protection covers the write side).
+
+### `backend/archive/squashfs/squashfs.go`
+- Same `-l/--links` handling: symlinks are skipped (with a notice naming the flag) unless the flag is set; with it they're listed under `name + fs.LinkSuffix`, sized to the length of the target (read via go-diskfs's `Readlink()`).
+- `Object.Open` returns the stored target honouring seek/range options (mirroring `openTranslatedLink` in the local backend), since go-diskfs can't open symlinks.
+- `newObjectNative` finds a symlink only under its suffixed name, so `NewObject` agrees with `List`.
+
+### Tests
+- `backend/archive/zip/zip_internal_test.go`: `TestReadZipSymlinksSkipped`, `TestReadZipSymlinksLinks` (listing/size/Open with seek+range, `*.rclonelink` regular files untouched, above-root target not escaping, List/NewObject agreement), `TestReadZipSymlinkRoot` (root pointing at a symlink → `fs.ErrorIsFile`, exposed under the suffixed name).
+- `backend/archive/squashfs/squashfs_internal_test.go` + new `testdata/symlink.sqfs`: `TestSymlinkSkipped`, `TestSymlinkLinks`, `TestSymlinkRoot`.
+- `backend/archive/archive_internal_test.go`: `TestArchiveSymlinkZip` — end-to-end: builds a real zip with `zip -ry`, checks the skipped-symlink notice, the `.rclonelink` listing, and that `sync.CopyDir` with `-l/--links` recreates the symlink on a local destination (the `rclone copy --links` scenario from the issue).
+
+### Verification
+- `go build ./...`, `go test ./backend/archive/...` (plus `-race`), `go vet`, `gofmt`, and `golangci-lint run ./backend/archive/...` (0 issues) all pass. `fs/sync` and `fs/operations` tests also still pass.
