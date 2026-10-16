@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.62 (2026-10-16)
+
+**The server-side clearing of old tool results (0.0.60) is removed.** Haiku 5.5 lost code it had read, read it again and
+never got to the change: at high effort on BeatAPI 163 turns, 0 edits, $0.45, stopped (60% cached: each clearing
+rewrites the cache); at max 146 turns without finishing (~$0.8). Keeping the last 5 tool results is too few, and a
+higher number would save little. Claude's context is left to grow; effort is the lever for its size.
+
+**GPT-6 Luna through UnoRouter's a7-5053 group** (the best of five group keys in a 4-call probe: every repeat cached):
+the real run cached 58% early and nothing after 10:20, calls took a median 77 s, and at 116 minutes and 37 turns the
+group went offline (`get_channel_failed`), ending the run; 9.1 cents billed. Its log shows why: a miss is billed as a
+cache write at 1.25x input (~10x a hit), and the input count fell five times between consecutive calls (100,236 ->
+93,400) although the history only grows: the group's upstreams add hidden prompts of different sizes, so a switch is a
+miss. A short probe cannot show this. GPT runs stay on BeatAPI with the cache key (97% cached, 17-19 minutes, $0.08-0.11).
+
 ## 0.0.61 (2026-10-16)
 
 Four own-loop changes, each measured on rclone (October set) with the build named; not judged yet (weekly limit).

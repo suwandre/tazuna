@@ -143,8 +143,9 @@ at $0.03-0.06 per run (the 1/3 ended in empty replies: thinking lost in the Open
 0.0.58-0.0.61 (see CHANGELOG): Claude on the Messages API (no more empty replies; costly at max effort on BeatAPI), GPT
 with `prompt_cache_key` (BeatAPI cache 18-47% -> 96-97%: Sol 3/3 $0.39, Luna 3/3 twice at $0.08-0.11), server-side
 clearing of old tool results for Claude, no more cut streams. DeepSeek 0.0.57 beats 0.0.53 (tests 23/24 vs 17/24, cost
--42%). Next: one judge pool for all of it after the weekly reset; Luna on UnoRouter's caching group (a7-5053); Haiku at
-high effort instead of max.
+-42%). Server-side clearing of tool results removed again in 0.0.62 (Haiku re-read and looped: 163 turns, 0 edits).
+Next: one judge pool for all of it after the weekly reset; Luna on UnoRouter's caching group (a7-5053, running); Haiku
+at high effort without clearing once BeatAPI is topped up.
 
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
 
@@ -308,7 +309,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   timeout) at 4-10x the cost: CheaperInference stays the cascade's provider. Its balance needs a top-up first.
 - 2026-10-16: Claude models on the own loop speak Anthropic's Messages API (thinking kept, effort set). Stripping older
   thinking to keep the context small was ruled out: Anthropic requires every thinking block of a tool-use turn, and an
-  edit before a block invalidates it. Server-side context editing is the sanctioned trim (0.0.60).
+  edit before a block invalidates it. Server-side context editing is the sanctioned trim (0.0.60), but clearing tool
+  results made Haiku re-read and loop, so it was removed in 0.0.62.
 - 2026-10-16: gateways pool upstream accounts (BeatAPI full cache misses seconds after a hit; UnoRouter names its
   account groups). Prompt caches and Haiku/Sonnet 5.5 thinking are bound to one account, so a gateway's cache rate and
   thinking continuity are the gateway's property: probe a few calls before a paid run. UnoRouter is used only through a

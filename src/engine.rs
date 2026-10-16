@@ -31,12 +31,6 @@ type Price = (f64, f64, f64);
 /// Room for a Claude model's thinking and answer in one turn (the Messages API requires a limit).
 const MAX_OUTPUT: u32 = 64000;
 
-/// Claude models: above this many input tokens the server clears the oldest tool results (Anthropic's context editing),
-/// at least 20K at a time since each clearing rewrites the cache from that point. Below 100K, where BeatAPI's Haiku 5.5
-/// costs 5x: kept thinking grew one rclone run to 334K, and the calls above 100K were most of its cost.
-/// ponytail: one threshold for every Claude model; a per-model or per-provider value if a long-context model needs it
-const CLEAR_TOOLS_AT: u32 = 80000;
-
 /// The API a model is called through.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Api {
@@ -222,10 +216,7 @@ impl Loop {
                     // adaptive is the only thinking mode from Claude 4.7 on; the top-level cache breakpoint moves to the
                     // end of the conversation on each call
                     let mut b = json!({"model": self.model, "max_tokens": MAX_OUTPUT, "messages": self.msgs, "tools": tools,
-                        "thinking": {"type": "adaptive"}, "cache_control": {"type": "ephemeral"},
-                        "context_management": {"edits": [{"type": "clear_tool_uses_20250919",
-                            "trigger": {"type": "input_tokens", "value": CLEAR_TOOLS_AT}, "keep": {"type": "tool_uses", "value": 5},
-                            "clear_at_least": {"type": "input_tokens", "value": 20000}}]}});
+                        "thinking": {"type": "adaptive"}, "cache_control": {"type": "ephemeral"}});
                     if !self.system.is_empty() {
                         b["system"] = json!(self.system);
                     }
@@ -645,8 +636,7 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
         let req = http.post(format!("{url}/{path}")).config().timeout_recv_response(Some(limit))
             .timeout_global(Some(Duration::from_secs(900))).build().header("Content-Type", "application/json");
         let req = match api {
-            Api::Messages => req.header("x-api-key", key).header("anthropic-version", "2023-06-01")
-                .header("anthropic-beta", "context-management-2025-06-27"),
+            Api::Messages => req.header("x-api-key", key).header("anthropic-version", "2023-06-01"),
             _ => req.header("Authorization", format!("Bearer {key}")),
         };
         let sent = req.send(&body)
@@ -898,7 +888,6 @@ data: {\"type\":\"message_stop\"}\n";
         l.run(&json!("read a and b"), false, &rx);
         let sent = sent.borrow();
         assert_eq!((sent[0]["system"].as_str(), sent[0]["output_config"]["effort"].as_str()), (Some("sys"), Some("max")));
-        assert_eq!(sent[0]["context_management"]["edits"][0]["trigger"]["value"], CLEAR_TOOLS_AT);
         let msgs = sent[1]["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 3, "user, assistant, one user turn with both results");
         assert_eq!(msgs[1]["content"][0]["signature"], "sig", "thinking goes back with its signature");
