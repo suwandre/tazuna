@@ -44,7 +44,7 @@ Other models through UnoRouter's cheapest group (probe, then one rclone run at m
   ($0.098 / $0.00196 / $0.196 per M, caches streamed calls): 147 calls in 99 minutes without changing a file (searching
   and printing code only), stopped at ~15 cents. The UnoRouter probe had shown 0% cached (two calls of the same prompt
   came back with different input counts), so a probe only rules out the obvious; a short real run decides.
-- **DeepSeek V4.1 Flash:** 0% cached in the probe on its two cheapest groups. **GLM 5.3** (si, $0.011 per M): 37%.
+- **DeepSeek V4.1 Flash:** UnoRouter 3/3, 174 turns, 30.3 minutes (1821 s), 18.7M input, 97.4% cached, ~3.2 cents billed ($0.021 counted). Both `ih-cb` and the `a7-*` groups cached ~100% in the probe once `uno_route.py` read `prompt_tokens` when `input_tokens` is `0` (`a7-*` returns `"input_tokens": 0` alongside `prompt_tokens`). **GLM 5.3** (si, $0.011 per M): 37%.
 
 ## 0.0.62 (2026-10-16)
 

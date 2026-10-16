@@ -58,7 +58,7 @@ def probe(model, group, calls):
             break
         u = r.get("usage", {})
         det = u.get("input_tokens_details") or u.get("prompt_tokens_details") or {}
-        rows.append((u.get("input_tokens", u.get("prompt_tokens", 0)), det.get("cached_tokens") or u.get("prompt_cache_hit_tokens") or 0, f"{time.time() - t:.0f}s"))
+        rows.append((u.get("input_tokens") or u.get("prompt_tokens") or 0, det.get("cached_tokens") or u.get("prompt_cache_hit_tokens") or 0, f"{time.time() - t:.0f}s"))
         msgs.append({"role": "assistant", "content": "OK"})
         time.sleep(15)  # an agent's tool run between calls
     ok = [r for r in rows if r[0] is not None]

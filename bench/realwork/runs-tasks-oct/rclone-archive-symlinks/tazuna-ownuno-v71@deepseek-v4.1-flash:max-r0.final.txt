@@ -1,0 +1,23 @@
+## Summary
+
+Added symbolic-link support to the `archive` backend, for both ZIP and squashfs, following the convention used by the local backend.
+
+### Behaviour
+- Symlinks in an archive are skipped unless `-l/--links` is in use. When any are skipped, a single NOTICE naming the flag is logged.
+- With `--links`, a symlink is exposed as an object named `<name>.rclonelink`, sized to the length of its target, whose `Open` returns the target path (honouring seek/range options). `rclone copy --links :archive:test.zip /tmp/out` therefore recreates symlinks at a destination that supports them.
+- `List` and `NewObject` agree on the names that exist; a regular member whose name ends in `.rclonelink` stays a regular file (it wins over a symlink whose translated name collides with it).
+- A hostile archive (symlink pointing outside plus a member "inside" it) is exposed faithfully but cannot make a copy write outside the destination — the local destination refuses the write-through, and a test proves it.
+
+### Changes
+- `backend/archive/archiver/archiver.go`: shared helpers `LinksEnabled`, `LinkRemote`, `UnlinkRemote`, `LogSkippedLinks`.
+- `backend/archive/zip/zip.go`: detect `os.ModeSymlink` entries; skip or translate them; defer symlinks so real `.rclonelink` members win; resolve a symlink Fs root given with or without the suffix.
+- `backend/archive/squashfs/squashfs.go`: read the target from `squashfs.StatT.LinkTarget`; skip or expose symlinks; add link handling to `List`, `NewObject`, single-object root detection and `Object.Open`/`Size`.
+- `docs/content/archive.md`: short "Symlinks" section.
+
+### Tests added
+- `zip_internal_test.go`: skipped/translated symlinks, seek/range reads, `.rclonelink` regular member, collision, symlink root.
+- `squashfs_internal_test.go` + new `testdata/symlink.sqfs`: same cases for squashfs, including a symlink in a subdirectory.
+- `archive_internal_test.go`: end-to-end copy recreating a symlink, and the hostile-archive escape test.
+
+### Verification
+`go build ./...`, `go vet`, `gofmt`, `golangci-lint run ./backend/archive/...` (0 issues), and `go test ./backend/archive/... -count=1` (including `-race`) all pass. I also exercised the behaviour manually with a built binary against real `zip -y` archives and `mksquashfs` images.

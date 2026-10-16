@@ -146,8 +146,8 @@ clearing of old tool results for Claude, no more cut streams. DeepSeek 0.0.57 be
 -42%). Server-side clearing of tool results removed again in 0.0.62 (Haiku re-read and looped: 163 turns, 0 edits).
 0.0.63: UnoRouter caches only unstreamed calls; with that, Luna on its si group ran rclone in 7-9 minutes at 92-96%
 cached for ~2 cents (3/3, 2/3); MiMo V2.6 Flash there 3/3 at 98.5% cached for ~3 cents (on BeatAPI it never edited a
-file). Next: one judge pool for all of it after the weekly reset; Haiku at high effort without clearing once BeatAPI is
-topped up.
+file); DeepSeek V4.1 Flash there 3/3 in 30 minutes at 97.4% cached for ~3.2 cents (174 turns, 18.7M input). Next: one
+judge pool for all of it after the weekly reset; Haiku at high effort without clearing once BeatAPI is topped up.
 
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
 
