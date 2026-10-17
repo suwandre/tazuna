@@ -20,7 +20,7 @@ when the group no longer serves the model, 2 when the estimated run costs more t
 `X-Group` header per group. A pass is no guarantee (a7-5053 passed a cache probe, then missed most of a run): the run
 script still stops a run whose cache rate falls.
 """
-import json, os, random, re, sys, time, urllib.error, urllib.request
+import json, os, random, re, signal, sys, time, urllib.error, urllib.request
 
 API = "https://api.unorouter.com"
 KEY = os.environ.get("UNOROUTER_API_KEY", "")
@@ -182,9 +182,18 @@ if __name__ == "__main__":
     for g, p in gs[:8]:
         off = f"  {1 - run_cost(p) / run_cost(ref):+.0%} vs OpenRouter" if ref else ""
         print(f"  {g:44} ${p[0]:.4f} / ${p[1]:.5f} / ${p[2]:.3f} per M -> ${run_cost(p):.3f} per run{off}")
+    def too_slow(*_):
+        raise TimeoutError("over 15 minutes for this group")
+    signal.signal(signal.SIGALRM, too_slow)
     for g, p in gs[:tries]:
         print(f"checking {g}", flush=True)
-        why = check(model, g, p)
+        # a group that holds a call open stalled the check for 40 minutes; the slowest pass so far took 11 (DeepSeek)
+        signal.alarm(900)
+        try:
+            why = check(model, g, p)
+        except TimeoutError as e:
+            why = str(e)
+        signal.alarm(0)
         if why is None:
             print(f"PIN {g}")
             sys.exit(0)
