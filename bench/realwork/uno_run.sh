@@ -39,3 +39,17 @@ done
 wait
 sleep 60
 echo "$(date +%H:%M) end: used-cents $(used)" >> "$LOG"
+# the uno-1 registry: only runs made this way count on the leaderboard (leaderboard.py)
+python3 - "$LOG" "bench.$LABEL.log" "$MODEL" "$GROUP" "$LABEL" "$TASK" <<'PY'
+import json, re, sys, time
+log, bench, model, group, label, task = sys.argv[1:]
+lines = open(log).read().splitlines()
+used = [float(m.group(1)) for l in lines for m in [re.search(r"used-cents ([0-9.]+)", l)] if m]
+stop = next((l.split("stopping: ", 1)[1] for l in lines if "stopping: " in l), None)
+result = next((l for l in open(bench) if " r0:" in l), "")
+rec = {"config": "uno-1", "t": int(time.time()), "model": model, "group": group, "label": label, "task": task,
+       "harness": f"tazuna-ownuno-{label}@{model}:max", "price": lines[0].split(": ", 1)[1].split("; used")[0],
+       "billed_cents": round(used[-1] - used[0], 3) if len(used) > 1 else None,
+       "status": "stopped: " + stop if stop else ("error" if "ERROR" in result else "finished"), "result": result.strip()[-200:]}
+open("uno-runs.jsonl", "a").write(json.dumps(rec) + "\n")
+PY

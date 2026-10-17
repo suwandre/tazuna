@@ -160,6 +160,17 @@ With the full check (`bench/uno_route.py`: price incl. output vs OpenRouter, cac
 DeepSeek on a pinned group (a7-burngate-5609) ran rclone 3/3 at 91% cached for 1.9 cents in 27 minutes, judge 8
 (CheaperInference: 8 at 2.4-5.2 cents).
 
+**UnoRouter config uno-1 (2026-10-18); only runs made with it count** (`bench/realwork/uno-runs.jsonl`, written by
+`uno_run.sh`; `leaderboard.py` reads it). tazuna 0.0.65 or newer (no streaming on UnoRouter, 413 or empty 200 sent again as
+a stream, `max` retried at `xhigh`, cache key for GPT, Messages API for Claude, `TAZUNA_HEADER` for the group); before each
+run `uno_route.py MODEL` (price incl. output vs OpenRouter, at least 50% cached on a grown conversation, a long reasoning
+call that comes back (asked again without tools if the model calls one), an English answer near the right number,
+PIN <group>); at the start `--price` (live price, cap 5x the estimated run, refused when the group is gone or over budget);
+during the run a stop when the group goes, its input price rises over 1.5x or under 50% is cached after 15 calls; effort
+max; tasks rclone, caddy-unix, caddy-retry. Default model on UnoRouter: the cheapest with 3+ runs, a judge floor (mean
+minus one standard error) of 7 or more and at most one failure in five. A config change is a new version (uno-2) with its
+own runs. Earlier runs measured our mistakes (streaming without cache, cut calls, unpinned groups) and do not count.
+
 **Next build item: group switching in the own loop** (after the 48-hour price log, `bench/realwork/uno-prices.jsonl`,
 shows how often groups and prices change). Today a run pins one group (`TAZUNA_HEADER`); when it drops out, the calls
 fail for ~15 minutes and the task ends. Instead, per model a dated list of groups that passed the check, ranked by the

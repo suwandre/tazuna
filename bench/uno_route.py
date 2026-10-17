@@ -8,7 +8,8 @@
 For the cheapest groups by estimated run cost, in order, until one passes:
 1. price: input, cache read and output from UnoRouter's live list (`/api/pricing`), checked against OpenRouter's public
    list as an independent reference (UnoRouter's own "-90%" was once computed from a $24 output price that no one charges);
-2. cache: a conversation grown over 6 calls the way an agent grows it; at least 80% of each previous call cached;
+2. cache: a conversation grown over 6 calls the way an agent grows it; at least 50% of each previous call cached (below
+   that the group keeps switching upstream accounts; above it the price at the measured rate decides, reported with it);
 3. long reasoning with tools: a counting question that takes a minute of thinking must come back with an answer
    (groups that cut such calls left Luna and Sol unable to finish hard steps);
 4. identity: that answer must be in English and near the right number (a "Haiku" group answered in Chinese and scored 1-3).
@@ -122,29 +123,35 @@ def cache_hit(model, group, calls=6):
     return sum(min(c, p[0]) for p, (_, c) in zip(rows, rows[1:])) / max(1, sum(p[0] for p in rows[:-1]))
 
 
-def check(model, group):
+def check(model, group, price):
     """None when the group passes, else why not."""
     try:
         hit = cache_hit(model, group)
     except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
         return f"cache test failed: {str(e)[:80]}"
-    if hit < 0.8:
+    if hit < 0.5:
         return f"cache {hit:.0%}"
     t = time.time()
     try:
         _, _, text = call(model, group, [{"role": "user", "content": QUESTION}], "high", tools=True, max_out=0)
     except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
         return f"long reasoning call failed after {time.time() - t:.0f} s: {str(e)[:80]}"
+    if text.startswith("[called a tool"):
+        # wanting to compute with a tool is fine for an agent (GLM ignores tool_choice none): ask again without tools,
+        # which still shows whether a long call is cut
+        t = time.time()
+        try:
+            _, _, text = call(model, group, [{"role": "user", "content": QUESTION}], "high", max_out=0)
+        except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
+            return f"long reasoning call (without tools) failed after {time.time() - t:.0f} s: {str(e)[:80]}"
     if not text.strip():
         return f"long reasoning call came back empty after {time.time() - t:.0f} s"
-    if text.startswith("[called a tool"):
-        return f"called a tool instead of answering ({time.time() - t:.0f} s), even with tool_choice none"
     if re.search(r"[぀-ヿ㐀-鿿가-힯]", text):
         return "answered an English question in another language"
     nums = [int(n) for n in re.findall(r"\d+", text.strip().splitlines()[-1])]
     if not nums or abs(nums[-1] - ANSWER) > 15:
         return f"answer {nums[-1:] or text.strip()[-40:]!r} is far from {ANSWER}"
-    print(f"    cache {hit:.0%}, long call {time.time() - t:.0f} s, answer {nums[-1]}", flush=True)
+    print(f"    cache {hit:.0%} (a typical run ${run_cost(price, hit):.3f} at that rate), long call {time.time() - t:.0f} s, answer {nums[-1]}", flush=True)
     return None
 
 
@@ -177,7 +184,7 @@ if __name__ == "__main__":
         print(f"  {g:44} ${p[0]:.4f} / ${p[1]:.5f} / ${p[2]:.3f} per M -> ${run_cost(p):.3f} per run{off}")
     for g, p in gs[:tries]:
         print(f"checking {g}", flush=True)
-        why = check(model, g)
+        why = check(model, g, p)
         if why is None:
             print(f"PIN {g}")
             sys.exit(0)
