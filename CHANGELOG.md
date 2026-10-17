@@ -16,6 +16,36 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Judge pass, 2026-10-17 (no code change)
+
+One judge pool per task (Opus xhigh with the reference fix, 1 pass, so a score can swing by about 2), 3 calls: 5-hour
+window 4% -> 6%, week 0% -> 1%, no extra usage.
+
+rclone, latest run per model and provider (tests, judge, billed):
+
+| model | provider | tests | judge | cost per run |
+|---|---|---|---|---|
+| DeepSeek V4.1 Flash | CheaperInference (0.0.38, anchor) | 3/3 | **9** | $0.024 |
+| DeepSeek V4.1 Flash HC | BeatAPI, 0.0.57 | 3/3 | 8 | $0.18 |
+| DeepSeek V4.1 Flash | UnoRouter (ih-cb) | 3/3 | 5 | ~$0.03 |
+| GPT-6.1 Sol | BeatAPI | 3/3 | 8 | $0.39 |
+| GPT-6.1 Sol | UnoRouter | 3/3 | 8 | $0.11 |
+| GPT-6 Luna | BeatAPI, 2 runs | 3/3, 3/3 | 7, 7 | $0.08-0.11 |
+| GPT-6 Luna | Codex CLI (ChatGPT plan) | 3/3 | 7 (8 in two earlier pools) | plan |
+| GPT-6 Luna | UnoRouter si, xhigh / max | 3/3, 2/3 | **4, 2** | ~$0.02 |
+| MiMo V2.6 Flash | UnoRouter | 3/3 | 7 | ~$0.03 |
+| Claude Haiku 5.5 | BeatAPI, old route, 2 runs | 3/3, 2/3 | 8, 4 | ~$0.05-0.09 |
+| Claude Haiku 5.5 | UnoRouter | 2/3 | 4 | $0.15 |
+| Claude Haiku 5.5 | Claude Code (subscription) | 2/3 | 3 | plan |
+
+The same model scores lower through UnoRouter than elsewhere (Luna 2-4 vs 7, DeepSeek 5 vs 8-9; Sol is the exception at
+8), and UnoRouter reports a third of the output tokens: its upstreams likely give the model less reasoning, so part of its
+low price is a weaker model. The cheap UnoRouter Luna runs are not a win.
+
+DeepSeek HC on BeatAPI by tazuna version (rclone, caddy-unix, caddy-retry): 0.0.53 (two rounds) 6/8, 4/9, 9/5 = 6.83;
+0.0.55 8, 7, 1 (no change on caddy-retry) = 5.33; **0.0.57 8, 9, 8 = 8.33**, the best of the three, with fewer turns and
+less input (see 0.0.61).
+
 ## 0.0.64 (2026-10-17)
 
 **An empty 200 to an unstreamed call is sent again as a stream** (UnoRouter): some of its upstreams cut a slow
@@ -23,8 +53,9 @@ unstreamed call at ~90 s with an empty 200 (0 tokens in and out) instead of the 
 another assistant while this one was at its usage limit; reviewed, tested.)
 
 GPT-6 Luna max on UnoRouter with automatic group routing (cheapest group of the hour, not si), 2026-10-16 evening: 1/3,
-44 turns, 69 minutes, 3.6M input, 89% cached, ~2 cents; a second run stopped by its watch at 49% cached after 40 calls
-(4.6 cents). On the si group earlier that day: 3/3 and 2/3 in 7-9 minutes. The group decides: pin a caching group
+44 turns, 69 minutes, 3.6M input, 89% cached, ~2 cents, and no edit at all (four empty replies in a row above 105K, before
+this fallback existed); a second run with the fallback edited and tested, then was stopped by its watch at 49% cached
+after 40 calls (4.6 cents). On the si group earlier that day: 3/3 and 2/3 in 7-9 minutes. The group decides: pin a caching group
 (`uno_route.py`) rather than trust automatic routing.
 
 ## 0.0.63 (2026-10-16)
