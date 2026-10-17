@@ -1,0 +1,44 @@
+Implemented symlink support for the archive backend.
+
+### Changes
+
+- **ZIP backend** (`backend/archive/zip/zip.go`)
+  - Detects entries whose Unix mode has `os.ModeSymlink`.
+  - Without `-l/--links`, skips them and logs a notice naming the flag.
+  - With `--links`, exposes them as `<name>.rclonelink` with size equal to the target length; opening the object reads the target, so range/seek options work through the existing read path.
+  - Regular members ending in `.rclonelink` remain ordinary files.
+
+- **Squashfs backend** (`backend/archive/squashfs/squashfs.go`)
+  - Symlink entries are now retained instead of dropped.
+  - Same `-l/--links` gating and skip notice as ZIP.
+  - Exposes symlinks as `.rclonelink` objects whose size and contents are the link target.
+  - `NewObject` uses the same naming rules as `List`, so lookup and listing agree.
+  - Symlink reads clamp out-of-range seeks, matching the local backend.
+
+- **Tests**
+  - ZIP: symlink listing/lookup behavior with and without `--links`, target reading, range/seek, and regular `.rclonelink` members.
+  - Squashfs: end-to-end symlink test via `mksquashfs` (skips if unavailable or symlinks are unsupported), lookup agreement, target reading, range/seek, and regular `.rclonelink` members.
+  - End-to-end hostile archive test verifying a symlink pointing above the destination root cannot be used to write outside it.
+
+- **Docs** (`docs/content/archive.md`)
+  - Added a Symlinks section documenting the `--links` behavior and `.rclonelink` convention.
+
+### Verification
+
+Ran:
+
+```bash
+go test ./backend/archive/... ./backend/local/... ./fs/sync/... ./fs/operations/...
+go test -race ./backend/archive/...
+go vet ./backend/archive/...
+go build ./...
+```
+
+All passed. Also manually verified with the CLI that:
+
+```bash
+rclone lsl --links :archive:/tmp/test.zip
+rclone copy --links :archive:/tmp/test.zip /tmp/out
+```
+
+recreates symlinks correctly and that without `--links` symlinks are skipped with a notice.

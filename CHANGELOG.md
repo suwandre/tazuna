@@ -16,6 +16,34 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.65 (2026-10-17)
+
+**`TAZUNA_HEADER="Name: value"` adds one header to every model call**, e.g. `X-Group: <group>` to pin an UnoRouter group
+for a run without a key per group.
+
+Why Luna scored 2-4 through UnoRouter: a long reasoning call with tools on the Responses API never returns on some groups
+(CX-Sale-duck 605 s, ih-cx 992 s, a7-ai-router 1048 s: no output), so the cheap groups cut the hard steps; Chat
+Completions is no way out (with tools Luna does not reason there: 0 reasoning tokens, wrong answer). Groups that finished
+a long call: a7-misy-3451, a7-jisol-5564, a7-misy-5255. DeepSeek reasons fully through UnoRouter (92,801 reasoning tokens
+against 99,911 on CheaperInference for the same question).
+
+Judged with the same reference runs as the pass below (they scored within a point of it):
+
+| rclone etc. | tests | judge | turns | time | cost |
+|---|---|---|---|---|---|
+| Luna, UnoRouter pinned to a7-jisol-5564 | 3/3 | 6 | 210 | 159 min | ~$0.20 counted |
+| Luna, BeatAPI / Codex (reference) | 3/3 | 7 / 7 | | 19 / 7.5 min | $0.11 / plan |
+| DeepSeek, UnoRouter default key, rclone x2 | 3/3, 3/3 | 9, 7 | 134-149 | 34-37 min | |
+| DeepSeek, UnoRouter default key, caddy-unix x2 | **0/7**, 7/7 | **4**, 9 | 86-143 | | |
+| DeepSeek, UnoRouter default key, caddy-retry x2 | 2/2, 2/2 | 9, 9 | 65-126 | | |
+| DeepSeek, CheaperInference (control) | 3/3, 7/7, 2/2 | 8, 9, 8 | 60-77 | 12-15 min | $0.04-0.05 |
+| DeepSeek, UnoRouter (earlier run) / CheaperInference, 0.0.64, rclone | 3/3, 3/3 | 8, 8 | 81, 77 | 17, 15 min | ~$0.01, $0.05 |
+
+Luna on a vetted UnoRouter group works but is slower, dearer and no better than BeatAPI. DeepSeek on UnoRouter's default
+key matched CheaperInference on 5 of 6 runs; one broke the package's tests. With automatic routing its runs cached less
+(57-83% against 96% earlier) and took about twice the turns, and UnoRouter billed ~$1.27 for these 7 runs against ~$0.55
+estimated at the cheapest group's prices: routing also used dearer groups. CheaperInference's balance ran out (402).
+
 ## Judge pass, 2026-10-17 (no code change)
 
 One judge pool per task (Opus xhigh with the reference fix, 1 pass, so a score can swing by about 2), 3 calls: 5-hour

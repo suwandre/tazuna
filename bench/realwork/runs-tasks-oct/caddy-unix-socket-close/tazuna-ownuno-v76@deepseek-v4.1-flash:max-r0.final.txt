@@ -1,0 +1,37 @@
+Implemented the fix.
+
+## Root cause
+
+`unixListener.Close()` / `unixConn.Close()` called `File()` to discover the socket path, which duplicates the underlying file descriptor and returns an `*os.File` that was never closed. Closing the `net.UnixListener` therefore left a leaked listening descriptor alive until the GC finalized the leaked `*os.File` (the 2-minute delayed close in the report). Additionally, the duplicated file’s `Name()` is not the filesystem path (`unix:/path->`), so the unlink silently failed and the socket file stayed behind.
+
+## Changes
+
+### `listen_unix.go`
+
+- Added a reference-counted `unixSocket` that owns the original listening socket. Each listener/conn holder gets its own duplicated descriptor, while the shared socket stays open and its file stays on disk until the last holder closes it.
+- Removed the `File()` call from `Close()` entirely; the shared socket records the actual socket path and unlinks it directly on last close.
+- Made `Close()` idempotent per holder with an atomic flag; a second `Close()` returns `net.ErrClosed` without releasing another reference.
+- Synchronized close/release with `unixSocketsMu`, which is already held across Unix listens, so a close racing with a new listen cannot unlink a socket the new listener is using.
+- Properly close the intermediate `*os.File` returned by `File()` during duplication (another descriptor leak).
+- Never unlink abstract Linux sockets (`@...`) on bind or close.
+- Made `deleteListener` / `deletePacketConn` pointer types with the same double-close protection so `listenerPool` is not decremented twice.
+
+### `listen_unix_test.go` (new)
+
+Added tests for:
+
+- closing removes the file immediately and the old path refuses connections
+- shared socket stays usable and keeps its file until the last holder closes
+- double close reports `net.ErrClosed` without releasing a second reference (stream and datagram)
+- close racing with a new listen leaves a working socket and file for the new listener
+- abstract sockets never unlink a same-named filesystem file (Linux)
+
+## Verification
+
+- `go test ./ -race -count=1`
+- `go test -short ./...`
+- `go test` on Linux (container) including the abstract-socket test
+- `golangci-lint run --timeout 10m ./...` — 0 issues
+- `go build ./...` and cross-compile test builds for Linux, FreeBSD, and Windows
+- End-to-end reproduction: reload from `admin unix//...` to `admin localhost:...` now gives immediate connection refused on the old socket and removes `admin.sock`, while the new TCP admin endpoint works.
+- Confirmed the new tests fail against the original `listen_unix.go`.

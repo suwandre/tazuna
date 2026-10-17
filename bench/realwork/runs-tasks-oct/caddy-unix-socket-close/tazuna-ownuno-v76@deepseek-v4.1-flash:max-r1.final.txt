@@ -1,0 +1,31 @@
+All tests pass on both macOS and Linux (including the Linux-only abstract-socket test). Here's a summary of the work.
+
+## Root cause
+
+`unixListener.Close` and `unixConn.Close` in `listen_unix.go` obtained the socket's filesystem name by calling `.File()` (a `dup()` of the fd) and then relying on `defer`/GC to close that duplicated file. Two problems followed:
+
+1. The dup'd `*os.File` was never closed, so the socket file descriptor stayed open. A Unix socket only stops accepting (and starts refusing connections) when *all* descriptors referring to it are closed. Since the orphaned dup kept the kernel socket alive, clients connecting to the stale path hung instead of getting `ECONNREFUSED`, and the path stayed on disk. Only Go's finalizer on the leaked file (run at the next GC) eventually closed it.
+2. `reuseUnixSocket` also leaked a dup'd `*os.File` on every reuse.
+
+Additionally, `Close` was not idempotent and the unlink/refcount bookkeeping wasn't synchronized with binds, so double-closes could decrement the shared count twice, and abstract (`@name`) sockets could unlink a same-named filesystem path.
+
+## Changes
+
+`listen_unix.go`:
+
+- `reuseUnixSocket`: close the dup'd `socketFile` after `net.FileListener`/`net.FilePacketConn` has taken its own copy; skip unlinking for abstract sockets; use keyed struct literals.
+- `unixListener.Close` / `unixConn.Close`:
+  - guard with an `atomic.Bool` so a second `Close` returns `net.ErrClosed` without releasing another reference;
+  - hold `unixSocketsMu` (the same lock `NetworkAddress.Listen` holds around `reuseUnixSocket` + bind), so a close racing with a reload's re-listen can't unlink the file out from under the new listener;
+  - derive the path from `Addr()`/`LocalAddr()` instead of leaking a `File()` dup;
+  - close the underlying socket immediately, then, only when the refcount hits zero, delete the map entry and unlink the file;
+  - never unlink Linux/Android abstract sockets (`@name`).
+- Added `isAbstractUnixSocket`.
+
+`listen_unix_test.go` (new, `unix && !solaris`): covers immediate close + unlink for stream and datagram sockets, refcount semantics (file stays while a sibling holds it), double-close returning `net.ErrClosed` without decrementing, concurrent close-vs-relisten leaving a dialable socket and intact file, and abstract sockets not removing a same-named filesystem entry.
+
+## Verification
+
+- `go test -race .` and the new unix tests pass on macOS and in a Linux `golang:1.26` container (abstract-socket test included).
+- Full `go test ./...` passes (the two ACME integration tests flaked once on network access and passed on retry).
+- End-to-end with the repro: after `caddy reload` off the Unix admin socket, `curl` now fails immediately with exit 7, `/proc/net/unix` has no entry, and the file is gone; moving between two Unix sockets and back leaves exactly one listening socket each time. Site `bind unix/...` → TCP also refuses and removes the file immediately.

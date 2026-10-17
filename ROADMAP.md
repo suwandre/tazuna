@@ -150,7 +150,11 @@ file); DeepSeek V4.1 Flash there 3/3 in 30 minutes at 97.4% cached for ~3.2 cent
 Judged 2026-10-17 (CHANGELOG): DeepSeek on CheaperInference 9 stays the best quality per dollar; Sol 8 on BeatAPI and
 UnoRouter; Luna 7 on BeatAPI and Codex but 2-4 on UnoRouter; MiMo 7; Haiku 3-8; tazuna 0.0.57 beats 0.0.53 (8.33 vs
 6.83). Through UnoRouter the same model scores lower (likely less reasoning upstream): cheap there is not better.
-Next: Haiku at high effort without clearing once BeatAPI is topped up; CheaperInference top-up for the cascade.
+0.0.65 (2026-10-17): Luna on a vetted UnoRouter group 6 (slower and dearer than BeatAPI's 7); DeepSeek on UnoRouter's
+default key 9, 7, 4, 9, 9, 9 against CheaperInference 8-9, but costlier than estimated (dearer groups) and caching less.
+Next: UnoRouter routing (a pinned set of vetted groups per model, or tazuna picking the cheapest vetted group per call
+from the live prices; a 48-hour price log decides how often); stability round 2 with a pinned DeepSeek set; Haiku at
+high effort once BeatAPI is topped up; CheaperInference top-up for the cascade.
 
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
 

@@ -640,6 +640,13 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
             Api::Messages => req.header("x-api-key", key).header("anthropic-version", "2023-06-01"),
             _ => req.header("Authorization", format!("Bearer {key}")),
         };
+        // one extra header for every call, e.g. `X-Group: <group>` to pin an UnoRouter group per run (its automatic routing
+        // picked groups whose long reasoning calls never returned)
+        let extra = std::env::var("TAZUNA_HEADER").ok();
+        let req = match extra.as_deref().and_then(|h| h.split_once(':')) {
+            Some((k, v)) => req.header(k.trim(), v.trim()),
+            None => req,
+        };
         let sent = req.send(&body.to_string())
             .and_then(|mut r| Ok((r.status().as_u16(), r.body_mut().with_config().limit(50 << 20).read_to_string()?)));
         let (status, text) = match sent {

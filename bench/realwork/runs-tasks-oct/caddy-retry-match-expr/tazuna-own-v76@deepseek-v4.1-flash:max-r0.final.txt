@@ -1,0 +1,24 @@
+## Summary
+
+Fixed the regression from #7569 where any `lb_retry_match` set containing an `expression` matcher was evaluated against the upstream response, so a request-only expression like `{http.request.method} == "POST"` marked every successful response retryable (leading to re-sent POSTs with empty bodies and a final `502`).
+
+### Changes
+
+**`modules/caddyhttp/celmatcher.go`**
+- `MatchExpression` now records, at provision time, the placeholder names its compiled expression reads (`placeholders []string`), extracted from the checked CEL AST via a new `celPlaceholderNames` helper that walks `ph(req, "...")` calls. A name that isn't a string literal (e.g. built by concatenation) is recorded as `""`, meaning "unknown until evaluation".
+- Exported read accessor `Placeholders()` returning a clone. Because extraction happens after escape processing on the checked AST, escaped text (`\{http.reverse_proxy.status_code}` inside a string literal) is a plain string, not a placeholder call, and thus not counted.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`: a matcher set only participates in response-based retries if an expression references `{http.reverse_proxy.status_code}`, `{http.reverse_proxy.status_text}`, `{http.reverse_proxy.header.*}`, or the upstream latency placeholders, or has a placeholder name unknown until evaluation time (kept conservative). Request-only expressions (including `{http.reverse_proxy.upstream.host}`, `{http.reverse_proxy.status_codes}`, and escaped placeholder text) are request conditions again, as before v2.11.3.
+
+**`modules/caddyhttp/reverseproxy/retries_test.go`**
+- `TestResponseRetryStatusCode` now covers both the `{placeholder}` shorthand and the direct `ph(req, "...")` call form.
+- New `TestRequestOnlyExpressionDoesNotRetryResponses` covers the four reported request-only cases; on the unfixed base it fails with the exact reported error (`502 ... ContentLength=7 with Body length 0`).
+
+### Verification
+- `go test -race -short ./...` — all packages pass.
+- `go test -race -short ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/` — pass; new regression test fails on the unpatched base and passes with the fix.
+- `go test ./caddytest/integration/ -run TestReverseProxyRetryMatch` — pass (existing #7569 examples keep working).
+- `go build ./...`, `golangci-lint run ./modules/caddyhttp/...` — clean.
+
+Note: this fix corresponds to the already-merged upstream PR caddyserver/caddy#8168 (merged as `7c74563`); the tree is byte-identical to that revision for the three changed files. As required, no PR/issue was created.

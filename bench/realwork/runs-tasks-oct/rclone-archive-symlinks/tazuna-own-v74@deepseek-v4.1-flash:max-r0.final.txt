@@ -1,0 +1,28 @@
+All changes verified. Here's a summary:
+
+## Summary
+
+The ZIP archive backend exposed a symlink member as a regular file whose contents were the target path, and the squashfs backend dropped symlinks entirely. Both now follow the convention used by the other backends (e.g. `local`).
+
+### Changes
+
+**`backend/archive/zip/zip.go`**
+- `Fs` gains a `links` field set from `fs.GetConfig(ctx).Links`.
+- `readZip` detects `file.Mode()&os.ModeSymlink` entries: without `--links` they are skipped (counted), with `--links` the `.rclonelink` suffix is appended to the exposed name (the member body already holds the target, so it reads back correctly).
+- A single notice, `Skipped N symlinks - use -l/--links to read them`, is logged when any were skipped.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Same `links` flag, skip-with-notice behaviour, and `.rclonelink` naming via new `objectFromLink`/`readlink` helpers (using `go-diskfs`' `*squashfs.StatT.LinkTarget`).
+- `newObjectNative` now derives the exposed name the same way `List` does, so listing and `NewObject` agree on which names exist; `Object` carries `isLink`/`link`, and `Open` serves the target as the object body honouring seek/range options with offset clamping.
+
+**Tests** (`backend/archive/zip/zip_internal_test.go`, `backend/archive/archive_internal_test.go`)
+- `TestReadZipSymlink`: skipped by default, listed as `link.txt.rclonelink` with target length and contents under `--links`.
+- `TestArchiveSquashfsSymlink`: end-to-end with `mksquashfs`, including that a regular member named `note.rclonelink` stays a regular file.
+- `TestArchiveZipSymlinkEscape`: a hostile archive (symlink `a -> ../outside` plus member `a/pwned.txt`) can't make `sync.CopyDir` write outside the destination.
+
+**`docs/content/archive.md`**: new "Symlinks" section documenting the flag and convention.
+
+### Verification
+- `go build ./...`, `go vet ./backend/archive/...`, `gofmt` clean, `golangci-lint run ./backend/archive/...` → 0 issues.
+- `RCLONE_CONFIG=/notfound go test -count=1 ./backend/archive/...` passes (also with `-race`), plus `./fs/sync` and `./fs/operations`.
+- Manual end-to-end: built rclone, created a zip with `src/file.txt`, `src/link.txt -> file.txt` and `src/note.rclonelink`; `lsl` skips the symlink with the notice, `lsl --links` shows `src/link.txt.rclonelink` (size 8), `copy --links` recreates a real symlink in the destination, `cat --offset/--count` honours range, and the same works for an `mksquashfs` image including the plain `.rclonelink` file.

@@ -1,0 +1,31 @@
+I've implemented symlink support in both archive backends, following the `.rclonelink` convention used by the local backend.
+
+## Changes
+
+### `backend/archive/zip/zip.go`
+- Detects entries whose mode has `os.ModeSymlink`.
+- Without `-l/--links`: skips them and logs `Skipped N symlinks in the archive - use -l/--links to see them`.
+- With `--links`: lists them as `<name>.rclonelink`, keeping the target as the object body (so `Size()` is the target length and `Open` returns the target path).
+- Suffixing happens before root filtering, so mounting an archive at `.../link.txt.rclonelink` works.
+- Offsets/seeks are clamped for symlink objects so reading past the end returns an empty result rather than an error.
+- Regular members whose names end in `.rclonelink` are left untouched.
+
+### `backend/archive/squashfs/squashfs.go`
+- Reads symlink targets from go-diskfs entries (`Readlink`).
+- Same skip/log behavior and `.rclonelink` exposure as zip.
+- Symlink objects report the target length as size, and `Open` returns the target with range/seek handling.
+- `NewObject` resolves suffixed names to the underlying symlink, prefers a literal regular file when one exists, and rejects unsuffixed symlink names so listing and lookup agree.
+
+### Tests
+- Added zip tests for listing, lookup, size, `Open`/seek/range, regular `.rclonelink` members, single-object mounting, and the hostile write-through case (symlink plus member beneath it cannot escape the destination).
+- Added a new `symlink.sqfs` test image plus equivalent squashfs tests.
+- Verified end-to-end with real `rclone lsl --links` and `rclone copy --links` for both zip and squashfs.
+
+### Docs
+- Added a “Symlinks” section to `docs/content/archive.md`.
+
+## Verification
+- `go test -count=1 ./backend/archive/...` passes.
+- `go test -race ./backend/archive/zip/ ./backend/archive/squashfs/` passes.
+- `go vet ./backend/archive/...` and `go build ./...` pass.
+- Ran the archive zip/squashfs integration tests (`TestArchiveZip`, `TestArchiveSquashfs`) against a locally built `rclone` binary — all pass.

@@ -1,0 +1,31 @@
+Done. Here's a summary.
+
+## Root cause
+
+Since #7569, `reverseProxy()` evaluated *any* `lb_retry_match` matcher set containing an expression matcher against the upstream response (`matcherSetHasExpressionMatcher`). An expression that only inspects the request — e.g. `{http.request.method} == "POST"` — therefore matched every response for a matching request, so every 200 was treated as retryable, the body was closed, and the request was re-sent (without a body) to the next upstreams until retries were exhausted, yielding a 502.
+
+## Fix
+
+**`modules/caddyhttp/celmatcher.go`**
+- `MatchExpression` now records the placeholder names read by its *checked* CEL expression at provision time (`celPlaceholderNames`, walking the AST for `ph(...)` calls).
+- New `Placeholders() []string` accessor returning a defensive copy. A name that isn't a string literal (known only at evaluation time) is recorded as `""`.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`, which treats a matcher set as a response condition only if an expression references response data:
+  - `http.reverse_proxy.status_code`, `.status_text`
+  - `http.reverse_proxy.upstream.latency`, `.latency_ms`
+  - any `http.reverse_proxy.header.*` (prefix match)
+  - an empty name (unknown at evaluation time → conservatively a response condition)
+- Everything else is a request condition again (pre-v2.11.3 behavior). Because names are read from the compiled AST, escaped placeholders inside string literals (`\{...}`) and look-alike names (`...status_codes`) are correctly not treated as response data, and direct `ph(req, "...")` calls are recognized.
+
+## Tests
+
+- `retries_test.go`: `TestResponseRetryStatusCode` now covers both the `{...}` shorthand and a direct `ph(req, "...")` call; new `TestRequestOnlyExpressionDoesNotRetryResponses` covers request-only expressions, upstream-selection placeholders, escaped placeholder text, and look-alike names (POST with a body, asserting one upstream hit and a 200 with body).
+- `celmatcher_test.go`: new `TestMatchExpressionPlaceholders` (shorthand, direct `ph()`, multiple, escaped literal, none, dynamic name) and `TestMatchExpressionPlaceholdersReturnsCopy`.
+
+## Verification
+
+- `go build ./...`, `go vet ./modules/caddyhttp/...`, `gofmt` clean.
+- `go test ./modules/caddyhttp/... ./caddyconfig/...` all pass, including `caddytest/integration` `TestReverseProxyRetryMatch*`.
+- Reproduced the exact reported Caddyfile with a built binary: POST now returns the backend's 200 with `body=b'order=1'` and exactly one upstream hit; GET returns 200. Also confirmed a `{rp.status_code} in [502, 503]` rule still retries a 502 to the next upstream.
+- The only integration failures (`TestACMEServerWithDefaults`, `TestACMEServerAllowPolicy`, `TestReverseProxyReloadStressUpgradedStreamsHeapProfiles`) also fail on the unmodified baseline in this environment, so they're unrelated.
