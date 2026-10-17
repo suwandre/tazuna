@@ -1,0 +1,32 @@
+Implemented symbolic link support for the archive backend.
+
+### Changes
+
+- **ZIP backend (`backend/archive/zip/zip.go`)**
+  - Detects symlink entries via `file.Mode()&os.ModeSymlink`.
+  - Skips symlinks when `--links` is not enabled, logging a notice naming `-l/--links`.
+  - With `--links`, exposes each symlink as `<name>.rclonelink`, with size equal to the target length; `Open` returns the target path and supports seek/range options.
+  - Updated root handling so symlink entries can be addressed with or without the `.rclonelink` suffix.
+  - Regular members ending in `.rclonelink` remain regular files.
+
+- **Squashfs backend (`backend/archive/squashfs/squashfs.go`)**
+  - Symlink entries are no longer dropped.
+  - Reads targets through go-diskfs `Readlink`/`StatT`.
+  - Applies the same `--links` convention: skip without the flag, otherwise expose as `.rclonelink` with target length and target contents on `Open`.
+  - Updated `NewObject` and single-file-root detection so listing and lookup agree on translated names.
+
+- **Tests**
+  - Added ZIP tests for listing, lookup, seek/range reads, `.rclonelink` regular files, single-symlink roots, and the hostile symlink escape case.
+  - Added squashfs tests using `mksquashfs` (skipped when unavailable) covering the same behavior, including nested roots.
+  - Added an archive-backend integration test verifying `--links` exposes symlinks and copying to local recreates them.
+
+### Verification
+
+```bash
+go test -count=1 ./backend/archive/...
+go test -race -count=1 ./backend/archive/...
+go vet ./backend/archive/...
+git diff --check
+```
+
+All passed.

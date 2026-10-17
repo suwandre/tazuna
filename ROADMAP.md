@@ -156,9 +156,22 @@ Haiku 5.5 high on tazuna's Claude path 7-8 (3/3 x3, ~1% of the 5-hour window per
 answered in Chinese, 1-3. Sol through UnoRouter: 54% cached, dearer than BeatAPI, group offline; the $5 balance is used up.
 UnoRouter so far: cheap and good for DeepSeek and MiMo at some hours; unsafe for Claude and GPT (cut reasoning, a
 substituted model, prices that moved 2-30x in a day).
-Next: UnoRouter routing (a pinned set of vetted groups per model, or tazuna picking the cheapest vetted group per call
-from the live prices; a 48-hour price log decides how often); stability round 2 with a pinned DeepSeek set; Haiku at
-high effort once BeatAPI is topped up; CheaperInference top-up for the cascade.
+With the full check (`bench/uno_route.py`: price incl. output vs OpenRouter, cache, long reasoning with tools, identity)
+DeepSeek on a pinned group (a7-burngate-5609) ran rclone 3/3 at 91% cached for 1.9 cents in 27 minutes.
+
+**Next build item: group switching in the own loop** (after the 48-hour price log, `bench/realwork/uno-prices.jsonl`,
+shows how often groups and prices change). Today a run pins one group (`TAZUNA_HEADER`); when it drops out, the calls
+fail for ~15 minutes and the task ends. Instead, per model a dated list of groups that passed the check, ranked by the
+live price of a whole run (input, cache, output; the price list is public and free), and at each call the group to use:
+- switch at once to the next group on `get_channel_failed`, repeated 5xx/429, or an empty reply after the stream fallback;
+- switch when the last 10 calls cached under 70%;
+- re-read prices every ~10 minutes; switch only if the saving over the rest of the task beats one cache miss (the whole
+  prompt at 1.25x);
+- no listed group left: a fixed provider (CheaperInference, BeatAPI or OpenRouter) or stop and ask;
+- new groups enter the list only through the check, in the background, with a daily cent cap.
+Measured as usual: the same tasks with switching vs one pinned group, cost, cache, judge. Then: `uno_route.py` becomes a
+provider-neutral check (base URL + model) for any new pay-as-you-go provider; stability round 2 for DeepSeek on the list;
+Haiku at high effort once BeatAPI is topped up; CheaperInference top-up for the cascade.
 
 ## Where tazuna can lead (gaps no other harness fills, 2026-10-08)
 

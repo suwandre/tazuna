@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## UnoRouter: the full check before a run, 2026-10-17 (bench only)
+
+`bench/uno_route.py MODEL` now runs, for the cheapest groups by the price of a whole run, until one passes: the live
+price (input, cache, output) against OpenRouter's public list; caching over a conversation grown like an agent's (at
+least 80%); a long reasoning call with tools that must come back; an English answer near the right number. It prints
+`PIN <group>`. DeepSeek V4.1 Flash: a7-sinnode-5969 (cheapest) came back empty after 296 s, a7-ipeenk-5188 cached 34%,
+a7-burngate-5609 passed (0.46 cents for the check). OpenRouter's reference for a typical run: $0.12; UnoRouter's groups
+$0.007-0.011. The run pinned to a7-burngate-5609: rclone 3/3, 111 turns, 27 minutes, 12.9M input, 91% cached,
+**1.9 cents billed** (not judged yet).
+
 ## UnoRouter: Haiku and Sol, pinned groups, 2026-10-17 (no code change)
 
 Group check first (long reasoning with tools): GLM 5.3 reasoned 0-156 tokens on its cheap groups and si answered 429
