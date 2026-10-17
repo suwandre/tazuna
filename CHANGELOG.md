@@ -24,7 +24,8 @@ least 80%); a long reasoning call with tools that must come back; an English ans
 `PIN <group>`. DeepSeek V4.1 Flash: a7-sinnode-5969 (cheapest) came back empty after 296 s, a7-ipeenk-5188 cached 34%,
 a7-burngate-5609 passed (0.46 cents for the check). OpenRouter's reference for a typical run: $0.12; UnoRouter's groups
 $0.007-0.011. The run pinned to a7-burngate-5609: rclone 3/3, 111 turns, 27 minutes, 12.9M input, 91% cached,
-**1.9 cents billed** (not judged yet).
+**1.9 cents billed, judge 8**, the same as CheaperInference (8 and 8 in the same pool, $0.024-0.052); the references
+scored as before (Codex 7; UnoRouter's default key 9 and 6).
 
 ## UnoRouter: Haiku and Sol, pinned groups, 2026-10-17 (no code change)
 

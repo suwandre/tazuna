@@ -157,7 +157,8 @@ answered in Chinese, 1-3. Sol through UnoRouter: 54% cached, dearer than BeatAPI
 UnoRouter so far: cheap and good for DeepSeek and MiMo at some hours; unsafe for Claude and GPT (cut reasoning, a
 substituted model, prices that moved 2-30x in a day).
 With the full check (`bench/uno_route.py`: price incl. output vs OpenRouter, cache, long reasoning with tools, identity)
-DeepSeek on a pinned group (a7-burngate-5609) ran rclone 3/3 at 91% cached for 1.9 cents in 27 minutes.
+DeepSeek on a pinned group (a7-burngate-5609) ran rclone 3/3 at 91% cached for 1.9 cents in 27 minutes, judge 8
+(CheaperInference: 8 at 2.4-5.2 cents).
 
 **Next build item: group switching in the own loop** (after the 48-hour price log, `bench/realwork/uno-prices.jsonl`,
 shows how often groups and prices change). Today a run pins one group (`TAZUNA_HEADER`); when it drops out, the calls
