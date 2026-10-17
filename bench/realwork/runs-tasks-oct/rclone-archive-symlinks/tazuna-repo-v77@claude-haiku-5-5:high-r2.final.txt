@@ -1,0 +1,25 @@
+Both the zip and squashfs archive backends now expose symlinks the way the maintainer notes describe, and the example from the issue works end to end. `go test ./backend/archive/...` passes, `golangci-lint` reports 0 issues, and the full repo builds. I haven't committed anything.
+
+**Behaviour**
+- **Without `-l/--links`:** symlinks are skipped, with a notice like `Symlink skipped, use -l/--links to list symlinks in archives`.
+- **With `--links`:** a symlink is listed as `name.rclonelink`, its size is the target length, and reading it returns the target path, honouring range and seek options.
+- **Listing and `NewObject` agree** in both formats.
+- **Regular member wins:** if an archive holds both a regular `x.rclonelink` and a symlink `x`, only the regular file is listed. Without this, the two would collide under one name.
+- **Hostile archive:** a symlink pointing outside the destination, followed by a member written through it, does not write outside. The local destination's `os.Root` guard rejects the write with `path escapes from parent`. That guard is the protection; the archive side only reads the target as text.
+
+**End-to-end check** (built binary, `zip -y` and `mksquashfs` archives):
+- `lsl :archive:test.zip` shows `file.txt` plus the notice.
+- `lsl --links` shows `src/link.txt.rclonelink` with size 8.
+- `copy --links` recreates `link.txt -> file.txt` as a real symlink.
+- Without `--links`, the copy skips the link.
+
+**Implementation**
+- `archiver.OpenLinkTarget` is a shared helper that returns the target as a reader and handles range and seek options.
+- Zip reads each symlink's target at listing time, capped at 4096 bytes (PATH_MAX). Squashfs takes the target from go-diskfs's `StatT`.
+- Squashfs gets a new `links.sqfs` fixture, generated with `mksquashfs -all-root -noappend -no-xattrs`.
+- I wrote the tests first and saw them fail before the fix. The hostile-archive test passes both before and after, since no symlink is created before the fix; it is a regression guard.
+- I added a short paragraph to `docs/content/archive.md`.
+
+**Known limitation:** a symlink can't be addressed as the root of an archive path (for example `:archive:x.zip/dir/link.txt`). It works inside directory listings, which is what the maintainer notes ask for. Squashfs does accept the suffixed name as a root, but zip does not, so the two differ there. I left this out because it needs suffix-aware root resolution in both formats.
+
+**Behaviour change to note:** a zip or squashfs symlink used to appear as a regular file containing its target. Without `--links` it no longer appears at all, which is the intended fix but a visible change for anyone relying on the old output.

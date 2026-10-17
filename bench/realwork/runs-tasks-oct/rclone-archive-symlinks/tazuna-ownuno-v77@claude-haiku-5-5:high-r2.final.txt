@@ -1,0 +1,20 @@
+已完成归档后端符号链接支持。
+
+主要变更：
+- ZIP 和 SquashFS 中检测 `os.ModeSymlink`。
+- 默认跳过符号链接，并记录提示：使用 `--links` 可包含它们。
+- 启用 `--links` 后：
+  - 符号链接以 `.rclonelink` 后缀列出。
+  - 对象大小为链接目标长度。
+  - `Open` 返回链接目标内容，并支持 seek/range。
+  - `NewObject` 与列表结果保持一致。
+- 普通文件名即使以 `.rclonelink` 结尾，也仍作为普通文件处理。
+- ZIP 中符号链接下的成员会被跳过，避免恶意归档通过链接路径将内容写到目标目录之外。
+- 同步覆盖 SquashFS 行为。
+
+验证通过：
+
+```text
+go test ./backend/archive/...
+git diff --check
+```

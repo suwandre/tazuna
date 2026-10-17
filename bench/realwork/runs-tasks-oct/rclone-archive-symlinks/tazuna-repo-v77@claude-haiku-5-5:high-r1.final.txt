@@ -1,0 +1,15 @@
+Zip and squashfs archives now expose symlinks the way the maintainer notes describe. Without `--links` they are skipped with a notice that names the flag. With `--links` they are listed as `name.rclonelink`, their size is the target length, and opening them returns the target, honouring range and seek. The changes are uncommitted in the working tree.
+
+**Verification:** `go test ./backend/archive/... ./backend/local/` passes, `go build ./...` succeeds, and `golangci-lint run ./backend/archive/...` reports 0 issues. I wrote the new tests first and confirmed they failed before the fix.
+
+**What changed**
+- **Zip** (`backend/archive/zip/zip.go`): `readZip` takes the `links` flag from `fs.GetConfig(ctx)`. Symlink entries get the suffix before the root filter, so a root that names a symlink matches its listed name. Regular members named `*.rclonelink` stay regular.
+- **Squashfs** (`backend/archive/squashfs/squashfs.go`): `List` and `newObjectNative` apply the same rule, so listing and `NewObject` agree. A symlink's target comes from `Sys().(*squashfs.StatT).LinkTarget`, and `Open` serves it with seek and range support.
+- **Tests**: zip and squashfs tests cover skip versus `--links`, `NewObject`, size, range and seek, and the regular `.rclonelink` member. The squashfs fixture is `testdata/symlink.sqfs`, built with `mksquashfs` (it is untracked, so it needs adding). An end-to-end test in `archive_internal_test.go` copies a symlink to a local destination and checks that the symlink is recreated. It also checks that a member written through a symlink pointing outside the destination fails and writes nothing outside.
+- **Docs**: a short note in the Limitations section of `docs/content/archive.md`.
+
+**Choices I made**
+- **Hostile archives**: I did not add target validation in the archive backend. The protection comes from the local destination's `os.Root` confinement, which the new test exercises. If the destination is not local, a symlink is just stored as a `.rclonelink` object and nothing is written through it.
+- **Log level**: the skip notice is logged per symlink at notice level, matching the local backend. A large archive full of symlinks will log many lines.
+
+**Known gap:** if an archive holds both a symlink `x` and a regular member `x.rclonelink`, both list under the same name. This is the same duplicate-name behaviour zip already has, and I did not add special handling for it.

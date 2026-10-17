@@ -152,6 +152,10 @@ UnoRouter; Luna 7 on BeatAPI and Codex but 2-4 on UnoRouter; MiMo 7; Haiku 3-8; 
 6.83). Through UnoRouter the same model scores lower (likely less reasoning upstream): cheap there is not better.
 0.0.65 (2026-10-17): Luna on a vetted UnoRouter group 6 (slower and dearer than BeatAPI's 7); DeepSeek on UnoRouter's
 default key 9, 7, 4, 9, 9, 9 against CheaperInference 8-9, but costlier than estimated (dearer groups) and caching less.
+Haiku 5.5 high on tazuna's Claude path 7-8 (3/3 x3, ~1% of the 5-hour window per run); through UnoRouter a group that
+answered in Chinese, 1-3. Sol through UnoRouter: 54% cached, dearer than BeatAPI, group offline; the $5 balance is used up.
+UnoRouter so far: cheap and good for DeepSeek and MiMo at some hours; unsafe for Claude and GPT (cut reasoning, a
+substituted model, prices that moved 2-30x in a day).
 Next: UnoRouter routing (a pinned set of vetted groups per model, or tazuna picking the cheapest vetted group per call
 from the live prices; a 48-hour price log decides how often); stability round 2 with a pinned DeepSeek set; Haiku at
 high effort once BeatAPI is topped up; CheaperInference top-up for the cascade.

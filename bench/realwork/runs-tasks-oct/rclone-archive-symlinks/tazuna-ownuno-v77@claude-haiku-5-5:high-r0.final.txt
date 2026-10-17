@@ -1,0 +1,28 @@
+已完成归档后端的符号链接支持：
+
+- ZIP：
+  - 检测 `os.ModeSymlink`。
+  - 默认跳过符号链接，并提示使用 `-l/--links`。
+  - 启用 `--links` 时，以 `目标名.rclonelink` 暴露。
+  - 保留符号链接目标内容和原始大小。
+  - 普通文件即使名称以 `.rclonelink` 结尾，也仍按普通文件处理。
+
+- SquashFS：
+  - 与 ZIP 使用相同的符号链接过滤和 `.rclonelink` 命名约定。
+  - `NewObject` 与目录列表保持一致。
+  - 打开符号链接对象时读取原始链接目标，而不是错误地读取带后缀路径。
+  - 跳过符号链接时记录包含 `-l/--links` 的提示。
+
+验证通过：
+
+```text
+go test ./backend/archive/...
+ok  	github.com/rclone/rclone/backend/archive
+ok  	github.com/rclone/rclone/backend/archive/squashfs
+ok  	github.com/rclone/rclone/backend/archive/zip
+```
+
+修改文件：
+
+- [backend/archive/zip/zip.go](/private/var/folders/9c/yftw74s95b1gm6rfjtjql9_40000gn/T/rw-rclone-archive-symlinks-tazuna-ownuno-v77@claude-haiku-5-5/backend/archive/zip/zip.go)
+- [backend/archive/squashfs/squashfs.go](/private/var/folders/9c/yftw74s95b1gm6rfjtjql9_40000gn/T/rw-rclone-archive-symlinks-tazuna-ownuno-v77@claude-haiku-5-5/backend/archive/squashfs/squashfs.go)

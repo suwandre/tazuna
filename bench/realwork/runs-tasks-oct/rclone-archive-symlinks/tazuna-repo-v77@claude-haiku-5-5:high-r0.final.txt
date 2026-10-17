@@ -1,0 +1,27 @@
+Both archive readers now expose symlinks the way local does with `--links`. Without the flag they are skipped with a notice that names `-l/--links`. Tests pass for `backend/archive/...` and lint is clean. I haven't committed anything.
+
+**What changed**
+
+- **zip** (`backend/archive/zip/zip.go`): entries with `os.ModeSymlink` are listed as `name.rclonelink`. Their size is the target length, and `Open` returns the target, honouring range and seek. A regular member named `*.rclonelink` stays a regular file.
+- **squashfs** (`backend/archive/squashfs/squashfs.go`): the same rules, using `StatT.LinkTarget` for the target. `NewObject` now uses the same rules as `List`. Before, `NewObject` found symlinks that listing hid, and it returned objects for device nodes and similar entries that listing skipped.
+- **Clashes**: if a symlink's listed name is already taken by another entry, the symlink is left out. This is order-independent.
+- **Fixture**: `backend/archive/squashfs/testdata/symlink.sqfs` was generated with `mksquashfs -comp gzip`. It is an untracked new file.
+
+**Tests**
+
+I wrote the tests first and confirmed they failed before the fix. They cover listing with and without `--links`, lookup agreement, range and seek on a link, the `.rclonelink` regular member, and the clash case. The hostile-archive test (zip, with a relative and an absolute symlink plus members inside them, copied with `--links`) passes both before and after the fix. It guards the new symlink-creation path rather than the old behaviour. A throwaway probe showed the copy recreates `rel` as a symlink, the write through it is refused, and nothing lands in the outside directory.
+
+**End-to-end**
+
+I built the binary and used a zip made with `zip -y`:
+- `lsl --links` shows `src/link.txt.rclonelink` at size 8, matching the issue.
+- `copy --links` recreates `link.txt -> file.txt` on the destination.
+- Without `--links`, the notice names `-l/--links`.
+
+I couldn't get `rclone cat` on the archive to work in my attempts, so I didn't verify the read path through that command. The copy exercises the same `Open` path.
+
+**Choices I made that you may want to change**
+
+- Skipped symlinks are logged as one aggregated notice per listing. Name clashes are logged at debug level, since they are rare.
+- Collisions are resolved in favour of the regular file.
+- I didn't add user docs. `docs/content/archive.md` has no symlink text, so you may want a short note there.

@@ -16,6 +16,23 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## UnoRouter: Haiku and Sol, pinned groups, 2026-10-17 (no code change)
+
+Group check first (long reasoning with tools): GLM 5.3 reasoned 0-156 tokens on its cheap groups and si answered 429
+after 180 s, so it was left out; all four cheapest Haiku groups returned thinking blocks; one of five Sol groups
+(a7-gpt-4848) finished, four cut the call at 180 s. Sol's price there had doubled ($0.30 / $1.50 per M).
+
+| rclone, 3 runs each | tests | judge | turns | time | cost |
+|---|---|---|---|---|---|
+| Haiku 5.5 high, **tazuna's Claude path** (subscription) | 3/3, 3/3, 3/3 | **7, 8, 8** | 36-54 | 8-10 min | 5-hour window 7% -> 9% for all three |
+| Haiku 5.5 high, UnoRouter pinned to a7-hiyo-codex-5544 | 0/3, 0/3, 1/3 | **1, 2, 3** | 43-52 | 7 min | ~6 cents together |
+| Sol max, UnoRouter pinned to a7-gpt-4848 | none finished | | 25-28 calls | | ~$1.40 together |
+
+The UnoRouter "Haiku" wrote its summaries in Chinese to an English task and scored 1-3: the group most likely serves
+another model or adds its own prompt. The Sol runs cached 54% and cost ~$0.45 each by call 28 (BeatAPI's whole run:
+$0.39); they emptied the $5 balance, then the group went offline (`get_channel_failed`). References in the same pool
+scored as before (Codex 7, DeepSeek CheaperInference 9, Haiku BeatAPI 8, Haiku Claude Code at max 4).
+
 ## 0.0.65 (2026-10-17)
 
 **`TAZUNA_HEADER="Name: value"` adds one header to every model call**, e.g. `X-Group: <group>` to pin an UnoRouter group

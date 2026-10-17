@@ -1,0 +1,17 @@
+已完成归档后端的符号链接支持。
+
+修改内容：
+- ZIP 和 SquashFS 中的符号链接默认跳过。
+- 使用 `--links` 时，符号链接以 `<name>.rclonelink` 暴露。
+- 链接对象大小为目标路径长度，读取内容为目标路径，并支持 range/seek。
+- `NewObject` 与目录列表使用一致的链接名称。
+- 保留普通归档成员的 `.rclonelink` 文件语义。
+- 过滤符号链接路径下的后续成员，避免恶意归档影响目标目录之外的路径。
+- 跳过符号链接时输出提示，说明使用 `--links`。
+
+验证结果：
+- `go test ./backend/archive/...` 通过。
+- `git diff --check` 通过。
+- 使用实际 ZIP 归档验证：
+  - `lsl --links` 显示 `link.txt.rclonelink`
+  - `copy --links` 成功重建 `link.txt -> file.txt`
