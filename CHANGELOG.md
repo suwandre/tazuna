@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## UnoRouter: Grok 4.7 and GLM 5.3 through the check, 2026-10-18 (bench only)
+
+- **Grok 4.7:** a7-bin-704 passed (100% cached, long call 527 s, 573) and was closed to the key a minute later (403 "No
+  permission to access this group"); a7-bin-709 passed too (100%, 434 s, 570), but its price rose from $0.024 to $0.10
+  per M input during the run (4.1 cents for 19 calls instead of ~1): stopped. Every Grok group costs $0.10 or more now
+  (~20 cents a run). Since then `uno_route.py --price` reads the price again at the start and `uno_run.sh` refuses or
+  stops a run on a price rise, a vanished group or a failing cache.
+- **GLM 5.3 Flash:** four groups cache (80-100%; ~2-7 cents a run), but none finished a long reasoning call: empty after
+  467-486 s, an error after 180-189 s, or held open for over 40 minutes. Not usable for hard steps on UnoRouter today.
+- **GLM 5.3:** cache reads cost the full input price there; the groups that cache come to $0.28-0.46 a run, the
+  cheapest group cached 20-32%.
+- The check takes at least 50% cached now (the price at the measured rate decides above that), asks again without tools
+  when a model calls one (GLM ignores tool_choice none), and gives a group at most 15 minutes.
+
 ## UnoRouter: the full check before a run, 2026-10-17 (bench only)
 
 `bench/uno_route.py MODEL` now runs, for the cheapest groups by the price of a whole run, until one passes: the live
