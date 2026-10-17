@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.64 (2026-10-17)
+
+**An empty 200 to an unstreamed call is sent again as a stream** (UnoRouter): some of its upstreams cut a slow
+unstreamed call at ~90 s with an empty 200 (0 tokens in and out) instead of the 413 handled in 0.0.63. (Written by
+another assistant while this one was at its usage limit; reviewed, tested.)
+
+GPT-6 Luna max on UnoRouter with automatic group routing (cheapest group of the hour, not si), 2026-10-16 evening: 1/3,
+44 turns, 69 minutes, 3.6M input, 89% cached, ~2 cents; a second run stopped by its watch at 49% cached after 40 calls
+(4.6 cents). On the si group earlier that day: 3/3 and 2/3 in 7-9 minutes. The group decides: pin a caching group
+(`uno_route.py`) rather than trust automatic routing.
+
 ## 0.0.63 (2026-10-16)
 
 **UnoRouter calls are no longer streamed** (a 413 for a long call switches that call to a stream): UnoRouter caches only
@@ -42,8 +53,8 @@ tests caching on the cheapest few with a growing conversation, through the `X-Gr
 Other models through UnoRouter's cheapest group (probe, then one rclone run at max):
 - **MiMo V2.6 Flash:** UnoRouter 3/3, 211 turns, 105 minutes, 20.5M input, 98.5% cached, ~2.8 cents billed. BeatAPI
   ($0.098 / $0.00196 / $0.196 per M, caches streamed calls): 147 calls in 99 minutes without changing a file (searching
-  and printing code only), stopped at ~15 cents. The UnoRouter probe had shown 0% cached (two calls of the same prompt
-  came back with different input counts), so a probe only rules out the obvious; a short real run decides.
+  and printing code only), stopped at ~15 cents. (The probe's 0% for MiMo, DeepSeek and GLM was a bug in the probe:
+  UnoRouter's Chat Completions usage has `input_tokens: 0` next to `prompt_tokens`, and the probe read the first.)
 - **DeepSeek V4.1 Flash:** UnoRouter 3/3, 174 turns, 30.3 minutes (1821 s), 18.7M input, 97.4% cached, ~3.2 cents billed ($0.021 counted). Both `ih-cb` and the `a7-*` groups cached ~100% in the probe once `uno_route.py` read `prompt_tokens` when `input_tokens` is `0` (`a7-*` returns `"input_tokens": 0` alongside `prompt_tokens`). **GLM 5.3** (si, $0.011 per M): 37%.
 
 ## 0.0.62 (2026-10-16)

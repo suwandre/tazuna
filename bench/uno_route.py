@@ -10,8 +10,8 @@ before went to another upstream (each adds its own hidden prompt).
     UNOROUTER_API_KEY=... ./uno_route.py gpt-6-luna [groups to test, default 3] [calls per group, default 8]
 
 Uses the key's own access with an `X-Group` header per group. Cost: about a cent per group at Luna's prices.
-A probe narrows the choice, a short real run decides: it was wrong both ways (a7-5053 passed and then missed most of a
-run; MiMo V2.6 Flash failed and then cached 98% of a run).
+A probe narrows the choice, a short real run decides: a7-5053 passed and then missed most of a run. (Until fca1072 the
+probe read `input_tokens`, which UnoRouter sets to 0 on Chat Completions, so every non-GPT model showed 0% cached.)
 """
 import json, os, random, sys, time, urllib.error, urllib.request
 

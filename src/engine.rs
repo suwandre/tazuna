@@ -619,7 +619,7 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
     // streamed by default: gateways cap a reply that is not streamed (UnoRouter: complete within 90 s, which a 130K-token
     // prompt cannot meet, and the task ended with a 413), and a started stream is not cut by the time limit. UnoRouter
     // alone caches only calls that are not streamed (Luna on its si group: 0% streamed, 92% over a run not streamed), so
-    // there a call starts unstreamed and is streamed after a 413. TAZUNA_STREAM=0 or 1 decides for any provider.
+    // there a call starts unstreamed and is streamed after a 413 or an empty 200. TAZUNA_STREAM=0 or 1 decides for any provider.
     let mut stream = std::env::var("TAZUNA_STREAM").map_or(!url.contains("unorouter.com"), |v| v != "0");
     let mut body = body.clone();
     // a call that times out is tried again with twice the time (up to 15 minutes): a slow provider's long reasoning answer
@@ -663,7 +663,15 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
                     continue;
                 }
                 Some(r) => return r,
-                None => return serde_json::from_str(&text).context("provider reply is not JSON"),
+                None => {
+                    let r = serde_json::from_str(&text).context("provider reply is not JSON")?;
+                    // some UnoRouter upstreams cut a slow unstreamed call at ~90 s with an empty 200 (0/0 tokens) instead of 413
+                    if !stream && wait > 0 && empty_reply(&r, api) {
+                        stream = true;
+                        continue;
+                    }
+                    return Ok(r);
+                }
             }
         }
         if status == 413 && !stream && wait > 0 {
@@ -924,10 +932,11 @@ data: {\"type\":\"message_stop\"}\n";
     fn a_call_rejected_for_max_effort_goes_again_at_xhigh() {
         use std::io::{Read, Write};
         let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", server.local_addr().unwrap());
+        let url = format!("http://{}/unorouter.com", server.local_addr().unwrap());
         let got = std::thread::spawn(move || {
             let mut bodies = vec![];
             for reply in ["400 Bad Request\r\n\r\n{\"error\":\"'reasoning_effort' does not support 'max'\"}",
+                "200 OK\r\nContent-Type: application/json\r\n\r\n{\"choices\":[{\"message\":{\"content\":\"\"}}]}",
                 "200 OK\r\nContent-Type: application/json\r\n\r\n{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"] {
                 let (mut c, _) = server.accept().unwrap();
                 let mut req = vec![];
@@ -955,6 +964,7 @@ data: {\"type\":\"message_stop\"}\n";
         assert_eq!(r["choices"][0]["message"]["content"], "ok");
         let bodies = got.join().unwrap();
         assert!(bodies[0].contains("\"max\"") && bodies[1].contains("\"xhigh\""), "{bodies:?}");
+        assert!(!bodies[1].contains("\"stream\"") && bodies[2].contains("\"stream\":true"), "{bodies:?}");
     }
 
     #[test]
