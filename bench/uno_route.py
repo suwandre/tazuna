@@ -2,6 +2,8 @@
 """UnoRouter: pick a group for a model, or none, before a paid run.
 
     UNOROUTER_API_KEY=... ./uno_route.py MODEL [groups to try, default 4]
+    ./uno_route.py MODEL --price GROUP [--budget USD]   # right before a run, and during it
+
 
 For the cheapest groups by estimated run cost, in order, until one passes:
 1. price: input, cache read and output from UnoRouter's live list (`/api/pricing`), checked against OpenRouter's public
@@ -10,7 +12,10 @@ For the cheapest groups by estimated run cost, in order, until one passes:
 3. long reasoning with tools: a counting question that takes a minute of thinking must come back with an answer
    (groups that cut such calls left Luna and Sol unable to finish hard steps);
 4. identity: that answer must be in English and near the right number (a "Haiku" group answered in Chinese and scored 1-3).
-Prints PIN <group> for the first group that passes. Costs a cent or two per group tried; uses the key's own access with an
+Prints PIN <group> for the first group that passes. Prices move between the check and the run (a Grok group went from
+$0.024 to $0.10 per M input within minutes), so `--price` reads the group's price again: it prints the
+`TAZUNA_PRICE=... TAZUNA_MAX_USD=...` to start the run with (the cap at 5x the estimated run, at most the budget), and exits 1
+when the group no longer serves the model, 2 when the estimated run costs more than the budget. Costs a cent or two per group tried; uses the key's own access with an
 `X-Group` header per group. A pass is no guarantee (a7-5053 passed a cache probe, then missed most of a run): the run
 script still stops a run whose cache rate falls.
 """
@@ -73,6 +78,7 @@ def call(model, group, msgs, effort, tools=False, max_out=64):
         if tools:
             body["tools"] = [{"type": "function", "name": "bash", "description": "run a command", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}]
             body["instructions"] = "Answer from your own reasoning; do not call tools for this."
+            body["tool_choice"] = "none"  # tools present (they change how some models reason), but the answer must be text
         r = get(API + "/v1/responses", body, group)
         u = r.get("usage", {})
         text = " ".join(c.get("text", "") for i in r.get("output", []) if i.get("type") == "message" for c in i.get("content", []))
@@ -82,6 +88,7 @@ def call(model, group, msgs, effort, tools=False, max_out=64):
         if tools:
             body["tools"] = [{"name": "bash", "description": "run a command", "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}}}]
             body["system"] = "Answer from your own reasoning; do not call tools for this."
+            body["tool_choice"] = {"type": "none"}
         r = get(API + "/v1/messages", body, group)
         u = r.get("usage", {})
         text = " ".join(b.get("text", "") for b in r.get("content", []) if b.get("type") == "text")
@@ -92,10 +99,14 @@ def call(model, group, msgs, effort, tools=False, max_out=64):
     if tools:
         body["tools"] = [{"type": "function", "function": {"name": "bash", "description": "run a command", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}}]
         body["messages"] = [{"role": "system", "content": "Answer from your own reasoning; do not call tools for this."}] + msgs
+        body["tool_choice"] = "none"
     r = get(API + "/v1/chat/completions", body, group)
     u = r.get("usage", {})
     det = u.get("prompt_tokens_details") or {}
-    return u.get("prompt_tokens") or u.get("input_tokens") or 0, det.get("cached_tokens") or 0, (r["choices"][0]["message"].get("content") or "")
+    m = r["choices"][0]["message"]
+    # a tool call despite tool_choice none says nothing about cut calls: report it as such
+    text = m.get("content") or ("[called a tool instead of answering]" if m.get("tool_calls") else "")
+    return u.get("prompt_tokens") or u.get("input_tokens") or 0, det.get("cached_tokens") or 0, text
 
 
 def cache_hit(model, group, calls=6):
@@ -126,6 +137,8 @@ def check(model, group):
         return f"long reasoning call failed after {time.time() - t:.0f} s: {str(e)[:80]}"
     if not text.strip():
         return f"long reasoning call came back empty after {time.time() - t:.0f} s"
+    if text.startswith("[called a tool"):
+        return f"called a tool instead of answering ({time.time() - t:.0f} s), even with tool_choice none"
     if re.search(r"[぀-ヿ㐀-鿿가-힯]", text):
         return "answered an English question in another language"
     nums = [int(n) for n in re.findall(r"\d+", text.strip().splitlines()[-1])]
@@ -135,8 +148,24 @@ def check(model, group):
     return None
 
 
+def price_env(model, group, budget):
+    """(exit code, line): the env for a run on the group at today's price, or why not."""
+    p = dict(groups(model)).get(group)
+    if p is None:
+        return 1, f"{group} no longer serves {model}"
+    cost = run_cost(p)
+    if cost > budget:
+        return 2, f"{group}: a typical run now costs ${cost:.3f}, over the ${budget:.2f} budget"
+    return 0, f"TAZUNA_PRICE={p[0]:.5f},{p[1]:.6f},{p[2]:.4f} TAZUNA_MAX_USD={min(budget, 5 * cost):.3f}"
+
+
 if __name__ == "__main__":
     assert norm("anthropic/claude-haiku-5.5") == norm("claude-haiku-5-5") == "claudehaiku55"
+    if "--price" in sys.argv:
+        a = sys.argv
+        code, line = price_env(a[1], a[a.index("--price") + 1], float(a[a.index("--budget") + 1]) if "--budget" in a else 1.0)
+        print(line)
+        sys.exit(code)
     assert abs(run_cost((1.0, 0.1, 2.0), hit=0.5) - (6 * (0.5 * 1.25 + 0.05) + 0.16)) < 1e-9
     model, tries = sys.argv[1], int(sys.argv[2]) if len(sys.argv) > 2 else 4
     gs, ref = groups(model), reference(model)
