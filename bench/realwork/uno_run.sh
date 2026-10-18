@@ -2,7 +2,7 @@
 # One rclone-set run on UnoRouter pinned to a group that passed uno_route.py, at the group's live price:
 #   uno_run.sh MODEL GROUP LABEL BUDGET_USD [TASK]
 # Refuses to start when the group is gone or a run would cost more than the budget; stops the run when the group's
-# input price rises over 1.5x the start price, the group disappears, or under 50% is cached after 15 calls.
+# input price rises over 1.5x the start price, the group disappears, or under 30% is cached after 15 calls (the cost cap guards the money; a cheap group at 47% still cost less than CheaperInference).
 MODEL=$1 GROUP=$2 LABEL=$3 BUDGET=$4 TASK=${5:-rclone-archive-symlinks}
 cd "$(dirname "$0")" || exit 1
 source ~/.uno-key
@@ -32,7 +32,7 @@ for l in open(sys.argv[1]):
 print(n, f"{c/max(i+c,1):.2f}")
 PY
 )
-    [ "${1:-0}" -ge 15 ] && python3 -c "import sys;sys.exit(0 if float('$2')<0.5 else 1)" && { stop "cache $2 after $1 calls"; break; }
+    [ "${1:-0}" -ge 15 ] && python3 -c "import sys;sys.exit(0 if float('$2')<0.3 else 1)" && { stop "cache $2 after $1 calls"; break; }
   fi
   sleep 120
 done

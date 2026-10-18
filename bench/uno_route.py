@@ -15,7 +15,7 @@ For the cheapest groups by estimated run cost, in order, until one passes:
 4. identity: that answer must be in English and near the right number (a "Haiku" group answered in Chinese and scored 1-3).
 Prints PIN <group> for the first group that passes. Prices move between the check and the run (a Grok group went from
 $0.024 to $0.10 per M input within minutes), so `--price` reads the group's price again: it prints the
-`TAZUNA_PRICE=... TAZUNA_MAX_USD=...` to start the run with (the cap at 5x the estimated run, at most the budget), and exits 1
+`TAZUNA_PRICE=... TAZUNA_MAX_USD=...` to start the run with (the cap at 5x a run at 50% cached, at most the budget), and exits 1
 when the group no longer serves the model, 2 when the estimated run costs more than the budget. Costs a cent or two per group tried; uses the key's own access with an
 `X-Group` header per group. A pass is no guarantee (a7-5053 passed a cache probe, then missed most of a run): the run
 script still stops a run whose cache rate falls.
@@ -163,7 +163,7 @@ def price_env(model, group, budget):
     cost = run_cost(p)
     if cost > budget:
         return 2, f"{group}: a typical run now costs ${cost:.3f}, over the ${budget:.2f} budget"
-    return 0, f"TAZUNA_PRICE={p[0]:.5f},{p[1]:.6f},{p[2]:.4f} TAZUNA_MAX_USD={min(budget, 5 * cost):.3f}"
+    return 0, f"TAZUNA_PRICE={p[0]:.5f},{p[1]:.6f},{p[2]:.4f} TAZUNA_MAX_USD={min(budget, 5 * run_cost(p, 0.5)):.3f}"
 
 
 if __name__ == "__main__":
