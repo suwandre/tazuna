@@ -28,6 +28,10 @@ TEXT = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"
 # a typical rclone run: input sent over all calls, share cached when the cache works, output
 RUN_IN, RUN_HIT, RUN_OUT = 6e6, 0.95, 80e3
 QUESTION, ANSWER = "How many primes p < 20000 satisfy p ≡ 3 (mod 8)? Work it out carefully, then give only the number on the last line.", 571
+# the long call's output limit: DeepSeek thought through 128K tokens on the question without an answer (0.45 cents); hitting
+# the limit after 2 minutes still shows the call is not cut, which is what the test is for
+LONG_CAP, LONG_MIN_S = 40000, 120
+IDENTITY = ("What is 17 times 23? Answer in one short English sentence that ends with the number.", 391)
 
 
 def get(url, body=None, group=None, timeout=600):
@@ -71,7 +75,7 @@ def reference(model):
 
 
 def call(model, group, msgs, effort, tools=False, max_out=64):
-    """One unstreamed call in the API tazuna uses for the model; returns (input, cached, text)."""
+    """One unstreamed call in the API tazuna uses for the model; returns (input, cached, text, stopped at the output limit)."""
     if model.startswith("gpt-"):
         body = {"model": model, "input": msgs, "store": False, "reasoning": {"effort": effort}, "prompt_cache_key": "tz-route"}
         if max_out:
@@ -83,7 +87,7 @@ def call(model, group, msgs, effort, tools=False, max_out=64):
         r = get(API + "/v1/responses", body, group)
         u = r.get("usage", {})
         text = " ".join(c.get("text", "") for i in r.get("output", []) if i.get("type") == "message" for c in i.get("content", []))
-        return u.get("input_tokens") or 0, (u.get("input_tokens_details") or {}).get("cached_tokens") or 0, text
+        return u.get("input_tokens") or 0, (u.get("input_tokens_details") or {}).get("cached_tokens") or 0, text, r.get("status") == "incomplete"
     if model.startswith("claude-"):
         body = {"model": model, "messages": msgs, "max_tokens": max_out or 32000, "thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}
         if tools:
@@ -93,7 +97,7 @@ def call(model, group, msgs, effort, tools=False, max_out=64):
         r = get(API + "/v1/messages", body, group)
         u = r.get("usage", {})
         text = " ".join(b.get("text", "") for b in r.get("content", []) if b.get("type") == "text")
-        return (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0), u.get("cache_read_input_tokens") or 0, text
+        return (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0), u.get("cache_read_input_tokens") or 0, text, r.get("stop_reason") == "max_tokens"
     body = {"model": model, "messages": msgs, "reasoning_effort": effort}
     if max_out:
         body["max_tokens"] = max_out
@@ -107,7 +111,33 @@ def call(model, group, msgs, effort, tools=False, max_out=64):
     m = r["choices"][0]["message"]
     # a tool call despite tool_choice none says nothing about cut calls: report it as such
     text = m.get("content") or ("[called a tool instead of answering]" if m.get("tool_calls") else "")
-    return u.get("prompt_tokens") or u.get("input_tokens") or 0, det.get("cached_tokens") or 0, text
+    return u.get("prompt_tokens") or u.get("input_tokens") or 0, det.get("cached_tokens") or 0, text, r["choices"][0].get("finish_reason") == "length"
+
+
+def ask_streamed(model, group):
+    """The long question once more as a stream, as tazuna sends a call that UnoRouter cut unstreamed (it caps those at
+    ~90-180 s, streams it does not); returns (answer text, stopped at the output limit)."""
+    msgs = [{"role": "user", "content": QUESTION}]
+    if model.startswith("gpt-"):
+        path, body = "/v1/responses", {"model": model, "input": msgs, "store": False, "reasoning": {"effort": "high"}, "max_output_tokens": LONG_CAP, "stream": True}
+    elif model.startswith("claude-"):
+        path, body = "/v1/messages", {"model": model, "messages": msgs, "max_tokens": LONG_CAP, "thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}, "stream": True}
+    else:
+        path, body = "/v1/chat/completions", {"model": model, "messages": msgs, "reasoning_effort": "high", "max_tokens": LONG_CAP, "stream": True}
+    h = {"Content-Type": "application/json", "Authorization": f"Bearer {KEY}", "anthropic-version": "2023-06-01", "X-Group": group}
+    text, capped = "", False
+    for raw in urllib.request.urlopen(urllib.request.Request(API + path, data=json.dumps(body).encode(), headers=h), timeout=600):
+        line = raw.decode(errors="replace").strip()
+        if not line.startswith("data:") or line == "data: [DONE]":
+            continue
+        e = json.loads(line[5:])
+        text += "".join((c.get("delta") or {}).get("content") or "" for c in e.get("choices") or [])
+        capped |= any(c.get("finish_reason") == "length" for c in e.get("choices") or [])
+        d = e.get("delta")
+        capped |= e.get("type") == "response.incomplete" or (isinstance(d, dict) and d.get("stop_reason") == "max_tokens")
+        if e.get("type") == "response.output_text.delta" or (e.get("type") == "content_block_delta" and (e.get("delta") or {}).get("type") == "text_delta"):
+            text += e.get("delta", "") if isinstance(e.get("delta"), str) else e["delta"].get("text", "")
+    return text, capped
 
 
 def cache_hit(model, group, calls=6):
@@ -131,27 +161,40 @@ def check(model, group, price):
         return f"cache test failed: {str(e)[:80]}"
     if hit < 0.5:
         return f"cache {hit:.0%}"
-    t = time.time()
+    cjk = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
+    t, capped = time.time(), False
     try:
-        _, _, text = call(model, group, [{"role": "user", "content": QUESTION}], "high", tools=True, max_out=0)
-    except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
-        return f"long reasoning call failed after {time.time() - t:.0f} s: {str(e)[:80]}"
-    if text.startswith("[called a tool"):
-        # wanting to compute with a tool is fine for an agent (GLM ignores tool_choice none): ask again without tools,
-        # which still shows whether a long call is cut
-        t = time.time()
+        _, _, text, capped = call(model, group, [{"role": "user", "content": QUESTION}], "high", tools=True, max_out=LONG_CAP)
+        if text.startswith("[called a tool"):
+            # wanting to compute with a tool is fine for an agent (GLM ignores tool_choice none): ask again without tools,
+            # which still shows whether a long call is cut
+            _, _, text, capped = call(model, group, [{"role": "user", "content": QUESTION}], "high", max_out=LONG_CAP)
+    except (urllib.error.URLError, OSError, KeyError, ValueError):
+        text = ""  # cut or failed unstreamed: asked again as a stream below, as tazuna does
+    if not text.strip() and not capped:
         try:
-            _, _, text = call(model, group, [{"role": "user", "content": QUESTION}], "high", max_out=0)
+            text, capped = ask_streamed(model, group)
         except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
-            return f"long reasoning call (without tools) failed after {time.time() - t:.0f} s: {str(e)[:80]}"
-    if not text.strip():
-        return f"long reasoning call came back empty after {time.time() - t:.0f} s"
-    if re.search(r"[぀-ヿ㐀-鿿가-힯]", text):
+            return f"long reasoning call failed, also streamed, after {time.time() - t:.0f} s: {str(e)[:80]}"
+    secs = time.time() - t
+    nums = [int(n) for n in re.findall(r"\d+", text.strip().splitlines()[-1])] if text.strip() else []
+    if nums and abs(nums[-1] - ANSWER) <= 15:
+        long_call = f"long call {secs:.0f} s, answer {nums[-1]}"
+    elif capped and secs >= LONG_MIN_S:
+        long_call = f"long call still thinking at the {LONG_CAP // 1000}K limit after {secs:.0f} s (not cut)"
+    elif not text.strip():
+        return f"long reasoning call came back empty, also streamed, after {secs:.0f} s"
+    else:
+        return f"long call answer {nums[-1:] or text.strip()[-40:]!r} is far from {ANSWER}"
+    if cjk.search(text):
         return "answered an English question in another language"
-    nums = [int(n) for n in re.findall(r"\d+", text.strip().splitlines()[-1])]
-    if not nums or abs(nums[-1] - ANSWER) > 15:
-        return f"answer {nums[-1:] or text.strip()[-40:]!r} is far from {ANSWER}"
-    print(f"    cache {hit:.0%} (a typical run ${run_cost(price, hit):.3f} at that rate), long call {time.time() - t:.0f} s, answer {nums[-1]}", flush=True)
+    try:
+        _, _, short, _ = call(model, group, [{"role": "user", "content": IDENTITY[0]}], "low", max_out=4000)
+    except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
+        return f"identity question failed: {str(e)[:80]}"
+    if cjk.search(short) or str(IDENTITY[1]) not in short:
+        return f"identity question answered {short.strip()[-60:]!r}"
+    print(f"    cache {hit:.0%} (a typical run ${run_cost(price, hit):.3f} at that rate), {long_call}, identity ok", flush=True)
     return None
 
 
