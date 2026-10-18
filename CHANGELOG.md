@@ -16,6 +16,26 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## `--self-review` on the own loop, DeepSeek on UnoRouter, 2026-10-18 (no code change)
+
+Weak DeepSeek runs are scope failures in the judge's notes: "over-engineered", "an unrelated DetachAfterHijack method",
+"rewrites the internal types ... the hidden tests do not compile". `--self-review` (0.0.14: finish rules in the prompt,
+one turn reviewing the diff when the model first stops, "revert changes the task did not ask for") already reaches the
+own loop; measured only on Opus before. Three runs (harness `tazuna-ownunorev`, groups ih-cb then b2capi, no switch),
+judged in one pool per task with the uno-2 runs and the anchors (`judge.oct.rev.jsonl`):
+
+| task | uno-2 (no review) | with review | review turn |
+|---|---|---|---|
+| caddy-retry | 9, 2/2, 57 turns, 0.37 cents | 9, 2/2, 46 turns, 0.28 cents | 9 calls, 3 small edits |
+| rclone | 6, 3/3, 61 turns, ~0.43 cents | 8, 3/3, 80 turns, 0.96 cents | 11 calls |
+| caddy-unix | 9, 7/7, 57 turns, ~0.43 cents | 4, 0/7 (suite does not compile), 80 turns, 0.70 cents | 17 calls, no edit |
+
+Mean 7.0 vs 8.0 at one run per task (judge noise 1.5 per run), billed +58% (1.94 vs 1.23 cents; the three runs shared
+one counter, split by input tokens). The caddy-unix failure came before the review: the same redesign as v76 (a new
+shared socket type, the map type and the `count` field changed). The review read the diff, called it all needed and
+changed nothing: "revert what the task did not ask for" catches extra changes, not a fix larger than it needs to be.
+Decision: stays opt-in; no evidence it lifts DeepSeek, and it does not touch the failure that costs most.
+
 ## UnoRouter: what 29 hours of prices say, 2026-10-18 (bench only)
 
 The public price list read every 10 minutes from Saturday 14:25 to Sunday 19:18 (170 readings,
