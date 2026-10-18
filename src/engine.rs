@@ -7,9 +7,66 @@ use serde_json::{Value, json};
 use std::{
     collections::VecDeque,
     io::{BufRead, Write},
-    sync::mpsc::{Receiver, TryRecvError},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicUsize, Ordering},
+        mpsc::{Receiver, TryRecvError},
+    },
     time::Duration,
 };
+
+/// UnoRouter groups to pin, cheapest first (`TAZUNA_GROUPS=a,b,c`, the groups that passed `bench/uno_route.py`). Calls go
+/// to the current one with an `X-Group` header; a group that drops out or stops caching is left for the next. In one day
+/// four groups vanished between check and run or mid-run, two of them taking working runs down.
+/// ponytail: one list per process (one model per engine) and no price re-check during a run; a per-call price check if
+/// prices turn out to move within a task
+struct Groups {
+    list: Vec<String>,
+    at: AtomicUsize,
+    /// (input, cached) of the last calls on the current group
+    recent: Mutex<VecDeque<(u64, u64)>>,
+}
+
+impl Groups {
+    fn from(spec: &str) -> Groups {
+        Groups { list: spec.split(',').map(str::trim).filter(|g| !g.is_empty()).map(String::from).collect(), at: AtomicUsize::new(0), recent: Mutex::new(VecDeque::new()) }
+    }
+
+    fn current(&self) -> Option<&str> {
+        self.list.get(self.at.load(Ordering::Relaxed)).map(String::as_str)
+    }
+
+    /// Moves to the next group; false when none is left.
+    fn next(&self, why: &str) -> bool {
+        let i = self.at.fetch_add(1, Ordering::Relaxed) + 1;
+        self.recent.lock().unwrap().clear();
+        eprintln!("group {} left ({why}); {}", self.list.get(i - 1).map_or("?", String::as_str), self.list.get(i).map_or("no group left", String::as_str));
+        i < self.list.len()
+    }
+
+    /// A call's cache use: under 70% over the last 10 calls on a group moves to the next (a cheap group that rotates
+    /// accounts cached 47%; the next miss there costs the whole prompt again).
+    fn note(&self, input: u64, cached: u64) {
+        if self.list.len() < 2 || self.at.load(Ordering::Relaxed) + 1 >= self.list.len() {
+            return;
+        }
+        let mut r = self.recent.lock().unwrap();
+        r.push_back((input, cached));
+        if r.len() > 10 {
+            r.pop_front();
+        }
+        let (i, c) = r.iter().fold((0, 0), |(i, c), x| (i + x.0, c + x.1));
+        if r.len() == 10 && (c as f64) < 0.7 * i as f64 {
+            drop(r);
+            self.next(&format!("{:.0}% cached over the last 10 calls", 100.0 * c as f64 / i.max(1) as f64));
+        }
+    }
+}
+
+fn groups() -> &'static Groups {
+    static G: OnceLock<Groups> = OnceLock::new();
+    G.get_or_init(|| Groups::from(&std::env::var("TAZUNA_GROUPS").unwrap_or_default()))
+}
 
 /// A backstop against loops: the dollar cap is the real limit, so cheap models get proportionally more turns. 200 cut
 /// DeepSeek off after ~75 minutes (180 turns cost it $0.09); 2000 stays above where its $1 cap lands.
@@ -265,6 +322,7 @@ impl Loop {
                 let prompt = n(&u["prompt_tokens"], &u["input_tokens"]);
                 (prompt, n(&u["completion_tokens"], &u["output_tokens"]), n(&u["prompt_tokens_details"]["cached_tokens"], &u["input_tokens_details"]["cached_tokens"]).min(prompt), 0)
             };
+            groups().note(prompt, cached);
             // the billed cost when the provider reports it (CheaperInference, OpenRouter), else the price list; a cache write
             // costs 1.25x input (Anthropic, 5 minutes)
             self.cost += u["cost"].as_f64().unwrap_or((prompt - cached) as f64 * self.price.0 + written as f64 * self.price.0 * 0.25
@@ -611,6 +669,10 @@ fn emit(e: &Value) {
 /// network outage ended a 38-minute run when the tries spanned only 40 s, and a free model "at capacity" (HTTP 429) ended
 /// all seven runs of a benchmark when they spanned 4 minutes.
 fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Result<Value> {
+    chat_in(http, url, key, api, body, groups())
+}
+
+fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, groups: &Groups) -> Result<Value> {
     let path = match api {
         Api::Chat => "chat/completions",
         Api::Responses => "responses",
@@ -649,6 +711,10 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
         let extra = std::env::var("TAZUNA_HEADER").ok();
         let req = match extra.as_deref().and_then(|h| h.split_once(':')) {
             Some((k, v)) => req.header(k.trim(), v.trim()),
+            None => req,
+        };
+        let req = match groups.current() {
+            Some(g) => req.header("X-Group", g),
             None => req,
         };
         let sent = req.send(&body.to_string())
@@ -702,6 +768,12 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
             if lowered {
                 continue;
             }
+        }
+        // the pinned group dropped out: the same call at once on the next group, not counted as a try
+        let gone = ["get_channel_failed", "No permission to access this group", "no available provider"];
+        if groups.current().is_some() && gone.iter().any(|m| text.contains(m)) && groups.next(&text.chars().take(80).collect::<String>()) {
+            i -= 1;
+            continue;
         }
         // a 429 for a locked model or an empty balance never clears by waiting (Experiential Labs: "insufficient_quota"),
         // but the same type with code free_limit_reached is its hourly free allowance, which does
@@ -957,9 +1029,64 @@ data: {\"type\":\"message_stop\"}\n";
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// One whole HTTP request (headers, then Content-Length bytes of body) from a test server's connection: answering
+    /// before the body is read made the client fail now and then (closed with unread data).
+    fn read_request(c: &mut std::net::TcpStream) -> String {
+        use std::io::Read;
+        let (mut req, mut buf) = (vec![], [0u8; 65536]);
+        loop {
+            let n = c.read(&mut buf).unwrap();
+            req.extend_from_slice(&buf[..n]);
+            let t = String::from_utf8_lossy(&req).to_string();
+            if let Some((head, body)) = t.split_once("\r\n\r\n") {
+                let len = head.lines().find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                if body.len() >= len || n == 0 {
+                    return t;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_group_that_drops_out_or_stops_caching_is_left_for_the_next() {
+        use std::io::Write;
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", server.local_addr().unwrap());
+        let seen = std::thread::spawn(move || {
+            let mut groups = vec![];
+            for _ in 0..2 {
+                let (mut c, _) = server.accept().unwrap();
+                let head = read_request(&mut c).to_lowercase();
+                let g = head.lines().find_map(|l| l.strip_prefix("x-group:").map(|v| v.trim().to_string())).unwrap_or_default();
+                let reply = if g == "a" {
+                    "503 Service Unavailable\r\nConnection: close\r\n\r\n{\"error\":{\"code\":\"get_channel_failed\"}}"
+                } else {
+                    "200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"
+                };
+                c.write_all(format!("HTTP/1.1 {reply}").as_bytes()).unwrap();
+                groups.push(g);
+            }
+            groups
+        });
+        let g = Groups::from("a, b, c");
+        let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+        let r = chat_in(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": []}), &g).unwrap();
+        assert_eq!(r["choices"][0]["message"]["content"], "ok");
+        assert_eq!(seen.join().unwrap(), ["a", "b"], "the call went again at once on the next group");
+        // ten calls at half cached move b on to c; on the last group nothing moves
+        for _ in 0..10 {
+            g.note(1000, 500);
+        }
+        assert_eq!(g.current(), Some("c"));
+        for _ in 0..10 {
+            g.note(1000, 0);
+        }
+        assert_eq!(g.current(), Some("c"));
+    }
+
     #[test]
     fn a_rate_limit_is_waited_out_past_the_normal_tries() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", server.local_addr().unwrap());
         // 12 normal tries and 3 of the long waits answered 429, then the allowance is back
@@ -969,8 +1096,7 @@ data: {\"type\":\"message_stop\"}\n";
         std::thread::spawn(move || {
             for reply in replies {
                 let (mut c, _) = server.accept().unwrap();
-                let mut buf = [0u8; 65536];
-                let _ = c.read(&mut buf);
+                read_request(&mut c);
                 let reply = format!("HTTP/1.1 {}", reply.replacen("\r\n\r\n", "\r\nConnection: close\r\n\r\n", 1));
                 c.write_all(reply.as_bytes()).unwrap();
             }

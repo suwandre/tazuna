@@ -13,7 +13,8 @@ For the cheapest groups by estimated run cost, in order, until one passes:
 3. long reasoning with tools: a counting question that takes a minute of thinking must come back with an answer
    (groups that cut such calls left Luna and Sol unable to finish hard steps);
 4. identity: that answer must be in English and near the right number (a "Haiku" group answered in Chinese and scored 1-3).
-Prints PIN <group> for the first group that passes. Prices move between the check and the run (a Grok group went from
+Prints PIN <group> for the first group that passes and GROUPS <a,b,c> for up to three that pass (cheapest first), the
+list tazuna switches along when a group drops out or stops caching (`TAZUNA_GROUPS`). Prices move between the check and the run (a Grok group went from
 $0.024 to $0.10 per M input within minutes), so `--price` reads the group's price again: it prints the
 `TAZUNA_PRICE=... TAZUNA_MAX_USD=...` to start the run with (the cap at 5x a run at 50% cached, at most the budget), and exits 1
 when the group no longer serves the model, 2 when the estimated run costs more than the budget. Costs a cent or two per group tried; uses the key's own access with an
@@ -228,7 +229,10 @@ if __name__ == "__main__":
     def too_slow(*_):
         raise TimeoutError("over 15 minutes for this group")
     signal.signal(signal.SIGALRM, too_slow)
+    passed = []
     for g, p in gs[:tries]:
+        if len(passed) == 3:
+            break
         print(f"checking {g}", flush=True)
         # a group that holds a call open stalled the check for 40 minutes; the slowest pass so far took 11 (DeepSeek)
         signal.alarm(900)
@@ -238,8 +242,10 @@ if __name__ == "__main__":
             why = str(e)
         signal.alarm(0)
         if why is None:
-            print(f"PIN {g}")
-            sys.exit(0)
-        print(f"    no: {why}", flush=True)
-    print("PIN none: no group passed")
-    sys.exit(1)
+            passed.append(g)
+        else:
+            print(f"    no: {why}", flush=True)
+    if not passed:
+        print("PIN none: no group passed")
+        sys.exit(1)
+    print(f"PIN {passed[0]}\nGROUPS {','.join(passed)}")

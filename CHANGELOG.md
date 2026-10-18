@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.68 (2026-10-18)
+
+**UnoRouter group switching in the own loop.** `TAZUNA_GROUPS=a,b,c` (cheapest first, the groups that passed
+`bench/uno_route.py`, which now prints up to three): calls go to the current group with an `X-Group` header; when it drops
+out (`get_channel_failed`, "No permission to access this group", "no available provider") the same call goes at once to
+the next, and when the last 10 calls on it cached under 70% the next call does. No listed group left: the task ends with
+the error, as before (no fall back to automatic routing, which picked dear groups). Why: in one day four groups vanished
+between check and run or mid-run; two of them ended working DeepSeek runs (99 and 146 calls, 20 and 15 edits) that a
+switch would have kept going. Prices are not re-read during a run yet (`uno_run.sh` watches them). Also 0.0.67: Experiential
+Labs' hourly free limit (`insufficient_quota` with code `free_limit_reached`) is waited out instead of read as an empty
+balance; a flaky test server that answered before reading the whole request is fixed.
+
 ## 0.0.66 (2026-10-18)
 
 **A rate limit is waited out for up to 70 more minutes** (the last try repeated every 5 minutes) instead of ending the
