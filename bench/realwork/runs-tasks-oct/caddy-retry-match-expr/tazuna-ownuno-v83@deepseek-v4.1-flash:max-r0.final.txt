@@ -1,0 +1,20 @@
+## Summary
+
+The verification run failed on `TestReverseProxyReloadStressUpgradedStreamsHeapProfiles` (detached-mode streams were killed by config reloads), which I initially confirmed also fails on the untouched base commit. But the failure had a cause in this tree that is worth fixing, so I fixed it rather than leaving a red suite.
+
+**Root cause of the detached-stream failure:** `handleUpgradeResponse` only detaches the writer chain if `caddyhttp.DetachResponseWriterAfterHijack` succeeds, and that helper only succeeds when *some* writer in the chain implements `DetachAfterHijack`. A plain `ResponseWriterWrapper` (which wraps `IdleTimeoutWriter` and similar middleware writers) didn't implement it, so with no access-log `responseRecorder` in the chain (`accessLogger == nil`), detachment was reported as failed and the stream stayed attached — and was then closed on reload.
+
+**Fix:** gave `ResponseWriterWrapper` a `DetachAfterHijack(bool) bool` that returns `true`, since a stateless wrapper has nothing to detach. `responseRecorder` keeps its own override (which also refuses once hijacked), so writer chains that track hijacked traffic still gate detachment correctly. Added `TestResponseWriterWrapperDetachAfterHijack` covering both the plain-wrapper success and a rejecting writer in the chain.
+
+**Retry-match fix (original task)** is unchanged:
+- `MatchExpression.Provision` records the placeholder names referenced by `ph(req, "...")` calls in the checked CEL AST and exposes them via `PlaceholderNames() ([]string, bool)`; the bool is false when a name is only known at evaluation time.
+- `matcherSetHasResponseExpressionMatcher` only treats an expression as a response condition when it references `http.reverse_proxy.status_code`, `status_text`, `header.*`, or the upstream latency placeholders (or when names are dynamic). Request-only expressions are request conditions again, so successful responses are no longer retried.
+
+**Verification:**
+- `go build ./...` and `go vet` clean.
+- `go test ./caddytest/integration/ ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/` → all `ok`.
+- `go test -race -short` on the same packages → all `ok`.
+- Ran the stress test 3× (`-count=3`) and the full integration package twice more; no failures.
+- Added tests: placeholder-name extraction, response-vs-request matcher classification (including `upstream.host`, `status_codes`, escaped literals, dynamic names, mixed sets), request-only POST body preservation, latency placeholder retries, and an end-to-end Caddyfile regression for the reported 502.
+
+Note: I did not change `modules/caddyhttp/reverseproxy/streaming.go`; the earlier debug prints and edits there were reverted.

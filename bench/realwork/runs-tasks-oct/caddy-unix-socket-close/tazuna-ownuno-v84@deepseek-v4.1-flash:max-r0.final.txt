@@ -1,0 +1,29 @@
+Implemented the Unix socket lifecycle fix.
+
+### Changes
+
+**`listen_unix.go`**
+- Closed the duplicated `*os.File` returned by `socket.File()` during socket reuse, fixing the leaked file descriptor that kept the old socket alive until GC.
+- Stopped calling `File()` during close just to obtain the path; the listener/conn address is used instead.
+- Made `unixListener.Close` and `unixConn.Close` idempotent with an atomic `closed` flag. A second close returns `net.ErrClosed` without decrementing the shared reference count again.
+- Serialized reference-count decrement, map removal, and socket-file unlinking under `unixSocketsMu`, so a close racing with a new listen on the same path cannot unlink the new listener’s socket file.
+- Added `isAbstractUnixSocket`; abstract Linux sockets (`@...`) are never unlinked, both during reuse cleanup and close.
+
+**`listen_unix_test.go`** (new)
+- Added coverage for:
+  - immediate close and file removal
+  - double-close behavior and reference counts
+  - reuse where the file remains until the last holder closes
+  - concurrent close/relisten for stream and datagram Unix sockets
+  - abstract Unix sockets not unlinking same-named filesystem paths
+
+### Verification
+
+```sh
+go test -race -short .
+go test -race -count=5 -run 'TestUnix|TestAbstract' .
+go vet .
+go build ./...
+```
+
+All passed.
