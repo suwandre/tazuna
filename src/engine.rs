@@ -25,11 +25,14 @@ struct Groups {
     at: AtomicUsize,
     /// (input, cached) of the last calls on the current group
     recent: Mutex<VecDeque<(u64, u64)>>,
+    /// switches not yet in the run log (stderr went unrecorded in benchmark runs)
+    notes: Mutex<Vec<String>>,
 }
 
 impl Groups {
     fn from(spec: &str) -> Groups {
-        Groups { list: spec.split(',').map(str::trim).filter(|g| !g.is_empty()).map(String::from).collect(), at: AtomicUsize::new(0), recent: Mutex::new(VecDeque::new()) }
+        Groups { list: spec.split(',').map(str::trim).filter(|g| !g.is_empty()).map(String::from).collect(), at: AtomicUsize::new(0),
+            recent: Mutex::new(VecDeque::new()), notes: Mutex::new(vec![]) }
     }
 
     fn current(&self) -> Option<&str> {
@@ -40,8 +43,15 @@ impl Groups {
     fn next(&self, why: &str) -> bool {
         let i = self.at.fetch_add(1, Ordering::Relaxed) + 1;
         self.recent.lock().unwrap().clear();
-        eprintln!("group {} left ({why}); {}", self.list.get(i - 1).map_or("?", String::as_str), self.list.get(i).map_or("no group left", String::as_str));
+        let note = format!("group {} left ({why}); now {}", self.list.get(i - 1).map_or("?", String::as_str), self.list.get(i).map_or("no group left", String::as_str));
+        eprintln!("{note}");
+        self.notes.lock().unwrap().push(note);
         i < self.list.len()
+    }
+
+    /// Switches since the last call, for the run log.
+    fn drain(&self) -> Vec<String> {
+        std::mem::take(&mut *self.notes.lock().unwrap())
     }
 
     /// A call's cache use: under 70% over the last 10 calls on a group moves to the next (a cheap group that rotates
@@ -323,6 +333,9 @@ impl Loop {
                 (prompt, n(&u["completion_tokens"], &u["output_tokens"]), n(&u["prompt_tokens_details"]["cached_tokens"], &u["input_tokens_details"]["cached_tokens"]).min(prompt), 0)
             };
             groups().note(prompt, cached);
+            for note in groups().drain() {
+                (self.out)(&json!({"type": "system", "subtype": "group_switch", "message": note}));
+            }
             // the billed cost when the provider reports it (CheaperInference, OpenRouter), else the price list; a cache write
             // costs 1.25x input (Anthropic, 5 minutes)
             self.cost += u["cost"].as_f64().unwrap_or((prompt - cached) as f64 * self.price.0 + written as f64 * self.price.0 * 0.25
@@ -769,9 +782,12 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
                 continue;
             }
         }
-        // the pinned group dropped out: the same call at once on the next group, not counted as a try
+        // the pinned group dropped out, or one of its upstreams refused the call (UnoRouter passes that on as a 400: "Provider
+        // returned error ... Baidu", "bad_response_status_code"; it ended two runs, one after the task was solved): the
+        // same call at once on the next group, not counted as a try
         let gone = ["get_channel_failed", "No permission to access this group", "no available provider"];
-        if groups.current().is_some() && gone.iter().any(|m| text.contains(m)) && groups.next(&text.chars().take(80).collect::<String>()) {
+        let upstream = status == 400 && ["Provider returned error", "bad_response_status_code"].iter().any(|m| text.contains(m));
+        if groups.current().is_some() && (upstream || gone.iter().any(|m| text.contains(m))) && groups.next(&text.chars().take(80).collect::<String>()) {
             i -= 1;
             continue;
         }
@@ -1050,30 +1066,40 @@ data: {\"type\":\"message_stop\"}\n";
     #[test]
     fn a_group_that_drops_out_or_stops_caching_is_left_for_the_next() {
         use std::io::Write;
-        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let url = format!("http://{}", server.local_addr().unwrap());
-        let seen = std::thread::spawn(move || {
-            let mut groups = vec![];
-            for _ in 0..2 {
-                let (mut c, _) = server.accept().unwrap();
-                let head = read_request(&mut c).to_lowercase();
-                let g = head.lines().find_map(|l| l.strip_prefix("x-group:").map(|v| v.trim().to_string())).unwrap_or_default();
-                let reply = if g == "a" {
-                    "503 Service Unavailable\r\nConnection: close\r\n\r\n{\"error\":{\"code\":\"get_channel_failed\"}}"
-                } else {
-                    "200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"
-                };
-                c.write_all(format!("HTTP/1.1 {reply}").as_bytes()).unwrap();
-                groups.push(g);
-            }
-            groups
-        });
-        let g = Groups::from("a, b, c");
+        // a server on which group "a" fails with `fail` and every other group answers
+        fn serve(fail: &'static str) -> (String, std::thread::JoinHandle<Vec<String>>) {
+            let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", server.local_addr().unwrap());
+            (url, std::thread::spawn(move || {
+                let mut groups = vec![];
+                for _ in 0..2 {
+                    let (mut c, _) = server.accept().unwrap();
+                    let head = read_request(&mut c).to_lowercase();
+                    let g = head.lines().find_map(|l| l.strip_prefix("x-group:").map(|v| v.trim().to_string())).unwrap_or_default();
+                    let reply = if g == "a" { fail } else {
+                        "200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"
+                    };
+                    c.write_all(format!("HTTP/1.1 {reply}").as_bytes()).unwrap();
+                    groups.push(g);
+                }
+                groups
+            }))
+        }
         let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
-        let r = chat_in(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": []}), &g).unwrap();
-        assert_eq!(r["choices"][0]["message"]["content"], "ok");
-        assert_eq!(seen.join().unwrap(), ["a", "b"], "the call went again at once on the next group");
+        // the group dropped out, or one of its upstreams refused the call (passed on as a 400)
+        for fail in ["503 Service Unavailable\r\nConnection: close\r\n\r\n{\"error\":{\"code\":\"get_channel_failed\"}}",
+            "400 Bad Request\r\nConnection: close\r\n\r\n{\"error\":{\"message\":\"Provider returned error (Baidu)\"}}"] {
+            let (url, seen) = serve(fail);
+            let g = Groups::from("a, b, c");
+            let r = chat_in(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": []}), &g).unwrap();
+            assert_eq!(r["choices"][0]["message"]["content"], "ok");
+            assert_eq!(seen.join().unwrap(), ["a", "b"], "the call went again at once on the next group");
+            assert_eq!(g.drain().len(), 1, "the switch is kept for the run log");
+            assert!(g.drain().is_empty());
+        }
         // ten calls at half cached move b on to c; on the last group nothing moves
+        let g = Groups::from("a, b, c");
+        g.at.store(1, Ordering::Relaxed);
         for _ in 0..10 {
             g.note(1000, 500);
         }

@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.69 (2026-10-18)
+
+**A 400 that UnoRouter passes on from an upstream ("Provider returned error ... Baidu", `bad_response_status_code`) moves
+to the next group** like a dropout, instead of ending the task. The first two runs with group switching (DeepSeek, rclone
+and caddy-retry over ih-cb and burngate) both ended on such a 400: caddy-retry after the task was solved (its summary was
+written; the 400 came in tazuna's follow-up, so the solution was not saved), rclone after 185 calls. **Group switches are
+written to the run log** (`system` / `group_switch`); they went only to stderr, which no one kept.
+
 ## 0.0.68 (2026-10-18)
 
 **UnoRouter group switching in the own loop.** `TAZUNA_GROUPS=a,b,c` (cheapest first, the groups that passed

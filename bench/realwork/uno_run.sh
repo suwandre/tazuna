@@ -16,7 +16,7 @@ START_IN=$(echo "$ENV" | sed -E 's/.*TAZUNA_PRICE=([0-9.]+),.*/\1/')
 used() { curl -s --max-time 15 https://api.unorouter.com/v1/dashboard/billing/usage -H "Authorization: Bearer $UNOROUTER_API_KEY" | python3 -I -c "import json,sys;print(json.load(sys.stdin)['total_usage'])"; }
 echo "$(date +%H:%M) start $MODEL on $GROUP_LIST: $ENV; used-cents $(used)" > "$LOG"
 env $ENV TAZUNA_GROUPS="$GROUP_LIST" BENCH_GATE=state GUARD_PAUSE_AT=101 GUARD_WEEK_AT=101 BENCH_SET=tasks-oct BENCH_TIMEOUT=10800 \
-  HARNESS_BIN=/tmp/tz-v68/tazuna ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "tazuna-ownuno-$LABEL@$MODEL:max" > "bench.$LABEL.log" 2>&1 &
+  HARNESS_BIN=/tmp/tz-v69/tazuna ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "tazuna-ownuno-$LABEL@$MODEL:max" > "bench.$LABEL.log" 2>&1 &
 R=$!
 # only this run's own process tree (matching by model killed a parallel run of the same model and one of a model whose
 # name starts the same)
