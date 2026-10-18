@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## UnoRouter uno-2: a first default, 2026-10-18 (no code change)
+
+DeepSeek V4.1 Flash on UnoRouter with group switching (0.0.69; three groups passed the check: sinnode, zlkpro, zangin):
+
+| task | tests | judge | turns | time | cached | billed |
+|---|---|---|---|---|---|---|
+| caddy-retry | 2/2 | 9 | 57 | 9 min | 98% | 0.37 cents |
+| caddy-unix | 7/7 | 9 | 57 | 10 min | 97% | ~0.43 cents |
+| rclone | 3/3 | 7 | 61 | 9 min | 98% | ~0.43 cents |
+
+`leaderboard.py uno-2`: judge 8.4 +- 1.1, worst 7, floor 7.5, no failure: **DeepSeek V4.1 Flash is the first model to meet
+the default rule** (3+ runs, floor 7 or more, at most one failure in five). For comparison, DeepSeek on CheaperInference
+scored 8-9 at 2.4-5.2 cents a run. No group switch was needed in these three runs, so switching is so far tested only in
+unit tests. The two runs of one launch share the billing counter; each is about half of the 0.86 cents logged.
+
 ## 0.0.69 (2026-10-18)
 
 **A 400 that UnoRouter passes on from an upstream ("Provider returned error ... Baidu", `bad_response_status_code`) moves

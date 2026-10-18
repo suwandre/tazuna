@@ -172,7 +172,8 @@ minus one standard error) of 7 or more and at most one failure in five. A config
 own runs. Earlier runs measured our mistakes (streaming without cache, cut calls, unpinned groups) and do not count.
 
 **Group switching in the own loop: built in 0.0.68-0.0.69 (dropouts, upstream 400s, failing cache; prices still watched
-outside); config uno-2.** First run (DeepSeek, caddy-retry): 2/2, judge 9, 0.37 cents, no switch needed. uno-1 (one pinned
+outside); config uno-2.** DeepSeek on three tasks: judge 9, 9, 7, 98% cached, ~0.4 cents a run, no failure: the first
+default under the rule (CheaperInference: 8-9 at 2.4-5 cents). Still open: a live group switch, more runs and models. uno-1 (one pinned
 group) for DeepSeek: judged 8.5, 9, 4 and two runs lost to vanished groups.
 **The design it follows:** (after the 48-hour price log, `bench/realwork/uno-prices.jsonl`,
 shows how often groups and prices change). Today a run pins one group (`TAZUNA_HEADER`); when it drops out, the calls
