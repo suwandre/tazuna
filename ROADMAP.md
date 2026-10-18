@@ -175,14 +175,15 @@ own runs. Earlier runs measured our mistakes (streaming without cache, cut calls
 outside); config uno-2.** DeepSeek on three tasks: judge 9, 9, 7, 98% cached, ~0.4 cents a run, no failure: the first
 default under the rule (CheaperInference: 8-9 at 2.4-5 cents). Still open: a live group switch, more runs and models. uno-1 (one pinned
 group) for DeepSeek: judged 8.5, 9, 4 and two runs lost to vanished groups.
-**The design it follows:** (after the 48-hour price log, `bench/realwork/uno-prices.jsonl`,
-shows how often groups and prices change). Today a run pins one group (`TAZUNA_HEADER`); when it drops out, the calls
+**The design it follows** (the price log, 29 hours, CHANGELOG 2026-10-18: DeepSeek's cheapest group vanished within the
+hour half the time, groups listed for 3 hours one time in ten; prices of a group that stays moved little within a run). Today a run pins one group (`TAZUNA_HEADER`); when it drops out, the calls
 fail for ~15 minutes and the task ends. Instead, per model a dated list of groups that passed the check, ranked by the
 live price of a whole run (input, cache, output; the price list is public and free), and at each call the group to use:
 - switch at once to the next group on `get_channel_failed`, repeated 5xx/429, or an empty reply after the stream fallback;
 - switch when the last 10 calls cached under 70%;
-- re-read prices every ~10 minutes; switch only if the saving over the rest of the task beats one cache miss (the whole
-  prompt at 1.25x);
+- prices: read before each run (groups listed 3 hours or more first) and every few minutes during it, but only to stop
+  a run whose whole cost (input, cache, output) rose over 1.5x; no switch for a lower price (a fraction of a cent against
+  a cache miss);
 - no listed group left: a fixed provider (CheaperInference, BeatAPI or OpenRouter) or stop and ask;
 - new groups enter the list only through the check, in the background, with a daily cent cap.
 Measured as usual: the same tasks with switching vs one pinned group, cost, cache, judge. Then: `uno_route.py` becomes a

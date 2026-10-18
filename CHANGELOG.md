@@ -16,6 +16,39 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## UnoRouter: what 29 hours of prices say, 2026-10-18 (bench only)
+
+The public price list read every 10 minutes from Saturday 14:25 to Sunday 19:18 (170 readings,
+`bench/realwork/uno-prices.jsonl`, logger `uno_price_log.sh`). Per model, per hour:
+
+| model | groups seen / listed >95% | groups appear / vanish | cheapest group changes | cheapest input, min-median-max $/M |
+|---|---|---|---|---|
+| DeepSeek V4.1 Flash | 50 / 26 | 3.1 / 3.1 | 2.4 | 0.0057-0.0084-0.0130 |
+| GPT-6.1 Sol | 29 / 16 | 0.6 / 0.6 | 2.2 | 0.266-0.280-0.300 |
+| Grok 4.7 | 15 / 8 | 0.5 / 0.5 | 3.6 | 0.0086-0.100-0.100 |
+| MiMo V2.6 Flash | 17 / 6 | 0.7 / 0.6 | 1.4 | 0.024-0.044-0.121 |
+| GLM 5.3 | 24 / 5 | 1.5 / 1.5 | 0.5 | 0.011-0.011-0.098 |
+| GPT-6 Luna | 23 / 10 | 0.4 / 0.5 | 0.07 | 0.0125-0.021-0.021 |
+| Haiku 5.5 | 7 / 4 | 0.1 / 0.1 | 0.14 | 0.043-0.043-0.050 |
+
+Picking the cheapest group and keeping it: for DeepSeek it was gone within 30 minutes in 39% of cases, within an hour in
+49%, within 12 hours in 90%; Luna's was gone within 12 hours in 11%. A group that stays rarely gets dearer by much within
+an hour (at most 2x for DeepSeek, 1.2x for Sol). The one large move was model-wide: DeepSeek's output multiplier stood at
+120x input for about four hours (Saturday 15:38-19:29; 3.8-4.9x otherwise), with the input price unchanged.
+
+Groups that have been listed for a while stay: of DeepSeek's cheapest groups 43% vanished within the hour, of the cheapest
+listed for 1, 3 and 6 hours 20%, 10% and 6%, at 1.10x, 1.18x and 1.25x the price (MiMo: 13% to 4% at 1.12x; Sol 8% to 2%
+at 1.03x). At 0.4 cents a run the 18% costs nothing that matters, while three vanishing groups end the run. Changes:
+- `uno_route.py` tries groups listed in every reading of the last 3 hours first (when the logger runs), cheapest first
+  within each half;
+- `uno_run.sh` stops a run when a typical run at the current price (input, cache and output) costs over 1.5x the
+  estimate at the start; it compared only the input price and would have missed the 120x output.
+
+How often to read prices: before every run (free, one request), and every few minutes during it only as a stop guard. A
+daily list is stale (90% of DeepSeek's cheapest picks gone after 12 hours); a read before every call buys nothing (a group
+that stays moves little within a run); switching groups mid-run for a lower price saves fractions of a cent and costs a
+cache miss, so it is not built.
+
 ## UnoRouter uno-2: a first default, 2026-10-18 (no code change)
 
 DeepSeek V4.1 Flash on UnoRouter with group switching (0.0.69; three groups passed the check: sinnode, zlkpro, zangin):

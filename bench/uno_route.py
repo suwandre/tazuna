@@ -13,7 +13,8 @@ For the cheapest groups by estimated run cost, in order, until one passes:
 3. long reasoning with tools: a counting question that takes a minute of thinking must come back with an answer
    (groups that cut such calls left Luna and Sol unable to finish hard steps);
 4. identity: that answer must be in English and near the right number (a "Haiku" group answered in Chinese and scored 1-3).
-Prints PIN <group> for the first group that passes and GROUPS <a,b,c> for up to three that pass (cheapest first), the
+Groups listed for the last 3 hours in the price log go first when the logger runs (cheap groups that just appeared often
+vanish within the hour). Prints PIN <group> for the first group that passes and GROUPS <a,b,c> for up to three that pass (cheapest first), the
 list tazuna switches along when a group drops out or stops caching (`TAZUNA_GROUPS`). Prices move between the check and the run (a Grok group went from
 $0.024 to $0.10 per M input within minutes), so `--price` reads the group's price again: it prints the
 `TAZUNA_PRICE=... TAZUNA_MAX_USD=...` to start the run with (the cap at 5x a run at 50% cached, at most the budget), and exits 1
@@ -63,7 +64,23 @@ def groups(model):
     m = next(m for m in d["data"] if m["model_name"] == model)
     base, out_x, cache_x = m["model_ratio"] * 2, m["completion_ratio"], m.get("cache_ratio") or 1
     gs = [(g, (base * r, base * r * cache_x, base * r * out_x)) for g, r in d["group_ratio"].items() if g in m["enable_groups"]]
-    return sorted(gs, key=lambda g: run_cost(g[1]))
+    steady = listed_for(model) or set()
+    return sorted(gs, key=lambda g: (g[0] not in steady, run_cost(g[1])))
+
+
+def listed_for(model, hours=3):
+    """Groups listed for the model in every reading of the price log (realwork/uno_price_log.sh) over the last hours, or
+    None without a log covering them. Of DeepSeek's cheapest groups 43% were gone within the hour; of the cheapest listed
+    3 hours or more, 10%, at 1.18x the price (29 hours of readings, 2026-10-17/18)."""
+    try:
+        rows = [json.loads(l) for l in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "realwork", "uno-prices.jsonl"))]
+    except OSError:
+        return None
+    now = time.time()
+    rows = [r for r in rows if now - r["t"] <= hours * 3600 and model in r]
+    if not rows or now - rows[-1]["t"] > 1800 or rows[0]["t"] > now - hours * 3600 + 1800:
+        return None
+    return set.intersection(*(set(r[model]["in"] if "in" in r[model] else r[model]) for r in rows))
 
 
 def reference(model):

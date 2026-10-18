@@ -3,7 +3,8 @@
 #   uno_run.sh MODEL GROUPS LABEL BUDGET_USD [TASK]      (GROUPS: a,b,c cheapest first, from its GROUPS line)
 # tazuna pins the first and moves along the list when a group drops out or stops caching (TAZUNA_GROUPS, 0.0.68).
 # Refuses to start when no listed group serves the model or a run would cost more than the budget; stops the run when all
-# listed groups are gone, the cheapest one left costs over 1.5x the start price, or under 30% is cached after 15 calls (the
+# listed groups are gone, a run on the cheapest one left costs over 1.5x the start estimate (input, cache and output: DeepSeek's
+# output went from 4x to 120x input for four hours while its input price held), or under 30% is cached after 15 calls (the
 # cost cap guards the money; a cheap group at 47% still cost less than CheaperInference).
 MODEL=$1 GROUP_LIST=$2 LABEL=$3 BUDGET=$4 TASK=${5:-rclone-archive-symlinks}
 cd "$(dirname "$0")" || exit 1
@@ -12,7 +13,9 @@ LOG=uno-$LABEL.log
 # the price of the cheapest listed group that still serves the model (the others' prices only matter after a switch)
 price() { for g in ${GROUP_LIST//,/ }; do python3 -I ../uno_route.py "$MODEL" --price "$g" --budget "$1" && return 0; done; return 1; }
 ENV=$(price "$BUDGET") || { echo "$(date +%H:%M) not started: no listed group serves $MODEL within \$$BUDGET ($GROUP_LIST)" | tee "$LOG"; exit 1; }
-START_IN=$(echo "$ENV" | sed -E 's/.*TAZUNA_PRICE=([0-9.]+),.*/\1/')
+# a typical run (uno_route.py run_cost) at the TAZUNA_PRICE in, cached, out
+cost() { echo "$1" | sed -E 's/.*TAZUNA_PRICE=([^ ]+).*/\1/' | python3 -I -c "i,c,o=map(float,input().split(','));print(6*(0.05*1.25*i+0.95*c)+0.08*o)"; }
+START=$(cost "$ENV")
 used() { curl -s --max-time 15 https://api.unorouter.com/v1/dashboard/billing/usage -H "Authorization: Bearer $UNOROUTER_API_KEY" | python3 -I -c "import json,sys;print(json.load(sys.stdin)['total_usage'])"; }
 echo "$(date +%H:%M) start $MODEL on $GROUP_LIST: $ENV; used-cents $(used)" > "$LOG"
 env $ENV TAZUNA_GROUPS="$GROUP_LIST" BENCH_GATE=state GUARD_PAUSE_AT=101 GUARD_WEEK_AT=101 BENCH_SET=tasks-oct BENCH_TIMEOUT=10800 \
@@ -25,8 +28,8 @@ stop() { echo "$(date +%H:%M) stopping: $1" >> "$LOG"; tree $R; }
 sleep 120
 while kill -0 $R 2>/dev/null; do
   NOW=$(price 100) || { stop "all listed groups gone ($GROUP_LIST)"; break; }
-  NOW_IN=$(echo "$NOW" | sed -E 's/.*TAZUNA_PRICE=([0-9.]+),.*/\1/')
-  python3 -c "import sys; sys.exit(0 if $NOW_IN > 1.5 * $START_IN else 1)" && { stop "input price rose from \$$START_IN to \$$NOW_IN per M"; break; }
+  NOW_COST=$(cost "$NOW")
+  python3 -c "import sys; sys.exit(0 if $NOW_COST > 1.5 * $START else 1)" && { stop "a run now costs \$$NOW_COST, \$$START at the start"; break; }
   f=$(ls -t ~/bench-homes/cc/.local/share/tazuna/sessions/ | grep "$LABEL@$MODEL" | head -1)
   if [ -n "$f" ]; then
     set -- $(python3 - "$HOME/bench-homes/cc/.local/share/tazuna/sessions/$f" <<'PY'
