@@ -627,7 +627,11 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
     // the reply's start; a stream that has started may run 15 minutes: cut at 180 s, UnoRouter's slow Luna calls were
     // billed anyway (with the input twice) and then sent again.
     let mut limit = CALL_TIMEOUT;
-    for wait in [2, 8, 30, 60, 120, 120, 120, 120, 120, 120, 120, 0] {
+    const TRIES: [u64; 12] = [2, 8, 30, 60, 120, 120, 120, 120, 120, 120, 120, 0];
+    let (mut i, mut limited) = (0, 0u64);
+    while i < TRIES.len() {
+        let wait = TRIES[i];
+        i += 1;
         if stream {
             body["stream"] = json!(true);
             if api == Api::Chat {
@@ -656,7 +660,7 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
                     limit = (limit * 2).min(Duration::from_secs(900));
                 }
                 eprintln!("model call failed ({e}); retrying in {wait}s");
-                std::thread::sleep(Duration::from_secs(wait));
+                pause(wait);
                 continue;
             }
             Err(e) => return Err(e.into()),
@@ -666,7 +670,7 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
                 // an error inside a stream (a gateway's upstream failed after the headers) is retried like a 5xx
                 Some(Err(e)) if wait > 0 => {
                     eprintln!("model call failed ({e:#}); retrying in {wait}s");
-                    std::thread::sleep(Duration::from_secs(wait));
+                    pause(wait);
                     continue;
                 }
                 Some(r) => return r,
@@ -701,12 +705,29 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
         }
         // a 429 for a locked model or an empty balance never clears by waiting (Experiential Labs: "insufficient_quota")
         let permanent = text.contains("insufficient_quota") || text.contains("requires_purchase");
+        // a rate limit clears by waiting, but an hourly allowance outlasts the ~15 minutes of tries above (Experiential
+        // Labs' free models: 166,500 output tokens an hour, reset on the hour; a run that crossed it ended): the last try
+        // is repeated every 5 minutes for up to 70 more minutes
+        if status == 429 && !permanent && wait == 0 && limited < 70 * 60 {
+            eprintln!("rate limited ({}); trying again in 300s", text.chars().take(120).collect::<String>());
+            pause(300);
+            limited += 300;
+            i -= 1;
+            continue;
+        }
         if wait == 0 || permanent || !(status == 429 || status >= 500) {
             bail!("HTTP {status}: {}", text.chars().take(300).collect::<String>());
         }
-        std::thread::sleep(Duration::from_secs(wait));
+        pause(wait);
     }
     unreachable!()
+}
+
+/// Sleeps between tries (not in tests).
+fn pause(secs: u64) {
+    if !cfg!(test) {
+        std::thread::sleep(Duration::from_secs(secs));
+    }
 }
 
 /// The `data:` payloads of a server-sent-event body, or None when the body is plain JSON (a provider that ignores `stream`).
@@ -933,6 +954,29 @@ data: {\"type\":\"message_stop\"}\n";
         let want = 10.0 * 1e-6 + 90.0 * 1.25e-6 + 900.0 * 1e-7 + 40.0 * 4e-6 + 5.0 * 1e-6;
         assert!((l.cost - want).abs() < 1e-12, "{}", l.cost);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_rate_limit_is_waited_out_past_the_normal_tries() {
+        use std::io::{Read, Write};
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", server.local_addr().unwrap());
+        // 12 normal tries and 3 of the long waits answered 429, then the allowance is back
+        let replies: Vec<&str> = std::iter::repeat_n("429 Too Many Requests\r\n\r\n{\"error\":\"hourly free allowance\"}", 15)
+            .chain(["200 OK\r\nContent-Type: application/json\r\n\r\n{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"]).collect();
+        let n = replies.len();
+        std::thread::spawn(move || {
+            for reply in replies {
+                let (mut c, _) = server.accept().unwrap();
+                let mut buf = [0u8; 65536];
+                let _ = c.read(&mut buf);
+                let reply = format!("HTTP/1.1 {}", reply.replacen("\r\n\r\n", "\r\nConnection: close\r\n\r\n", 1));
+                c.write_all(reply.as_bytes()).unwrap();
+            }
+        });
+        let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+        let r = chat(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": []})).unwrap();
+        assert_eq!((r["choices"][0]["message"]["content"].as_str(), n), (Some("ok"), 16));
     }
 
     #[test]

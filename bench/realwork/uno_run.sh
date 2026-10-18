@@ -6,13 +6,13 @@
 MODEL=$1 GROUP=$2 LABEL=$3 BUDGET=$4 TASK=${5:-rclone-archive-symlinks}
 cd "$(dirname "$0")" || exit 1
 source ~/.uno-key
-ENV=$(python3 -I ../uno_route.py "$MODEL" --price "$GROUP" --budget "$BUDGET") || { echo "not started: $ENV"; exit 1; }
-START_IN=$(echo "$ENV" | sed -E 's/.*TAZUNA_PRICE=([0-9.]+),.*/\1/')
 LOG=uno-$LABEL.log
+ENV=$(python3 -I ../uno_route.py "$MODEL" --price "$GROUP" --budget "$BUDGET") || { echo "$(date +%H:%M) not started: $ENV" | tee "$LOG"; exit 1; }
+START_IN=$(echo "$ENV" | sed -E 's/.*TAZUNA_PRICE=([0-9.]+),.*/\1/')
 used() { curl -s --max-time 15 https://api.unorouter.com/v1/dashboard/billing/usage -H "Authorization: Bearer $UNOROUTER_API_KEY" | python3 -I -c "import json,sys;print(json.load(sys.stdin)['total_usage'])"; }
 echo "$(date +%H:%M) start $MODEL on $GROUP: $ENV; used-cents $(used)" > "$LOG"
 env $ENV TAZUNA_HEADER="X-Group: $GROUP" BENCH_GATE=state GUARD_PAUSE_AT=101 GUARD_WEEK_AT=101 BENCH_SET=tasks-oct BENCH_TIMEOUT=10800 \
-  HARNESS_BIN=/tmp/tz-v65/tazuna ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "tazuna-ownuno-$LABEL@$MODEL:max" > "bench.$LABEL.log" 2>&1 &
+  HARNESS_BIN=/tmp/tz-v66/tazuna ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "tazuna-ownuno-$LABEL@$MODEL:max" > "bench.$LABEL.log" 2>&1 &
 R=$!
 stop() { echo "$(date +%H:%M) stopping: $1" >> "$LOG"; kill $R; for g in $(ps -axo pgid,command | grep "tazuna --run" | grep -v grep | awk '{print $1}' | sort -u); do ps -o command= -g $g | grep -q -- "--model $MODEL" && kill -TERM -$g; done; }
 sleep 120

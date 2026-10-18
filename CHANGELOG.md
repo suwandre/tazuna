@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.66 (2026-10-18)
+
+**A rate limit is waited out for up to 70 more minutes** (the last try repeated every 5 minutes) instead of ending the
+task after ~15 minutes of tries: Experiential Labs' free DeepSeek V4.1 Flash 1017 allows 166,500 output tokens an hour,
+reset on the hour, and two runs hit it at once; BeatAPI's 15 requests a minute stalled runs the same way. A run can be
+interrupted while it waits. Bench: `uno_run.sh` logs why it did not start (a DeepSeek group that passed the check was gone
+by the start, the second group to vanish between check and run), and the launcher checks again in that case.
+
 ## UnoRouter: Grok 4.7 and GLM 5.3 through the check, 2026-10-18 (bench only)
 
 - **Grok 4.7:** a7-bin-704 passed (100% cached, long call 527 s, 573) and was closed to the key a minute later (403 "No
