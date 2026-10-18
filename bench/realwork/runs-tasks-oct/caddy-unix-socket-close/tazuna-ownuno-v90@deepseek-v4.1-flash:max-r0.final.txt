@@ -1,0 +1,30 @@
+Implemented the fix.
+
+## Root cause
+
+`unixListener.Close` / `unixConn.Close` called `File()` only to obtain the socket path. That created a duplicated descriptor which was never closed, so the kernel kept the socket in `LISTEN` state until the file's GC finalizer ran. Worse, `File().Name()` returns a Go-internal name (e.g. `unix:/path->`), not the filesystem path, so the unlink failed and the socket file remained. `reuseUnixSocket` also leaked its duplicated `socketFile`.
+
+## Changes
+
+`listen_unix.go`:
+- Close the duplicated file in `reuseUnixSocket` after `FileListener`/`FilePacketConn`.
+- Removed `File()` usage from `Close`; derive the path from `Addr()` / `LocalAddr()` before closing.
+- Added per-wrapper `closed atomic.Bool` so a second `Close` returns `net.ErrClosed` without decrementing the reference count again.
+- Serialize decrement/cleanup under `unixSocketsMu` so a close racing with a new listen can't unlink the new socket's file.
+- Skip unlinking Linux/Android abstract sockets (`@name`).
+- Close the underlying listener/conn before deleting the map entry and unlinking.
+
+`listen_unix_test.go` (new):
+- Close removes the file and prevents further connections.
+- Shared refcount keeps the socket/file alive until the last holder closes.
+- Double close returns `net.ErrClosed` and doesn't release another reference.
+- Concurrent close + relisten leaves a working socket and file.
+- `unixgram` close removes the socket and supports double-close semantics.
+- Abstract sockets don't unlink same-named filesystem paths (Linux).
+
+## Verification
+
+- `go test -race -short -count=1 .` — pass
+- `go test -race -run 'TestUnix|TestAbstract' -count=1 .` — pass
+- `GOOS=linux GOARCH=amd64 go test -c .` — compiles
+- Manual repro: after reload, old Unix admin socket returns immediate connection failure (curl exit 7), its file is gone, and the new TCP admin endpoint works.

@@ -1,0 +1,25 @@
+Implemented symbolic-link support for the archive backend.
+
+### Changes
+
+**ZIP backend (`backend/archive/zip/zip.go`)**
+- Detects entries whose mode has `os.ModeSymlink`.
+- Without `-l/--links`, skips them and logs a notice naming the flag.
+- With `--links`, reads the link target from the entry, lists it as `<name>.rclonelink`, reports its size as the target length, and serves the target path from `Open` with seek/range support.
+- Regular members ending in `.rclonelink` remain ordinary files.
+- `NewObject` uses the same cached tree as `List`, so both agree on exposed names.
+
+**Squashfs backend (`backend/archive/squashfs/squashfs.go`)**
+- Lists symlink entries only with `-l/--links`, exposing them as `<name>.rclonelink` with target length and target-reading `Open`.
+- Skips and reports them otherwise.
+- `findObjectNative` now resolves `.rclonelink` names to symlinks, prefers exact regular names, and supports root detection for symlinks.
+
+**Tests**
+- Added ZIP tests for listing/reading symlinks, `.rclonelink` regular files, seek/range reads, copy recreating a real symlink, and the hostile symlink write-through escape case.
+- Added a squashfs test (skipped when `mksquashfs` is unavailable) covering the same listing/reading behavior.
+
+### Verification
+- `go test -count=1 ./backend/archive/...` — passes.
+- `go test -count=1 ./backend/local/` — passes.
+- `golangci-lint run ./backend/archive/...` — 0 issues.
+- End-to-end `rclone lsl --links` and `rclone copy --links` against a symlink-containing ZIP recreated the symlink correctly.
