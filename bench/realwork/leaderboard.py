@@ -44,7 +44,8 @@ def judge_scores():
 
 def main(config):
     runs = [json.loads(l) for l in open(HERE / "uno-runs.jsonl") if l.strip()]
-    runs = [r for r in runs if r["config"] == config]
+    # a run stopped by our own mistake (a guard set too strict) is marked excluded in the registry and left out
+    runs = [r for r in runs if r["config"] == config and not r.get("excluded")]
     results = {(r["task"], r["harness"], r["run"]): r for r in map(json.loads, open(HERE / "results-tasks-oct.jsonl"))}
     judged = judge_scores()
     by_model = defaultdict(list)
