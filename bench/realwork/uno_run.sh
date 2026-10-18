@@ -12,9 +12,12 @@ START_IN=$(echo "$ENV" | sed -E 's/.*TAZUNA_PRICE=([0-9.]+),.*/\1/')
 used() { curl -s --max-time 15 https://api.unorouter.com/v1/dashboard/billing/usage -H "Authorization: Bearer $UNOROUTER_API_KEY" | python3 -I -c "import json,sys;print(json.load(sys.stdin)['total_usage'])"; }
 echo "$(date +%H:%M) start $MODEL on $GROUP: $ENV; used-cents $(used)" > "$LOG"
 env $ENV TAZUNA_HEADER="X-Group: $GROUP" BENCH_GATE=state GUARD_PAUSE_AT=101 GUARD_WEEK_AT=101 BENCH_SET=tasks-oct BENCH_TIMEOUT=10800 \
-  HARNESS_BIN=/tmp/tz-v66/tazuna ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "tazuna-ownuno-$LABEL@$MODEL:max" > "bench.$LABEL.log" 2>&1 &
+  HARNESS_BIN=/tmp/tz-v67/tazuna ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "tazuna-ownuno-$LABEL@$MODEL:max" > "bench.$LABEL.log" 2>&1 &
 R=$!
-stop() { echo "$(date +%H:%M) stopping: $1" >> "$LOG"; kill $R; for g in $(ps -axo pgid,command | grep "tazuna --run" | grep -v grep | awk '{print $1}' | sort -u); do ps -o command= -g $g | grep -q -- "--model $MODEL" && kill -TERM -$g; done; }
+# only this run's own process tree (matching by model killed a parallel run of the same model and one of a model whose
+# name starts the same)
+tree() { for c in $(pgrep -P "$1"); do tree "$c"; done; kill -TERM "$1" 2>/dev/null; }
+stop() { echo "$(date +%H:%M) stopping: $1" >> "$LOG"; tree $R; }
 sleep 120
 while kill -0 $R 2>/dev/null; do
   NOW=$(python3 -I ../uno_route.py "$MODEL" --price "$GROUP" --budget 100) || { stop "group gone ($NOW)"; break; }

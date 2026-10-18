@@ -703,8 +703,9 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
                 continue;
             }
         }
-        // a 429 for a locked model or an empty balance never clears by waiting (Experiential Labs: "insufficient_quota")
-        let permanent = text.contains("insufficient_quota") || text.contains("requires_purchase");
+        // a 429 for a locked model or an empty balance never clears by waiting (Experiential Labs: "insufficient_quota"),
+        // but the same type with code free_limit_reached is its hourly free allowance, which does
+        let permanent = (text.contains("insufficient_quota") || text.contains("requires_purchase")) && !text.contains("free_limit_reached");
         // a rate limit clears by waiting, but an hourly allowance outlasts the ~15 minutes of tries above (Experiential
         // Labs' free models: 166,500 output tokens an hour, reset on the hour; a run that crossed it ended): the last try
         // is repeated every 5 minutes for up to 70 more minutes
@@ -962,7 +963,7 @@ data: {\"type\":\"message_stop\"}\n";
         let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", server.local_addr().unwrap());
         // 12 normal tries and 3 of the long waits answered 429, then the allowance is back
-        let replies: Vec<&str> = std::iter::repeat_n("429 Too Many Requests\r\n\r\n{\"error\":\"hourly free allowance\"}", 15)
+        let replies: Vec<&str> = std::iter::repeat_n("429 Too Many Requests\r\n\r\n{\"error\":{\"type\":\"insufficient_quota\",\"code\":\"free_limit_reached\"}}", 15)
             .chain(["200 OK\r\nContent-Type: application/json\r\n\r\n{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}"]).collect();
         let n = replies.len();
         std::thread::spawn(move || {
