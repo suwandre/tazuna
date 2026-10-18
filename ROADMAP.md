@@ -171,7 +171,9 @@ max; tasks rclone, caddy-unix, caddy-retry. Default model on UnoRouter: the chea
 minus one standard error) of 7 or more and at most one failure in five. A config change is a new version (uno-2) with its
 own runs. Earlier runs measured our mistakes (streaming without cache, cut calls, unpinned groups) and do not count.
 
-**Group switching in the own loop: built in 0.0.68 (dropouts and failing cache; prices still watched outside); measuring.**
+**Group switching in the own loop: built in 0.0.68-0.0.69 (dropouts, upstream 400s, failing cache; prices still watched
+outside); config uno-2.** First run (DeepSeek, caddy-retry): 2/2, judge 9, 0.37 cents, no switch needed. uno-1 (one pinned
+group) for DeepSeek: judged 8.5, 9, 4 and two runs lost to vanished groups.
 **The design it follows:** (after the 48-hour price log, `bench/realwork/uno-prices.jsonl`,
 shows how often groups and prices change). Today a run pins one group (`TAZUNA_HEADER`); when it drops out, the calls
 fail for ~15 minutes and the task ends. Instead, per model a dated list of groups that passed the check, ranked by the

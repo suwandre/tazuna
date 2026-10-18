@@ -1,0 +1,37 @@
+Implemented the fix.
+
+## What changed
+
+**`modules/caddyhttp/celmatcher.go`**
+- During `MatchExpression.Provision`, the compiled CEL AST is now inspected for `ph(...)` calls.
+- Statically-known placeholder names are recorded; if a placeholder name is computed at runtime (e.g. a concatenated string), the expression is marked as potentially referencing any placeholder.
+- Added `MatchExpression.Placeholders()` to expose the collected names and whether they were all statically determinable.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` with `matcherSetUsesResponsePlaceholders`.
+- A retry matcher set is now evaluated against the upstream response only if it references actual response data:
+  - `http.reverse_proxy.status_code`
+  - `http.reverse_proxy.status_text`
+  - `http.reverse_proxy.header.*`
+  - `http.reverse_proxy.upstream.latency`
+  - `http.reverse_proxy.upstream.latency_ms`
+  - or contains a placeholder whose name cannot be determined statically
+- Request-only expressions such as `{http.request.method} == "POST"` are request conditions again and no longer retry successful responses.
+- Updated the `LoadBalancing` docs to reflect the behavior.
+
+## Tests added
+
+- `TestMatchExpressionPlaceholders` in `celmatcher_test.go` covers shorthand placeholders, direct `ph(req, "...")` calls, multiple placeholders, escaped literals, similar-looking names (`status_codes`), dynamic names, and expressions with no placeholders.
+- `TestMatcherSetUsesResponsePlaceholders` covers the response-placeholder classification rules.
+- Regression tests in `retries_test.go`:
+  - request-only expression no longer retries a successful POST (body is delivered once, response is `200`)
+  - direct `ph(req, "...")` response placeholder still triggers retries
+  - escaped placeholder text does not trigger response retries
+  - dynamically named placeholders are still treated as possible response conditions
+
+## Verification
+
+- `go build ./...`
+- `go test -race -short ./modules/caddyhttp/...`
+- `golangci-lint run --timeout 5m ./modules/caddyhttp/...` — 0 issues
+- Final targeted runs: `go test -short ./modules/caddyhttp ./modules/caddyhttp/reverseproxy` pass.
