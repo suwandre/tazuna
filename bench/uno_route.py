@@ -24,8 +24,10 @@ script still stops a run whose cache rate falls.
 """
 import json, os, random, re, signal, sys, time, urllib.error, urllib.request
 
-API = "https://api.unorouter.com"
-KEY = os.environ.get("UNOROUTER_API_KEY", "")
+# another gateway: ROUTE_API=https://newapi.apizio.com ROUTE_KEY_ENV=APIZIO_API_KEY, or https://mortera.cloud
+# MORTERA_API_KEY (no groups: the key's own)
+API = os.environ.get("ROUTE_API", "https://api.unorouter.com")
+KEY = os.environ.get(os.environ.get("ROUTE_KEY_ENV", "UNOROUTER_API_KEY"), "")
 TEXT = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src", "engine.rs")).read()
 # a typical rclone run: input sent over all calls, share cached when the cache works, output
 RUN_IN, RUN_HIT, RUN_OUT = 6e6, 0.95, 80e3
@@ -33,11 +35,12 @@ QUESTION, ANSWER = "How many primes p < 20000 satisfy p ≡ 3 (mod 8)? Work it o
 # the long call's output limit: DeepSeek thought through 128K tokens on the question without an answer (0.45 cents); hitting
 # the limit after 2 minutes still shows the call is not cut, which is what the test is for
 LONG_CAP, LONG_MIN_S = 40000, 120
+IDR_PER_USD = 16300
 IDENTITY = ("What is 17 times 23? Answer in one short English sentence that ends with the number.", 391)
 
 
 def get(url, body=None, group=None, timeout=600):
-    h = {"Content-Type": "application/json"}
+    h = {"Content-Type": "application/json", "User-Agent": "curl/8"}  # Apizio's front refuses Python-urllib with a 403
     if KEY and url.startswith(API + "/v1"):
         # only to UnoRouter: OpenRouter answers its model list in another shape when it sees anthropic-version
         h.update({"Authorization": f"Bearer {KEY}", "anthropic-version": "2023-06-01"})
@@ -60,8 +63,22 @@ def run_cost(price, hit=RUN_HIT):
 
 def groups(model):
     """[(group, (input, cached, output) USD per M)] for every group serving the model, by estimated run cost."""
+    if "shannonapi" in API:
+        # Shannon (sub2api): no price list; the official price times the key's group rate (ROUTE_RATE, e.g. 0.05), the
+        # charge per call to be confirmed in /v1/usage
+        return [("", tuple(x * float(os.environ["ROUTE_RATE"]) for x in reference(model)))]
+    if "mortera" in API:
+        # Mortera Cloud: rupiah per M in its model list (with the key); ponytail: a fixed rate, read a live one if it drifts
+        p = next(m for m in get(API + "/v1/models")["data"] if m["id"] == model)["pricing"]["payg_per_1m_idr"]
+        return [("", (p["in"] / IDR_PER_USD, p["cache"] / IDR_PER_USD, p["out"] / IDR_PER_USD))]
     d = get(API + "/api/pricing")
     m = next(m for m in d["data"] if m["model_name"] == model)
+    if m.get("billing_mode") == "tiered_expr":
+        # a price by time of day (Apizio: peak on weekday mornings UTC at twice off-peak): the dearest tier, per M
+        tiers = re.findall(r"p \* ([\d.]+) \+ c \* ([\d.]+) \+ cr \* ([\d.]+)", m["billing_expr"])
+        return [("", max(((float(i), float(cr), float(o)) for i, o, cr in tiers), key=run_cost))]
+    if "unorouter" not in API:
+        return [("", (m["model_ratio"] * 2, m["model_ratio"] * 2 * (m.get("cache_ratio") or 1), m["model_ratio"] * 2 * m["completion_ratio"]))]
     base, out_x, cache_x = m["model_ratio"] * 2, m["completion_ratio"], m.get("cache_ratio") or 1
     gs = [(g, (base * r, base * r * cache_x, base * r * out_x)) for g, r in d["group_ratio"].items() if g in m["enable_groups"]]
     steady = listed_for(model) or set()
@@ -123,6 +140,19 @@ def call(model, group, msgs, effort, tools=False, max_out=64):
         body["tools"] = [{"type": "function", "function": {"name": "bash", "description": "run a command", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}}]
         body["messages"] = [{"role": "system", "content": "Answer from your own reasoning; do not call tools for this."}] + msgs
         body["tool_choice"] = "none"
+    if "unorouter" not in API:
+        # Apizio streams even when asked not to; tazuna streams off UnoRouter anyway, so test it that way
+        body.update(stream=True, stream_options={"include_usage": True})
+        text, called, capped, u = "", False, False, {}
+        for e in sse("/v1/chat/completions", body, group):
+            for c in e.get("choices") or []:
+                d = c.get("delta") or {}
+                text += d.get("content") or ""
+                called |= bool(d.get("tool_calls"))
+                capped |= c.get("finish_reason") == "length"
+            u = e.get("usage") or u
+        text = text or ("[called a tool instead of answering]" if called else "")
+        return u.get("prompt_tokens") or 0, (u.get("prompt_tokens_details") or {}).get("cached_tokens") or 0, text, capped
     r = get(API + "/v1/chat/completions", body, group)
     u = r.get("usage", {})
     det = u.get("prompt_tokens_details") or {}
@@ -130,6 +160,17 @@ def call(model, group, msgs, effort, tools=False, max_out=64):
     # a tool call despite tool_choice none says nothing about cut calls: report it as such
     text = m.get("content") or ("[called a tool instead of answering]" if m.get("tool_calls") else "")
     return u.get("prompt_tokens") or u.get("input_tokens") or 0, det.get("cached_tokens") or 0, text, r["choices"][0].get("finish_reason") == "length"
+
+
+def sse(path, body, group):
+    """The events of a streamed call."""
+    h = {"Content-Type": "application/json", "User-Agent": "curl/8", "Authorization": f"Bearer {KEY}", "anthropic-version": "2023-06-01"}
+    if group:
+        h["X-Group"] = group
+    for raw in urllib.request.urlopen(urllib.request.Request(API + path, data=json.dumps(body).encode(), headers=h), timeout=600):
+        line = raw.decode(errors="replace").strip()
+        if line.startswith("data:") and line != "data: [DONE]":
+            yield json.loads(line[5:])
 
 
 def ask_streamed(model, group):
@@ -142,13 +183,8 @@ def ask_streamed(model, group):
         path, body = "/v1/messages", {"model": model, "messages": msgs, "max_tokens": LONG_CAP, "thinking": {"type": "adaptive"}, "output_config": {"effort": "high"}, "stream": True}
     else:
         path, body = "/v1/chat/completions", {"model": model, "messages": msgs, "reasoning_effort": "high", "max_tokens": LONG_CAP, "stream": True}
-    h = {"Content-Type": "application/json", "Authorization": f"Bearer {KEY}", "anthropic-version": "2023-06-01", "X-Group": group}
     text, capped = "", False
-    for raw in urllib.request.urlopen(urllib.request.Request(API + path, data=json.dumps(body).encode(), headers=h), timeout=600):
-        line = raw.decode(errors="replace").strip()
-        if not line.startswith("data:") or line == "data: [DONE]":
-            continue
-        e = json.loads(line[5:])
+    for e in sse(path, body, group):
         text += "".join((c.get("delta") or {}).get("content") or "" for c in e.get("choices") or [])
         capped |= any(c.get("finish_reason") == "length" for c in e.get("choices") or [])
         d = e.get("delta")

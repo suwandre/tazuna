@@ -16,6 +16,47 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.71 (2026-10-19)
+
+- **A 400 on a conversation with thinking blocks drops them and goes again** (Messages API). A thinking block's
+  signature holds only on the upstream account that wrote it; Mortera Cloud's failover moves a conversation to another
+  account and then answers `400 "rejected the request: it is invalid"` (reproduced with a forged signature; the same
+  request without thinking blocks goes through). Haiku 5.5 died at call 39 on 0.0.70; on 0.0.71 the drop fired 2 and 3
+  times in two runs and each went on.
+- **Mortera's `422 model_unavailable` is tried again like a 5xx**, though it says not to retry: it passed within a minute
+  for Muse Spark and ended a Haiku run at call 38.
+
+## 0.0.70 (2026-10-19)
+
+**Mortera Cloud** (`https://mortera.cloud/v1`, rupiah pay-as-you-go, cache at cache rates): no top-level
+`cache_control` there, and GPT unstreamed there.
+- Mortera sets its own cache breakpoints and writes none when a request brings a top-level one: Haiku 5.5 0% cached over
+  25 calls on 0.0.69, 92-96% on 0.0.70.
+- Its streamed Responses carry no usage: GPT-6 Luna looked 0% cached and the cost cap counted nothing; unstreamed, Luna
+  ran at 96% cached.
+
+## Three more gateways, 2026-10-18/19 (bench only)
+
+`uno_route.py` now checks any gateway (`ROUTE_API`, `ROUTE_KEY_ENV`; Apizio's time-of-day price formula, Mortera's
+rupiah list, Shannon at the official price times the key's group rate) and streams its test calls off UnoRouter.
+
+| gateway | model | check | run (rclone) |
+|---|---|---|---|
+| Apizio (new-api, $5 free) | DeepSeek V4.1 Flash (`n/`) | no reply in 100 s, 10 tries over 2 hours | - |
+| Apizio | GLM 5.3 | cache passed; long call cut twice (549 s) | - |
+| Mortera | GLM 5.3 Flash | cache 99%, long call 60 s, answer 566 | stopped: one call open 27 min after 27 calls |
+| Mortera | DeepSeek V4.1 Flash | cache 99%, long call not cut | **judge 9**, 3/3, 74 turns, 9 min, 97% cached, ~$0.018 |
+| Mortera | GPT-6 Luna | cache 79%, long call 102 s | judge 6, 2/3, 150 turns, 37 min, 96% cached, ~$0.033 |
+| Mortera | Haiku 5.5 | cache 94%, long call 5 s | none finished: 0.0.69 uncached; 0.0.70 died on thinking (39 calls); 0.0.71 on a 422 (38), then on Cloudflare 524 after an hour-long upstream outage (44) |
+| Mortera | Muse Spark 1.3 (free) | 422 in the cache test twice; streamed with an effort, "model unavailable" | - |
+| Shannon (sub2api, pooled accounts) | DeepSeek (0.05x group), GPT-6 Astra (0.02x; Luna not in the group) | "upstream temporarily unavailable" / "access forbidden", 11 tries over 2 hours | - |
+
+Judged in one pool with the anchors (`judge.oct.mrt.jsonl`): Mortera DeepSeek 9 ("matches the reference fix"), tazuna
+own-v38 9, Codex Luna 8, UnoRouter DeepSeek v91 7, Mortera Luna 6 ("an unrequested zip pre-scan ... fails that hidden
+test"). Mortera spent Rp 2,074 (about $0.13) on 5 checks and 8 runs or attempts; Apizio 3.4 cents of free credit; Shannon
+nothing. Five runs at once on one Mortera key: DeepSeek ran at 79 tokens/s (83.7 alone on UnoRouter); GLM's long calls
+fell from about 50 to 12-24 tokens/s, unclear whether from the load or the provider.
+
 ## `--self-review` on the own loop, DeepSeek on UnoRouter, 2026-10-18 (no code change)
 
 Weak DeepSeek runs are scope failures in the judge's notes: "over-engineered", "an unrelated DetachAfterHijack method",

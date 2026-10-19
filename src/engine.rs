@@ -201,6 +201,19 @@ struct Loop {
     out: Box<dyn FnMut(&Value)>,
 }
 
+/// Removes every thinking block from the conversation; true when there was one.
+fn drop_thinking(msgs: &mut [Value]) -> bool {
+    let mut dropped = false;
+    for m in msgs.iter_mut().filter(|m| m["role"] == "assistant") {
+        if let Some(blocks) = m["content"].as_array_mut() {
+            let n = blocks.len();
+            blocks.retain(|b| b["type"] != "thinking" && b["type"] != "redacted_thinking");
+            dropped |= blocks.len() < n;
+        }
+    }
+    dropped
+}
+
 fn empty_reply(reply: &Value, api: Api) -> bool {
     match api {
         Api::Responses => !reply["output"].as_array().is_some_and(|items| items.iter().any(|i| i["type"] == "function_call" || i["type"] == "message")),
@@ -265,7 +278,7 @@ impl Loop {
                 return end(self, "error_max_budget_usd", format!("[stopped: ${cap:.2} spent]"), turns, usage);
             }
             (self.out)(&json!({"type": "stream_event", "event": {"type": "message_start"}}));
-            let body = match self.api {
+            let mut body = match self.api {
                 Api::Responses => {
                     // stateless (store: false): earlier reasoning comes back encrypted and is sent again with the history.
                     // The cache key keeps a conversation on one cache: without it BeatAPI cached 18-47% of GPT input
@@ -302,6 +315,17 @@ impl Loop {
             };
             let mut reply = match (self.call)(&body) {
                 Ok(r) => r,
+                // a thinking block's signature holds only on the upstream account that wrote it: a gateway that moves the
+                // conversation to another account mid-run (Mortera Cloud's failover) answers 400 "invalid" (Haiku 5.5
+                // after 39 calls); the same request without them goes through
+                Err(e) if self.api == Api::Messages && format!("{e:#}").contains("400") && drop_thinking(&mut self.msgs) => {
+                    (self.out)(&json!({"type": "system", "subtype": "thinking_dropped", "message": format!("{e:#}")}));
+                    body["messages"] = json!(self.msgs);
+                    match (self.call)(&body) {
+                        Ok(r) => r,
+                        Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
+                    }
+                }
                 Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
             };
             // an empty reply (no text, no call) is a provider hiccup, not an answer: the same request again, up to 3
@@ -695,8 +719,15 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
     // prompt cannot meet, and the task ended with a 413), and a started stream is not cut by the time limit. UnoRouter
     // alone caches only calls that are not streamed (Luna on its si group: 0% streamed, 92% over a run not streamed), so
     // there a call starts unstreamed and is streamed after a 413 or an empty 200. TAZUNA_STREAM=0 or 1 decides for any provider.
-    let mut stream = std::env::var("TAZUNA_STREAM").map_or(!url.contains("unorouter.com"), |v| v != "0");
+    // Mortera Cloud sets its own cache breakpoints and caches nothing when a request brings a top-level one (Haiku 5.5:
+    // 0 tokens written with it, 6,286 without), and its streamed Responses carry no usage (GPT-6 Luna looked 0% cached
+    // and the cost cap saw nothing), so GPT goes unstreamed there
+    let mortera = url.contains("mortera.cloud");
+    let mut stream = std::env::var("TAZUNA_STREAM").map_or(!url.contains("unorouter.com") && !(mortera && matches!(api, Api::Responses)), |v| v != "0");
     let mut body = body.clone();
+    if mortera {
+        body.as_object_mut().map(|o| o.remove("cache_control"));
+    }
     // a call that times out is tried again with twice the time (up to 15 minutes): a slow provider's long reasoning answer
     // (MiMo V2.6 Pro at the official ~30 tok/s) takes over 3 minutes and was cut off at 180 s on every try. The limit is on
     // the reply's start; a stream that has started may run 15 minutes: cut at 180 s, UnoRouter's slow Luna calls were
@@ -804,7 +835,9 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             i -= 1;
             continue;
         }
-        if wait == 0 || permanent || !(status == 429 || status >= 500) {
+        // Mortera Cloud's 422 "model_unavailable" says not to retry, yet passes within a minute or two (Muse Spark came
+        // back after one; it ended a Haiku run at call 38): tried again like a 5xx
+        if wait == 0 || permanent || !(status == 429 || status >= 500 || text.contains("model_unavailable")) {
             bail!("HTTP {status}: {}", text.chars().take(300).collect::<String>());
         }
         pause(wait);
@@ -1169,6 +1202,80 @@ data: {\"type\":\"message_stop\"}\n";
         let bodies = got.join().unwrap();
         assert!(bodies[0].contains("\"max\"") && bodies[1].contains("\"xhigh\""), "{bodies:?}");
         assert!(!bodies[1].contains("\"stream\"") && bodies[2].contains("\"stream\":true"), "{bodies:?}");
+    }
+
+    #[test]
+    fn a_model_marked_unavailable_is_tried_again() {
+        use std::io::Write;
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1", server.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for (status, reply) in [("422 Unprocessable Entity", "{\"error\":{\"code\":\"model_unavailable\",\"isRetryable\":false}}"),
+                ("200 OK", "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}")] {
+                let (mut c, _) = server.accept().unwrap();
+                read_request(&mut c);
+                write!(c, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()).unwrap();
+            }
+        });
+        let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+        let r = chat(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": [], "stream": false})).unwrap();
+        assert_eq!(r["choices"][0]["message"]["content"], "ok");
+    }
+
+    #[test]
+    fn mortera_gets_no_top_level_cache_breakpoint_and_gpt_unstreamed() {
+        use std::io::Write;
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/mortera.cloud", server.local_addr().unwrap());
+        let got = std::thread::spawn(move || {
+            let (mut c, _) = server.accept().unwrap();
+            let req = read_request(&mut c);
+            let reply = "{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}";
+            write!(c, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()).unwrap();
+            req.split_once("\r\n\r\n").unwrap().1.to_string()
+        });
+        let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+        chat(&http, &url, "k", Api::Responses, &json!({"model": "gpt-6-luna", "input": [], "cache_control": {"type": "ephemeral"}})).unwrap();
+        let body = got.join().unwrap();
+        assert!(!body.contains("cache_control") && !body.contains("\"stream\""), "{body}");
+    }
+
+    #[test]
+    fn a_400_on_thinking_from_another_account_drops_the_thinking_and_goes_again() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let s = sent.clone();
+        let mut l = Loop {
+            call: Box::new(move |b: &Value| {
+                s.borrow_mut().push(b.clone());
+                if s.borrow().len() == 1 {
+                    bail!("HTTP 400: {{\"error\":{{\"code\":\"invalid_request\"}}}}")
+                }
+                Ok(json!({"content": [{"type": "text", "text": "done"}], "usage": {}}))
+            }),
+            api: Api::Messages,
+            system: "sys".into(),
+            model: "claude-haiku-5-5".into(),
+            effort: None,
+            price: (0.0, 0.0, 0.0),
+            tools: vec![],
+            msgs: vec![json!({"role": "user", "content": "fix it"}),
+                json!({"role": "assistant", "content": [{"type": "thinking", "thinking": "hm", "signature": "x"}, {"type": "tool_use", "id": "t1", "name": "bash", "input": {}}]}),
+                json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]})],
+            server: crate::mcp::Server::new(std::env::temp_dir()),
+            session: "s".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
+            out: Box::new(|_: &Value| {}),
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("go on"), true, &rx);
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 2);
+        assert!(sent[0].to_string().contains("\"thinking\"") && !sent[1]["messages"].to_string().contains("\"thinking\""), "{sent:?}");
+        assert!(sent[1]["messages"].to_string().contains("tool_use"));
     }
 
     #[test]

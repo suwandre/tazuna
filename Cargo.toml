@@ -1,6 +1,6 @@
 [package]
 name = "tazuna"
-version = "0.0.69"
+version = "0.0.71"
 edition = "2024"
 
 [dependencies]
