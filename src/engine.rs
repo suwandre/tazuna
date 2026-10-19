@@ -954,15 +954,17 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
 
 /// The model's prices from the provider's model list (per million tokens there, per token here), and the API it takes.
 fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price, Api)> {
+    let api = |openai: bool| if model.starts_with("claude-") { Api::Messages } else if openai { Api::Responses } else { Api::Chat };
+    // a set price needs no list: Shannon lists a model only while an account serving it is online (gpt-6-luna came and
+    // went within the hour)
+    if let Ok(v) = std::env::var("TAZUNA_PRICE") {
+        return Ok((price_override(&v)?, api(model.starts_with("gpt-"))));
+    }
     let mut r = http.get(format!("{url}/models")).header("Authorization", format!("Bearer {key}")).call()?;
     let list: Value = serde_json::from_str(&r.body_mut().with_config().limit(50 << 20).read_to_string()?)?;
     let m = list["data"].as_array().into_iter().flatten().find(|m| m["id"] == model).with_context(|| format!("{model} is not in {url}/models"))?;
-    // a provider whose list has no prices (apinex): `TAZUNA_PRICE=input,cached,output` in USD per million
-    let (p, openai) = match std::env::var("TAZUNA_PRICE") {
-        Ok(v) => (price_override(&v)?, model.starts_with("gpt-")),
-        Err(_) => parse_price(m)?,
-    };
-    Ok((p, if model.starts_with("claude-") { Api::Messages } else if openai { Api::Responses } else { Api::Chat }))
+    let (p, openai) = parse_price(m)?;
+    Ok((p, api(openai)))
 }
 
 fn price_override(v: &str) -> Result<Price> {

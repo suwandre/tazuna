@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Effort on Mortera, and Shannon runs, 2026-10-19 (0.0.72-0.0.73)
+
+0.0.73: a set `TAZUNA_PRICE` skips the provider's model list (Shannon lists a model only while an account serving it is
+online; gpt-6-luna came and went within the hour). rclone, one judge call (`judge.oct.xhigh.jsonl`; this pass scored the
+anchors 1-2 points lower than earlier ones, so compare within it):
+
+| run | effort | judge | tests | turns | time | cost |
+|---|---|---|---|---|---|---|
+| DeepSeek, Mortera (v98) | default (max ignored) | 8 | 3/3 | 74 | 9 min | $0.018 |
+| DeepSeek, Mortera (v106) | xhigh | 8 | 3/3 | 214 | 48 min | ~$0.10 |
+| DeepSeek, Shannon 0.14x (v108) | max | 7 | 3/3 | 203 | 80 min | $1.03 credit, ~$0.14 paid |
+| Luna, Mortera (v99) | default | 4 | 2/3 | 150 | 37 min | $0.033 |
+| Luna, Mortera (v107) | xhigh | 6 | 3/3 | 99 | 18 min | $0.012 |
+| anchors: tazuna own-v38 / Codex Luna | | 8 / 6 | | | | |
+
+xhigh lifted Luna two points at a third of the cost; DeepSeek scored the same at 5.7x the cost, so DeepSeek on Mortera
+is best at its default effort (quality per dollar). Shannon's DeepSeek cached 67-77% over the run.
+
 ## 0.0.72 (2026-10-19)
 
 On Mortera Cloud:
