@@ -1,0 +1,52 @@
+Perfect! Let me write a comprehensive summary of the changes:
+
+## Summary
+
+I've successfully implemented support for symbolic links in the ZIP and squashfs archive backends for rclone. Here's what was done:
+
+### Changes Made:
+
+#### 1. **ZIP Backend** (`backend/archive/zip/zip.go`)
+- Added `links` and `skippedLink` fields to the `Fs` struct to track symlink handling
+- Modified `New()` to read the `--links` config flag from context
+- Added `isSymlink()` helper function to detect Unix symlinks in ZIP files by checking the file mode bits in `ExternalAttrs`
+- Updated `readZip()` to:
+  - Detect symlinks and add `.rclonelink` suffix when `--links` is enabled
+  - Skip symlinks by default and set `skippedLink` flag
+  - Log notice when symlinks are skipped without the `--links` flag
+- Updated `Object` struct to track `isSymlink` field
+- Added comprehensive tests in `zip_internal_test.go`:
+  - `TestSymlinksSkippedByDefault`: Verifies symlinks are hidden without `--links`
+  - `TestSymlinksExposedWithLinks`: Verifies symlinks appear with `.rclonelink` suffix with `--links`
+  - `TestSymlinkReadContent`: Verifies symlink content can be read as the target path
+  - `TestSymlinkSlipProtection`: Ensures hostile archives can't escape the root
+
+#### 2. **Squashfs Backend** (`backend/archive/squashfs/squashfs.go`)
+- Added `links` and `skippedLink` fields to the `Fs` struct
+- Modified `New()` to read the `--links` config flag
+- Updated `List()` to:
+  - Detect and handle symlinks with the same `.rclonelink` suffix approach
+  - Skip symlinks when `--links` is not set
+  - Log notice when symlinks are skipped
+- Added helper methods:
+  - `readSymlink()`: Reads symlink target from the squashfs image
+  - `objectFromFileInfoSymlink()`: Creates symlink objects with size set to target length
+- Updated `NewObject()` to handle symlink lookups with the `.rclonelink` suffix
+
+### Key Features:
+
+1. **Backward Compatible**: Symlinks are skipped by default, preserving existing behavior
+2. **`.rclonelink` Suffix**: When `--links` is enabled, symlinks are exposed with `.rclonelink` suffix, allowing:
+   - Symlinks to be distinguished from regular files
+   - When copied to a destination supporting symlinks, they're recreated correctly
+   - The symlink target is readable as the file content
+3. **Security**: Symlinks pointing outside the archive root are filtered by existing `sanitize.Path()` checks
+4. **Notification**: Users are informed when symlinks are skipped and how to include them with `--links`
+
+### Testing:
+
+All existing tests pass, and new tests verify:
+- Symlinks are hidden by default
+- With `--links`, symlinks appear with correct `.rclonelink` suffix
+- Symlink content is readable as the target path  
+- Hostile symlinks don't escape the archive root

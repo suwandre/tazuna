@@ -1,0 +1,22 @@
+Implemented archive symlink support for ZIP and SquashFS backends.
+
+### Changes
+- Honor `--links` when reading archive symlinks.
+- Skip symlinks without `--links` and log a notice mentioning `-l/--links`.
+- Expose enabled symlinks as `.rclonelink` objects.
+- Return symlink target contents with correct size and range/seek handling.
+- Ensure regular archive members ending in `.rclonelink` remain regular files.
+- Keep `List` and `NewObject` behavior consistent.
+- Prevent ZIP members beneath symlink paths from being copied through potentially escaping symlinks.
+
+### Verification
+Passed:
+
+```text
+go test ./backend/archive/... ./fs/operations ./fs/sync ./backend/local
+go build ./...
+go vet ./backend/archive/... ./fs/operations ./fs/sync ./backend/local
+go test -race ./backend/archive/zip ./backend/archive/squashfs
+```
+
+Added tests covering ZIP and SquashFS listing, lookup, target reads, range/seek behavior, symlink copying, and archive traversal safety.

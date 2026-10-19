@@ -16,6 +16,32 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Provider and key comparison, night of 2026-10-19 (bench only)
+
+rclone, one judge call (`judge.oct.night.jsonl`):
+
+| run | judge | tests | turns | time | cost |
+|---|---|---|---|---|---|
+| DeepSeek 1017, SubRouter three providers (v118) | 9 | 3/3 | 69 | 19 min | <= 0.18 yuan |
+| Luna, SubRouter cheapest provider (v119) | **8** | 3/3 | 115 | 15 min | ~$0.004 at the key's prices |
+| DeepSeek V4.1 Flash, Shannon 0.14x at night (v127, xhigh) | 7 | 3/3 | 75 | 11 min | ~$0.06 credit, ~$0.009 paid |
+| Luna, SubRouter 4 providers (v120) | 6 | 2/3 | 152 | 95 min | |
+| Luna, SubRouter models-only key, smart routing (v125, xhigh) | 5 | 2/3 | 93 | 11 min | |
+| Haiku 5.5 "mh-kiro", SubRouter (v121, xhigh) | 2 | 2/3 | 127 | 11 min | <= 0.045 yuan |
+| anchors: tazuna own-v38 / Codex Luna | 9 / 8 | | | | |
+
+- Luna on SubRouter is best on its single cheapest provider ($0.003 in, $0.0003 cached, $0.015 out per M): judged at
+  Codex's level for about $0.004 a run; four providers or smart routing scored 5-6.
+- The Kiro Haiku reports fake usage (1 token in, 0 out), thinks ~300 characters and answered the counting question wrong
+  (2,411 and 2,439 for 571); its run judged 2. SubRouter's default Haiku 5.5 fails its streams after ~50 s without data,
+  since its providers send nothing while Haiku thinks ("upstream stream read failed ... 等待响应超时").
+- GLM 5.3 (kriora) and GLM 5.3 Flash (foxrouter) on SubRouter cached 15% and 31% in the check and 23-25% in runs;
+  stopped after ~20 minutes at 0.67 yuan for both.
+- Shannon at night (04:00 in China): DeepSeek 0.14x cached 100% in the check and ~95% over the run, 11 minutes against
+  80 by day; Luna still waited 65-190 s for the first token; the 0.02x and 0.05x groups still answered 502/429.
+- The cost cap needs the price in real dollars: SubRouter's listed rates are a generic price (its 1017 list tripled during
+  the day while real charges did not move), so `TAZUNA_PRICE` takes the provider's own price from the console.
+
 ## SubRouter: DeepSeek 1017 three times at 9, Luna at 7, 2026-10-19 (bench only)
 
 rclone, one judge call (`judge.oct.sub3.jsonl`):

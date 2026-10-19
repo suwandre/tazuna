@@ -1,0 +1,42 @@
+Implemented symlink support for both archive backends.
+
+### Changes
+
+- **ZIP backend** (`backend/archive/zip/zip.go`)
+  - Detects entries whose mode includes `os.ModeSymlink`.
+  - Without `-l/--links`, skips them and logs a notice naming the flag.
+  - With `--links`, exposes them as `<name>.rclonelink`, with size equal to the target length.
+  - `Open` returns the target path as content, honouring seek/range options.
+  - Regular members ending in `.rclonelink` remain ordinary files.
+  - `List` and `NewObject` share the same directory tree, so they agree on exposed names.
+
+- **Squashfs backend** (`backend/archive/squashfs/squashfs.go`)
+  - Symlinks are no longer dropped.
+  - Same skip/notice and `.rclonelink` behaviour as ZIP.
+  - Uses the symlink target from the squashfs metadata, with a fallback to `Readlink`.
+  - `NewObject` resolves both exact names (for real `.rclonelink` files) and suffix-stripped names (for symlinks).
+  - Single-file roots naming symlinks require the link suffix, consistent with the exposed listing names.
+
+- **Shared helper** (`backend/archive/archiver/archiver.go`)
+  - Added `OpenLink` to serve a symlink target as object contents with range/seek handling.
+
+### Tests
+
+Added tests covering:
+- symlink visibility with and without `--links`
+- sizes and target contents
+- seek/range reads
+- `NewObject` agreement with listings
+- regular files whose names end in `.rclonelink`
+- single-file symlink roots
+- copying symlinks back to a local destination
+- hostile symlink traversal attempt (copy must not write outside the destination)
+
+Verified with:
+
+```bash
+go test -count=1 ./backend/archive/...
+go vet ./backend/archive/...
+```
+
+Also manually verified `rclone lsl --links` and `rclone copy --links` for both ZIP and squashfs images.
