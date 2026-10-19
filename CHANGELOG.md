@@ -39,6 +39,10 @@ rclone, one judge call (`judge.oct.night.jsonl`):
   stopped after ~20 minutes at 0.67 yuan for both.
 - Shannon at night (04:00 in China): DeepSeek 0.14x cached 100% in the check and ~95% over the run, 11 minutes against
   80 by day; Luna still waited 65-190 s for the first token; the 0.02x and 0.05x groups still answered 502/429.
+- DeepSeek 1017 on a models-only SubRouter key (smart routing, v124) was stopped after ~90 calls: over 56 calls it billed
+  0.87 yuan (~$0.13) for 5.1M input (98% cached) and 138K output, about the official DeepSeek price and roughly 5x the
+  fixed three-provider key (v118: <= 0.18 yuan for a whole run). Smart routing ranks stability and evaluation before
+  price, so for DeepSeek the providers have to be fixed in the key.
 - The cost cap needs the price in real dollars: SubRouter's listed rates are a generic price (its 1017 list tripled during
   the day while real charges did not move), so `TAZUNA_PRICE` takes the provider's own price from the console.
 
