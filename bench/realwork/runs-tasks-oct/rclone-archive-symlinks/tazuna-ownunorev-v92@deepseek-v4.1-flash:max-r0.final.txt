@@ -1,0 +1,32 @@
+I reviewed the complete diff and checked each requirement against the code.
+
+## Requirement check
+
+| Requirement | Code |
+|---|---|
+| ZIP detects `os.ModeSymlink` entries | `zip.go` `readZip`: `isLink := !isDir && file.Mode()&os.ModeSymlink != 0` |
+| Squashfs symlinks handled instead of dropped | `squashfs.go` `List`: `else if item.Type()&os.ModeSymlink != 0` → `linkObjectFromDirEntry` |
+| Skipped unless `-l/--links`, with a notice naming the flag | `zip.go` `linksSkipped` branch + `fs.Logf(... "use -l/--links ...")`; `squashfs.go` `linksSkipped` branch + same notice |
+| With `--links`, listed as `<name>.rclonelink` | ZIP appends `fs.LinkSuffix` before prefix/root handling; squashfs appends it in `linkObjectFromDirEntry` |
+| Size is the target length | ZIP: symlink entry's uncompressed size (the stored target); squashfs: `o.size = int64(len(target))` |
+| `Open` reads the target, honouring range/seek | ZIP: existing range/seek path plus offset clamp; squashfs: `linkTarget` reader with clamped offset and `NewLimitedReadCloser` |
+| List and `NewObject` agree | ZIP: both use `f.dt`; squashfs: `NewObject` retries with the suffix removed and rejects non-link or mismatched remotes; `New` root detection accepts the suffixed name only |
+| Regular `.rclonelink` member stays regular | Suffix is only added on the symlink branch; tests cover both backends |
+| Hostile archive can't write outside destination | Archive test copies a symlink pointing outside plus `pwn/authkeys`; local `--links` writes go through `os.Root`, so the write is refused and nothing lands outside |
+| Single-object root of a symlink | ZIP works naturally via suffix-before-root matching; squashfs `New` maps the suffixed root and records `f.file` |
+
+## Review actions
+
+- Read the full `git diff`.
+- Verified the APIs used: `fs.GetConfig`/`fs.AddConfig`, `fs.LinkSuffix`, `fs.Logf`, `readers.NewLimitedReadCloser`, `zip.FileHeader.Mode/SetMode`, and go-diskfs `directoryEntry.Readlink`/`Mode`/`Info`.
+- Removed an unused parameter from the new test helper `writeZipFile`.
+- Simplified the squashfs root-detection condition for readability.
+- No changes outside `backend/archive`.
+
+## Verification
+
+- `go test ./backend/archive/... ./fs/operations/ ./fs/sync/ -count=1` — all pass.
+- `golangci-lint run ./backend/archive/...` — 0 issues.
+- `go vet ./backend/archive/...` — clean.
+- Manual CLI checks for both ZIP and Squashfs: `lsl --links` shows `link.txt.rclonelink` with target length, and `copy --links` recreates a real symlink.
+- Existing external-binary tests `TestArchiveZip` / `TestArchiveSquashfs` pass.

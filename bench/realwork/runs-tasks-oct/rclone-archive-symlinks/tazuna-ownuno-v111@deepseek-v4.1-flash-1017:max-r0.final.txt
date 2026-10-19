@@ -1,0 +1,25 @@
+Implemented symlink support in the archive backend.
+
+## Changes
+
+**`backend/archive/zip/zip.go`**
+- Added a `links` field, initialised from `fs.GetConfig(ctx).Links`.
+- While reading the central directory, an entry whose mode has `os.ModeSymlink` is skipped (with a count) unless `--links` is set; with it, the entry is exposed under its name plus `fs.LinkSuffix` (`.rclonelink`), so the existing `Open` (which already honours seek/range options) reads back the target stored in the member.
+- Logs one NOTICE per archive when symlinks were skipped: `Skipped N symlinks - use -l/--links to read them`.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Same `links` handling in `List`, using the entry mode (`os.ModeSymlink`) and reading the target from go-diskfs's `StatT.LinkTarget`; skipped symlinks are logged once per listing.
+- Added `objectFromLink`/`readlink` and an `isLink`/`link` pair on `Object`; `Open` serves the target with offset/limit applied (clamped to avoid panics), so range/seek work.
+- `newObjectNative` now names entries exactly as `List` does (suffix appended for symlinks, skipped without the flag), so listing and `NewObject` agree on which names exist.
+
+**Tests**
+- `zip_internal_test.go`: `TestReadZipSymlink` (hidden by default, listed/readable with `--links`, size = target length, seek/range reads, unsuffixed name absent) and `TestReadZipRclonelinkMember` (a regular member ending in `.rclonelink` stays a regular file).
+- `archive_internal_test.go`: `TestArchiveSquashfsSymlink` (mksquashfs-built image, flag behaviour, `NewObject`/`List` agreement, regular `.rclonelink` member preserved) and `TestArchiveZipSymlinkEscape` (symlink pointing outside plus a member "inside" it; copy fails and nothing is written outside the destination).
+
+**Docs**
+- Added a "Symlinks" section to `docs/content/archive.md` documenting the `--links` / `.rclonelink` convention and showing the example output.
+
+## Verification
+- `go test ./backend/archive/...` passes (including the external-binary tests, which run here since `mksquashfs` is installed).
+- `go vet` and `golangci-lint run ./backend/archive/...` report no issues.
+- Built rclone and manually verified `lsl` (with and without `--links`), `copy --links`, and the resulting symlink for both a zip and a squashfs archive.

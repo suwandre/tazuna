@@ -1,0 +1,16 @@
+Self-review complete.
+
+**Diff reviewed** (`celmatcher.go`, `reverseproxy.go`, `retries_test.go`) — no unrelated changes.
+
+**Requirement check**
+
+1. *Response retries only for response-reading expressions* — `matcherSetReferencesResponse` in `reverseproxy.go` checks `MatchExpression.Placeholders()` against `responsePlaceholders` (`status_code`, `status_text`, `upstream.latency`, `upstream.latency_ms`) and the `http.reverse_proxy.header.` prefix. `celPlaceholderNames` walks the compiled CEL AST, so it captures both `{placeholder}` shorthand (already expanded to `ph(...)` by `Provision`) and direct `ph(req, "...")` calls.
+2. *All other expressions are request conditions* — matcher sets without a response reference are skipped in the post-round-trip check. Verified with tests for `{http.request.method}`, `ph(req, "http.request.method")`, `{http.reverse_proxy.upstream.host}`, escaped `\{http.reverse_proxy.status_code}` (never becomes a `ph` call), and the non-matching `{http.reverse_proxy.status_codes}` prefix.
+3. *Unknown placeholder names remain response conditions* — `celPlaceholderNames` emits `""` for non-literal names, and `name == ""` makes the set response-relevant. Added a test using a ternary-computed placeholder name.
+4. *#7569 examples still work* — existing response retry/header/latency tests pass.
+5. *Names/assumptions verified* — `upstream.host/hostport/address` are set before the round trip (lines 801–803), `latency`/`latency_ms` after it (lines 1239–1240); `NativeRep().Expr()` and `ast.PreOrderVisit` exist in cel-go v0.32.0; Go 1.26 supports `slices`.
+
+**Verification**
+
+- `go test -race -short ./modules/caddyhttp/reverseproxy/ ./modules/caddyhttp/ ./caddyconfig/httpcaddyfile/` — all pass
+- `go build ./...` — passes

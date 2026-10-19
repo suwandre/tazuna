@@ -1,0 +1,26 @@
+All clean. Let me give a final summary of what I changed.
+
+## Summary
+
+I added support for symbolic links in the archive backend (`zip` and `squashfs`), matching the convention the local backend uses for `-l`/`--links`.
+
+### Behaviour
+
+- **Without `--links`**: symlinks in an archive are skipped, and a single notice naming the flag is logged per `New` (zip) / per directory listing (squashfs).
+- **With `--links`**: a symlink is listed under its own name plus the `.rclonelink` suffix, its `Size()` is the length of the target, and `Open` reads back the target path honouring `SeekOption`/`RangeOption`.
+- **Listing and `NewObject` agree**: a link is only looked up under its suffixed name; the plain name returns `ErrorObjectNotFound`; and a regular member whose name ends in `.rclonelink` stays a regular file (`NewObject` tries the symlink interpretation first, then falls back to the literal name).
+- A hostile archive (a symlink pointing above the destination plus a member "inside" it) is faithfully reproduced as a symlink by the local backend, but rclone's existing `os.Root` protection refuses the write-through, so nothing lands outside the destination (CWE-59).
+
+### Files changed
+
+- `backend/archive/zip/zip.go` — detect `os.ModeSymlink` entries, gate on `fs.GetConfig(ctx).Links`, append `fs.LinkSuffix`, count skipped links.
+- `backend/archive/squashfs/squashfs.go` — expose symlinks via go-diskfs's `Readlink`, add `isLink`/`linkTarget` to `Object`, split `newObjectNative` into `findNative`/`findNativeObject`, and add `newStringReadCloser` for range/seek-aware target reads.
+- Tests: `zip_internal_test.go`, `squashfs_internal_test.go`, `archive_internal_test.go` (new hostile-symlink escape test), plus a static `squashfs/testdata/symlink.sqfs` image generated reproducibly with `mksquashfs ... -mkfs-time 0 -inode-time 0 -root-time 0`.
+- `docs/content/archive.md` — new "Symbolic links" section.
+
+### Verification
+
+- `go test -count=1 ./backend/archive/... ./cmd/archive/... ./fs/sync/... ./fs/operations/...` all pass.
+- `go test -race ./backend/archive/...` passes.
+- `golangci-lint run ./backend/archive/...` reports 0 issues; `go build ./...` succeeds.
+- Manually verified end-to-end with a built binary: `lsl --links`, `copy --links` recreating symlinks, range/seek reads, regular `.rclonelink` members staying regular, and a hostile archive not escaping the destination.

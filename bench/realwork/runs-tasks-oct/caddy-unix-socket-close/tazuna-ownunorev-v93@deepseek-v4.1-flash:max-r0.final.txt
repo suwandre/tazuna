@@ -1,0 +1,30 @@
+I completed the self-review. Here is the accounting and final state.
+
+## Requirements → code
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| Old socket closed after reload; connect refused; file removed | `unixSocket.release()` unlinks `us.path` and closes the master when the last holder is released; each holder closes its own dup immediately. The leaked `File()` duplicate (the GC-delay cause) is now closed via `defer socketFile.Close()` in `reuseUnixSocket` and `newUnixSocketHolder`. | `TestUnixListenerClose`, `TestUnixPacketConnClose`, plus the reported reload scenario run end-to-end |
+| Shared socket is reference counted; file removed only on last close; stays working for other holders | `unixSocket.count`, incremented on reuse, decremented in `release()` under `unixSocketsMu` | `TestUnixListenerReuse`, `TestUnixListenerReuseReverseClose`, `TestUnixPacketConnReuse` |
+| Double `Close` must not release another reference; second returns `net.ErrClosed` | `closed atomic.Bool` CAS in `unixListener.Close`/`unixConn.Close` | `TestUnixListenerCloseTwice` (also asserts count stays 1 and the sibling still accepts), `TestUnixPacketConnClose` |
+| Close racing with new listen leaves working socket + file | `NetworkAddress.Listen` and `release()` serialize on `unixSocketsMu`; `release` only deletes the map entry if it still points to the same `unixSocket` | `TestUnixListenerCloseRaceWithListen` (50 iterations, dials and checks the file) |
+| Abstract sockets (`@`) never unlink a filesystem path | `isAbstractUnixSocket` guards the pre-bind unlink; `newUnixSocketHolder` stores `path = ""` for abstract sockets so `release` never unlinks | `TestUnixAbstractSocketNoUnlink` (Linux-only, compiles for Linux) |
+
+## Review adjustments made
+
+- Restored the original `listenerPool.LoadOrStore` placement/return style in `listenReusable` to keep the diff focused.
+- Removed the now-unused `mapKey` field from both wrapper structs.
+- Fixed the `newUnixSocketHolder` doc comment (it creates, not registers, the shared socket).
+- Strengthened `TestUnixListenerCloseTwice` to assert the reference count is unchanged and the sibling holder still accepts.
+
+## Verification
+
+- `go test -race -run 'TestUnix' -count=1 .` — pass
+- `go test -race -short -count=1 ./...` — all packages pass
+- `golangci-lint run --timeout 10m .` — 0 issues
+- Cross-builds: linux/amd64, linux/arm64, windows/amd64, freebsd/amd64, solaris/amd64; test binaries compile for linux/windows; `go vet` clean
+- End-to-end repro from the report: after reload, `curl` fails to connect immediately (exit 7) and `/tmp/.../admin.sock` is removed.
+
+## Summary of changes
+
+`listen_unix.go`: introduced a reference-counted `unixSocket` that owns the shared master descriptor and filesystem path; holders get their own duplicated descriptor and are closed idempotently; the last holder unlinks the file and closes the master. Fixed the leaked `File()` descriptors and the wrong unlink name, guarded abstract sockets, and made close/listen serialization safe. Added `listen_unix_test.go` covering all review requirements.

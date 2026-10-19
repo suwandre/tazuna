@@ -1,0 +1,21 @@
+Symlinks in both zip and squashfs archives are now handled the way the local backend handles them: skipped by default, and exposed as `.rclonelink` files under `--links`. `go test ./backend/archive/...` passes, and `golangci-lint` reports 0 issues.
+
+**Changes**
+
+- **`backend/archive/zip/zip.go`**: `readZip` checks the symlink bit on each entry. Without `--links`, symlinks are skipped and a notice names the flag. With `--links`, they are listed with the `.rclonelink` suffix. The member data already holds the target, so `Open` and `Size` needed no change.
+- **`backend/archive/squashfs/squashfs.go`**: `List` and `NewObject` follow the same rules. The target comes from go-diskfs's `StatT.LinkTarget`. `Open` serves it with seek and range support, clamped to the target length.
+- **Tests**: zip gets `TestReadZipSymlinks` and `TestCopySymlinkEscape`. Squashfs gets `TestSymlinks`, which checks listing, `NewObject` agreement, and the seek and range reads.
+- **Fixture**: `backend/archive/squashfs/testdata/symlink.sqfs` is a new untracked file. It holds a relative link, a link in a subdirectory, a dangling link, and a regular file named `regular.rclonelink`.
+
+**Verified end to end**
+
+I built rclone and ran it against real archives:
+- `lsl` without `--links` shows only the regular file and prints the skip notice.
+- `lsl --links` shows `link.txt.rclonelink` with size 8, the length of the target.
+- `copy --links` recreates `link.txt -> file.txt` as a real symlink.
+
+**Caveats**
+
+- The hostile-archive test currently passes through the "file exists" branch, not the path that would write through the link. It still guards against escape, but it doesn't exercise that write path. The local backend's `os.Root` protection is what stops the escape.
+- I did not update `docs/content/archive.md`. The task asked for the smallest change, and the doc has no symlink section yet. It would be a reasonable follow-up.
+- I did not commit.

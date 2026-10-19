@@ -1,0 +1,5 @@
+Implemented symlink support for ZIP and squashfs archives. Without `--links`, symlinks are skipped with a notice; with it, they appear as `.rclonelink` objects whose contents are the link targets, including range and seek reads. Listings and lookups agree, regular files already ending in `.rclonelink` remain regular, and ZIP entries beneath symlinks are excluded to prevent destination escapes.
+
+Added tests for both formats, including single-object lookup, range reads, and a hostile ZIP case.
+
+Verified with archive, operations, and sync package tests; archive race tests, vet, and lint; and a CLI ZIP copy smoke test that recreated a symlink. A broader `go test ./...` attempt was blocked by gitannex end-to-end tests requiring an `rclone` executable on PATH.

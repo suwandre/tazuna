@@ -1,0 +1,32 @@
+All checks pass. Here's a summary.
+
+## What changed
+
+**`backend/archive/zip/zip.go`** — the ZIP reader now checks `file.Mode()&os.ModeSymlink` while building its directory tree:
+- Without `-l/--links`, symlink members are omitted from listings (previously they showed up as tiny regular files containing the target) and a single NOTICE reports how many were skipped and names the flag.
+- With `--links`, a symlink is exposed as `name.rclonelink`, with `Size()` equal to the target length and `Open()` serving the target bytes; the existing offset/limit logic makes `SeekOption`/`RangeOption` work. Because the member data *is* the target, no object changes were needed.
+- `NewObject` uses the same dirtree, so listing and lookup agree on names.
+
+**`backend/archive/squashfs/squashfs.go`** — symlinks used to be dropped silently:
+- `List` now recognises `os.ModeSymlink` entries, skips them (with a NOTICE naming `-l/--links`) unless links are enabled, and otherwise emits an object with the `.rclonelink` suffix. The target is read via the squashfs `StatT.LinkTarget` metadata.
+- `newObjectNative` mirrors the naming (`-l` check, suffix, target) so `NewObject` and `List` agree, including when mounting a path inside the image.
+- `Object` gained `isLink`/`link`; `Open` serves the target from memory, clamping offsets so seek/range reads can't panic.
+- A genuine regular file that happens to end in `.rclonelink` stays a regular file in both backends (the type check drives behaviour, never the name).
+
+**Tests** (`zip_internal_test.go`, `archive_internal_test.go`):
+- Symlink skipped by default, listed/read with `--links`, correct size.
+- Seek and range reads of a symlink target.
+- `List` and `NewObject` agree on which names exist, both with and without the flag.
+- A regular `.rclonelink` member stays regular.
+- Symlink under a mounted subdirectory root.
+- Squashfs image built with `mksquashfs`: skipped by default, exposed with `--links`, seek/range reads, regular `.rclonelink` file preserved.
+- End-to-end hostile-archive test: a symlink pointing above the root plus a member inside it makes `sync.CopyDir` fail and nothing is written outside the destination (the local backend's `os.Root` protection refuses it).
+
+**Docs** — added a "Symlinks" section to `docs/content/archive.md` with the `lsl`/`cat`/`copy` example.
+
+## Verification
+
+- `go test -count=1 ./backend/archive/...` — all packages pass (also with `-race`).
+- `go vet ./backend/archive/...`, `gofmt -l`, and `golangci-lint run ./backend/archive/...` — clean.
+- `go build ./...` succeeds.
+- Manual end-to-end with a built binary: `lsl --links` shows `link.txt.rclonelink` sized 8; `cat --links` prints `file.txt`; `copy --links` recreates a real symlink; without `--links` the symlink is skipped with a NOTICE; the hostile zip fails the copy and writes nothing outside the destination. Same checks pass for a squashfs image made by `mksquashfs`.

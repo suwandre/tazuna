@@ -1,0 +1,30 @@
+I've implemented symlink support in both archive readers. Summary of the change:
+
+## What changed
+
+**`backend/archive/archiver/archiver.go`**
+- Added `LinkTargetMaxSize` (128 KiB, matching the local backend's cap) and `ReadLinkTarget(target, offset, limit)`, which serves a link target through a range/seek-aware reader. Shared by both archivers.
+
+**`backend/archive/zip/zip.go`**
+- Detects entries with `os.ModeSymlink` (a symlink is never treated as a directory even if its name ends in `/`).
+- Without `-l/--links` symlinks are skipped and a single notice per archive is logged naming the flag.
+- With `--links` the symlink is exposed as `<name>.rclonelink`; its target is read from the entry (bounded by `LinkTargetMaxSize`) so `Size()` is the target length, and `Open` serves the target honouring `RangeOption`/`SeekOption`.
+- A regular member whose name ends in `.rclonelink` stays a regular file and takes precedence over a symlink whose translated name would collide, so `List` and `NewObject` agree and no name shadowing is possible.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Symlinks (previously silently dropped) now behave the same way: skipped with a notice without `--links`, exposed as `.rclonelink` objects with the target as content and its length as size with `--links`.
+- `newObjectNative` and `List` share the same collision rule (regular member first, then the suffixed symlink), and a symlink can be the single file an archive path points at.
+
+**Tests** (all use real archives)
+- `zip_internal_test.go`: listing/lookup agreement, size/content, range/seek/beyond-end, skipped-symlink notice, `.rclonelink` regular members, name clashes, symlink as mount root, oversized targets.
+- `squashfs_internal_test.go` + new `testdata/symlink.sqfs` (generated with `mksquashfs`): same matrix including relative/absolute/directory symlinks and clashes.
+- `archive_internal_test.go`: end-to-end `sync.CopyDir --links` recreates symlinks for both zip and squashfs, and a hostile archive (symlink above the root plus `pwn/authkeys`) cannot write outside the destination.
+
+**Docs**: added a "Symbolic links" section to `docs/content/archive.md`.
+
+## Verification
+- `go build ./...`
+- `go test -count=1 ./backend/archive/...` (plus `-race`)
+- `go test ./fs/sync ./fs/operations`
+- `golangci-lint run ./backend/archive/...` — 0 issues
+- Manual CLI checks: `rclone lsl --links`, `rclone copy --links` recreating symlinks, `rclone check --links` matching, and a malicious zip being refused from writing through a planted symlink.

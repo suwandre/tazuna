@@ -1,0 +1,31 @@
+Implemented symbolic link support in the archive backend (ZIP and SquashFS), following the local backend's `.rclonelink` convention.
+
+## What changed
+
+**`backend/archive/archiver/links.go` (new)**
+- `OpenLink(target, offset, limit)` serves a link target as a reader, clamping the offset and honouring range/seek limits.
+
+**`backend/archive/zip/zip.go`**
+- Detects entries with `os.ModeSymlink` via `file.Mode()`.
+- Without `-l/--links`, symlinks are skipped and a single notice names the flag.
+- With `--links`, a symlink is listed as `<name>.rclonelink`, its size is the target length, and `Open` reads back the target (with range/seek support). The target is read through a 128 KiB limit so a hostile archive can't force unbounded reads.
+- `NewObject` and `List` both come from the same dirtree, so they agree on names.
+- A regular member whose name already ends in `.rclonelink` wins over a symlink that would collide with it.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Symlinks were previously dropped entirely; now they are skipped with a flag notice by default and exposed as `.rclonelink` objects with `--links`, using go-diskfs's `Readlink()` through the `linkReader` interface.
+- Single-object root handling and `NewObject` understand both plain regular names and translated link names, with the same regular-file precedence rule.
+
+**Docs** — added a "Symbolic links" section to `docs/content/archive.md`.
+
+## Tests added
+- ZIP: skipped without `--links`; listed/opened with `--links` (size, seek, range, suffix-less lookup, regular `.rclonelink` precedence, root as single link).
+- SquashFS: same coverage against a new `testdata/symlinks.sqfs` image (regular file, symlink, and a symlink colliding with a regular `plain.rclonelink`).
+- Archive-level: `rclone copy --links` recreates the symlink at the destination, and a hostile archive (symlink to an outside dir plus `pwn/authkeys`) cannot write outside the destination.
+
+## Verification
+- `go build ./...`
+- `go test ./backend/archive/... ./cmd/archive/... -count=1` (including the external-tool integration tests `TestArchiveZip` and `TestArchiveSquashfs`)
+- `go test ./backend/archive/... -race`
+- `go vet` and `golangci-lint run ./backend/archive/...` — 0 issues
+- Manually confirmed `rclone lsl --links` and `rclone copy --links` produce the expected `.rclonelink` listing and real symlink on disk.
