@@ -19,8 +19,14 @@ GFILE=$PWD/uno-$LABEL.groups TRIED=$PWD/uno-$LABEL.tried
 printf '%s\n' ${GROUP_LIST//,/ } > "$GFILE"; cp "$GFILE" "$TRIED"
 # the price of the cheapest listed group that still serves the model (the others' prices only matter after a switch)
 price() { for g in $(cat "$GFILE"); do python3 -I ../uno_route.py "$MODEL" --price "$g" --budget "$1" && return 0; done; return 1; }
-# listed groups that still serve the model
-serving() { n=0; for g in $(cat "$GFILE"); do python3 -I ../uno_route.py "$MODEL" --price "$g" --budget 100 >/dev/null && n=$((n+1)); done; echo $n; }
+# groups from tazuna's current one on (a group it left for caching badly stays listed but is not gone back to) that still
+# serve the model; tazuna's position is its number of switches in the run log (a 1017 run left zlkpro for hly, its last
+# group, and the refill waited since zlkpro was still listed)
+serving() {
+  f=$(ls -t ~/bench-homes/cc/.local/share/tazuna/sessions/ | grep "$LABEL@$MODEL" | head -1)
+  at=$( [ -n "$f" ] && grep -c group_switch "$HOME/bench-homes/cc/.local/share/tazuna/sessions/$f" || echo 0)
+  n=0; for g in $(tail -n +$((at + 1)) "$GFILE"); do python3 -I ../uno_route.py "$MODEL" --price "$g" --budget 100 >/dev/null && n=$((n+1)); done; echo $n
+}
 ENV=$(price "$BUDGET") || { echo "$(date +%H:%M) not started: no listed group serves $MODEL within \$$BUDGET ($GROUP_LIST)" | tee "$LOG"; exit 1; }
 # a typical run (uno_route.py run_cost) at the TAZUNA_PRICE in, cached, out
 cost() { echo "$1" | sed -E 's/.*TAZUNA_PRICE=([^ ]+).*/\1/' | python3 -I -c "i,c,o=map(float,input().split(','));print(6*(0.05*1.25*i+0.95*c)+0.08*o)"; }
