@@ -16,6 +16,29 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## DeepSeek V4.1 Flash 1017 on UnoRouter and SubRouter; Shannon's Luna groups, 2026-10-19 (bench only)
+
+rclone, one judge call (`judge.oct.1017.jsonl`):
+
+| run | judge | tests | turns | time | cached | billed |
+|---|---|---|---|---|---|---|
+| 1017, UnoRouter zlkpro then hly (v111, 0.0.75) | **9** | 3/3 | 59 | 10 min | 57-78% | 2.65 cents |
+| 1017, SubRouter kriora (v112) | 6 | 3/3 | 112 | 61 min | ~62% | 0.47 yuan, ~$0.069 |
+| V4.1 Flash, Mortera, default effort (v98) | 8 | 3/3 | 74 | 9 min | 97% | ~$0.018 |
+| anchors: tazuna own-v38 / Codex Luna | 8 / 7 | | | | | |
+
+- The first group switch in a real run: v111 left zlkpro at call 21 ("57% cached over the last 10 calls") for hly and
+  finished there. UnoRouter billed it at almost the uncached price (2.65 cents against tazuna's 0.1-cent estimate), six
+  times the regular V4.1 Flash runs (~0.4 cents). An earlier 1017 run on one checked group ended at call 43 when that
+  group vanished (0.92 cents); the check script crashed on a group answering `"choices": null` (fixed).
+- SubRouter (new-api, shown in yuan at 6.8 per dollar): the check passed (83% cached, long call not cut); the run cached
+  ~62%. Some calls failed with a 524 that SubRouter logs as "json: cannot unmarshal number 1792415975.375 into Go struct
+  field ... of type int64" (kriora sends a fractional timestamp); unbilled, retried by tazuna. The judge marked it down
+  for reading every zip link target when listing.
+- Shannon's GPT groups for gpt-6-luna, speed test (time to the first token at max effort): 0.12x 14 s to 601 s (a 504
+  from its gateway), 0.27x Pro 180-248 s, 0.19x and 0.37x Fast do not serve gpt-6-luna at the moment (404, though on
+  their price lists). A Luna run on 0.12x reached the 3-hour limit after ~50 calls.
+
 ## 0.0.74-0.0.75 (2026-10-19)
 
 - **0.0.74: on Shannon the first token is waited for 600 s** (180 s elsewhere). Its GPT groups queue calls before the
