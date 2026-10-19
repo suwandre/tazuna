@@ -27,6 +27,11 @@ first-token speed, price).
   provider (v124, ~5x the fixed key). A new provider, manxueai (满血AI), joined 1017's list during the evening; one
   call that set a cookie for api.a6api.com went to a6aa. For DeepSeek the key has to allow only providers that cache
   (kriora, lingai, a6aa: judged 9 three times at ~$0.03 a run).
+- Correction: the DeepSeek checks that "cached 0%" counted replies without usage as uncached; `uno_route.py` now prints
+  each call and fails on a reply without usage. Re-run: with price first, the first call timed out (524) twice; with
+  stability first and no provider restriction, all six calls answered with real usage and none cached (8,450 tokens
+  sent twice, 0 cached), at 0.01 yuan for the check. Unrestricted, the key routes DeepSeek 1017 to a provider that
+  does not cache.
 - So one key can serve every model: allowed providers = the good ones per model, routing = stability, then
   cache-adjusted price.
 

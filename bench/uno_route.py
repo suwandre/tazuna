@@ -205,6 +205,10 @@ def cache_hit(model, group, calls=6):
         chunk = TEXT[start + i * 4000: start + (i + 1) * 4000] if i else f"[{nonce}]\n" + TEXT[start: start + 24000]
         msgs.append({"role": "user", "content": chunk + "\n\nReply with OK only."})
         rows.append(call(model, group, msgs, "low")[:2])
+        print(f"      call {i + 1}: input {rows[-1][0]}, cached {rows[-1][1]}", flush=True)
+        if not rows[-1][0]:
+            # a reply without usage says nothing about the cache (a SubRouter check read 0% from such replies)
+            raise ValueError(f"call {i + 1} came back without usage")
         msgs.append({"role": "assistant", "content": "OK"})
         time.sleep(10)  # an agent's tool run between calls
     return sum(min(c, p[0]) for p, (_, c) in zip(rows, rows[1:])) / max(1, sum(p[0] for p in rows[:-1]))
