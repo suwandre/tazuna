@@ -158,7 +158,7 @@ def call(model, group, msgs, effort, tools=False, max_out=64):
     r = get(API + "/v1/chat/completions", body, group)
     u = r.get("usage", {})
     det = u.get("prompt_tokens_details") or {}
-    m = r["choices"][0]["message"]
+    m = (r.get("choices") or [{}])[0].get("message") or {}  # a group answered "choices": null
     # a tool call despite tool_choice none says nothing about cut calls: report it as such
     text = m.get("content") or ("[called a tool instead of answering]" if m.get("tool_calls") else "")
     return u.get("prompt_tokens") or u.get("input_tokens") or 0, det.get("cached_tokens") or 0, text, r["choices"][0].get("finish_reason") == "length"
@@ -285,7 +285,9 @@ if __name__ == "__main__":
         raise TimeoutError("over 15 minutes for this group")
     signal.signal(signal.SIGALRM, too_slow)
     passed = []
-    for g, p in gs[:tries]:
+    # UNO_SKIP: groups already listed or tried (uno_run.sh checks the groups that appear during a run)
+    skip = set(filter(None, os.environ.get("UNO_SKIP", "").split(",")))
+    for g, p in [g for g in gs if g[0] not in skip][:tries]:
         if len(passed) == 3:
             break
         print(f"checking {g}", flush=True)

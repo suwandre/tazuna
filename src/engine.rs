@@ -21,7 +21,10 @@ use std::{
 /// ponytail: one list per process (one model per engine) and no price re-check during a run; a per-call price check if
 /// prices turn out to move within a task
 struct Groups {
-    list: Vec<String>,
+    list: Mutex<Vec<String>>,
+    /// `TAZUNA_GROUPS_FILE`: groups added while the run goes (bench/realwork/uno_run.sh checks groups that appear and adds
+    /// those that pass), read again at each switch: a run whose listed groups all vanished ended (1017, a7-mega, call 43)
+    file: Option<std::path::PathBuf>,
     at: AtomicUsize,
     /// (input, cached) of the last calls on the current group
     recent: Mutex<VecDeque<(u64, u64)>>,
@@ -29,24 +32,43 @@ struct Groups {
     notes: Mutex<Vec<String>>,
 }
 
+fn group_list(spec: &str) -> Vec<String> {
+    spec.split([',', '\n']).map(str::trim).filter(|g| !g.is_empty()).map(String::from).collect()
+}
+
 impl Groups {
-    fn from(spec: &str) -> Groups {
-        Groups { list: spec.split(',').map(str::trim).filter(|g| !g.is_empty()).map(String::from).collect(), at: AtomicUsize::new(0),
-            recent: Mutex::new(VecDeque::new()), notes: Mutex::new(vec![]) }
+    fn from(spec: &str, file: Option<std::path::PathBuf>) -> Groups {
+        let g = Groups { list: Mutex::new(group_list(spec)), file, at: AtomicUsize::new(0), recent: Mutex::new(VecDeque::new()),
+            notes: Mutex::new(vec![]) };
+        g.refresh();
+        g
     }
 
-    fn current(&self) -> Option<&str> {
-        self.list.get(self.at.load(Ordering::Relaxed)).map(String::as_str)
+    /// Adds the groups in the file not listed yet.
+    fn refresh(&self) {
+        let Some(text) = self.file.as_ref().and_then(|f| std::fs::read_to_string(f).ok()) else { return };
+        let mut list = self.list.lock().unwrap();
+        for g in group_list(&text) {
+            if !list.contains(&g) {
+                list.push(g);
+            }
+        }
+    }
+
+    fn current(&self) -> Option<String> {
+        self.list.lock().unwrap().get(self.at.load(Ordering::Relaxed)).cloned()
     }
 
     /// Moves to the next group; false when none is left.
     fn next(&self, why: &str) -> bool {
+        self.refresh();
         let i = self.at.fetch_add(1, Ordering::Relaxed) + 1;
         self.recent.lock().unwrap().clear();
-        let note = format!("group {} left ({why}); now {}", self.list.get(i - 1).map_or("?", String::as_str), self.list.get(i).map_or("no group left", String::as_str));
+        let list = self.list.lock().unwrap();
+        let note = format!("group {} left ({why}); now {}", list.get(i - 1).map_or("?", String::as_str), list.get(i).map_or("no group left", String::as_str));
         eprintln!("{note}");
         self.notes.lock().unwrap().push(note);
-        i < self.list.len()
+        i < list.len()
     }
 
     /// Switches since the last call, for the run log.
@@ -57,7 +79,9 @@ impl Groups {
     /// A call's cache use: under 70% over the last 10 calls on a group moves to the next (a cheap group that rotates
     /// accounts cached 47%; the next miss there costs the whole prompt again).
     fn note(&self, input: u64, cached: u64) {
-        if self.list.len() < 2 || self.at.load(Ordering::Relaxed) + 1 >= self.list.len() {
+        self.refresh();
+        let len = self.list.lock().unwrap().len();
+        if len < 2 || self.at.load(Ordering::Relaxed) + 1 >= len {
             return;
         }
         let mut r = self.recent.lock().unwrap();
@@ -75,7 +99,7 @@ impl Groups {
 
 fn groups() -> &'static Groups {
     static G: OnceLock<Groups> = OnceLock::new();
-    G.get_or_init(|| Groups::from(&std::env::var("TAZUNA_GROUPS").unwrap_or_default()))
+    G.get_or_init(|| Groups::from(&std::env::var("TAZUNA_GROUPS").unwrap_or_default(), std::env::var_os("TAZUNA_GROUPS_FILE").map(Into::into)))
 }
 
 /// A backstop against loops: the dollar cap is the real limit, so cheap models get proportionally more turns. 200 cut
@@ -746,7 +770,9 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
     // (MiMo V2.6 Pro at the official ~30 tok/s) takes over 3 minutes and was cut off at 180 s on every try. The limit is on
     // the reply's start; a stream that has started may run 15 minutes: cut at 180 s, UnoRouter's slow Luna calls were
     // billed anyway (with the input twice) and then sent again.
-    let mut limit = CALL_TIMEOUT;
+    // Shannon queues GPT calls before the first token (median 69 s, up to 396 s for gpt-6-luna) and bills a call tazuna
+    // gave up on: a 180 s limit sent the first request of a run three times
+    let mut limit = if url.contains("shannonapi") { Duration::from_secs(600) } else { CALL_TIMEOUT };
     const TRIES: [u64; 12] = [2, 8, 30, 60, 120, 120, 120, 120, 120, 120, 120, 0];
     let (mut i, mut limited) = (0, 0u64);
     while i < TRIES.len() {
@@ -772,7 +798,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             None => req,
         };
         let req = match groups.current() {
-            Some(g) => req.header("X-Group", g),
+            Some(g) => req.header("X-Group", &g),
             None => req,
         };
         let sent = req.send(&body.to_string())
@@ -1139,7 +1165,7 @@ data: {\"type\":\"message_stop\"}\n";
         for fail in ["503 Service Unavailable\r\nConnection: close\r\n\r\n{\"error\":{\"code\":\"get_channel_failed\"}}",
             "400 Bad Request\r\nConnection: close\r\n\r\n{\"error\":{\"message\":\"Provider returned error (Baidu)\"}}"] {
             let (url, seen) = serve(fail);
-            let g = Groups::from("a, b, c");
+            let g = Groups::from("a, b, c", None);
             let r = chat_in(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": []}), &g).unwrap();
             assert_eq!(r["choices"][0]["message"]["content"], "ok");
             assert_eq!(seen.join().unwrap(), ["a", "b"], "the call went again at once on the next group");
@@ -1147,16 +1173,25 @@ data: {\"type\":\"message_stop\"}\n";
             assert!(g.drain().is_empty());
         }
         // ten calls at half cached move b on to c; on the last group nothing moves
-        let g = Groups::from("a, b, c");
+        let g = Groups::from("a, b, c", None);
         g.at.store(1, Ordering::Relaxed);
         for _ in 0..10 {
             g.note(1000, 500);
         }
-        assert_eq!(g.current(), Some("c"));
+        assert_eq!(g.current().as_deref(), Some("c"));
         for _ in 0..10 {
             g.note(1000, 0);
         }
-        assert_eq!(g.current(), Some("c"));
+        assert_eq!(g.current().as_deref(), Some("c"));
+        // groups added to the file while the run goes are there for the next switch
+        let f = std::env::temp_dir().join(format!("tz-groups-{}", std::process::id()));
+        std::fs::write(&f, "a\n").unwrap();
+        let g = Groups::from("", Some(f.clone()));
+        assert_eq!(g.current().as_deref(), Some("a"));
+        std::fs::write(&f, "a\nb, a\n").unwrap();
+        assert!(g.next("gone") && g.current().as_deref() == Some("b"));
+        assert!(!g.next("gone"), "nothing left after b");
+        std::fs::remove_file(f).ok();
     }
 
     #[test]

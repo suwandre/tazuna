@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.74-0.0.75 (2026-10-19)
+
+- **0.0.74: on Shannon the first token is waited for 600 s** (180 s elsewhere). Its GPT groups queue calls before the
+  first token (gpt-6-luna on 0.12x: median 69 s, up to 396 s in its own usage export; "Say OK." took 14 s, 179 s and
+  then a 504 from its gateway at 601 s), and a call tazuna gave up on still ran and was billed: the first request of a
+  run went three times.
+- **0.0.75: the group list can be a file** (`TAZUNA_GROUPS_FILE`), read again at each switch. `uno_run.sh` keeps the
+  file: when at most one listed group still serves the model, it checks the groups not tried yet in the background
+  (`uno_route.py` with `UNO_SKIP`) and adds those that pass; the run stops only when no group is left and no check is
+  running. A DeepSeek V4.1 Flash 1017 run (UnoRouter, one checked group, 0.92 cents) ended at call 43 when that group
+  vanished from the price list.
+
 ## Effort on Mortera, and Shannon runs, 2026-10-19 (0.0.72-0.0.73)
 
 0.0.73: a set `TAZUNA_PRICE` skips the provider's model list (Shannon lists a model only while an account serving it is
