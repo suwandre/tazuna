@@ -1,0 +1,29 @@
+Implemented symlink support in the archive backend, following the same convention as the local backend.
+
+## What changed
+
+**`backend/archive/zip/zip.go`**
+- `Fs` gains a `links` flag from `fs.GetConfig(ctx).Links`.
+- In `readZip`, an entry whose mode has `os.ModeSymlink` is:
+  - skipped (and counted) when `-l/--links` is not set;
+  - otherwise listed under its name plus `fs.LinkSuffix` (`.rclonelink`). Its member data already *is* the link target, so `Size()` and `Open` need no special casing — the target is read back as the file content, honouring range/seek options.
+- A single NOTICE per archive reports the number of skipped symlinks and names `-l/--links`, so a hostile archive can't flood the log.
+- Regular entries whose name happens to end in `.rclonelink` are left untouched.
+
+**`backend/archive/squashfs/squashfs.go`** (previously symlinks were dropped entirely)
+- Same `links` flag and skip notice in `List`.
+- Symlinks become `Object`s with `isLink`/`link`; `objectFromLink` names them with the suffix, sets `size` to the target length and keeps the mtime.
+- `newObjectNative` applies the same naming/filtering so `List` and `NewObject` agree; `Open` serves the target string with offset/limit clamping so range and seek options work.
+
+**Tests**
+- `backend/archive/zip/zip_internal_test.go`: `TestReadZipSymlink` — skip without `--links`, suffixed listing and target readback with `--links`.
+- `backend/archive/archive_internal_test.go`: `TestArchiveSquashfsSymlink` (skips if `mksquashfs` is absent; verifies default skip, `--links` listing, link readback, and that `note.rclonelink` stays a regular file) and `TestArchiveZipSymlinkEscape` (hostile `a -> ../outside` plus `a/pwned.txt` must not write outside the destination).
+
+**Docs**: added a "Symlinks" section to `docs/content/archive.md`.
+
+## Verification
+- `go build ./backend/archive/...`, `go vet`, `gofmt -l`, and `golangci-lint run ./backend/archive/...` all clean.
+- `go test -count=1 ./backend/archive/... ./fs/operations/ ./fs/sync/` passes (also with `-race` on the archive packages).
+- End-to-end with a built binary: `rclone lsl :archive:x.zip` shows the skip notice; `lsl --links` lists `link.txt.rclonelink` with size 8; `copy --links` recreates `link.txt -> file.txt`; offset/count/tail reads return the expected slices; a hostile zip leaves the outside directory empty.
+
+Note: the working tree has no commits made, per instructions.

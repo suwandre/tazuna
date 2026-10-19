@@ -16,6 +16,31 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Repeat runs, 2026-10-19 evening (bench only)
+
+rclone, one judge call (`judge.oct.eve.jsonl`):
+
+| run | judge | tests | turns | time | cached |
+|---|---|---|---|---|---|
+| 1017, SubRouter three providers (v114, afternoon) | 9 | 3/3 | 113 | 37 min | ~87% |
+| 1017, SubRouter lingai + a6aa (v117) | 8 | 3/3 | 92 | 23 min | 96% |
+| 1017, UnoRouter (v111) | 9 | 3/3 | 59 | 10 min | 57-78% |
+| Luna, Mortera xhigh (v107, afternoon) | 5 | 3/3 | 99 | 18 min | ~90% |
+| Luna, Mortera xhigh (v116) | 4 | 2/3 | 170 | 59 min | 94% |
+| anchors: tazuna own-v38 / Codex Luna | 8 / 7 | | | | |
+
+- DeepSeek V4.1 Flash 1017 holds at 8-9 on SubRouter whichever providers serve it; fixed to lingai + a6aa it was the
+  fastest SubRouter run and cached 96%. Both SubRouter keys share one usage counter: v115, v117 and a check together
+  billed 0.53 yuan (~$0.078).
+- A second three-provider run (v115) was stopped by its own $0.50 cap at ~$0.07 of real spend: tazuna was given
+  SubRouter's listed rates as dollars, about 6x its real charge (v114: tazuna $0.27, billed 0.32 yuan). For SubRouter,
+  `TAZUNA_PRICE` should be about 0.17x the list (0.035, 0.0007, 0.14 per M), so the cap means real money.
+- Luna at xhigh on Mortera: 5 and 4 in this pass, 2/3 hidden tests once; it varies a lot from run to run and stays
+  below DeepSeek.
+- Shannon's GPT groups again (18:35): 0.12x and 0.27x Pro answered the reasoning question right (109) after 67-141 s to
+  the first token and ~12 minutes in all; short calls took 27-360 s, half of them empty; 0.19x and 0.37x still do not
+  serve gpt-6-luna.
+
 ## SubRouter with three providers, 2026-10-19 (bench only)
 
 The same 1017 run with the SubRouter key routed over kriora, lingai and a6aa (the site's own ranking: stability, then
