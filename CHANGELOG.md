@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## One SubRouter key for DeepSeek and Luna, 2026-10-20 (bench only)
+
+The models-only key with its providers restricted to the ones that cache for DeepSeek 1017 (kriora, lingai, a6aa and one
+more) and routing by stability, then cache-adjusted price. The check cached 0% on the first two calls (other providers),
+then 7,424, 6,400, 9,600 and 10,624 tokens: 80% over the test, long call not cut.
+
+| run | judge | tests | turns | time | cached | billed |
+|---|---|---|---|---|---|---|
+| DeepSeek 1017, one key (v131, xhigh) | 8 | 3/3 | 62 | 16 min | 97-98% | 0.065 yuan (~$0.0095) with its check |
+| DeepSeek 1017, three providers (v114) | 9 | 3/3 | 113 | 37 min | ~87% | 0.32 yuan |
+| DeepSeek 1017, three providers (v118) | 8 | 3/3 | 69 | 19 min | ~92% | <= 0.18 yuan |
+| DeepSeek 1017, lingai + a6aa (v117) | 8 | 3/3 | 92 | 23 min | 96% | |
+| anchors: tazuna own-v38 / Codex Luna | 8 / 7 | | | | | |
+
+(`judge.oct.onekey.jsonl`.) With Luna on the same key (v129: 8, ~$0.005), one key serves both models at 8 for about a
+cent a run or less. A key per model and provider is not needed: the key lists the models, allows the providers that
+work for each, and routes by stability, then cache-adjusted price.
+
 ## One SubRouter key for all models: routing order, 2026-10-19 (bench only)
 
 The models-only key (DeepSeek 1017, Luna, Haiku 5.5; no provider pinned) with its routing reordered: stability, then

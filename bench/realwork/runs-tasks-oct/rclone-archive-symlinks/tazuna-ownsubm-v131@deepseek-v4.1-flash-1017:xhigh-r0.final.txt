@@ -1,0 +1,25 @@
+Implemented symlink support for both archive formats.
+
+### Changes
+
+**ZIP (`backend/archive/zip/zip.go`)**
+- Detects entries with `os.ModeSymlink`.
+- Without `-l/--links`, skips them and logs a notice naming the flag.
+- With `--links`, exposes them as `<name>.rclonelink`; the existing content reader already returns the target path, so size, seek, and range options work naturally.
+- Root/prefix filtering happens on the suffixed name, so single-object mounts and `NewObject` agree with listings.
+- Regular members ending in `.rclonelink` remain regular files.
+
+**Squashfs (`backend/archive/squashfs/squashfs.go`)**
+- Detects symlink inodes instead of dropping them.
+- Without `--links`, skips them and logs a notice.
+- With `--links`, exposes them with the suffix, using the target length as size and returning the target from `Open` (including seek/range handling).
+- `NewObject` resolves suffixed names only when they correspond to actual symlinks, keeping listing and lookup consistent and preserving regular `.rclonelink` files.
+
+**Tests**
+- Added ZIP tests for links on/off, listing/lookup consistency, regular `.rclonelink` members, seek/range reads, single-symlink roots, copy recreating a symlink, and the hostile symlink escape case.
+- Added squashfs tests covering the same behaviors, generating images with `mksquashfs` and skipping if it is unavailable.
+
+### Verification
+- `RCLONE_CONFIG=/notfound go test -count=1 ./backend/archive/...`
+- `go vet ./backend/archive/...`
+- Manual end-to-end checks with `rclone lsl --links` and `rclone copy --links` for both ZIP and squashfs archives confirmed correct sizes and recreated symlinks.
