@@ -47,11 +47,11 @@ rupiah list, Shannon at the official price times the key's group rate) and strea
 | Mortera | GLM 5.3 Flash | cache 99%, long call 60 s, answer 566 | stopped: one call open 27 min after 27 calls |
 | Mortera | DeepSeek V4.1 Flash | cache 99%, long call not cut | **judge 9**, 3/3, 74 turns, 9 min, 97% cached, ~$0.018 |
 | Mortera | GPT-6 Luna | cache 79%, long call 102 s | judge 6, 2/3, 150 turns, 37 min, 96% cached, ~$0.033 |
-| Mortera | Haiku 5.5 | cache 94%, long call 5 s | none finished: 0.0.69 uncached; 0.0.70 died on thinking (39 calls); 0.0.71 on a 422 (38), then on Cloudflare 524 after an hour-long upstream outage (44) |
+| Mortera | Haiku 5.5 | cache 94%, long call 5 s | 0.0.69 uncached; 0.0.70 died on thinking (39 calls); 0.0.71 on a 422 (38), on Cloudflare 524 after an hour-long upstream outage (44); then, alone, **judge 7**, 3/3, 33 turns, 19 min, 144K output (its stream no longer reported input, so cache and cost only from the balance) |
 | Mortera | Muse Spark 1.3 (free) | 422 in the cache test twice; streamed with an effort, "model unavailable" | - |
 | Shannon (sub2api, pooled accounts) | DeepSeek (0.05x group), GPT-6 Astra (0.02x; Luna not in the group) | "upstream temporarily unavailable" / "access forbidden", 11 tries over 2 hours | - |
 
-Judged in one pool with the anchors (`judge.oct.mrt.jsonl`): Mortera DeepSeek 9 ("matches the reference fix"), tazuna
+Judged in one pool with the anchors (`judge.oct.mrt.jsonl`; the second pool, `judge.oct.mrt2.jsonl`, with Haiku gave every other run the same score): Mortera DeepSeek 9 ("matches the reference fix"), tazuna
 own-v38 9, Codex Luna 8, UnoRouter DeepSeek v91 7, Mortera Luna 6 ("an unrequested zip pre-scan ... fails that hidden
 test"). Mortera spent Rp 2,074 (about $0.13) on 5 checks and 8 runs or attempts; Apizio 3.4 cents of free credit; Shannon
 nothing. Five runs at once on one Mortera key: DeepSeek ran at 79 tokens/s (83.7 alone on UnoRouter); GLM's long calls
