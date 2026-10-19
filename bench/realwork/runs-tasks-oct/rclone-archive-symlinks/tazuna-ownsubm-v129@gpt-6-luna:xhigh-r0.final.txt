@@ -1,0 +1,5 @@
+Implemented symlink support for ZIP and squashfs archives. Symlinks are skipped with a `--links` notice by default; with `--links`, they appear with the `.rclonelink` suffix and open as their target path, including range and seek support. Regular members ending in that suffix remain regular archive objects.
+
+Added tests for listing and lookup behavior, target contents and sizes, and preventing an archive symlink from writing outside a local copy destination.
+
+Verified with `go test ./backend/archive/...` and `git diff --check`.

@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## One SubRouter key for all models: routing order, 2026-10-19 (bench only)
+
+The models-only key (DeepSeek 1017, Luna, Haiku 5.5; no provider pinned) with its routing reordered: stability, then
+price adjusted for cache hits, then first-token speed, credit, evaluation (before: stability, evaluation, credit,
+first-token speed, price).
+- Luna (v129, xhigh): **judge 8** in one pass with v119 (7, cheapest provider pinned), v125 (4, same key in the old
+  order) and Codex with Luna (7); 3/3, 67 turns, 7.6 minutes, 3.7M input, ~0.033 yuan (~$0.005) with two checks.
+- DeepSeek 1017: the check cached 0% twice, so no run. In the old order the same key put it on an official-price
+  provider (v124, ~5x the fixed key). A new provider, manxueai (满血AI), joined 1017's list during the evening; one
+  call that set a cookie for api.a6api.com went to a6aa. For DeepSeek the key has to allow only providers that cache
+  (kriora, lingai, a6aa: judged 9 three times at ~$0.03 a run).
+- So one key can serve every model: allowed providers = the good ones per model, routing = stability, then
+  cache-adjusted price.
+
 ## Provider and key comparison, night of 2026-10-19 (bench only)
 
 rclone, one judge call (`judge.oct.night.jsonl`):
