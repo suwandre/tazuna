@@ -66,6 +66,8 @@ def groups(model):
     if "shannonapi" in API:
         # Shannon (sub2api): no price list; the official price times the key's group rate (ROUTE_RATE, e.g. 0.05), the
         # charge per call to be confirmed in /v1/usage
+        if os.environ.get("ROUTE_PRICE"):  # the group's own list, "input,cached,output" per M
+            return [("", tuple(map(float, os.environ["ROUTE_PRICE"].split(","))))]
         return [("", tuple(x * float(os.environ["ROUTE_RATE"]) for x in reference(model)))]
     if "mortera" in API:
         # Mortera Cloud: rupiah per M in its model list (with the key); ponytail: a fixed rate, read a live one if it drifts

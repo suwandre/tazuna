@@ -16,6 +16,25 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.72 (2026-10-19)
+
+On Mortera Cloud:
+- **`max` effort is sent as `xhigh`.** Its sources take OpenRouter's effort levels, which end at `xhigh`; Mortera forwards
+  the value untouched and accepts any string (a made-up "banana" passed on all four models). DeepSeek V4.1 Flash on a
+  counting question, streamed, output tokens: `low` 12.2K and 10.6K, `xhigh` 21.0K and 25.0K, `max` 16.2K and 13.8K. The
+  Mortera runs before this (DeepSeek 9, Haiku 7, Luna 6) ran at the model's default effort, not at its highest.
+- **A `cache_affinity_key` per conversation** (a hash of its first messages): Mortera keeps the conversation on the same
+  upstream source for up to an hour, for warm caches and no switch to an account that rejects earlier thinking blocks.
+Haiku's effort is likely lost either way: Mortera carries thinking settings only on a native Anthropic source, Haiku's
+usage comes back in OpenAI's shape, and through Chat Completions any effort field is refused (400 or 422).
+
+Shannon (Sub2API 0.2.17, docs on Feishu: base URL `https://api.shannonapi.xyz/v1`, tools set to Chat Completions): the
+DeepSeek 0.14x group (cache read $0.0028/M) cached 0-100% over ten six-call tests, about 48% on average, with or without
+`session_id`/`conversation_id` headers, `prompt_cache_key` or `user` (one combination hit 100% once, then 53% and 0%):
+about $0.065 a run in real money, 3.6x Mortera. Luna on the ChatGPT 0.12x group answered once (Responses, streamed,
+`high`, no output cap: 311 s, 568) and otherwise came back empty or `502`. The two 0.02x/0.05x groups never answered.
+Parked.
+
 ## 0.0.71 (2026-10-19)
 
 - **A 400 on a conversation with thinking blocks drops them and goes again** (Messages API). A thinking block's

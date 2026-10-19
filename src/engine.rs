@@ -727,6 +727,20 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
     let mut body = body.clone();
     if mortera {
         body.as_object_mut().map(|o| o.remove("cache_control"));
+        // one key per conversation keeps it on one upstream source for up to an hour (Mortera's cache_affinity_key, removed
+        // before dispatch): warm caches, and no switch to an account that rejects the earlier thinking blocks
+        let first: String = ["system", "instructions"].iter().map(|k| body[*k].to_string())
+            .chain((0..2).flat_map(|i| [body["messages"][i].to_string(), body["input"][i].to_string()])).collect();
+        let mut h = std::hash::DefaultHasher::new();
+        std::hash::Hash::hash(&first, &mut h);
+        body["cache_affinity_key"] = json!(format!("tz-{:016x}", std::hash::Hasher::finish(&h)));
+        // its sources take OpenRouter's effort levels, which end at xhigh: max passed without an error and thought no
+        // longer than low (DeepSeek: max 16K and 14K tokens on a counting question, low 11-21K, xhigh 21K and 25K)
+        for p in ["/reasoning/effort", "/reasoning_effort", "/output_config/effort"] {
+            if let Some(e) = body.pointer_mut(p).filter(|e| **e == "max") {
+                *e = json!("xhigh");
+            }
+        }
     }
     // a call that times out is tried again with twice the time (up to 15 minutes): a slow provider's long reasoning answer
     // (MiMo V2.6 Pro at the official ~30 tok/s) takes over 3 minutes and was cut off at 180 s on every try. The limit is on
@@ -1223,7 +1237,7 @@ data: {\"type\":\"message_stop\"}\n";
     }
 
     #[test]
-    fn mortera_gets_no_top_level_cache_breakpoint_and_gpt_unstreamed() {
+    fn mortera_gets_its_cache_key_xhigh_for_max_no_top_level_breakpoint_and_gpt_unstreamed() {
         use std::io::Write;
         let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}/mortera.cloud", server.local_addr().unwrap());
@@ -1235,9 +1249,9 @@ data: {\"type\":\"message_stop\"}\n";
             req.split_once("\r\n\r\n").unwrap().1.to_string()
         });
         let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
-        chat(&http, &url, "k", Api::Responses, &json!({"model": "gpt-6-luna", "input": [], "cache_control": {"type": "ephemeral"}})).unwrap();
+        chat(&http, &url, "k", Api::Responses, &json!({"model": "gpt-6-luna", "input": [], "cache_control": {"type": "ephemeral"}, "reasoning": {"effort": "max"}})).unwrap();
         let body = got.join().unwrap();
-        assert!(!body.contains("cache_control") && !body.contains("\"stream\""), "{body}");
+        assert!(!body.contains("cache_control") && !body.contains("\"stream\"") && body.contains("\"cache_affinity_key\":\"tz-") && body.contains("\"effort\":\"xhigh\""), "{body}");
     }
 
     #[test]
