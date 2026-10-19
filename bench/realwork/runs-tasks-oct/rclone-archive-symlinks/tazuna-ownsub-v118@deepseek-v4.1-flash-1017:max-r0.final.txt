@@ -1,0 +1,26 @@
+All tests pass. Here's a summary of the change:
+
+## What changed
+
+**`backend/archive/zip/zip.go`**
+- `Fs` gains a `links` flag captured from `--links` at construction.
+- In `readZip`, an entry whose mode has `os.ModeSymlink` is now skipped (and counted) unless `--links` is set; with `--links` its remote gets the `fs.LinkSuffix` (`.rclonelink`) appended. Since the existing `Object` reads its size from the member's uncompressed size (the link target) and `Open` already honours `SeekOption`/`RangeOption`, a symlink then looks exactly like a `.rclonelink` object holding the target.
+- A NOTICE naming the flag is logged once per archive when symlinks were skipped.
+- The suffix is only added when the entry is actually a symlink, so a regular member named `*.rclonelink` stays a regular file, and listing/`NewObject` (both served from the same dirtree) agree.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Same `links` flag; symlink entries are no longer silently dropped: they are skipped with a count/NOTICE without `--links`, or exposed with the `.rclonelink` suffix when it is set.
+- New `objectFromLink`/`readlink` helpers read the target from go-diskfs `StatT.LinkTarget`; the object's `Size` is the target length and `Open` serves the target with offset/limit clamping, matching the local backend (including clamping a range past the end).
+- `newObjectNative` names entries exactly as `List` does (skipping symlinks, adding the suffix for them) so single-object lookup and listings agree.
+
+**Tests**
+- `zip_internal_test.go`: `TestReadZipSymlink` — symlink skipped by default, listed as `link.txt.rclonelink` with `--links`, size = target length, contents read back.
+- `archive_internal_test.go`: `TestArchiveSquashfsSymlink` (builds an image with `mksquashfs`, checks skip/list/read and that a regular `note.rclonelink` remains regular) and `TestArchiveZipSymlinkEscape` (hostile `../outside` symlink plus member inside it must not write outside the destination).
+
+**Docs**: new "Symlinks" section in `docs/content/archive.md` documenting the flag convention.
+
+## Verification
+- `go test ./backend/archive/...` and `-race` variant: pass.
+- `go test ./fs/operations/...`: pass.
+- `go vet ./backend/archive/...` and `golangci-lint run ./backend/archive/...`: clean.
+- Manual end-to-end with a built binary: `lsl --links`, default `lsl` (skip + NOTICE), `cat`/`--offset`/`--count`, single-object roots with and without the suffix, and `copy --links` onto local recreated real symlinks, for both `.zip` and `.sqfs`.

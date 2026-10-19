@@ -16,6 +16,26 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## SubRouter: DeepSeek 1017 three times at 9, Luna at 7, 2026-10-19 (bench only)
+
+rclone, one judge call (`judge.oct.sub3.jsonl`):
+
+| run | judge | tests | turns | time | cached |
+|---|---|---|---|---|---|
+| 1017, three providers (v114) | 9 | 3/3 | 113 | 37 min | ~87% |
+| 1017, three providers, price in real dollars (v118) | 9 | 3/3 | 69 | 19 min | ~92% |
+| 1017, lingai + a6aa (v117) | 9 | 3/3 | 92 | 23 min | 96% |
+| Luna, cheapest provider (v119) | 7 | 3/3 | 115 | 15 min | 98% |
+| Luna, Mortera xhigh (v107) | 5 | 3/3 | 99 | 18 min | ~90% |
+| anchors: tazuna own-v38 / Codex Luna | 9 / 7 | | | | |
+
+- DeepSeek V4.1 Flash 1017 on SubRouter: three runs, all 9 in one pass, 19-37 minutes, about $0.03-0.05 each (one shared
+  usage counter across the keys). The most consistent setup measured so far.
+- Luna on SubRouter's cheapest provider matched Codex with Luna (7) in 15 minutes; Mortera's Luna at xhigh scored 5.
+  SubRouter's Luna upstream adds about 4,400 tokens of `instructions` of its own to every call (cached).
+- Effort on SubRouter's DeepSeek 1017 (reasoning tokens, streamed counting question): low 29.1K and 7.9K, xhigh 28.5K and
+  32K+ (capped), max 23.2K and 17.4K: xhigh thought most both times, max below it, as on Mortera.
+
 ## Repeat runs, 2026-10-19 evening (bench only)
 
 rclone, one judge call (`judge.oct.eve.jsonl`):

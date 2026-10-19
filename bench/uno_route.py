@@ -77,8 +77,9 @@ def groups(model):
     m = next(m for m in d["data"] if m["model_name"] == model)
     if m.get("billing_mode") == "tiered_expr":
         # a price by time of day (Apizio: peak on weekday mornings UTC at twice off-peak): the dearest tier, per M
-        tiers = re.findall(r"p \* ([\d.]+) \+ c \* ([\d.]+) \+ cr \* ([\d.]+)", m["billing_expr"])
-        return [("", max(((float(i), float(cr), float(o)) for i, o, cr in tiers), key=run_cost))]
+        # terms by name, in any order (SubRouter's Luna: p, cr, cc, c); per tier, then the dearest tier
+        tiers = [dict(re.findall(r"\b(p|c|cr) \* ([\d.]+)", t)) for t in m["billing_expr"].split("tier(")[1:]]
+        return [("", max(((float(t["p"]), float(t.get("cr", t["p"])), float(t["c"])) for t in tiers if "p" in t and "c" in t), key=run_cost))]
     if "unorouter" not in API:
         return [("", (m["model_ratio"] * 2, m["model_ratio"] * 2 * (m.get("cache_ratio") or 1), m["model_ratio"] * 2 * m["completion_ratio"]))]
     base, out_x, cache_x = m["model_ratio"] * 2, m["completion_ratio"], m.get("cache_ratio") or 1
