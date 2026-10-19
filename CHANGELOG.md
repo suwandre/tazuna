@@ -16,6 +16,23 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## SubRouter with three providers, 2026-10-19 (bench only)
+
+The same 1017 run with the SubRouter key routed over kriora, lingai and a6aa (the site's own ranking: stability, then
+reference score, provider credit, first-token speed, then price adjusted for cache hits), instead of kriora alone.
+Judged in one call with the earlier 1017 runs (`judge.oct.sub2.jsonl`):
+
+| run | judge | tests | turns | time | cached | billed |
+|---|---|---|---|---|---|---|
+| SubRouter, three providers (v114) | **9** | 3/3 | 113 | 37 min | ~87% at the end | 0.32 yuan, ~$0.047 |
+| SubRouter, kriora only (v112) | 7 | 3/3 | 112 | 61 min | ~62% | 0.47 yuan, ~$0.069 |
+| UnoRouter, zlkpro then hly (v111) | 9 | 3/3 | 59 | 10 min | 57-78% | 2.65 cents |
+| anchors: tazuna own-v38 / Codex Luna | 8 / 7 | | | | | |
+
+The pre-run check cached 55% with three providers (83% with kriora alone), yet over the run the cache rate rose to 87%:
+the router's "adjust for cache hit rate" seems to keep a conversation where it caches. Faster and a third cheaper than
+kriora alone, with no visible kriora 524s slowing it.
+
 ## DeepSeek V4.1 Flash 1017 on UnoRouter and SubRouter; Shannon's Luna groups, 2026-10-19 (bench only)
 
 rclone, one judge call (`judge.oct.1017.jsonl`):
