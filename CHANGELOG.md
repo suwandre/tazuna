@@ -16,6 +16,23 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## GPT-6.1 Sol on the one SubRouter key, 2026-10-20 (bench only)
+
+Sol on the shared models key: the check cached 98% and answered the long question exactly (571, 279 s). It bills at about
+3% of the official list ($2 in, $0.10 cached, $10 out per M): 20 calls cost 0.079 yuan against $0.39 at list. The first
+run (v134) was restarted after 20 calls because tazuna counted the list price and was about to reach its cap; with the
+real price (0.06, 0.003, 0.30 per M):
+
+| run | judge | tests | turns | time | billed |
+|---|---|---|---|---|---|
+| Sol, one key (v137, xhigh) | 8 | 3/3 | **33** | 14 min | 0.109 yuan (~$0.016) |
+| Luna, one key (v129) | 8 | 3/3 | 67 | 8 min | ~$0.005 |
+| DeepSeek 1017, one key (v131) | 7 | 3/3 | 62 | 16 min | ~$0.0095 |
+| anchors: tazuna own-v38 / Codex Luna | 9 / 6 | | | | |
+
+(`judge.oct.sol.jsonl`; v131 judged 8 the night before.) Sol solved the task in half the turns of any other model, with
+"very thorough" tests, for under 2 cents.
+
 ## One SubRouter key for DeepSeek and Luna, 2026-10-20 (bench only)
 
 The models-only key with its providers restricted to the ones that cache for DeepSeek 1017 (kriora, lingai, a6aa and one

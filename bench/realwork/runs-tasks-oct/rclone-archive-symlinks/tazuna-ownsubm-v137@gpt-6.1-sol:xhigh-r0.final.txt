@@ -1,0 +1,13 @@
+Implemented consistent symlink support for ZIP and SquashFS archives.
+
+- Symlinks are skipped by default, with a notice naming `--links`.
+- With `--links`, symlinks expose `.rclonelink` objects with the target’s size and contents, including range/seek support.
+- Listings and `NewObject` agree; regular `.rclonelink` members remain regular archive objects.
+- Added documentation and regression tests covering copies, single-file roots, and hostile ZIPs attempting writes outside the destination.
+
+Verified with:
+- `go build`
+- `go test -race ./backend/archive/... ./backend/local ./cmd/archive/...`
+- ZIP/SquashFS integration tests using external archive tools
+- `golangci-lint run ./backend/archive/...`
+- A CLI `lsl` and `copy --links` smoke test confirming symlink recreation.
