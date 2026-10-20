@@ -16,6 +16,26 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## GPT-6 Astra on the one SubRouter key; more runs, 2026-10-20 (bench only)
+
+Astra's cheapest providers on SubRouter bill about 1% of its list price (老六 ¥0.595 in / ¥2.975 out / ¥0.0595 cached
+per M, with a 21% "reference evaluation" against 53-56% for the next two). Check: 98% cached, the long question answered
+exactly (571) after 518 s. rclone, one judge call (`judge.oct.astra.jsonl`), all on the shared key:
+
+| run | judge | tests | turns | time | billed |
+|---|---|---|---|---|---|
+| Astra (v140, xhigh) | 8 | 3/3 | 38 | 14 min | 0.85 yuan (~$0.125) with its check |
+| Luna (v129) | 8 | 3/3 | 67 | 8 min | ~$0.005 |
+| DeepSeek 1017 (v131) | 8 | 3/3 | 62 | 16 min | ~$0.0095 |
+| Sol (v137) | 7 | 3/3 | 33 | 14 min | ~$0.016 |
+| anchors: tazuna own-v38 / Codex Luna | 9 / 6 | | | | |
+
+On this task Astra scored no higher than Luna or DeepSeek at 13-25x their cost; Sol and Astra need about half the turns.
+Also today: Shannon DeepSeek 0.14x by day (v135) 3/3 in 39 minutes at 55-63% cached (95% at night); GLM 5.3 Flash and
+Muse Spark 1.3 on Mortera again read for an hour without changing a file (Muse stopped after 30 minutes without a reply,
+GLM recovered from a 28-minute call); UnoRouter 1017: of the two cheapest groups one cached 10%, the other returned an
+empty long answer after 31 minutes (the check's 15-minute limit was swallowed as an OSError; fixed).
+
 ## Is SubRouter's gpt-6-luna the real model? Codex on SubRouter, 2026-10-20 (bench only)
 
 The same harness on two providers: Codex CLI (`codexsub`, a model provider pointed at SubRouter's Responses API with the

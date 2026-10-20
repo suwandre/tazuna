@@ -286,8 +286,11 @@ if __name__ == "__main__":
     for g, p in gs[:8]:
         off = f"  {1 - run_cost(p) / run_cost(ref):+.0%} vs OpenRouter" if ref else ""
         print(f"  {g:44} ${p[0]:.4f} / ${p[1]:.5f} / ${p[2]:.3f} per M -> ${run_cost(p):.3f} per run{off}")
+    class TooSlow(Exception):  # not an OSError: check() catches those, and swallowed the alarm (a 1017 group ran 30+ minutes)
+        pass
+
     def too_slow(*_):
-        raise TimeoutError("over 15 minutes for this group")
+        raise TooSlow("over 15 minutes for this group")
     signal.signal(signal.SIGALRM, too_slow)
     passed = []
     # UNO_SKIP: groups already listed or tried (uno_run.sh checks the groups that appear during a run)
@@ -300,7 +303,7 @@ if __name__ == "__main__":
         signal.alarm(900)
         try:
             why = check(model, g, p)
-        except TimeoutError as e:
+        except TooSlow as e:
             why = str(e)
         signal.alarm(0)
         if why is None:
