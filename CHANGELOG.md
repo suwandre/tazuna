@@ -16,6 +16,23 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Shannon by day: DeepSeek 0.14x and Sol 0.27x, 2026-10-20 (bench only)
+
+rclone, one judge call (`judge.oct.shn2.jsonl`):
+
+| run | judge | tests | turns | time | cost |
+|---|---|---|---|---|---|
+| Sol, SubRouter one key (v137) | 8 | 3/3 | 33 | 14 min | ~$0.016 |
+| DeepSeek, Shannon 0.14x by day (v135) | 7 | 3/3 | 142 | 39 min | |
+| DeepSeek, Shannon 0.14x at night (v127) | 6 | 3/3 | 75 | 11 min | ~$0.009 paid |
+| Sol, Shannon 0.27x (v136) | 4 | 2/3 | 103 | 99 min | ~$1.2 credit, ~$0.17 paid |
+| anchors: tazuna own-v38 / Codex Luna | 9 / 7 | | | | |
+
+The same Sol scored 4 on Shannon and 8 on SubRouter, at ten times the cost and seven times the time; the judge called the
+Shannon run over-engineered (an O(N*M) pass dropping zip members, per-call directory walks). Of Shannon's GPT groups only
+0.27x served Sol (0.02x forbidden, 0.12x "overloaded", 0.19x not listed, 0.37x unavailable). Shannon's DeepSeek scores
+6-7 by day or night.
+
 ## GPT-6 Astra on the one SubRouter key; more runs, 2026-10-20 (bench only)
 
 Astra's cheapest providers on SubRouter bill about 1% of its list price (老六 ¥0.595 in / ¥2.975 out / ¥0.0595 cached
