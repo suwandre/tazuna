@@ -385,6 +385,41 @@ def run_codex(h, w, prompt):
     return dict(inp=max(0, inp - cached), cache_r=cached, cache_w=0, out=out, turns=turns, reported_cost=0, final=final)
 
 
+def run_codex_sub(h, w, prompt):
+    """Codex CLI with SubRouter as its model provider (Responses API, the shared models key): the same harness as the
+    Codex reference run, another provider, to tell the model from the harness."""
+    model, effort = model_effort(h)
+    home = BENCH_HOMES / "codex"
+    provider = '{name="SubRouter",base_url="https://subrouter.ai/v1",env_key="SUBROUTER_MODELS_KEY",wire_api="responses"}'
+    r = sh(["codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox",
+            "-m", model, "-c", f'model_reasoning_effort="{effort}"', "-c", 'model_provider="subrouter"',
+            "-c", f"model_providers.subrouter={provider}", prompt], w, timeout=TIMEOUT,
+           env={"PATH": os.environ["PATH"], "HOME": str(home), **cur_go_env(), "CODEX_HOME": str(home / ".codex"),
+                "SUBROUTER_MODELS_KEY": os.environ["SUBROUTER_MODELS_KEY"]})
+    inp = cached = out = turns = 0
+    final = ""
+    for line in r.stdout.splitlines():
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        u = e.get("usage") or {}
+        if e.get("type") == "turn.completed" and u:
+            inp += u.get("input_tokens", 0)
+            cached += u.get("cached_input_tokens", 0)
+            out += u.get("output_tokens", 0)
+        it = e.get("item") or {}
+        if it.get("type") in ("command_execution", "file_change", "mcp_tool_call"):
+            turns += 1
+        if it.get("type") == "agent_message":
+            final = it.get("text", "")
+        if e.get("type") in ("error", "turn.failed"):
+            raise RuntimeError(f"codex: {str(e)[:800]}")
+    if not final and r.returncode:
+        raise RuntimeError(f"codex rc={r.returncode}: {(r.stdout + r.stderr)[-800:]}")
+    return dict(inp=max(0, inp - cached), cache_r=cached, cache_w=0, out=out, turns=turns, reported_cost=0, final=final)
+
+
 def run_empryo(h, w, prompt):
     cmd = [str(Path.home() / ".empryo/bin/empryo"), "--headless", "--events", "--model", f"subscriptions/{MODEL}",
            "--effort", EFFORT, "--cwd", str(w), prompt]
@@ -526,7 +561,7 @@ def run_plan_exec(h, w, prompt):
                 phase_cost={k: round(v, 4) for k, v in costs.items()})
 
 
-HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "empryo": run_empryo, "pi": run_pi_family, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
+HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
              "cc": run_cc, "cc-lean": run_cc, "cc-mid": run_cc, "cc-ecc": run_cc, "cc-superpowers": run_cc, "cc-caveman": run_cc,
              "cc-graphify": run_cc, "cc-gstack": run_cc, "cc-allplugins": run_cc}
 

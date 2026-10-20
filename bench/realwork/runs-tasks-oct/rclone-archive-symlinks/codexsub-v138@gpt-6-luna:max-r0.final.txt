@@ -1,0 +1,3 @@
+Implemented `.rclonelink` support for ZIP and squashfs archives. Without `--links`, symlinks are skipped with a notice; with it, they expose the target text with range and seek support. Listing and `NewObject` agree, including for single-file roots and regular files ending in `.rclonelink`.
+
+Added tests for both formats and for copying a hostile ZIP symlink without writing outside the destination. Verification passed: `go test -count=1 ./backend/archive/... ./backend/local`.

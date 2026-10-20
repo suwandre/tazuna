@@ -1,0 +1,23 @@
+Done. Summary of the change:
+
+## What changed
+
+**ZIP (`backend/archive/zip/zip.go`)**
+- `readZip` now detects members with `os.ModeSymlink` in their mode (`file.Mode()&os.ModeSymlink`).
+- Without `-l/--links`, symlinks are skipped and a single notice per archive is logged: `Skipped N symbolic links - use -l/--links to copy them`.
+- With `--links`, a symlink is added to the dirtree under its name plus `fs.LinkSuffix`, so listing and `NewObject` agree; the target is read from the member body, so `Size()` (already the uncompressed member size) is the target length and `Open` honours `SeekOption`/`RangeOption` unchanged. A member whose name ends in `.rclonelink` but isn't a symlink stays regular.
+- A root pointing at a symlink is matched with or without the suffix, and the single-object remote gets the suffix.
+
+**Squashfs (`backend/archive/squashfs/squashfs.go`)**
+- `List` no longer drops symlinks: it skips them with the same notice by default, or exposes them as `.rclonelink` objects whose `Size` is the target length and whose `Open` reads back the target (range/seek supported).
+- `newObjectNative` was split into `lookupNative`/`objectFromSymlink` so lookups mirror `List`: a link is only found under its suffixed name, a regular member ending in the suffix is found by its own name, and a root naming a link (with or without the suffix) resolves to the single object.
+- Targets longer than 128 KiB are refused.
+
+**Docs** — added a "Symbolic links" section to `docs/content/archive.md`.
+
+## Tests
+- `zip`: skip-by-default, `--links` listing/size/Open/range/seek, suffix-named regular member, and root-at-symlink agreement between `List` and `NewObject`.
+- `squashfs`: the same, against a new reproducible `testdata/symlinks.sqfs` (built with `mksquashfs`, fixed timestamps so the checksum is stable).
+- `archive`: end-to-end `sync.CopyDir --links` from both zip and squashfs onto a local destination, verifying real symlinks are created, plus a hostile archive (link pointing above the root plus a member "inside" it) which must not write outside the destination.
+
+Verified with `go build ./...`, `go test ./backend/archive/...`, `go test -race ./backend/archive/...`, `golangci-lint run ./backend/archive/...` (0 issues), and manually with a built binary: `rclone lsl --links :archive:test.zip` and `rclone copy --links ...` reproduce the issue's expected output.

@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Is SubRouter's gpt-6-luna the real model? Codex on SubRouter, 2026-10-20 (bench only)
+
+The same harness on two providers: Codex CLI (`codexsub`, a model provider pointed at SubRouter's Responses API with the
+shared key) against the Codex reference run (Codex CLI on the user's ChatGPT plan, official gpt-6-luna). rclone, one
+judge call (`judge.oct.codexsub.jsonl`):
+
+| run | judge | tests | commands | time | billed |
+|---|---|---|---|---|---|
+| Codex, official gpt-6-luna (reference) | 7 | | | | ChatGPT plan |
+| Codex, SubRouter gpt-6-luna (v138) | 7 | 3/3 | 162 | 11 min | 0.030 yuan (~$0.0044) |
+| tazuna, SubRouter gpt-6-luna (v129) | 8 | 3/3 | 67 | 8 min | ~$0.005 |
+| tazuna, SubRouter gpt-6-luna, cheapest provider (v119) | 7 | 3/3 | 115 | 15 min | ~$0.004 |
+| anchor: tazuna own-v38 (DeepSeek) | 9 | | | | |
+
+Same harness, same score: nothing points to a weaker model behind SubRouter's gpt-6-luna. The judge's notes on both
+Codex runs name the same habits (double lookups in squashfs, symlink-specific offset handling in zip). tazuna on the same
+provider scored a point higher with fewer than half the commands.
+
 ## GPT-6.1 Sol on the one SubRouter key, 2026-10-20 (bench only)
 
 Sol on the shared models key: the check cached 98% and answered the long question exactly (571, 279 s). It bills at about
