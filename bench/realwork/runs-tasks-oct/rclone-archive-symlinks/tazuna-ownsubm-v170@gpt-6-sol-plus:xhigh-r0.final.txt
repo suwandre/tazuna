@@ -1,0 +1,19 @@
+Implemented archive symlink support for ZIP and SquashFS backends.
+
+### Changes
+- Detect symlink entries in ZIP and SquashFS archives.
+- Skip symlinks by default and log a notice mentioning `-l/--links`.
+- With `--links`:
+  - Expose symlinks using the `.rclonelink` suffix.
+  - Report the target length as the object size.
+  - Read the target path, including seek/range handling.
+- Ensure `List` and `NewObject` agree on translated symlink names.
+- Preserve regular archive members whose names end in `.rclonelink`.
+- Added handling for single-object archive roots involving symlinks.
+- Added hostile-archive coverage verifying symlinks cannot redirect writes outside the destination.
+
+### Verification
+- `go test ./backend/archive/... -count=1`
+- `go test ./backend/local -run 'TestSymlink|TestEncodingEscapeBlocked' -count=1`
+- `go vet ./backend/archive/...`
+- `git diff --check`

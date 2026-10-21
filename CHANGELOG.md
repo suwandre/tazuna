@@ -16,6 +16,49 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## SubRouter, more models: Gemini, Qwen, Opus, Grok pool, Sol family; real cost from the usage log, 2026-10-20/21 (bench only)
+
+rclone, all on SubRouter. Real cost is SubRouter's own usage log (the console's CSV export: 500,000 quota per USD, within
+5% of the account counter), read per run by `bench/realwork/sub_summary.py`, which also writes `sub-summary.json` (tokens
+billed, routes and their prices, run and generation tok/s, first-token time) for ranking in the app later. Judge calls:
+`judge.oct.sub4.jsonl` and `judge.oct.sol2.jsonl`, one each; DeepSeek anchor 9 in both, Codex Luna 9 and 7.
+
+| run | route | judge | tests | turns | time | real cost |
+|---|---|---|---|---|---|---|
+| gpt-6.1-sol (v167) | ChorAPI | 7 | 3/3 | 44 | 16 min | $0.047 together with v168 |
+| gpt-6-sol (v165) | (between the two exports) | 7 | 3/3 | 113 | 55 min | under $0.236 (that with v166) |
+| Grok 4.7, X Premium+ pool, high (v161) | pool | 6 | 3/3 | 40 | 21 min | $0.020 |
+| gpt-6-sol-plus (v170) | OrangeAPI | 6 | 3/3 | 125 | 83 min | $0.179 |
+| gpt-5.6-sol (v163) | ModelShare | 5 | 2/3 | 81 | 18 min | $0.040 |
+| gpt-6.1-sol-plus (v169) | 星球中转站 | 4 | 3/3 | 103 | 64 min | $0.096 |
+| gpt-6.1-sol-new (v168) | ChorAPI | 4 | 2/3 | 31 | 12 min | see v167 |
+| Opus 5.5 (v156) | fate86, viapi | 3 | 2/3 | 129 | 20 min | $0.467 |
+| Opus 4.8 (v145) | BangAi | 1 | 0/3 | 73 | 11 min | $0.072 |
+| for reference: DeepSeek 1017 / Luna / Sol / Astra (v131/v129/v137/v140) | | 8 | 3/3 | 33-67 | 8-16 min | $0.009 / ~$0.005 / $0.019 / $0.120 |
+
+Cut before finishing (most at a $0.45-0.80 cap): Opus 4.7 (老六 reports ~200K tokens per call for ~35K of context,
+~$0.008-0.009 per call; $0.48 and $0.52), Opus 5 (曲奇ai $0.475 at 224 calls; 老六 and the Claude shared pool at about 4x that
+per call, the pool at 8.5x its token prices), Opus 4.8 on Stable AI ($0.47 and $0.67), Qwen 3.8 Max ($1.14 in 203 calls, at a6aa's $0.279 per M
+input). Qwen 3.8 Flash (twice, 242 and 503 calls) and Gemini 3.8 Flash (257 calls) never changed a file.
+
+What decides a SubRouter run is the route, not the model name: the same Opus cost $0.001-0.016 per call by provider.
+Routes that drop the effort (a6aa and xcgx on Opus: reasoning_effort None in the log), add hidden prompts (老六 ~20-40K,
+one-api ~68K), stop caching (BangAi on Opus 5 and later on Opus 4.8: 0-1%; LingAI's cache stalls at a fixed prefix) or
+bill the official price (Claude 共享池, ratio 1.0) make a run 4-10x dearer or not a real xhigh run. A smart-routing key
+also falls back to shared subscription pools and official channels when its providers fail (曲奇ai answered 503 "no
+available accounts" all evening): the key settings "Include shared subscriptions" (now off) and "Maximum official-channel
+price ratio" (now 0.2) close that; gpt-5.6-sol-fast is only served above the 0.2 ratio and did not run. Reasoning effort:
+Gemini 3.8 Flash thinks at none and high, not at xhigh or max, Qwen 3.8 and Grok 4.7 reason the same at any level.
+
+On this task the cheap models stay on top: DeepSeek 1017, Luna and gpt-6.1-sol at 7-8 for $0.005-0.03; Grok on the pool
+passes the hidden tests for $0.02 but judges 6; the Opus models judge 1-3 at 20-50x the cost. One run per model: ±1-2.
+
+Bench tooling: the route check (`uno_route.py`) now streams Claude calls as tazuna does (a provider left the cache fields
+out of unstreamed replies, which read as 13 input tokens for a 27K conversation), counts cache writes as input, re-asks
+without tools when Claude answers with a tool call, reads SubRouter's untiered price formulas, and takes
+`ROUTE_CACHE_BLIND` where the bill was measured to ignore the cache; `run.py` keeps the work of a run that ends in an
+error as `<run>.diff.partial` (the judge reads `*.diff` only) and has a harness for a second SubRouter key (`ownsubgp`).
+
 ## Shannon by day: DeepSeek 0.14x and Sol 0.27x, 2026-10-20 (bench only)
 
 rclone, one judge call (`judge.oct.shn2.jsonl`):

@@ -1,0 +1,48 @@
+I've implemented symlink support for the archive backend (both ZIP and squashfs) following the maintainer's specifications. Here's what changed:
+
+## Changes Made
+
+### 1. **ZIP Backend (`backend/archive/zip/zip.go`)**
+- Added symlink detection in `readZip()` using `file.Mode()&os.ModeSymlink`
+- Symlinks are skipped unless `--links` flag is enabled
+- With `--links`, symlinks are listed with `.rclonelink` suffix
+- Added `isSymlink` field to `Object` struct
+- Implemented `openSymlink()` method to read symlink target and return it as file contents
+- Added `validateSymlinkTarget()` to prevent hostile archives from escaping the root
+- Added notice logging when symlinks are skipped
+
+### 2. **Squashfs Backend (`backend/archive/squashfs/squashfs.go`)**
+- Added symlink detection in `List()` using `item.Type()&os.ModeSymlink`
+- Symlinks are skipped unless `--links` flag is enabled
+- With `--links`, symlinks are listed with `.rclonelink` suffix
+- Added `isSymlink` field to `Object` struct
+- Created `objectFromFileInfoWithSymlink()` helper method
+- Updated `newObjectNative()` to handle symlinks with context parameter
+- Implemented `openSymlink()` method for reading symlink targets
+- Added `validateSymlinkTarget()` for security validation
+- Added notice logging when symlinks are skipped
+
+### 3. **Key Features Implemented**
+- Symlinks use `.rclonelink` suffix convention matching local backend
+- Size is the length of the symlink target path
+- Opening a symlink object reads back the target path with proper offset/limit support
+- Regular files ending in `.rclonelink` remain regular files (real name takes precedence)
+- Hostile symlinks (absolute paths or `../` escapes) are rejected
+- Listing and `NewObject` agree on which names exist
+- Both backends share the same symlink notice to avoid log spam
+
+## Verification
+
+1. **Built successfully**: Both backends compile without errors
+2. **Existing tests pass**: 
+   - ZIP backend: All 4 tests pass
+   - Squashfs backend: All 2 tests pass
+   - Archive backend: Full integration test suite passes
+3. **No regressions**: All existing functionality preserved, symlinks are simply skipped by default (current behavior) unless `--links` is specified
+
+The implementation follows rclone's patterns:
+- Uses `fs.GetConfig(ctx).Links` to check the `--links` flag
+- Follows the `.rclonelink` convention from the local backend
+- Validates symlink targets to prevent path traversal attacks
+- Minimal code changes focused on the specific feature
+- Reuses existing infrastructure (readers, sanitization, etc.)

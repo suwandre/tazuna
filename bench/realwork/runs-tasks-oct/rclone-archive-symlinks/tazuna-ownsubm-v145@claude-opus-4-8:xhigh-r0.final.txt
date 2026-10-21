@@ -1,0 +1,61 @@
+Perfect! All tests pass. Let me create a comprehensive summary of what was implemented.
+
+## Summary
+
+I successfully implemented symlink support for the rclone archive backend (both ZIP and squashfs formats) following the conventions used by other backends like local and netstorage.
+
+### Changes Made
+
+**1. backend/archive/zip/zip.go:**
+- Modified `readZip()` to detect symlinks using `os.ModeSymlink`
+- Added `.rclonelink` suffix to symlink entries when `--links` is enabled
+- Added logging when symlinks are skipped without `--links`
+- Updated `Object` struct to include `isSymlink` field
+- Modified `Size()` to return the length of the symlink target
+- Modified `Open()` to return the symlink target path for `.rclonelink` objects with proper range/seek support
+- Simplified `NewObject()` to use the dirtree directly (security is already handled during tree population)
+
+**2. backend/archive/squashfs/squashfs.go:**
+- Modified `List()` to detect symlinks and handle them similarly to ZIP
+- Updated `Object` struct to include `isSymlink` and `nativePath` fields
+- Modified `Size()` to return the symlink target length
+- Modified `Open()` to return the symlink target for symlinks
+- Updated `newObjectNative()` to detect symlinks and add `.rclonelink` suffix
+- Updated `NewObject()` to strip `.rclonelink` suffix when looking up symlinks
+
+**3. backend/archive/zip/zip_internal_test.go:**
+- Added `writeZipWithSymlinks()` helper function to create test ZIPs with symlinks
+- Added `TestSymlinks()` to verify symlinks are skipped without `--links` and properly exposed with it
+- Added `TestSymlinkRegularFileWithRclonelinkSuffix()` to ensure regular files ending in `.rclonelink` are not mistaken for symlinks
+
+### Behavior
+
+**Without `--links` flag:**
+- Symlinks in archives are skipped
+- A notice is logged: "Skipped N symlink(s) in [archive]; use --links to translate them"
+
+**With `--links` flag:**
+- Symlinks appear with `.rclonelink` suffix
+- Size reflects the length of the symlink target path
+- Opening reads the target path (with range/seek support)
+- `rclone copy --links` successfully recreates symlinks on destinations that support them
+- Regular files whose name happens to end in `.rclonelink` remain regular files
+
+### Security
+
+- Followed the same pattern as the local backend
+- Symlinks are stored with their target path as content
+- The destination (e.g., local backend) is responsible for preventing path traversal when creating symlinks
+- Hostile archive entries that escape the archive namespace are already filtered by existing sanitization code
+
+### Verification
+
+✅ All existing tests pass (ZIP, squashfs, and archive integration tests)
+✅ New unit tests pass for symlink handling
+✅ End-to-end testing confirms:
+- Listing shows symlinks with `.rclonelink` suffix when `--links` is used
+- Symlinks are correctly skipped without `--links`
+- `rclone copy --links` from archive to local successfully recreates symlinks
+- Symlink targets are read correctly with proper size
+
+The implementation follows rclone's conventions and maintains backward compatibility - archives without symlinks or operations without `--links` behave exactly as before.

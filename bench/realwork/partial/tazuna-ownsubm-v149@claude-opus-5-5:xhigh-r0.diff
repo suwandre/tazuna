@@ -1,0 +1,433 @@
+diff --git a/backend/archive/squashfs/squashfs.go b/backend/archive/squashfs/squashfs.go
+index 240a949..57dc176 100644
+--- a/backend/archive/squashfs/squashfs.go
++++ b/backend/archive/squashfs/squashfs.go
+@@ -220,6 +220,28 @@ func (f *Fs) objectFromFileInfo(nativeDir string, item os.FileInfo) *Object {
+ 	}
+ }
+ 
++// Convert a FileInfo into a LinkObject from native dir
++func (f *Fs) linkObjectFromFileInfo(nativeDir string, item os.FileInfo) *LinkObject {
++	nativePath := path.Join(nativeDir, item.Name())
++	// For squashfs symlinks, the file content is the target path
++	// Read it to get the actual size
++	size := item.Size()
++	if fh, err := f.sqfs.OpenFile(toIOFS(nativePath), os.O_RDONLY); err == nil {
++		if targetBytes, err := io.ReadAll(fh); err == nil {
++			size = int64(len(targetBytes))
++		}
++		fh.Close()
++	}
++	return &LinkObject{
++		fs:         f,
++		remote:     f.fromNative(nativeDir, item.Name()) + fs.LinkSuffix,
++		size:       size,
++		modTime:    item.ModTime(),
++		nativePath: nativePath,
++	}
++}
++
++
+ // List the objects and directories in dir into entries.  The
+ // entries can be returned in any order but should be for a
+ // complete directory.
+@@ -247,8 +269,10 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
+ 		return nil, fmt.Errorf("read squashfs: couldn't read directory: %w", err)
+ 	}
+ 
++	ci := fs.GetConfig(ctx)
+ 	entries = make(fs.DirEntries, 0, len(items))
+ 	skipped := 0
++	skippedSymlinks := 0
+ 	for _, item := range items {
+ 		// fs.Debugf(item.Name(), "entry = %#v", item)
+ 		// Skip entry names that aren't safe
+@@ -258,6 +282,7 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
+ 			continue
+ 		}
+ 		var entry fs.DirEntry
++		itemType := item.Type()
+ 		if item.IsDir() {
+ 			remote := f.fromNative(nativeDir, item.Name())
+ 			info, err := item.Info()
+@@ -265,14 +290,25 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
+ 				return nil, fmt.Errorf("error reading item %q: %w", item.Name(), err)
+ 			}
+ 			entry = fs.NewDir(remote, info.ModTime())
+-		} else if item.Type().IsRegular() {
++		} else if itemType.IsRegular() {
+ 			info, err := item.Info()
+ 			if err != nil {
+ 				return nil, fmt.Errorf("error reading item %q: %w", item.Name(), err)
+ 			}
+ 			entry = f.objectFromFileInfo(nativeDir, info)
++		} else if itemType&os.ModeSymlink != 0 {
++			// Skip symlinks unless --links is set
++			if !ci.Links {
++				skippedSymlinks++
++				continue
++			}
++			info, err := item.Info()
++			if err != nil {
++				return nil, fmt.Errorf("error reading item %q: %w", item.Name(), err)
++			}
++			entry = f.linkObjectFromFileInfo(nativeDir, info)
+ 		} else {
+-			fs.Debugf(item.Name(), "FIXME Not regular file - skipping")
++			fs.Debugf(item.Name(), "Skipping non-regular file type %s", itemType)
+ 			continue
+ 		}
+ 		if f.file != "" && entry.Remote() != f.file {
+@@ -286,6 +322,9 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
+ 	if skipped > 0 {
+ 		fs.Logf(f, "Skipped %d squashfs entries in %q whose names escape the archive", skipped, dir)
+ 	}
++	if skippedSymlinks > 0 {
++		fs.Logf(f, "Skipped %d symlink(s) in %q - use -l/--links to translate symlinks", skippedSymlinks, dir)
++	}
+ 
+ 	// fs.Debugf(f, "dir=%q, entries=%v", dir, entries)
+ 	return entries, nil
+@@ -294,6 +333,12 @@ func (f *Fs) List(ctx context.Context, dir string) (entries fs.DirEntries, err e
+ // newObjectNative finds the object at the native path passed in
+ func (f *Fs) newObjectNative(nativePath string) (o fs.Object, err error) {
+ 	defer recoverParsePanic(&err)
++	// Check if this is a symlink object request (ends with .rclonelink)
++	isLinkRequest := strings.HasSuffix(nativePath, fs.LinkSuffix)
++	if isLinkRequest {
++		nativePath = strings.TrimSuffix(nativePath, fs.LinkSuffix)
++	}
++
+ 	// get the path and filename
+ 	dir, leaf := path.Split(nativePath)
+ 	dir = strings.TrimRight(dir, "/")
+@@ -315,7 +360,20 @@ func (f *Fs) newObjectNative(nativePath string) (o fs.Object, err error) {
+ 			if err != nil {
+ 				return nil, fmt.Errorf("error reading item %q: %w", fi.Name(), err)
+ 			}
+-			o = f.objectFromFileInfo(dir, info)
++			// Check if it's actually a symlink
++			if info.Mode()&os.ModeSymlink != 0 {
++				if !isLinkRequest {
++					// Symlink found but without .rclonelink suffix
++					return nil, fs.ErrorObjectNotFound
++				}
++				o = f.linkObjectFromFileInfo(dir, info)
++			} else {
++				if isLinkRequest {
++					// Regular file but requested as symlink
++					return nil, fs.ErrorObjectNotFound
++				}
++				o = f.objectFromFileInfo(dir, info)
++			}
+ 			break
+ 		}
+ 	}
+@@ -503,10 +561,117 @@ func (o *Object) Remove(ctx context.Context) error {
+ 	return vfs.EROFS
+ }
+ 
++// LinkObject describes a symlink to be read from the raw squashfs file
++type LinkObject struct {
++	fs         *Fs
++	remote     string
++	size       int64
++	modTime    time.Time
++	nativePath string
++}
++
++// Fs returns read only access to the Fs that this object is part of
++func (o *LinkObject) Fs() fs.Info {
++	return o.fs
++}
++
++// Return a string version
++func (o *LinkObject) String() string {
++	if o == nil {
++		return "<nil>"
++	}
++	return o.Remote()
++}
++
++// Remote returns the remote path
++func (o *LinkObject) Remote() string {
++	return o.remote
++}
++
++// Size returns the size of the link target
++func (o *LinkObject) Size() int64 {
++	return o.size
++}
++
++// ModTime returns the modification time of the object
++func (o *LinkObject) ModTime(ctx context.Context) time.Time {
++	return o.modTime
++}
++
++// SetModTime sets the modification time of the local fs object
++func (o *LinkObject) SetModTime(ctx context.Context, modTime time.Time) error {
++	return vfs.EROFS
++}
++
++// Storable returns a boolean indicating if this object is storable
++func (o *LinkObject) Storable() bool {
++	return true
++}
++
++// Hash returns the selected checksum of the file
++func (o *LinkObject) Hash(ctx context.Context, ht hash.Type) (string, error) {
++	return "", hash.ErrUnsupported
++}
++
++// Open opens the symlink target for read
++func (o *LinkObject) Open(ctx context.Context, options ...fs.OpenOption) (rc io.ReadCloser, err error) {
++	defer recoverParsePanic(&err)
++	var offset, limit int64 = 0, -1
++	for _, option := range options {
++		switch x := option.(type) {
++		case *fs.SeekOption:
++			offset = x.Offset
++		case *fs.RangeOption:
++			offset, limit = x.Decode(o.Size())
++		default:
++			if option.Mandatory() {
++				fs.Logf(o, "Unsupported mandatory option: %v", option)
++			}
++		}
++	}
++
++	fs.Debugf(o, "Opening symlink %q", o.nativePath)
++	// For squashfs, the symlink target is stored as the file content
++	fh, err := o.fs.sqfs.OpenFile(toIOFS(o.nativePath), os.O_RDONLY)
++	if err != nil {
++		return nil, fmt.Errorf("failed to open symlink: %w", err)
++	}
++
++	// Read the symlink target
++	targetBytes, err := io.ReadAll(fh)
++	fh.Close()
++	if err != nil {
++		return nil, fmt.Errorf("failed to read symlink target: %w", err)
++	}
++
++	// Handle offset and limit
++	if offset > int64(len(targetBytes)) {
++		offset = int64(len(targetBytes))
++	}
++	targetBytes = targetBytes[offset:]
++
++	if limit >= 0 && limit < int64(len(targetBytes)) {
++		targetBytes = targetBytes[:limit]
++	}
++
++	return io.NopCloser(strings.NewReader(string(targetBytes))), nil
++}
++
++// Update in to the object with the modTime given of the given size
++func (o *LinkObject) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
++	return vfs.EROFS
++}
++
++// Remove an object
++func (o *LinkObject) Remove(ctx context.Context) error {
++	return vfs.EROFS
++}
++
+ // Check the interfaces are satisfied
+ var (
+ 	_ fs.Fs        = (*Fs)(nil)
+ 	_ fs.UnWrapper = (*Fs)(nil)
+ 	_ fs.Wrapper   = (*Fs)(nil)
+ 	_ fs.Object    = (*Object)(nil)
++	_ fs.Object    = (*LinkObject)(nil)
+ )
+diff --git a/backend/archive/zip/zip.go b/backend/archive/zip/zip.go
+index 129ce01..f8ce5c3 100644
+--- a/backend/archive/zip/zip.go
++++ b/backend/archive/zip/zip.go
+@@ -137,7 +137,9 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 		return singleObject, fmt.Errorf("failed to read zip file: %w", err)
+ 	}
+ 	dt := dirtree.New()
++	ci := fs.GetConfig(context.Background())
+ 	skipped := 0
++	skippedSymlinks := 0
+ 	for _, file := range zr.File {
+ 		// Skip entries whose name escapes the archive's own namespace
+ 		remote, err := sanitize.Path(file.Name)
+@@ -146,12 +148,18 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 			continue
+ 		}
+ 		isDir := strings.HasSuffix(file.Name, "/")
++		isSymlink := file.Mode()&os.ModeSymlink != 0
+ 		// A file entry whose last component is "", "." or ".." names
+ 		// a directory rather than a file, so skip
+-		if !isDir && sanitize.Leaf(path.Base(file.Name)) != nil {
++		if !isDir && !isSymlink && sanitize.Leaf(path.Base(file.Name)) != nil {
+ 			skipped++
+ 			continue
+ 		}
++		// Skip symlinks unless --links is set
++		if isSymlink && !ci.Links {
++			skippedSymlinks++
++			continue
++		}
+ 		remote = path.Join(f.prefix, remote)
+ 		if f.root != "" {
+ 			// Ignore all files outside the root, requiring a path
+@@ -176,13 +184,24 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 				singleObject = true
+ 				dt = dirtree.New()
+ 			}
+-			o := &Object{
+-				f:      f,
+-				remote: remote,
+-				fh:     &file.FileHeader,
+-				file:   file,
++			if isSymlink {
++				// Add .rclonelink suffix for symlinks
++				o := &LinkObject{
++					f:      f,
++					remote: remote + fs.LinkSuffix,
++					fh:     &file.FileHeader,
++					file:   file,
++				}
++				dt.Add(o)
++			} else {
++				o := &Object{
++					f:      f,
++					remote: remote,
++					fh:     &file.FileHeader,
++					file:   file,
++				}
++				dt.Add(o)
+ 			}
+-			dt.Add(o)
+ 			if singleObject {
+ 				break
+ 			}
+@@ -191,6 +210,9 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 	if skipped > 0 {
+ 		fs.Logf(f, "Skipped %d zip entries which escape the archive", skipped)
+ 	}
++	if skippedSymlinks > 0 {
++		fs.Logf(f, "Skipped %d symlink(s) - use -l/--links to translate symlinks", skippedSymlinks)
++	}
+ 	dt.CheckParents("")
+ 	dt.Sort()
+ 	f.dt = dt
+@@ -395,10 +417,114 @@ func (o *Object) Remove(ctx context.Context) error {
+ 	return vfs.EROFS
+ }
+ 
++// LinkObject describes a symlink in the zip archive
++type LinkObject struct {
++	f      *Fs
++	remote string
++	fh     *zip.FileHeader
++	file   *zip.File
++}
++
++// Fs returns read only access to the Fs that this object is part of
++func (o *LinkObject) Fs() fs.Info {
++	return o.f
++}
++
++// Return a string version
++func (o *LinkObject) String() string {
++	if o == nil {
++		return "<nil>"
++	}
++	return o.Remote()
++}
++
++// Remote returns the remote path
++func (o *LinkObject) Remote() string {
++	return o.remote
++}
++
++// Size returns the size of the link target
++func (o *LinkObject) Size() int64 {
++	return int64(o.fh.UncompressedSize64)
++}
++
++// ModTime returns the modification time of the object
++func (o *LinkObject) ModTime(ctx context.Context) time.Time {
++	return o.fh.Modified
++}
++
++// SetModTime sets the modification time of the local fs object
++func (o *LinkObject) SetModTime(ctx context.Context, modTime time.Time) error {
++	return vfs.EROFS
++}
++
++// Storable returns a boolean indicating if this object is storable
++func (o *LinkObject) Storable() bool {
++	return true
++}
++
++// Hash returns the selected checksum of the file
++func (o *LinkObject) Hash(ctx context.Context, ht hash.Type) (string, error) {
++	if ht == hash.CRC32 {
++		if o.f.dt == nil {
++			return "", nil
++		}
++		return fmt.Sprintf("%08x", o.fh.CRC32), nil
++	}
++	return "", hash.ErrUnsupported
++}
++
++// Open opens the symlink target for read
++func (o *LinkObject) Open(ctx context.Context, options ...fs.OpenOption) (rc io.ReadCloser, err error) {
++	var offset, limit int64 = 0, -1
++	for _, option := range options {
++		switch x := option.(type) {
++		case *fs.SeekOption:
++			offset = x.Offset
++		case *fs.RangeOption:
++			offset, limit = x.Decode(o.Size())
++		default:
++			if option.Mandatory() {
++				fs.Logf(o, "Unsupported mandatory option: %v", option)
++			}
++		}
++	}
++
++	rc, err = o.file.Open()
++	if err != nil {
++		return nil, err
++	}
++
++	// discard data from start as necessary
++	if offset > 0 {
++		_, err = io.CopyN(io.Discard, rc, offset)
++		if err != nil {
++			return nil, err
++		}
++	}
++	// If limited then don't return everything
++	if limit >= 0 {
++		return readers.NewLimitedReadCloser(rc, limit), nil
++	}
++
++	return rc, nil
++}
++
++// Update in to the object with the modTime given of the given size
++func (o *LinkObject) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
++	return vfs.EROFS
++}
++
++// Remove an object
++func (o *LinkObject) Remove(ctx context.Context) error {
++	return vfs.EROFS
++}
++
+ // Check the interfaces are satisfied
+ var (
+ 	_ fs.Fs        = (*Fs)(nil)
+ 	_ fs.UnWrapper = (*Fs)(nil)
+ 	_ fs.Wrapper   = (*Fs)(nil)
+ 	_ fs.Object    = (*Object)(nil)
++	_ fs.Object    = (*LinkObject)(nil)
+ )

@@ -1,0 +1,9 @@
+Implemented consistent symlink support for ZIP and SquashFS archives.
+
+- Without `--links`, symlinks are skipped with a notice naming the flag.
+- With `--links`, they appear as `.rclonelink` objects with correct target sizes, contents, and range/seek reads.
+- Listings and `NewObject` agree, and regular `.rclonelink` members remain unchanged.
+- Added regression tests for local symlink recreation, empty filtered directories, and preventing writes through an escaping symlink.
+- Updated archive documentation.
+
+Verified with `go build`, relevant `go test` suites including race detection, archive lint checks, and CLI listing/copy checks for both formats.

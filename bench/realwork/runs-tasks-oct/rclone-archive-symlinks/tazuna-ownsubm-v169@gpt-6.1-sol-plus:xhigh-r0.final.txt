@@ -1,0 +1,17 @@
+Implemented symbolic-link support for the archive backend:
+
+- ZIP and SquashFS symlinks are skipped by default with a notice mentioning `-l/--links`.
+- With `--links`, symlinks are exposed using the `.rclonelink` suffix.
+- Symlink object sizes equal their target lengths, and reads support seek/range options.
+- Regular archive members ending in `.rclonelink` remain regular files.
+- Listing and `NewObject` lookup behavior are consistent, including single-object roots.
+- Symlink targets are read directly from SquashFS metadata rather than followed.
+- Added ZIP and SquashFS tests covering skipped links, translated links, ranges, regular suffix names, and root lookups.
+
+Verified with:
+
+```text
+go test ./backend/archive/...
+go test ./backend/local -run 'TestSymlinkEscapeWriteThroughBlocked|TestCopySymlink'
+go test ./vfs ./fs/operations ./fs/sync
+```

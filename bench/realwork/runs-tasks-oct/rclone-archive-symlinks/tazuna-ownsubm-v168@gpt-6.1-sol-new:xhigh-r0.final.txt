@@ -1,0 +1,13 @@
+Implemented symbolic-link support for ZIP and squashfs archives.
+
+- Links are skipped by default, with a notice naming `-l/--links`.
+- With `--links`, they appear as `.rclonelink` objects with the target’s size and contents, including range/seek support.
+- Listing and `NewObject` agree, and regular `.rclonelink` members remain unchanged.
+- ZIP entries beneath archived symlinks are blocked to prevent destination traversal.
+- Added regression tests, copy tests, a squashfs fixture, and documentation.
+
+Verified successfully:
+- `go test ./backend/archive/... ./backend/local ./fs/operations ./fs/sync`
+- `go test -race ./backend/archive/...`
+- Archive-package lint and full CLI build
+- CLI smoke test confirming `copy --links` recreates a real symlink

@@ -1,0 +1,822 @@
+[
+ {
+  "label": "v129",
+  "model": "gpt-6-luna",
+  "start": "10-19 23:30",
+  "calls": 67,
+  "edits": 28,
+  "input": 90742,
+  "cache_read": 3622400,
+  "cache_write": 0,
+  "output": 29168,
+  "cached_share": 0.976,
+  "usd": null,
+  "usd_per_call": null,
+  "usd_per_m_tokens": null,
+  "routes": {},
+  "route_prices": {},
+  "wall_s": 454,
+  "run_tok_s": 64.3,
+  "gen_tok_s": null,
+  "first_token_s": null,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 454.0s turns=67 in=3713142 out=29168 64.2to",
+  "judge": 8
+ },
+ {
+  "label": "v131",
+  "model": "deepseek-v4.1-flash-1017",
+  "start": "10-20 00:00",
+  "calls": 62,
+  "edits": 12,
+  "input": 63064,
+  "cache_read": 3670656,
+  "cache_write": 0,
+  "output": 79757,
+  "cached_share": 0.983,
+  "usd": 0.0091,
+  "usd_per_call": 0.00015,
+  "usd_per_m_tokens": 0.0024,
+  "routes": {
+   "a6aa": 64
+  },
+  "route_prices": {
+   "a6aa": {
+    "input": 0.01997058823529412,
+    "cache_read": 0.0003994117647058824,
+    "cache_write": 0.01997058823529412,
+    "output": 0.07988235294117647
+   }
+  },
+  "wall_s": 933,
+  "run_tok_s": 42.5,
+  "gen_tok_s": 186.3,
+  "first_token_s": 6.2,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 933.1s turns=62 in=3733364 out=39667 42.5to",
+  "judge": 8
+ },
+ {
+  "label": "v137",
+  "model": "gpt-6.1-sol",
+  "start": "10-20 10:50",
+  "calls": 33,
+  "edits": 1,
+  "input": 135457,
+  "cache_read": 1535232,
+  "cache_write": 0,
+  "output": 20742,
+  "cached_share": 0.919,
+  "usd": 0.0186,
+  "usd_per_call": 0.00056,
+  "usd_per_m_tokens": 0.0111,
+  "routes": {
+   "兄弟连": 34
+  },
+  "route_prices": {
+   "兄弟连": {
+    "input": 0.05882352941176471,
+    "cache_read": 0.0029411764705882353,
+    "cache_write": 0.07352941176470588,
+    "output": 0.29411764705882354
+   }
+  },
+  "wall_s": 819,
+  "run_tok_s": 25.2,
+  "gen_tok_s": 110.5,
+  "first_token_s": 12.0,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 819.4s turns=33 in=1627904 out=20672 25.2to",
+  "judge": 8
+ },
+ {
+  "label": "v140",
+  "model": "gpt-6-astra",
+  "start": "10-20 12:12",
+  "calls": 38,
+  "edits": 6,
+  "input": 86390,
+  "cache_read": 1763200,
+  "cache_write": 0,
+  "output": 28875,
+  "cached_share": 0.953,
+  "usd": 0.1197,
+  "usd_per_call": 0.00315,
+  "usd_per_m_tokens": 0.0647,
+  "routes": {
+   "ChorAPI": 40
+  },
+  "route_prices": {
+   "ChorAPI": {
+    "input": 0.29411764705882354,
+    "cache_read": 0.029411764705882356,
+    "cache_write": 0.36764705882352944,
+    "output": 1.4705882352941178
+   }
+  },
+  "wall_s": 865,
+  "run_tok_s": 21.4,
+  "gen_tok_s": 64.6,
+  "first_token_s": 7.2,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 864.9s turns=38 in=1841296 out=18504 21.4to",
+  "judge": 8
+ },
+ {
+  "label": "v141",
+  "model": "gemini-3.8-flash",
+  "start": "10-20 13:01",
+  "calls": 257,
+  "edits": 0,
+  "input": 3533079,
+  "cache_read": 16535339,
+  "cache_write": 0,
+  "output": 40220,
+  "cached_share": 0.824,
+  "usd": 0.1416,
+  "usd_per_call": 0.00055,
+  "usd_per_m_tokens": 0.0071,
+  "routes": {
+   "Cybersol": 252,
+   "云集AI": 8
+  },
+  "route_prices": {
+   "Cybersol": {
+    "input": 0.022058823529411766,
+    "cache_read": 0.0022058823529411764,
+    "cache_write": null,
+    "output": 0.11029411764705882
+   },
+   "云集AI": {
+    "input": 0.4125,
+    "cache_read": 0.225,
+    "cache_write": 0.225,
+    "output": 2.0625
+   }
+  },
+  "wall_s": 2602,
+  "run_tok_s": 13.6,
+  "gen_tok_s": 709.0,
+  "first_token_s": 3.9,
+  "hidden": null,
+  "outcome": "ERROR [stopped: $0.40 spent]",
+  "judge": null
+ },
+ {
+  "label": "v143",
+  "model": "claude-opus-4-7",
+  "start": "10-20 14:28",
+  "calls": 60,
+  "edits": 16,
+  "input": 2420219,
+  "cache_read": 16790286,
+  "cache_write": 569566,
+  "output": 59044,
+  "cached_share": 0.849,
+  "usd": 0.4805,
+  "usd_per_call": 0.00801,
+  "usd_per_m_tokens": 0.0243,
+  "routes": {
+   "老六": 62
+  },
+  "route_prices": {
+   "老六": {
+    "input": 0.09411764705882353,
+    "cache_read": 0.009411764705882354,
+    "cache_write": 0.11764705882352944,
+    "output": 0.4705882352941177
+   }
+  },
+  "wall_s": 648,
+  "run_tok_s": 82.7,
+  "gen_tok_s": 205.8,
+  "first_token_s": 3.3,
+  "hidden": null,
+  "outcome": "ERROR [stopped: $0.50 spent]",
+  "judge": null
+ },
+ {
+  "label": "v145",
+  "model": "claude-opus-4-8",
+  "start": "10-20 14:41",
+  "calls": 73,
+  "edits": 16,
+  "input": 25900,
+  "cache_read": 2119019,
+  "cache_write": 185348,
+  "output": 29362,
+  "cached_share": 0.909,
+  "usd": 0.0724,
+  "usd_per_call": 0.00099,
+  "usd_per_m_tokens": 0.0311,
+  "routes": {
+   "BangAi": 73
+  },
+  "route_prices": {
+   "BangAi": {
+    "input": 0.11764705882352942,
+    "cache_read": 0.011764705882352941,
+    "cache_write": 0.14705882352941177,
+    "output": 0.5882352941176471
+   }
+  },
+  "wall_s": 681,
+  "run_tok_s": 43.1,
+  "gen_tok_s": 81.2,
+  "first_token_s": 3.4,
+  "hidden": "0/3",
+  "outcome": "0/3 suite_fail=0 681.7s turns=73 in=2330267 out=29362 43.1to",
+  "judge": 1
+ },
+ {
+  "label": "v148",
+  "model": "claude-opus-5",
+  "start": "10-20 15:00",
+  "calls": 224,
+  "edits": 11,
+  "input": 462,
+  "cache_read": 18046804,
+  "cache_write": 1597246,
+  "output": 48019,
+  "cached_share": 0.919,
+  "usd": 0.4753,
+  "usd_per_call": 0.00212,
+  "usd_per_m_tokens": 0.0242,
+  "routes": {
+   "曲奇ai": 231
+  },
+  "route_prices": {
+   "曲奇ai": {
+    "input": 0.11764705882352942,
+    "cache_read": 0.011764705882352941,
+    "cache_write": 0.14705882352941177,
+    "output": 0.5882352941176471
+   }
+  },
+  "wall_s": 1655,
+  "run_tok_s": 28.1,
+  "gen_tok_s": 101.3,
+  "first_token_s": 3.7,
+  "hidden": null,
+  "outcome": "end: used 1635.79984; ",
+  "judge": null
+ },
+ {
+  "label": "v150",
+  "model": "qwen3.8-flash",
+  "start": "10-20 16:06",
+  "calls": 242,
+  "edits": 3,
+  "input": 513224,
+  "cache_read": 5696960,
+  "cache_write": 0,
+  "output": 230453,
+  "cached_share": 0.917,
+  "usd": 0.0465,
+  "usd_per_call": 0.00019,
+  "usd_per_m_tokens": 0.0075,
+  "routes": {
+   "Kriora": 246
+  },
+  "route_prices": {
+   "Kriora": {
+    "input": 0.029411764705882356,
+    "cache_read": 0.0031372548970588234,
+    "cache_write": null,
+    "output": 0.05882352941176471
+   }
+  },
+  "wall_s": 8320,
+  "run_tok_s": 26.5,
+  "gen_tok_s": 68.6,
+  "first_token_s": 5.6,
+  "hidden": null,
+  "outcome": "end: used 3196.7411999999995; ",
+  "judge": null
+ },
+ {
+  "label": "v151",
+  "model": "claude-opus-4-7",
+  "start": "10-20 16:30",
+  "calls": 56,
+  "edits": 11,
+  "input": 1031191,
+  "cache_read": 6980342,
+  "cache_write": 2847072,
+  "output": 52662,
+  "cached_share": 0.643,
+  "usd": 0.5215,
+  "usd_per_call": 0.00931,
+  "usd_per_m_tokens": 0.048,
+  "routes": {
+   "老六": 56,
+   "XCGX AI · 多模型服务": 1
+  },
+  "route_prices": {
+   "老六": {
+    "input": 0.09411764705882353,
+    "cache_read": 0.009411764705882354,
+    "cache_write": 0.11764705882352944,
+    "output": 0.4705882352941177
+   },
+   "XCGX AI · 多模型服务": {
+    "input": 0.06838235294117648,
+    "cache_read": 0.006838235294117648,
+    "cache_write": 0.08547794117647059,
+    "output": 0.3419117647058824
+   }
+  },
+  "wall_s": 374,
+  "run_tok_s": 140.8,
+  "gen_tok_s": 336.3,
+  "first_token_s": 3.2,
+  "hidden": null,
+  "outcome": "end: used 2600.46824; ",
+  "judge": null
+ },
+ {
+  "label": "v153",
+  "model": "claude-opus-5",
+  "start": "10-20 16:57",
+  "calls": 33,
+  "edits": 8,
+  "input": 530130,
+  "cache_read": 3432368,
+  "cache_write": 1518010,
+  "output": 35056,
+  "cached_share": 0.626,
+  "usd": 0.2686,
+  "usd_per_call": 0.00814,
+  "usd_per_m_tokens": 0.049,
+  "routes": {
+   "老六": 33
+  },
+  "route_prices": {
+   "老六": {
+    "input": 0.09117647058823529,
+    "cache_read": 0.009117647058823529,
+    "cache_write": 0.11397058823529413,
+    "output": 0.4558823529411765
+   }
+  },
+  "wall_s": 220,
+  "run_tok_s": 159.3,
+  "gen_tok_s": 318.7,
+  "first_token_s": 3.0,
+  "hidden": null,
+  "outcome": "end: used 2824.278; ",
+  "judge": null
+ },
+ {
+  "label": "v154",
+  "model": "claude-opus-5",
+  "start": "10-20 17:10",
+  "calls": 38,
+  "edits": 3,
+  "input": 80,
+  "cache_read": 1732941,
+  "cache_write": 79545,
+  "output": 18238,
+  "cached_share": 0.956,
+  "usd": 0.364,
+  "usd_per_call": 0.00958,
+  "usd_per_m_tokens": 0.2008,
+  "routes": {
+   "Claude 共享池": 39
+  },
+  "route_prices": {
+   "Claude 共享池": {
+    "input": 1,
+    "cache_read": 0.1,
+    "cache_write": 1.25,
+    "output": 5
+   }
+  },
+  "wall_s": 370,
+  "run_tok_s": 49.3,
+  "gen_tok_s": 92.3,
+  "first_token_s": 2.2,
+  "hidden": null,
+  "outcome": "end: used 3177.0429599999998; ",
+  "judge": null
+ },
+ {
+  "label": "v156",
+  "model": "claude-opus-5-5",
+  "start": "10-20 19:28",
+  "calls": 129,
+  "edits": 14,
+  "input": 2119756,
+  "cache_read": 8776515,
+  "cache_write": 75645,
+  "output": 53503,
+  "cached_share": 0.8,
+  "usd": 0.4671,
+  "usd_per_call": 0.00362,
+  "usd_per_m_tokens": 0.0426,
+  "routes": {
+   "fate86api": 106,
+   "viapi": 23
+  },
+  "route_prices": {
+   "fate86api": {
+    "input": 0.13970588235294118,
+    "cache_read": 0.006985294117647059,
+    "cache_write": 0.17463235294117646,
+    "output": 0.698529411764706
+   },
+   "viapi": {
+    "input": 0.5147058823529412,
+    "cache_read": 0.025735294117647058,
+    "cache_write": 0.6433823529411765,
+    "output": 2.573529411764706
+   }
+  },
+  "wall_s": 1195,
+  "run_tok_s": 44.8,
+  "gen_tok_s": 120.7,
+  "first_token_s": 4.0,
+  "hidden": "2/3",
+  "outcome": "2/3 suite_fail=0 1194.8s turns=129 in=10971916 out=53503 44.",
+  "judge": 3
+ },
+ {
+  "label": "v157",
+  "model": "qwen3.8-flash",
+  "start": "10-20 19:48",
+  "calls": 503,
+  "edits": 0,
+  "input": 1718268,
+  "cache_read": 7897280,
+  "cache_write": 0,
+  "output": 277314,
+  "cached_share": 0.821,
+  "usd": 0.0916,
+  "usd_per_call": 0.00018,
+  "usd_per_m_tokens": 0.0095,
+  "routes": {
+   "Kriora": 417
+  },
+  "route_prices": {
+   "Kriora": {
+    "input": 0.029411764705882356,
+    "cache_read": 0.0031372548970588234,
+    "cache_write": null,
+    "output": 0.05882352941176471
+   }
+  },
+  "wall_s": 11890,
+  "run_tok_s": 31.5,
+  "gen_tok_s": 59.2,
+  "first_token_s": 4.9,
+  "hidden": null,
+  "outcome": "end: used 5340.92128; ",
+  "judge": null
+ },
+ {
+  "label": "v158",
+  "model": "qwen3.8-max",
+  "start": "10-20 19:48",
+  "calls": 203,
+  "edits": 35,
+  "input": 1378996,
+  "cache_read": 16147818,
+  "cache_write": 0,
+  "output": 254722,
+  "cached_share": 0.921,
+  "usd": 1.1375,
+  "usd_per_call": 0.0056,
+  "usd_per_m_tokens": 0.0649,
+  "routes": {
+   "a6aa": 204,
+   "TokenX": 1
+  },
+  "route_prices": {
+   "a6aa": {
+    "input": 0.27941176470588236,
+    "cache_read": 0.034926470588235295,
+    "cache_write": 0.3492647058823529,
+    "output": 0.8382352941176471
+   },
+   "TokenX": {
+    "input": 0.04411764705882353,
+    "cache_read": 0.0055147058823529415,
+    "cache_write": 0.0551470588235294,
+    "output": 0.1323529411764706
+   }
+  },
+  "wall_s": 7371,
+  "run_tok_s": 34.4,
+  "gen_tok_s": 80.6,
+  "first_token_s": 4.9,
+  "hidden": null,
+  "outcome": "ERROR [stopped: $5.00 spent]",
+  "judge": null
+ },
+ {
+  "label": "v159",
+  "model": "claude-opus-4-8",
+  "start": "10-20 19:58",
+  "calls": 102,
+  "edits": 21,
+  "input": 1632698,
+  "cache_read": 11481105,
+  "cache_write": 261560,
+  "output": 26089,
+  "cached_share": 0.858,
+  "usd": 0.4666,
+  "usd_per_call": 0.00457,
+  "usd_per_m_tokens": 0.0349,
+  "routes": {
+   "Stable AI": 109
+  },
+  "route_prices": {
+   "Stable AI": {
+    "input": 0.14411764705882352,
+    "cache_read": 0.014411764705882353,
+    "cache_write": 0.18014705882352944,
+    "output": 0.7205882352941178
+   }
+  },
+  "wall_s": 829,
+  "run_tok_s": 31.2,
+  "gen_tok_s": 71.7,
+  "first_token_s": 4.3,
+  "hidden": null,
+  "outcome": "end: used 3939.2590399999995; ",
+  "judge": null
+ },
+ {
+  "label": "v160",
+  "model": "claude-opus-4-8",
+  "start": "10-20 20:13",
+  "calls": 148,
+  "edits": 26,
+  "input": 2409225,
+  "cache_read": 17818616,
+  "cache_write": 241574,
+  "output": 31172,
+  "cached_share": 0.87,
+  "usd": 0.6699,
+  "usd_per_call": 0.00453,
+  "usd_per_m_tokens": 0.0327,
+  "routes": {
+   "Stable AI": 148
+  },
+  "route_prices": {
+   "Stable AI": {
+    "input": 0.14411764705882352,
+    "cache_read": 0.014411764705882353,
+    "cache_write": 0.18014705882352944,
+    "output": 0.7205882352941178
+   }
+  },
+  "wall_s": 1135,
+  "run_tok_s": 27.5,
+  "gen_tok_s": 68.3,
+  "first_token_s": 4.3,
+  "hidden": null,
+  "outcome": "end: used 4543.58184; ",
+  "judge": null
+ },
+ {
+  "label": "v161",
+  "model": "grok-4.7",
+  "start": "10-20 21:21",
+  "calls": 40,
+  "edits": 36,
+  "input": 330491,
+  "cache_read": 2551168,
+  "cache_write": 0,
+  "output": 63862,
+  "cached_share": 0.885,
+  "usd": 0.0201,
+  "usd_per_call": 0.0005,
+  "usd_per_m_tokens": 0.007,
+  "routes": {
+   "Grok X Premium+": 39,
+   "miletechx": 2
+  },
+  "route_prices": {
+   "miletechx": {
+    "input": 0.011,
+    "cache_read": 0.00275,
+    "cache_write": null,
+    "output": 0.033
+   }
+  },
+  "wall_s": 1244,
+  "run_tok_s": 51.1,
+  "gen_tok_s": 101.9,
+  "first_token_s": 2.7,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 1244.0s turns=40 in=2850830 out=63579 51.1t",
+  "judge": 6
+ },
+ {
+  "label": "v163",
+  "model": "gpt-5.6-sol",
+  "start": "10-20 22:14",
+  "calls": 81,
+  "edits": 40,
+  "input": 178279,
+  "cache_read": 3925007,
+  "cache_write": 0,
+  "output": 35225,
+  "cached_share": 0.957,
+  "usd": 0.0398,
+  "usd_per_call": 0.00049,
+  "usd_per_m_tokens": 0.0097,
+  "routes": {
+   "ModelShare": 79
+  },
+  "route_prices": {},
+  "wall_s": 1062,
+  "run_tok_s": 32.0,
+  "gen_tok_s": 166.4,
+  "first_token_s": 7.9,
+  "hidden": "2/3",
+  "outcome": "2/3 suite_fail=0 1062.2s turns=81 in=4446651 out=33972 32.0t",
+  "judge": 5
+ },
+ {
+  "label": "v165",
+  "model": "gpt-6-sol",
+  "start": "10-20 22:48",
+  "calls": 113,
+  "edits": 53,
+  "input": 252460,
+  "cache_read": 11016960,
+  "cache_write": 0,
+  "output": 47888,
+  "cached_share": 0.978,
+  "usd": null,
+  "usd_per_call": null,
+  "usd_per_m_tokens": null,
+  "routes": {},
+  "route_prices": {},
+  "wall_s": 3312,
+  "run_tok_s": 14.5,
+  "gen_tok_s": null,
+  "first_token_s": null,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 3311.8s turns=113 in=11269420 out=47888 14.",
+  "judge": 7
+ },
+ {
+  "label": "v166",
+  "model": "gpt-6-sol-plus",
+  "start": "10-20 22:48",
+  "calls": 69,
+  "edits": 22,
+  "input": 897597,
+  "cache_read": 4021719,
+  "cache_write": 0,
+  "output": 42016,
+  "cached_share": 0.818,
+  "usd": null,
+  "usd_per_call": null,
+  "usd_per_m_tokens": null,
+  "routes": {},
+  "route_prices": {},
+  "wall_s": 1616,
+  "run_tok_s": 26.0,
+  "gen_tok_s": null,
+  "first_token_s": null,
+  "hidden": null,
+  "outcome": "ERROR [stopped: $0.50 spent]",
+  "judge": null
+ },
+ {
+  "label": "v167",
+  "model": "gpt-6.1-sol",
+  "start": "10-20 23:52",
+  "calls": 44,
+  "edits": 18,
+  "input": 17916,
+  "cache_read": 534016,
+  "cache_write": 0,
+  "output": 8786,
+  "cached_share": 0.968,
+  "usd": 0.0078,
+  "usd_per_call": 0.00018,
+  "usd_per_m_tokens": 0.0142,
+  "routes": {
+   "ChorAPI": 8
+  },
+  "route_prices": {
+   "ChorAPI": {
+    "input": 0.08823529411764706,
+    "cache_read": 0.004411764705882353,
+    "cache_write": 0.1102941176470588,
+    "output": 0.4411764705882353
+   }
+  },
+  "wall_s": 947,
+  "run_tok_s": 25.3,
+  "gen_tok_s": 99.7,
+  "first_token_s": 15.0,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 947.1s turns=44 in=2102548 out=23925 25.3to",
+  "judge": 7
+ },
+ {
+  "label": "v168",
+  "model": "gpt-6.1-sol-new",
+  "start": "10-20 23:52",
+  "calls": 31,
+  "edits": 2,
+  "input": 4228,
+  "cache_read": 400128,
+  "cache_write": 0,
+  "output": 2813,
+  "cached_share": 0.99,
+  "usd": 0.0034,
+  "usd_per_call": 0.00011,
+  "usd_per_m_tokens": 0.0084,
+  "routes": {
+   "ChorAPI": 5
+  },
+  "route_prices": {
+   "ChorAPI": {
+    "input": 0.08823529411764706,
+    "cache_read": 0.004411764705882353,
+    "cache_write": 0.1102941176470588,
+    "output": 0.4411764705882353
+   }
+  },
+  "wall_s": 719,
+  "run_tok_s": 27.9,
+  "gen_tok_s": 98.7,
+  "first_token_s": 12.1,
+  "hidden": "2/3",
+  "outcome": "2/3 suite_fail=0 719.2s turns=31 in=1579849 out=20042 27.9to",
+  "judge": 4
+ },
+ {
+  "label": "v169",
+  "model": "gpt-6.1-sol-plus",
+  "start": "10-21 00:15",
+  "calls": 103,
+  "edits": 46,
+  "input": 290820,
+  "cache_read": 9291008,
+  "cache_write": 0,
+  "output": 40288,
+  "cached_share": 0.97,
+  "usd": 0.0959,
+  "usd_per_call": 0.00093,
+  "usd_per_m_tokens": 0.01,
+  "routes": {
+   "星球中转站": 107
+  },
+  "route_prices": {
+   "星球中转站": {
+    "input": 0.1,
+    "cache_read": 0.005,
+    "cache_write": 0.125,
+    "output": 0.5
+   }
+  },
+  "wall_s": 3846,
+  "run_tok_s": 9.8,
+  "gen_tok_s": 60.3,
+  "first_token_s": 15.0,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 3846.5s turns=103 in=9489561 out=37673 9.8t",
+  "judge": 4
+ },
+ {
+  "label": "v170",
+  "model": "gpt-6-sol-plus",
+  "start": "10-21 01:21",
+  "calls": 125,
+  "edits": 56,
+  "input": 1160065,
+  "cache_read": 13467455,
+  "cache_write": 0,
+  "output": 65528,
+  "cached_share": 0.921,
+  "usd": 0.1785,
+  "usd_per_call": 0.00143,
+  "usd_per_m_tokens": 0.0122,
+  "routes": {
+   "OrangeAPI": 125
+  },
+  "route_prices": {
+   "OrangeAPI": {
+    "input": 0.12,
+    "cache_read": 0,
+    "cache_write": null,
+    "output": 0.6
+   }
+  },
+  "wall_s": 4987,
+  "run_tok_s": 13.1,
+  "gen_tok_s": 56.2,
+  "first_token_s": 22.3,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 4987.1s turns=125 in=14627520 out=65528 13.",
+  "judge": 6
+ }
+]

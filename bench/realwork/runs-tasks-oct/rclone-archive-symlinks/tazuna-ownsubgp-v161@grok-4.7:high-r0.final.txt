@@ -1,0 +1,5 @@
+ZIP and squashfs archives now follow the same symlink convention as the local backend.
+
+Without `-l`/`--links`, symlinks are skipped and a single notice names the flag. With `--links`, a symlink is listed as `name.rclonelink`, its size is the target length, and opening it returns the target (including range and seek). A regular member whose name already ends in `.rclonelink` stays a regular file, and listing and `NewObject` agree. Copying such an archive recreates the link, and a symlink pointing above the root cannot make a later member write outside the destination.
+
+Verified with `go test ./backend/archive/archiver/ ./backend/archive/squashfs/ ./backend/archive/zip/ ./backend/archive/`.

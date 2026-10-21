@@ -78,7 +78,7 @@ def groups(model):
     if m.get("billing_mode") == "tiered_expr":
         # a price by time of day (Apizio: peak on weekday mornings UTC at twice off-peak): the dearest tier, per M
         # terms by name, in any order (SubRouter's Luna: p, cr, cc, c); per tier, then the dearest tier
-        tiers = [dict(re.findall(r"\b(p|c|cr) \* ([\d.]+)", t)) for t in m["billing_expr"].split("tier(")[1:]]
+        tiers = [dict(re.findall(r"\b(p|c|cr) ?\* ?([\d.]+)", t)) for t in m["billing_expr"].split("tier(")[1:] or [m["billing_expr"]]]
         return [("", max(((float(t["p"]), float(t.get("cr", t["p"])), float(t["c"])) for t in tiers if "p" in t and "c" in t), key=run_cost))]
     if "unorouter" not in API:
         return [("", (m["model_ratio"] * 2, m["model_ratio"] * 2 * (m.get("cache_ratio") or 1), m["model_ratio"] * 2 * m["completion_ratio"]))]
@@ -132,10 +132,25 @@ def call(model, group, msgs, effort, tools=False, max_out=64):
             body["tools"] = [{"name": "bash", "description": "run a command", "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}}}]
             body["system"] = "Answer from your own reasoning; do not call tools for this."
             body["tool_choice"] = {"type": "none"}
-        r = get(API + "/v1/messages", body, group)
-        u = r.get("usage", {})
-        text = " ".join(b.get("text", "") for b in r.get("content", []) if b.get("type") == "text")
-        return (u.get("input_tokens") or 0) + (u.get("cache_read_input_tokens") or 0), u.get("cache_read_input_tokens") or 0, text, r.get("stop_reason") == "max_tokens"
+        if "unorouter" not in API:
+            # SubRouter's Opus 4.7 leaves the cache fields out of unstreamed replies (input 13 for a 27K conversation)
+            # and sends them streamed; tazuna streams off UnoRouter, so test it that way
+            body["stream"] = True
+            text, capped, called, u = "", False, False, {}
+            for e in sse("/v1/messages", body, group):
+                u.update({k: v for k, v in ((e.get("message") or {}).get("usage") or e.get("usage") or {}).items() if v})
+                d = e.get("delta") or {}
+                text += d.get("text", "") if d.get("type") == "text_delta" else ""
+                capped |= d.get("stop_reason") == "max_tokens"
+                called |= (e.get("content_block") or {}).get("type") == "tool_use"
+            if called:  # "Let me write a program:" and a tool call, despite tool_choice none: asked again without tools
+                text = "[called a tool instead of answering] " + text
+        else:
+            r = get(API + "/v1/messages", body, group)
+            u, capped = r.get("usage", {}), r.get("stop_reason") == "max_tokens"
+            text = " ".join(b.get("text", "") for b in r.get("content", []) if b.get("type") == "text")
+        cached = u.get("cache_read_input_tokens") or 0
+        return (u.get("input_tokens") or 0) + cached + (u.get("cache_creation_input_tokens") or 0), cached, text, capped
     body = {"model": model, "messages": msgs, "reasoning_effort": effort}
     if max_out:
         body["max_tokens"] = max_out
@@ -217,10 +232,12 @@ def cache_hit(model, group, calls=6):
 def check(model, group, price):
     """None when the group passes, else why not."""
     try:
-        hit = cache_hit(model, group)
+        # ROUTE_CACHE_BLIND: the bill was measured to ignore the cache (SubRouter Gemini: chat reports 0 cached, the same
+        # calls through the native API report 82% cached, and the counter charged both the same)
+        hit = 0.0 if os.environ.get("ROUTE_CACHE_BLIND") else cache_hit(model, group)
     except (urllib.error.URLError, OSError, KeyError, ValueError) as e:
         return f"cache test failed: {str(e)[:80]}"
-    if hit < 0.5:
+    if hit < 0.5 and not os.environ.get("ROUTE_CACHE_BLIND"):
         return f"cache {hit:.0%}"
     cjk = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")
     t, capped = time.time(), False

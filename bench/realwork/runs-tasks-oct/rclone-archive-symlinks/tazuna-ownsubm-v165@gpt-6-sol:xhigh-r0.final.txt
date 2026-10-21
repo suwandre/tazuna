@@ -1,0 +1,25 @@
+ 
+Implemented archive symlink support for ZIP and SquashFS backends.
+
+### Changes
+- Detect archive members with `os.ModeSymlink`.
+- Skip symlinks by default and log a notice recommending `--links`.
+- With `--links`:
+  - Expose symlinks using the `.rclonelink` suffix.
+  - Report target length as the object size.
+  - Read symlink targets with seek/range support.
+- Ensure `List` and `NewObject` agree on translated symlink names.
+- Preserve regular archive members whose names already end in `.rclonelink`.
+- Avoid ambiguous symlink/regular-name collisions.
+- Verified hostile archive paths cannot write outside the destination using local backend protections.
+- Added ZIP and SquashFS regression tests.
+
+### Verification
+Passed:
+
+```text
+go test ./backend/archive/... ./backend/local ./fs/operations -count=1
+go vet ./backend/archive/... ./backend/local ./fs/operations
+```
+
+Also manually verified `rclone copy --links` recreates a ZIP symlink correctly. The full repository test run encountered unrelated `cmd/gitannex` tests requiring an `rclone` executable in `PATH`.
