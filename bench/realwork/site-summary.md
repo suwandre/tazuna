@@ -9,7 +9,7 @@
 | SubRouter | gpt-6-luna | xhigh | 4 | tazuna-ownsubm-v129 r0 | 8 (9) | 3/3 | 0.005 | 91K / 3.62M / 0K / 29K | 98% | 7.6 | 67 | 64.2 | 55.7 | 6.25 | 0.088 | 32.225 |
 | UnoRouter | gpt-6.1-sol | max | 1 | tazuna-ownuno-v58 r0 | 8 (9) | 3/3 | 0.015 est | 214K / 4.11M / 0K / 29K | 95% | 22.4 | 70 | 21.5 | 24.8 | 8 | 0.015 | 22.4 |
 | Mortera | deepseek-v4.1-flash | max | 2 | tazuna-ownmrt-v98 r0 | 8 (8) | 3/3 | 0.018 | 77K / 3.40M / 0K / 42K | 98% | 8.9 | 74 | 78.6 | 92.2 | 8 | 0.059 | 28.25 |
-| SubRouter | gpt-6.1-sol | xhigh | 2 | tazuna-ownsubm-v137 r0 | 8 (9) | 3/3 | 0.019 | 135K / 1.54M / 0K / 21K | 92% | 13.7 | 33 | 25.3 | 28.9 | 7.5 | 0.013 | 14.75 |
+| SubRouter | gpt-6.1-sol | xhigh | 2 | tazuna-ownsubm-v137 r0 | 8 (9) | 3/3 | 0.019 | 135K / 1.54M / 0K / 21K | 92% | 13.7 | 33 | 25.3 | 28.9 | 7.5 | 0.022 | 14.75 |
 | BeatAPI | claude-haiku-5-5 | max | 3 | tazuna-ownbeat-v60 r0 | 8 (9) | 3/3 | 0.031 est | 106K / 1.87M / 0K / 64K | 95% | 14.5 | 45 | 73.1 | 89.3 | 6 | 0.041 | 17.633 |
 | SubRouter | gpt-6-astra | xhigh | 1 | tazuna-ownsubm-v140 r0 | 8 (9) | 3/3 | 0.120 | 86K / 1.76M / 0K / 29K | 95% | 14.4 | 38 | 33.4 | 23.6 | 8 | 0.120 | 14.4 |
 | Anthropic plan | claude-haiku-5-5 | high | 4 | tazuna-repo-v77 r1 | 8 (9) | 3/3 | 0.326 est | 0K / 4.59M / 140K / 75K | 97% | 7.6 | 54 | 163.7 | 236.7 | 6.75 | 1.784 | 22.4 |
@@ -29,7 +29,7 @@
 | Mortera | gpt-6-luna | max | 3 | tazuna-ownmrt-v107 r0 | 5 (9) | 3/3 | 0.012 | 200K / 6.51M / 0K / 29K | 97% | 17.9 | 99 | 27.5 | 30.6 | 4.333 | 0.025 | 37.9 |
 | SubRouter | gpt-5.6-sol | xhigh | 1 | tazuna-ownsubm-v163 r0 | 5 (9) | 2/3 | 0.040 | 178K / 3.93M / 0K / 35K | 96% | 17.7 | 81 | 33.2 | 20.9 | 5 | 0.040 | 17.7 |
 | apinex | claude-opus-5.5 | medium | 1 | tazuna-ownapx-v52 r0 | 5 (9) | 2/3 | 0.305 est | 523K / 0K / 0K / 17K | 0% | 6.5 | 25 | 44.7 | 34.8 | 5 | 0.305 | 6.5 |
-| SubRouter | gpt-6.1-sol-new | xhigh | 1 | tazuna-ownsubm-v168 r0 | 4 (9) | 2/3 | 0.003 | 4K / 400K / 0K / 3K | 99% | 12.0 | 31 | 3.9 | 37.4 | 4 | 0.003 | 12.0 |
+| SubRouter | gpt-6.1-sol-new | xhigh | 1 | tazuna-ownsubm-v168 r0 | 4 (9) | 2/3 | 0.021 | 67K / 1.51M / 0K / 20K | 96% | 12.0 | 31 | 27.9 | 37.4 | 4 | 0.021 | 12.0 |
 | SubRouter | gpt-6.1-sol-plus | xhigh | 1 | tazuna-ownsubm-v169 r0 | 4 (9) | 3/3 | 0.096 | 291K / 9.29M / 0K / 40K | 97% | 64.1 | 103 | 10.5 | 10.8 | 4 | 0.096 | 64.1 |
 | Shannon | gpt-6.1-sol | xhigh | 1 | tazuna-ownshn-v136 r0 | 4 (9) | 2/3 | 0.170 | 2.20M / 8.80M / 0K / 120K | 80% | 99.4 | 103 | 20.1 | 12.3 | 4 | 0.170 | 99.4 |
 | UnoRouter | claude-haiku-5-5 | max | 4 | tazuna-ownuno-v61 r0 | 4 (9) | 2/3 | 0.294 est | 1.52M / 4.87M / 0K / 174K | 76% | 33.7 | 91 | 85.9 | 41.9 | 2.5 | 0.088 | 13.575 |

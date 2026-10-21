@@ -20,7 +20,9 @@ ANCHOR = "tazuna-own-v38@deepseek-v4.1-flash:max"
 # real costs recorded in CHANGELOG.md from the sites' own counters (USD; yuan at 7 per USD; "paid" for Shannon's credit)
 RECORDED = {"v98": 0.018, "v99": 0.033, "v106": 0.10, "v107": 0.012, "v108": 0.14, "v111": 0.0265, "v112": 0.069,
             "v114": 0.046, "v118": 0.026, "v119": 0.004, "v121": 0.0064, "v127": 0.009, "v129": 0.005, "v136": 0.17,
-            "v138": 0.0044}
+            "v138": 0.0044,
+            # v167 and v168 ran together for $0.047 on the counter, split by tazuna's own estimates for each
+            "v167": 0.026, "v168": 0.021}
 SITE = {"tazuna-own": "CheaperInference", "tazuna-ownel": "Experiential Labs", "tazuna-ownbeat": "BeatAPI",
         "tazuna-ownuno": "UnoRouter", "tazuna-ownapx": "apinex", "tazuna-ownmrt": "Mortera", "tazuna-ownshn": "Shannon",
         "tazuna-ownshnds": "Shannon", "tazuna-ownsub": "SubRouter", "tazuna-ownsubm": "SubRouter",
@@ -63,7 +65,9 @@ def main():
                 judge[(x["harness"], x.get("run", 0))], anchor[(x["harness"], x.get("run", 0))] = x["overall"], a
     real, billed = {}, {}
     if os.path.exists(os.path.join(HERE, "sub-summary.json")):
-        subs = [s for s in json.load(open(os.path.join(HERE, "sub-summary.json"))) if s.get("usd") is not None]
+        # only runs the usage export covers whole (a logging gap cut v165-v168 short)
+        subs = [s for s in json.load(open(os.path.join(HERE, "sub-summary.json")))
+                if s.get("usd") is not None and sum(s["routes"].values()) >= 0.8 * s["calls"]]
         real = {s["label"]: s["usd"] for s in subs}
         billed = {s["label"]: s for s in subs}  # SubRouter's billed tokens (tazuna's own log has no cache writes)
     runs = []
