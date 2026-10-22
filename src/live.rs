@@ -1248,15 +1248,25 @@ const MAX_INSTRUCTIONS: usize = 80_000;
 /// the agent reads them when it works in that directory (like Claude Code, which loads nested files lazily).
 /// Returns (text for the system prompt, bytes included, files included).
 // ponytail: no `@file` import expansion; add it when a repo relies on imports
-/// The prompt as a file for `claude --system-prompt-file`, named by its content (one file per distinct prompt, left in the
-/// temp dir): on the command line, the repo's instructions in it made the process a match for an agent's `pkill -f`.
+/// The prompt as a file for `claude --system-prompt-file`, named by its content, in `~/.cache/tazuna/prompts` (0700): on
+/// the command line, the repo's instructions in it made the process a match for an agent's `pkill -f`; in a shared temp
+/// dir (/tmp on Linux) another user could plant the file or a symlink at the guessable name.
+// ponytail: one small file per distinct prompt is kept; prune by age if the folder ever grows
 fn prompt_file(prompt: &str) -> Result<PathBuf> {
     use std::hash::{Hash, Hasher};
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let dir = PathBuf::from(std::env::var("HOME").context("HOME")?).join(".cache/tazuna/prompts");
+    std::fs::DirBuilder::new().mode(0o700).recursive(true).create(&dir).context("creating the prompt folder")?;
+    std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))?; // also when it existed
     let mut h = std::collections::hash_map::DefaultHasher::new();
     prompt.hash(&mut h);
-    let path = std::env::temp_dir().join(format!("tazuna-prompt-{:016x}.md", h.finish()));
+    let path = dir.join(format!("{:016x}.md", h.finish()));
     if std::fs::read_to_string(&path).ok().as_deref() != Some(prompt) {
-        std::fs::write(&path, prompt).context("writing the prompt file")?;
+        // written beside and renamed: a reader never sees half a prompt
+        let tmp = dir.join(format!("{:016x}.{}.tmp", h.finish(), std::process::id()));
+        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).context("writing the prompt file")?;
+        std::io::Write::write_all(&mut f, prompt.as_bytes())?;
+        std::fs::rename(&tmp, &path).context("writing the prompt file")?;
     }
     Ok(path)
 }
@@ -1348,6 +1358,8 @@ mod tests {
         assert_eq!(prompt_file("rules\n# AGENTS.md\nintegration tests").unwrap(), a, "the same prompt reuses its file");
         assert_ne!(prompt_file("other").unwrap(), a);
         assert!(!a.to_string_lossy().contains("integration"), "the path carries none of the text");
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(std::fs::metadata(a.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700, "a private folder");
     }
 
     #[test]

@@ -23,8 +23,9 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
   `pkill -f "integration.test"`, which matched caddy's AGENTS.md text ("integration tests") in every engine's arguments
   and stopped ten runs at once (in real use the same command would stop tazuna itself; the prompt was also readable by
   anyone running `ps`). The engine now reads it from `TAZUNA_SYSTEM_PROMPT` and drops it from its environment, so the
-  agent's commands do not inherit it; the claude path's lean profiles pass `--system-prompt-file` (a temp file named by
-  the prompt's hash); the reviewer reads the task and diff on stdin. Checked: the same `pkill` against a run in a repo
+  agent's commands do not inherit it; the claude path's lean profiles pass `--system-prompt-file` (a file named by the
+  prompt's hash in a private `~/.cache/tazuna/prompts`, 0700: not the shared temp dir, where on Linux another user could
+  plant it); the reviewer reads the task and diff on stdin. Checked: the same `pkill` against a run in a repo
   whose AGENTS.md says "integration tests" leaves the engine running and the task finishes; a Haiku review reads its
   input from stdin (verdict in 4.9 s).
 
