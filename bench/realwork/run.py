@@ -511,6 +511,10 @@ def run_best2(h, w, prompt):
         if not ok:
             raise res[0]
         diffs = [capture_diff(d) for d in (w, w2)]
+        # the second attempt's changes as a binary-safe patch for moving them into `w`: the plain diff says only
+        # "Binary files differ" for a new test archive, which git apply cannot apply (smoke run v252)
+        base2 = sh(["git", "rev-list", "--max-parents=0", "HEAD"], w2).stdout.split()[-1]
+        patch_b = sh(["git", "diff", "--cached", "--binary", base2], w2).stdout
         pick, why, pick_cost = ok[0], "only one attempt finished", 0.0
         if len(ok) == 2 and diffs[0].strip() and diffs[1].strip():
             status = lambda r: {"passed": "passed", "failed": "FAILED"}.get(r["verify"], r["verify"] or "not run")
@@ -529,17 +533,17 @@ def run_best2(h, w, prompt):
                 why = f"pick failed ({e}); kept attempt A"
         elif len(ok) == 2 and not diffs[0].strip():
             pick, why = 1, "attempt A changed nothing"
+        with (HERE / "best2-picks.jsonl").open("a") as f:  # before moving changes: a failure there keeps the record
+            f.write(json.dumps(dict(harness=h, picked="AB"[pick], why=why, verify=[r["verify"] if isinstance(r, dict) else "error" for r in res],
+                                    turns=[r["turns"] if isinstance(r, dict) else None for r in res], pick_cost_api=pick_cost)) + "\n")
         if pick == 1:  # the second attempt's changes into the scored tree
             base = sh(["git", "rev-list", "--max-parents=0", "HEAD"], w).stdout.split()[-1]  # an agent may have committed
             sh(["git", "reset", "-q", "--hard", base], w)
             sh(["git", "clean", "-qfd"], w)
-            if diffs[1].strip():
-                a = subprocess.run(["git", "apply", "--whitespace=nowarn", "-"], cwd=w, input=diffs[1], text=True, capture_output=True)
+            if patch_b.strip():
+                a = subprocess.run(["git", "apply", "--binary", "--whitespace=nowarn", "-"], cwd=w, input=patch_b, text=True, capture_output=True)
                 if a.returncode:
                     raise RuntimeError("could not apply attempt B: " + a.stderr[-300:])
-        with (HERE / "best2-picks.jsonl").open("a") as f:
-            f.write(json.dumps(dict(harness=h, picked="AB"[pick], why=why, verify=[r["verify"] if isinstance(r, dict) else "error" for r in res],
-                                    turns=[r["turns"] if isinstance(r, dict) else None for r in res], pick_cost_api=pick_cost)) + "\n")
         parts = [r for r in res if isinstance(r, dict)]
         total = {k: sum(r[k] for r in parts) for k in ("inp", "cache_w", "cache_r", "out", "turns", "reported_cost")}
         return dict(total, final=parts[min(pick, len(parts) - 1)]["final"] if len(parts) == 2 else parts[0]["final"],
