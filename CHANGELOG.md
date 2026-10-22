@@ -16,6 +16,26 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Two cheap attempts, Opus picks one: +0.2 to +0.8, the worst run never picked, 2026-10-22 (bench only)
+
+Offline, from runs already judged: for each pair of runs of a task, Opus 5.5 high (`claude -p` on the subscription, no
+tools, no reference) sees the task and both diffs in random order and picks the one it would merge (`bench/realwork/pick.py`,
+`pick.oct.jsonl`); its pick is then compared with the judge's scores. Thirty picks used ~4% of the 5-hour window (~0.15%
+a pick, a third of a five-lens review).
+
+| pool | pairs | picked the better / worse / tie | picked mean vs pair mean | lowest picked |
+|---|---|---|---|---|
+| DeepSeek 1017 alone, rclone and both caddy tasks (judged 7-9) | 9 | 5 / 2 / 2 | 8.39 vs 8.22 | 8 (pair minimums 7-7.5) |
+| Luna, rclone, three routes (judged 2-8.5) | 21 | 14 / 5 / 2 | 6.98 vs 6.21 | 5 |
+
+The run judged 2 lost all six of its pairs; the best (8.5) won five. All five wrong picks in the Luna pool were v181
+(judged 5, 2/3 hidden tests), which won every pair with an extra guard (archive members under a symlink dropped: "blocks
+the hostile-archive escape") although the picker's prompt counts hardening beyond the task against a patch. In tazuna each
+attempt's own verification result would be at hand for the picker, which may have caught it. As a route, best of two
+costs one more cheap run (~$0.01-0.04) and ~0.15% of the window for the pick, and raises the floor where single runs
+vary most. Next: build it (two attempts in separate work trees, the pick with each attempt's test results) and measure
+it end to end.
+
 ## Five-lens gate on the own loop: worse, not better, 2026-10-22 (bench only)
 
 The cheap route with a quality gate: DeepSeek V4.1 Flash 1017 at max on SubRouter's default key implements; Opus 5.5 high

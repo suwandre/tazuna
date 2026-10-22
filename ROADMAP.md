@@ -270,6 +270,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-22: offline check of best-of-two with an Opus picker (30 picks from judged runs, ~4% of the 5-hour window):
+  +0.17 on a pool judged 7-9, +0.77 on Luna's 2-8.5 pool; the run judged 2 never picked; one run with an extra guard won
+  every pair. Next for the cheap route: build it with each attempt's test results shown to the picker, then measure.
 - 2026-10-22: the cheap route's quality gate (Opus five-lens review, the cheap model fixes the findings) measured on
   rclone and both caddy tasks, 3 runs each: 6.6 against 8.2 for DeepSeek 1017 alone. Not adopted; a reviewer that asks
   a cheap model for fixes widens its patches. Next candidate for the floor: two cheap attempts, Opus picks one (no fix).
