@@ -24,7 +24,7 @@ price() { for g in $(cat "$GFILE"); do python3 -I ../uno_route.py "$MODEL" --pri
 # group, and the refill waited since zlkpro was still listed)
 serving() {
   f=$(ls -t ~/bench-homes/cc/.local/share/tazuna/sessions/ | grep "$LABEL@$MODEL" | head -1)
-  at=$( [ -n "$f" ] && grep -c group_switch "$HOME/bench-homes/cc/.local/share/tazuna/sessions/$f" || echo 0)
+  at=$( [ -n "$f" ] && grep -c group_switch "$HOME/bench-homes/cc/.local/share/tazuna/sessions/$f"); at=${at:-0}  # grep -c prints 0 itself on no match
   n=0; for g in $(tail -n +$((at + 1)) "$GFILE"); do python3 -I ../uno_route.py "$MODEL" --price "$g" --budget 100 >/dev/null && n=$((n+1)); done; echo $n
 }
 ENV=$(price "$BUDGET") || { echo "$(date +%H:%M) not started: no listed group serves $MODEL within \$$BUDGET ($GROUP_LIST)" | tee "$LOG"; exit 1; }
@@ -34,7 +34,7 @@ START=$(cost "$ENV")
 used() { curl -s --max-time 15 https://api.unorouter.com/v1/dashboard/billing/usage -H "Authorization: Bearer $UNOROUTER_API_KEY" | python3 -I -c "import json,sys;print(json.load(sys.stdin)['total_usage'])"; }
 echo "$(date +%H:%M) start $MODEL on $GROUP_LIST: $ENV; used-cents $(used)" > "$LOG"
 env $ENV TAZUNA_GROUPS_FILE="$GFILE" BENCH_GATE=state GUARD_PAUSE_AT=101 GUARD_WEEK_AT=101 BENCH_SET=tasks-oct BENCH_TIMEOUT=10800 \
-  HARNESS_BIN=/tmp/tz-v75/tazuna ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "$H-$LABEL@$MODEL:max" > "bench.$LABEL.log" 2>&1 &
+  HARNESS_BIN=${HARNESS_BIN:-$HOME/bench-homes/tz-v75/tazuna} ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "$H-$LABEL@$MODEL:max" > "bench.$LABEL.log" 2>&1 &
 R=$!
 # only this run's own process tree (matching by model killed a parallel run of the same model and one of a model whose
 # name starts the same)

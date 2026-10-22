@@ -1335,5 +1335,263 @@
   "outcome": "3/3 suite_fail=0 959.2s turns=87 in=5282546 out=44549 46.4to",
   "overlap": false,
   "judge": 6
+ },
+ {
+  "label": "v196",
+  "model": "gpt-6.1-sol",
+  "start": "10-22 12:24",
+  "calls": 111,
+  "edits": 61,
+  "input": 217050,
+  "cache_read": 6397184,
+  "cache_write": 0,
+  "output": 44513,
+  "cached_share": 0.967,
+  "usd": 0.0726,
+  "usd_per_call": 0.00065,
+  "usd_per_m_tokens": 0.011,
+  "routes": {
+   "子木 ai": 111
+  },
+  "route_prices": {
+   "子木 ai": {
+    "input": 0.09558823529411765,
+    "cache_read": 0.004779411764705883,
+    "cache_write": 0.11948529411764706,
+    "output": 0.47794117647058826
+   }
+  },
+  "wall_s": 1323,
+  "run_tok_s": 33.6,
+  "gen_tok_s": 187.0,
+  "first_token_s": 8.4,
+  "hidden": "2/3",
+  "outcome": "2/3 suite_fail=0 1323.3s turns=111 in=6614234 out=44513 33.6",
+  "overlap": false,
+  "judge": 4.5
+ },
+ {
+  "label": "v197",
+  "model": "gpt-6.1-sol",
+  "start": "10-22 12:24",
+  "calls": 75,
+  "edits": 38,
+  "input": 113395,
+  "cache_read": 5016064,
+  "cache_write": 0,
+  "output": 41002,
+  "cached_share": 0.978,
+  "usd": 0.0544,
+  "usd_per_call": 0.00073,
+  "usd_per_m_tokens": 0.0106,
+  "routes": {
+   "子木 ai": 75
+  },
+  "route_prices": {
+   "子木 ai": {
+    "input": 0.09558823529411765,
+    "cache_read": 0.004779411764705883,
+    "cache_write": 0.11948529411764706,
+    "output": 0.47794117647058826
+   }
+  },
+  "wall_s": 1263,
+  "run_tok_s": 32.5,
+  "gen_tok_s": 201.4,
+  "first_token_s": 9.7,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 1263.1s turns=75 in=5129459 out=41002 32.5t",
+  "overlap": false,
+  "judge": 7.5
+ },
+ {
+  "label": "v200",
+  "model": "gpt-6-luna",
+  "start": "10-22 13:37",
+  "calls": 63,
+  "edits": 26,
+  "input": 109748,
+  "cache_read": 4541926,
+  "cache_write": 106911,
+  "output": 31928,
+  "cached_share": 0.954,
+  "usd": 0.0154,
+  "usd_per_call": 0.00025,
+  "usd_per_m_tokens": 0.0032,
+  "routes": {
+   "LingAI": 63
+  },
+  "route_prices": {
+   "LingAI": {
+    "input": 0.02058823529411765,
+    "cache_read": 0.002058823529411765,
+    "cache_write": 0.025735294117647058,
+    "output": 0.10294117647058823
+   }
+  },
+  "wall_s": 888,
+  "run_tok_s": 35.9,
+  "gen_tok_s": 121.0,
+  "first_token_s": 7.7,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 987.3s turns=63 in=4651674 out=31928 32.3to",
+  "overlap": false,
+  "judge": 8.5
+ },
+ {
+  "label": "v201",
+  "model": "gpt-6-luna",
+  "start": "10-22 13:37",
+  "calls": 105,
+  "edits": 38,
+  "input": 166348,
+  "cache_read": 10556795,
+  "cache_write": 165973,
+  "output": 80301,
+  "cached_share": 0.969,
+  "usd": 0.0343,
+  "usd_per_call": 0.00033,
+  "usd_per_m_tokens": 0.0031,
+  "routes": {
+   "LingAI": 105
+  },
+  "route_prices": {
+   "LingAI": {
+    "input": 0.02058823529411765,
+    "cache_read": 0.002058823529411765,
+    "cache_write": 0.025735294117647058,
+    "output": 0.10294117647058823
+   }
+  },
+  "wall_s": 2024,
+  "run_tok_s": 39.7,
+  "gen_tok_s": 74.6,
+  "first_token_s": 9.4,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 2122.7s turns=105 in=10723143 out=80301 37.",
+  "overlap": false,
+  "judge": 8
+ },
+ {
+  "label": "v202",
+  "model": "deepseek-v4.1-flash",
+  "start": "10-22 14:25",
+  "calls": 213,
+  "edits": 15,
+  "input": 4507726,
+  "cache_read": 23047561,
+  "cache_write": 0,
+  "output": 216030,
+  "cached_share": 0.836,
+  "usd": 0.0566,
+  "usd_per_call": 0.00027,
+  "usd_per_m_tokens": 0.0021,
+  "routes": {
+   "a6aa": 213
+  },
+  "route_prices": {
+   "a6aa": {
+    "input": 0.009705882352941177,
+    "cache_read": 0.00019411764705882354,
+    "cache_write": null,
+    "output": 0.03882352941176471
+   }
+  },
+  "wall_s": 2717,
+  "run_tok_s": 79.5,
+  "gen_tok_s": 236.8,
+  "first_token_s": 4.9,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 3336.2s turns=213 in=27555287 out=216030 64",
+  "overlap": false,
+  "judge": 5.5
+ },
+ {
+  "label": "v203",
+  "model": "deepseek-v4.1-flash-1017",
+  "start": "10-22 14:20",
+  "calls": 133,
+  "edits": 2,
+  "input": 666754,
+  "cache_read": 11494784,
+  "cache_write": 0,
+  "output": 142023,
+  "cached_share": 0.945,
+  "usd": 0.0146,
+  "usd_per_call": 0.00011,
+  "usd_per_m_tokens": 0.0012,
+  "routes": {
+   "Kriora": 133
+  },
+  "route_prices": {
+   "Kriora": {
+    "input": 0.009970588235294118,
+    "cache_read": 0.00019941176470588236,
+    "cache_write": 0.009970588235294118,
+    "output": 0.03988235294117647
+   }
+  },
+  "wall_s": 2004,
+  "run_tok_s": 70.9,
+  "gen_tok_s": 219.4,
+  "first_token_s": 5.4,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 2547.9s turns=133 in=12161538 out=142023 55",
+  "overlap": false,
+  "judge": 6
+ },
+ {
+  "label": "v204",
+  "model": "gpt-6-luna",
+  "start": "10-22 14:34",
+  "calls": 72,
+  "edits": 37,
+  "input": 73994,
+  "cache_read": 2881280,
+  "cache_write": 0,
+  "output": 24106,
+  "cached_share": 0.975,
+  "usd": 0.0029,
+  "usd_per_call": 4e-05,
+  "usd_per_m_tokens": 0.001,
+  "routes": {
+   "OpenAI Pro": 73
+  },
+  "route_prices": {},
+  "wall_s": 523,
+  "run_tok_s": 45.9,
+  "gen_tok_s": 171.3,
+  "first_token_s": 3.6,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 1067.1s turns=72 in=2915762 out=24012 22.5t",
+  "overlap": false,
+  "judge": 6
+ },
+ {
+  "label": "v205",
+  "model": "gpt-6-luna",
+  "start": "10-22 14:34",
+  "calls": 67,
+  "edits": 35,
+  "input": 131134,
+  "cache_read": 4839168,
+  "cache_write": 0,
+  "output": 41955,
+  "cached_share": 0.974,
+  "usd": 0.005,
+  "usd_per_call": 7e-05,
+  "usd_per_m_tokens": 0.001,
+  "routes": {
+   "OpenAI Pro": 67
+  },
+  "route_prices": {},
+  "wall_s": 699,
+  "run_tok_s": 60.0,
+  "gen_tok_s": 160.6,
+  "first_token_s": 4.8,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 1242.5s turns=67 in=4970302 out=41955 33.8t",
+  "overlap": false,
+  "judge": 8
  }
 ]

@@ -1,0 +1,20 @@
+Summary of changes:
+
+**`backend/archive/zip/zip.go`**
+- Reads `-l/--links` from the context in `New`.
+- Symlinks (entries with `os.ModeSymlink`) are now skipped unless `--links` is in use, with a single notice naming the flag (`Skipped N symbolic links - use -l/--links to read them`).
+- With `--links` a symlink is exposed under its archive name plus `.rclonelink`; `Size` is the entry's (target) length and `Open` returns the target, honouring seek/range options (clamping offsets for links).
+- Entry-name resolution (sanitisation, root filtering, link suffix) is factored into `zipEntryFor`, so listing and `NewObject` share it and agree on names.
+- A regular member always wins a name a symlink would also be exposed under (both directory/object cases), so `x.rclonelink` stays a regular file.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Symlinks are no longer silently dropped: skipped with a notice unless `--links`, otherwise exposed as `.rclonelink` objects with target length, target read via the go-diskfs `StatT`/`Readlink`, and range/seek support through a shared `linkReader`.
+- `NewObject` resolves the suffix to a symlink while a regular file takes precedence; `findRootObject` lets a root name a symlink (with suffix) so single-object listing works.
+- Regular files/directories win name collisions with symlinks, matching zip.
+
+**Tests**
+- `zip_internal_test.go`: symlink listing/open/seek/range, `--links` gating, `.rclonelink` regular-file precedence, name-collision behaviour, root-at-symlink, and the hostile symlink-plus-member copy escape test.
+- `squashfs_internal_test.go`: same coverage using an image built in-process with go-diskfs (no external tools).
+- `docs/content/archive.md`: documented symlink handling.
+
+Verified with `go build ./...`, `go vet`, `gofmt`, `golangci-lint run ./backend/archive/...` (0 issues), `go test ./backend/archive/...` (plus `-race`), and manual `rclone lsl`/`copy --links` runs against both zip and squashfs archives, including the hostile-archive scenario (nothing written outside the destination).

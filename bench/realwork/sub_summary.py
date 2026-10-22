@@ -17,27 +17,30 @@ SESSIONS = os.path.expanduser("~/bench-homes/cc/.local/share/tazuna/sessions")
 QUOTA_PER_USD, UTC_OFFSET = 500_000, timedelta(hours=2)  # the log is in UTC, the run logs in CEST
 DEFAULT = ["v129", "v131", "v137", "v140", "v141", "v143", "v145", "v148", "v150", "v151", "v153", "v154", "v156",
            "v157", "v158", "v159", "v160", "v161", "v163", "v165", "v166", "v167", "v168", "v169", "v170", "v172", "v174",
-           "v175", "v176", "v177", "v178", "v179", "v180", "v181", "v182", "v183", "v184", "v185", "v186", "v189"]
+           "v175", "v176", "v177", "v178", "v179", "v180", "v181", "v182", "v183", "v184", "v185", "v186", "v189", "v196",
+           "v197", "v200", "v201", "v202", "v203", "v204", "v205"]
 LOG_MODEL = {"minimax-m3.1-flash-free": "minimax/minimax-m3.1-flash:free"}  # the run's model as SubRouter's log names it
 
 
 def run_window(label):
-    """(model, start, end, result line) from mrt-<label>.log; the log's lines carry the time only, its creation the date."""
+    """(model, start, end, result line, effort) from mrt-<label>.log; the log's lines carry the time only, its creation the
+    date; the effort is on the start line since 2026-10-22 (None before)."""
     path = os.path.join(HERE, f"mrt-{label}.log")
     lines = open(path).read().splitlines()
     m = re.match(r"(\d\d):(\d\d) start (\S+)", lines[0])
     end = next((l for l in lines if " end:" in l), None)
+    eff = (re.search(r" effort (\w+)", lines[0]) or [None, None])[1]
     born = datetime.fromtimestamp(os.stat(path).st_birthtime)
     day = datetime(born.year, born.month, born.day)
     start = day + timedelta(hours=int(m[1]), minutes=int(m[2]))
     if end is None:  # still running
-        return m[3], start, datetime.now(), "running"
+        return m[3], start, datetime.now(), "running", eff
     e = re.match(r"(\d\d):(\d\d)", end)
     stop = day + timedelta(hours=int(e[1]), minutes=int(e[2]) + 1)
     if stop < start:
         stop += timedelta(days=1)
     r0 = re.search(r"r0: (.*)", end)
-    return m[3], start, stop, (r0[1] if r0 else end.split(" ", 1)[-1])
+    return m[3], start, stop, (r0[1] if r0 else end.split(" ", 1)[-1]), eff
 
 
 def session(label):
@@ -59,7 +62,7 @@ def session(label):
     return s
 
 
-def usage(rows, model, start, stop):
+def usage(rows, model, start, stop, effort=None):
     """Real spend, billed tokens, routes with their prices (USD per M: the log's provider prices are USD per M, charged
     at 0.5 quota per price x token) and per-request speed of the run's requests in SubRouter's log."""
     q, routes, rates, frts, tok = 0, collections.Counter(), [], [], collections.Counter()
@@ -69,6 +72,8 @@ def usage(rows, model, start, stop):
         if r[2] != LOG_MODEL.get(model, model) or not start <= t <= stop or r[1] != "消费":
             continue
         d = json.loads(r[14]) if r[14].startswith("{") else {}
+        if effort and d.get("reasoning_effort") != effort:  # two efforts of one model run side by side (v196/v197)
+            continue
         q += int(r[7] or 0); route = d.get("provider_name") or r[4]; routes[route] += 1
         cr, cw = int(d.get("cache_tokens") or 0), int(d.get("cache_creation_tokens") or 0)
         # Claude rows count input without the cache, OpenAI-style rows with it
@@ -111,10 +116,10 @@ def main():
     results = {r["harness"]: r for r in map(json.loads, open(os.path.join(HERE, "results-tasks-oct.jsonl"))) if r.get("task") == "rclone-archive-symlinks"}
     jd, out = judges(), []
     for label in labels:
-        model, start, stop, end = run_window(label)
+        model, start, stop, end, effort = run_window(label)
         s = session(label) or collections.Counter()
         harness = next((h for h in results if f"-{label}@" in h), None)
-        u = usage(rows, model, start, stop)
+        u = usage(rows, model, start, stop, effort)
         # billed tokens from SubRouter's log when the run is in it, else tazuna's own counts (no cache writes there)
         b = u["tokens"] if u["routes"] else {"input": s["input_tokens"], "cache_read": s["cache_read_input_tokens"], "cache_write": 0, "output": s["output_tokens"]}
         inp, cr, cw, o = b["input"], b["cache_read"], b["cache_write"], b["output"]

@@ -1,0 +1,5 @@
+Implemented `-l/--links` support for ZIP and squashfs archives. Symlinks are skipped by default with a notice naming the flag; with links enabled, they appear with the `.rclonelink` suffix and open as their target text, including range and seek reads. Squashfs uses link metadata without following the symlink, and `NewObject` matches listing behavior. Regular files ending in `.rclonelink` remain regular files.
+
+Added tests and a squashfs fixture for symlink handling, local symlink recreation, and preventing writes outside the destination from a hostile archive.
+
+Verified with `go test -count=1 ./backend/archive/... ./backend/local`, `go vet ./backend/archive/... ./backend/local`, and `golangci-lint run ./backend/archive/... ./backend/local`.

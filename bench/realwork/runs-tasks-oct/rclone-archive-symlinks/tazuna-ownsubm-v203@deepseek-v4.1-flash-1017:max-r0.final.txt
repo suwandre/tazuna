@@ -1,0 +1,28 @@
+Done. Summary of the change:
+
+## What changed
+
+**`backend/archive/zip/zip.go`**
+- Read `fs.GetConfig(ctx).Links` (`-l`/`--links`) into a new `Fs.links` field.
+- In `readZip`, entries whose mode has `os.ModeSymlink` are now handled explicitly:
+  - without `--links` they are skipped, and a single notice per archive is logged naming the flag;
+  - with `--links` they are added under `name + fs.LinkSuffix` (`.rclonelink`). The target is the member's own data, so `Size()`/`Open()` (including seek/range options) already behave like a translated link, exactly as `local` does.
+- The suffix is applied before root filtering, so a single-object lookup (e.g. `:archive:test.zip/link.txt.rclonelink`) and directory listings agree, and a regular member literally named `foo.rclonelink` remains an ordinary file (its name matches exactly and is not a symlink).
+
+**`backend/archive/squashfs/squashfs.go`**
+- Squashfs symlinks were previously dropped entirely. They are now:
+  - skipped (with a per-listing notice naming `--links`) when `--links` is off;
+  - with `--links`, listed under `name + .rclonelink` with `Size()` = length of the target, and `Open()` reads back the target honouring offset/limit (clamped as `local` does).
+- `newObjectNative` now prefers an exact name match so a regular `foo.rclonelink` isn't shadowed by a symlink `foo`, and only resolves the suffix form when `--links` is on.
+- Single-file roots (`:archive:image.sqfs/link.txt.rclonelink`) report the translated name.
+
+**Safety**: symlink targets are stored verbatim as the object body, exactly like a `local --links` source, so the existing destination-side `os.Root` protection prevents a hostile archive (symlink above the root plus a member “inside” it) from writing outside the destination. Verified with a real end-to-end copy.
+
+**Docs**: added a "Symbolic links" section to `docs/content/archive.md` with the example from the issue.
+
+## Tests added
+- `backend/archive/zip`: `TestReadZipSymlinks` — no-links skipping, translated listing/size/contents, seek/range, regular `.rclonelink` member, and single-object lookup.
+- `backend/archive/squashfs`: `TestSymlinks` (new `testdata/symlink.sqfs` fixture) — same matrix plus subdirectory and single-object cases.
+- `backend/archive`: `TestArchiveSymlinkEscape` — hostile archive must not write outside the destination.
+
+Verified with `go test ./backend/archive/...`, `-race`, `go vet`, `golangci-lint` (0 issues), plus the existing external-binary `TestArchiveZip`/`TestArchiveSquashfs` integration tests and manual `rclone lsl/copy --links` runs.

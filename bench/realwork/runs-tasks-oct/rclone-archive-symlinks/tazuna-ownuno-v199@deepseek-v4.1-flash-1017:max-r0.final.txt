@@ -1,0 +1,26 @@
+All changes are in place and verified. Summary:
+
+## What changed
+
+**ZIP backend** (`backend/archive/zip/zip.go`)
+- Added a `links` field populated from `fs.GetConfig(ctx).Links` (`-l/--links`).
+- In `readZip`, entries whose mode has `os.ModeSymlink` are now skipped and counted when links mode is off; with links mode on they are exposed under their name plus `fs.LinkSuffix` (`.rclonelink`). Since the zip member body already contains the link target, the existing object/`Open` path returns it with the correct size and honours seek/range options automatically.
+- Emits `Skipped N symlinks - use -l/--links to read them` when any were dropped.
+- Regular members whose names already end in `.rclonelink` are untouched because detection uses the file mode, not the name.
+
+**Squashfs backend** (`backend/archive/squashfs/squashfs.go`)
+- Added the same `links` flag handling. Symlink entries (previously dropped entirely) are skipped and counted without `--links`, or exposed as `.rclonelink` objects with `Size()` = target length and `Open` reading the target through the existing offset/limit logic.
+- `readlink` reads the target from go-diskfs's `*squashfs.StatT`, treating an empty target as valid since symlink-ness is decided from the mode.
+- `newObjectNative` applies the same naming/skipping rules as `List`, so listing and `NewObject` agree; a regular file named `foo.rclonelink` still resolves as a regular file.
+
+**Docs** (`docs/content/archive.md`) — new "Symlinks" section documenting the flag, suffix, and copy-back behaviour.
+
+**Tests**
+- `backend/archive/zip/zip_internal_test.go`: `TestReadZipSymlink` covers skip-by-default, `.rclonelink` naming/size/target under `--links`.
+- `backend/archive/archive_internal_test.go`: `TestArchiveSquashfsSymlink` (external `mksquashfs`, includes a real file ending in `.rclonelink`) and `TestArchiveZipSymlinkEscape`, an end-to-end hostile archive (`a -> ../outside` plus `a/pwned.txt`) verifying `sync.CopyDir` refuses and nothing lands outside the destination.
+
+## Verification
+- `go build ./...` — passes.
+- `go test -count=1 ./backend/archive/...` — all packages pass.
+- `golangci-lint run ./backend/archive/...` — 0 issues.
+- Manual run with a real `zip --symlinks` archive: default listing hides the link, `--links` lists `link.txt.rclonelink` with size 8, and `rclone copy --links` recreates `link.txt -> file.txt` at the destination.

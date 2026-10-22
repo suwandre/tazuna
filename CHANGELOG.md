@@ -16,6 +16,46 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Routes by day: Luna on the OpenAI Pro pool judges 8 for $0.005; UnoRouter DeepSeek over SubRouter, 2026-10-22 (bench only)
+
+rclone, China evening (12:24-15:20 CEST); max and xhigh side by side on one key and route, SubRouter's log split by the
+effort on each call (every call went out at the effort asked). Real cost: SubRouter's usage log, UnoRouter's counter.
+Judge calls: `judge.oct.day6.jsonl` (the Sol, LingAI-Luna and UnoRouter runs), `judge.oct.luna-routes.jsonl` (all Luna
+runs of 2026-10-21/22 in one pool) and `judge.oct.ds-sites.jsonl` (DeepSeek on both sites, both days), two each; anchors
+DeepSeek 8-9, Codex Luna 7-7.5. Runs judged twice moved 0.5-1.
+
+| run | key, route | effort | judge | tests | turns | time | real cost |
+|---|---|---|---|---|---|---|---|
+| gpt-6-luna (v205 / v204) | Luna pools key, OpenAI Pro | max / xhigh | 8 / 6 | 3/3, 3/3 | 67 / 72 | 21 / 18 min | $0.0050 / $0.0029 |
+| gpt-6-luna (v201 / v200) | 4-provider key, LingAI | max / xhigh | 8 / 8.5 | 3/3, 3/3 | 105 / 63 | 35 / 17 min | $0.034 / $0.015 |
+| gpt-6.1-sol (v197 / v196) | default, 子木 ai | max / xhigh | 7.5 / 4.5 | 3/3, 2/3 | 75 / 111 | 21 / 22 min | $0.054 / $0.073 |
+| DeepSeek 1017 (v199) | UnoRouter, zlkpro | max | 8-9 | 3/3 | 117 | 19 min | $0.009 |
+| DeepSeek V4.1 Flash (v198) | UnoRouter, ih-cb | max | 6.5 | 3/3 | 336 | 52 min | $0.016 |
+| DeepSeek 1017 (v203) | default, Kriora | max | 6 | 3/3 | 133 | 42 min | $0.015 |
+| DeepSeek V4.1 Flash (v202) | default, a6aa | max | 5.5 | 3/3 | 213 | 56 min | $0.057 |
+
+Luna by route, all seven runs in one pool: LingAI 8.5/8, OpenAI Pro pool 8/6, FoxRouter (2026-10-21, early morning in
+China) 6/5/2. The route moves Luna more than the effort does; max is ahead on two routes of three (mean 7.3 against 5.4 at
+xhigh). The Pro pool is the cheapest good route: 8 for half a cent, a seventh of LingAI. The default key sent Luna to a6aa,
+which cached nothing (0% in three checks, 13:14-13:25); a key with FoxRouter and the pools sent the check to FoxRouter,
+also at 0%; the pools alone cached 99%. Sol: max over xhigh this time (7.5 against 4.5), the other way on 2026-10-21 (7
+against 8.5): one run each does not settle it. DeepSeek: UnoRouter 1017 judged 8-9 in 19 min for under a cent; SubRouter's
+DeepSeek judged 5.5-6 in the China evening against 8-8.5 the night before, V4.1 Flash on a6aa at 3.6x 1017's cost on
+Kriora. UnoRouter 1017 needed four tries to find a group: its cheapest group took over 15 minutes for the long call, the
+next cached 9% or answered 502/503.
+
+Shannon again: of its GPT groups only 0.12x serves Luna and Sol (0.02x "upstream access forbidden" as on 2026-10-20, 0.19x
+and 0.37x without the models, 0.27x Sol only); Luna there failed the long call (over 15 minutes), Sol passed (73% cached,
+616 s long call). Luna on 0.12x and Sol on 0.27x bill ~4,400 input tokens for a one-line question (a hidden system prompt);
+Sol on 0.12x 44.
+
+Bench tooling: the SubRouter run, its watcher and the spend guard live in the repo (`bench/realwork/sub_run.sh`,
+`sub_guard.sh`; a restart of the Mac at 12:10 cleared their `/tmp` copies, the tazuna binary the runs used and three runs
+in flight). The no-edit stop counts a change in the work tree as an edit (DeepSeek edits through python in bash: 321 calls
+without an edit tool, 618 lines changed). `sub_summary.py` reads the effort from the run's start line and splits two runs
+of one model side by side by it; `uno_run.sh` takes `HARNESS_BIN` and no longer prints an arithmetic error on a run without
+a group switch.
+
 ## Effort and time of day on SubRouter: Luna max over xhigh, Sol xhigh over max; MiniMax free passes, 2026-10-21/22 (bench only)
 
 rclone, one run each unless noted; real cost from SubRouter's usage log (`sub_summary.py`), UnoRouter at tazuna's estimate.

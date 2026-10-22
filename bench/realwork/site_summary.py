@@ -22,13 +22,15 @@ RECORDED = {"v98": 0.018, "v99": 0.033, "v106": 0.10, "v107": 0.012, "v108": 0.1
             "v114": 0.046, "v118": 0.026, "v119": 0.004, "v121": 0.0064, "v127": 0.009, "v129": 0.005, "v136": 0.17,
             "v138": 0.0044,
             # v167 and v168 ran together for $0.047 on the counter, split by tazuna's own estimates for each
-            "v167": 0.026, "v168": 0.021}
+            "v167": 0.026, "v168": 0.021,
+            # UnoRouter's counter around each run (uno-<label>.log, cents)
+            "v198": 0.0156, "v199": 0.0090}
 SITE = {"tazuna-own": "CheaperInference", "tazuna-ownel": "Experiential Labs", "tazuna-ownbeat": "BeatAPI",
         "tazuna-ownuno": "UnoRouter", "tazuna-ownapx": "apinex", "tazuna-ownmrt": "Mortera", "tazuna-ownshn": "Shannon",
         "tazuna-ownshnds": "Shannon", "tazuna-ownsub": "SubRouter", "tazuna-ownsubm": "SubRouter",
         "tazuna-ownsubla": "SubRouter", "tazuna-ownsubl1": "SubRouter", "tazuna-ownsubl4": "SubRouter",
         "tazuna-ownsubhk": "SubRouter", "tazuna-ownsubgp": "SubRouter (Grok pool key)", "tazuna-ownsubmm": "SubRouter",
-        "tazuna-ownsubx": "SubRouter", "codexsub": "SubRouter (Codex CLI)",
+        "tazuna-ownsubx": "SubRouter", "tazuna-ownshngpt": "Shannon", "codexsub": "SubRouter (Codex CLI)",
         "codex": "OpenAI plan (Codex CLI)", "tazuna-repo": "Anthropic plan"}
 
 

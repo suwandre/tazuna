@@ -1,0 +1,3 @@
+Implemented symlink translation for ZIP and squashfs archives. Symlinks are skipped by default with a notice naming `--links`; with the flag enabled, they appear with the `.rclonelink` suffix and expose their target text, including range and seek reads. Added tests for listing and lookup consistency, regular files already ending in `.rclonelink`, and preventing a hostile archive copy from writing outside the destination.
+
+Verified with `go test -count=1 ./backend/archive/... ./backend/local` and `git diff --check`.
