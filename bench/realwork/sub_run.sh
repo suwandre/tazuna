@@ -10,7 +10,10 @@ cd "$(dirname "$0")" || exit 1
 source ~/.subrouter-key
 SESSIONS=~/bench-homes/cc/.local/share/tazuna/sessions
 used() { curl -s -A curl/8 --max-time 15 https://subrouter.ai/v1/dashboard/billing/usage -H "Authorization: Bearer ${!KEYENV}" | python3 -I -c "import json,sys;print(json.load(sys.stdin)['total_usage'])"; }
-stop() { echo "$(date +%H:%M) stopped: $1" >> "$LOG"; ps -axo pid=,command= | grep -- "-$LABEL@" | grep -v grep | awk '{print $1}' | xargs kill 2>/dev/null; }
+# a process and everything under it: tazuna and its engine carry no label on their command line (0.0.76), so they
+# are found through run.py, which does
+tree() { local c; for c in $(ps -axo pid=,ppid= | awk -v p="$1" '$2==p{print $1}'); do tree "$c"; done; echo "$1"; }
+stop() { echo "$(date +%H:%M) stopped: $1" >> "$LOG"; for p in $(ps -axo pid=,command= | grep -- "-$LABEL@" | grep -v grep | awk '{print $1}'); do kill $(tree "$p") 2>/dev/null; done; }
 LOG=mrt-$LABEL.log
 echo "$(date +%H:%M) start $MODEL on ${SUB_SITE:-SubRouter} $TASK price $PRICE cap $CAP effort $EFF; used $(used)" > "$LOG"
 TAZUNA_PRICE=$PRICE TAZUNA_MAX_USD=$CAP BENCH_GATE=${SUB_GATE-state} GUARD_PAUSE_AT=${GUARD_PAUSE_AT:-101} GUARD_WEEK_AT=${GUARD_WEEK_AT:-101} BENCH_SET=tasks-oct BENCH_TIMEOUT=${SUB_TIMEOUT:-10800} \

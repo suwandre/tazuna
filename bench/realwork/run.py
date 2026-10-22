@@ -479,7 +479,73 @@ def run_harness(h, w, prompt):
     u = d["usage"]
     return dict(inp=u.get("input_tokens", 0), cache_w=u.get("cache_creation_input_tokens", 0),
                 cache_r=u.get("cache_read_input_tokens", 0), out=u.get("output_tokens", 0),
-                turns=d.get("num_turns", 0), reported_cost=d.get("total_cost_usd", 0), final=d.get("result") or "")
+                turns=d.get("num_turns", 0), reported_cost=d.get("total_cost_usd", 0), final=d.get("result") or "",
+                verify=((d.get("tazuna") or {}).get("verify") or {}).get("status"))
+
+
+PICK_SYSTEM = """You review two candidate patches for the same task, as the maintainer who has to merge one of them. Pick the
+one you would merge: it does what the task asks and handles the cases the task implies, it is correct, and it changes no
+more than the task needs, in the style of the codebase. Extra features, rewrites of code the task did not touch and
+speculative hardening count against a patch, not for it. Each patch comes with the result of the repository's own tests
+after it: a patch whose tests failed needs a strong reason to win. Answer with JSON only: {"pick": "A" or "B", "why": "<one sentence>"}"""
+
+
+def run_best2(h, w, prompt):
+    """Best of two (bench prototype): the same own-loop setup twice, in two copies of the work tree at once; Opus on the
+    subscription (no tools, no reference) sees the task, both diffs and each attempt's test result and picks one; the
+    pick's changes end up in `w` for scoring. `tazuna-<x>best2-vN@model:effort` runs `tazuna-<x>-vN` twice
+    (tazuna-ownsubmbest2: SubRouter's default key; tazuna-ownsubxbest2: the key in SUBROUTER_X_KEYENV)."""
+    single = h.replace("best2-", "-", 1)
+    w2 = Path(str(w) + "-b")
+    shutil.copytree(w, w2, symlinks=True)  # the set-up tree before any change
+    try:
+        with ThreadPoolExecutor(2) as ex:
+            futs = [ex.submit(run_harness, single, d, prompt) for d in (w, w2)]
+            res = []
+            for f in futs:
+                try:
+                    res.append(f.result())
+                except Exception as e:  # one attempt failing leaves the other
+                    res.append(e)
+        ok = [i for i, r in enumerate(res) if isinstance(r, dict)]
+        if not ok:
+            raise res[0]
+        diffs = [capture_diff(d) for d in (w, w2)]
+        pick, why, pick_cost = ok[0], "only one attempt finished", 0.0
+        if len(ok) == 2 and diffs[0].strip() and diffs[1].strip():
+            status = lambda r: {"passed": "passed", "failed": "FAILED"}.get(r["verify"], r["verify"] or "not run")
+            text = (f"# Task\n\n{prompt}\n\n# Patch A (tests: {status(res[0])})\n\n```diff\n{diffs[0][:60000]}\n```\n\n"
+                    f"# Patch B (tests: {status(res[1])})\n\n```diff\n{diffs[1][:60000]}\n```")
+            r = subprocess.run(["claude", "-p", "--model", "claude-opus-5-5", "--effort", "high", "--output-format", "json",
+                                "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config",
+                                "--disable-slash-commands", "--tools", "", "--system-prompt", PICK_SYSTEM],
+                               input=text, capture_output=True, text=True, timeout=900)
+            try:
+                out = json.loads(r.stdout)
+                t = out.get("result", "")
+                p = json.loads(t[t.find("{"):t.rfind("}") + 1])
+                pick, why, pick_cost = (0 if p["pick"].strip().upper().startswith("A") else 1), p.get("why", ""), out.get("total_cost_usd") or 0.0
+            except (json.JSONDecodeError, KeyError, AttributeError) as e:
+                why = f"pick failed ({e}); kept attempt A"
+        elif len(ok) == 2 and not diffs[0].strip():
+            pick, why = 1, "attempt A changed nothing"
+        if pick == 1:  # the second attempt's changes into the scored tree
+            base = sh(["git", "rev-list", "--max-parents=0", "HEAD"], w).stdout.split()[-1]  # an agent may have committed
+            sh(["git", "reset", "-q", "--hard", base], w)
+            sh(["git", "clean", "-qfd"], w)
+            if diffs[1].strip():
+                a = subprocess.run(["git", "apply", "--whitespace=nowarn", "-"], cwd=w, input=diffs[1], text=True, capture_output=True)
+                if a.returncode:
+                    raise RuntimeError("could not apply attempt B: " + a.stderr[-300:])
+        with (HERE / "best2-picks.jsonl").open("a") as f:
+            f.write(json.dumps(dict(harness=h, picked="AB"[pick], why=why, verify=[r["verify"] if isinstance(r, dict) else "error" for r in res],
+                                    turns=[r["turns"] if isinstance(r, dict) else None for r in res], pick_cost_api=pick_cost)) + "\n")
+        parts = [r for r in res if isinstance(r, dict)]
+        total = {k: sum(r[k] for r in parts) for k in ("inp", "cache_w", "cache_r", "out", "turns", "reported_cost")}
+        return dict(total, final=parts[min(pick, len(parts) - 1)]["final"] if len(parts) == 2 else parts[0]["final"],
+                    verify=res[pick]["verify"] if isinstance(res[pick], dict) else None)
+    finally:
+        shutil.rmtree(w2, ignore_errors=True)
 
 
 PLAN_PROMPT = """You are the planner. A cheaper model will implement your plan without your context: it sees only the task and
@@ -561,7 +627,7 @@ def run_plan_exec(h, w, prompt):
                 phase_cost={k: round(v, 4) for k, v in costs.items()})
 
 
-HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
+HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
              "cc": run_cc, "cc-lean": run_cc, "cc-mid": run_cc, "cc-ecc": run_cc, "cc-superpowers": run_cc, "cc-caveman": run_cc,
              "cc-graphify": run_cc, "cc-gstack": run_cc, "cc-allplugins": run_cc}
 

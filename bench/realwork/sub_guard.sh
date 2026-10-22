@@ -14,7 +14,9 @@ else
   source ~/.subrouter-key; UNIT=fen PER_USD=700
   used() { curl -s -A curl/8 --max-time 15 https://subrouter.ai/v1/dashboard/billing/usage -H "Authorization: Bearer $SUBROUTER_MODELS_KEY" | python3 -I -c "import json,sys;print(json.load(sys.stdin)['total_usage'])"; }
 fi
-pids() { ps -axo pid=,command= | grep -E -- "$RE" | grep -v grep | awk '{print $1}'; }
+tree() { local c; for c in $(ps -axo pid=,ppid= | awk -v p="$1" '$2==p{print $1}'); do tree "$c"; done; echo "$1"; }
+# run.py carries the label; tazuna and its engine under it do not (0.0.76): stop the whole tree
+pids() { for p in $(ps -axo pid=,command= | grep -E -- "$RE" | grep -v grep | awk '{print $1}'); do tree "$p"; done; }
 sleep 30
 while [ -n "$(pids)" ]; do
   u=$(used)
