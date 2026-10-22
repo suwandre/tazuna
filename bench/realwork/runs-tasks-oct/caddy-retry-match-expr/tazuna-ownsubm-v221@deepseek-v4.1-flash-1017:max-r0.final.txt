@@ -1,0 +1,29 @@
+All checks pass. Here's what I did.
+
+## Root cause
+
+Since #7569, `reverseProxy()` treated *any* matcher set containing a `MatchExpression` as a response condition, so an expression that only inspected the request (e.g. `{http.request.method} == "POST"`) matched every successful response and caused the request to be retried until retries were exhausted (502).
+
+## Changes
+
+**`modules/caddyhttp/celmatcher.go`**
+- `MatchExpression` now records the placeholder names read by the provisioned expression (`celPlaceholderNames`, walking the compiled CEL AST for `ph(...)` calls) and exposes them via `Placeholders()`. Non-literal placeholder names are reported as `""`, meaning "unknown until evaluation time".
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`, which only treats a matcher set as a response condition when an expression references response-only placeholders: `http.reverse_proxy.status_code`, `status_text`, `upstream.latency`/`latency_ms`, any `http.reverse_proxy.header.*`, or an unknown placeholder name.
+- Request-only expressions (method, path, `upstream.host`, escaped placeholders in string literals, lookalike names like `status_codes`) are again plain request conditions, as before v2.11.3.
+- Updated the `RetryMatchRaw` doc comment to describe the narrowed behavior.
+
+**Tests**
+- `celmatcher_test.go`: new `TestMatchExpressionPlaceholders` covering shorthand, explicit `ph(req, ...)`, escaped placeholders, dynamic names, and no placeholders.
+- `retries_test.go`:
+  - `TestResponseRetryStatusCode` now also runs via explicit `ph(req, "http.reverse_proxy.status_code")`.
+  - New `TestRequestOnlyExpressionDoesNotRetryResponses` (POST through two healthy upstreams; asserts one hit, 200, body `ok`) for request-only, upstream-selection, escaped-placeholder, and lookalike-placeholder expressions.
+  - New `TestMatcherSetReferencesResponse` table test for the response-vs-request classification.
+
+## Verification
+
+- `go test ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/` — pass
+- `go test -race -short ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/` — pass
+- `go test ./caddytest/integration/ -run TestReverseProxyRetryMatch` — pass
+- `go build ./...`, `go vet`, and `golangci-lint run ./modules/caddyhttp/...` — clean

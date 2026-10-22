@@ -1,0 +1,28 @@
+I fixed the Unix-socket reload leak. Summary of changes:
+
+## Root cause
+
+`reuseUnixSocket` dup'd the socket file to make a new `net.Listener`, but never closed the intermediate `*os.File` it got from `File()`. That leaked descriptor stayed open and listening, so the old socket accepted connections into a queue nobody read (clients hung) until the finalizer eventually closed it at the next GC. Socket-file cleanup in `unixListener.Close`/`unixConn.Close` was also broken:
+
+- `Close` on the listener's *last* reference closed the underlying socket before calling `File()`, so `File()` failed and the unlink never happened (file left behind).
+- A second `Close` decremented the shared reference count again (and the `deleteListener` wrapper would also underflow `listenerPool`).
+- `reuseUnixSocket` unlinked the address unconditionally, including Linux abstract (`@name`) sockets.
+- The map entry was replaced on each reuse, so the last close deleted an entry that may no longer correspond to it.
+
+## Fix (`listen_unix.go`)
+
+- `unixSockets` now stores a `*unixSocket` "keeper" (a duplicate listener/packet conn plus a shared refcount) that stays open for the whole life of the socket and hands out a fresh dup to each holder.
+- `unixListener`/`unixConn` each carry `path` and a `closed` flag; `Close` is CAS-guarded, returns `net.ErrClosed` on a second call, closes only its own holder, and on the last reference closes the keeper and unlinks the file — all under `unixSocketsMu`, which is also held by `NetworkAddress.Listen`, so a close racing with a new listen can't unlink a socket the new listener is using.
+- Abstract sockets (`@...` on Linux/Android) are never unlinked, and no unlink is attempted before binding them.
+- Intermediate `*os.File` copies are always closed, and error paths undo the `listenerPool` reference.
+
+## Tests (`listen_unix_test.go`, new)
+
+Added coverage for: immediate close + unlink for stream and datagram sockets, dial failing immediately after close, refcounted reuse (file survives and the socket still accepts while another holder lives, file removed on last close), double-close returning `net.ErrClosed` without releasing another reference, concurrent close-vs-relisten for `unix`/`unixgram`, and abstract sockets not unlinking a same-named filesystem path.
+
+## Verification
+
+- `go test -race -count=1 -run 'TestUnix|TestAbstract|TestFakeClose' .` — pass (abstract test skips on darwin, and passes in a Linux container).
+- `go test -race -short ./...` — no failures; `go vet ./...`, `golangci-lint run` (0 issues), `go build ./...`.
+- Cross-compiles for linux/amd64/arm64/386, darwin, freebsd, openbsd, netbsd, dragonfly, aix, illumos, android, windows.
+- End-to-end in a Linux container with the built binary: after `caddy reload` from `admin unix//tmp/repro/admin.sock` to `localhost:2999`, `/proc/net/unix` has no entry for the old path, the file is gone, and dialing it returns `connection refused`; the new TCP admin answers 200. Also verified moving between two Unix sockets, `|0660` mode suffixes, and a site `bind unix/...` moved to TCP.

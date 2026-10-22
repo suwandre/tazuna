@@ -1,0 +1,17 @@
+Done. Summary of the change:
+
+**Zip archiver (`backend/archive/zip/zip.go`)**
+- `Fs` now records whether `-l/--links` is in use (`fs.GetConfig(ctx).Links`).
+- While reading the archive, entries whose mode has `os.ModeSymlink` are skipped unless links mode is on. When on, they are exposed under their name plus `fs.LinkSuffix`; the member body (the target) is what `Open` reads, and `Size` is already the body length, so listing/lookup agree.
+- A skipped-symlink notice naming the flag is logged once per archive.
+- Regular members ending in `.rclonelink` are untouched, so they stay regular files.
+
+**Squashfs archiver (`backend/archive/squashfs/squashfs.go`)**
+- Symlinks were previously dropped silently. Now, without links mode they are skipped with a per-directory notice naming the flag; with links mode they become objects named `<name>.rclonelink` whose size is the target length and whose `Open` returns the target (clamped offset, honouring range/seek options).
+- `newObjectNative` applies the same naming rule as `List`, so listing and single-object lookup agree.
+
+**Tests**
+- `zip_internal_test.go`: symlink listing/lookup with and without links mode, target read-back with seek/range options, plain `.rclonelink` file staying regular, symlink in a subdirectory.
+- `archive_internal_test.go`: end-to-end squashfs symlink listing/reading (skipped if `mksquashfs` is missing), a zip `--links` copy recreating a real symlink, and a hostile zip (symlink `a -> ../outside` plus member `a/pwned.txt`) verifying `sync.CopyDir` fails and nothing is written outside the destination.
+
+Verified with `gofmt`, `go vet ./backend/archive/...`, and `go test -count=1 ./backend/archive/...` (all three packages pass).

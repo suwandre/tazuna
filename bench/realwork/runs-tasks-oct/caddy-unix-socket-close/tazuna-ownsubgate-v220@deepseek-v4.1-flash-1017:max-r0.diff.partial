@@ -1,0 +1,12 @@
+diff --git a/listen_unix.go b/listen_unix.go
+index d60f69f..9755fd0 100644
+--- a/listen_unix.go
++++ b/listen_unix.go
+@@ -29,6 +29,7 @@ import (
+ 	"os"
+ 	"slices"
+ 	"strconv"
++	"strings"
+ 	"sync"
+ 	"sync/atomic"
+ 	"syscall"

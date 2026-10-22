@@ -1,0 +1,30 @@
+All checks pass. Here's a summary of the work.
+
+## Root cause
+
+`unixListener.Close()` / `unixConn.Close()` in `listen_unix.go` did two wrong things when the last reference went away:
+
+1. **`uln.File()` was called to learn the socket's name.** `File()` `dup()`s the underlying listening fd. That duplicate fd was never closed — it was only reclaimed when the finalizer ran during GC, which is why the socket kept listening for ~2 minutes (until the forced GC) or forever with `GOGC=off`. This is the "clients hang" symptom: the kernel socket still had a live fd, so connects were accepted into the backlog with nobody accepting.
+2. **The name used for unlinking was wrong.** `os.File.Name()` on a socket dup returns `"unix:/path/sock->"`, so `syscall.Unlink(name)` never removed the real file. That's why the socket file stayed on disk.
+
+Also, `Close()` wasn't idempotent: calling it twice decremented the shared reference count twice, so closing the same listener twice could release another holder's reference (and remove its file).
+
+## Changes (`listen_unix.go`)
+
+- **Close no longer calls `File()`.** It derives the path from `Addr()`/`LocalAddr()` (a `*net.UnixAddr`, whose `String()` is the path) and closes the underlying `net.UnixListener`/`net.UnixConn` directly, so the fd is released immediately.
+- **Unlink only when the reference count reaches zero**, while holding `unixSocketsMu`, and after removing the map entry. This keeps the socket and its file alive for any other holder, and serializes with `reuseUnixSocket` so a reload's new listener can't have its freshly bound file removed underneath it.
+- **Idempotent Close:** added a `closed atomic.Bool` per wrapper; a second `Close` returns `net.ErrClosed` without touching the shared count.
+- **Abstract sockets:** added `isAbstractUnixSocket` (Linux/Android, `@` prefix), used both in `reuseUnixSocket` (don't try to unlink a stale file) and in `Close` (never unlink a filesystem path of the same name).
+- **`reuseUnixSocket`** now closes the duplicated `socketFile` it obtained via `File()`, fixing a per-reload fd leak.
+
+## Tests (`listen_unix_test.go`, new)
+
+Covers listener and datagram variants: immediate close + unlink + fast-refused dial; reuse keeps the socket usable and the file present until the last holder closes; double `Close` returns `net.ErrClosed` and doesn't decrement the shared count; 20-iteration close-vs-relisten race leaves a dialable socket and existing file; and Linux abstract sockets don't unlink a same-named filesystem path.
+
+## Verification
+
+- `go test -race -short ./...` — passes, no failures.
+- `go test -race -run Unix -count=3 .` — passes.
+- `go build ./...` and cross-builds for linux, windows, darwin, freebsd, openbsd, solaris/amd64 — OK.
+- `golangci-lint run --timeout 10m ./...` — 0 issues.
+- End-to-end with a locally built binary and the issue's repro: after the reload, `curl` on the old socket exits 7 (connection refused) immediately instead of timing out, and `admin.sock` is gone. Also verified moving a site's `bind unix/...` to TCP (old site socket refused, file removed, new TCP port serving), and reloading an identical Unix config (socket keeps working, file preserved).

@@ -1,0 +1,34 @@
+All checks pass. Here's a summary of the work.
+
+## Root cause
+
+In `listen_unix.go`, `unixListener.Close()` and `unixConn.Close()` called `File()` to discover the socket path. `File()` **duplicates the underlying file descriptor**, and the returned `*os.File` was never closed. Consequences:
+
+1. The duplicated listening FD stayed open, so the socket kept accepting/queueing connections after the real listener was closed — it only disappeared when the GC's finalizer closed the leaked `*os.File` (hence the 2‑minute forced GC, and never with `GOGC=off`).
+2. `file.Name()` for a Unix socket is `"unix:/path->"` (not the bare path), so `syscall.Unlink` targeted a non-existent name and the socket file was never removed.
+
+## Changes (`listen_unix.go`)
+
+- **Close no longer calls `File()`.** The path is taken from `Addr()` / `LocalAddr()`, so no FD is duplicated and the underlying listener/conn is closed synchronously. The file is unlinked immediately when the last reference closes.
+- **Double-close safety:** added a `closed atomic.Bool` to both wrappers; a second `Close()` returns `net.ErrClosed` without decrementing the shared reference count.
+- **Reload race:** `Close()` now holds `unixSocketsMu` for the whole decrement/close/unlink sequence, serializing against `NetworkAddress.Listen` (which already holds it). A close racing with a new listen either unlinks before the new bind, or decrements to 1 and leaves the path intact for the new holder.
+- **Abstract sockets:** added `isAbstractUnixSocket()` (Linux/Android `@` names); these are never unlinked and skip the pre-bind unlink, so closing one can't remove a same-named filesystem path.
+- **FD leak in reuse:** `reuseUnixSocket` now closes the temporary `socketFile` it dups.
+- `reuseUnixSocket` no longer attempts to unlink abstract socket names.
+
+## Tests (`listen_unix_test.go`, new, `//go:build unix && !solaris`)
+
+Covering each review requirement:
+- `TestUnixListenerClosesImmediatelyAndUnlinks` / `TestUnixConnClosesImmediatelyAndUnlinks` — close is immediate (dial fails fast), file removed.
+- `TestUnixListenerDoubleCloseDoesNotReleaseAnotherReference` / `TestUnixConnDoubleCloseDoesNotReleaseAnotherReference` — second `Close` returns `net.ErrClosed`, count unchanged, sibling's socket file preserved.
+- `TestUnixListenerReuseAndUnlinkOnlyWhenZeroCount` — file removed only at the last reference.
+- `TestUnixListenerConcurrentCloseAndRelisten` / `TestUnixConnConcurrentCloseAndRelisten` — 20 iterations of close racing listen; socket stays dialable with its file present.
+- `TestAbstractUnixSocketsDoNotUnlinkFilesystemPaths` — sentinel file survives listen and close for `unix` and `unixgram` (skipped off Linux).
+
+## Verification
+
+- `go test -race -count=5 -run 'TestUnix|TestAbstract' .` — pass
+- `go test -race -short ./...` — all 30 packages pass
+- `go build ./...`, `go vet .` — clean; cross-vet/test-build for linux, freebsd, windows succeeds (the non-Unix `listen_test.go` still compiles unchanged).
+
+Note: the pre-existing tests failed before the fix (e.g. leaked FD kept dialing alive, unlink never happened), which independently confirms the diagnosis.

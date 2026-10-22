@@ -1,0 +1,27 @@
+I fixed the root cause and added regression tests.
+
+## Root cause
+
+Two bugs in `listen_unix.go`'s unix-socket reuse path:
+
+1. **Leaked dup'd descriptor.** `reuseUnixSocket` called `socket.File()` (which `dup`s) and passed the file to `net.FileListener`/`net.FilePacketConn` (which dup again), but never closed the first `*os.File`. The leaked `os.File` kept the listening socket open until its finalizer ran at the next GC — exactly the 2-minute delay in the report, and never with `GOGC=off`.
+2. **Unlink used the wrong name.** `unixListener.Close`/`unixConn.Close` took `file.Name()`, which for a socket fd is `"unix:/path->"`, not a filesystem path, so `syscall.Unlink` silently failed and the file stayed behind. It also only cleaned up when the counter hit zero, without synchronizing with a concurrent bind of the same path.
+
+## Changes (`listen_unix.go`)
+
+- Replaced the per-holder `{mapKey, count}` fields with a shared `unixSocket` value stored in `unixSockets`, which owns one dup of the socket fd and a holder count. `newHolder()` creates a listener/packet conn from that stable file, so holders can close in any order and the socket stays usable.
+- `release()` (called under `unixSocketsMu`, with the underlying socket closed in the same critical section) unlinks the remembered **address path** only when the last holder goes, and only if the map still points at that shared state — so a concurrent reload bind can't have its file removed.
+- Abstract sockets (`@name` on Linux/Android) never touch the filesystem, both on bind and on close.
+- `unixListener`/`unixConn`/`deleteListener`/`deletePacketConn` now guard `Close` with an atomic flag: a second `Close` returns `net.ErrClosed` and does not release a second reference.
+
+## Tests
+
+- `listen_unix_test.go`: file removal + refusal after close (`unix` and `unixgram`), shared holders, reload ordering (old-holder-closes-after-new, and newest-closes-first-then-reuse), permissions suffix, double-close with a live sibling, and 50 iterations of close racing a new listen on the same path.
+- `listen_unix_abstract_test.go` (linux): closing/binding `@name` never unlinks a same-named file.
+
+## Verification
+
+- `go test -race -short ./...` — all pass; new tests also run with `-count=20`.
+- `golangci-lint run --timeout 5m ./...` — 0 issues.
+- Cross-compiled/vetted for linux, windows, darwin, freebsd, openbsd, netbsd.
+- Reproduced the report's scenario with a built binary: after reloading from `unix//tmp/.../admin.sock` to `localhost:2999`, the old path refuses connections immediately and the file is gone; moving back to the same path leaves a single listener.

@@ -1,0 +1,31 @@
+## Summary
+
+Fixed `lb_retry_match` so successful responses are no longer retried when the expression only inspects the request.
+
+### Root cause
+Since #7569, `reverseproxy.go` evaluated **every** `lb_retry_match` matcher set containing an `expression` matcher against the completed upstream response. A request-only expression (e.g. `{http.request.method} == "POST"`) therefore matched the response too, making every successful response retryable — the body was already consumed, and retries eventually returned 502.
+
+### Changes
+
+**`modules/caddyhttp/celmatcher.go`**
+- Record the placeholder names an expression reads during `Provision`, by walking the compiled CEL AST and inspecting each `ph(req, "<name>")` call (this also catches the `{placeholder}` shorthand, since it is expanded to `ph(...)`).
+- Expose `MatchExpression.Placeholders() []string`. A placeholder whose name is not a string literal (only known at evaluation time, e.g. `ph(req, "http.request." + "method")`) is reported as `""`.
+- Escaped placeholders (`\{http.reverse_proxy.status_code}`) are literals after expansion and are not reported as placeholder calls.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replace `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`, which only treats a matcher set as response-based when an expression reads response data: `http.reverse_proxy.status_code`, `...status_text`, any `http.reverse_proxy.header.*`, or the upstream latency placeholders. An unknown (`""`) placeholder name is conservatively treated as a possible response condition.
+- Request-only expressions (`{rp.upstream.host}`, escaped placeholders, `{rp.status_codes}`, etc.) are skipped for response retries and continue to act as request conditions on transport errors, as before v2.11.3.
+- Updated the `LoadBalancing.RetryMatch` doc comment to describe the new distinction.
+
+**Tests**
+- `TestMatchExpressionPlaceholders` covers shorthand, explicit `ph(req, ...)`, headers, escaped placeholders, and dynamic names.
+- `TestResponseRetryStatusCode` now also exercises the explicit `ph(req, "...")` form.
+- `TestRequestOnlyExpressionDoesNotRetryResponses` verifies a POST with a body gets a single 200 (the reported bug), for request method, upstream host, escaped response placeholder, and `status_codes` look-alike expressions.
+- `TestMatcherSetReferencesResponse` unit-tests the classification table, including status text, headers, both latency placeholders, and dynamic names.
+
+### Verification
+- `go build ./...`
+- `go test -race -short ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/ ./caddyconfig/httpcaddyfile/`
+- `go test ./modules/caddyhttp/...`
+- `go test ./caddytest/integration/ -run TestCaddyfileAdapt`
+- `go vet` and `golangci-lint` on both packages — all pass.

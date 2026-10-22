@@ -16,6 +16,33 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Five-lens gate on the own loop: worse, not better, 2026-10-22 (bench only)
+
+The cheap route with a quality gate: DeepSeek V4.1 Flash 1017 at max on SubRouter's default key implements; Opus 5.5 high
+reviews the diff on the subscription (`claude -p`, the five-lens prompt, `--review-model`); its Critical/Major findings go
+back once to DeepSeek as a fix round; then tazuna's verification. No hand-over (`--no-escalate`) to isolate the review.
+Harness `tazuna-ownsubgate` against the same setup without the review (`tazuna-ownsubm`), side by side per task, 3 runs each
+on rclone, caddy-unix and caddy-retry (v229-v247, `gate1.sh`; one gate run lost to a provider error, replaced by v247).
+Judge: one pool per task, two passes (`judge.oct.gate1.jsonl`, `judge.oct.gate1r.jsonl`, six calls; anchors DeepSeek 8,
+Codex Luna 7), with tazuna on Opus 5.5 medium (v34) for reference.
+
+| task | alone | with the gate | tazuna on Opus (v34) |
+|---|---|---|---|
+| rclone | 8, 7.5, 8 (7.8) | 7, 7.5, 5 (6.5) | 4.5, 5 |
+| caddy-unix | 9, 9, 8 (8.7) | 6, 4.5, 5 (5.2) | 4, 5 |
+| caddy-retry | 7, 8.5, 9 (8.2) | 6.5, 9, 9 (8.2) | 8.5, 8.5 |
+| all | 8.2, hidden tests 9 of 9 runs | 6.6, 5 of 9 | |
+
+Turns 121 against 177, 30 against 46 minutes a run; $0.73 real on SubRouter for all 19 runs (~$0.04 a run); each review
+~0.5% of the 5-hour window, 61-137 s (about $0.45 a review at API prices). Reviews found something in 3 runs of 9 (v230:
+every zip member scanned the whole directory; v232: a socket registry pointing at a closed socket; v242: three symlink
+cases) and the fixed runs judged 7, 6 and 5: the fix widened the patch away from what the task asked (v232's rewrite also
+broke the hidden tests' build). Six reviews found nothing; two of those runs (v238, v244) were weak already, from
+DeepSeek's own redesign of the socket bookkeeping (the hidden tests read a `count` field it removed: they do not compile,
+0/7). With 3 runs an arm part of the gap is chance, but the gate never came out ahead. DeepSeek 1017 alone beat tazuna on
+Opus on these three tasks (8.2 against ~6) at about a cent each. Not adopted: a review with a fix round by the cheap model
+does not raise its floor (as with Claude implementers, 2026-10-08 and 2026-10-13).
+
 ## 0.0.76 (2026-10-22)
 
 - **No prompt on a command line.** The own loop's engine got its system prompt, the repo's CLAUDE.md and AGENTS.md

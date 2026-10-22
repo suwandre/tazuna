@@ -1,0 +1,36 @@
+Implemented the fix.
+
+### What changed
+
+- **`modules/caddyhttp/celmatcher.go`**
+  - During `MatchExpression.Provision`, collect the Caddy placeholder names referenced by the compiled expression AST.
+  - Added `MatchExpression.Placeholders()`, which returns those names; a dynamic/unresolvable placeholder name is reported as `""`.
+  - This works for both `{placeholder}` shorthand (expanded to `ph(req, "...")`) and direct `ph(req, "...")` calls.
+
+- **`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+  - Replaced the “any expression matcher means response-based retry” check with `matcherSetReferencesResponse`.
+  - Response-based retry matching now only runs when an expression actually reads:
+    - `{http.reverse_proxy.status_code}`
+    - `{http.reverse_proxy.status_text}`
+    - `{http.reverse_proxy.header.*}`
+    - `{http.reverse_proxy.upstream.latency}` / `_ms`
+  - Dynamic placeholder names are treated conservatively as possible response conditions.
+  - Escaped placeholders, lookalike names like `status_codes`, and request-only placeholders such as `upstream.host` no longer cause successful responses to be retried.
+  - Updated the `RetryMatch` documentation.
+
+- **Tests**
+  - Added `TestMatchExpressionPlaceholders` covering shorthand, direct `ph()` calls, escaped placeholders, dynamic names, and no-placeholder expressions.
+  - Added `TestMatcherSetReferencesResponse` covering response vs. request-only expressions.
+  - Added `TestRequestOnlyExpressionDoesNotRetryResponses`, verifying a POST with a request-only expression hits the backend once and returns its `200` response.
+  - Extended `TestResponseRetryStatusCode` to cover direct `ph(req, "...")` calls.
+
+### Verification
+
+Ran successfully:
+
+```bash
+go build ./...
+go vet ./modules/caddyhttp ./modules/caddyhttp/reverseproxy
+go test ./modules/caddyhttp/... ./caddyconfig/httpcaddyfile/... -count=1
+go test -race -short ./modules/caddyhttp ./modules/caddyhttp/reverseproxy -count=1
+```

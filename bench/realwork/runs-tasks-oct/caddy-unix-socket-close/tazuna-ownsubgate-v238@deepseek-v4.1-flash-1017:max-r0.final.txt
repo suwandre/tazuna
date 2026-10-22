@@ -1,0 +1,34 @@
+All done. Here's a summary of the change.
+
+## Root cause
+
+`unixListener.Close()` / `unixConn.Close()` (in `listen_unix.go`) tried to learn the socket's path by calling `uln.File()`. That call **dups the listening fd into a new `*os.File` that was never closed**. That leaked descriptor kept the socket alive and listening (so clients connecting to the old path hung) until the Go GC finalized it — hence the "clears at next GC / never with `GOGC=off`" behavior. On top of that, `File().Name()` is `"unix:/path->"`, so the subsequent `syscall.Unlink(name)` never removed the real socket file.
+
+There was also a second, related bug: `net.FileListener`/`net.FilePacketConn` call `Fd()` on the `*os.File` returned by `File()`, which clears `O_NONBLOCK` on the **shared** file description. My first attempt hit exactly this: a concurrent `Accept` on an already-serving listener then blocked in the kernel and `Close()` hung. The master fd is now obtained via `SyscallConn().Control` + `unix.Dup` + `os.NewFile`, which leaves blocking mode untouched.
+
+## Changes
+
+`listen_unix.go`:
+- Introduced `unixSocketState`, a reference-counted shared state holding a *master* duplicate of the listening socket (`file`), the socket `path`, whether it's datagram, and a ref count, all guarded by the existing `unixSocketsMu`.
+- `reuseUnixSocket` now makes new holders from the master fd (`net.FileListener`/`net.FilePacketConn` dup it internally), so closing one holder never affects the others.
+- `unixListener.Close`/`unixConn.Close` release the state after closing; when the last holder releases, the master fd is closed and the file is unlinked — under `unixSocketsMu`, so a concurrent bind can't be caught between close and unlink. Both use an `atomic.Bool` so a second `Close` returns `net.ErrClosed` without releasing another reference.
+- Abstract sockets (`@name`) are never unlinked (on bind or on release), and their name is no longer passed to `os.Chmod`.
+- `deleteListener`/`deletePacketConn` became pointer types with an `atomic.Bool` so a double `Close` can't decrement `listenerPool` twice.
+- `listenReusable` no longer registers in `listenerPool` when the bind failed.
+
+`listeners.go`: extracted the shared `isAbstractUnixSocket` helper used by both files.
+
+## Tests (`listen_unix_test.go`, new)
+
+- close removes the file and makes connect fail (`unix`, `unixpacket`, `unixgram`)
+- shared socket: file stays and socket keeps accepting until the last holder closes
+- double close returns `net.ErrClosed` and does not release a sibling's reference (`unix` and `unixgram`)
+- close racing with a new listen on the same path leaves a working socket and file (50 iterations)
+- abstract sockets never unlink a same-named filesystem entry (Linux-only, skipped elsewhere)
+
+## Verification
+
+- `go test -race -short ./...` passes (all packages), plus repeated runs of the new tests and the existing `TestFakeCloseListenerSiblingSurvivesClose`.
+- `golangci-lint run --timeout 10m` → 0 issues.
+- Cross-compiles and `go vet`/`go test -c` for linux, darwin, freebsd, openbsd, netbsd, dragonfly, aix, illumos, solaris, windows.
+- End-to-end with the issue's repro: after reload the old admin Unix socket refuses connections (`curl` exit 7) and `admin.sock` is gone; same for a site `bind unix/...` moved to TCP, and for `|0600` mode suffixes and repeated reloads.

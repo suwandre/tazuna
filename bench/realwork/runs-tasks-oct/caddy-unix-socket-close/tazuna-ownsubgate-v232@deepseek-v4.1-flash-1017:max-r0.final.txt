@@ -1,0 +1,20 @@
+Fixed. The reviewer's finding was correct.
+
+## What changed
+
+**`listen_unix.go`:** the registry `unixSockets` no longer holds a wrapper (whose fd dies with that holder); it now holds a shared `*unixSocket` record containing the refcount, a dup'd `*os.File` of a live socket, and a `datagram` flag.
+
+- `listenReusable` creates the `unixSocket` when it binds a fresh unix socket and stores it in `unixSockets`; if the `File()` dup fails it closes the listener and releases the pool entry.
+- `reuseUnixSocket` dups from `socket.file` via `net.FileListener`/`net.FilePacketConn` instead of calling `File()` on whichever wrapper the map happened to hold, and returns a wrapper pointing at the same shared record. So the reuse source outlives any individual holder.
+- `unixListener.Close`/`unixConn.Close` decrement the shared count and close only their own socket; when the count hits zero they delete the registry entry, close the shared `file`, and unlink the path (skipping abstract sockets). This is the same smallest-change approach the reviewer suggested (shared dup'd file next to the counter).
+
+All previously added behavior is preserved: last-holder-only unlink, `net.ErrClosed` on double close without a second decrement, unlink serialized under `unixSocketsMu` so a racing bind can't lose its file, and abstract sockets never unlinked.
+
+**`listen_unix_test.go`:** added `TestUnixListenerNewestHolderClosesFirst` and `TestUnixConnNewestHolderClosesFirst`, which reproduce the reviewer's sequence — reuse the socket, close the newest holder while the older one is still open, then require that the older holder still works and that a subsequent `Listen` reuses the live socket rather than failing. The only other test edit was `first.count` → `first.socket.count` for the new field layout.
+
+## Verification
+
+- Confirmed the regression test fails on the pre-fix code with exactly the reported error (`file unix ...: use of closed network connection`) and passes after the fix.
+- `go test -race -run 'Unix|Abstract' ./` passes; the Unix tests pass under `-count=5`.
+- `go test -race -short ./...` passes, as do `go vet`, `go build ./...`, `GOOS=windows go build ./`, and `GOOS=linux go vet ./`.
+- Re-ran the issue's repro with a freshly built binary: after the reload, `curl` exits 7 (connection refused) and `admin.sock` is gone.

@@ -1,0 +1,18 @@
+The reviewer was right. Fixed.
+
+## What changed
+
+`backend/archive/zip/zip.go` (`readZip`):
+
+- Removed the unconditional `dt.Find(remote)` call (which is documented as O(N) and made reading a zip O(N²) in files per directory).
+- Clash handling now only runs when `f.links` is set **and** the name ends in `fs.LinkSuffix` — the only case where a symlink and a regular member can collide. Otherwise the entry is simply `dt.Add`ed, exactly as before the symlink change.
+- For that narrow case, a `map[string]int` (`added`) records the index of each link-suffixed object added so far, so a later regular member with the same name replaces the symlink in place in O(1) rather than searching the directory. The map is only allocated when `--links` is on.
+
+## Verification
+
+- Measured: 30,000 files in one directory now load in **11 ms** (both `--links` off and on). I also temporarily reinstated the reviewed version and measured **1.13 s** for the same archive, confirming the reported quadratic blow-up and that the map removes it.
+- `TestReadZipLinkNameClash` extended to run both entry orders (symlink first, regular first), verifying the regular `.rclonelink` member still wins and its contents are served.
+- `go test ./backend/archive/...` (including `-race`), plus `./fs/operations` and `./fs/sync` — all pass.
+- `go vet ./backend/archive/...` and `golangci-lint run ./backend/archive/...` — clean (0 issues).
+
+The rest of the change (symlink exposure with `--links`, notice when skipped, squashfs parity, hostile-archive safety, docs) is unchanged.

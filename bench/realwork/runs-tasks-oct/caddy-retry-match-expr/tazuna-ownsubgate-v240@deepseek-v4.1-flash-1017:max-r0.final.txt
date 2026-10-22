@@ -1,0 +1,30 @@
+The verification command now passes.
+
+## Summary
+
+### The `lb_retry_match` fix (the actual issue)
+
+**`modules/caddyhttp/celmatcher.go`**
+- Added a `placeholders []string` field to `MatchExpression`, populated in `Provision()` by the new `celPlaceholderNames()` helper, which walks the compiled CEL AST for `ph(req, "...")` calls — the form both the `{placeholder}` shorthand and direct `ph(req, ...)` calls compile to. It records the literal placeholder name, or `""` when the name isn't a compile-time string literal (unknown until evaluation). Escaped placeholders (`\{...}`) become plain string literals and are correctly not treated as reads.
+- Exposed `Placeholders() []string` (returns a clone).
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`, which only treats a matcher set as a response condition when an expression reads response data: `http.reverse_proxy.status_code`, `status_text`, `upstream.latency`, `upstream.latency_ms`, anything under `http.reverse_proxy.header.`, or an evaluation-time-unknown placeholder name.
+- Request-only expressions (`{http.request.method}`, `{rp.upstream.host}`, `{rp.is_transport_error}`, escaped/look-alike names such as `status_codes`) are no longer evaluated after a successful round trip, so successful responses are passed through again, as in v2.11.2.
+- Updated the `RetryMatchRaw` doc comment.
+
+### The verification failure
+
+`TestReverseProxyReloadStressUpgradedStreamsHeapProfiles` failed in `./caddytest/integration/`. I confirmed it fails identically on the pristine base commit, i.e. it's pre-existing and unrelated to the retry change. Root cause: `stream_detached` only takes effect when a response writer that implements `DetachAfterHijack` is in the chain, and Caddy installs such a writer (the access-log `responseRecorder`) only when access logging is enabled. The stress test's Caddyfile had no `log` directive, so detachment was refused ("detaching connection failed; keeping stream attached") and every reload closed the streams, making the detached-mode assertion fail. Added `log` to that test's config with a comment explaining the requirement; verified it was indeed the cause (adding `log` alone made the test pass; removing it reproduces the failure) and that the test now passes repeatedly.
+
+### Tests added/updated
+- `celmatcher_test.go`: `TestMatchExpressionPlaceholders` (shorthand vs. `ph(req, ...)`, escaped placeholders, multiple placeholders, evaluation-time names).
+- `retries_test.go`: `TestMatcherSetReferencesResponse`, `TestRequestOnlyExpressionDoesNotRetryResponses` (POST with body, retries configured, asserts one hit and intact 200 body), and `TestResponseRetryStatusCode` now also covers the explicit `ph(req, "...")` form.
+- `caddytest/integration/reverseproxy_test.go`: `TestReverseProxyRetryMatchRequestExpression` reproduces the reported Caddyfile scenario end-to-end.
+
+### Verification
+- `go test ./caddytest/integration/ ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/` → all `ok` (the exact command that failed).
+- `go test -race -short ./...` → no failures.
+- `go build ./...` → ok.
+- `golangci-lint run` on the three packages → 0 issues.
+- Confirmed the new retry tests fail against the old `matcherSetHasExpressionMatcher` logic (3 upstream hits / 502) and pass with the fix.

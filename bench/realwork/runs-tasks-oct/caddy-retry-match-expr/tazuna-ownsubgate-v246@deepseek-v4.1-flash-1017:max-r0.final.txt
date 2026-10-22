@@ -1,0 +1,35 @@
+I implemented the fix and verified it with unit tests across the affected packages.
+
+## What changed
+
+**`modules/caddyhttp/celmatcher.go`**
+- During `Provision`, the compiled CEL AST is walked for `ph(...)` calls and the literal placeholder names are recorded in a new unexported `placeholders` field.
+- Added `MatchExpression.Placeholders() []string`, which returns those names. A placeholder whose name is only known at evaluation time (e.g. `ph(req, "http.reverse_proxy.status_" + "code")`) is reported as `""`.
+- Because the walk runs on the *expanded* AST, both the `{placeholder}` shorthand and direct `ph(req, "...")` calls are detected, while escaped literals (`\{...}`) are not.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` (which treated any expression matcher as response-based) with `matcherSetReferencesResponse`, which only returns true when an expression actually reads response data:
+  - `http.reverse_proxy.status_code`, `http.reverse_proxy.status_text`
+  - `http.reverse_proxy.upstream.latency`, `http.reverse_proxy.upstream.latency_ms`
+  - any `http.reverse_proxy.header.*`
+  - an unknown (evaluation-time) placeholder name (`""`)
+- So `{rp.*}` expressions still retry on responses (unchanged behavior from #7569), while request-only expressions, escaped literal placeholders, similarly-named placeholders like `{rp.status_codes}`, and non-response placeholders such as `{rp.upstream.host}` no longer cause successful responses to be retried.
+- Updated the `LoadBalancing.RetryMatchRaw` doc comment and the inline comment to describe the new rule.
+
+## Tests
+
+- `modules/caddyhttp/celmatcher_test.go`: new `TestMatchExpressionPlaceholders` covering shorthand, direct `ph(req, ...)`, multiple placeholders, escaped placeholders, evaluation-time names, and expressions with no placeholders.
+- `modules/caddyhttp/reverseproxy/retries_test.go`:
+  - `TestResponseRetryStatusCode` now also covers direct `ph(req, ...)` and a dynamic placeholder name.
+  - New `TestMatcherSetReferencesResponse` table test for the response-vs-request classification.
+  - New `TestRequestOnlyExpressionDoesNotRetryResponses` reproducing the reported bug (POST with body to a 200 upstream is hit exactly once and the client gets `200`/`ok`), including the upstream-host, escaped-placeholder, and `status_codes` cases.
+
+## Verification
+
+- `go build ./...`
+- `go test -race -short ./...` — all packages pass
+- `go test ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/ ./caddyconfig/httpcaddyfile/`
+- `go test ./caddytest/integration/ -run TestReverseProxyRetryMatch` and `-run TestCaddyfileAdapt` — pass
+- `golangci-lint run ./modules/caddyhttp/...` — 0 issues; `go vet` clean
+
+(One unrelated pre-existing failure appeared when running the broad `ReverseProxy|Retry` integration filter: `TestReverseProxyReloadStressUpgradedStreamsHeapProfiles`; the retry-match integration tests themselves pass.)

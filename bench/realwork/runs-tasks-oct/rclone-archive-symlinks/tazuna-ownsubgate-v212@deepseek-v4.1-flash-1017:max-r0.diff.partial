@@ -1,0 +1,242 @@
+diff --git a/backend/archive/zip/zip.go b/backend/archive/zip/zip.go
+index 129ce01..d2ab785 100644
+--- a/backend/archive/zip/zip.go
++++ b/backend/archive/zip/zip.go
+@@ -43,6 +43,7 @@ type Fs struct {
+ 	prefix      string          // position for objects
+ 	prefixSlash string          // position for objects with a slash on
+ 	root        string          // position to read from within the archive
++	links       bool            // expose symlinks as .rclonelink objects
+ 	dt          dirtree.DirTree // read from zipfile
+ }
+ 
+@@ -67,12 +68,13 @@ func New(ctx context.Context, wrappedFs fs.Fs, remote, prefix, root string) (fs.
+ 		node:        node,
+ 		remote:      remote,
+ 		root:        root,
++		links:       fs.GetConfig(ctx).Links,
+ 		prefix:      prefix,
+ 		prefixSlash: prefix + "/",
+ 	}
+ 
+ 	// Read the contents of the zip file
+-	singleObject, err := f.readZip()
++	singleObject, err := f.readZip(ctx)
+ 	if err != nil {
+ 		return nil, fmt.Errorf("failed to open zip file: %w", err)
+ 	}
+@@ -117,10 +119,59 @@ func (f *Fs) String() string {
+ 	return fmt.Sprintf("Zip %q", f.name)
+ }
+ 
++// maxLinkTargetSize is the largest symlink target read from an archive,
++// comfortably above any OS path limit (Windows allows 32767 UTF-16 units).
++const maxLinkTargetSize = 128 * 1024
++
++// readLinkTarget returns the target of a symlink entry, which is stored
++// as the entry's contents.
++func readLinkTarget(file *zip.File) (target string, err error) {
++	rc, err := file.Open()
++	if err != nil {
++		return "", err
++	}
++	defer fs.CheckClose(rc, &err)
++	buf, err := io.ReadAll(io.LimitReader(rc, maxLinkTargetSize+1))
++	if err != nil {
++		return "", err
++	}
++	if len(buf) > maxLinkTargetSize {
++		return "", errors.New("symlink target is too long")
++	}
++	return string(buf), nil
++}
++
++// dropShadowedLinks removes translated links from dt when a regular
++// entry with the same name exists, so a regular member whose name ends
++// in .rclonelink isn't hidden by a symlink of the same name.
++func dropShadowedLinks(dt dirtree.DirTree) {
++	for dir, entries := range dt {
++		regular := make(map[string]struct{}, len(entries))
++		for _, entry := range entries {
++			if o, ok := entry.(*Object); ok && !o.translatedLink {
++				regular[o.Remote()] = struct{}{}
++			}
++		}
++		if len(regular) == 0 {
++			continue
++		}
++		kept := entries[:0]
++		for _, entry := range entries {
++			if o, ok := entry.(*Object); ok && o.translatedLink {
++				if _, found := regular[o.Remote()]; found {
++					continue
++				}
++			}
++			kept = append(kept, entry)
++		}
++		dt[dir] = kept
++	}
++}
++
+ // readZip the zip file into f
+ //
+ // Returns singleObject=true if f.root points to a file
+-func (f *Fs) readZip() (singleObject bool, err error) {
++func (f *Fs) readZip(ctx context.Context) (singleObject bool, err error) {
+ 	if f.node == nil {
+ 		return singleObject, fs.ErrorDirNotFound
+ 	}
+@@ -138,6 +189,7 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 	}
+ 	dt := dirtree.New()
+ 	skipped := 0
++	skippedLinks := 0
+ 	for _, file := range zr.File {
+ 		// Skip entries whose name escapes the archive's own namespace
+ 		remote, err := sanitize.Path(file.Name)
+@@ -152,18 +204,41 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 			skipped++
+ 			continue
+ 		}
++		isLink := !isDir && file.Mode()&os.ModeSymlink != 0
++		if isLink && !f.links {
++			skippedLinks++
++			continue
++		}
+ 		remote = path.Join(f.prefix, remote)
++		member := remote
+ 		if f.root != "" {
+ 			// Ignore all files outside the root, requiring a path
+ 			// boundary so that root "foo" does not also match a
+ 			// sibling entry such as "foobar"
+-			if remote != f.root && !strings.HasPrefix(remote, f.root+"/") {
++			root := f.root
++			matched := remote == root || strings.HasPrefix(remote, root+"/")
++			if !matched && isLink && strings.HasSuffix(root, fs.LinkSuffix) {
++				// The root may name a translated link either by its
++				// archive name or by its .rclonelink name
++				root = strings.TrimSuffix(root, fs.LinkSuffix)
++				matched = remote == root
++			}
++			if !matched {
+ 				continue
+ 			}
+-			if remote == f.root {
++			if remote == root {
+ 				remote = ""
+ 			} else {
+-				remote = strings.TrimPrefix(remote, f.root+"/")
++				remote = strings.TrimPrefix(remote, root+"/")
++			}
++		}
++		var target string
++		if isLink {
++			target, err = readLinkTarget(file)
++			if err != nil {
++				fs.Debugf(f, "Skipping symlink %q: %v", file.Name, err)
++				skippedLinks++
++				continue
+ 			}
+ 		}
+ 		if isDir {
+@@ -172,18 +247,29 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 		} else {
+ 			if remote == "" {
+ 				// A file at the root is the archive member f.root points at
+-				remote = path.Base(f.root)
++				remote = path.Base(member)
++				if isLink {
++					remote += fs.LinkSuffix
++					// A regular entry of the same name takes precedence
++					if _, entry := dt.Find(remote); entry != nil {
++						continue
++					}
++				}
+ 				singleObject = true
+ 				dt = dirtree.New()
++			} else if isLink {
++				remote += fs.LinkSuffix
+ 			}
+ 			o := &Object{
+-				f:      f,
+-				remote: remote,
+-				fh:     &file.FileHeader,
+-				file:   file,
++				f:              f,
++				remote:         remote,
++				fh:             &file.FileHeader,
++				file:           file,
++				link:           target,
++				translatedLink: isLink,
+ 			}
+ 			dt.Add(o)
+-			if singleObject {
++			if singleObject && !isLink {
+ 				break
+ 			}
+ 		}
+@@ -191,6 +277,10 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 	if skipped > 0 {
+ 		fs.Logf(f, "Skipped %d zip entries which escape the archive", skipped)
+ 	}
++	if skippedLinks > 0 {
++		fs.Logf(f, "Skipped %d symlinks - use -l/--links to include them", skippedLinks)
++	}
++	dropShadowedLinks(dt)
+ 	dt.CheckParents("")
+ 	dt.Sort()
+ 	f.dt = dt
+@@ -289,10 +379,12 @@ func (f *Fs) SetWrapper(wrapper fs.Fs) {
+ 
+ // Object describes an object to be read from the raw zip file
+ type Object struct {
+-	f      *Fs
+-	remote string
+-	fh     *zip.FileHeader
+-	file   *zip.File
++	f              *Fs
++	remote         string
++	fh             *zip.FileHeader
++	file           *zip.File
++	link           string // symlink target
++	translatedLink bool   // true if this is a translated symlink
+ }
+ 
+ // Fs returns read only access to the Fs that this object is part of
+@@ -315,6 +407,9 @@ func (o *Object) Remote() string {
+ 
+ // Size returns the size of the file
+ func (o *Object) Size() int64 {
++	if o.translatedLink {
++		return int64(len(o.link))
++	}
+ 	return int64(o.fh.UncompressedSize64)
+ }
+ 
+@@ -341,7 +436,7 @@ func (o *Object) Storable() bool {
+ func (o *Object) Hash(ctx context.Context, ht hash.Type) (string, error) {
+ 	if ht == hash.CRC32 {
+ 		// FIXME return empty CRC if writing
+-		if o.f.dt == nil {
++		if o.f.dt == nil || o.translatedLink {
+ 			return "", nil
+ 		}
+ 		return fmt.Sprintf("%08x", o.fh.CRC32), nil
+@@ -365,6 +460,17 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (rc io.Read
+ 		}
+ 	}
+ 
++	if o.translatedLink {
++		// The contents of a translated link are its target
++		if offset < 0 {
++			offset = 0
++		}
++		if offset > int64(len(o.link)) {
++			offset = int64(len(o.link))
++		}
++		return readers.NewLimitedReadCloser(io.NopCloser(strings.NewReader(o.link[offset:])), limit), nil
++	}
++
+ 	rc, err = o.file.Open()
+ 	if err != nil {
+ 		return nil, err

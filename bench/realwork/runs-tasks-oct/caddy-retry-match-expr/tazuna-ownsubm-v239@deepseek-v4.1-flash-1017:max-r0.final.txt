@@ -1,0 +1,32 @@
+Done. Summary of the fix and verification:
+
+## Root cause
+
+Since #7569, `reverseProxy()` treated *any* matcher set containing an `expression` matcher as a response matcher. A request-only expression such as `{http.request.method} == "POST"` therefore matched every response for that request, so every successful response was discarded and retried (empty body on the retry, then `502` once retries ran out).
+
+## Changes
+
+**`modules/caddyhttp/celmatcher.go`**
+- `MatchExpression` now records, at provision time, the names of the placeholders the compiled CEL program actually reads (`celPlaceholderNames`, walking the checked AST with `ast.PreOrderVisit`). Both the `{placeholder}` sugar and direct `ph(req, "...")` calls are covered.
+- Names that aren't string literals (e.g. `ph(req, "http.request." + "method")`) are recorded as `""` to mean "only known at evaluation time".
+- Escaped placeholders (`\{...}`) are compiled to string literals, so they are *not* reported as placeholders.
+- Added `Placeholders()` accessor returning a copy.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`, which only treats an expression as response-based when it reads:
+  - `http.reverse_proxy.status_code` / `status_text`,
+  - `http.reverse_proxy.header.*`,
+  - `http.reverse_proxy.upstream.latency` / `latency_ms`,
+  - or an evaluation-time-only name (`""`).
+- All other expressions are once again pure request conditions, as before v2.11.3. The `lb_retry_match` field docs were updated accordingly.
+
+**Tests**
+- `celmatcher_test.go`: `TestMatchExpressionPlaceholders` covers shorthand, direct `ph()`, escaped placeholders, and dynamic names.
+- `retries_test.go`: `TestResponseRetryStatusCode` now also exercises `ph(req, "http.reverse_proxy.status_code")`; new `TestRequestOnlyExpressionDoesNotRetryResponses` covers request-only, upstream-selection-only, escaped-response-placeholder, and near-miss placeholder names (it reproduces the reported 502/empty-body failure against the old code).
+
+## Verification
+
+- `go test -race -short ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/` — pass
+- `go test -short ./modules/caddyhttp/... ./caddyconfig/httpcaddyfile/...` — pass
+- `go test ./caddytest/integration/ -run TestReverseProxyRetryMatch` — pass (existing `{rp.*}` examples still work)
+- `golangci-lint run ./modules/caddyhttp/...` — 0 issues; `go build ./...` — pass

@@ -1,0 +1,27 @@
+Both backends now behave the same way. Summary of the change:
+
+## What changed
+
+**`backend/archive/zip/zip.go`**
+- Records whether `-l/--links` is in use (`f.links`).
+- While reading the central directory, entries with `os.ModeSymlink` are now recognised. They are skipped (and counted) unless `--links` is set, in which case they are listed under their name plus `fs.LinkSuffix` (`.rclonelink`). The existing `Object.Open` already reads the entry body (the target) honouring `SeekOption`/`RangeOption`, so no extra object code was needed.
+- A notice naming `-l/--links` is logged once per archive when links were skipped.
+- The suffix is applied before root filtering so that a root naming a symlink by its suffixed name works and listing/`NewObject` agree.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Same `links` flag; symlink entries are no longer dropped by `List` — they become `Object`s with the link target, size = len(target), and the `.rclonelink` suffix.
+- `Open` on such an object returns the target (clamped offset, honouring range/seek).
+- `NewObject`/root lookup accept the suffixed name for a symlink and refuse to return a symlink under its unsuffixed name, so listing and lookup agree.
+- Notices now report skipped symlinks as well as skipped escaping names.
+
+**Tests**
+- `zip_internal_test.go` / `squashfs_internal_test.go`: `TestSymlinks` (skipped by default, listed/readable with `--links`, `.rclonelink` regular files stay regular, seek/range) and `TestSymlinkRoot` (single-file roots, suffixed and unsuffixed).
+- New deterministic squashfs fixture `squashfs/testdata/symlink.sqfs` (documented in the test).
+- `archive_internal_test.go`: end-to-end `TestArchiveCopySymlink` (`rclone copy --links` recreates the symlink) and `TestArchiveSymlinkEscape` (hostile symlink + member "inside" it cannot write outside the destination).
+
+**Docs** — added a "Symbolic links" section to `docs/content/archive.md`.
+
+## Verification
+- `go test ./backend/archive/...` and `go test -race ./backend/archive/...` pass, including the external-binary `TestArchiveZip`/`TestArchiveSquashfs` tests.
+- `golangci-lint run ./backend/archive/...` reports 0 issues; `go build ./...` succeeds.
+- Manually checked `rclone lsl --links`, `rclone lsl`, and `rclone copy --links` against real zip and squashfs archives, plus the escape scenario (nothing written outside the destination).

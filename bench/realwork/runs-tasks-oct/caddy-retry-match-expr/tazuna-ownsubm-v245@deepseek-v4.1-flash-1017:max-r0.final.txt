@@ -1,0 +1,29 @@
+Implemented the fix.
+
+## What changed
+
+**`modules/caddyhttp/celmatcher.go`**
+- Added a `placeholders` field to `MatchExpression`, populated at provision time by walking the compiled CEL AST and collecting the names passed to `ph(req, "...")` calls.
+- Added `MatchExpression.Placeholders()`, returning those names; a name that isn’t a string literal (only known at evaluation time) is represented by an empty string.
+- Added the `celPlaceholderNames` AST helper.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` (which treated *any* expression matcher as response-aware) with `matcherSetReferencesResponse`.
+- `matcherSetReferencesResponse` only returns true when an expression references actual response data:
+  - `http.reverse_proxy.status_code`
+  - `http.reverse_proxy.status_text`
+  - `http.reverse_proxy.header.*`
+  - `http.reverse_proxy.upstream.latency` / `...latency_ms`
+  - or a placeholder whose name is only known at evaluation time.
+- Request-only expressions such as `{http.request.method} == "POST"`, escaped placeholder text, and near-miss names like `{http.reverse_proxy.status_codes}` are no longer evaluated against successful responses.
+- Updated the `RetryMatchRaw` documentation accordingly.
+
+**Tests**
+- `celmatcher_test.go`: verifies placeholder-name extraction, including direct `ph(req, "...")` calls, escaped placeholders, and dynamic names.
+- `retries_test.go`: added tests confirming request-only expressions don’t retry successful responses (including the reported POST case), response-placeholder expressions still retry, and the response-reference detection rules are correct.
+
+## Verification
+- `go test -race -short ./modules/caddyhttp ./modules/caddyhttp/reverseproxy ./caddyconfig/httpcaddyfile`
+- `go test ./caddytest/integration/ -run 'TestReverseProxyRetryMatch'`
+- `go build ./...`
+- `golangci-lint run --timeout 10m ./modules/caddyhttp/...` → 0 issues

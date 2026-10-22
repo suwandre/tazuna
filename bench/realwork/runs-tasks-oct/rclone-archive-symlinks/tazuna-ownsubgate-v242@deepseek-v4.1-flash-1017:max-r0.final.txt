@@ -1,0 +1,15 @@
+All three reviewer findings are addressed. Final verification passed:
+
+## Summary of fixes
+
+**1. Nested symlinks bypassed the escape guard (zip).** `insideSymlink` was only consulted for non-symlink entries. The check now runs for every entry: a symlink's own name (with `fs.LinkSuffix` stripped) is checked against `symlinks`, so a symlink below another symlink (`pwn/x.rclonelink`) is dropped like any other member inside `pwn`. `TestSymlinkEscape` now includes nested symlinks and a directory under the symlink; all are skipped, and `dt.CheckParents` no longer invents a clashing `pwn` directory.
+
+**2. Unsuffixed root naming a symlink now errors instead of exposing an unreachable object.** Added `archiver.ErrLinkNeedsSuffix` (same message as the local backend's `errLinksNeedsSuffix`). Both archivers return it when a root names a symlink without `.rclonelink`:
+- zip: `readZip` detects the case while matching the root, and `New` passes the error through unwrapped.
+- squashfs: `New` probes the suffixed name and returns the error if it resolves.
+
+Only the suffixed root is a single object (`fs.ErrorIsFile`), so `path.Base(fsPath)` matches the exposed name. Tests updated to assert the error for the unsuffixed form and success for the suffixed form, and the docs note the suffix requirement.
+
+**3. Symlink targets were read eagerly in `New`.** `readZip` no longer calls `readLink`; `Object.Size` uses `fh.UncompressedSize64` (zip stores the target as the entry contents, so this is the target length) and `Open` reads the target lazily, applying the `MaxLinkTargetSize` check there. New `TestSymlinkTargetReadOnOpen` verifies listing works without reading targets and that an over-long target fails only on `Open`.
+
+Verified with `go test ./backend/archive/... ./cmd/archive/...`, `go test -race ./backend/archive/...`, `go vet`, `golangci-lint run ./backend/archive/...` (0 issues), plus `fs/operations` and `fs/sync` unit tests, and manually with `rclone lsl/copy --links` on zip and squashfs images (including an unsuffixed root, which now fails with the suffix error, and a hostile nested-symlink zip that copies only the top-level symlink).

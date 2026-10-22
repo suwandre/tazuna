@@ -1,0 +1,22 @@
+All done. Summary of the changes:
+
+**Root cause:** Since #7569, the post-round-trip retry check in `reverseproxy.go` evaluated every matcher set containing an expression matcher against the upstream response. A request-only expression (e.g. `{http.request.method} == "POST"`) therefore matched every response for matching requests, turning successful responses into retries and eventually a 502.
+
+**Fix:**
+
+- `modules/caddyhttp/celmatcher.go`
+  - `MatchExpression` now records the placeholder names read by the compiled expression (`celPlaceholderNames` walks the checked CEL AST and collects the second argument of every `ph(req, "...")` call, including those produced by `{placeholder}` sugar; non-literal names are recorded as `""`).
+  - Added `Placeholders()` accessor (returns a clone). Escaped placeholders (`\{...}`) are string literals after expansion, so they aren't collected; similarly named placeholders are collected verbatim and don't match response names.
+
+- `modules/caddyhttp/reverseproxy/reverseproxy.go`
+  - Replaced `matcherSetHasExpressionMatcher` with `matcherSetReferencesResponse`, which only treats a set as a response condition if one of its expressions reads `http.reverse_proxy.status_code`, `http.reverse_proxy.status_text`, `http.reverse_proxy.upstream.latency`, `http.reverse_proxy.upstream.latency_ms`, any `http.reverse_proxy.header.*`, or a placeholder name that is only known at evaluation time (`""`).
+  - Updated the `RetryMatchRaw` doc comment accordingly.
+  - Request-only expressions now behave as request conditions again (as before v2.11.3), and transport-error retries via `tryAgain` are unchanged.
+
+**Tests:**
+- `modules/caddyhttp/celmatcher_test.go`: `TestMatchExpressionPlaceholders` covers shorthand, direct `ph(req, ...)`, multiple placeholders, escaped literal placeholders, and dynamic placeholder names.
+- `modules/caddyhttp/reverseproxy/retries_test.go`:
+  - `TestMatcherSetReferencesResponse` table-tests the response-reference classification (status code/text, header, latency, `ph()` call, dynamic name vs. request method, upstream host, escaped placeholder, `status_codes`).
+  - `TestRequestOnlyExpressionDoesNotRetryResponses` reproduces the reported regression: a POST with `lb_retry_match expression '{http.request.method} == "POST"'` gets one upstream hit, the original body echoed back, and a 200.
+
+**Verification:** `go build ./...`, `go vet ./modules/caddyhttp/...`, `go test ./modules/caddyhttp/...`, `go test -race ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/`, `go test ./caddytest/integration/ -run TestCaddyfileAdaptToJSON`, and `go test -short ./...` all pass; `gofmt` reports no changes for the touched files.

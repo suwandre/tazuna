@@ -1,0 +1,26 @@
+Everything passes. Final summary of the change:
+
+## What changed
+
+### `backend/archive/zip/zip.go`
+- Added a `links` field set from `fs.GetConfig(ctx).Links`.
+- In `readZip`, entries whose mode has `os.ModeSymlink` are now:
+  - skipped (and counted, then reported once via `fs.Logf(... "use -l/--links to read them")`) when `--links` is not in use;
+  - otherwise exposed under `name + fs.LinkSuffix`, with the symlink target as their content, so `Open` (with seek/range) reads back the target and `Size()` is the target length.
+- Root resolution accepts a symlink's own name or its `.rclonelink` name.
+- A regular member whose name is the `.rclonelink` name of a symlink wins (symlink skipped), so listing and `NewObject` agree.
+- Sanitization/root-boundary checks are unchanged, so a symlink can't escape the archive namespace.
+
+### `backend/archive/squashfs/squashfs.go`
+- Added a `links` field and `objectFromEntry`, which turns a symlink entry into an `Object` named `name.rclonelink` with `size` = target length and the target stored (read via the entry's `Readlink`).
+- `List` now handles symlinks instead of dropping them: skipped with a notice naming the flag when `--links` is off; exposed with the suffix otherwise. Regular members whose name collides with a symlink's `.rclonelink` name win.
+- `Open` serves the target string for link objects, honouring offset/range (`openString`).
+- `NewObject`/`newObjectNativeLink` accept either the plain or `.rclonelink` name for symlinks and never return the plain name, matching the listing.
+
+### Docs and tests
+- `docs/content/archive.md`: new "Symlinks" section with the maintainer's example.
+- `zip_internal_test.go`: skip-without-links, list/open/size/seek/range with links, regular `.rclonelink` member stays regular, symlink roots, and `.rclonelink` name collision.
+- `squashfs_internal_test.go`: same coverage using two new test images (`symlink.sqfs`, `symlink-clash.sqfs`).
+- `archive_internal_test.go`: end-to-end `copy --links` recreates a real symlink, and a hostile archive (symlink out of the destination + member inside it) cannot write outside the destination.
+
+Verified with `go build ./...`, `go vet`, `gofmt`, `go test -race` on the archive packages, and `go test` on `fs/operations`, `fs/sync`, `cmd/archive/...` and `backend/local`.

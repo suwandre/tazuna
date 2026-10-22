@@ -265,10 +265,14 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Haiku tester subagent (`--tester haiku`) | −14% cost, judge −0.40 | Fable judge agrees (lower, −0.21 of 5 vs Opus −0.32); the gap is one no-change run on T-946, even without it; saving at the noise line: opt-in |
 | Earlier compaction (at ~80k) | at most −9% reads, before the summary's cost | median run peaks at 58k; only 8.8% of read tokens sit above 80k (313 runs, no benchmark) |
 | Fable 5.1 xhigh reviewer (`--review-model`) | 3.4× cost, same judge (1 ticket) | the review costs twice the run; it talked Opus out of the root-cause fix |
+| Five-lens review + one fix round on the own loop (DeepSeek 1017 implementing, Opus 5.5 high reviewing, `tazuna-ownsubgate`) | judge 6.6 vs 8.2 alone, hidden tests 5/9 vs 9/9, +46% turns (3 tasks × 3 runs, 2026-10-22) | findings in 3 of 9 runs; every fixed run judged lower (the fix widens the patch); the cheap model alone beat Opus on these tasks |
 | Haiku explorer subagent (`--explorer haiku`) | −28% cost, −41% turns, judge −0.25 | default since 0.0.25 (price to performance) |
 
 ## Decision log
 
+- 2026-10-22: the cheap route's quality gate (Opus five-lens review, the cheap model fixes the findings) measured on
+  rclone and both caddy tasks, 3 runs each: 6.6 against 8.2 for DeepSeek 1017 alone. Not adopted; a reviewer that asks
+  a cheap model for fixes widens its patches. Next candidate for the floor: two cheap attempts, Opus picks one (no fix).
 - 2026-10-03: start lean (cc-mid profile) and measure everything; Opus 5.5 medium as default (best price to quality).
 - 2026-10-06: the repo's own config (hooks, skills, CLAUDE.md/AGENTS.md) is respected by default, because "those configs
   exist for a reason". This gave up the lean cost advantage in repos with config; repo-lean is the attempt to get it back.
