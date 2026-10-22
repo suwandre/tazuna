@@ -18,7 +18,7 @@ QUOTA_PER_USD, UTC_OFFSET = 500_000, timedelta(hours=2)  # the log is in UTC, th
 DEFAULT = ["v129", "v131", "v137", "v140", "v141", "v143", "v145", "v148", "v150", "v151", "v153", "v154", "v156",
            "v157", "v158", "v159", "v160", "v161", "v163", "v165", "v166", "v167", "v168", "v169", "v170", "v172", "v174",
            "v175", "v176", "v177", "v178", "v179", "v180", "v181", "v182", "v183", "v184", "v185", "v186", "v189", "v196",
-           "v197", "v200", "v201", "v202", "v203", "v204", "v205"]
+           "v197", "v200", "v201", "v202", "v203", "v204", "v205", "v207"]
 LOG_MODEL = {"minimax-m3.1-flash-free": "minimax/minimax-m3.1-flash:free"}  # the run's model as SubRouter's log names it
 
 

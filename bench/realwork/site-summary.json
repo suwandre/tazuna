@@ -1779,7 +1779,7 @@
    "usd_source": "real",
    "run_tok_s": 25.3,
    "call_tok_s": 33.8,
-   "judge": 8,
+   "judge": 7.5,
    "anchor": 9
   },
   {
@@ -2132,7 +2132,7 @@
    "run_tok_s": 24.9,
    "call_tok_s": 26.8,
    "judge": 8,
-   "anchor": 8
+   "anchor": 9
   },
   {
    "site": "SubRouter",
@@ -2219,7 +2219,7 @@
    "usd_source": "real",
    "run_tok_s": 33.6,
    "call_tok_s": 25.1,
-   "judge": 4.5,
+   "judge": 4,
    "anchor": 9
   },
   {
@@ -2241,7 +2241,7 @@
    "usd_source": "real",
    "run_tok_s": 91.0,
    "call_tok_s": 78.5,
-   "judge": 6.5,
+   "judge": 7.5,
    "anchor": 8
   },
   {
@@ -2395,7 +2395,51 @@
    "usd_source": "real",
    "run_tok_s": 64.8,
    "call_tok_s": 65.8,
-   "judge": 5.5,
+   "judge": 6.5,
+   "anchor": 8
+  },
+  {
+   "site": "Shannon",
+   "model": "gpt-6.1-sol",
+   "effort": "max",
+   "harness": "tazuna-ownshngpt-v206@gpt-6.1-sol:max",
+   "run": 0,
+   "tests": "3/3",
+   "passed": 3,
+   "turns": 75,
+   "minutes": 16.5,
+   "input": 1390157,
+   "cache_read": 8483483,
+   "cache_write": 0,
+   "output": 73131,
+   "cached": 0.859,
+   "usd": 0.5232,
+   "usd_source": "est",
+   "run_tok_s": 73.7,
+   "call_tok_s": 53.6,
+   "judge": 7,
+   "anchor": 9
+  },
+  {
+   "site": "SubRouter",
+   "model": "deepseek-v4.1-flash",
+   "effort": "max",
+   "harness": "tazuna-ownsubm-v207@deepseek-v4.1-flash:max",
+   "run": 0,
+   "tests": "3/3",
+   "passed": 3,
+   "turns": 339,
+   "minutes": 66.6,
+   "input": 3555281,
+   "cache_read": 44523008,
+   "cache_write": 0,
+   "output": 258228,
+   "cached": 0.926,
+   "usd": 0.0524,
+   "usd_source": "real",
+   "run_tok_s": 64.7,
+   "call_tok_s": 48.8,
+   "judge": 6.5,
    "anchor": 8
   }
  ],
@@ -2468,7 +2512,7 @@
     "anchor": 8
    },
    "mean": {
-    "judge": 7.222,
+    "judge": 7.333,
     "passed": 2.818,
     "usd": 0.03,
     "minutes": 25.891,
@@ -2878,7 +2922,7 @@
     "anchor": 9
    },
    "mean": {
-    "judge": 6.25,
+    "judge": 6.083,
     "passed": 2.5,
     "usd": 0.065,
     "minutes": 36.533,
@@ -3467,6 +3511,88 @@
    }
   },
   {
+   "site": "Shannon",
+   "model": "gpt-6.1-sol",
+   "runs": 1,
+   "best": {
+    "site": "Shannon",
+    "model": "gpt-6.1-sol",
+    "effort": "max",
+    "harness": "tazuna-ownshngpt-v206@gpt-6.1-sol:max",
+    "run": 0,
+    "tests": "3/3",
+    "passed": 3,
+    "turns": 75,
+    "minutes": 16.5,
+    "input": 1390157,
+    "cache_read": 8483483,
+    "cache_write": 0,
+    "output": 73131,
+    "cached": 0.859,
+    "usd": 0.5232,
+    "usd_source": "est",
+    "run_tok_s": 73.7,
+    "call_tok_s": 53.6,
+    "judge": 7,
+    "anchor": 9
+   },
+   "mean": {
+    "judge": 7,
+    "passed": 3,
+    "usd": 0.523,
+    "minutes": 16.5,
+    "turns": 75,
+    "cached": 0.859,
+    "run_tok_s": 73.7,
+    "call_tok_s": 53.6,
+    "input": 1390157,
+    "cache_read": 8483483,
+    "cache_write": 0,
+    "output": 73131
+   }
+  },
+  {
+   "site": "SubRouter",
+   "model": "deepseek-v4.1-flash",
+   "runs": 2,
+   "best": {
+    "site": "SubRouter",
+    "model": "deepseek-v4.1-flash",
+    "effort": "max",
+    "harness": "tazuna-ownsubm-v207@deepseek-v4.1-flash:max",
+    "run": 0,
+    "tests": "3/3",
+    "passed": 3,
+    "turns": 339,
+    "minutes": 66.6,
+    "input": 3555281,
+    "cache_read": 44523008,
+    "cache_write": 0,
+    "output": 258228,
+    "cached": 0.926,
+    "usd": 0.0524,
+    "usd_source": "real",
+    "run_tok_s": 64.7,
+    "call_tok_s": 48.8,
+    "judge": 6.5,
+    "anchor": 8
+   },
+   "mean": {
+    "judge": 6.5,
+    "passed": 3,
+    "usd": 0.054,
+    "minutes": 61.1,
+    "turns": 276,
+    "cached": 0.881,
+    "run_tok_s": 64.75,
+    "call_tok_s": 57.3,
+    "input": 4031503.5,
+    "cache_read": 33785284.5,
+    "cache_write": 0,
+    "output": 237129
+   }
+  },
+  {
    "site": "SubRouter",
    "model": "minimax-m3.1-flash-free",
    "runs": 1,
@@ -3669,47 +3795,6 @@
     "cache_read": 1389070.5,
     "cache_write": 74586,
     "output": 31308
-   }
-  },
-  {
-   "site": "SubRouter",
-   "model": "deepseek-v4.1-flash",
-   "runs": 1,
-   "best": {
-    "site": "SubRouter",
-    "model": "deepseek-v4.1-flash",
-    "effort": "max",
-    "harness": "tazuna-ownsubm-v202@deepseek-v4.1-flash:max",
-    "run": 0,
-    "tests": "3/3",
-    "passed": 3,
-    "turns": 213,
-    "minutes": 55.6,
-    "input": 4507726,
-    "cache_read": 23047561,
-    "cache_write": 0,
-    "output": 216030,
-    "cached": 0.836,
-    "usd": 0.0566,
-    "usd_source": "real",
-    "run_tok_s": 64.8,
-    "call_tok_s": 65.8,
-    "judge": 5.5,
-    "anchor": 8
-   },
-   "mean": {
-    "judge": 5.5,
-    "passed": 3,
-    "usd": 0.057,
-    "minutes": 55.6,
-    "turns": 213,
-    "cached": 0.836,
-    "run_tok_s": 64.8,
-    "call_tok_s": 65.8,
-    "input": 4507726,
-    "cache_read": 23047561,
-    "cache_write": 0,
-    "output": 216030
    }
   },
   {

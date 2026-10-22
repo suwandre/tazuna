@@ -1593,5 +1593,39 @@
   "outcome": "3/3 suite_fail=0 1242.5s turns=67 in=4970302 out=41955 33.8t",
   "overlap": false,
   "judge": 8
+ },
+ {
+  "label": "v207",
+  "model": "deepseek-v4.1-flash",
+  "start": "10-22 15:51",
+  "calls": 339,
+  "edits": 70,
+  "input": 3555281,
+  "cache_read": 44523008,
+  "cache_write": 0,
+  "output": 258228,
+  "cached_share": 0.926,
+  "usd": 0.0524,
+  "usd_per_call": 0.00015,
+  "usd_per_m_tokens": 0.0011,
+  "routes": {
+   "Kriora": 339
+  },
+  "route_prices": {
+   "Kriora": {
+    "input": 0.009558823529411765,
+    "cache_read": 0.00019117647058823528,
+    "cache_write": null,
+    "output": 0.03823529411764706
+   }
+  },
+  "wall_s": 3994,
+  "run_tok_s": 64.7,
+  "gen_tok_s": 224.6,
+  "first_token_s": 5.1,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 3993.8s turns=339 in=48078289 out=258228 64",
+  "overlap": false,
+  "judge": null
  }
 ]

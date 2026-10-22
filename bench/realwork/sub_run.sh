@@ -19,7 +19,9 @@ RUN=$!
 while kill -0 $RUN 2>/dev/null; do
   sleep 60
   f=$(ls -t "$SESSIONS" | grep -- "-$LABEL@" | head -1); [ -z "$f" ] && continue  # no session before the gate opens
-  idle=$(( $(date +%s) - $(stat -f %m "$SESSIONS/$f") ))
+  # a pause (kill -STOP on the run and this loop, or a sleeping Mac) is not a hang: idle counts from the end of a gap
+  t=$(date +%s); [ $((t - ${TICK:-$t})) -gt 300 ] && WOKE=$t; TICK=$t
+  m=$(stat -f %m "$SESSIONS/$f"); idle=$(( t - (m > ${WOKE:-0} ? m : ${WOKE:-0}) ))
   [ $idle -gt 1800 ] && { stop "no reply for $idle s"; break; }
   [ "${SUB_NOEDIT:-240}" -gt 0 ] || continue
   # calls since the last edit: an edit tool, or a change in the work tree (DeepSeek edits through python in bash)

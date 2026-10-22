@@ -56,6 +56,19 @@ without an edit tool, 618 lines changed). `sub_summary.py` reads the effort from
 of one model side by side by it; `uno_run.sh` takes `HARNESS_BIN` and no longer prints an arithmetic error on a run without
 a group switch.
 
+Later the same day (`judge.oct.sol-sites.jsonl`, `judge.oct.ds-flash.jsonl`, two calls each; anchors DeepSeek 8-9, Codex
+Luna 7): Sol at max on Shannon 0.12x (v206) 3/3 in 16.5 minutes, 86% cached, ~$0.52 of credit (~$0.07 at the 2026-10-20
+rate), judge 7, beside SubRouter's Sol runs 7.5-8 (v185, v167, v197) and Shannon 0.27x on 2026-10-20 at 4. DeepSeek V4.1
+Flash on the default key with a6aa disabled went to Kriora (v207: 339 calls, 93% cached, $0.052, 67 minutes) and judged
+6.5, as v202 on a6aa: the same quality and cost, a third less per call but more calls; UnoRouter's V4.1 Flash 7.5-9 for
+$0.002-0.016. Mortera: Opus 5.5 left every prompt uncached (four calls on a 26K prefix marked for caching, each billed in
+full; its streamed replies report 0 input tokens), so a run would cost ~$1.80 there; Sol at max (v208) spent $0.20 in 28
+minutes unfinished, then was stopped by our own watcher after a pause (below) and is left out.
+
+The run watcher counted an hour's `kill -STOP` as an hour without a reply and stopped v208 as it resumed; a gap of over
+five minutes in its own loop (a pause or a sleeping Mac) now restarts the count. `sub_one.sh` runs the route check, then
+one watched run with its own spend guard; `sub_guard.sh` also reads Mortera's balance (`GUARD_SITE=mortera`, IDR).
+
 ## Effort and time of day on SubRouter: Luna max over xhigh, Sol xhigh over max; MiniMax free passes, 2026-10-21/22 (bench only)
 
 rclone, one run each unless noted; real cost from SubRouter's usage log (`sub_summary.py`), UnoRouter at tazuna's estimate.

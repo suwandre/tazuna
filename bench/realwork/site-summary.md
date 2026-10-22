@@ -1,7 +1,7 @@
 | site | model | effort | runs | best run | judge (anchor) | tests | $ | in / cache read / write / out | cached | min | turns | run tok/s | call tok/s | avg judge | avg $ | avg min |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Experiential Labs | deepseek-v4.1-flash | max | 2 | tazuna-ownel-v39 r0 | 9.5 (—) | 3/3 | 0.204 est | 218K / 6.14M / 0K / 85K | 97% | 18.6 | 91 | 75.7 | 83.8 | 9.25 | 0.145 | 14.25 |
-| UnoRouter | deepseek-v4.1-flash | max | 11 | tazuna-ownuno-v187 r0 | 9 (8) | 3/3 | 0.002 est | 3.86M / 26.21M / 0K / 150K | 87% | 28.7 | 228 | 87.0 | 67.2 | 7.222 | 0.030 | 25.891 |
+| UnoRouter | deepseek-v4.1-flash | max | 11 | tazuna-ownuno-v187 r0 | 9 (8) | 3/3 | 0.002 est | 3.86M / 26.21M / 0K / 150K | 87% | 28.7 | 228 | 87.0 | 67.2 | 7.333 | 0.030 | 25.891 |
 | UnoRouter | deepseek-v4.1-flash-1017 | max | 3 | tazuna-ownuno-v111 r0 | 9 (8) | 3/3 | 0.026 | 1.20M / 2.41M / 0K / 35K | 67% | 10.0 | 59 | 58.2 | 48.9 | 8.333 | 0.018 | 27.6 |
 | BeatAPI | deepseek-v4.1-flash-hc | max | 5 | tazuna-ownbeat-v52 r0 | 9 (9) | 3/3 | 0.027 est | 84K / 3.09M / 0K / 28K | 97% | 10.7 | 58 | 44.4 | 56.3 | 7.6 | 0.183 | 75.08 |
 | SubRouter | deepseek-v4.1-flash-1017 | max | 5 | tazuna-ownsub-v114 r0 | 9 (8) | 3/3 | 0.046 | 1.25M / 8.80M / 0K / 178K | 88% | 37.3 | 113 | 79.6 | 46.5 | 7.6 | 0.065 | 36.36 |
@@ -11,7 +11,7 @@
 | SubRouter | deepseek-v4.1-flash-1017 | xhigh | 4 | tazuna-ownsubm-v131 r0 | 8 (9) | 3/3 | 0.009 | 63K / 3.67M / 0K / 80K | 98% | 15.6 | 62 | 85.5 | 36.6 | 7.375 | 0.023 | 46.525 |
 | UnoRouter | gpt-6.1-sol | max | 1 | tazuna-ownuno-v58 r0 | 8 (9) | 3/3 | 0.015 est | 214K / 4.11M / 0K / 29K | 95% | 22.4 | 70 | 21.5 | 24.8 | 8 | 0.015 | 22.4 |
 | Mortera | deepseek-v4.1-flash | max | 2 | tazuna-ownmrt-v98 r0 | 8 (8) | 3/3 | 0.018 | 77K / 3.40M / 0K / 42K | 98% | 8.9 | 74 | 78.6 | 92.2 | 8 | 0.059 | 28.25 |
-| SubRouter | gpt-6.1-sol | xhigh | 6 | tazuna-ownsubm-v137 r0 | 8 (9) | 3/3 | 0.019 | 135K / 1.54M / 0K / 21K | 92% | 13.7 | 33 | 25.3 | 28.9 | 6.25 | 0.065 | 36.533 |
+| SubRouter | gpt-6.1-sol | xhigh | 6 | tazuna-ownsubm-v137 r0 | 8 (9) | 3/3 | 0.019 | 135K / 1.54M / 0K / 21K | 92% | 13.7 | 33 | 25.3 | 28.9 | 6.083 | 0.065 | 36.533 |
 | BeatAPI | claude-haiku-5-5 | max | 3 | tazuna-ownbeat-v60 r0 | 8 (9) | 3/3 | 0.031 est | 106K / 1.87M / 0K / 64K | 95% | 14.5 | 45 | 73.1 | 89.3 | 6 | 0.041 | 17.633 |
 | SubRouter | gpt-6-astra | xhigh | 1 | tazuna-ownsubm-v140 r0 | 8 (9) | 3/3 | 0.120 | 86K / 1.76M / 0K / 29K | 95% | 14.4 | 38 | 33.4 | 23.6 | 8 | 0.120 | 14.4 |
 | Anthropic plan | claude-haiku-5-5 | high | 3 | tazuna-repo-v77 r1 | 8 (9) | 3/3 | 0.326 est | 0K / 4.59M / 140K / 75K | 97% | 7.6 | 54 | 163.7 | 236.7 | 7.667 | 0.418 | 9.333 |
@@ -26,12 +26,13 @@
 | CheaperInference | gpt-6-luna | max | 1 | tazuna-own-v38 r0 | 7 (—) | 3/3 | 0.133 est | 199K / 14.36M / 0K / 81K | 99% | 24.2 | 119 | 56.2 | 62.2 | 7 | 0.133 | 24.2 |
 | Shannon | deepseek-v4.1-flash | max | 1 | tazuna-ownshnds-v108 r0 | 7 (8) | 3/3 | 0.140 | 4.91M / 16.89M / 0K / 470K | 78% | 80.0 | 203 | 98.0 | 56.9 | 7 | 0.140 | 80.0 |
 | SubRouter | gpt-6-sol | xhigh | 1 | tazuna-ownsubm-v165 r0 | 7 (9) | 3/3 | 0.159 est | 252K / 11.02M / 0K / 48K | 98% | 55.2 | 113 | 14.5 | 9.8 | 7 | 0.159 | 55.2 |
+| Shannon | gpt-6.1-sol | max | 1 | tazuna-ownshngpt-v206 r0 | 7 (9) | 3/3 | 0.523 est | 1.39M / 8.48M / 0K / 73K | 86% | 16.5 | 75 | 73.7 | 53.6 | 7 | 0.523 | 16.5 |
+| SubRouter | deepseek-v4.1-flash | max | 2 | tazuna-ownsubm-v207 r0 | 6.5 (8) | 3/3 | 0.052 | 3.56M / 44.52M / 0K / 258K | 93% | 66.6 | 339 | 64.7 | 48.8 | 6.5 | 0.054 | 61.1 |
 | SubRouter | minimax-m3.1-flash-free | xhigh | 1 | tazuna-ownsubmm-v186 r0 | 6 (8) | 3/3 | 0.000 | 239K / 50.87M / 0K / 993K | 100% | 212.7 | 372 | 77.8 | 41.8 | 6 | 0.000 | 212.7 |
 | SubRouter (Grok pool key) | grok-4.7 | high | 1 | tazuna-ownsubgp-v161 r0 | 6 (9) | 3/3 | 0.020 | 330K / 2.55M / 0K / 64K | 88% | 20.7 | 40 | 51.3 | 30.5 | 6 | 0.020 | 20.7 |
 | SubRouter | gpt-6-sol-plus | xhigh | 1 | tazuna-ownsubm-v170 r0 | 6 (9) | 3/3 | 0.178 | 1.16M / 13.47M / 0K / 66K | 92% | 83.1 | 125 | 13.1 | 10.8 | 6 | 0.178 | 83.1 |
 | UnoRouter | gpt-6-luna | max | 5 | tazuna-ownuno-v75 r0 | 6 (8) | 3/3 | 0.199 est | 476K / 27.41M / 0K / 255K | 98% | 159.2 | 210 | 26.7 | 30.3 | 3.25 | 0.050 | 59.68 |
 | Anthropic plan | claude-opus-5-5 | medium | 2 | tazuna-repo-v34 r1 | 6 (9) | 1/2 | 1.162 est | 0K / 1.27M / 71K / 26K | 95% | 7.3 | 25 | 60.3 | 118.4 | 6 | 1.310 | 14.4 |
-| SubRouter | deepseek-v4.1-flash | max | 1 | tazuna-ownsubm-v202 r0 | 5.5 (8) | 3/3 | 0.057 | 4.51M / 23.05M / 0K / 216K | 84% | 55.6 | 213 | 64.8 | 65.8 | 5.5 | 0.057 | 55.6 |
 | Mortera | gpt-6-luna | max | 3 | tazuna-ownmrt-v107 r0 | 5 (9) | 3/3 | 0.012 | 200K / 6.51M / 0K / 29K | 97% | 17.9 | 99 | 27.5 | 30.6 | 4.333 | 0.025 | 37.9 |
 | SubRouter | gpt-5.6-sol | xhigh | 1 | tazuna-ownsubm-v163 r0 | 5 (9) | 2/3 | 0.040 | 178K / 3.93M / 0K / 35K | 96% | 17.7 | 81 | 33.2 | 20.9 | 5 | 0.040 | 17.7 |
 | apinex | claude-opus-5.5 | medium | 1 | tazuna-ownapx-v52 r0 | 5 (9) | 2/3 | 0.305 est | 523K / 0K / 0K / 17K | 0% | 6.5 | 25 | 44.7 | 34.8 | 5 | 0.305 | 6.5 |

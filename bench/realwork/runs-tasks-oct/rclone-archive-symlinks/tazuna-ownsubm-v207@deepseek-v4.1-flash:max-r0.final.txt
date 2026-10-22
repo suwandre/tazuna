@@ -1,0 +1,28 @@
+The earlier combined run just exceeded the 120s shell timeout (operations/sync suites take ~35s alone); both passed individually earlier.
+
+## Summary
+
+Symlinks inside `zip` and `squashfs` archives are now exposed the same way the local backend exposes them.
+
+### `backend/archive/zip/zip.go`
+- `Fs` gains a `links` flag, taken from `fs.GetConfig(ctx).Links` when the archive is opened.
+- Entries with `os.ModeSymlink` are skipped unless `--links` is set; when skipped, one `NOTICE` names `-l/--links` (counted once per archive, not per entry).
+- With `--links`, a symlink is exposed under its name plus `fs.LinkSuffix`, `Size()` is the target length, and `Open` serves the target (clamped for `SeekOption`/`RangeOption`).
+- Target reading is bounded (`maxLinkTargetSize`) so a hostile archive can't make rclone buffer an unbounded link.
+- The suffix is applied after prefix/root mapping, so a root naming `foo/link.txt.rclonelink` works.
+- A regular member whose name ends in `.rclonelink` stays a regular file and wins over a symlink that would translate to the same name (precomputed name set).
+
+### `backend/archive/squashfs/squashfs.go`
+- Same `links` flag, same skip/notice/suffix/size/`Open` behaviour, using `go-diskfs`' `StatT.LinkTarget` (previously symlinks were dropped entirely).
+- Split `newObjectNative` into `objectNative` (returns `nil` when absent) so lookups can fall back to the `name + .rclonelink` form and reject returning an object under a different name — keeping `List` and `NewObject` in agreement.
+- Single-object roots now compare the resulting remote exactly, so a symlink is only found by its translated name.
+- `List` of a path that isn't a directory (e.g. a symlink) now returns `ErrorDirNotFound` instead of a parse error.
+
+### Tests (`zip_internal_test.go`, `squashfs_internal_test.go`, `archive_internal_test.go`, new `testdata/symlink.sqfs`)
+- Listing with/without `--links`, `NewObject` agreement, size/contents, seek/range (including past-the-end), root-at-symlink, `.rclonelink` name clash precedence, over-long target skipping, `List` of a non-directory.
+- Archive-level: `rclone copy --links` recreates the symlink on the local destination for both formats, and a hostile archive (`pwn` → outside dir, plus `pwn/authkeys`) reproduces the link but writes nothing outside the destination.
+
+### Docs
+- New "Symbolic links" section in `docs/content/archive.md` with the maintainer's example.
+
+Verified with `go build ./...`, `go test ./backend/archive/...` (also with `-race`), `go test ./fs/operations/ ./fs/sync/`, `go vet`, and `golangci-lint run ./backend/archive/...` (0 issues), plus manual `rclone lsl/copy --links` runs against real zip and squashfs files.
