@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.77 (2026-10-22)
+
+- **DeepSeek's reasoning goes back when a provider needs it.** On Chat Completions the own loop kept only text and tool
+  calls (some providers reject reasoning fields); a gate run on SubRouter's default key ended at call 29 with HTTP 400
+  "This reasoning model requires previous reasoning_content in multi-turn requests", most likely after the gateway moved
+  it to another provider. Each assistant turn now keeps its `reasoning_content` (from the stream too), still left out of
+  requests; on that 400 the call is sent again with it, and for the rest of the run. Memory: the reasoning text of the
+  run stays in the history (a few MB at most on a 300-call run).
+
 ## Two cheap attempts, Opus picks one: +0.2 to +0.8, the worst run never picked, 2026-10-22 (bench only)
 
 Offline, from runs already judged: for each pair of runs of a task, Opus 5.5 high (`claude -p` on the subscription, no

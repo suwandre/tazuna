@@ -185,6 +185,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         queued: VecDeque::new(),
         mode,
         asked: 0,
+        send_reasoning: false,
         out: Box::new(|e: &Value| emit(e)),
     };
     loop {
@@ -224,6 +225,9 @@ struct Loop {
     /// Permission mode in claude's names: bypassPermissions (auto: never asks), default (ask before commands and edits),
     /// acceptEdits (ask before commands). Plan mode is not offered for the own loop.
     mode: String,
+    /// Chat Completions: send each assistant turn's `reasoning_content` back. Off by default (some providers reject the
+    /// field); switched on for the rest of the run when a provider refuses a call without it.
+    send_reasoning: bool,
     /// Permission questions asked so far (their request ids).
     asked: u32,
     out: Box<dyn FnMut(&Value)>,
@@ -268,6 +272,21 @@ fn repo_changed() -> bool {
 }
 
 impl Loop {
+    /// The history for Chat Completions: assistant turns without their `reasoning_content` unless a provider asked for it.
+    fn chat_messages(&self) -> Value {
+        if self.send_reasoning {
+            return json!(self.msgs);
+        }
+        json!(self.msgs.iter().map(|m| match m.get("reasoning_content") {
+            Some(_) => {
+                let mut m = m.clone();
+                m.as_object_mut().expect("a message is an object").remove("reasoning_content");
+                m
+            }
+            None => m.clone(),
+        }).collect::<Vec<_>>())
+    }
+
     /// One user message: model calls and tool runs until the model answers without tools, or a cap or interrupt ends it.
     fn run(&mut self, content: &Value, followup: bool, rx: &Receiver<Value>) {
         self.msgs.push(json!({"role": "user", "content": text_of(content)}));
@@ -334,7 +353,7 @@ impl Loop {
                     b
                 }
                 Api::Chat => {
-                    let mut b = json!({"model": self.model, "messages": self.msgs, "tools": self.tools});
+                    let mut b = json!({"model": self.model, "messages": self.chat_messages(), "tools": self.tools});
                     if let Some(e) = &self.effort {
                         b["reasoning_effort"] = json!(e);
                     }
@@ -349,6 +368,17 @@ impl Loop {
                 Err(e) if self.api == Api::Messages && format!("{e:#}").contains("400") && drop_thinking(&mut self.msgs) => {
                     (self.out)(&json!({"type": "system", "subtype": "thinking_dropped", "message": format!("{e:#}")}));
                     body["messages"] = json!(self.msgs);
+                    match (self.call)(&body) {
+                        Ok(r) => r,
+                        Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
+                    }
+                }
+                // DeepSeek's thinking with tools: a provider behind a gateway that moved the run there answered 400 "This
+                // reasoning model requires previous reasoning_content in multi-turn requests" (call 29 of a caddy run)
+                Err(e) if self.api == Api::Chat && !self.send_reasoning && format!("{e:#}").contains("reasoning_content") => {
+                    (self.out)(&json!({"type": "system", "subtype": "reasoning_resent", "message": format!("{e:#}")}));
+                    self.send_reasoning = true;
+                    body["messages"] = self.chat_messages();
                     match (self.call)(&body) {
                         Ok(r) => r,
                         Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
@@ -426,10 +456,13 @@ impl Loop {
                     let m = &reply["choices"][0]["message"];
                     let text = m["content"].as_str().unwrap_or_default().to_string();
                     let calls: Vec<Value> = m["tool_calls"].as_array().cloned().unwrap_or_default();
-                    // only what the next call needs; reasoning fields are not sent back (some providers reject them)
+                    // only what the next call needs; the reasoning is kept but sent back only when a provider asks for it
                     let mut keep = json!({"role": "assistant", "content": text});
                     if !calls.is_empty() {
                         keep["tool_calls"] = json!(calls);
+                    }
+                    if let Some(r) = m["reasoning_content"].as_str().filter(|r| !r.is_empty()) {
+                        keep["reasoning_content"] = json!(r);
                     }
                     self.msgs.push(keep);
                     (text, calls)
@@ -611,6 +644,7 @@ pub fn explore_serve(args: &[String]) -> Result<()> {
         queued: VecDeque::new(),
         mode: "explore".into(),
         asked: 0,
+        send_reasoning: false,
         out: Box::new(move |e: &Value| {
             if e["type"] == "result" {
                 *sink.borrow_mut() = e["result"].as_str().unwrap_or_default().to_string();
@@ -946,7 +980,7 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
             .context("stream ended without response.completed");
     }
     // calls by their `index`, which some gateways count across content blocks (text 0, tools 1, 2, ...)
-    let (mut content, mut usage, mut calls) = (String::new(), Value::Null, Vec::<(u64, Value)>::new());
+    let (mut content, mut reasoning, mut usage, mut calls) = (String::new(), String::new(), Value::Null, Vec::<(u64, Value)>::new());
     for e in events {
         if let Some(err) = e.get("error") {
             bail!("provider error in stream: {}", err.to_string().chars().take(300).collect::<String>());
@@ -956,6 +990,7 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
         }
         let d = &e["choices"][0]["delta"];
         content.push_str(d["content"].as_str().unwrap_or_default());
+        reasoning.push_str(d["reasoning_content"].as_str().unwrap_or_default());
         for t in d["tool_calls"].as_array().into_iter().flatten() {
             // a piece without an index continues the last call
             let i = t["index"].as_u64().or(calls.last().map(|c| c.0)).unwrap_or(0);
@@ -978,6 +1013,9 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
     let mut message = json!({"role": "assistant", "content": content});
     if !calls.is_empty() {
         message["tool_calls"] = json!(calls);
+    }
+    if !reasoning.is_empty() {
+        message["reasoning_content"] = json!(reasoning);
     }
     Ok(json!({"choices": [{"message": message}], "usage": usage}))
 }
@@ -1023,6 +1061,59 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn reasoning_goes_back_only_when_asked() {
+        // the stream's reasoning is kept with the turn
+        let stream = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"look at a\"}}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"read\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\"}\"}}]}}]}\n\n\
+data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n";
+        let first = from_stream(&sse(stream).unwrap(), Api::Chat).unwrap();
+        assert_eq!(first["choices"][0]["message"]["reasoning_content"], "look at a");
+
+        let dir = std::env::temp_dir().join(format!("tazuna-reasoning-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+        let sent = Rc::new(RefCell::new(vec![]));
+        let (s, mut n) = (sent.clone(), 0);
+        let mut l = Loop {
+            call: Box::new(move |b: &Value| {
+                s.borrow_mut().push(b.clone());
+                n += 1;
+                let has = b["messages"].as_array().unwrap().iter().any(|m| m.get("reasoning_content").is_some());
+                match n {
+                    1 => Ok(first.clone()),
+                    // a provider that needs the reasoning back refuses the call without it
+                    _ if !has => anyhow::bail!("HTTP 400: This reasoning model requires previous reasoning_content in multi-turn requests."),
+                    _ => Ok(json!({"choices": [{"message": {"role": "assistant", "content": "done"}}], "usage": {}})),
+                }
+            }),
+            api: Api::Chat,
+            system: "sys".into(),
+            model: "deepseek-v4.1-flash-1017".into(),
+            effort: Some("max".into()),
+            price: (1e-6, 1e-7, 4e-6),
+            tools: vec![],
+            msgs: vec![json!({"role": "system", "content": "sys"})],
+            server: crate::mcp::Server::new(dir.clone()),
+            session: "s".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
+            send_reasoning: false,
+            out: Box::new(|_: &Value| {}),
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("read a"), false, &rx);
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 3, "the first call, the refused one, the same again with the reasoning");
+        assert!(sent[1]["messages"].as_array().unwrap().iter().all(|m| m.get("reasoning_content").is_none()), "not sent by default");
+        assert_eq!(sent[2]["messages"][2]["reasoning_content"], "look at a");
+        assert!(l.send_reasoning, "kept on for the rest of the run");
+        std::fs::remove_dir_all(&dir).ok();
+    }
     use super::*;
     use std::{cell::RefCell, rc::Rc};
 
@@ -1105,6 +1196,7 @@ data: {\"type\":\"message_stop\"}\n";
             queued: VecDeque::new(),
             mode: "bypassPermissions".into(),
             asked: 0,
+        send_reasoning: false,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1323,6 +1415,7 @@ data: {\"type\":\"message_stop\"}\n";
             queued: VecDeque::new(),
             mode: "bypassPermissions".into(),
             asked: 0,
+        send_reasoning: false,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1360,6 +1453,7 @@ data: {\"type\":\"message_stop\"}\n";
             queued: VecDeque::new(),
             mode: "bypassPermissions".into(),
             asked: 0,
+        send_reasoning: false,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1403,6 +1497,7 @@ data: {\"type\":\"message_stop\"}\n";
             queued: VecDeque::new(),
             mode: "bypassPermissions".into(),
             asked: 0,
+        send_reasoning: false,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1444,6 +1539,7 @@ data: {\"type\":\"message_stop\"}\n";
             queued: VecDeque::new(),
             mode: "bypassPermissions".into(),
             asked: 0,
+        send_reasoning: false,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1489,6 +1585,7 @@ data: {\"type\":\"message_stop\"}\n";
             queued: VecDeque::new(),
             mode: mode.into(),
             asked: 0,
+        send_reasoning: false,
             out: Box::new(move |e: &Value| {
                 if e["type"] == "control_request" {
                     if let Some((tx, r)) = &reply {
