@@ -34,7 +34,7 @@ START=$(cost "$ENV")
 used() { curl -s --max-time 15 https://api.unorouter.com/v1/dashboard/billing/usage -H "Authorization: Bearer $UNOROUTER_API_KEY" | python3 -I -c "import json,sys;print(json.load(sys.stdin)['total_usage'])"; }
 echo "$(date +%H:%M) start $MODEL on $GROUP_LIST: $ENV; used-cents $(used)" > "$LOG"
 env $ENV TAZUNA_GROUPS_FILE="$GFILE" BENCH_GATE=state GUARD_PAUSE_AT=101 GUARD_WEEK_AT=101 BENCH_SET=tasks-oct BENCH_TIMEOUT=10800 \
-  HARNESS_BIN=${HARNESS_BIN:-$HOME/bench-homes/tz-v75/tazuna} ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "$H-$LABEL@$MODEL:max" > "bench.$LABEL.log" 2>&1 &
+  HARNESS_BIN=${HARNESS_BIN:-$HOME/bench-homes/tz-v76/tazuna} ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "$H-$LABEL@$MODEL:max" > "bench.$LABEL.log" 2>&1 &
 R=$!
 # only this run's own process tree (matching by model killed a parallel run of the same model and one of a model whose
 # name starts the same)

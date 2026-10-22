@@ -4,6 +4,8 @@
 # (16300 per USD; START is then minus the balance at the start). The counter is account-wide: runs started together share
 # one guard. GUARD_EVERY: seconds between reads (60).
 START=$1 LIMIT=$2; shift 2
+# a failed counter read at launch once left START empty: LIMIT took the first label and the guard never stopped anything
+python3 -c "float('$START'); float('$LIMIT')" 2>/dev/null || { echo "$(date +%H:%M) bad START/LIMIT '$START' '$LIMIT': not guarding $*"; exit 2; }
 RE="-($(IFS='|'; echo "$*"))@"
 if [ "$GUARD_SITE" = mortera ]; then
   source ~/.mortera-key; UNIT=IDR PER_USD=16300

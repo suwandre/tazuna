@@ -143,7 +143,11 @@ pub fn serve(args: &[String]) -> Result<()> {
     let model = flag("--model").context("--model")?;
     let effort = flag("--effort");
     let mode = flag("--permission-mode").unwrap_or_else(|| "bypassPermissions".into());
-    let mut system = flag("--system-prompt").unwrap_or_default();
+    // the prompt (with the repo's CLAUDE.md/AGENTS.md) comes in the environment, not on the command line: an agent's
+    // `pkill -f "integration.test"` matched the AGENTS.md text in every engine's arguments and stopped ten runs (0.0.76)
+    let mut system = std::env::var("TAZUNA_SYSTEM_PROMPT").ok().or_else(|| flag("--system-prompt")).unwrap_or_default();
+    // SAFETY: no other thread runs yet; the agent's commands must not inherit the prompt
+    unsafe { std::env::remove_var("TAZUNA_SYSTEM_PROMPT") };
     if std::env::var_os("TAZUNA_BATCH").is_some() {
         system.push_str(BATCH_RULE);
     }

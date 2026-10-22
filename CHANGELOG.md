@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.76 (2026-10-22)
+
+- **No prompt on a command line.** The own loop's engine got its system prompt, the repo's CLAUDE.md and AGENTS.md
+  included, as an argument; in a benchmark round of 18 parallel runs one agent cleaned up its test servers with
+  `pkill -f "integration.test"`, which matched caddy's AGENTS.md text ("integration tests") in every engine's arguments
+  and stopped ten runs at once (in real use the same command would stop tazuna itself; the prompt was also readable by
+  anyone running `ps`). The engine now reads it from `TAZUNA_SYSTEM_PROMPT` and drops it from its environment, so the
+  agent's commands do not inherit it; the claude path's lean profiles pass `--system-prompt-file` (a temp file named by
+  the prompt's hash); the reviewer reads the task and diff on stdin. Checked: the same `pkill` against a run in a repo
+  whose AGENTS.md says "integration tests" leaves the engine running and the task finishes; a Haiku review reads its
+  input from stdin (verdict in 4.9 s).
+
 ## Routes by day: Luna on the OpenAI Pro pool judges 8 for $0.005; UnoRouter DeepSeek over SubRouter, 2026-10-22 (bench only)
 
 rclone, China evening (12:24-15:20 CEST); max and xhigh side by side on one key and route, SubRouter's log split by the

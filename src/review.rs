@@ -5,7 +5,7 @@
 
 use serde_json::Value;
 use std::{
-    io::Read,
+    io::{Read, Write},
     path::Path,
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -42,10 +42,11 @@ pub fn run(cwd: &Path, task: &str, model: &str, effort: &str) -> Review {
     let prompt = format!("# Task\n\n{task}\n\n# The change (against HEAD; new files in full)\n\n```diff\n{}\n```", diff(cwd));
     // TAZUNA_REVIEWER: a stand-in for `claude` (tests of the feedback path need a reviewer that finds something)
     let spawned = Command::new(std::env::var("TAZUNA_REVIEWER").unwrap_or_else(|_| "claude".into()))
-        .args(["-p", &prompt, "--model", model, "--effort", effort, "--output-format", "json", "--no-session-persistence"])
+        // the task and the diff on stdin, not as an argument (an agent's `pkill -f` matched text in the arguments, 0.0.76)
+        .args(["-p", "--model", model, "--effort", effort, "--output-format", "json", "--no-session-persistence"])
         .args(["--setting-sources", "", "--strict-mcp-config", "--disable-slash-commands", "--tools", "Read,Grep,Glob", "--system-prompt", SYSTEM])
         .current_dir(cwd)
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn();
@@ -54,6 +55,10 @@ pub fn run(cwd: &Path, task: &str, model: &str, effort: &str) -> Review {
         Ok(c) => c,
         Err(e) => return fail(format!("could not start claude: {e}"), 0.0),
     };
+    let mut stdin = child.stdin.take().expect("piped");
+    std::thread::spawn(move || {
+        let _ = stdin.write_all(prompt.as_bytes()); // dropped at the end: claude reads to EOF
+    });
     let mut stdout = child.stdout.take().expect("piped");
     let reader = std::thread::spawn(move || {
         let mut s = String::new();

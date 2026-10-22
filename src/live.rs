@@ -1073,7 +1073,8 @@ impl Live {
                 self.instructions_used = (bytes, sources);
             }
             let mut cmd = Command::new(std::env::current_exe().context("locating the tazuna binary")?);
-            cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--system-prompt", &prompt, "--permission-mode", &self.permission_mode])
+            cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--permission-mode", &self.permission_mode])
+                .env("TAZUNA_SYSTEM_PROMPT", &prompt)
                 .env("LEAN_BASH_CAP", self.bash_cap.to_string());
             if self.mode == "headless" {
                 cmd.env("TAZUNA_HEADLESS", "1"); // a task, not a conversation: stopping without a change gets a nudge
@@ -1137,7 +1138,7 @@ impl Live {
                     prompt.push_str(&text);
                     self.instructions_used = (bytes, sources);
                 }
-                cmd.args(["--system-prompt", &prompt, "--tools", "Bash,Read,Edit,Write,Grep,Glob,Skill"]);
+                cmd.arg("--system-prompt-file").arg(prompt_file(&prompt)?).args(["--tools", "Bash,Read,Edit,Write,Grep,Glob,Skill"]);
             }
             Profile::Lean => {
                 let mut prompt = self.mid_prompt();
@@ -1151,7 +1152,9 @@ impl Live {
                 let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": exe, "args": ["mcp"], "env": {"LEAN_BASH_CAP": self.bash_cap.to_string()}}}}).to_string();
                 // cc-mid: lean prompt and tools, no skills or other MCP servers
                 cmd.args(["--strict-mcp-config", "--disable-slash-commands"])
-                    .args(["--system-prompt", &prompt, "--tools", "Grep,Glob", "--mcp-config", &mcp])
+                    .arg("--system-prompt-file")
+                    .arg(prompt_file(&prompt)?)
+                    .args(["--tools", "Grep,Glob", "--mcp-config", &mcp])
                     // pre-allowed only in auto: the other modes ask about the lean tools too
                     .args(if self.permission_mode == "bypassPermissions" { &["--allowedTools", "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit"][..] } else { &[] });
             }
@@ -1245,6 +1248,19 @@ const MAX_INSTRUCTIONS: usize = 80_000;
 /// the agent reads them when it works in that directory (like Claude Code, which loads nested files lazily).
 /// Returns (text for the system prompt, bytes included, files included).
 // ponytail: no `@file` import expansion; add it when a repo relies on imports
+/// The prompt as a file for `claude --system-prompt-file`, named by its content (one file per distinct prompt, left in the
+/// temp dir): on the command line, the repo's instructions in it made the process a match for an agent's `pkill -f`.
+fn prompt_file(prompt: &str) -> Result<PathBuf> {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    prompt.hash(&mut h);
+    let path = std::env::temp_dir().join(format!("tazuna-prompt-{:016x}.md", h.finish()));
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(prompt) {
+        std::fs::write(&path, prompt).context("writing the prompt file")?;
+    }
+    Ok(path)
+}
+
 pub fn project_instructions(cwd: &Path, names: &[&str]) -> (String, usize, Vec<String>) {
     let mut body = String::new();
     let mut files = Vec::new();
@@ -1323,6 +1339,15 @@ mod tests {
         assert_eq!(c[1]["text"], "what is wrong in @shot.png ?");
         assert_eq!(user_content("no image here.png", &dir), json!("no image here.png"), "a path that is not a file stays text");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn prompt_goes_to_a_file_named_by_content() {
+        let a = prompt_file("rules\n# AGENTS.md\nintegration tests").unwrap();
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "rules\n# AGENTS.md\nintegration tests");
+        assert_eq!(prompt_file("rules\n# AGENTS.md\nintegration tests").unwrap(), a, "the same prompt reuses its file");
+        assert_ne!(prompt_file("other").unwrap(), a);
+        assert!(!a.to_string_lossy().contains("integration"), "the path carries none of the text");
     }
 
     #[test]

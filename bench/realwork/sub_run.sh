@@ -13,8 +13,8 @@ used() { curl -s -A curl/8 --max-time 15 https://subrouter.ai/v1/dashboard/billi
 stop() { echo "$(date +%H:%M) stopped: $1" >> "$LOG"; ps -axo pid=,command= | grep -- "-$LABEL@" | grep -v grep | awk '{print $1}' | xargs kill 2>/dev/null; }
 LOG=mrt-$LABEL.log
 echo "$(date +%H:%M) start $MODEL on ${SUB_SITE:-SubRouter} $TASK price $PRICE cap $CAP effort $EFF; used $(used)" > "$LOG"
-TAZUNA_PRICE=$PRICE TAZUNA_MAX_USD=$CAP BENCH_GATE=${SUB_GATE-state} GUARD_PAUSE_AT=101 GUARD_WEEK_AT=101 BENCH_SET=tasks-oct BENCH_TIMEOUT=${SUB_TIMEOUT:-10800} \
-  HARNESS_BIN=${HARNESS_BIN:-$HOME/bench-homes/tz-v75/tazuna} ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "$H-$LABEL@$MODEL:$EFF" > "bench.$LABEL.log" 2>&1 &
+TAZUNA_PRICE=$PRICE TAZUNA_MAX_USD=$CAP BENCH_GATE=${SUB_GATE-state} GUARD_PAUSE_AT=${GUARD_PAUSE_AT:-101} GUARD_WEEK_AT=${GUARD_WEEK_AT:-101} BENCH_SET=tasks-oct BENCH_TIMEOUT=${SUB_TIMEOUT:-10800} \
+  HARNESS_BIN=${HARNESS_BIN:-$HOME/bench-homes/tz-v76/tazuna} ./run.py --runs 1 --workers 1 --tasks "$TASK" --harness "$H-$LABEL@$MODEL:$EFF" > "bench.$LABEL.log" 2>&1 &
 RUN=$!
 while kill -0 $RUN 2>/dev/null; do
   sleep 60
