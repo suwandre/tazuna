@@ -1,0 +1,28 @@
+The working tree is clean of build artifacts. Here's a summary of the change:
+
+## Summary
+
+The archive backend now exposes symbolic links contained in ZIP and Squashfs archives, following the same convention the local backend uses.
+
+### New package: `backend/archive/links`
+Shared helpers for the two archivers: `Name()` (appends the `.rclonelink` suffix), `IsSymlink()`, `Open()` (reads a link target as an object's contents, honouring offset/limit), `LogSkipped()` (logs a notice naming `--links`), and `MaxTargetSize`.
+
+### `backend/archive/zip/zip.go`
+- Detects entries with `os.ModeSymlink` (via `zip.FileHeader.Mode`).
+- Without `--links`, symlinks are skipped and a notice is logged: `Skipped N symlinks - use --links to translate them`.
+- With `--links`, a symlink is exposed as a regular file named `<name>.rclonelink` whose size is the length of the target and whose contents read back the target (seek/range options honoured). The CRC32 hash is that of the target.
+- The root may name a symlink with or without the suffix; both resolve to the same exposed name.
+
+### `backend/archive/squashfs/squashfs.go`
+- Previously symlinks were dropped entirely (`FIXME Not regular file - skipping`); they are now handled identically to the ZIP case, using the target from `squashfs.StatT.LinkTarget`.
+- `List` and `NewObject` agree on which names exist, including for a symlink used as the Fs root.
+
+### Shared behaviour
+- A regular archive member whose name happens to end in `.rclonelink` stays a regular file and is not found without the suffix.
+- Duplicate exposed names (a symlink clashing with a regular `.rclonelink` member) are skipped with a log line rather than duplicated.
+- The destination side is unchanged: the local backend's `os.Root` protection already refuses to write through a symlink planted by a hostile archive, so nothing can be written outside the destination.
+
+### Tests
+New tests in `backend/archive/{archive,zip,squashfs}` cover: skipping vs. exposing, the `.rclonelink` naming, size/hash/contents, seek/range options, subdirectories, name clashes, listing↔`NewObject` agreement, symlink roots, an end-to-end copy recreating the symlink, and a hostile archive that must not write outside the destination. `docs/content/archive.md` documents the new behaviour.
+
+Verified with `go test ./backend/archive/...` (also under `-race`), `golangci-lint run ./backend/archive/...` (0 issues), and the wider `./backend/... ./fs/...` suites.

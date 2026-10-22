@@ -1,0 +1,25 @@
+Implemented symbolic-link support for archive backends.
+
+### Changes
+- ZIP archives:
+  - Detect symlink entries via `os.ModeSymlink`.
+  - Hide symlinks unless `-l/--links` is enabled.
+  - Expose enabled symlinks using the `.rclonelink` suffix.
+  - Preserve target contents and size.
+  - Keep regular files ending in `.rclonelink` unchanged.
+  - Skip archive members nested beneath symlinks to prevent path traversal.
+  - Ensure `List` and `NewObject` agree.
+
+- SquashFS archives:
+  - Added equivalent symlink translation behavior.
+  - Read symlink targets directly from the filesystem image.
+  - Support range and seek reads.
+  - Prevent lookups or directory listings through symlink parents.
+  - Added skip notices mentioning `-l/--links`.
+
+- Added ZIP and SquashFS tests covering listing, lookup, target contents, range/seek behavior, suffix collisions, copying, and hostile nested paths.
+
+### Verification
+- `go test ./backend/archive/... ./fs/operations -count=1`
+- `go vet ./backend/archive/... ./fs/operations`
+- `git diff --check`

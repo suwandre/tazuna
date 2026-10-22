@@ -1,0 +1,96 @@
+diff --git a/backend/archive/zip/zip.go b/backend/archive/zip/zip.go
+index 129ce01..00df440 100644
+--- a/backend/archive/zip/zip.go
++++ b/backend/archive/zip/zip.go
+@@ -43,6 +43,7 @@ type Fs struct {
+ 	prefix      string          // position for objects
+ 	prefixSlash string          // position for objects with a slash on
+ 	root        string          // position to read from within the archive
++	links       bool            // expose symlinks as .rclonelink files
+ 	dt          dirtree.DirTree // read from zipfile
+ }
+ 
+@@ -67,6 +68,7 @@ func New(ctx context.Context, wrappedFs fs.Fs, remote, prefix, root string) (fs.
+ 		node:        node,
+ 		remote:      remote,
+ 		root:        root,
++		links:       fs.GetConfig(ctx).Links,
+ 		prefix:      prefix,
+ 		prefixSlash: prefix + "/",
+ 	}
+@@ -138,6 +140,16 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 	}
+ 	dt := dirtree.New()
+ 	skipped := 0
++	skippedLinks := 0
++	symlinkDirs := make(map[string]struct{})
++	for _, file := range zr.File {
++		if !strings.HasSuffix(file.Name, "/") && file.Mode()&os.ModeSymlink != 0 {
++			remote, err := sanitize.Path(file.Name)
++			if err == nil {
++				symlinkDirs[path.Join(f.prefix, remote)] = struct{}{}
++			}
++		}
++	}
+ 	for _, file := range zr.File {
+ 		// Skip entries whose name escapes the archive's own namespace
+ 		remote, err := sanitize.Path(file.Name)
+@@ -146,6 +158,7 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 			continue
+ 		}
+ 		isDir := strings.HasSuffix(file.Name, "/")
++		isSymlink := !isDir && file.Mode()&os.ModeSymlink != 0
+ 		// A file entry whose last component is "", "." or ".." names
+ 		// a directory rather than a file, so skip
+ 		if !isDir && sanitize.Leaf(path.Base(file.Name)) != nil {
+@@ -153,6 +166,22 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 			continue
+ 		}
+ 		remote = path.Join(f.prefix, remote)
++		// Do not expose children of symlinks: copying them could write
++		// through a translated link outside the destination root.
++		unsafeChild := false
++		for parent := path.Dir(remote); parent != "." && parent != "/"; parent = path.Dir(parent) {
++			if _, ok := symlinkDirs[parent]; ok {
++				unsafeChild = true
++				break
++			}
++		}
++		if unsafeChild {
++			continue
++		}
++		if isSymlink && !f.links {
++			skippedLinks++
++			continue
++		}
+ 		if f.root != "" {
+ 			// Ignore all files outside the root, requiring a path
+ 			// boundary so that root "foo" does not also match a
+@@ -176,11 +205,19 @@ func (f *Fs) readZip() (singleObject bool, err error) {
+ 				singleObject = true
+ 				dt = dirtree.New()
+ 			}
++			if isSymlink {
++				if !f.links {
++					skippedLinks++
++					continue
++				}
++				remote += fs.LinkSuffix
++			}
+ 			o := &Object{
+ 				f:      f,
+ 				remote: remote,
+ 				fh:     &file.FileHeader,
+ 				file:   file,
++				link:   isSymlink,
+ 			}
+ 			dt.Add(o)
+ 			if singleObject {
+@@ -293,6 +330,7 @@ type Object struct {
+ 	remote string
+ 	fh     *zip.FileHeader
+ 	file   *zip.File
++	link   bool
+ }
+ 
+ // Fs returns read only access to the Fs that this object is part of

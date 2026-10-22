@@ -1,0 +1,1 @@
+<thinking>**Placing skip after root filtering****Fixing symlink root trimming**</thinking>

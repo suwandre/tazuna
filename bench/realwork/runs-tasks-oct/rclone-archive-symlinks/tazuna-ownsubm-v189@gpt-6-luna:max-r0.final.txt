@@ -1,0 +1,5 @@
+Implemented symlink support for ZIP and SquashFS archives. Symlinks are skipped by default with a notice to use `-l/--links`; with links enabled, they appear as `.rclonelink` objects whose contents are the target path. Listing and `NewObject` use the same naming, and regular files ending in `.rclonelink` remain regular files.
+
+Added ZIP and SquashFS tests for listing, lookup, size, range/seek reads, and single-object roots, plus copy tests verifying symlink recreation and blocking writes outside the destination from a hostile archive.
+
+Verified with `go test ./backend/archive/... -count=1` and `git diff --check`.

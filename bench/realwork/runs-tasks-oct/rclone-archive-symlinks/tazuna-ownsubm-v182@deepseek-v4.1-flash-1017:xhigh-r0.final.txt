@@ -1,0 +1,27 @@
+Symlinks in archives now behave like the local backend's `-l/--links` convention.
+
+## What changed
+
+**`backend/archive/zip/zip.go`**
+- Detect `os.ModeSymlink` entries from the zip header mode.
+- Without `--links`, symlinks are skipped and a single notice names the flag (`Skipped N zip symlinks - use -l/--links to include them`).
+- With `--links`, a symlink is listed as `<name>.rclonelink`; its `Size()` is the member's stored length (the target) and `Open` reads the member back, so the target is returned. Range/seek past the end of the target is clamped to read empty instead of erroring.
+- The link suffix is applied before root matching so the Fs can also be rooted at a symlink by its exposed name.
+- A regular member ending in `.rclonelink` is untouched (only header mode decides).
+
+**`backend/archive/squashfs/squashfs.go`**
+- Previously symlinks were dropped entirely. They are now detected via the entry mode and exposed the same way: skipped with a notice without `--links`, and with `--links` listed as `<name>.rclonelink`, sized to the target and opened by returning the target (with range/seek handling).
+- Lookups (`findNative`/`newObjectNative`/`NewObject`) resolve both the raw member name and the suffixed exposed name, and `NewObject` only returns an object when the exposed name matches exactly, so listing and `NewObject` agree.
+- Single-file roots work for symlinks too (`--links :archive:x.sqfs/sub/link.txt.rclonelink`).
+
+**Tests**
+- `zip_internal_test.go`: listing/`NewObject` agreement, sizes, open/seek/range, suffix-named regular file, root at a link, the skip notice, and a hostile archive (symlink out of the tree + member "inside" it) that must not write outside the destination.
+- `squashfs_internal_test.go`: same coverage plus a copy test, using a new small test image `testdata/symlinks.sqfs` (built with `mksquashfs ... -no-xattrs -all-time 1600000000`).
+- `archive_internal_test.go`: end-to-end tests through `:archive:` for both formats — `rclone copy --links` recreates the symlink, and the hostile archive can't escape the destination.
+
+**Docs**: added a "Symlinks" section to `docs/content/archive.md`.
+
+## Verification
+- `go build ./...`, `go vet ./backend/archive/...`, `golangci-lint run ./backend/archive/...` (0 issues).
+- `go test ./backend/archive/... ./fs/operations/ ./fs/sync/` and `go test -race ./backend/archive/...` all pass.
+- Manually exercised with a built binary: `lsl --links` shows `src/link.txt.rclonelink` with the target length, plain `lsl` logs the flag notice, and `copy --links` recreates real symlinks for both zip and squashfs.

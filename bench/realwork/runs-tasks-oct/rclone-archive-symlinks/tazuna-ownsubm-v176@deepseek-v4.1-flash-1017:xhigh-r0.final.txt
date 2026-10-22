@@ -1,0 +1,26 @@
+Implemented symlink support for both archive formats.
+
+## What changed
+
+**`backend/archive/archiver/archiver.go`**
+- Added `MaxLinkTargetSize` (128 KiB, matching the local backend's limit) and `OpenLink(target, offset, limit)`, which serves a symlink target as a reader honouring seek/range options.
+
+**`backend/archive/zip/zip.go`**
+- Detects entries with `os.ModeSymlink` via `file.Mode()`.
+- Without `-l/--links`: symlinks are skipped and a notice naming the flag is logged.
+- With `--links`: the entry is listed as `<name>.rclonelink`, its size is the target length, and `Open` reads the target (with seek/range support). `NewObject` resolves the same names because both listing and lookup use the same dirtree.
+- Regular members whose name ends in `.rclonelink` are untouched.
+- Symlink targets are read eagerly at archive open, bounded by `MaxLinkTargetSize`.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Symlinks were previously dropped as "not regular files". They now follow the same convention: skipped (with a flag-naming notice) unless `--links`, otherwise exposed as `.rclonelink` objects backed by `Readlink`.
+- `NewObject` accepts the suffixed name and refuses the unsuffixed one in links mode, so listing and lookup agree; regular `.rclonelink`-named files remain regular. Single-file roots pointing at a symlink are handled too.
+
+**Docs/tests**
+- Added a "Symbolic links" section to `docs/content/archive.md`.
+- Tests cover: skipping without `--links`, listing/lookup agreement, size, content, seek/range reads, regular `.rclonelink` files, symlink recreation via `operations.Copy`, and a hostile archive whose symlink points outside the destination (copy is refused, nothing escapes).
+
+## Verification
+- `go test -count=1 ./backend/archive/...` — all pass.
+- `go test -race ./backend/archive/zip/ ./backend/archive/squashfs/` — pass.
+- End-to-end with a built binary: `rclone lsl --links :archive:test.zip` matches the requested output, and `rclone copy --links :archive:test.zip out` recreates `link.txt -> file.txt` for both zip and squashfs.

@@ -3,6 +3,7 @@
 
     UNOROUTER_API_KEY=... ./uno_route.py MODEL [groups to try, default 4]
     ./uno_route.py MODEL --price GROUP [--budget USD]   # right before a run, and during it
+    ./uno_route.py MODEL --effort [GROUP]                # which effort the route really runs at (prints EFFORT <level>)
 
 
 For the cheapest groups by estimated run cost, in order, until one passes:
@@ -21,8 +22,13 @@ $0.024 to $0.10 per M input within minutes), so `--price` reads the group's pric
 when the group no longer serves the model, 2 when the estimated run costs more than the budget. Costs a cent or two per group tried; uses the key's own access with an
 `X-Group` header per group. A pass is no guarantee (a7-5053 passed a cache probe, then missed most of a run): the run
 script still stops a run whose cache rate falls.
+
+`--effort` asks the long question twice at each of high, xhigh and max, streamed, in parallel, and counts the reasoning
+tokens: a gateway can drop or clamp the effort without an error (SubRouter's a6aa forwarded none on Opus; Gemini 3.8 Flash
+stops thinking at xhigh and max). The top effort is the highest level that reasons over 10% more than the one before it;
+the line also shows what each reply says it ran at (the Responses API echoes the effort) and the levels refused.
 """
-import json, os, random, re, signal, sys, time, urllib.error, urllib.request
+import concurrent.futures, json, os, random, re, signal, statistics, sys, time, urllib.error, urllib.request
 
 # another gateway: ROUTE_API=https://newapi.apizio.com ROUTE_KEY_ENV=APIZIO_API_KEY, or https://mortera.cloud
 # MORTERA_API_KEY (no groups: the key's own)
@@ -276,6 +282,70 @@ def check(model, group, price):
     return None
 
 
+EFFORTS = ("high", "xhigh", "max")
+
+
+def reasoning(model, group, effort):
+    """(reasoning tokens, the effort the reply names or the refusal, seconds) for the long question at one effort, streamed
+    (unstreamed long calls end in a gateway's 100-second timeout)."""
+    msgs = [{"role": "user", "content": QUESTION}]
+    if model.startswith("gpt-"):
+        path, body = "/v1/responses", {"model": model, "input": msgs, "store": False, "reasoning": {"effort": effort}, "max_output_tokens": LONG_CAP, "stream": True}
+    elif model.startswith("claude-"):
+        path, body = "/v1/messages", {"model": model, "messages": msgs, "max_tokens": LONG_CAP, "thinking": {"type": "adaptive"}, "output_config": {"effort": effort}, "stream": True}
+    else:
+        path, body = "/v1/chat/completions", {"model": model, "messages": msgs, "reasoning_effort": effort, "max_tokens": LONG_CAP, "stream": True, "stream_options": {"include_usage": True}}
+    t, u, echo = time.time(), {}, None
+    try:
+        for e in sse(path, body, group):
+            if e.get("type") in ("response.completed", "response.incomplete"):
+                u, echo = e["response"].get("usage") or {}, (e["response"].get("reasoning") or {}).get("effort")
+            elif e.get("usage"):
+                u = {**u, **{k: v for k, v in e["usage"].items() if v}}
+    except urllib.error.HTTPError as e:
+        return None, f"HTTP {e.code}", time.time() - t
+    if not (u.get("output_tokens") or u.get("completion_tokens")):
+        return None, echo or "cut", time.time() - t  # the stream ended without the final usage
+    d = u.get("output_tokens_details") or u.get("completion_tokens_details")
+    # with a breakdown, its reasoning count (0 when the level turned thinking off, as Gemini's xhigh did); Claude without
+    # one counts its thinking in the output
+    toks = (d.get("reasoning_tokens") or d.get("thinking_tokens") or 0) if d else (u.get("output_tokens") or u.get("completion_tokens"))
+    return toks, echo, time.time() - t
+
+
+def top_effort(medians):
+    """The highest level that reasons over 10% more than the level kept before it; levels without reasoning are skipped."""
+    top = None
+    for e in EFFORTS:
+        if medians.get(e) and (top is None or medians[e] > 1.1 * medians[top]):
+            top = e
+    return top
+
+
+def effort_check(model, group, samples=2):
+    with concurrent.futures.ThreadPoolExecutor(len(EFFORTS) * samples) as ex:
+        res = list(ex.map(lambda e: (e, reasoning(model, group, e)), [e for e in EFFORTS for _ in range(samples)]))
+    medians, parts = {}, []
+    for e in EFFORTS:
+        got = [r for x, r in res if x == e]
+        toks = [t for t, _, _ in got if t is not None]
+        medians[e] = statistics.median(toks) if toks else None
+        named = sorted({str(n) for _, n, _ in got if n and n != e})
+        parts.append(f"{e} {'/'.join(f'{t / 1000:.1f}K' for t in toks) or 'none finished'}" + (f" ({', '.join(named)})" if named else ""))
+    unknown = [e for e in EFFORTS if medians[e] is None]  # no sample finished: say so instead of ranking past it
+    done = [t for _, (t, _, _) in res if t]
+    capped = bool(done) and all(t >= 0.95 * LONG_CAP for t in done)
+    # every sample at the output limit says nothing about the levels (DeepSeek 1017 thinks past 40K on the question)
+    top = None if capped else top_effort(medians)
+    note = f" (not measured: {', '.join(unknown)})" if unknown else ""
+    print(f"{model}: reasoning tokens " + "; ".join(parts) + (f" -> all at the {LONG_CAP // 1000}K limit, no answer" if capped else f" -> {top}{note}"), flush=True)
+    # a level above the pick that did not finish could still be the real top: no pick then
+    if top and any(EFFORTS.index(e) > EFFORTS.index(top) for e in unknown):
+        top = None
+    print(f"EFFORT {top}")
+    return top
+
+
 def price_env(model, group, budget):
     """(exit code, line): the env for a run on the group at today's price, or why not."""
     p = dict(groups(model)).get(group)
@@ -289,6 +359,13 @@ def price_env(model, group, budget):
 
 if __name__ == "__main__":
     assert norm("anthropic/claude-haiku-5.5") == norm("claude-haiku-5-5") == "claudehaiku55"
+    assert top_effort({"high": 10000, "xhigh": 10500, "max": 14000}) == "max"  # xhigh within noise of high, max well over
+    assert top_effort({"high": 11944, "xhigh": 0, "max": 0}) == "high"  # Gemini 3.8 Flash: no thinking at xhigh and max
+    assert top_effort({"high": 800, "xhigh": 840, "max": 870}) == "high"  # Grok 4.7: the same at every level
+    if "--effort" in sys.argv:
+        a = sys.argv
+        effort_check(a[1], a[a.index("--effort") + 1] if len(a) > a.index("--effort") + 1 else "", int(os.environ.get("ROUTE_EFFORT_SAMPLES", "2")))
+        sys.exit(0)
     if "--price" in sys.argv:
         a = sys.argv
         code, line = price_env(a[1], a[a.index("--price") + 1], float(a[a.index("--budget") + 1]) if "--budget" in a else 1.0)
@@ -301,7 +378,7 @@ if __name__ == "__main__":
     if ref:
         print(f"  OpenRouter reference: ${ref[0]:.4f} / ${ref[1]:.5f} / ${ref[2]:.3f} per M -> ${run_cost(ref):.3f} per run")
     for g, p in gs[:8]:
-        off = f"  {1 - run_cost(p) / run_cost(ref):+.0%} vs OpenRouter" if ref else ""
+        off = f"  {1 - run_cost(p) / run_cost(ref):+.0%} vs OpenRouter" if ref and run_cost(ref) else ""  # free models: $0 reference
         print(f"  {g:44} ${p[0]:.4f} / ${p[1]:.5f} / ${p[2]:.3f} per M -> ${run_cost(p):.3f} per run{off}")
     class TooSlow(Exception):  # not an OSError: check() catches those, and swallowed the alarm (a 1017 group ran 30+ minutes)
         pass

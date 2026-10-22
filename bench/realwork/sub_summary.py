@@ -16,7 +16,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SESSIONS = os.path.expanduser("~/bench-homes/cc/.local/share/tazuna/sessions")
 QUOTA_PER_USD, UTC_OFFSET = 500_000, timedelta(hours=2)  # the log is in UTC, the run logs in CEST
 DEFAULT = ["v129", "v131", "v137", "v140", "v141", "v143", "v145", "v148", "v150", "v151", "v153", "v154", "v156",
-           "v157", "v158", "v159", "v160", "v161", "v163", "v165", "v166", "v167", "v168", "v169", "v170"]
+           "v157", "v158", "v159", "v160", "v161", "v163", "v165", "v166", "v167", "v168", "v169", "v170", "v172", "v174",
+           "v175", "v176", "v177", "v178", "v179", "v180", "v181", "v182", "v183", "v184", "v185", "v186", "v189"]
+LOG_MODEL = {"minimax-m3.1-flash-free": "minimax/minimax-m3.1-flash:free"}  # the run's model as SubRouter's log names it
 
 
 def run_window(label):
@@ -64,7 +66,7 @@ def usage(rows, model, start, stop):
     prices = {}
     for r in rows:
         t = datetime.strptime(r[0], "%Y-%m-%d %H:%M:%S") + UTC_OFFSET
-        if r[2] != model or not start <= t <= stop or r[1] != "消费":
+        if r[2] != LOG_MODEL.get(model, model) or not start <= t <= stop or r[1] != "消费":
             continue
         d = json.loads(r[14]) if r[14].startswith("{") else {}
         q += int(r[7] or 0); route = d.get("provider_name") or r[4]; routes[route] += 1
@@ -125,8 +127,12 @@ def main():
                         wall_s=round(s["secs"]), run_tok_s=round(s["output_tokens"] / s["secs"], 1) if s["secs"] else None,
                         gen_tok_s=u["gen_tok_s"], first_token_s=u["first_token_s"],
                         hidden=f"{results[harness]['passed']}/3" if harness else None, outcome=end[:60],
+                        # another run of the same model in the same window: the spend and tokens are both runs' (v175 with v177)
+                        overlap=sum(u["routes"].values()) > 1.2 * s["calls"],
                         judge=j["overall"] if j else None))
-    json.dump(out, open(os.path.join(HERE, "sub-summary.json"), "w"), indent=1, ensure_ascii=False)
+    path = os.path.join(HERE, "sub-summary.json")  # runs not asked for keep their earlier rows (older exports)
+    keep = [r for r in json.load(open(path)) if r["label"] not in labels] if os.path.exists(path) else []
+    json.dump(sorted(keep + out, key=lambda r: int(r["label"][1:])), open(path, "w"), indent=1, ensure_ascii=False)
     print("| run | model | calls | in / cache read / write / out (K) | cached | real $ | $/call | $/M tok | run tok/s | gen tok/s | 1st tok s | hidden | judge | routes |")
     print("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
     for r in out:

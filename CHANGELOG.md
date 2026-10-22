@@ -16,6 +16,46 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Effort and time of day on SubRouter: Luna max over xhigh, Sol xhigh over max; MiniMax free passes, 2026-10-21/22 (bench only)
+
+rclone, one run each unless noted; real cost from SubRouter's usage log (`sub_summary.py`), UnoRouter at tazuna's estimate.
+The night round ran staggered (two rounds of three plus MiniMax, $0.75 cap per round) at 21:50-01:33 CEST; all calls of a
+run went to one route. Judge: `judge.oct.night2.jsonl`, two passes (two calls, 5h meter +1%); anchors DeepSeek 8, Codex
+Luna 7.5.
+
+| run | route | effort | judge | tests | turns | time | real cost |
+|---|---|---|---|---|---|---|---|
+| DeepSeek V4.1 Flash (v187) | UnoRouter | max | 9 | 3/3 | 228 | 29 min | ~$0.002 est |
+| DeepSeek 1017 (v182 / v183) | SubRouter, Kriora | xhigh | 8.5 / 7 | 3/3, 3/3 | 287 / 199 | 66 / 52 min | $0.051 / $0.026 |
+| DeepSeek 1017 (v188) | UnoRouter | max | 8 | 3/3 | 184 | 54 min | ~$0.018 est |
+| gpt-6.1-sol (v185 / v184) | SubRouter, 数游AI | xhigh | 8 / 5 | 3/3, 2/3 | 53 / 59 | 14 / 15 min | $0.085 / $0.088 |
+| gpt-6-luna (v189) | SubRouter, FoxRouter | max | 6 | 3/3 | 87 | 16 min | $0.016 |
+| gpt-6-luna (v181 / v180) | SubRouter, FoxRouter | xhigh | 5.5 / 2 | 2/3, 1/3 | 73 / 28 | 14 / 8 min | $0.015 / $0.003 |
+| MiniMax M3.1 Flash free (v186) | SubRouter, XCGX | xhigh | 6 | 3/3 | 372 | 3.5 h | $0 |
+
+Effort. SubRouter's log shows the effort each call went out with: v189 forwarded max on all 87 calls, the xhigh runs xhigh.
+Luna on SubRouter (tazuna runs since 2026-10-20) judges 6.3 at max (7, 6, 6; tests 3, 2, 3 of 3) and 4.8 at xhigh (8, 6,
+5.5, 4, 3.5, 2; tests 3, 3, 2, 2, 2, 1): max ahead by 1.5, over the noise threshold but on few runs, other days and routes.
+Max does not think longer per call on FoxRouter (499 output tokens per call against 649-1018 at xhigh; the new effort check
+below found no more reasoning at max than at xhigh there), it works longer (87 calls against 28-73). gpt-6.1-sol goes the other way:
+max judged 7 against xhigh's 8.5 in a blind pair with v167 (`judge.oct.sol-max.jsonl`), at 3x the cost ($0.082 against
+$0.026). Sol at xhigh: 8, 8, 8, 5, 4.
+
+Time of day. The same Sol model, effort and key judged 8 in the evening (v167) and 4 at Chinese daytime (v174, 139 min against
+16; `judge.oct.drift.jsonl`, UnoRouter DeepSeek v173 6.5 in the same pair). Daytime Luna and DeepSeek 1017 (v175 6, v176 6.5,
+v177 on the pool key 3.5) against evening (v129 8, v131 8; `judge.oct.daypair.jsonl`): 1.5-4 points lower, 3-8x slower.
+
+Route price. gpt-6.1-sol on 数游AI costs $0.085 a run, 3x the same model on LingAI or ChorAPI ($0.019-0.026) and 4x tazuna's
+estimate; the log has no provider prices for it. MiniMax M3.1 Flash free changed no file in its first ~90 calls (1.2 min and
+~5K output tokens each) and still passed 3/3 at 6 for $0: free models now run without the no-edit stop (time limit only).
+
+Bench tooling: `uno_route.py MODEL --effort` asks a long question twice at high, xhigh and max (streamed, in parallel) and
+prints the highest level that reasons more than the one below (`EFFORT <level>`, None when a level is cut or unmeasured);
+`sub_summary.py` merges new runs into `sub-summary.json` and flags runs that shared a window with another run of the same
+model (v174, v175, v177: their spend is not theirs alone), which `site_summary.py` then leaves at tazuna's estimate;
+`site_summary.py` groups by effort too; `run.py` has harnesses for a key chosen per run (`ownsubx`) and MiniMax free
+(`ownsubmm`). The usage guard sends its own User-Agent (`tazuna-guard/1`) instead of Claude Code's: the meter answers the same.
+
 ## SubRouter, more models: Gemini, Qwen, Opus, Grok pool, Sol family; real cost from the usage log, 2026-10-20/21 (bench only)
 
 rclone, all on SubRouter. Real cost is SubRouter's own usage log (the console's CSV export: 500,000 quota per USD, within

@@ -1,0 +1,22 @@
+All changes are in place and verified. Summary of what I did:
+
+## Zip backend (`backend/archive/zip/zip.go`)
+- Detects members with `os.ModeSymlink` in the central directory.
+- Without `-l/--links` they are skipped, and one notice is logged per archive (`Skipped N symlinks - use -l/--links to transfer them`).
+- With `--links` the member is listed as `<name>.rclonelink`, sized as the length of its target, and `Open` reads the member body (the target), so `SeekOption`/`RangeOption` work unchanged.
+- `readZip` now takes the context so it can read `fs.GetConfig(ctx).Links`.
+- A new `addObject` resolves a name clash: a regular member ending in `.rclonelink` always wins over a translated symlink, regardless of the order the two appear in the archive.
+- Root/single-object mounting works because the suffix is added before the root check, so `:archive:test.zip/src/link.txt.rclonelink` resolves.
+
+## Squashfs backend (`backend/archive/squashfs/squashfs.go`)
+- Symlinks (previously dropped with a "FIXME Not regular file" debug) are now handled the same way: skipped with a notice by default, exposed as `.rclonelink` objects with size = target length and `Open` serving the target (honouring seek/range) when `--links` is set.
+- `newObjectNative` takes a `wantLink` flag so listing and `NewObject` agree on names; `NewObject` tries the exact name first (regular member with a `.rclonelink` name) and then the translated symlink, and a name occupied by a regular member blocks the translated symlink consistently in both `List` and `NewObject`.
+- A path that exists but is not a directory (e.g. a symlink named without the suffix) now returns `ErrorDirNotFound` instead of a parser error.
+
+## Tests and docs
+- `zip_internal_test.go`: symlink skipped/translated, size/seek/range, name-clash in both orders, symlink-as-root.
+- `squashfs_internal_test.go`: same coverage plus two new test images, `testdata/symlink.sqfs` and `testdata/symlink-clash.sqfs` (built with `mksquashfs`, documented in the test comments).
+- `archive_internal_test.go`: end-to-end `--links` copies for both formats recreate real symlinks, plus a hostile-zip test (symlink above the root + member "inside" it) proving nothing is written outside the destination.
+- `docs/content/archive.md`: new "Symlinks" section with the `lsl`/`copy` example.
+
+Verified with `go test ./backend/archive/... ./cmd/archive/...`, `-race`, `go vet`, `golangci-lint` (0 issues), plus manual CLI runs of `lsl`/`copy --links` against real zip and squashfs archives.

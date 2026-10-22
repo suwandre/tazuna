@@ -1,0 +1,5 @@
+Implemented symlink support for ZIP and squashfs archives. Symlinks are hidden unless `-l/--links` is enabled; when enabled, they use the `.rclonelink` suffix and open as their target text, including range and seek reads. Regular files with that suffix remain regular, and ZIP members beneath symlinks are excluded to prevent writes outside the copy destination.
+
+Added ZIP and squashfs tests, including a squashfs symlink fixture and a hostile ZIP copy case.
+
+Verified with `go test ./backend/archive/...`, `go vet ./backend/archive/zip ./backend/archive/squashfs ./backend/archive`, and `git diff --check`.

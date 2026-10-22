@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Best and average finished rclone run per model per provider site, with every number we have.
+"""Best and average finished rclone run per model, effort and provider site, with every number we have.
 
     site_summary.py
 
@@ -27,7 +27,8 @@ SITE = {"tazuna-own": "CheaperInference", "tazuna-ownel": "Experiential Labs", "
         "tazuna-ownuno": "UnoRouter", "tazuna-ownapx": "apinex", "tazuna-ownmrt": "Mortera", "tazuna-ownshn": "Shannon",
         "tazuna-ownshnds": "Shannon", "tazuna-ownsub": "SubRouter", "tazuna-ownsubm": "SubRouter",
         "tazuna-ownsubla": "SubRouter", "tazuna-ownsubl1": "SubRouter", "tazuna-ownsubl4": "SubRouter",
-        "tazuna-ownsubhk": "SubRouter", "tazuna-ownsubgp": "SubRouter (Grok pool key)", "codexsub": "SubRouter (Codex CLI)",
+        "tazuna-ownsubhk": "SubRouter", "tazuna-ownsubgp": "SubRouter (Grok pool key)", "tazuna-ownsubmm": "SubRouter",
+        "tazuna-ownsubx": "SubRouter", "codexsub": "SubRouter (Codex CLI)",
         "codex": "OpenAI plan (Codex CLI)", "tazuna-repo": "Anthropic plan"}
 
 
@@ -67,7 +68,7 @@ def main():
     if os.path.exists(os.path.join(HERE, "sub-summary.json")):
         # only runs the usage export covers whole (a logging gap cut v165-v168 short)
         subs = [s for s in json.load(open(os.path.join(HERE, "sub-summary.json")))
-                if s.get("usd") is not None and sum(s["routes"].values()) >= 0.8 * s["calls"]]
+                if s.get("usd") is not None and sum(s["routes"].values()) >= 0.8 * s["calls"] and not s.get("overlap")]
         real = {s["label"]: s["usd"] for s in subs}
         billed = {s["label"]: s for s in subs}  # SubRouter's billed tokens (tazuna's own log has no cache writes)
     runs = []
@@ -96,9 +97,9 @@ def main():
                          judge=judge.get(k), anchor=anchor.get(k)))
     groups = collections.defaultdict(list)
     for r in runs:
-        groups[(r["site"], r["model"])].append(r)
+        groups[(r["site"], r["model"], r["effort"])].append(r)  # max and xhigh apart: they judge differently
     out = []
-    for (site, model), rs in groups.items():
+    for (site, model, _), rs in groups.items():
         best = max(rs, key=lambda r: (r["judge"] or -1, r["passed"], -r["usd"]))
         mean = lambda k: round(statistics.mean(x[k] for x in rs if x[k] is not None), 3) if any(x[k] is not None for x in rs) else None
         out.append(dict(site=site, model=model, runs=len(rs), best=best,

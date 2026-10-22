@@ -1,0 +1,26 @@
+## Summary
+
+Both archive backends now follow the local backend's `.rclonelink` convention for symlinks.
+
+### zip (`backend/archive/zip/zip.go`)
+- Records `--links` (`fs.GetConfig(ctx).Links`) when the Fs is created.
+- Entries with `os.ModeSymlink` are skipped unless `--links` is set; the number skipped is logged once per archive with a notice naming `-l/--links`.
+- With `--links` a link is exposed as a regular object named `<name>.rclonelink`, whose size is the target length and whose body is the target. Range/seek options already work because the entry body is read like any other member.
+- A regular member that happens to end in `.rclonelink` is unaffected — it is stored under its own name.
+
+### squashfs (`backend/archive/squashfs/squashfs.go`)
+- Previously symlinks were dropped silently. Now they are skipped with a notice unless `--links` is set, and with `--links` are exposed as `<name>.rclonelink` objects with the target as their contents (via a small `newLinkReader` honouring offset/limit).
+- Added `objectFromEntry`, used by both `List` and `newObjectNative`, so listing and single-object lookup agree on names. Exact-name matches win over the symlink-suffix translation, so a regular `foo.rclonelink` member stays a regular file, and a symlink named `foo.rclonelink` is only reachable as `foo.rclonelink.rclonelink`.
+- Non-regular, non-symlink entries are still skipped as before.
+
+### Tests
+- `zip_internal_test.go`: `TestReadZipSymlinks` — hidden without `--links`, exposed with it, size/contents/seek/range behaviour, regular `.rclonelink` member unchanged, listing and `NewObject` agree.
+- `squashfs_internal_test.go`: `TestSymlinks` over a new `testdata/symlink.sqfs` fixture covering the same cases.
+- `archive_internal_test.go`: `TestArchiveSymlinkEscape` — a hostile archive with a link pointing outside plus `pwn/authkeys` cannot write outside the destination (the local backend's `os.Root` protection rejects it).
+
+### Docs
+- Added a "Symbolic links" section to `docs/content/archive.md`.
+
+### Verification
+- `go test ./backend/archive/...` and `go test -race ./backend/archive/...` pass; `golangci-lint run ./backend/archive/...` reports 0 issues.
+- Manually exercised the built binary: `rclone lsl --links :archive:test.zip` shows `link.txt.rclonelink` with the target's length, `rclone copy --links` recreates real symlinks on the local destination, without `--links` links are skipped with the notice, and the hostile-archive copy leaves nothing outside the destination.

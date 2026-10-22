@@ -24,7 +24,7 @@ def meter():
                          env={**os.environ, "HOME": str(PI_HOME)}, capture_output=True, text=True,
                          stdin=subprocess.DEVNULL, timeout=60).stdout.strip().splitlines()[-1]
     r = subprocess.run(["curl", "-s", "-m", "30", "https://api.anthropic.com/api/oauth/usage", "-H", f"Authorization: Bearer {tok}",
-                        "-H", "anthropic-beta: oauth-2025-04-20", "-H", "User-Agent: claude-code/2.1.289"],
+                        "-H", "anthropic-beta: oauth-2025-04-20", "-H", "User-Agent: tazuna-guard/1"],
                        capture_output=True, text=True, timeout=60)
     d = json.loads(r.stdout)
     # the tighter of the 5h window and the weekly limit: either one running out spills into extra usage

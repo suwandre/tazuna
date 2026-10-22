@@ -818,5 +818,522 @@
   "hidden": "3/3",
   "outcome": "3/3 suite_fail=0 4987.1s turns=125 in=14627520 out=65528 13.",
   "judge": 6
+ },
+ {
+  "label": "v172",
+  "model": "gpt-6.1-sol",
+  "start": "10-21 11:03",
+  "calls": 88,
+  "edits": 41,
+  "input": 612943,
+  "cache_read": 6042134,
+  "cache_write": 0,
+  "output": 93983,
+  "cached_share": 0.908,
+  "usd": 0.0815,
+  "usd_per_call": 0.00093,
+  "usd_per_m_tokens": 0.0122,
+  "routes": {
+   "LingAI": 96
+  },
+  "route_prices": {
+   "LingAI": {
+    "input": 0.05882352941176471,
+    "cache_read": 0.0029411764705882353,
+    "cache_write": 0.07352941176470588,
+    "output": 0.29411764705882354
+   }
+  },
+  "wall_s": 2441,
+  "run_tok_s": 20.2,
+  "gen_tok_s": 147.2,
+  "first_token_s": 9.3,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 2441.1s turns=88 in=6530096 out=49186 20.1t",
+  "overlap": false,
+  "judge": 7
+ },
+ {
+  "label": "v174",
+  "model": "gpt-6.1-sol",
+  "start": "10-21 11:51",
+  "calls": 121,
+  "edits": 67,
+  "input": 1595215,
+  "cache_read": 9151243,
+  "cache_write": 0,
+  "output": 1140978,
+  "cached_share": 0.852,
+  "usd": 0.4578,
+  "usd_per_call": 0.00378,
+  "usd_per_m_tokens": 0.0426,
+  "routes": {
+   "LingAI": 126,
+   "老六": 21,
+   "ChorAPI": 12,
+   "Kriora": 9,
+   "a6aa": 6
+  },
+  "route_prices": {
+   "LingAI": {
+    "input": 0.05882352941176471,
+    "cache_read": 0.0029411764705882353,
+    "cache_write": 0.07352941176470588,
+    "output": 0.29411764705882354
+   },
+   "Kriora": {
+    "input": 0.04411764705882353,
+    "cache_read": 0.0022058823529411764,
+    "cache_write": 0.0551470588235294,
+    "output": 0.22058823529411764
+   },
+   "a6aa": {
+    "input": 0.058235294117647066,
+    "cache_read": 0.0029117647058823533,
+    "cache_write": 0.07279411764705883,
+    "output": 0.2911764705882353
+   },
+   "ChorAPI": {
+    "input": 0.08823529411764706,
+    "cache_read": 0.004411764705882353,
+    "cache_write": 0.1102941176470588,
+    "output": 0.4411764705882353
+   },
+   "老六": {
+    "input": 0.05588235294117647,
+    "cache_read": 0.0027941176470588237,
+    "cache_write": 0.06985294117647059,
+    "output": 0.27941176470588236
+   }
+  },
+  "wall_s": 8214,
+  "run_tok_s": 8.4,
+  "gen_tok_s": 48.7,
+  "first_token_s": 23.2,
+  "hidden": "2/3",
+  "outcome": "2/3 suite_fail=0 8319.6s turns=121 in=9357499 out=68818 8.3t",
+  "overlap": true,
+  "judge": 4
+ },
+ {
+  "label": "v175",
+  "model": "gpt-6-luna",
+  "start": "10-21 14:27",
+  "calls": 107,
+  "edits": 54,
+  "input": 2735137,
+  "cache_read": 9136481,
+  "cache_write": 0,
+  "output": 98317,
+  "cached_share": 0.77,
+  "usd": 0.0317,
+  "usd_per_call": 0.0003,
+  "usd_per_m_tokens": 0.0027,
+  "routes": {
+   "FoxRouter": 109,
+   "OpenAI Team": 72
+  },
+  "route_prices": {
+   "FoxRouter": {
+    "input": 0.008403382352941177,
+    "cache_read": 0.0008403382352941177,
+    "cache_write": 0.010504227941176471,
+    "output": 0.042016911764705886
+   }
+  },
+  "wall_s": 2207,
+  "run_tok_s": 26.6,
+  "gen_tok_s": 165.3,
+  "first_token_s": 10.5,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 3569.0s turns=107 in=8783039 out=58611 16.4",
+  "overlap": true,
+  "judge": 6
+ },
+ {
+  "label": "v176",
+  "model": "deepseek-v4.1-flash-1017",
+  "start": "10-21 14:29",
+  "calls": 74,
+  "edits": 9,
+  "input": 241937,
+  "cache_read": 4697472,
+  "cache_write": 0,
+  "output": 94592,
+  "cached_share": 0.951,
+  "usd": 0.0071,
+  "usd_per_call": 0.0001,
+  "usd_per_m_tokens": 0.0014,
+  "routes": {
+   "Kriora": 78
+  },
+  "route_prices": {
+   "Kriora": {
+    "input": 0.009970588235294118,
+    "cache_read": 0.00019941176470588236,
+    "cache_write": 0.009970588235294118,
+    "output": 0.03988235294117647
+   }
+  },
+  "wall_s": 1755,
+  "run_tok_s": 30.9,
+  "gen_tok_s": 78.1,
+  "first_token_s": 6.7,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 3116.7s turns=74 in=4793698 out=54196 17.4t",
+  "overlap": false,
+  "judge": 6.5
+ },
+ {
+  "label": "v177",
+  "model": "gpt-6-luna",
+  "start": "10-21 14:38",
+  "calls": 129,
+  "edits": 59,
+  "input": 2237196,
+  "cache_read": 13293844,
+  "cache_write": 0,
+  "output": 91476,
+  "cached_share": 0.856,
+  "usd": 0.0265,
+  "usd_per_call": 0.00021,
+  "usd_per_m_tokens": 0.0017,
+  "routes": {
+   "OpenAI Team": 135,
+   "FoxRouter": 65
+  },
+  "route_prices": {
+   "FoxRouter": {
+    "input": 0.008403382352941177,
+    "cache_read": 0.0008403382352941177,
+    "cache_write": 0.010504227941176471,
+    "output": 0.042016911764705886
+   }
+  },
+  "wall_s": 2478,
+  "run_tok_s": 22.6,
+  "gen_tok_s": 151.4,
+  "first_token_s": 9.7,
+  "hidden": "2/3",
+  "outcome": "2/3 suite_fail=0 3839.8s turns=129 in=9116741 out=55888 14.6",
+  "overlap": true,
+  "judge": 3.5
+ },
+ {
+  "label": "v178",
+  "model": "minimax-m3.1-flash-free",
+  "start": "10-21 15:44",
+  "calls": 118,
+  "edits": 1,
+  "input": 93462,
+  "cache_read": 6518989,
+  "cache_write": 0,
+  "output": 618530,
+  "cached_share": 0.986,
+  "usd": 0.0,
+  "usd_per_call": 0.0,
+  "usd_per_m_tokens": 0.0,
+  "routes": {
+   "XCGX AI · 多模型服务": 121
+  },
+  "route_prices": {
+   "XCGX AI · 多模型服务": {
+    "input": 0,
+    "cache_read": 0,
+    "cache_write": null,
+    "output": 0
+   }
+  },
+  "wall_s": 4200,
+  "run_tok_s": 133.3,
+  "gen_tok_s": 140.7,
+  "first_token_s": 1.6,
+  "hidden": null,
+  "outcome": "end: used 6067.706639999999; ",
+  "overlap": false,
+  "judge": null
+ },
+ {
+  "label": "v179",
+  "model": "minimax-m3.1-flash-free",
+  "start": "10-21 21:16",
+  "calls": 0,
+  "edits": 0,
+  "input": 0,
+  "cache_read": 0,
+  "cache_write": 0,
+  "output": 0,
+  "cached_share": null,
+  "usd": null,
+  "usd_per_call": null,
+  "usd_per_m_tokens": null,
+  "routes": {},
+  "route_prices": {},
+  "wall_s": 0,
+  "run_tok_s": null,
+  "gen_tok_s": null,
+  "first_token_s": null,
+  "hidden": null,
+  "outcome": "end: used 6072.259919999999; ",
+  "overlap": false,
+  "judge": null
+ },
+ {
+  "label": "v180",
+  "model": "gpt-6-luna",
+  "start": "10-21 21:50",
+  "calls": 28,
+  "edits": 15,
+  "input": 149033,
+  "cache_read": 917760,
+  "cache_write": 0,
+  "output": 24949,
+  "cached_share": 0.86,
+  "usd": 0.0031,
+  "usd_per_call": 0.00011,
+  "usd_per_m_tokens": 0.0029,
+  "routes": {
+   "FoxRouter": 28
+  },
+  "route_prices": {
+   "FoxRouter": {
+    "input": 0.008403382352941177,
+    "cache_read": 0.0008403382352941177,
+    "cache_write": 0.010504227941176471,
+    "output": 0.042016911764705886
+   }
+  },
+  "wall_s": 464,
+  "run_tok_s": 53.7,
+  "gen_tok_s": 160.3,
+  "first_token_s": 8.4,
+  "hidden": "1/3",
+  "outcome": "1/3 suite_fail=0 464.5s turns=28 in=1066793 out=24949 53.7to",
+  "overlap": false,
+  "judge": 2
+ },
+ {
+  "label": "v181",
+  "model": "gpt-6-luna",
+  "start": "10-21 23:06",
+  "calls": 73,
+  "edits": 34,
+  "input": 1168385,
+  "cache_read": 3876126,
+  "cache_write": 0,
+  "output": 49017,
+  "cached_share": 0.768,
+  "usd": 0.0151,
+  "usd_per_call": 0.00021,
+  "usd_per_m_tokens": 0.003,
+  "routes": {
+   "FoxRouter": 75
+  },
+  "route_prices": {
+   "FoxRouter": {
+    "input": 0.008403382352941177,
+    "cache_read": 0.0008403382352941177,
+    "cache_write": 0.010504227941176471,
+    "output": 0.042016911764705886
+   }
+  },
+  "wall_s": 810,
+  "run_tok_s": 58.5,
+  "gen_tok_s": 220.8,
+  "first_token_s": 5.7,
+  "hidden": "2/3",
+  "outcome": "2/3 suite_fail=0 810.2s turns=73 in=4844448 out=47384 58.5to",
+  "overlap": false,
+  "judge": 5.5
+ },
+ {
+  "label": "v182",
+  "model": "deepseek-v4.1-flash-1017",
+  "start": "10-21 21:50",
+  "calls": 287,
+  "edits": 6,
+  "input": 3033051,
+  "cache_read": 42423552,
+  "cache_write": 0,
+  "output": 298800,
+  "cached_share": 0.933,
+  "usd": 0.0506,
+  "usd_per_call": 0.00018,
+  "usd_per_m_tokens": 0.0011,
+  "routes": {
+   "Kriora": 287
+  },
+  "route_prices": {
+   "Kriora": {
+    "input": 0.009970588235294118,
+    "cache_read": 0.00019941176470588236,
+    "cache_write": 0.009970588235294118,
+    "output": 0.03988235294117647
+   }
+  },
+  "wall_s": 3985,
+  "run_tok_s": 75.0,
+  "gen_tok_s": 227.5,
+  "first_token_s": 5.4,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 3984.6s turns=287 in=45456603 out=298800 75",
+  "overlap": false,
+  "judge": 8.5
+ },
+ {
+  "label": "v183",
+  "model": "deepseek-v4.1-flash-1017",
+  "start": "10-21 23:06",
+  "calls": 199,
+  "edits": 10,
+  "input": 1424876,
+  "cache_read": 21094912,
+  "cache_write": 0,
+  "output": 189930,
+  "cached_share": 0.937,
+  "usd": 0.026,
+  "usd_per_call": 0.00013,
+  "usd_per_m_tokens": 0.0012,
+  "routes": {
+   "Kriora": 199
+  },
+  "route_prices": {
+   "Kriora": {
+    "input": 0.009970588235294118,
+    "cache_read": 0.00019941176470588236,
+    "cache_write": 0.009970588235294118,
+    "output": 0.03988235294117647
+   }
+  },
+  "wall_s": 3134,
+  "run_tok_s": 60.6,
+  "gen_tok_s": 225.3,
+  "first_token_s": 5.6,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 3134.2s turns=199 in=22519788 out=189930 60",
+  "overlap": false,
+  "judge": 7
+ },
+ {
+  "label": "v184",
+  "model": "gpt-6.1-sol",
+  "start": "10-21 21:50",
+  "calls": 59,
+  "edits": 27,
+  "input": 90378,
+  "cache_read": 2839424,
+  "cache_write": 0,
+  "output": 26147,
+  "cached_share": 0.969,
+  "usd": 0.0877,
+  "usd_per_call": 0.00149,
+  "usd_per_m_tokens": 0.0299,
+  "routes": {
+   "数游AI": 59
+  },
+  "route_prices": {},
+  "wall_s": 876,
+  "run_tok_s": 29.8,
+  "gen_tok_s": 38.5,
+  "first_token_s": 2.1,
+  "hidden": "2/3",
+  "outcome": "2/3 suite_fail=0 876.0s turns=59 in=2929802 out=26147 29.8to",
+  "overlap": false,
+  "judge": 5
+ },
+ {
+  "label": "v185",
+  "model": "gpt-6.1-sol",
+  "start": "10-21 23:06",
+  "calls": 53,
+  "edits": 19,
+  "input": 160190,
+  "cache_read": 2380544,
+  "cache_write": 0,
+  "output": 21427,
+  "cached_share": 0.937,
+  "usd": 0.085,
+  "usd_per_call": 0.0016,
+  "usd_per_m_tokens": 0.0335,
+  "routes": {
+   "数游AI": 53
+  },
+  "route_prices": {},
+  "wall_s": 860,
+  "run_tok_s": 24.9,
+  "gen_tok_s": 39.0,
+  "first_token_s": 2.1,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 859.8s turns=53 in=2540734 out=21427 24.9to",
+  "overlap": false,
+  "judge": 8
+ },
+ {
+  "label": "v186",
+  "model": "minimax-m3.1-flash-free",
+  "start": "10-21 21:50",
+  "calls": 372,
+  "edits": 91,
+  "input": 238869,
+  "cache_read": 50872997,
+  "cache_write": 0,
+  "output": 993068,
+  "cached_share": 0.995,
+  "usd": 0.0,
+  "usd_per_call": 0.0,
+  "usd_per_m_tokens": 0.0,
+  "routes": {
+   "XCGX AI · 多模型服务": 372
+  },
+  "route_prices": {
+   "XCGX AI · 多模型服务": {
+    "input": 0,
+    "cache_read": 0,
+    "cache_write": null,
+    "output": 0
+   }
+  },
+  "wall_s": 12761,
+  "run_tok_s": 77.8,
+  "gen_tok_s": 120.9,
+  "first_token_s": 3.0,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 12761.3s turns=372 in=51111866 out=993068 7",
+  "overlap": false,
+  "judge": 6
+ },
+ {
+  "label": "v189",
+  "model": "gpt-6-luna",
+  "start": "10-21 22:50",
+  "calls": 87,
+  "edits": 38,
+  "input": 1299643,
+  "cache_read": 4039559,
+  "cache_write": 0,
+  "output": 46119,
+  "cached_share": 0.757,
+  "usd": 0.0162,
+  "usd_per_call": 0.00019,
+  "usd_per_m_tokens": 0.003,
+  "routes": {
+   "FoxRouter": 92
+  },
+  "route_prices": {
+   "FoxRouter": {
+    "input": 0.008403382352941177,
+    "cache_read": 0.0008403382352941177,
+    "cache_write": 0.010504227941176471,
+    "output": 0.042016911764705886
+   }
+  },
+  "wall_s": 959,
+  "run_tok_s": 46.4,
+  "gen_tok_s": 198.3,
+  "first_token_s": 6.7,
+  "hidden": "3/3",
+  "outcome": "3/3 suite_fail=0 959.2s turns=87 in=5282546 out=44549 46.4to",
+  "overlap": false,
+  "judge": 6
  }
 ]

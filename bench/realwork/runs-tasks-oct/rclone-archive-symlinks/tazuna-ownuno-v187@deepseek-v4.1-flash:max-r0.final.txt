@@ -1,0 +1,25 @@
+Implemented symlink support for both archive backends.
+
+## What changed
+
+**`backend/archive/zip/zip.go`**
+- Capture `-l/--links` from the context into `Fs.links`.
+- Detect members with `file.Mode()&os.ModeSymlink`. Without `--links` they are skipped and a single notice names the flag; with it the member is exposed under its name plus `fs.LinkSuffix` (`.rclonelink`), and `Open` already reads back the stored target (so seek/range options work).
+- Regular members whose name merely ends in `.rclonelink` are untouched.
+
+**`backend/archive/squashfs/squashfs.go`**
+- Same flag handling for image entries with `os.ModeSymlink`.
+- Symlinks become objects holding the target read from go-diskfs' `StatT.LinkTarget`; `Size` is the target length and `Open` serves the target (clamped for seek, limited for range).
+- `newObjectNative` now applies the same naming rules as `List` (skip symlinks without the flag, add the suffix with it), so listing and `NewObject` agree on which names exist.
+
+**Tests**
+- `backend/archive/zip/zip_internal_test.go`: symlink entry is hidden without `--links`, exposed/readable with it (including seek/range), plus a regular `.rclonelink`-named member.
+- `backend/archive/squashfs/squashfs_internal_test.go`: same checks against a new `testdata/symlink.sqfs` fixture (nested symlink and a regular `.rclonelink` file).
+- `backend/archive/archive_internal_test.go`: end-to-end `sync.CopyDir --links` for both formats recreating the symlink, and a hostile zip with a symlink pointing above the root plus a member "inside" it, asserting nothing is written outside the destination.
+
+**Docs** — added a "Symlinks" section to `docs/content/archive.md` with the `lsl`/`cat`/`copy` examples.
+
+## Verification
+- `go build ./...`, `go vet ./backend/archive/...`, `gofmt -l backend/archive`
+- `go test -count=1 ./backend/archive/...` (also with `-race` and `-count=3`)
+- Manually built rclone and confirmed `rclone lsl --links :archive:test.zip` shows `link.txt.rclonelink`, `rclone copy --links` recreates `link.txt -> file.txt`, and without `--links` the symlink is skipped with the notice.

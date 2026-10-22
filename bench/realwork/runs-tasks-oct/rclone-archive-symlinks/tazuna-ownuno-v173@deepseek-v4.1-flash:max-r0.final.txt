@@ -1,0 +1,33 @@
+Implemented symlink support for the archive backend.
+
+### Changes
+
+- **ZIP backend**
+  - Detects entries with `os.ModeSymlink`.
+  - Skips them by default and logs a notice mentioning `-l/--links`.
+  - With `--links`, exposes them as `<name>.rclonelink` objects whose size is the target length and whose `Open` returns the target path, including seek/range handling.
+  - Keeps regular members ending in `.rclonelink` as regular files.
+  - Ensures `List` and `NewObject` agree, including root paths with or without the suffix.
+  - Handles archives containing only skipped symlinks as empty directories rather than missing directories.
+
+- **Squashfs backend**
+  - Reads symlink targets via the directory entry `Readlink` support.
+  - Applies the same skip/notice and `.rclonelink` behaviour as ZIP.
+  - Supports symlink roots and suffix-aware `NewObject` lookups.
+
+- **Shared helpers**
+  - Added `backend/archive/archiver/link.go` with bounded link-target reading and seek/range-aware link opening.
+
+- **Docs**
+  - Documented archive symlink behaviour in `docs/content/archive.md`.
+
+- **Tests**
+  - Added ZIP tests for skipped links, `--links` listing/reading/seek/range, suffix handling, symlink-only archives, root lookups, regular `.rclonelink` files, and hostile symlink copy escape prevention.
+  - Added a squashfs fixture `testdata/symlink.sqfs` and tests covering the same behaviours.
+
+### Verification
+
+- `go test -count=1 ./backend/archive/...` passes.
+- `go vet ./backend/archive/...` passes.
+- `golangci-lint run ./backend/archive/...` reports `0 issues`.
+- Manually verified `rclone lsl --links`, `rclone copy --links`, and hostile-archive behaviour with a built binary.

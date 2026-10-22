@@ -1,0 +1,5 @@
+Implemented symlink support for ZIP and squashfs archives. With `-l/--links`, safe symlinks appear with the `.rclonelink` suffix and expose their target as readable content, including range reads. Without the flag, symlinks are skipped with a notice. Unsafe targets and translated-name collisions are skipped, while regular `.rclonelink` members remain regular archive objects.
+
+Added ZIP and squashfs tests, including a copy-to-local symlink check and coverage for archive traversal safety.
+
+Verified with `go test -race ./backend/archive/...`, `golangci-lint run ./backend/archive/base ./backend/archive/zip ./backend/archive/squashfs`, and `git diff --check`.
