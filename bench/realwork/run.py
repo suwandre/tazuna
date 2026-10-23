@@ -497,7 +497,14 @@ def run_best2(h, w, prompt):
     (tazuna-ownsubmbest2: SubRouter's default key; tazuna-ownsubxbest2: the key in SUBROUTER_X_KEYENV)."""
     single = h.replace("best2-", "-", 1)
     w2 = Path(str(w) + "-b")
-    shutil.copytree(w, w2, symlinks=True)  # the set-up tree before any change
+    # the set-up tree before any change: the files as they are, the repository through git (a background `git gc` after
+    # the setup commit packed loose objects while copytree read them: v255 lost one mid-copy)
+    shutil.copytree(w, w2, symlinks=True, ignore=shutil.ignore_patterns(".git"))
+    clone = Path(str(w) + "-clone")
+    sh(["git", "clone", "-q", "--no-checkout", str(w), str(clone)], w)
+    (clone / ".git").rename(w2 / ".git")
+    shutil.rmtree(clone, ignore_errors=True)
+    sh(["git", "reset", "-q"], w2)  # the index to HEAD; the files are already there
     try:
         with ThreadPoolExecutor(2) as ex:
             futs = [ex.submit(run_harness, single, d, prompt) for d in (w, w2)]
