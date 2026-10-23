@@ -1,0 +1,20 @@
+Implemented archive symlink support for ZIP and SquashFS backends.
+
+### Changes
+- Detect archive members with `os.ModeSymlink`.
+- Skip symlinks by default and log a notice referencing `--links`.
+- With `--links`, expose symlinks as `.rclonelink` objects.
+- Preserve symlink target contents and sizes, including range/seek reads.
+- Ensure `List` and `NewObject` agree on translated-link names.
+- Keep regular files ending in `.rclonelink` as regular archive members.
+- Added protection regression coverage for archive symlinks that could otherwise redirect writes outside the destination.
+
+### Verification
+Passed:
+
+```text
+go test -count=1 ./backend/archive/... ./backend/local ./fs/operations ./fs/sync ./vfs ./fs/dirtree
+golangci-lint run ./backend/archive/...
+```
+
+A full `go test ./...` was also attempted but was blocked by unrelated environment requirements, including missing `flock` and an unavailable `rclone` executable in git-annex tests.

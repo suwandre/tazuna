@@ -1,0 +1,3 @@
+Fixed Unix socket lifecycle handling by closing temporary duplicated file descriptors, serializing final cleanup with new listens, and unlinking the socket path only when its last holder closes. Repeated closes now return `net.ErrClosed`, and Linux abstract sockets are not unlinked. Added tests for shared listeners, close/relisten races, Unix datagrams, and abstract sockets.
+
+Verified with `go test -race -short ./...`, repeated Unix socket tests, and a Linux test-binary cross-compile. The patch was AI-assisted by GPT-6 Luna; please review and understand it before submission.

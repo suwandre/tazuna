@@ -1,0 +1,17 @@
+Implemented the Unix socket close/reload fix.
+
+### Changes
+- Added shared Unix socket state with explicit reference counting and an independently owned file descriptor.
+- Serialized socket reuse and release to prevent reload races from deleting the new listener’s socket file.
+- Closed duplicated descriptors explicitly instead of relying on garbage collection.
+- Unlinked the configured socket path only after the final holder closes.
+- Avoided unlinking Linux abstract sockets (`@...`).
+- Made listener and packet connection closes idempotent; repeated closes return `net.ErrClosed`.
+- Added coverage for Unix stream sockets, `unixgram`, close/listen races, holder lifetimes, and abstract sockets.
+
+### Verification
+- `go test -race -short ./...`
+- `go build ./...`
+- `golangci-lint run --timeout 10m ./...`
+- `go vet ./...`
+- Cross-compiled package tests for Linux and Windows.

@@ -89,7 +89,8 @@ def sh(cmd, cwd, timeout=900, env=None, shell=False):
 def setup_workdir(task, w):
     g = json.loads((task / "git.json").read_text())
     subprocess.run(f"git -C '{g['repo']}' archive {g['base']} | tar -x -C '{w}'", shell=True, check=True)
-    sh(["git", "init", "-q"], w); sh(["git", "add", "-A"], w); sh(["git", *GIT_ID, "commit", "-qm", "base"], w)
+    sh(["git", "init", "-q"], w); sh(["git", "config", "gc.auto", "0"], w)  # no background gc racing copies of the tree
+    sh(["git", "add", "-A"], w); sh(["git", *GIT_ID, "commit", "-qm", "base"], w)
     r = sh(g["setup"], w, shell=True)
     if r.returncode:
         raise RuntimeError("setup failed: " + r.stderr[-500:])
@@ -501,7 +502,14 @@ def run_best2(h, w, prompt):
     # the setup commit packed loose objects while copytree read them: v255 lost one mid-copy)
     shutil.copytree(w, w2, symlinks=True, ignore=shutil.ignore_patterns(".git"))
     clone = Path(str(w) + "-clone")
-    sh(["git", "clone", "-q", "--no-checkout", str(w), str(clone)], w)
+    for attempt in range(3):  # a background gc can still race the clone: try again
+        c = sh(["git", "clone", "-q", "--no-checkout", str(w), str(clone)], w)
+        if c.returncode == 0:
+            break
+        shutil.rmtree(clone, ignore_errors=True)
+        time.sleep(5)
+    else:
+        raise RuntimeError("could not clone the work tree for attempt B: " + c.stderr[-300:])
     (clone / ".git").rename(w2 / ".git")
     shutil.rmtree(clone, ignore_errors=True)
     sh(["git", "reset", "-q"], w2)  # the index to HEAD; the files are already there

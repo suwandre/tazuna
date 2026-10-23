@@ -1,0 +1,11 @@
+Updated `lb_retry_match` so only expressions referencing response placeholders trigger response-based retries. Request-only expressions remain request conditions, while dynamically determined placeholder names are treated conservatively as possible response references.
+
+Added regression coverage for POST bodies, escaped placeholder text, lookalike names, response placeholders, and direct or dynamic `ph(req, ...)` calls.
+
+Verified with:
+- `go test -race ./modules/caddyhttp ./modules/caddyhttp/reverseproxy`
+- `go test ./caddyconfig/httpcaddyfile`
+- `go test ./caddytest/integration -run '^TestCaddyfileAdaptToJSON/reverse_proxy_retry_match'`
+- `golangci-lint run --timeout 10m ./modules/caddyhttp ./modules/caddyhttp/reverseproxy`
+
+AI-assisted change (OpenAI ChatGPT).

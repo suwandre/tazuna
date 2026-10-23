@@ -1,0 +1,19 @@
+Implemented the reverse proxy retry-match fix.
+
+### Changes
+- Detects which CEL placeholders an expression references, including direct `ph(req, "...")` calls.
+- Response-based retries now occur only for:
+  - status code/text
+  - response headers
+  - upstream latency placeholders
+  - dynamically determined placeholder names
+- Request-only expressions and similarly named/non-response placeholders no longer cause successful responses to be retried.
+- Added regression tests covering request-only expressions, escaped literals, dynamic placeholders, direct `ph` calls, upstream placeholders, and near-match names.
+
+### Verification
+- `go test -race -short ./modules/caddyhttp/reverseproxy ./modules/caddyhttp ./caddyconfig/httpcaddyfile`
+- `go test ./caddytest/integration -run 'Test.*Retry|RetryMatch'`
+- `go build ./...`
+- `golangci-lint run --timeout 10m ./modules/caddyhttp/...`
+
+All passed.

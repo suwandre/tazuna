@@ -1,0 +1,11 @@
+Fixed Unix socket cleanup and reuse:
+
+- Close the temporary descriptor created during socket reuse, and track all active holders so reuse still works if the newest holder closes first.
+- Remove the socket file only after the final holder closes; make repeated closes return `net.ErrClosed`.
+- Skip filesystem unlinking for abstract socket names.
+
+Added tests for shared Unix stream and datagram sockets, double-close behavior, close/listen races, and Linux abstract sockets.
+
+Verified with `go test . -count=1`, `go test -race . -count=1`, `go vet .`, and a Linux test-binary cross-compile. The tests ran on Darwin; the Linux abstract-socket test was compiled but not executed here.
+
+AI-assisted change: GPT-6 Luna.

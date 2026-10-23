@@ -1,0 +1,27 @@
+Implemented the fix.
+
+## What changed
+
+**`modules/caddyhttp/celmatcher.go`**
+- `MatchExpression` now records the Caddy placeholder names its compiled CEL AST actually reads (`celPlaceholderNames` walks the AST and inspects each `ph(req, "...")` call, including ones written directly with `ph()`).
+- Names that aren't string literals (e.g. `ph(req, "http.reverse_proxy." + "status_code")`) are recorded as `""`, meaning "unknown until evaluation".
+- New `Placeholders()` accessor returns those names.
+
+**`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+- Replaced `matcherSetHasExpressionMatcher` (which made *any* expression matcher response-based) with `matcherSetReferencesResponse`, which only treats a matcher set as a response condition when an expression actually reads response data:
+  - `http.reverse_proxy.status_code` / `status_text`
+  - `http.reverse_proxy.header.*` (prefix match, so real header placeholders work)
+  - `http.reverse_proxy.upstream.latency` / `latency_ms`
+  - or an unknown/dynamic placeholder name
+- Request-only expressions (`{http.request.method}`, `{http.reverse_proxy.upstream.host}`, escaped `\{http.reverse_proxy.status_code}` inside a string literal, `{http.reverse_proxy.status_codes}`, etc.) are no longer evaluated against successful responses, so they behave as pre-v2.11.3 request conditions again.
+- Updated the `LoadBalancing.RetryMatchRaw` doc comment accordingly.
+
+## Tests
+
+- `modules/caddyhttp/celmatcher_test.go`: new `TestMatchExpressionPlaceholders` covering shorthand, `ph()` call, escaped literal, dynamic name, multiple placeholders.
+- `modules/caddyhttp/reverseproxy/retries_test.go`:
+  - `TestMatcherSetReferencesResponse` table test for every accepted/rejected placeholder form.
+  - `TestRequestOnlyExpressionDoesNotRetryResponses` (regression: the reported POST case — one backend hit, `200`, body passed through).
+  - `TestResponseRetryStatusCode` now also covers `ph(req, "http.reverse_proxy.status_code")`.
+  - `TestResponseRetryUpstreamLatency` verifies latency placeholders still trigger response retries.
+- Verified with `go build ./...`, `go vet`, `go test -race -short ./modules/caddyhttp/ ./modules/caddyhttp/reverseproxy/`, and a manual end-to-end run of the reported Caddyfile (POST now returns the backend's `200`, backend hit exactly once).
