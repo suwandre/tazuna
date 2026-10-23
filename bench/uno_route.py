@@ -118,17 +118,42 @@ def reference(model):
             return i, float(p.get("input_cache_read") or p["prompt"]) * 1e6, float(p["completion"]) * 1e6
 
 
+# ROUTE_NO_CACHE_KEY=1: GPT calls without `prompt_cache_key`, as tazuna sends them after a provider refused the key
+NO_CACHE_KEY = [bool(os.environ.get("ROUTE_NO_CACHE_KEY"))]
+
+
+def refused_cache_key(e):
+    """SubRouter answers a request with `prompt_cache_key` 503 "no available channel" when no channel takes it (2026-10-23)."""
+    if not isinstance(e, urllib.error.HTTPError) or e.code not in (400, 404, 503):
+        return False
+    try:
+        text = e.read().decode(errors="replace")
+    except Exception:
+        return False
+    return any(k in text for k in ("model_not_found", "无可用渠道", "prompt_cache_key"))
+
+
 def call(model, group, msgs, effort, tools=False, max_out=64):
     """One unstreamed call in the API tazuna uses for the model; returns (input, cached, text, stopped at the output limit)."""
     if model.startswith("gpt-"):
-        body = {"model": model, "input": msgs, "store": False, "reasoning": {"effort": effort}, "prompt_cache_key": "tz-route"}
+        body = {"model": model, "input": msgs, "store": False, "reasoning": {"effort": effort}}
+        if not NO_CACHE_KEY[0]:
+            body["prompt_cache_key"] = "tz-route"
         if max_out:
             body["max_output_tokens"] = max_out
         if tools:
             body["tools"] = [{"type": "function", "name": "bash", "description": "run a command", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}]
             body["instructions"] = "Answer from your own reasoning; do not call tools for this."
             body["tool_choice"] = "none"  # tools present (they change how some models reason), but the answer must be text
-        r = get(API + "/v1/responses", body, group)
+        try:
+            r = get(API + "/v1/responses", body, group)
+        except urllib.error.HTTPError as e:
+            if "prompt_cache_key" not in body or not refused_cache_key(e):
+                raise
+            print("      the provider refused prompt_cache_key: calls go on without it (as tazuna does)", flush=True)
+            NO_CACHE_KEY[0] = True
+            body.pop("prompt_cache_key")
+            r = get(API + "/v1/responses", body, group)
         u = r.get("usage", {})
         text = " ".join(c.get("text", "") for i in r.get("output", []) if i.get("type") == "message" for c in i.get("content", []))
         return u.get("input_tokens") or 0, (u.get("input_tokens_details") or {}).get("cached_tokens") or 0, text, r.get("status") == "incomplete"

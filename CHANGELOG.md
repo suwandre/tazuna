@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.78 (2026-10-23)
+
+- **The cache key goes when a provider refuses it.** GPT models on the Responses API carry `prompt_cache_key` (the
+  session id) since 0.0.61: on BeatAPI it lifted the cached share from 18-47% to 96-97%. On 2026-10-23 SubRouter answered
+  every gpt-6-luna request with it 503 "该分组下模型无可用渠道" (no channel for the model in this group, `model_not_found`)
+  and logged nothing, while the same request without it went through, so a Luna run on that key would have stopped at
+  its first call. On that refusal the call goes again without the key, which stays off for the run; `TAZUNA_NO_CACHE_KEY`
+  turns it off from the start. The route check (`uno_route.py`) does the same and takes `ROUTE_NO_CACHE_KEY`. A first
+  check on the key showed the refusal comes and goes: its first call was taken with the key, the next refused.
+
 ## 0.0.77 (2026-10-22)
 
 - **DeepSeek's reasoning goes back when a provider needs it.** On Chat Completions the own loop kept only text and tool

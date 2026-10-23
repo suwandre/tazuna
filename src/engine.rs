@@ -186,6 +186,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         mode,
         asked: 0,
         send_reasoning: false,
+        cache_key: std::env::var_os("TAZUNA_NO_CACHE_KEY").is_none(),
         out: Box::new(|e: &Value| emit(e)),
     };
     loop {
@@ -228,9 +229,18 @@ struct Loop {
     /// Chat Completions: send each assistant turn's `reasoning_content` back. Off by default (some providers reject the
     /// field); switched on for the rest of the run when a provider refuses a call without it.
     send_reasoning: bool,
+    /// Responses API: send `prompt_cache_key` (the session id). On unless `TAZUNA_NO_CACHE_KEY` is set; switched off for
+    /// the rest of the run when a provider refuses requests that carry it.
+    cache_key: bool,
     /// Permission questions asked so far (their request ids).
     asked: u32,
     out: Box<dyn FnMut(&Value)>,
+}
+
+/// A provider's refusal of requests that carry `prompt_cache_key`: SubRouter's "no available channel" (503
+/// model_not_found) for them while the same request without the key goes through, or an error naming the field.
+fn refused_cache_key(e: &str) -> bool {
+    (e.contains("503") || e.contains("400") || e.contains("404")) && (e.contains("model_not_found") || e.contains("无可用渠道") || e.contains("prompt_cache_key"))
 }
 
 /// Removes every thinking block from the conversation; true when there was one.
@@ -332,7 +342,10 @@ impl Loop {
                     // (99.97% with it, from the second call on)
                     let tools: Vec<Value> = self.tools.iter().map(|t| json!({"type": "function", "name": t["function"]["name"], "description": t["function"]["description"], "parameters": t["function"]["parameters"]})).collect();
                     let mut b = json!({"model": self.model, "instructions": self.system, "input": self.msgs, "tools": tools, "store": false,
-                        "include": ["reasoning.encrypted_content"], "prompt_cache_key": self.session});
+                        "include": ["reasoning.encrypted_content"]});
+                    if self.cache_key {
+                        b["prompt_cache_key"] = json!(self.session);
+                    }
                     if let Some(e) = &self.effort {
                         b["reasoning"] = json!({"effort": e});
                     }
@@ -375,6 +388,19 @@ impl Loop {
                 }
                 // DeepSeek's thinking with tools: a provider behind a gateway that moved the run there answered 400 "This
                 // reasoning model requires previous reasoning_content in multi-turn requests" (call 29 of a caddy run)
+                // SubRouter answered every request carrying `prompt_cache_key` 503 "该分组下模型无可用渠道" (no channel for the
+                // model in this group) while the same request without it went through (2026-10-23)
+                Err(e) if self.api == Api::Responses && self.cache_key && refused_cache_key(&format!("{e:#}")) => {
+                    (self.out)(&json!({"type": "system", "subtype": "cache_key_dropped", "message": format!("{e:#}")}));
+                    self.cache_key = false;
+                    if let Some(o) = body.as_object_mut() {
+                        o.remove("prompt_cache_key");
+                    }
+                    match (self.call)(&body) {
+                        Ok(r) => r,
+                        Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
+                    }
+                }
                 Err(e) if self.api == Api::Chat && !self.send_reasoning && format!("{e:#}").contains("reasoning_content") => {
                     (self.out)(&json!({"type": "system", "subtype": "reasoning_resent", "message": format!("{e:#}")}));
                     self.send_reasoning = true;
@@ -645,6 +671,7 @@ pub fn explore_serve(args: &[String]) -> Result<()> {
         mode: "explore".into(),
         asked: 0,
         send_reasoning: false,
+        cache_key: true,
         out: Box::new(move |e: &Value| {
             if e["type"] == "result" {
                 *sink.borrow_mut() = e["result"].as_str().unwrap_or_default().to_string();
@@ -1063,6 +1090,48 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 mod tests {
 
     #[test]
+    fn cache_key_dropped_when_refused() {
+        let dir = std::env::temp_dir().join(format!("tazuna-cachekey-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sent = Rc::new(RefCell::new(vec![]));
+        let s = sent.clone();
+        let mut l = Loop {
+            call: Box::new(move |b: &Value| {
+                s.borrow_mut().push(b.clone());
+                if b.get("prompt_cache_key").is_some() {
+                    anyhow::bail!("HTTP 503: {{\"error\":{{\"code\":\"model_not_found\",\"message\":\"该分组下模型无可用渠道\"}}}}");
+                }
+                Ok(json!({"output": [{"type": "message", "content": [{"type": "output_text", "text": "done"}]}], "usage": {}}))
+            }),
+            api: Api::Responses,
+            system: "sys".into(),
+            model: "gpt-6-luna".into(),
+            effort: Some("max".into()),
+            price: (1e-6, 1e-7, 4e-6),
+            tools: vec![],
+            msgs: vec![],
+            server: crate::mcp::Server::new(dir.clone()),
+            session: "s1".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
+            send_reasoning: false,
+            cache_key: true,
+            out: Box::new(|_: &Value| {}),
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("hi"), false, &rx);
+        let sent = sent.borrow();
+        assert_eq!(sent[0]["prompt_cache_key"], "s1", "sent by default");
+        assert!(sent[1].get("prompt_cache_key").is_none(), "the refused call goes again without it");
+        assert!(!l.cache_key, "off for the rest of the run");
+        assert!(refused_cache_key("HTTP 503: model_not_found") && !refused_cache_key("HTTP 503: overloaded"));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn reasoning_goes_back_only_when_asked() {
         // the stream's reasoning is kept with the turn
         let stream = "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"look at a\"}}]}\n\n\
@@ -1103,6 +1172,7 @@ data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n
             mode: "bypassPermissions".into(),
             asked: 0,
             send_reasoning: false,
+        cache_key: true,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1197,6 +1267,7 @@ data: {\"type\":\"message_stop\"}\n";
             mode: "bypassPermissions".into(),
             asked: 0,
         send_reasoning: false,
+        cache_key: true,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1416,6 +1487,7 @@ data: {\"type\":\"message_stop\"}\n";
             mode: "bypassPermissions".into(),
             asked: 0,
         send_reasoning: false,
+        cache_key: true,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1454,6 +1526,7 @@ data: {\"type\":\"message_stop\"}\n";
             mode: "bypassPermissions".into(),
             asked: 0,
         send_reasoning: false,
+        cache_key: true,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1498,6 +1571,7 @@ data: {\"type\":\"message_stop\"}\n";
             mode: "bypassPermissions".into(),
             asked: 0,
         send_reasoning: false,
+        cache_key: true,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1540,6 +1614,7 @@ data: {\"type\":\"message_stop\"}\n";
             mode: "bypassPermissions".into(),
             asked: 0,
         send_reasoning: false,
+        cache_key: true,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1586,6 +1661,7 @@ data: {\"type\":\"message_stop\"}\n";
             mode: mode.into(),
             asked: 0,
         send_reasoning: false,
+        cache_key: true,
             out: Box::new(move |e: &Value| {
                 if e["type"] == "control_request" {
                     if let Some((tx, r)) = &reply {
