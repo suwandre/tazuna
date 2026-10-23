@@ -1,0 +1,23 @@
+Implemented the fix in `listen_unix.go` and added regression tests in `listen_unix_close_test.go`.
+
+**Changes**
+- `reuseUnixSocket` now closes the duplicated `*os.File` instead of leaking it until GC, and never unlinks filesystem paths for Linux abstract sockets (`@...`).
+- Unix listener/packet-conn `Close` now:
+  - Closes the underlying socket immediately.
+  - Uses an atomic closed flag so a second `Close` returns `net.ErrClosed` without decrementing the reference count again.
+  - Removes the socket file only when the last reference closes.
+  - Takes the path from `Addr()`/`LocalAddr()` rather than `File().Name()`.
+  - Performs close, map removal, and unlink while holding `unixSocketsMu`, keeping the operation atomic against a concurrent relisten on the same path.
+
+**Tests added**
+- Immediate close and unlink for `unix` and `unixgram`.
+- Shared reference counting, double close, and continued operation for remaining holders.
+- Concurrent close/relisten loops for both networks.
+- Abstract socket close preserving a filesystem path of the same name.
+
+**Verification**
+- `go test -count=1 -run 'TestUnixSocket|TestUnixAbstract' .` — pass
+- `go test -race -count=1 -run 'TestUnixSocket|TestUnixAbstract' .` — pass
+- `go test -count=1 -timeout 10m .` — pass
+- `go vet ./...` — pass
+- Task’s Unix/Abstract review suite — pass

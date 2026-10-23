@@ -1,0 +1,9 @@
+Implemented Unix socket lifecycle fixes in `listen_unix.go`:
+
+- Close duplicated descriptor files promptly, and unlink the stored socket address only after the last holder closes.
+- Keep the reuse map pointed at a live holder when holders close out of order; synchronize close and listen operations.
+- Make repeated closes return `net.ErrClosed` without releasing another reference, and avoid unlinking abstract socket names.
+
+Added tests for shared stream and datagram sockets, close/listen races, double closes, and Linux abstract-socket paths.
+
+Verified with `go test -race .`, `go vet .`, and a Linux test-binary cross-compile. The abstract-socket runtime test is Linux-only and was not run on this host. Changes were AI-assisted; human review is recommended.

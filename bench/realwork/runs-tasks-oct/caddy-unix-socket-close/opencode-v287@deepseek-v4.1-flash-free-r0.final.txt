@@ -1,0 +1,28 @@
+Implemented the Unix socket cleanup fix.
+
+### Changes
+
+**`listen_unix.go`**
+- Closes the duplicated `socketFile` created during socket reuse, so the old listener is closed immediately instead of waiting for GC.
+- Adds reference-counted close handling:
+  - The socket file is unlinked only when the last holder closes it.
+  - A second `Close` on the same listener/conn returns `net.ErrClosed` without decrementing the count again.
+- Reads the socket path from the listener/connection address rather than `File().Name()`, which was not the filesystem path.
+- Performs close, map removal, and unlink together under `unixSocketsMu`, keeping it atomic against a concurrent listen/relisten on the same path.
+- Skips unlinking for Linux abstract Unix sockets (`@...`).
+
+**`listen_unix_test.go`**
+- Added regression tests covering immediate close/unlink for `unix` and `unixgram`, reference counting, double close, concurrent close/relisten, and abstract-socket filesystem safety.
+
+### Verification
+
+```text
+go test -count=1 . -run '^Test(Unix|Abstract)'        PASS
+go test -race -count=1 . -run '^Test(Unix|Abstract)'  PASS
+go test -count=1 -timeout 10m . -skip '^Test(Unix|Abstract)'  PASS
+go vet .                                               PASS
+go build ./...                                         PASS
+GOOS=linux GOARCH=amd64 go test -c .                   PASS
+```
+
+The abstract-socket test is skipped on macOS but the Linux test binary compiles successfully.

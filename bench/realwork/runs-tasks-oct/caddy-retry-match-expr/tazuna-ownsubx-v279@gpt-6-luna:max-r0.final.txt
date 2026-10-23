@@ -1,0 +1,20 @@
+Implemented the `lb_retry_match` fix.
+
+### Changes
+- Added CEL expression analysis to identify response-dependent placeholders:
+  - Status code/text
+  - Response headers
+  - Upstream latency placeholders
+  - Dynamically determined placeholder names are treated conservatively as response-dependent.
+- Request-only expressions are no longer evaluated against successful upstream responses.
+- Preserved transport-error retry behavior and existing response-based retry behavior.
+- Added regression and classification tests covering request expressions, direct `ph(req, ...)` calls, escaped literals, near-match placeholder names, and dynamic names.
+
+### Verification
+- `go test ./... -short`
+- `go test -race ./modules/caddyhttp/reverseproxy ./modules/caddyhttp -count=1 -short`
+- `go build ./...`
+
+All passed.
+
+AI-assisted change: GPT-6 Luna.

@@ -1,0 +1,31 @@
+Implemented symlink support in the archive backends.
+
+### Changes
+- **ZIP (`backend/archive/zip/zip.go`)**
+  - Detects `os.ModeSymlink` entries.
+  - Without `-l/--links`, skips them and logs a notice naming the flag.
+  - With `--links`, exposes them as `<name>.rclonelink`; the existing object reader returns the link target and supports seek/range reads.
+
+- **Squashfs (`backend/archive/squashfs/squashfs.go`)**
+  - Adds the same `--links` handling using the squashfs stat link target.
+  - `List` and `NewObject` use the same naming rules, including for single-file roots.
+  - Symlink objects report the target length and serve the target through an in-memory reader honoring seek/range options.
+  - Regular members whose names already end in `.rclonelink` remain regular files.
+
+- **Tests**
+  - Added ZIP symlink listing/lookup/read coverage.
+  - Added squashfs symlink coverage.
+  - Added an end-to-end hostile ZIP test ensuring symlink escapes cannot write outside the destination.
+
+- **Docs**
+  - Documented archive symlink behavior and usage in `docs/content/archive.md`.
+
+### Verification
+Passed:
+```bash
+go test -count=1 ./backend/archive/...
+go test -json -count=1 ./backend/archive ./backend/archive/zip \
+  -run '^(TestReadZipSymlink|TestArchiveSquashfsSymlink|TestArchiveZipSymlinkEscape)$'
+go vet ./backend/archive/...
+```
+`gofmt` and `git diff --check` are clean.

@@ -1,0 +1,19 @@
+Implemented the `lb_retry_match` expression fix.
+
+### Changes
+- CEL expressions now record the placeholders they reference from the compiled AST.
+- Response-based retries are triggered only for:
+  - `status_code` / `status_text`
+  - response headers
+  - upstream latency placeholders
+  - dynamically determined placeholder names, conservatively
+- Request-only expressions, escaped placeholder text, upstream-selection placeholders, and similarly named placeholders no longer retry successful responses.
+- Added coverage for direct `ph(req, "...")` calls and request-only expressions.
+
+### Verification
+Passed:
+- `go test ./modules/caddyhttp/reverseproxy ./modules/caddyhttp ./caddyconfig/httpcaddyfile`
+- `go test -race ./modules/caddyhttp/reverseproxy ./modules/caddyhttp ./caddyconfig/httpcaddyfile`
+- `go test ./caddytest/integration -run 'TestReverseProxyRetryMatch' -count=1`
+
+Disclosure: this patch was AI-assisted by OpenAI GPT-6 Luna.

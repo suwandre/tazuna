@@ -1,0 +1,32 @@
+Implemented the fix in `/Users/suwandre/bench-repos/caddy`.
+
+### Changes
+
+- **`modules/caddyhttp/celmatcher.go`**
+  - `MatchExpression` now records the placeholder names referenced by its compiled CEL expression.
+  - Handles both `{placeholder}` shorthand and direct `ph(req, "...")` calls by inspecting the compiled AST.
+  - Placeholder names that are only known at evaluation time are recorded as `""`.
+  - Added `MatchExpression.Placeholders()` returning a defensive copy.
+
+- **`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+  - Replaced the “contains any expression matcher” check with `matcherSetReferencesResponse`.
+  - Only evaluates a retry set against the upstream response when it references:
+    - `http.reverse_proxy.status_code`
+    - `http.reverse_proxy.status_text`
+    - `http.reverse_proxy.upstream.latency`
+    - `http.reverse_proxy.upstream.latency_ms`
+    - `http.reverse_proxy.header.*`
+    - or a dynamically resolved placeholder name
+  - Request-only expressions such as `{http.request.method} == "POST"` are no longer evaluated after a successful round trip.
+
+- **`modules/caddyhttp/reverseproxy/retries_test.go`**
+  - Added coverage for request-only expressions, escaped look-alike placeholders, upstream host placeholders, and both shorthand and `ph()` response status checks.
+
+### Verification
+
+```text
+go test -count=1 ./modules/caddyhttp/reverseproxy -run '...'   → ok
+go test -count=1 ./modules/caddyhttp -run 'TestMatchExpression' → ok
+go test -count=1 -timeout 10m ./modules/caddyhttp ./modules/caddyhttp/reverseproxy \
+  -skip '^TestRequestOnlyExpressionDoesNotRetryResponses$'      → ok
+```

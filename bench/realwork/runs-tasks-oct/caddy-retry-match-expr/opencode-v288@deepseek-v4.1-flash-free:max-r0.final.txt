@@ -1,0 +1,38 @@
+Implemented the fix.
+
+### Changes
+
+- **`modules/caddyhttp/celmatcher.go`**
+  - Records placeholder names referenced by the compiled CEL expression.
+  - Detects both `{placeholder}` shorthand and direct `ph(req, "placeholder")` calls.
+  - Treats placeholders with dynamically evaluated names conservatively as response-dependent.
+
+- **`modules/caddyhttp/reverseproxy/reverseproxy.go`**
+  - Response-based retry matching now only runs for expressions that reference response data:
+    - `{http.reverse_proxy.status_code}`
+    - `{http.reverse_proxy.status_text}`
+    - `{http.reverse_proxy.header.*}`
+    - `{http.reverse_proxy.upstream.latency}`
+    - `{http.reverse_proxy.upstream.latency_ms}`
+  - Request-only expressions such as `{http.request.method} == "POST"` no longer retry successful responses.
+  - Escaped placeholder text and look-alike names such as `status_codes` are not treated as response data.
+
+- **`modules/caddyhttp/reverseproxy/retries_test.go`**
+  - Added coverage for shorthand and direct `ph()` response-status expressions.
+  - Added coverage for request-only expressions, escaped literals, look-alike placeholder names, and upstream-selection placeholders.
+
+### Tests
+
+Passed:
+
+```text
+go test -count=1 ./modules/caddyhttp/reverseproxy -run '^(TestResponseRetryStatusCode|TestRequestOnlyExpressionDoesNotRetryResponses|TestRequestOnlyMatcherDoesNotRetryResponses|TestResponseRetryHeader|TestResponseRetryNoMatchNoRetry|TestResponseRetryExhaustedPreservesStatusCode|TestResponseRetryHeaderCleanup)$'
+ok  	github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy
+
+go test -count=1 ./modules/caddyhttp -run 'TestMatchExpression|TestCEL'
+ok  	github.com/caddyserver/caddy/v2/modules/caddyhttp
+
+go test -count=1 -timeout 10m ./modules/caddyhttp ./modules/caddyhttp/reverseproxy -skip '^TestRequestOnlyExpressionDoesNotRetryResponses$'
+ok  	github.com/caddyserver/caddy/v2/modules/caddyhttp
+ok  	github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy
+```

@@ -1,0 +1,36 @@
+Implemented symlink support in the archive backends at `/Users/suwandre/bench-repos/rclone`.
+
+### Changes
+
+- **ZIP backend** (`backend/archive/zip/zip.go`)
+  - Detects `os.ModeSymlink` entries.
+  - Skips them by default and logs a notice mentioning `-l/--links`.
+  - With `--links`, exposes them as `<name>.rclonelink`, preserving target content and existing range/seek behavior.
+  - Regular members ending in `.rclonelink` remain regular files.
+
+- **Squashfs backend** (`backend/archive/squashfs/squashfs.go`)
+  - Reads symlink targets from squashfs stat metadata.
+  - Applies the same skip/notice and `--links` naming behavior.
+  - Makes `List` and `NewObject` agree on symlink names.
+  - Serves link targets from memory while honoring range and seek options.
+
+- **Tests**
+  - Added ZIP symlink listing/lookup/read coverage.
+  - Added squashfs symlink end-to-end coverage.
+  - Added hostile ZIP symlink escape coverage.
+
+### Verification
+
+Passed:
+
+```bash
+go test -json -count=1 ./backend/archive ./backend/archive/zip \
+  -run '^(TestReadZipSymlink|TestArchiveSquashfsSymlink|TestArchiveZipSymlinkEscape)$'
+
+go test -count=1 -timeout 10m ./backend/archive/... \
+  -skip '^(TestReadZipSymlink|TestArchiveSquashfsSymlink|TestArchiveZipSymlinkEscape)$'
+
+go vet ./backend/archive/...
+```
+
+Also verified manually that `rclone lsl --links :archive:test.zip` lists the `.rclonelink` entry and `rclone copy --links` recreates an actual symlink with the correct target.

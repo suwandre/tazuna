@@ -1,0 +1,16 @@
+Implemented response-aware `lb_retry_match` handling.
+
+### Changes
+- CEL expressions now identify whether they reference response-dependent placeholders:
+  - status code/text
+  - response headers
+  - upstream latency placeholders
+  - dynamically resolved placeholder names are treated conservatively as response-dependent
+- Request-only expressions, including upstream host and escaped/string-literal placeholder text, no longer cause successful responses to retry.
+- Added regression coverage for request-only POST expressions and placeholder classification.
+
+### Verification
+- `go test -race -short ./modules/caddyhttp ./modules/caddyhttp/reverseproxy ./caddyconfig/httpcaddyfile`
+- `go test ./caddytest/integration -run 'TestReverseProxyRetryMatch' -count=1`
+- `go test ./modules/caddyhttp/... -short`
+- `go vet ./modules/caddyhttp ./modules/caddyhttp/reverseproxy`

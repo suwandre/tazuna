@@ -1,0 +1,21 @@
+Implemented archive symlink support for ZIP and SquashFS backends.
+
+### Changes
+- Detect symbolic-link entries using `os.ModeSymlink`.
+- Skip archive symlinks by default and log guidance to use `-l/--links`.
+- With `--links`, expose symlinks as `.rclonelink` objects containing the link target.
+- Preserve target size and support range/seek reads.
+- Ensure `NewObject` and listings agree, including single-object archive roots.
+- Keep regular members ending in `.rclonelink` as regular files.
+- Added ZIP and SquashFS symlink tests, including target reads and root lookups.
+- Existing local filesystem protections prevent hostile archive symlinks from escaping the destination.
+
+### Verification
+Passed:
+
+```text
+go test ./backend/archive/... ./fs/operations ./fs/sync ./cmd/archive/... -count=1
+go vet ./backend/archive/... ./fs/operations ./fs/sync ./cmd/archive/...
+```
+
+A full `go test ./...` run also reached unrelated FTP/S3 integration failures because the environment lacks `flock` and required test-server dependencies.

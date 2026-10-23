@@ -1,0 +1,23 @@
+Implemented Unix socket lifecycle cleanup and reload safety.
+
+### Changes
+- Close duplicated socket FDs returned by `File()` to prevent GC-dependent listeners.
+- Unlink the actual Unix socket address rather than the duplicated file descriptor’s name.
+- Add reference-counted, idempotent close handling for Unix listeners and packet connections.
+- Serialize close/relisten operations and preserve replacement sockets during reload races.
+- Avoid unlinking Linux abstract sockets (`@...`) or filesystem paths with the same name.
+- Prevent replacement sockets using another Unix network type from being unlinked.
+- Return `net.ErrClosed` on repeated closes for reusable listener wrappers.
+- Added regression tests covering stream/datagram sockets, reference counting, double close, relisten races, immediate unlinking, and abstract sockets.
+
+### Verification
+- `go test . -count=1`
+- `go test -race . -count=1`
+- Linux Go 1.26 container: `go test -race . -run 'TestUnix|TestAbstract'`
+- `go build ./...`
+- `golangci-lint run --timeout 10m ./...`
+- Manually verified the admin Unix socket reload reproduction closes and removes the old socket.
+
+The full repository test run was also attempted; an unrelated integration test (`TestReverseProxySNIPlaceHolder`) failed with a 502 in this environment.
+
+AI-assisted using GPT-6 Luna.

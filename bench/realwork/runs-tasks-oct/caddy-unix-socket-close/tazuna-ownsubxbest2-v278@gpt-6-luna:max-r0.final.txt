@@ -1,0 +1,21 @@
+Implemented the Unix socket lifecycle fix.
+
+### Changes
+- Closed temporary duplicated file descriptors created during Unix socket reuse.
+- Removed `File()` calls during close and track the original socket path directly, allowing correct unlinking.
+- Added synchronized reference-counted holder tracking so:
+  - The socket/file remains while other holders use it.
+  - Closing the current holder selects another live holder for future reuse.
+  - Close/listen races cannot remove the new listener’s socket.
+- Made listener and packet-connection closes idempotent; repeated closes return `net.ErrClosed`.
+- Prevented unlinking filesystem paths for Linux abstract sockets (`@...`).
+- Added tests covering stream sockets, datagram sockets, reference counting, close/relisten races, repeated closes, and abstract sockets.
+
+### Verification
+- `go test -race -short ./...`
+- `go build ./...`
+- `go vet ./...`
+- `golangci-lint run --timeout 10m ./...`
+- Linux test binary cross-compilation succeeded.
+
+AI-assisted change: GPT-6 Luna.

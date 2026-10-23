@@ -1,0 +1,5 @@
+Implemented symbolic-link support for ZIP and squashfs archives. By default, links are skipped with a notice; with `--links`, they’re listed as `.rclonelink` objects whose contents are the link targets. Lookup, range reads, and single-file roots are covered, while regular files already ending in `.rclonelink` remain regular files.
+
+Added tests for both archive formats, end-to-end copying of a link, and blocking writes through a hostile archive symlink.
+
+Verified with `go test -count=1 ./backend/archive/...`, `golangci-lint run ./backend/archive/...`, and `git diff --check`.
