@@ -491,28 +491,33 @@ speculative hardening count against a patch, not for it. Each patch comes with t
 after it: a patch whose tests failed needs a strong reason to win. Answer with JSON only: {"pick": "A" or "B", "why": "<one sentence>"}"""
 
 
+def copy_tree(src, dst):
+    """A copy of a work tree: the files as they are, the repository through git (a background `git gc` after the setup
+    commit packed loose objects while copytree read them: v255 lost one mid-copy; v264's clone failed once)."""
+    shutil.copytree(src, dst, symlinks=True, ignore=shutil.ignore_patterns(".git"))
+    clone = Path(str(dst) + "-clone")
+    for attempt in range(3):
+        c = sh(["git", "clone", "-q", "--no-checkout", str(src), str(clone)], src)
+        if c.returncode == 0:
+            break
+        shutil.rmtree(clone, ignore_errors=True)
+        time.sleep(5)
+    else:
+        raise RuntimeError(f"could not clone {src}: " + c.stderr[-300:])
+    (clone / ".git").rename(dst / ".git")
+    shutil.rmtree(clone, ignore_errors=True)
+    sh(["git", "reset", "-q"], dst)  # the index to HEAD; the files are already there
+
+
 def run_best2(h, w, prompt):
     """Best of two (bench prototype): the same own-loop setup twice, in two copies of the work tree at once; Opus on the
     subscription (no tools, no reference) sees the task, both diffs and each attempt's test result and picks one; the
     pick's changes end up in `w` for scoring. `tazuna-<x>best2-vN@model:effort` runs `tazuna-<x>-vN` twice
     (tazuna-ownsubmbest2: SubRouter's default key; tazuna-ownsubxbest2: the key in SUBROUTER_X_KEYENV)."""
     single = h.replace("best2-", "-", 1)
+    task = next(t for t in TASKS.iterdir() if w.name.startswith(f"rw-{t.name}-"))
     w2 = Path(str(w) + "-b")
-    # the set-up tree before any change: the files as they are, the repository through git (a background `git gc` after
-    # the setup commit packed loose objects while copytree read them: v255 lost one mid-copy)
-    shutil.copytree(w, w2, symlinks=True, ignore=shutil.ignore_patterns(".git"))
-    clone = Path(str(w) + "-clone")
-    for attempt in range(3):  # a background gc can still race the clone: try again
-        c = sh(["git", "clone", "-q", "--no-checkout", str(w), str(clone)], w)
-        if c.returncode == 0:
-            break
-        shutil.rmtree(clone, ignore_errors=True)
-        time.sleep(5)
-    else:
-        raise RuntimeError("could not clone the work tree for attempt B: " + c.stderr[-300:])
-    (clone / ".git").rename(w2 / ".git")
-    shutil.rmtree(clone, ignore_errors=True)
-    sh(["git", "reset", "-q"], w2)  # the index to HEAD; the files are already there
+    copy_tree(w, w2)
     try:
         with ThreadPoolExecutor(2) as ex:
             futs = [ex.submit(run_harness, single, d, prompt) for d in (w, w2)]
@@ -551,6 +556,27 @@ def run_best2(h, w, prompt):
         with (HERE / "best2-picks.jsonl").open("a") as f:  # before moving changes: a failure there keeps the record
             f.write(json.dumps(dict(harness=h, picked="AB"[pick], why=why, verify=[r["verify"] if isinstance(r, dict) else "error" for r in res],
                                     turns=[r["turns"] if isinstance(r, dict) else None for r in res], pick_cost_api=pick_cost)) + "\n")
+        # each attempt scored on its own (hidden tests, its diff for the judge) as tazuna-<x>att{a,b}-vN: how often the
+        # pick was the better attempt is then measured, not guessed
+        for i, d in enumerate((w, w2)):
+            if not isinstance(res[i], dict) or not diffs[i].strip():
+                continue
+            s = Path(str(w) + f"-s{i}")
+            try:
+                copy_tree(d, s)
+                passed, total, regress = hidden_score(task, s)
+            finally:
+                shutil.rmtree(s, ignore_errors=True)
+            att = h.replace("best2-", "att" + "ab"[i] + "-", 1)
+            (RUNS / task.name).mkdir(parents=True, exist_ok=True)
+            (RUNS / task.name / f"{att}-r0.diff").write_text(diffs[i])
+            model, effort = model_effort(att)
+            row = dict(task=task.name, harness=att, run=0, model=model, effort=effort, cost=round(res[i]["reported_cost"], 4),
+                       **{k: res[i][k] for k in ("inp", "cache_w", "cache_r", "out", "turns", "reported_cost", "verify")},
+                       secs=0, passed=passed, total=total, regress=regress, picked=(i == pick))
+            with LOCK:
+                with RESULTS.open("a") as f:
+                    f.write(json.dumps(row) + "\n")
         if pick == 1:  # the second attempt's changes into the scored tree
             base = sh(["git", "rev-list", "--max-parents=0", "HEAD"], w).stdout.split()[-1]  # an agent may have committed
             sh(["git", "reset", "-q", "--hard", base], w)

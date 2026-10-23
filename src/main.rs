@@ -349,6 +349,12 @@ fn main() -> Result<()> {
     let a = args()?;
     if let Some((url, _)) = &a.provider {
         check_data(url, a.data_any)?;
+        // every other route sees the code too (0.0.79, `TAZUNA_ROUTES`)
+        for r in std::env::var("TAZUNA_ROUTES").unwrap_or_default().split([';', '\n']) {
+            if let Some(u) = r.split_whitespace().next() {
+                check_data(u, a.data_any)?;
+            }
+        }
     }
     if let Some((_, url)) = a.explorer.as_deref().and_then(|e| e.split_once('@')) {
         check_data(url, a.data_any)?; // the explorer reads the code, so the code goes to its provider

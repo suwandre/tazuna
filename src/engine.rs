@@ -9,7 +9,7 @@ use std::{
     io::{BufRead, Write},
     sync::{
         Mutex, OnceLock,
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{Receiver, TryRecvError},
     },
     time::Duration,
@@ -97,6 +97,31 @@ impl Groups {
     }
 }
 
+/// Another route is waiting (0.0.79): a failing call then gives up after 3 tries instead of ~15 minutes of backing off,
+/// and the loop moves to that route.
+static FALLBACK: AtomicBool = AtomicBool::new(false);
+
+/// Why the current route should be left, from its own calls as (seconds, input, cached) (0.0.79): the last 10 cached under
+/// 70% of their input (the group rule since 0.0.68), or slow: their median over 60 s, or over 40 s and 3x the route's first
+/// 10 (on one key a run landed on a pool at 56-148 s a call, another on one at 8-16 s, and stayed there).
+fn route_trouble(calls: &[(f64, u64, u64)]) -> Option<String> {
+    if calls.len() < 10 {
+        return None;
+    }
+    let last = &calls[calls.len() - 10..];
+    let (i, c) = last.iter().fold((0, 0), |(i, c), x| (i + x.1, c + x.2));
+    if (c as f64) < 0.7 * i as f64 {
+        return Some(format!("{:.0}% cached over the last 10 calls", 100.0 * c as f64 / i.max(1) as f64));
+    }
+    let median = |s: &[(f64, u64, u64)]| {
+        let mut v: Vec<f64> = s.iter().map(|x| x.0).collect();
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    };
+    let (now, first) = (median(last), median(&calls[..10]));
+    (now > 60.0 || (calls.len() >= 20 && now > 40.0 && now > 3.0 * first)).then(|| format!("calls take {now:.0} s (median of the last 10; first 10: {first:.0} s)"))
+}
+
 fn groups() -> &'static Groups {
     static G: OnceLock<Groups> = OnceLock::new();
     G.get_or_init(|| Groups::from(&std::env::var("TAZUNA_GROUPS").unwrap_or_default(), std::env::var_os("TAZUNA_GROUPS_FILE").map(Into::into)))
@@ -151,6 +176,24 @@ pub fn serve(args: &[String]) -> Result<()> {
     if std::env::var_os("TAZUNA_BATCH").is_some() {
         system.push_str(BATCH_RULE);
     }
+    // other routes for the model, tried in order when the first fails, slows down or stops caching (0.0.79):
+    // `TAZUNA_ROUTES="url key-env; url key-env"`; their keys are read now and leave the environment like the first one
+    let spec = std::env::var("TAZUNA_ROUTES").unwrap_or_default();
+    let mut routes = VecDeque::new();
+    for r in spec.split([';', '\n']) {
+        let mut w = r.split_whitespace();
+        if let (Some(u), Some(k)) = (w.next(), w.next()) {
+            match std::env::var(k) {
+                Ok(key) => routes.push_back((u.trim_end_matches('/').to_string(), key)),
+                Err(_) => eprintln!("route {u}: {k} not set; left out"),
+            }
+        }
+    }
+    for k in spec.split([';', '\n']).filter_map(|r| r.split_whitespace().nth(1)).filter(|k| *k != key_env) {
+        // SAFETY: no other thread runs yet; the agent's commands must not inherit the keys
+        unsafe { std::env::remove_var(k) };
+    }
+    FALLBACK.store(!routes.is_empty(), Ordering::Relaxed);
     let (call, api, price) = connect(&url, &key_env, &model)?;
 
     let (tx, rx) = std::sync::mpsc::channel();
@@ -187,6 +230,9 @@ pub fn serve(args: &[String]) -> Result<()> {
         asked: 0,
         send_reasoning: false,
         cache_key: std::env::var_os("TAZUNA_NO_CACHE_KEY").is_none(),
+        routes,
+        route_calls: vec![],
+        connector: connect_key,
         out: Box::new(|e: &Value| emit(e)),
     };
     loop {
@@ -232,6 +278,12 @@ struct Loop {
     /// Responses API: send `prompt_cache_key` (the session id). On unless `TAZUNA_NO_CACHE_KEY` is set; switched off for
     /// the rest of the run when a provider refuses requests that carry it.
     cache_key: bool,
+    /// Other routes for the model as (url, key), next first (0.0.79, `TAZUNA_ROUTES`)
+    routes: VecDeque<(String, String)>,
+    /// (seconds, input, cached) of each call on the current route, for `route_trouble`
+    route_calls: Vec<(f64, u64, u64)>,
+    /// How a route is reached: `connect_key`; a stand-in in tests
+    connector: fn(&str, &str, &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, Api, Price)>,
     /// Permission questions asked so far (their request ids).
     asked: u32,
     out: Box<dyn FnMut(&Value)>,
@@ -282,6 +334,31 @@ fn repo_changed() -> bool {
 }
 
 impl Loop {
+    /// Moves to the next route that answers with the same API (0.0.79); false when none is left. What is bound to the old
+    /// upstream leaves the history: Claude thinking (its signature holds on the account that wrote it) and Responses
+    /// reasoning items (encrypted per organisation); the per-route flags start over. The new route's cache starts cold.
+    fn switch_route(&mut self, why: &str) -> bool {
+        while let Some((url, key)) = self.routes.pop_front() {
+            FALLBACK.store(!self.routes.is_empty(), Ordering::Relaxed);
+            match (self.connector)(&url, &key, &self.model) {
+                Ok((call, api, price)) if api == self.api => {
+                    self.call = call;
+                    self.price = price;
+                    drop_thinking(&mut self.msgs);
+                    self.msgs.retain(|m| m["type"] != "reasoning");
+                    self.cache_key = std::env::var_os("TAZUNA_NO_CACHE_KEY").is_none();
+                    self.send_reasoning = false;
+                    self.route_calls.clear();
+                    (self.out)(&json!({"type": "system", "subtype": "route_switch", "message": format!("now {url}: {why}")}));
+                    return true;
+                }
+                Ok(_) => (self.out)(&json!({"type": "system", "subtype": "route_switch", "message": format!("{url} skipped: another API for this model")})),
+                Err(e) => (self.out)(&json!({"type": "system", "subtype": "route_switch", "message": format!("{url} skipped: {e:#}")})),
+            }
+        }
+        false
+    }
+
     /// The history for Chat Completions: assistant turns without their `reasoning_content` unless a provider asked for it.
     fn chat_messages(&self) -> Value {
         if self.send_reasoning {
@@ -334,6 +411,10 @@ impl Loop {
             if self.cost - start >= cap {
                 return end(self, "error_max_budget_usd", format!("[stopped: ${cap:.2} spent]"), turns, usage);
             }
+            // a route that has slowed down or stopped caching is left before the next call (0.0.79)
+            if let Some(why) = (!self.routes.is_empty()).then(|| route_trouble(&self.route_calls)).flatten() {
+                self.switch_route(&why);
+            }
             (self.out)(&json!({"type": "stream_event", "event": {"type": "message_start"}}));
             let mut body = match self.api {
                 Api::Responses => {
@@ -373,6 +454,7 @@ impl Loop {
                     b
                 }
             };
+            let t0 = std::time::Instant::now();
             let mut reply = match (self.call)(&body) {
                 Ok(r) => r,
                 // a thinking block's signature holds only on the upstream account that wrote it: a gateway that moves the
@@ -410,6 +492,8 @@ impl Loop {
                         Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
                     }
                 }
+                // the route failed for good (a refusal, or 3 failed tries while another route waits): the same turn on the next
+                Err(e) if self.switch_route(&format!("{e:#}").chars().take(120).collect::<String>()) => continue,
                 Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
             };
             // an empty reply (no text, no call) is a provider hiccup, not an answer: the same request again, up to 3
@@ -424,6 +508,10 @@ impl Loop {
                     Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
                 };
             }
+            if empty_reply(&reply, self.api) && self.switch_route("empty replies") {
+                continue;
+            }
+            let secs = t0.elapsed().as_secs_f64();
             turns += 1;
             let u = &reply["usage"];
             let (prompt, out, cached, written) = if self.api == Api::Messages {
@@ -441,6 +529,9 @@ impl Loop {
                 (prompt, n(&u["completion_tokens"], &u["output_tokens"]), n(&u["prompt_tokens_details"]["cached_tokens"], &u["input_tokens_details"]["cached_tokens"]).min(prompt), 0)
             };
             groups().note(prompt, cached);
+            if !self.routes.is_empty() {
+                self.route_calls.push((secs, prompt, cached));
+            }
             for note in groups().drain() {
                 (self.out)(&json!({"type": "system", "subtype": "group_switch", "message": note}));
             }
@@ -559,6 +650,12 @@ fn connect(url: &str, key_env: &str, model: &str) -> Result<(Box<dyn FnMut(&Valu
     let key = std::env::var(key_env).with_context(|| format!("{key_env} not set"))?;
     // SAFETY: called before any other thread starts.
     unsafe { std::env::remove_var(key_env) };
+    connect_key(url, &key, model)
+}
+
+/// `connect` with the key itself (a later route's, read at start).
+fn connect_key(url: &str, key: &str, model: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, Api, Price)> {
+    let key = key.to_string();
     let http: ureq::Agent = ureq::Agent::config_builder()
         // a normal call answers in 15-60 s, a long reasoning one in a minute or two; 300 s let a provider that accepted a
         // call and never answered stall a run for an hour across the retries (GLM on Experiential Labs, 2026-10-12)
@@ -672,6 +769,9 @@ pub fn explore_serve(args: &[String]) -> Result<()> {
         asked: 0,
         send_reasoning: false,
         cache_key: true,
+        routes: VecDeque::new(),
+        route_calls: vec![],
+        connector: connect_key,
         out: Box::new(move |e: &Value| {
             if e["type"] == "result" {
                 *sink.borrow_mut() = e["result"].as_str().unwrap_or_default().to_string();
@@ -841,7 +941,8 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
     const TRIES: [u64; 12] = [2, 8, 30, 60, 120, 120, 120, 120, 120, 120, 120, 0];
     let (mut i, mut limited) = (0, 0u64);
     while i < TRIES.len() {
-        let wait = TRIES[i];
+        // with another route waiting, 3 tries are enough: that route is the better wait (0.0.79)
+        let wait = if FALLBACK.load(Ordering::Relaxed) && i >= 2 { 0 } else { TRIES[i] };
         i += 1;
         if stream {
             body["stream"] = json!(true);
@@ -933,7 +1034,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         // a rate limit clears by waiting, but an hourly allowance outlasts the ~15 minutes of tries above (Experiential
         // Labs' free models: 166,500 output tokens an hour, reset on the hour; a run that crossed it ended): the last try
         // is repeated every 5 minutes for up to 70 more minutes
-        if status == 429 && !permanent && wait == 0 && limited < 70 * 60 {
+        if status == 429 && !permanent && wait == 0 && limited < 70 * 60 && !FALLBACK.load(Ordering::Relaxed) {
             eprintln!("rate limited ({}); trying again in 300s", text.chars().take(120).collect::<String>());
             pause(300);
             limited += 300;
@@ -1090,6 +1191,62 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 mod tests {
 
     #[test]
+    fn route_left_when_it_fails_slows_or_stops_caching() {
+        // the rules
+        let ok = |n: usize, secs: f64| vec![(secs, 1000u64, 900u64); n];
+        assert_eq!(route_trouble(&ok(9, 100.0)), None, "fewer than 10 calls: no verdict");
+        assert_eq!(route_trouble(&ok(10, 10.0)), None);
+        assert!(route_trouble(&vec![(5.0, 1000, 500); 10]).unwrap().contains("50% cached"));
+        assert!(route_trouble(&ok(10, 70.0)).unwrap().contains("70 s"), "slow from the start");
+        let mut slowed = ok(10, 10.0);
+        slowed.extend(ok(10, 45.0));
+        assert!(route_trouble(&slowed).is_some(), "over 40 s and 3x the first 10");
+        let mut steady = ok(10, 30.0);
+        steady.extend(ok(10, 45.0));
+        assert_eq!(route_trouble(&steady), None, "45 s after 30 s is not a slowdown");
+
+        // a refusal moves the same turn to the next route, which finishes it
+        fn next(_: &str, _: &str, _: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, Api, Price)> {
+            Ok((Box::new(|_: &Value| Ok(json!({"choices": [{"message": {"role": "assistant", "content": "done"}}], "usage": {}}))), Api::Chat, (1e-6, 1e-7, 4e-6)))
+        }
+        let dir = std::env::temp_dir().join(format!("tazuna-routes-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let events = Rc::new(RefCell::new(vec![]));
+        let ev = events.clone();
+        let mut l = Loop {
+            call: Box::new(|_: &Value| anyhow::bail!("HTTP 403: no permission")),
+            api: Api::Chat,
+            system: "sys".into(),
+            model: "deepseek-v4.1-flash-1017".into(),
+            effort: None,
+            price: (1e-6, 1e-7, 4e-6),
+            tools: vec![],
+            msgs: vec![json!({"role": "system", "content": "sys"})],
+            server: crate::mcp::Server::new(dir.clone()),
+            session: "s".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
+            send_reasoning: true,
+            cache_key: true,
+            routes: VecDeque::from([("https://b.example/v1".to_string(), "k".to_string())]),
+            route_calls: vec![],
+            connector: next,
+            out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("hi"), false, &rx);
+        let events = events.borrow();
+        let switch = events.iter().find(|e| e["subtype"] == "route_switch").expect("a route_switch event");
+        assert!(switch["message"].as_str().unwrap().contains("b.example") && switch["message"].as_str().unwrap().contains("403"));
+        assert_eq!(events.last().unwrap()["subtype"], "success", "the next route finished the turn");
+        assert!(!l.send_reasoning && l.routes.is_empty(), "per-route flags start over; the list is used up");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn cache_key_dropped_when_refused() {
         let dir = std::env::temp_dir().join(format!("tazuna-cachekey-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1119,6 +1276,9 @@ mod tests {
             asked: 0,
             send_reasoning: false,
             cache_key: true,
+        routes: VecDeque::new(),
+        route_calls: vec![],
+        connector: connect_key,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1173,6 +1333,9 @@ data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n
             asked: 0,
             send_reasoning: false,
         cache_key: true,
+        routes: VecDeque::new(),
+        route_calls: vec![],
+        connector: connect_key,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1268,6 +1431,9 @@ data: {\"type\":\"message_stop\"}\n";
             asked: 0,
         send_reasoning: false,
         cache_key: true,
+        routes: VecDeque::new(),
+        route_calls: vec![],
+        connector: connect_key,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1488,6 +1654,9 @@ data: {\"type\":\"message_stop\"}\n";
             asked: 0,
         send_reasoning: false,
         cache_key: true,
+        routes: VecDeque::new(),
+        route_calls: vec![],
+        connector: connect_key,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1527,6 +1696,9 @@ data: {\"type\":\"message_stop\"}\n";
             asked: 0,
         send_reasoning: false,
         cache_key: true,
+        routes: VecDeque::new(),
+        route_calls: vec![],
+        connector: connect_key,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1572,6 +1744,9 @@ data: {\"type\":\"message_stop\"}\n";
             asked: 0,
         send_reasoning: false,
         cache_key: true,
+        routes: VecDeque::new(),
+        route_calls: vec![],
+        connector: connect_key,
             out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1615,6 +1790,9 @@ data: {\"type\":\"message_stop\"}\n";
             asked: 0,
         send_reasoning: false,
         cache_key: true,
+        routes: VecDeque::new(),
+        route_calls: vec![],
+        connector: connect_key,
             out: Box::new(|_: &Value| {}),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -1662,6 +1840,9 @@ data: {\"type\":\"message_stop\"}\n";
             asked: 0,
         send_reasoning: false,
         cache_key: true,
+        routes: VecDeque::new(),
+        route_calls: vec![],
+        connector: connect_key,
             out: Box::new(move |e: &Value| {
                 if e["type"] == "control_request" {
                     if let Some((tx, r)) = &reply {

@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.79 (2026-10-23)
+
+- **Routes: the own loop moves to another provider or key when one fails, slows down or stops caching** (design:
+  docs/ROUTES.md). `TAZUNA_ROUTES="url key-env; url key-env"` lists more routes for the run's model after `--provider`;
+  their keys are read at start and leave the environment, and with `--data trusted` every route's host must be trusted.
+  A route is left (`route_switch` in the run log, with the reason) on a call that fails for good (a refusal, or 3 failed
+  tries while another route waits: no ~15 minutes of backing off), on 3 empty replies, or, from its own last 10 calls,
+  under 70% cached or slow (median over 60 s, or over 40 s and 3x its first 10). On a switch Claude thinking and Responses
+  reasoning (bound to the old upstream) leave the history and the per-route flags start over; the new route's cache
+  starts cold. No probe calls: the run's own calls are the check, so a run whose first route works costs nothing extra.
+  Why: on SubRouter one key put a Luna run on a pool at 56-148 s a call and another on one at 8-16 s for its whole length
+  (2026-10-23), a key's routing refused the cache key for an hour, and a key without a caching provider cached 0%.
+  Tests: route_left_when_it_fails_slows_or_stops_caching (each rule; a refusal finishing the turn on the next route).
+  Not measured on runs yet.
+
 ## 0.0.78 (2026-10-23)
 
 - **The cache key goes when a provider refuses it.** GPT models on the Responses API carry `prompt_cache_key` (the
