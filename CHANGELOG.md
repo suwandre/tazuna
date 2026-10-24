@@ -16,6 +16,25 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## OpenCode's free DeepSeek, clean: judges like tazuna's DeepSeek in fewer turns, 2026-10-24 (bench only)
+
+Rerun behind the leak guards below (proxy, sandbox; leak scan clean for all six; times on a slow LTE link, not
+comparable). OpenCode CLI 2.0.29, `opencode/deepseek-v4.1-flash-free` at its default effort and at `#max`. Judge:
+`judge.oct.opencode-clean.jsonl`, one pool per task, two passes (6 calls, ~4% of a 5-hour window); anchors tazuna on Opus
+(v34) and Codex Luna.
+
+| task | default (hidden, turns) | `#max` (hidden, turns) | tazuna DeepSeek, clean runs (judge, median turns) |
+|---|---|---|---|
+| rclone | 6 (3/3, 73) | 8 (3/3, 82) | 6.6 (111); 1017: 7.1 (192) |
+| caddy-unix | 4.5 (0/7, 60) | 5 (0/7, 63) | 4.0 (80); 1017: 4.75 (150) |
+| caddy-retry | 9 (2/2, 73) | 9 (2/2, 67) | 9 (57); 1017: 7 (74) |
+| mean | 6.5 | 7.33 | |
+
+Same quality as tazuna's clean DeepSeek runs (from other pools, so only roughly comparable), in fewer turns on rclone
+(73-82 against 111-192) and caddy-unix (60-63 against 80-150); caddy-retry is close. caddy-unix fails for both harnesses
+and for Luna (0/7 in 7 clean runs): a model limit, not a harness one. Every OpenCode run tried GitHub or local copies
+for the fix and was refused. Next: where tazuna's extra turns go on rclone (clean transcripts only).
+
 ## Correction: 91 of 263 tasks-oct runs saw the reference fix; DeepSeek's lead was mostly that, 2026-10-24 (bench only)
 
 Comparing OpenCode's transcripts with tazuna's turned up runs that copied the merged upstream fix instead of writing one.
