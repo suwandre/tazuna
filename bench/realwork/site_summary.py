@@ -74,9 +74,11 @@ def main():
         real = {s["label"]: s["usd"] for s in subs}
         billed = {s["label"]: s for s in subs}  # SubRouter's billed tokens (tazuna's own log has no cache writes)
     runs = []
+    from leakscan import leaked
+    LEAKED = leaked()
     for l in open(os.path.join(HERE, "results-tasks-oct.jsonl")):
         r = json.loads(l)
-        if r["task"] != TASK or base(r["harness"]) not in SITE:
+        if r["task"] != TASK or base(r["harness"]) not in SITE or (TASK, r["harness"]) in LEAKED:
             continue
         label = re.search(r"-(v\d+)@", r["harness"])
         if label and label[1] in billed:

@@ -79,7 +79,10 @@ def ask_judge(prompt, model, effort):
 
 def candidates(task_name):
     """The finished runs of a task that JUDGE_ONLY selects (a run without a result row was cancelled or killed)."""
-    results = {(r["harness"], r["run"]): r for r in map(json.loads, RESULTS.read_text().splitlines()) if r["task"] == task_name}
+    from leakscan import leaked
+    bad = leaked()  # runs that saw the reference fix are not judged
+    results = {(r["harness"], r["run"]): r for r in map(json.loads, RESULTS.read_text().splitlines())
+               if r["task"] == task_name and (task_name, r["harness"]) not in bad}
     cands = []
     only = set(filter(None, os.environ.get("JUDGE_ONLY", "").split(",")))
     for f in sorted((RUNS / task_name).glob("*.diff")):

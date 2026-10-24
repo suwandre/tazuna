@@ -17,6 +17,12 @@ HOMES = Path.home() / "bench-homes"
 MODS = Path(os.environ.get("GOMODCACHE", Path.home() / "go/pkg/mod"))
 
 
+def leaked():
+    """(task, harness) pairs that saw the fix, from the last scan; summaries and the judge leave them out."""
+    p = HERE / "leaks.jsonl"
+    return {(d["task"], d["harness"]) for d in map(json.loads, p.read_text().splitlines())} if p.exists() else set()
+
+
 def has_fix(moddir, patch):
     """True when the reference patch is already applied in this module copy."""
     with tempfile.TemporaryDirectory() as t:

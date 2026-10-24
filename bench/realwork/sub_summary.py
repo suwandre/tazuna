@@ -113,7 +113,10 @@ def main():
         for r in list(csv.reader(open(f, encoding="utf-8-sig")))[1:]:
             if r[11] not in seen:
                 seen.add(r[11]); rows.append(r)
-    results = {r["harness"]: r for r in map(json.loads, open(os.path.join(HERE, "results-tasks-oct.jsonl"))) if r.get("task") == "rclone-archive-symlinks"}
+    from leakscan import leaked
+    bad = leaked()
+    results = {r["harness"]: r for r in map(json.loads, open(os.path.join(HERE, "results-tasks-oct.jsonl")))
+               if r.get("task") == "rclone-archive-symlinks" and ("rclone-archive-symlinks", r["harness"]) not in bad}
     jd, out = judges(), []
     for label in labels:
         model, start, stop, end, effort = run_window(label)
