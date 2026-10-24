@@ -325,9 +325,9 @@ Otherwise continue now and make the change with the tools.";
 
 /// Clean DeepSeek runs on rclone spent ~53 turns each after their tests first passed, against ~25 in OpenCode: re-reading
 /// their own code, diffs, builds and repros, and 7-15 test runs with nothing changed since the last pass (2026-10-24).
-const GREEN: &str = "\n\n[tazuna] The tests pass and your change includes tests. Check the diff against the request once, \
+const GREEN: &str = "The tests pass and your change includes tests. Check the diff against the request once, \
 then finish with a short summary. Run tests, builds or linters again only if you change code.";
-const RERUN: &str = "\n\n[tazuna] Nothing changed since the last passing run, so this run told you nothing new.";
+const RERUN: &str = "Nothing changed since the last passing run, so this run told you nothing new.";
 
 fn is_test(cmd: &str) -> bool {
     ["go test", "cargo test", "cargo nextest", "pytest", "npm test", "npm run test", "yarn test", "pnpm test", "jest",
@@ -676,10 +676,10 @@ impl Loop {
                 }
                 return end(self, "success", text, turns, usage);
             }
-            let mut results = vec![];
+            let (mut results, mut note) = (vec![], None);
             for (id, name, input) in parsed {
                 let cmd = (name == "bash").then(|| input.as_ref().and_then(|i| i["command"].as_str()).map(String::from)).flatten();
-                let (mut text, is_error) = match input {
+                let (text, is_error) = match input {
                     None => ("the arguments were not valid JSON; call the tool again with a JSON object".to_string(), true),
                     Some(input) => match self.permit(&name, &input, rx) {
                         Permit::Allow(input) if self.mode == "explore" && (name == "search" || name == "list") => {
@@ -693,9 +693,7 @@ impl Loop {
                         Permit::Stop => return end(self, "error_during_execution", "[interrupted]".into(), turns, usage),
                     },
                 };
-                if let Some(note) = cmd.and_then(|c| test_note(&c, &text, tree_state, &mut green, &mut told)) {
-                    text.push_str(note);
-                }
+                note = cmd.and_then(|c| test_note(&c, &text, tree_state, &mut green, &mut told)).or(note);
                 match self.api {
                     Api::Responses => self.msgs.push(json!({"type": "function_call_output", "call_id": id, "output": text})),
                     Api::Chat => self.msgs.push(json!({"role": "tool", "tool_call_id": id, "content": text})),
@@ -703,10 +701,20 @@ impl Loop {
                 }
                 results.push(json!({"type": "tool_result", "tool_use_id": id, "content": text, "is_error": is_error}));
             }
+            // the note is a user turn of its own: appended to the tool output (0.0.80), DeepSeek ran 79-95 more turns after it
+            let note = note.map(|n| json!({"type": "text", "text": n.trim()}));
+            match (self.api, &note) {
+                (Api::Messages, Some(n)) => results.push(n.clone()),
+                (_, Some(n)) => self.msgs.push(json!({"role": "user", "content": n["text"]})),
+                _ => {}
+            }
             if self.api == Api::Messages {
                 self.msgs.push(json!({"role": "user", "content": results}));
             }
             (self.out)(&json!({"type": "user", "message": {"role": "user", "content": results}}));
+            if let (false, Some(n)) = (self.api == Api::Messages, note) {
+                (self.out)(&json!({"type": "user", "message": {"role": "user", "content": [n]}}));
+            }
         }
     }
 }
