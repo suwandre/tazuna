@@ -323,6 +323,68 @@ fn empty_reply(reply: &Value, api: Api) -> bool {
 const NUDGE: &str = "You stopped without changing any file. If the task needs no change, reply DONE and say why. \
 Otherwise continue now and make the change with the tools.";
 
+/// Clean DeepSeek runs on rclone spent ~53 turns each after their tests first passed, against ~25 in OpenCode: re-reading
+/// their own code, diffs, builds and repros, and 7-15 test runs with nothing changed since the last pass (2026-10-24).
+const GREEN: &str = "\n\n[tazuna] The tests pass and your change includes tests. Check the diff against the request once, \
+then finish with a short summary. Run tests, builds or linters again only if you change code.";
+const RERUN: &str = "\n\n[tazuna] Nothing changed since the last passing run, so this run told you nothing new.";
+
+fn is_test(cmd: &str) -> bool {
+    ["go test", "cargo test", "cargo nextest", "pytest", "npm test", "npm run test", "yarn test", "pnpm test", "jest",
+     "vitest", "mvn test", "gradle test", "make test", "ctest", "rspec", "phpunit", "dotnet test", "mix test"]
+        .iter().any(|t| cmd.contains(t))
+}
+
+/// A test run that passed: no failing exit, no failure in the output (a `| tail` hides the exit code), and some sign of
+/// passing tests (`[no test files]` alone is not one).
+fn passed(out: &str) -> bool {
+    let failed = out.match_indices(" failed").any(|(i, _)| {
+        out[..i].rsplit(|c: char| !c.is_ascii_digit()).next().is_none_or(|n| n.is_empty() || n.chars().any(|c| c != '0'))
+    });
+    !out.contains("[exit ") && !out.contains("[timed out") && !out.contains("FAIL") && !out.contains("panic:") && !failed
+        && ["ok ", "PASS", " passed", "test result: ok"].iter().any(|p| out.contains(p))
+}
+
+/// The working tree's state (a hash of the diff and of the untracked files' sizes and times) and whether a test file is
+/// among the changes; None outside a git repo.
+fn tree_state() -> Option<(u64, bool)> {
+    use std::hash::{Hash, Hasher};
+    let git = |args: &[&str]| std::process::Command::new("git").args(args).output().ok().filter(|o| o.status.success()).map(|o| o.stdout);
+    let (diff, status) = (git(&["diff", "HEAD"])?, git(&["status", "--porcelain", "-uall"])?);
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    diff.hash(&mut h);
+    let status = String::from_utf8_lossy(&status).into_owned();
+    let mut tests = false;
+    for path in status.lines().filter_map(|l| l.get(3..)) {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        tests |= name.contains("_test.") || name.starts_with("test_") || name.contains(".test.") || name.contains(".spec.")
+            || path.starts_with("tests/") || path.contains("/tests/") || path.starts_with("test/") || path.contains("/test/");
+        if let Ok(m) = std::fs::metadata(path) {
+            (path, m.len(), m.modified().ok()).hash(&mut h);
+        }
+    }
+    Some((h.finish(), tests))
+}
+
+/// The note a test run's result gets, if any: GREEN at the first pass with tests in the change, RERUN for a pass with the
+/// tree unchanged since the last one. `green` is the tree at the last pass; `told`, whether GREEN was given.
+fn test_note(cmd: &str, out: &str, tree: impl FnOnce() -> Option<(u64, bool)>, green: &mut Option<u64>, told: &mut bool) -> Option<&'static str> {
+    if !is_test(cmd) || !passed(out) {
+        return None;
+    }
+    let (now, tests) = tree()?;
+    let note = if *green == Some(now) {
+        Some(RERUN)
+    } else if !*told && tests {
+        *told = true;
+        Some(GREEN)
+    } else {
+        None
+    };
+    *green = Some(now);
+    note
+}
+
 fn headless() -> bool {
     std::env::var_os("TAZUNA_HEADLESS").is_some()
 }
@@ -382,6 +444,7 @@ impl Loop {
         }
         let ((began, start), mut turns, mut usage) = (self.task, 0, [0u64; 3]);
         let mut nudges = 0;
+        let (mut green, mut told) = (None, false);
         let end = |s: &mut Self, subtype: &str, text: String, turns: usize, usage: [u64; 3]| {
             (s.out)(&json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "result": text,
                 "num_turns": turns, "total_cost_usd": s.cost, "session_id": s.session,
@@ -615,7 +678,8 @@ impl Loop {
             }
             let mut results = vec![];
             for (id, name, input) in parsed {
-                let (text, is_error) = match input {
+                let cmd = (name == "bash").then(|| input.as_ref().and_then(|i| i["command"].as_str()).map(String::from)).flatten();
+                let (mut text, is_error) = match input {
                     None => ("the arguments were not valid JSON; call the tool again with a JSON object".to_string(), true),
                     Some(input) => match self.permit(&name, &input, rx) {
                         Permit::Allow(input) if self.mode == "explore" && (name == "search" || name == "list") => {
@@ -629,6 +693,9 @@ impl Loop {
                         Permit::Stop => return end(self, "error_during_execution", "[interrupted]".into(), turns, usage),
                     },
                 };
+                if let Some(note) = cmd.and_then(|c| test_note(&c, &text, tree_state, &mut green, &mut told)) {
+                    text.push_str(note);
+                }
                 match self.api {
                     Api::Responses => self.msgs.push(json!({"type": "function_call_output", "call_id": id, "output": text})),
                     Api::Chat => self.msgs.push(json!({"role": "tool", "tool_call_id": id, "content": text})),
@@ -1189,6 +1256,29 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_pass_with_tests_says_finish_once_and_a_rerun_without_change_says_so() {
+        use super::{passed, test_note, GREEN, RERUN};
+        assert!(passed("ok  \tgithub.com/rclone/rclone/backend/archive\t1.2s\n"));
+        assert!(passed("test result: ok. 5 passed; 0 failed; 0 ignored\n"));
+        assert!(!passed("--- FAIL: TestX (0.00s)\nFAIL\n"), "a failure behind `| tail` exits 0");
+        assert!(!passed("3 passed, 1 failed\n"));
+        assert!(!passed("ok  \tpkg\t1s\n\n[exit 1]"));
+        assert!(!passed("?   \tpkg\t[no test files]\n"), "nothing ran");
+        let (mut green, mut told) = (None, false);
+        let ok = "ok  \tpkg\t1s\n";
+        // tests pass before any test file changed: no note, but the tree is remembered
+        assert_eq!(test_note("go test ./...", ok, || Some((1, false)), &mut green, &mut told), None);
+        assert_eq!(test_note("go test ./...", ok, || Some((1, false)), &mut green, &mut told), Some(RERUN));
+        assert_eq!(test_note("go test ./... 2>&1 | tail", ok, || Some((2, true)), &mut green, &mut told), Some(GREEN));
+        assert_eq!(test_note("go test -race ./...", ok, || Some((2, true)), &mut green, &mut told), Some(RERUN));
+        // after a change, a pass gets nothing: the finish note comes once
+        assert_eq!(test_note("go test ./...", ok, || Some((3, true)), &mut green, &mut told), None);
+        assert_eq!(test_note("go vet ./...", ok, || panic!("not a test run"), &mut green, &mut told), None);
+        assert_eq!(test_note("go test ./...", "FAIL\n", || panic!("failed runs leave the tree alone"), &mut green, &mut told), None);
+        assert_eq!(test_note("go test ./...", ok, || None, &mut green, &mut told), None, "outside git: nothing");
+    }
 
     #[test]
     fn route_left_when_it_fails_slows_or_stops_caching() {
