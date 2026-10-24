@@ -1,3 +1,5 @@
+{"task": "caddy-quoted-braces", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "caddy-quoted-braces", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["local", "web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-cascade-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-own-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
@@ -23,6 +25,8 @@
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v83@deepseek-v4.1-flash:max", "channels": ["modcache", "web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v86@deepseek-v4.1-flash:max", "channels": ["modcache"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownunorev-v94@deepseek-v4.1-flash:max", "channels": ["modcache"]}
+{"task": "caddy-tls-automate-names", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "caddy-tls-automate-names", "harness": "tazuna-own-v31@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["modcache"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-cascade-v38@deepseek-v4.1-flash:max", "channels": ["modcache", "web"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-own-v38@deepseek-v4.1-flash:max", "channels": ["modcache"]}
@@ -42,14 +46,36 @@
 {"task": "caddy-unix-socket-close", "harness": "tazuna-ownuno-v76@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-ownuno-v84@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-ownuno-v90@deepseek-v4.1-flash:max", "channels": ["modcache"]}
+{"task": "hugo-eq-numeric", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "hugo-eq-numeric", "harness": "tazuna-own-v31@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "hugo-section-slug", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["modcache", "web"]}
+{"task": "hugo-section-slug", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "hugo-section-slug", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}
+{"task": "hugo-template-return", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "hugo-template-return", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}
+{"task": "hugo-template-return", "harness": "tazuna-own-v29@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "k6-run-once", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "k6-run-once", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "k6-run-once", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}
+{"task": "k6-run-once", "harness": "tazuna-own-v29@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "lazygit-mnemonic-prefix", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "lazygit-mnemonic-prefix", "harness": "tazuna-cascade-v39@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "lazygit-mnemonic-prefix", "harness": "tazuna-handhigh-v41@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "lazygit-mnemonic-prefix", "harness": "tazuna-own-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "lazygit-mnemonic-prefix", "harness": "tazuna-ownplan-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "prometheus-duration-parens", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "prometheus-duration-parens", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "prometheus-duration-parens", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}
+{"task": "prometheus-duration-parens", "harness": "tazuna-own-v29@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "prometheus-exemplar-compaction", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "prometheus-exemplar-compaction", "harness": "tazuna-cascade-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "prometheus-exemplar-compaction", "harness": "tazuna-ownplan-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "prometheus-replay-mmap", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "prometheus-replay-mmap", "harness": "tazuna-own-v31@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "prometheus-replay-mmap", "harness": "tazuna-own-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "prometheus-wbl-checkpoint", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "prometheus-wbl-checkpoint", "harness": "tazuna-own-v31@deepseek-v4.1-flash:max", "channels": ["local", "web"]}
+{"task": "prometheus-wbl-checkpoint", "harness": "tazuna-own-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "rclone-archive-symlinks", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "rclone-archive-symlinks", "harness": "tazuna-cascade-v38@deepseek-v4.1-flash:max", "channels": ["local", "web"]}
 {"task": "rclone-archive-symlinks", "harness": "tazuna-own-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
@@ -80,3 +106,5 @@
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-handmed-v41@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-own-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownbatch-v39@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "terraform-import-foreach", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "terraform-import-foreach", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}

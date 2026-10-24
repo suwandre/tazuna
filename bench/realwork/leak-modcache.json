@@ -1,0 +1,15 @@
+{
+ "caddy-retry-match-expr": [
+  "v2@v2.11.8-0.20261017132241-719db53e9461"
+ ],
+ "caddy-unix-socket-close": [
+  "v2@v2.11.7",
+  "v2@v2.11.8-0.20261017132241-719db53e9461"
+ ],
+ "hugo-section-slug": [
+  "hugo@v0.167.0"
+ ],
+ "prometheus-duration-parens": [
+  "prometheus@v0.315.0"
+ ]
+}

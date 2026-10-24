@@ -7,13 +7,14 @@ places: the bench repos (full git history), the Go module cache (newer releases 
 writes leaks.jsonl: one line per (task, harness label) with the channels seen. A module-cache copy counts only if the
 reference fix is in it (checked with git apply), so reading an older release is not flagged.
 
-usage: leakscan.py [tasks-dir ...]   (default: tasks-oct)
+usage: leakscan.py [tasks-dir ...]   (default: every tasks* set; run.py runs it after each batch)
 """
 import json, os, re, subprocess, sys, tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 HOMES = Path.home() / "bench-homes"
+SEEN = HERE / "leak-modcache.json"  # module-cache copies that contained a task's fix
 MODS = Path(os.environ.get("GOMODCACHE", Path.home() / "go/pkg/mod"))
 
 
@@ -48,13 +49,18 @@ def task_rules(tdir):
     }
     fixed = [d.name for d in (MODS / mod).parent.glob(Path(mod).name + "@*")
              if d.is_dir() and has_fix(d, tdir / "solution.patch")] if mod else []
+    # copies found once are remembered: they get deleted from the cache, the old transcripts still name them
+    seen = json.loads(SEEN.read_text()) if SEEN.exists() else {}
+    fixed = sorted(set(fixed) | set(seen.get(tdir.name, [])))
+    if fixed:
+        SEEN.write_text(json.dumps(seen | {tdir.name: fixed}, indent=1, sort_keys=True) + "\n")
     if fixed:
         rules["modcache"] = re.compile("|".join(re.escape(f"{Path(mod).parent}/{v}/") for v in fixed))
     return rules, fixed
 
 
-def main():
-    tdirs = [HERE / a for a in (sys.argv[1:] or ["tasks-oct"])]
+def main(sets=None):
+    tdirs = [HERE / a for a in (sets or sys.argv[1:])] or sorted(HERE.glob("tasks*/"))
     tasks = {t.name: task_rules(t) for d in tdirs for t in sorted(d.iterdir()) if (t / "git.json").exists()}
     for name, (_, fixed) in tasks.items():
         print(f"{name}: fix in module cache copies {fixed or 'none'}")

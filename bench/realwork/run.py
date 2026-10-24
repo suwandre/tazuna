@@ -49,10 +49,90 @@ def cur_go_env():
     return e
 
 
+# Hosts an agent could copy the merged upstream fix from (runs did, 2026-10-24: raw files, the commit API, .patch URLs,
+# newer module versions). Agents and harnesses reach the internet through this proxy; these hosts are refused, the rest
+# (model APIs, logins) tunnel through. A command that drops the proxy variables gets past it: leakscan.py is the backstop.
+BLOCKED = ("github.com", "githubusercontent.com", "proxy.golang.org", "goproxy.io", "goproxy.cn", "pkg.go.dev",
+           "sourcegraph.com", "gitlab.com", "codeberg.org")
+
+
+def blocked(host):
+    return any(host == b or host.endswith("." + b) for b in BLOCKED)
+
+
+def _proxy_conn(c):
+    import socket
+    try:
+        head = b""
+        while b"\r\n\r\n" not in head and len(head) < 65536:
+            d = c.recv(4096)
+            if not d:
+                return
+            head += d
+        parts = head.split(b" ", 2)
+        if len(parts) < 2 or parts[0] != b"CONNECT":
+            return c.sendall(b"HTTP/1.1 405 Only CONNECT\r\n\r\n")
+        host, _, port = parts[1].decode().rpartition(":")
+        if blocked(host.strip("[]").lower()):
+            return c.sendall(b"HTTP/1.1 403 Blocked by the benchmark\r\n\r\n")
+        u = socket.create_connection((host.strip("[]"), int(port)), timeout=30)
+        u.settimeout(None)
+        c.sendall(b"HTTP/1.1 200 OK\r\n\r\n")
+        rest = head.split(b"\r\n\r\n", 1)[1]
+        if rest:
+            u.sendall(rest)
+
+        def pipe(a, b):
+            try:
+                while d := a.recv(65536):
+                    b.sendall(d)
+            except OSError:
+                pass
+            finally:
+                for x in (a, b):
+                    try:
+                        x.shutdown(socket.SHUT_RDWR)
+                    except OSError:
+                        pass
+        threading.Thread(target=pipe, args=(u, c), daemon=True).start()
+        pipe(c, u)
+        u.close()
+    except (OSError, ValueError):
+        pass
+    finally:
+        c.close()
+
+
+_PROXY, _PROXY_LOCK = [], threading.Lock()
+
+
+def proxy_url():
+    """Start the blocking CONNECT proxy once per bench process (a thread: it dies with run.py)."""
+    import socket
+    with _PROXY_LOCK:
+        if not _PROXY:
+            srv = socket.create_server(("127.0.0.1", 0))
+
+            def serve():
+                while True:
+                    c, _ = srv.accept()
+                    threading.Thread(target=_proxy_conn, args=(c,), daemon=True).start()
+            threading.Thread(target=serve, daemon=True).start()
+            _PROXY.append(f"http://127.0.0.1:{srv.getsockname()[1]}")
+    return _PROXY[0]
+
+
+def proxy_env():
+    px, local = proxy_url(), "localhost,127.0.0.1,::1"
+    return {k: px for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy")} | {
+        "NO_PROXY": local, "no_proxy": local}
+
+
 def env_for(harness, **extra):
     home = BENCH_HOMES / ("cc" if harness.startswith("cc") else harness)
     home.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, **cur_go_env(), "HOME": str(home), "PI_SKIP_VERSION_CHECK": "1", **extra}
+    env.update(proxy_env())
     if harness.split("@")[0] == "cc-mid-jg":  # jg wrapper (no answer cache) ahead of the real binary
         env["PATH"] = f"{home / 'bin'}:{env['PATH']}"
     return env
@@ -370,7 +450,7 @@ def run_codex(h, w, prompt):
     r = sh(["codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox",
             "-m", model, "-c", f'model_reasoning_effort="{effort}"', prompt], w, timeout=TIMEOUT,
            # only what codex and go need: no provider keys from the parent environment
-           env={"PATH": os.environ["PATH"], "HOME": str(home), **cur_go_env(), "CODEX_HOME": str(home / ".codex")})
+           env={"PATH": os.environ["PATH"], "HOME": str(home), **cur_go_env(), **proxy_env(), "CODEX_HOME": str(home / ".codex")})
     inp = cached = out = turns = 0
     final = ""
     for line in r.stdout.splitlines():
@@ -404,7 +484,7 @@ def run_codex_sub(h, w, prompt):
     r = sh(["codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox",
             "-m", model, "-c", f'model_reasoning_effort="{effort}"', "-c", 'model_provider="subrouter"',
             "-c", f"model_providers.subrouter={provider}", prompt], w, timeout=TIMEOUT,
-           env={"PATH": os.environ["PATH"], "HOME": str(home), **cur_go_env(), "CODEX_HOME": str(home / ".codex"),
+           env={"PATH": os.environ["PATH"], "HOME": str(home), **cur_go_env(), **proxy_env(), "CODEX_HOME": str(home / ".codex"),
                 "SUBROUTER_MODELS_KEY": os.environ["SUBROUTER_MODELS_KEY"]})
     inp = cached = out = turns = 0
     final = ""
@@ -910,6 +990,8 @@ def main():
     log(f"{len(jobs)} jobs, {a.workers} workers")
     with ThreadPoolExecutor(a.workers) as ex:
         list(ex.map(lambda j: run_job(*j), jobs))
+    import leakscan
+    leakscan.main()  # flags runs that copied the reference fix; summaries and the judge skip them
     summarize([json.loads(l) for l in RESULTS.read_text().splitlines()])
 
 
