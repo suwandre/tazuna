@@ -1,6 +1,7 @@
 {"task": "caddy-quoted-braces", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}
 {"task": "caddy-retry-match-expr", "harness": "opencode-v290@deepseek-v4.1-flash-free:max", "channels": ["web-blocked"]}
+{"task": "caddy-retry-match-expr", "harness": "opencode-v291@deepseek-v4.1-flash-free", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["local", "web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-cascade-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-own-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
@@ -31,6 +32,7 @@
 {"task": "caddy-unix-socket-close", "harness": "opencode-v287@deepseek-v4.1-flash-free", "channels": ["local"]}
 {"task": "caddy-unix-socket-close", "harness": "opencode-v288@deepseek-v4.1-flash-free:max", "channels": ["local"]}
 {"task": "caddy-unix-socket-close", "harness": "opencode-v289@deepseek-v4.1-flash-free", "channels": ["local", "web"]}
+{"task": "caddy-unix-socket-close", "harness": "opencode-v291@deepseek-v4.1-flash-free", "channels": ["web-blocked"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["modcache"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-cascade-v38@deepseek-v4.1-flash:max", "channels": ["modcache", "web"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-own-v38@deepseek-v4.1-flash:max", "channels": ["modcache"]}

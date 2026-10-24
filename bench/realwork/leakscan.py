@@ -83,8 +83,8 @@ def transcripts():
                 db.close()
 
 
-def main(sets=None):
-    tdirs = [HERE / a for a in (sets or sys.argv[1:])] or sorted(HERE.glob("tasks*/"))
+def main(sets=()):
+    tdirs = [HERE / a for a in sets] or sorted(HERE.glob("tasks*/"))
     tasks = {t.name: task_rules(t) for d in tdirs for t in sorted(d.iterdir()) if (t / "git.json").exists()}
     for name, (_, fixed) in tasks.items():
         print(f"{name}: fix in module cache copies {fixed or 'none'}")
@@ -111,4 +111,4 @@ def main(sets=None):
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
