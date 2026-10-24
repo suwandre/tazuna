@@ -16,6 +16,27 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Opus gate on 0.0.83, clean: still no better than DeepSeek alone, 2026-10-25 (bench only)
+
+The first gate test (2026-10-22, judged 6.6 against 8.2) rested partly on runs that saw the reference fix, so it was
+redone behind the leak guards (`bench/realwork/gate2.sh`): tazuna 0.0.83, deepseek-v4.1-flash-1017 at max on SubRouter's
+default key (FoxRouter; its cache fell from 98-100% to 40-73% from 23:10, so the round cost $0.62 instead of ~$0.35),
+alone (`tazuna-ownsubm`) and with the Opus 5.5 high five-lens review on the subscription (`tazuna-ownsubgate`), side by
+side, one round (v335-v340); leak scan clean. Judge `judge.oct.gate2.jsonl` (two passes, the earlier 0.0.83 runs
+v330/v332/v334 in the same pools, anchors Opus v34 5-9 and Codex Luna 6.5); Claude usage ~2% of the 5-hour window.
+
+| task | alone (v335/v337/v339) | gate (v336/v338/v340) | 0.0.83 alone, earlier (v330/v332/v334) |
+|---|---|---|---|
+| rclone | 8, 3/3, 177 turns | 7, 3/3, 175 | 8 |
+| caddy-unix | 5.5, 0/7, 172 | 5, 0/7, 138 | 4.5 |
+| caddy-retry | 8.5, 2/2, 65 | 7.5, 2/2, 42 | 9 |
+| mean | 7.33 | 6.5 | 7.17 |
+
+The gate scores lower on every task (-0.83, just over the ±0.75 threshold, one round) and costs Opus usage; the earlier
+verdict stands. On caddy-unix, 0.0.83's after-green note came at turn 35-36 in both arms, when a repro test written
+before the fix first passed: the runs then went on for 100+ turns, rightly, since the fix was not done. The note
+should wait for a change in non-test code as well (next version).
+
 ## 0.0.80-0.0.83 (2026-10-24): finish after green, whole-file reads, edit errors with context; -47% turns, judge +2.2
 
 From the clean OpenCode/tazuna comparison on rclone (where tazuna's extra turns went: ~53 a run after its tests first

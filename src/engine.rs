@@ -345,28 +345,34 @@ fn passed(out: &str) -> bool {
         && ["ok ", "PASS", " passed", "test result: ok"].iter().any(|p| out.contains(p))
 }
 
-/// The working tree's state (a hash of the diff and of the untracked files' sizes and times) and whether a test file is
-/// among the changes; None outside a git repo.
+/// The working tree's state (a hash of the diff and of the untracked files' sizes and times) and whether the changes hold
+/// both a test file and other code; None outside a git repo. Tests alone are not enough: a repro test written before the
+/// fix passed at turn 35 on caddy-unix, and the note came 100+ turns early (2026-10-25).
 fn tree_state() -> Option<(u64, bool)> {
+    tree_state_in(&std::env::current_dir().ok()?)
+}
+
+fn tree_state_in(dir: &std::path::Path) -> Option<(u64, bool)> {
     use std::hash::{Hash, Hasher};
-    let git = |args: &[&str]| std::process::Command::new("git").args(args).output().ok().filter(|o| o.status.success()).map(|o| o.stdout);
+    let git = |args: &[&str]| std::process::Command::new("git").arg("-C").arg(dir).args(args).output().ok().filter(|o| o.status.success()).map(|o| o.stdout);
     let (diff, status) = (git(&["diff", "HEAD"])?, git(&["status", "--porcelain", "-uall"])?);
     let mut h = std::collections::hash_map::DefaultHasher::new();
     diff.hash(&mut h);
     let status = String::from_utf8_lossy(&status).into_owned();
-    let mut tests = false;
+    let (mut tests, mut code) = (false, false);
     for path in status.lines().filter_map(|l| l.get(3..)) {
         let name = path.rsplit('/').next().unwrap_or(path);
-        tests |= name.contains("_test.") || name.starts_with("test_") || name.contains(".test.") || name.contains(".spec.")
+        let test = name.contains("_test.") || name.starts_with("test_") || name.contains(".test.") || name.contains(".spec.")
             || path.starts_with("tests/") || path.contains("/tests/") || path.starts_with("test/") || path.contains("/test/");
-        if let Ok(m) = std::fs::metadata(path) {
+        (tests, code) = (tests || test, code || !test);
+        if let Ok(m) = std::fs::metadata(dir.join(path)) {
             (path, m.len(), m.modified().ok()).hash(&mut h);
         }
     }
-    Some((h.finish(), tests))
+    Some((h.finish(), tests && code))
 }
 
-/// The note a test run's result gets, if any: GREEN at the first pass with tests in the change, RERUN for a pass with the
+/// The note a test run's result gets, if any: GREEN at the first pass with tests and code in the change, RERUN for a pass with the
 /// tree unchanged since the last one. `green` is the tree at the last pass; `told`, whether GREEN was given.
 fn test_note(cmd: &str, out: &str, tree: impl FnOnce() -> Option<(u64, bool)>, green: &mut Option<u64>, told: &mut bool) -> Option<&'static str> {
     if !is_test(cmd) || !passed(out) {
@@ -1294,6 +1300,21 @@ mod tests {
         assert_eq!(test_note("go vet ./...", ok, || panic!("not a test run"), &mut green, &mut told), None);
         assert_eq!(test_note("go test ./...", "FAIL\n", || panic!("failed runs leave the tree alone"), &mut green, &mut told), None);
         assert_eq!(test_note("go test ./...", ok, || None, &mut green, &mut told), None, "outside git: nothing");
+        // the tree: a test file alone (a repro written before the fix) is not yet a change with tests
+        let dir = std::env::temp_dir().join(format!("tazuna-tree-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |a: &[&str]| std::process::Command::new("git").arg("-C").arg(&dir).args(a).output().unwrap();
+        git(&["init", "-q"]);
+        std::fs::write(dir.join("a.go"), "package a\n").unwrap();
+        git(&["add", "."]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
+        std::fs::write(dir.join("a_test.go"), "package a\n").unwrap();
+        let (h1, both) = super::tree_state_in(&dir).unwrap();
+        assert!(!both, "test file only");
+        std::fs::write(dir.join("a.go"), "package a\n\nfunc F() {}\n").unwrap();
+        let (h2, both) = super::tree_state_in(&dir).unwrap();
+        assert!(both && h1 != h2, "test and code");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
