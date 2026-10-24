@@ -18,7 +18,9 @@ SEEN = HERE / "leak-modcache.json"  # module-cache copies that contained a task'
 MODS = Path(os.environ.get("GOMODCACHE", Path.home() / "go/pkg/mod"))
 
 
-BLOCKED = re.compile(r"Blocked by the benchmark|CONNECT tunnel failed, response 403|Tunnel connection failed: 403|non 2xx status code \(403")
+# refusals by run.py's proxy (web) and sandbox (local files): an attempt that got one of these is not a leak
+BLOCKED = re.compile(r"Blocked by the benchmark|CONNECT tunnel failed, response 403|Tunnel connection failed: 403|non 2xx status code \(403"
+                     r"|\[exit 56\]|Operation not permitted|command not found")  # exit 56: a silent curl refused by the proxy; the last: the fetch never ran (no `timeout`)
 
 
 # labels invalid as a whole: OpenCode v287/v288 ran with the bench directory as their project (no PWD), where the tasks'
@@ -30,7 +32,7 @@ def leaked():
     """(task, harness) pairs that saw the fix, from the last scan; summaries and the judge leave them out."""
     p = HERE / "leaks.jsonl"
     found = {(d["task"], d["harness"]) for d in map(json.loads, p.read_text().splitlines())
-             if set(d["channels"]) - {"web-blocked"}} if p.exists() else set()
+             if any(not c.endswith("-blocked") for c in d["channels"])} if p.exists() else set()
     return found | {(r["task"], r["harness"]) for f in HERE.glob("results*.jsonl")
                     for r in map(json.loads, f.read_text().splitlines()) if r["harness"].startswith(INVALID)}
 
@@ -54,7 +56,7 @@ def task_rules(tdir):
         "local": re.compile(r"bench-repos/" + re.escape(Path(g["repo"]).name) + r"\b|bench/realwork/tasks[\w-]*/"
                             + re.escape(tdir.name) + r"/(solution\.patch|hidden|expected)"),
         # a fetch, not an import path or a doc link: curl/wget/WebFetch url within one line (quotes removed first)
-        "web": re.compile(r"(curl|wget|\burl\b|urlopen|requests\.get|git clone)[^\n]{0,300}?https?://"
+        "web": re.compile(r"(?:(curl|wget|urlopen|requests\.get|git clone|git ls-remote)[^\n]{0,300}?|\burl:\s*)https?://"
                           r"(github\.com|raw\.githubusercontent\.com|api\.github\.com/repos|codeload\.github\.com)/"
                           + re.escape(owner) + "/" + re.escape(repo) + r"\b"),
     }
@@ -98,16 +100,18 @@ def main(sets=()):
     label = re.compile(r"rw-(" + "|".join(map(re.escape, tasks)) + r")-(\S+?@[\w.-]+(?::[a-z]+)?)-[a-z0-9_]{8}")
     found = {}
     for f, s in transcripts():
-        s = s.replace('\\"', "").replace('"', "")
+        # JSON escapes undone so a match cannot run across lines (Go's `net/url` and a GitHub link in a comment below it
+        # once read as a fetch)
+        s = s.replace('\\"', "").replace('"', "").replace("\\n", "\n")
         if True:
             m = label.search(f) or label.search(s)
             if not m or "company-review" in f:
                 continue
             hits = {k for k, r in tasks[m.group(1)][0].items() if r.search(s)}
-            if "web" in hits and all(BLOCKED.search(s, w.end(), w.end() + 1500)
-                                     for w in tasks[m.group(1)][0]["web"].finditer(s)):
-                hits.discard("web")
-                hits.add("web-blocked")  # tried, refused by run.py's proxy: not a leak
+            for ch in ("web", "local"):
+                if ch in hits and all(BLOCKED.search(s, w.end(), w.end() + 1500) for w in tasks[m.group(1)][0][ch].finditer(s)):
+                    hits.discard(ch)
+                    hits.add(ch + "-blocked")  # tried, refused by the proxy or the sandbox
             if hits:
                 found.setdefault((m.group(1), m.group(2)), set()).update(hits)
     with open(HERE / "leaks.jsonl", "w") as out:
