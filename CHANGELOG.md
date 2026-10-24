@@ -55,8 +55,25 @@ leaked; v231 fetched upstream files too).
 
 Fixed in the harness (run.py): every command gets `PWD` set to its own working directory; each task gets its own Go
 module cache (`~/bench-homes/gomod/<task>`, filled by the task's setup) and runs with `GOPROXY=off`, so `go` cannot fetch a
-newer release mid-run. Not fixed yet: the shared `~/go/pkg/mod`, the bench repos and GitHub stay reachable by `find /` and
-`curl`. Until they are closed, `leakscan.py` runs after every batch and leaked rows are left out of summaries.
+newer release mid-run. Then closed, same day:
+
+- **GitHub and Go proxies**: agents and harnesses reach the internet through a CONNECT proxy inside run.py that refuses
+  GitHub (incl. raw, API, codeload), the Go module proxies, pkg.go.dev, sourcegraph, gitlab and codeberg; model APIs and
+  logins tunnel through. A clean OpenCode run (v290 caddy-retry) tried `git ls-remote`, webfetch and `go list -m
+  -versions` against them and got 403 each time.
+- **Local copies**: OpenCode v289 then took the fix commit from `~/bench-repos/caddy` instead. Agents now run under
+  `sandbox-exec` with reads denied for the task repos, `bench/`, `~/go/pkg/mod` and the transcript stores (Claude, Codex,
+  OpenCode); OpenCode and the Claude CLI were checked working inside it. The module-cache copies that held fixes (caddy
+  v2.11.7 and the 10-17 pseudo-version, hugo v0.167.0, prometheus v0.315.0) and agents' upstream files in `/tmp` are
+  deleted.
+- **Detection**: `leakscan.py` runs after every batch, reads OpenCode's sqlite sessions too, remembers fixed module
+  copies in `leak-modcache.json` and reports proxy-refused fetches as `web-blocked` (not a leak); the judge and the
+  summaries skip leaked rows.
+
+Over all task sets: 114 task/label pairs leaked, 109 of them DeepSeek V4.1 Flash (any variant), 2 Luna, 2 Sol, 1 MiMo.
+Rows leaked: tasks-oct 89 of 266 (85 tazuna), tasks 22 of 374 (all tazuna own-loop DeepSeek), tasks-hard 5 of 20. The
+Claude CLI's 165 transcripts show none; pi, omp, omo, hermes, empryo and Codex keep no transcripts and cannot be checked
+(their rows are Opus/Haiku/Luna).
 
 ## Best of two, retested: +0.16, not worth twice the calls; OpenCode's free DeepSeek scores 9 or 1, 2026-10-23/24 (bench only)
 
