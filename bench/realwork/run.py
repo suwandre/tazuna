@@ -123,9 +123,21 @@ def proxy_url():
 
 
 def proxy_env():
+    """The environment of an agent: the blocking proxy, and BENCH_JAIL so sh() runs it inside JAIL."""
     px, local = proxy_url(), "localhost,127.0.0.1,::1"
     return {k: px for k in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy")} | {
-        "NO_PROXY": local, "no_proxy": local}
+        "NO_PROXY": local, "no_proxy": local, "BENCH_JAIL": "1"}
+
+
+# Places on this machine that hold the tasks' fixes: the bench repos (full history), this directory (reference patches,
+# hidden tests, earlier runs' diffs), the shared module cache (newer releases), and transcripts that quote them. OpenCode
+# applied the fix commit from ~/bench-repos after the proxy blocked GitHub (2026-10-24). Agents run under sandbox-exec
+# with reads of these denied; everything else (network, their HOME, the work tree) is as before.
+_H = Path.home()
+JAIL_DENY = sorted({json.loads(g.read_text())["repo"] for g in HERE.glob("tasks*/*/git.json")}) + [
+    HERE.parent, _H / "go/pkg/mod", _H / ".claude/projects", _H / ".codex/sessions", _H / ".local/share/opencode"]
+JAIL = "(version 1)(allow default)(deny file-read* " + " ".join(
+    f'(subpath "{os.path.realpath(p)}")' for p in JAIL_DENY) + ")"
 
 
 def env_for(harness, **extra):
@@ -157,6 +169,9 @@ def sh(cmd, cwd, timeout=900, env=None, shell=False):
     # PWD follows cwd: the inherited one pointed at bench/realwork, which OpenCode took for its project, finding the tasks'
     # reference fixes and hidden tests there (2026-10-24)
     env = {**(env or {**os.environ, **cur_go_env()}), "PWD": str(cwd)}
+    if env.get("BENCH_JAIL"):
+        cmd = ["sandbox-exec", "-p", JAIL, *(["/bin/sh", "-c", cmd] if shell else cmd)]
+        shell = False
     p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
                          env=env, shell=shell, start_new_session=True)
     try:

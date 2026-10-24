@@ -18,10 +18,14 @@ SEEN = HERE / "leak-modcache.json"  # module-cache copies that contained a task'
 MODS = Path(os.environ.get("GOMODCACHE", Path.home() / "go/pkg/mod"))
 
 
+BLOCKED = re.compile(r"Blocked by the benchmark|CONNECT tunnel failed, response 403|Tunnel connection failed: 403|non 2xx status code \(403")
+
+
 def leaked():
     """(task, harness) pairs that saw the fix, from the last scan; summaries and the judge leave them out."""
     p = HERE / "leaks.jsonl"
-    return {(d["task"], d["harness"]) for d in map(json.loads, p.read_text().splitlines())} if p.exists() else set()
+    return {(d["task"], d["harness"]) for d in map(json.loads, p.read_text().splitlines())
+            if set(d["channels"]) - {"web-blocked"}} if p.exists() else set()
 
 
 def has_fix(moddir, patch):
@@ -59,6 +63,26 @@ def task_rules(tdir):
     return rules, fixed
 
 
+def transcripts():
+    """(name, text) of every transcript: JSON(L) files, and OpenCode's sessions (sqlite, one text per session)."""
+    import sqlite3
+    for root, dirs, files in os.walk(HOMES):
+        dirs[:] = [d for d in dirs if d not in ("mod", "gomod", "go-build", "node_modules")]
+        for f in files:
+            p = Path(root) / f
+            if f.endswith((".jsonl", ".json")):
+                try:
+                    yield str(p), p.read_text(errors="ignore")
+                except OSError:
+                    pass
+            elif f == "opencode.db":
+                db = sqlite3.connect(f"file:{p}?mode=ro", uri=True)
+                for sid, d in db.execute("select id, directory from session_v2"):
+                    yield str(p), d + "\n" + "\n".join(r[0] for r in db.execute(
+                        "select data from session_message where session_id = ? order by seq", (sid,)))
+                db.close()
+
+
 def main(sets=None):
     tdirs = [HERE / a for a in (sets or sys.argv[1:])] or sorted(HERE.glob("tasks*/"))
     tasks = {t.name: task_rules(t) for d in tdirs for t in sorted(d.iterdir()) if (t / "git.json").exists()}
@@ -66,20 +90,17 @@ def main(sets=None):
         print(f"{name}: fix in module cache copies {fixed or 'none'}")
     label = re.compile(r"rw-(" + "|".join(map(re.escape, tasks)) + r")-(\S+?@[\w.-]+(?::[a-z]+)?)-[a-z0-9_]{8}")
     found = {}
-    for root, dirs, files in os.walk(HOMES):
-        dirs[:] = [d for d in dirs if d not in ("mod", "gomod", "go-build", "node_modules")]
-        for f in files:
-            if not f.endswith((".jsonl", ".json")):
-                continue
-            p = Path(root) / f
-            try:
-                s = p.read_text(errors="ignore").replace('\\"', "").replace('"', "")
-            except OSError:
-                continue
+    for f, s in transcripts():
+        s = s.replace('\\"', "").replace('"', "")
+        if True:
             m = label.search(f) or label.search(s)
-            if not m or "company-review" in str(p):
+            if not m or "company-review" in f:
                 continue
             hits = {k for k, r in tasks[m.group(1)][0].items() if r.search(s)}
+            if "web" in hits and all(BLOCKED.search(s, w.end(), w.end() + 1500)
+                                     for w in tasks[m.group(1)][0]["web"].finditer(s)):
+                hits.discard("web")
+                hits.add("web-blocked")  # tried, refused by run.py's proxy: not a leak
             if hits:
                 found.setdefault((m.group(1), m.group(2)), set()).update(hits)
     with open(HERE / "leaks.jsonl", "w") as out:
