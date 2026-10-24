@@ -265,11 +265,15 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Haiku tester subagent (`--tester haiku`) | −14% cost, judge −0.40 | Fable judge agrees (lower, −0.21 of 5 vs Opus −0.32); the gap is one no-change run on T-946, even without it; saving at the noise line: opt-in |
 | Earlier compaction (at ~80k) | at most −9% reads, before the summary's cost | median run peaks at 58k; only 8.8% of read tokens sit above 80k (313 runs, no benchmark) |
 | Fable 5.1 xhigh reviewer (`--review-model`) | 3.4× cost, same judge (1 ticket) | the review costs twice the run; it talked Opus out of the root-cause fix |
+| Best of two cheap attempts, Opus picks with their test results (`tazuna-ownsubxbest2`) | judge 7.08 vs 6.92 one run (Luna, 3 tasks x 2, 2026-10-24); the pick took the better attempt 4 of 5 times | +0.16 within noise for twice the calls and the slower attempt's time; at most an opt-in for hard tasks |
 | Five-lens review + one fix round on the own loop (DeepSeek 1017 implementing, Opus 5.5 high reviewing, `tazuna-ownsubgate`) | judge 6.6 vs 8.2 alone, hidden tests 5/9 vs 9/9, +46% turns (3 tasks × 3 runs, 2026-10-22) | findings in 3 of 9 runs; every fixed run judged lower (the fix widens the patch); the cheap model alone beat Opus on these tasks |
 | Haiku explorer subagent (`--explorer haiku`) | −28% cost, −41% turns, judge −0.25 | default since 0.0.25 (price to performance) |
 
 ## Decision log
 
+- 2026-10-24: best of two retested on one route (Luna on OpenAI Pro, both attempts scored): +0.16, not a default. OpenCode's
+  free DeepSeek judged 9 or 1 in a fifth of tazuna's turns; next: compare its transcripts with tazuna's on caddy-unix and
+  rclone for where tazuna's own loop spends its extra turns, then measure route switching (0.0.79).
 - 2026-10-22: offline check of best-of-two with an Opus picker (30 picks from judged runs, ~4% of the 5-hour window):
   +0.17 on a pool judged 7-9, +0.77 on Luna's 2-8.5 pool; the run judged 2 never picked; one run with an extra guard won
   every pair. Next for the cheap route: build it with each attempt's test results shown to the picker, then measure.

@@ -16,6 +16,43 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Best of two, retested: +0.16, not worth twice the calls; OpenCode's free DeepSeek scores 9 or 1, 2026-10-23/24 (bench only)
+
+**Best of two** (`tazuna-ownsubxbest2`, bench prototype in run.py): the same own-loop setup twice in two copies of the
+work tree, Opus 5.5 high on the subscription (no tools, no reference) picks one with each attempt's own test result.
+Retest at night (23:21-01:39 CEST, early morning in China): gpt-6-luna at max on SubRouter's 4-providers key (it served
+OpenAI Pro all night, 15-22 s a call in every run), tazuna 0.0.78, both arms side by side, 2 rounds of rclone,
+caddy-unix and caddy-retry (v275-v286); both attempts of each pair scored on their own. Judge: `judge.oct.best2retest.jsonl`,
+one pool per task, two passes (6 calls); anchors DeepSeek 9, Codex Luna 8; tazuna on Opus (v34) 4.5-9.
+
+| task | one run | best of two: result (picked attempt / other) |
+|---|---|---|
+| rclone | 8, 8 | 5.5 (5.5 / 7), 7 (7 / 6) |
+| caddy-unix | 4, 6 | 5 (5 / 5), 8 (8, 7/7 hidden / 5) |
+| caddy-retry | 7.5, 8 | 8 (8 / 7.5), 9 (9 / 7.5) |
+| mean | 6.92 | 7.08 |
+
+The pick took the better attempt in 4 of the 5 pairs that differed; the miss was rclone again, where an extra guard
+("drops archive members beneath a symlink") won as in the offline check. Best of two helps when one attempt is clearly
+bad (caddy-unix: the only tazuna run of the day passing 7/7) and costs twice the model calls and the slower attempt's time
+(33-70 minutes against 15-48). +0.16 is within noise: not made a default. The day before, a first try on the 6 Luna key
+was spoiled by its OpenAI Team pool (56-148 s a call, a best-of-two attempt at the 3-hour limit): judged 6.0 against 6.5.
+
+**OpenCode with its free DeepSeek** (`opencode` harness: the official OpenCode CLI, `opencode run --standalone --auto
+--format json -m opencode/deepseek-v4.1-flash-free[#max]`, its own clean HOME). OpenCode Zen's free models answer only
+from within OpenCode (403 "FreeTierError" to any other client), so they are measured in their own harness; effort is a
+model variant (this one has `max` and `high`). Same pools as above:
+
+| task | default effort (v287) | `#max` (v288) |
+|---|---|---|
+| rclone | 9 (3/3) | 1 (1/3) |
+| caddy-unix | 9 (7/7) | 9 (7/7) |
+| caddy-retry | 1 (1/2) | 1 (1/2) |
+
+Each run judged 9 or 1, in 20-29 turns and 2-7 minutes (tazuna with paid DeepSeek 1017: 60-340 turns, 12-67 minutes,
+judged 6-9). caddy-unix: 9 twice where tazuna's runs scored 4-6 and failed the hidden tests (they rewrite the socket
+bookkeeping the PR's tests read). A lead for tazuna's own loop: the same model family needs far fewer turns there.
+
 ## 0.0.79 (2026-10-23)
 
 - **Routes: the own loop moves to another provider or key when one fails, slows down or stops caching** (design:
