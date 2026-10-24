@@ -21,11 +21,18 @@ MODS = Path(os.environ.get("GOMODCACHE", Path.home() / "go/pkg/mod"))
 BLOCKED = re.compile(r"Blocked by the benchmark|CONNECT tunnel failed, response 403|Tunnel connection failed: 403|non 2xx status code \(403")
 
 
+# labels invalid as a whole: OpenCode v287/v288 ran with the bench directory as their project (no PWD), where the tasks'
+# reference fixes and hidden tests lie, whether or not a transcript shows them read
+INVALID = ("opencode-v287@", "opencode-v288@")
+
+
 def leaked():
     """(task, harness) pairs that saw the fix, from the last scan; summaries and the judge leave them out."""
     p = HERE / "leaks.jsonl"
-    return {(d["task"], d["harness"]) for d in map(json.loads, p.read_text().splitlines())
-            if set(d["channels"]) - {"web-blocked"}} if p.exists() else set()
+    found = {(d["task"], d["harness"]) for d in map(json.loads, p.read_text().splitlines())
+             if set(d["channels"]) - {"web-blocked"}} if p.exists() else set()
+    return found | {(r["task"], r["harness"]) for f in HERE.glob("results*.jsonl")
+                    for r in map(json.loads, f.read_text().splitlines()) if r["harness"].startswith(INVALID)}
 
 
 def has_fix(moddir, patch):
