@@ -132,8 +132,10 @@ pub(crate) fn reap_left() {
     }
 }
 
-/// `read` without a limit returns this many lines and says how to get the rest.
-const READ_WINDOW: u64 = 250;
+/// `read` without a limit returns this many lines (or as many as fit the output cap) and says how to get the rest. 250
+/// had DeepSeek reading files in slices, mostly through `cat`/`sed` cut at the 8K bash cap; OpenCode reads up to 2000 lines
+/// and its runs read 12-24K-character files in one call (2026-10-24).
+const READ_WINDOW: u64 = 2000;
 
 impl Server {
     pub(crate) fn new(cwd: PathBuf) -> Self {
@@ -188,7 +190,7 @@ impl Server {
     }
 
     fn read(&mut self, path: PathBuf, offset: u64, limit: Option<u64>) -> Result<String, String> {
-        let text = cap(&read(&path, offset, Some(limit.unwrap_or(READ_WINDOW)))?, self.max);
+        let text = cap(&read(&path, offset, Some(limit.unwrap_or(READ_WINDOW)), self.max)?, self.max);
         self.reads += 1;
         if let Some(seen) = self.seen.as_mut() {
             use std::hash::{Hash, Hasher};
@@ -336,11 +338,11 @@ pub(crate) fn tools() -> Value {
     json!([
         {"name": "bash", "description": "Run shell command. Working directory persists between calls.",
          "inputSchema": {"type": "object", "properties": {"command": s}, "required": ["command"]}},
-        {"name": "read", "description": "Read file: up to 250 lines from the 1-based offset unless you give a limit.",
+        {"name": "read", "description": "Read file: the whole file (up to 2000 lines) unless you give a 1-based offset or a limit. Use it rather than cat, head or sed.",
          "inputSchema": {"type": "object", "properties": {"path": s, "offset": i, "limit": i}, "required": ["path"]}},
         {"name": "write", "description": "Write file, creating dirs.",
          "inputSchema": {"type": "object", "properties": {"path": s, "content": s}, "required": ["path", "content"]}},
-        {"name": "edit", "description": "Replace exact unique text in file.",
+        {"name": "edit", "description": "Replace exact unique text in file. Use it for every change to an existing file, rather than sed or scripts.",
          "inputSchema": {"type": "object", "properties": {"path": s, "old": s, "new": s}, "required": ["path", "old", "new"]}},
     ])
 }
@@ -349,7 +351,9 @@ fn io_err(path: &Path, e: std::io::Error) -> String {
     format!("{}: {e}", path.display())
 }
 
-fn read(path: &Path, offset: u64, limit: Option<u64>) -> Result<String, String> {
+/// Lines `offset..offset+limit`, stopping early at whole lines when `max` characters are reached: the note at the end says
+/// where to go on, which a plain cut would not.
+fn read(path: &Path, offset: u64, limit: Option<u64>, max: usize) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| io_err(path, e))?;
     let text = String::from_utf8_lossy(&bytes);
     let mut all: Vec<&str> = text.split('\n').collect();
@@ -357,7 +361,15 @@ fn read(path: &Path, offset: u64, limit: Option<u64>) -> Result<String, String> 
         all.pop(); // the final newline ends the last line; it does not start another
     }
     let start = offset.max(1) as usize - 1;
-    let end = limit.map_or(all.len(), |n| (start + n as usize).min(all.len()));
+    let mut end = limit.map_or(all.len(), |n| (start + n as usize).min(all.len()));
+    let mut chars = 0;
+    for (i, l) in all.iter().enumerate().take(end).skip(start) {
+        chars += l.chars().count() + 1;
+        if chars > max.saturating_sub(100) && i > start {
+            end = i;
+            break;
+        }
+    }
     let mut out = all.get(start..end.max(start)).unwrap_or_default().join("\n");
     if end < all.len() {
         out.push_str(&format!("\n[lines {}-{end} of {}; read with offset={} for more]", start + 1, all.len(), end + 1));
@@ -376,8 +388,19 @@ fn write(path: &Path, content: &str) -> Result<String, String> {
 fn edit(path: &Path, old: &str, new: &str) -> Result<String, String> {
     let text = std::fs::read_to_string(path).map_err(|e| io_err(path, e))?;
     let n = if old.is_empty() { 0 } else { text.matches(old).count() };
-    if n != 1 {
-        return Err(format!("old text found {n} times, need exactly 1"));
+    if n > 1 {
+        return Err(format!("old text found {n} times, need exactly 1: include more of the surrounding lines"));
+    }
+    if n == 0 {
+        // where the first line of `old` is, if anywhere: a failed edit was most often whitespace or a stale copy, and
+        // DeepSeek then fell back to python/sed edits in bash (up to 17 failed edits a run, 2026-10-24)
+        let first = old.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or_default();
+        let lines: Vec<&str> = text.lines().collect();
+        return Err(match lines.iter().position(|l| !first.is_empty() && l.contains(first)) {
+            Some(i) => format!("old text not found. Its first line is at line {}; the file there now reads:\n{}", i + 1,
+                lines[i.saturating_sub(2)..(i + 8).min(lines.len())].join("\n")),
+            None => "old text not found, nor its first line: read the file again, it may have changed".into(),
+        });
     }
     std::fs::write(path, text.replacen(old, new, 1)).map_err(|e| io_err(path, e))?;
     Ok("ok".into())
@@ -418,13 +441,16 @@ mod tests {
     fn reads_a_window_and_points_back_to_unchanged_repeats() {
         let dir = std::env::temp_dir().join(format!("tazuna-read-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let body: String = (1..=300).map(|i| format!("line {i}\n")).collect();
+        let body: String = (1..=2300).map(|i| format!("line {i}\n")).collect();
         std::fs::write(dir.join("f.txt"), &body).unwrap();
         let call = |s: &mut Server, a: Value| s.call(&json!({"name": "read", "arguments": a})).unwrap()["content"][0]["text"].as_str().unwrap().to_string();
         let mut lean = Server::new(dir.clone());
         let t = call(&mut lean, json!({"path": "f.txt"}));
-        assert!(t.starts_with("line 1\n") && t.contains("line 250\n[lines 1-250 of 300; read with offset=251 for more]"), "{t}");
-        assert!(!t.contains("line 251"));
+        assert!(t.starts_with("line 1\n") && t.contains("line 2000\n[lines 1-2000 of 2300; read with offset=2001 for more]"), "{t}");
+        assert!(!t.contains("line 2001"));
+        // the output cap ends a read at a whole line, with the offset to go on from
+        let short = read(&dir.join("f.txt"), 1, None, 200).unwrap();
+        assert!(short.ends_with("line 13\n[lines 1-13 of 2300; read with offset=14 for more]"), "{short}");
         assert_eq!(call(&mut lean, json!({"path": "f.txt"})), t, "the claude path never shortens a repeat");
         let mut own = Server::new(dir.clone()).with_read_dedupe();
         assert!(call(&mut own, json!({"path": "f.txt", "offset": 290})).starts_with("[read #1]\nline 290"));
@@ -449,7 +475,7 @@ mod tests {
         assert_eq!(ask(&mut s, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#), None);
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).unwrap(),
-            r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"bash","description":"Run shell command. Working directory persists between calls.","inputSchema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}},{"name":"read","description":"Read file: up to 250 lines from the 1-based offset unless you give a limit.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},{"name":"write","description":"Write file, creating dirs.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},{"name":"edit","description":"Replace exact unique text in file.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}},"required":["path","old","new"]}}]}}"#
+            r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"bash","description":"Run shell command. Working directory persists between calls.","inputSchema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}},{"name":"read","description":"Read file: the whole file (up to 2000 lines) unless you give a 1-based offset or a limit. Use it rather than cat, head or sed.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},{"name":"write","description":"Write file, creating dirs.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},{"name":"edit","description":"Replace exact unique text in file. Use it for every change to an existing file, rather than sed or scripts.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}},"required":["path","old","new"]}}]}}"#
         );
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read","arguments":{"path":"f.txt","offset":2,"limit":1}}}"#).unwrap(),
@@ -463,7 +489,7 @@ mod tests {
         assert!(pwd.contains(r#"/sub\n""#), "cd persists between calls: {pwd}");
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"edit","arguments":{"path":"../f.txt","old":"line","new":"x"}}}"#).unwrap(),
-            r#"{"jsonrpc":"2.0","id":6,"result":{"content":[{"type":"text","text":"old text found 3 times, need exactly 1"}],"isError":true}}"#
+            r#"{"jsonrpc":"2.0","id":6,"result":{"content":[{"type":"text","text":"old text found 3 times, need exactly 1: include more of the surrounding lines"}],"isError":true}}"#
         );
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"nope","arguments":{}}}"#).unwrap(),
@@ -483,7 +509,11 @@ mod tests {
         assert_eq!(write(&f, "one two").unwrap(), "ok");
         assert_eq!(edit(&f, "two", "2").unwrap(), "ok");
         assert_eq!(std::fs::read_to_string(&f).unwrap(), "one 2");
-        assert!(edit(&f, "missing", "x").unwrap_err().contains("found 0 times"));
+        assert!(edit(&f, "missing", "x").unwrap_err().contains("nor its first line"));
+        write(&f, "a\nfn x() {\n    y();\n}\n").unwrap();
+        let e = edit(&f, "fn x() {\n  y();", "z").unwrap_err();
+        assert!(e.contains("first line is at line 2") && e.contains("    y();"), "shows the lines as they are: {e}");
+        assert!(edit(&f, "", "z").is_err());
         assert_eq!(cap("abcdef", 4), "abcd\n[truncated 2 chars]");
         std::fs::remove_dir_all(&dir).ok();
     }

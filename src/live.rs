@@ -1066,7 +1066,9 @@ impl Live {
                 bail!("--provider has no plan mode yet (auto, ask or edits)");
             }
             // the own loop: lean prompt and tools, the repo's instructions in the prompt
-            let mut prompt = self.mid_prompt();
+            // the own loop has no Grep/Glob tools: its runs searched with grep in bash anyway, and cut file reads at the
+            // bash cap (2026-10-24)
+            let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", "Search with grep -rn in bash; read whole files with read.");
             if self.project_instructions {
                 let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                 prompt.push_str(&text);
