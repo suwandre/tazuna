@@ -41,6 +41,11 @@ def cur_go_env():
     e = dict(GO_ENV)
     if getattr(_TL, "gocache", None):
         e["GOCACHE"] = _TL.gocache
+    # each task's own module cache, filled by its setup, and no fetching after it: the shared ~/go/pkg/mod held caddy and
+    # rclone versions newer than the tasks' base (with the fixes, fetched by some earlier agent) and runs read the answer
+    # there (v237's diff matched the fix byte for byte; 2026-10-24)
+    if getattr(_TL, "gomod", None):
+        e["GOMODCACHE"], e["GOPROXY"], e["GOFLAGS"] = str(_TL.gomod), "off", "-mod=mod"
     return e
 
 
@@ -69,8 +74,11 @@ def descendants(root):
 def sh(cmd, cwd, timeout=900, env=None, shell=False):
     # own session: on a timeout the whole tree goes (the harness, its engine, servers the agent left running), not only
     # the direct child; an orphaned engine once kept running for a day and a half
+    # PWD follows cwd: the inherited one pointed at bench/realwork, which OpenCode took for its project, finding the tasks'
+    # reference fixes and hidden tests there (2026-10-24)
+    env = {**(env or {**os.environ, **cur_go_env()}), "PWD": str(cwd)}
     p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
-                         env=env or {**os.environ, **cur_go_env()}, shell=shell, start_new_session=True)
+                         env=env, shell=shell, start_new_session=True)
     try:
         out, err = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -91,7 +99,8 @@ def setup_workdir(task, w):
     subprocess.run(f"git -C '{g['repo']}' archive {g['base']} | tar -x -C '{w}'", shell=True, check=True)
     sh(["git", "init", "-q"], w); sh(["git", "config", "gc.auto", "0"], w)  # no background gc racing copies of the tree
     sh(["git", "add", "-A"], w); sh(["git", *GIT_ID, "commit", "-qm", "base"], w)
-    r = sh(g["setup"], w, shell=True)
+    # the setup fetches the base's modules into the task's own cache (the agent then runs with GOPROXY=off)
+    r = sh(g["setup"], w, shell=True, env={**os.environ, **cur_go_env(), "GOPROXY": os.environ.get("GOPROXY", "https://proxy.golang.org,direct")})
     if r.returncode:
         raise RuntimeError("setup failed: " + r.stderr[-500:])
 
@@ -767,6 +776,7 @@ def run_job(task, h, i):
 
 def _run_job(task, h, i):
     wait_gate()
+    _TL.gomod = BENCH_HOMES / "gomod" / task.name
     for attempt in range(8):
         with tempfile.TemporaryDirectory(prefix=f"rw-{task.name}-{h}-", ignore_cleanup_errors=True) as d:
             w = Path(d).resolve()

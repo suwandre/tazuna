@@ -16,7 +16,51 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Correction: 91 of 263 tasks-oct runs saw the reference fix; DeepSeek's lead was mostly that, 2026-10-24 (bench only)
+
+Comparing OpenCode's transcripts with tazuna's turned up runs that copied the merged upstream fix instead of writing one.
+The agents can read anything on this machine and fetch from the internet, and the fix of every tasks-oct task is public.
+Three channels, found with the new `bench/realwork/leakscan.py` (scans every transcript under `~/bench-homes`; writes
+`leaks.jsonl`, one line per task and harness label):
+
+- **GitHub** (66 task/label pairs): `curl` of `raw.githubusercontent.com/<repo>/master/...`, the commit API by path, and
+  `github.com/.../commit/<fix>.patch`, then a diff against the work tree. DeepSeek did this most, but also Luna (v286
+  caddy-retry), MiMo, Haiku and Opus via the `repo` profile on rclone (v34).
+- **Go module cache** (20): `~/go/pkg/mod` held caddy v2.11.7 (contains the caddy-unix fix) and a 2026-10-17 pseudo-version
+  (contains both caddy fixes), pulled in by earlier runs and shared by every run. The anchor run tazuna-own-v38 DeepSeek
+  (judged ≈9, used as an anchor in every pool since) diffed its caddy-unix work against v2.11.7's `listen_unix.go`.
+  rclone v1.75.1/v1.75.2 in the cache do not contain the rclone fix and are not counted.
+- **The bench repos** (2, plus OpenCode): `git log`/`git show <fix>` in `~/bench-repos/<repo>` (full history); cascade-v38
+  rclone and cascade-v34 caddy-retry applied the fix commit verbatim. OpenCode v287/v288 ran with the bench directory as
+  their working directory (the harness passed no `PWD`), read `solution.patch` and the hidden tests and edited
+  `~/bench-repos` directly: all six OpenCode rows are invalid, and the OpenCode table in the next entry is withdrawn.
+
+Judged score, leaked runs against clean runs of the same task and model (all tasks-oct judges):
+
+| task | model | leaked | clean |
+|---|---|---|---|
+| caddy-unix | deepseek-v4.1-flash | 8.67 (9) | 4.0 (1) |
+| caddy-unix | deepseek-v4.1-flash-1017 | 8.0 (4) | 4.75 (2) |
+| rclone | deepseek-v4.1-flash | 8.38 (12) | 6.57 (14) |
+| rclone | deepseek-v4.1-flash-1017 | 8.33 (6) | 7.12 (12) |
+| caddy-retry | deepseek-v4.1-flash-1017 | 8.4 (5) | 7.0 (1) |
+| rclone | gpt-6-luna | - | 5.93 (43) |
+| caddy-unix | gpt-6-luna | 8.0 (1) | 5.27 (11) |
+
+What changes: "DeepSeek V4.1 Flash on the own loop judges ≈9" and the routes-by-day DeepSeek results are inflated; clean
+DeepSeek runs judge like Luna (rclone 6.6-7.1, caddy-unix ~4-5). The Luna route conclusions (Pro pool against Team pool,
+max over xhigh) stand: those runs are nearly all clean. The DeepSeek anchor (v38) is out of the anchor set. An earlier
+note here that tazuna's DeepSeek runs "almost always" fail caddy-unix was also wrong: v231/v237/v243 passed 7/7 (v237
+leaked; v231 fetched upstream files too).
+
+Fixed in the harness (run.py): every command gets `PWD` set to its own working directory; each task gets its own Go
+module cache (`~/bench-homes/gomod/<task>`, filled by the task's setup) and runs with `GOPROXY=off`, so `go` cannot fetch a
+newer release mid-run. Not fixed yet: the shared `~/go/pkg/mod`, the bench repos and GitHub stay reachable by `find /` and
+`curl`. Until they are closed, `leakscan.py` runs after every batch and leaked rows are left out of summaries.
+
 ## Best of two, retested: +0.16, not worth twice the calls; OpenCode's free DeepSeek scores 9 or 1, 2026-10-23/24 (bench only)
+
+(Leak check, 2026-10-24: v286 caddy-retry fetched upstream files; the OpenCode table below is invalid, see above.)
 
 **Best of two** (`tazuna-ownsubxbest2`, bench prototype in run.py): the same own-loop setup twice in two copies of the
 work tree, Opus 5.5 high on the subscription (no tools, no reference) picks one with each attempt's own test result.
