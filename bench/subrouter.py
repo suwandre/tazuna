@@ -110,8 +110,12 @@ def key(name, model, slugs, var):
         api("/api/token/", "PUT", {**api(f"/api/token/{old['id']}"), **limits})
     value = "sk-" + api(f"/api/token/{old['id']}")["key"]
     lines = [l for l in KEYFILE.read_text().splitlines() if not l.startswith(f"export {var}=")] if KEYFILE.exists() else []
-    KEYFILE.write_text("\n".join(lines + [f"export {var}={value}"]) + "\n")
-    KEYFILE.chmod(0o600)
+    # written owner-only from the start (no window with default permissions), then moved over the old file
+    tmp = KEYFILE.with_name(KEYFILE.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write("\n".join(lines + [f"export {var}={value}"]) + "\n")
+    os.replace(tmp, KEYFILE)
     os.environ[var] = value
     return old["id"]
 
@@ -135,10 +139,12 @@ def vet(model, again=False):
                            env={**os.environ, "ROUTE_API": BASE, "ROUTE_KEY_ENV": "SUBROUTER_VET_KEY"}, timeout=1800)
         out = r.stdout + r.stderr
         time.sleep(20)  # the log lags the calls a little
-        cs = [c for c in calls((int(time.time()) - t0) // 60 + 2, model) if int(c["token_id"]) == vid]
+        cs = [c for c in calls((int(time.time()) - t0) // 60 + 2, model) if int(c["token_id"]) == vid and int(c["created_at"]) >= t0]
         served = sorted({json.loads(c.get("other") or "{}").get("provider_slug", "?") for c in cs})
-        cache = re.search(r"cache (\d+)%", out)
-        verdict = "pass" if "identity ok" in out and cache and int(cache[1]) >= 70 and served == [slug] else "fail"
+        # only uno_route.py's own success line counts (anchored), never text a reply could contain
+        cache = re.search(r"^    cache (\d+)% .*, identity ok$", r.stdout, re.M)
+        ok = r.returncode == 0 and cache and not re.search(r"^\s+no: ", r.stdout, re.M)
+        verdict = "pass" if ok and int(cache[1]) >= 70 and served == [slug] else "fail"
         seen[slug] = {"at": t0, "price": p["min_input_price"], "out_price": p["min_output_price"], "verdict": verdict,
                       "cache": int(cache[1]) if cache else None, "served_by": served, "calls": len(cs),
                       "usd": round(sum(int(c["quota"]) for c in cs) / QUOTA_PER_USD, 4),
