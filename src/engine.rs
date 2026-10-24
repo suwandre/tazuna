@@ -635,7 +635,15 @@ impl Loop {
                 Api::Chat => {
                     let m = &reply["choices"][0]["message"];
                     let text = m["content"].as_str().unwrap_or_default().to_string();
-                    let calls: Vec<Value> = m["tool_calls"].as_array().cloned().unwrap_or_default();
+                    let mut calls: Vec<Value> = m["tool_calls"].as_array().cloned().unwrap_or_default();
+                    // LingAI sent 16 calls with an empty id in one DeepSeek run; the history was accepted until call 161,
+                    // then refused: "Assistant tool_calls require distinct non-empty ids" (2026-10-24)
+                    for (i, c) in calls.iter_mut().enumerate() {
+                        let id = c["id"].as_str().unwrap_or_default();
+                        if id.is_empty() || self.msgs.iter().any(|m| m["tool_calls"].as_array().is_some_and(|t| t.iter().any(|t| t["id"] == id))) {
+                            c["id"] = json!(format!("call_{turns}_{i}"));
+                        }
+                    }
                     // only what the next call needs; the reasoning is kept but sent back only when a provider asks for it
                     let mut keep = json!({"role": "assistant", "content": text});
                     if !calls.is_empty() {
@@ -1814,7 +1822,8 @@ data: {\"type\":\"message_stop\"}\n";
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.txt"), "hello\n").unwrap();
         let replies = Rc::new(RefCell::new(VecDeque::from([
-            json!({"choices": [{"message": {"content": null, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read", "arguments": "{\"path\":\"a.txt\"}"}}]}}],
+            // no id, as LingAI sometimes sends: tazuna gives it one
+            json!({"choices": [{"message": {"content": null, "tool_calls": [{"id": "", "type": "function", "function": {"name": "read", "arguments": "{\"path\":\"a.txt\"}"}}]}}],
                    "usage": {"prompt_tokens": 1000, "completion_tokens": 10, "prompt_tokens_details": {"cached_tokens": 0}}}),
             json!({"choices": [{"message": {"content": "it says hello"}}], "usage": {"prompt_tokens": 1100, "completion_tokens": 5, "prompt_tokens_details": {"cached_tokens": 1000}}}),
         ])));
@@ -1860,6 +1869,8 @@ data: {\"type\":\"message_stop\"}\n";
         assert!((r["total_cost_usd"].as_f64().unwrap() - want).abs() < 1e-12);
         // the second call carries the tool result
         assert_eq!(sent.borrow()[1]["messages"][3]["role"], "tool");
+        let id = sent.borrow()[1]["messages"][2]["tool_calls"][0]["id"].clone();
+        assert!(id.as_str().is_some_and(|i| !i.is_empty()) && sent.borrow()[1]["messages"][3]["tool_call_id"] == id, "{id}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
