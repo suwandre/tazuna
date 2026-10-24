@@ -16,6 +16,44 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.80-0.0.83 (2026-10-24): finish after green, whole-file reads, edit errors with context; -47% turns, judge +2.2
+
+From the clean OpenCode/tazuna comparison on rclone (where tazuna's extra turns went: ~53 a run after its tests first
+passed, re-reading, rerunning unchanged tests, builds and repros; reads cut at the 8K bash cap; python-heredoc edits
+failing up to 17 times a run). Own loop only.
+
+- **0.0.80**: when a test run passes and the change includes test files, the result gets "check the diff once, then
+  finish; rerun only if code changes"; a passing rerun with the tree unchanged gets "nothing changed since the last
+  passing run". Appended to the tool output, DeepSeek ignored it: 79 (rclone) and 95 (caddy-unix) more turns after it
+  (one PixStudio round, v305-v310, stopped at $0.90).
+- **0.0.81**: the same note as its own user turn.
+- **0.0.82**: `read` returns the whole file (2000 lines, was 250; cut at a whole line under the output cap, with the
+  offset to go on); a failed `edit` shows where the old text's first line is and the lines there; tool descriptions
+  steer reads to `read` and changes to `edit`; the own loop's prompt no longer names Grep/Glob (tools it lacks).
+- **0.0.83**: a tool call without an id (or with a repeated one) gets its own; LingAI sent 16 empty ids in one run and
+  the provider refused the history at call 161.
+
+A/B, deepseek-v4.1-flash-1017 at max on SubRouter's default key (round 1 LingAI, round 2 FoxRouter, 96-99% cached),
+both arms side by side, leak scan clean (every attempt at GitHub or the bench repos was refused). Round 1: 0.0.79
+against 0.0.81 (v323-v328, $0.36); round 2: 0.0.79b (0.0.79 plus the id fix) against 0.0.83 (v329-v334, $0.34). Judge
+`judge.oct.stopgreen.jsonl`, one pool per task, two passes, anchors tazuna on Opus (v34) 3.5-8.5 and Codex Luna 6.
+
+| task | 0.0.79 / 0.0.79b: judge, hidden, turns | 0.0.81 / 0.0.83: judge, hidden, turns |
+|---|---|---|
+| rclone r1 | 7, 3/3, 216 | 8, 3/3, 123 |
+| rclone r2 | 8, 3/3, 231 | 8.5, 3/3, 168 |
+| caddy-unix r1 | 4.5, 0/7, 108 | 8.5, 7/7, 74 |
+| caddy-unix r2 | 3, 0/7, 175 | 4, 0/7, 72 |
+| caddy-retry r1 | died at call 161 (empty ids) | 8.5, 2/2, 74 |
+| caddy-retry r2 | 4.5, 2/2, 252 | 9, 2/2, 79 |
+| 5 pairs | judge 5.4, turns 982, input 113M, output 2.5M | judge 7.6, turns 516 (-47%), input 41M (-64%), output 1.5M (-40%) |
+
+Over the noise thresholds on every measure, at 5 pairs (fewer than the 12 runs per arm a Tier 1 asks). The note works
+as a user turn: 4 of 5 runs given it ended 2-19 turns later (rclone 28-43). Long runs cost quality as well as tokens:
+the baseline's 252-turn caddy-retry passed its tests and judged 4.5 (churned code), the 79-turn one 9. The hints move
+DeepSeek part of the way: rclone r2 31 `edit` calls and 11 script edits, against 0 and 47 in the baseline. caddy-unix's
+7/7 in round 1 is one lucky run: both arms fail it otherwise. 0.0.83 is the own loop's new baseline.
+
 ## OpenCode's free DeepSeek, clean: judges like tazuna's DeepSeek in fewer turns, 2026-10-24 (bench only)
 
 Rerun behind the leak guards below (proxy, sandbox; leak scan clean for all six; times on a slow LTE link, not
