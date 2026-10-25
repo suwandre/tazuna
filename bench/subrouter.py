@@ -131,7 +131,8 @@ def vet(model, again=False):
         slug, last = p["provider_slug"], seen.get(p["provider_slug"], {})
         if p["min_input_price"] > 3 * cheapest:
             continue
-        if not again and time.time() - last.get("at", 0) < 3 * 86400 and last.get("price") == p["min_input_price"]:
+        if not again and last.get("verdict") != "error" and time.time() - last.get("at", 0) < 3 * 86400 \
+                and last.get("price") == p["min_input_price"]:
             continue
         vid = key("tazuna-vet", model, [slug], "SUBROUTER_VET_KEY")
         t0 = int(time.time())
@@ -145,6 +146,10 @@ def vet(model, again=False):
         cache = re.search(r"^    cache (\d+)% .*, identity ok$", r.stdout, re.M)
         ok = r.returncode == 0 and cache and not re.search(r"^\s+no: ", r.stdout, re.M)
         verdict = "pass" if ok and int(cache[1]) >= 70 and served == [slug] else "fail"
+        # a transport error says nothing about the provider: checked again on the next run (a night of resets and 400s
+        # that a rerun the next morning did not show, 2026-10-25)
+        if verdict == "fail" and re.search(r"Connection reset|HTTP Error (400|429|5\d\d)|timed out|Remote end closed", out):
+            verdict = "error"
         seen[slug] = {"at": t0, "price": p["min_input_price"], "out_price": p["min_output_price"], "verdict": verdict,
                       "cache": int(cache[1]) if cache else None, "served_by": served, "calls": len(cs),
                       "usd": round(sum(int(c["quota"]) for c in cs) / QUOTA_PER_USD, 4),
