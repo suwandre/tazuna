@@ -16,6 +16,30 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## SubRouter routes through the account API: vetted provider keys, live drops, 2026-10-25 (bench only)
+
+SubRouter picks the provider per call from a key's settings (subscribed providers, price, its own stability and
+cache-rate weighting); a request cannot name one. Its account API (system access token, `~/.subrouter-account`) can:
+`bench/subrouter.py` reads the per-call log (provider, cached tokens, cost: what the CSV exports showed), the providers of
+a model with prices, and creates keys limited per model to providers.
+
+- **Vetting** (`subrouter.py vet MODEL`): each provider up to 3x the cheapest input price, through a test key limited to it
+  (four at once): an answer, a long reasoning call, identity, and the log for who really served it. Without the cache
+  test: its 6 short calls were wrong both ways (FoxRouter 99% in the check, 40-73% in the run after it; LingAI 15% in
+  the check, 78-88% in runs). deepseek-v4.1-flash-1017: 10 of 13 pass (QuqiAI and GETAPI answer the long question with
+  a tool message, ModelShare over 15 minutes); ~$0.03 for all. A first night's vetting lost 9 providers to transport
+  errors (connection resets, 400s that a morning rerun did not show): errors are now retried, not failed.
+- **Route key** `tazuna-route-<model>`: limited to the providers that passed; `subrouter.py watch` reads the log during
+  runs and drops a provider whose last 15 calls cached under 70%.
+
+Route test 1 (`routes1.sh`, v341-v346, 0.0.84, 1017 at max): default key against the route key, side by side, $0.27.
+SubRouter sent both keys to LingAI only (548 calls, 94-95% cached): same tasks results (rclone 3/3 at 217 vs 201
+turns, caddy-unix 0/7 at 116 vs 71, caddy-retry 2/2 at 83 vs 89), nothing to drop. A forced switch (v347: a test key
+with a6aa and LingAI, cache weighting off, so the cheaper a6aa should come first) sent all 47 calls to LingAI as well:
+SubRouter's own ordering (stability first) already avoided a6aa, so the run was stopped. Today the key limits matter
+for keeping out providers SubRouter does pick (PixStudio at 5x the price, a6aa at 13-22% cached, both on 2026-10-24);
+the live drop has yet to fire on a real run.
+
 ## Opus gate on 0.0.83, clean: still no better than DeepSeek alone, 2026-10-25 (bench only)
 
 The first gate test (2026-10-22, judged 6.6 against 8.2) rested partly on runs that saw the reference fix, so it was
