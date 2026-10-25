@@ -391,6 +391,9 @@ fn edit(path: &Path, old: &str, new: &str) -> Result<String, String> {
     if n > 1 {
         return Err(format!("old text found {n} times, need exactly 1: include more of the surrounding lines"));
     }
+    if old.is_empty() {
+        return Err("`old` is missing: give the exact text to replace".into());
+    }
     if n == 0 {
         // where the first line of `old` is, if anywhere: a failed edit was most often whitespace or a stale copy, and
         // DeepSeek then fell back to python/sed edits in bash (up to 17 failed edits a run, 2026-10-24)
@@ -513,7 +516,7 @@ mod tests {
         write(&f, "a\nfn x() {\n    y();\n}\n").unwrap();
         let e = edit(&f, "fn x() {\n  y();", "z").unwrap_err();
         assert!(e.contains("first line is at line 2") && e.contains("    y();"), "shows the lines as they are: {e}");
-        assert!(edit(&f, "", "z").is_err());
+        assert!(edit(&f, "", "z").unwrap_err().contains("`old` is missing"));
         assert_eq!(cap("abcdef", 4), "abcd\n[truncated 2 chars]");
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -228,7 +228,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         queued: VecDeque::new(),
         mode,
         asked: 0,
-        send_reasoning: false,
+        send_reasoning: reasoning_back(),
         cache_key: std::env::var_os("TAZUNA_NO_CACHE_KEY").is_none(),
         routes,
         route_calls: vec![],
@@ -379,7 +379,8 @@ fn test_note(cmd: &str, out: &str, tree: impl FnOnce() -> Option<(u64, bool)>, g
         return None;
     }
     let (now, tests) = tree()?;
-    let note = if *green == Some(now) {
+    // a command that writes a test file, runs it and deletes it leaves the tree as it was: not a rerun (v341, 2026-10-25)
+    let note = if *green == Some(now) && !(cmd.contains("_test.") && cmd.contains('>')) {
         Some(RERUN)
     } else if !*told && tests {
         *told = true;
@@ -389,6 +390,13 @@ fn test_note(cmd: &str, out: &str, tree: impl FnOnce() -> Option<(u64, bool)>, g
     };
     *green = Some(now);
     note
+}
+
+/// DeepSeek's reasoning goes back with the history by default (0.0.85): without it the model re-planned on every turn,
+/// 8-26K output tokens and then one small edit, 15-34 such turns a run, and rewrote the same code (one file 7 times);
+/// OpenCode keeps it, plans once and edits each place once (rclone, 2026-10-25). TAZUNA_DROP_REASONING turns it off.
+fn reasoning_back() -> bool {
+    std::env::var_os("TAZUNA_DROP_REASONING").is_none()
 }
 
 fn headless() -> bool {
@@ -415,7 +423,7 @@ impl Loop {
                     drop_thinking(&mut self.msgs);
                     self.msgs.retain(|m| m["type"] != "reasoning");
                     self.cache_key = std::env::var_os("TAZUNA_NO_CACHE_KEY").is_none();
-                    self.send_reasoning = false;
+                    self.send_reasoning = reasoning_back();
                     self.route_calls.clear();
                     (self.out)(&json!({"type": "system", "subtype": "route_switch", "message": format!("now {url}: {why}")}));
                     return true;
@@ -427,7 +435,8 @@ impl Loop {
         false
     }
 
-    /// The history for Chat Completions: assistant turns without their `reasoning_content` unless a provider asked for it.
+    /// The history for Chat Completions: assistant turns with their `reasoning_content` (0.0.85), or without it after a
+    /// provider refused the field or with TAZUNA_DROP_REASONING.
     fn chat_messages(&self) -> Value {
         if self.send_reasoning {
             return json!(self.msgs);
@@ -552,9 +561,12 @@ impl Loop {
                         Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
                     }
                 }
-                Err(e) if self.api == Api::Chat && !self.send_reasoning && format!("{e:#}").contains("reasoning_content") => {
-                    (self.out)(&json!({"type": "system", "subtype": "reasoning_resent", "message": format!("{e:#}")}));
-                    self.send_reasoning = true;
+                // either way round: a provider that demands the reasoning back gets it, one that refuses the field gets
+                // the history without it (once each per route)
+                Err(e) if self.api == Api::Chat && format!("{e:#}").contains("reasoning_content") => {
+                    let subtype = if self.send_reasoning { "reasoning_dropped" } else { "reasoning_resent" };
+                    (self.out)(&json!({"type": "system", "subtype": subtype, "message": format!("{e:#}")}));
+                    self.send_reasoning = !self.send_reasoning;
                     body["messages"] = self.chat_messages();
                     match (self.call)(&body) {
                         Ok(r) => r,
@@ -1295,6 +1307,7 @@ mod tests {
         assert_eq!(test_note("go test ./...", ok, || Some((1, false)), &mut green, &mut told), Some(RERUN));
         assert_eq!(test_note("go test ./... 2>&1 | tail", ok, || Some((2, true)), &mut green, &mut told), Some(GREEN));
         assert_eq!(test_note("go test -race ./...", ok, || Some((2, true)), &mut green, &mut told), Some(RERUN));
+        assert_eq!(test_note("cat > zz_probe_test.go <<EOF ... && go test -run Probe; rm zz_probe_test.go", ok, || Some((2, true)), &mut green, &mut told), None, "a probe written and removed in the command");
         // after a change, a pass gets nothing: the finish note comes once
         assert_eq!(test_note("go test ./...", ok, || Some((3, true)), &mut green, &mut told), None);
         assert_eq!(test_note("go vet ./...", ok, || panic!("not a test run"), &mut green, &mut told), None);
@@ -1356,7 +1369,7 @@ mod tests {
             queued: VecDeque::new(),
             mode: "bypassPermissions".into(),
             asked: 0,
-            send_reasoning: true,
+            send_reasoning: false,
             cache_key: true,
             routes: VecDeque::from([("https://b.example/v1".to_string(), "k".to_string())]),
             route_calls: vec![],
@@ -1369,7 +1382,7 @@ mod tests {
         let switch = events.iter().find(|e| e["subtype"] == "route_switch").expect("a route_switch event");
         assert!(switch["message"].as_str().unwrap().contains("b.example") && switch["message"].as_str().unwrap().contains("403"));
         assert_eq!(events.last().unwrap()["subtype"], "success", "the next route finished the turn");
-        assert!(!l.send_reasoning && l.routes.is_empty(), "per-route flags start over; the list is used up");
+        assert!(l.send_reasoning == reasoning_back() && l.routes.is_empty(), "per-route flags start over; the list is used up");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1474,6 +1487,57 @@ data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n
         assert!(l.send_reasoning, "kept on for the rest of the run");
         std::fs::remove_dir_all(&dir).ok();
     }
+    #[test]
+    fn reasoning_goes_back_by_default_and_not_where_refused() {
+        let dir = std::env::temp_dir().join(format!("tazuna-reasoning2-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.txt"), "a\n").unwrap();
+        let first = json!({"choices": [{"message": {"role": "assistant", "content": null, "reasoning_content": "look at a",
+            "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read", "arguments": "{\"path\":\"a.txt\"}"}}]}}], "usage": {}});
+        let sent = Rc::new(RefCell::new(vec![]));
+        let (s, mut n) = (sent.clone(), 0);
+        let mut l = Loop {
+            call: Box::new(move |b: &Value| {
+                s.borrow_mut().push(b.clone());
+                n += 1;
+                let has = b["messages"].as_array().unwrap().iter().any(|m| m.get("reasoning_content").is_some());
+                match n {
+                    1 => Ok(first.clone()),
+                    _ if has => anyhow::bail!("HTTP 400: unknown field `reasoning_content`"),
+                    _ => Ok(json!({"choices": [{"message": {"role": "assistant", "content": "done"}}], "usage": {}})),
+                }
+            }),
+            api: Api::Chat,
+            system: "sys".into(),
+            model: "m".into(),
+            effort: None,
+            price: (1e-6, 1e-7, 4e-6),
+            tools: vec![],
+            msgs: vec![json!({"role": "system", "content": "sys"})],
+            server: crate::mcp::Server::new(dir.clone()),
+            session: "s".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
+            send_reasoning: true,
+            cache_key: true,
+            routes: VecDeque::new(),
+            route_calls: vec![],
+            connector: connect_key,
+            out: Box::new(|_: &Value| {}),
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("read a"), false, &rx);
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 3, "the first call, the refused one, the same again without the reasoning");
+        assert_eq!(sent[1]["messages"][2]["reasoning_content"], "look at a", "sent by default");
+        assert!(sent[2]["messages"].as_array().unwrap().iter().all(|m| m.get("reasoning_content").is_none()));
+        assert!(!l.send_reasoning, "off for the rest of the run");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     use super::*;
     use std::{cell::RefCell, rc::Rc};
 
