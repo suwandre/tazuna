@@ -7,8 +7,9 @@
     subrouter.py vet MODEL [--all]           check each provider of MODEL (up to 3x the cheapest input price) through the
                                              key tazuna-vet, record it in subrouter-vetted.json and limit the route key
                                              tazuna-route-MODEL to those that pass (--all: also those checked within 3 days)
-    subrouter.py watch MODEL                 during runs on the route key: drop a provider from it when its last 15 real
-                                             calls cached under 70% (runs until killed)
+    subrouter.py watch MODEL [--key NAME --var ENV]  during runs on the route key (or the key NAME, its value in ENV):
+                                             drop a provider from it when its last 15 real calls cached under 70% (runs
+                                             until killed)
 
 Credentials: ~/.subrouter-account (SUBROUTER_ACCESS_TOKEN, SUBROUTER_USER_ID; mode 600). The access token controls the
 account: it is sent only to subrouter.ai, never printed. Writes touch only keys named tazuna-vet and tazuna-route-*;
@@ -95,7 +96,7 @@ def env_name(model):
     return "SUBROUTER_ROUTE_" + re.sub(r"[^A-Z0-9]+", "_", model.upper()).strip("_") + "_KEY"
 
 
-def key(name, model, slugs, var):
+def key(name, model, slugs, var, cache_weight=True):
     """Creates the key `name` (one model, these providers) or updates its providers; its value goes to ~/.subrouter-key as
     `var`. Only keys this script names are touched."""
     assert re.fullmatch(r"tazuna-vet(-\d)?", name) or name.startswith("tazuna-route-")
@@ -103,7 +104,7 @@ def key(name, model, slugs, var):
     old = next((k for k in (d["items"] if isinstance(d, dict) else d) if k["name"] == name), None)
     limits = {"model_limits_enabled": True, "model_limits": model,
               "subrouter_model_providers": json.dumps({model: slugs}), "subrouter_providers": ",".join(slugs),
-              "include_official_channels": False, "include_shared_subscriptions": False, "include_cache_hit_rate": True}
+              "include_official_channels": False, "include_shared_subscriptions": False, "include_cache_hit_rate": cache_weight}
     if old is None:
         api("/api/token/", "POST", {"name": name, "expired_time": -1, "unlimited_quota": True, **limits})
         d = api("/api/token/?p=1&page_size=100")
@@ -184,11 +185,11 @@ def vet(model, again=False):
     print(f"route key tazuna-route-{model}: {good or 'unchanged, no provider passed'} (in ~/.subrouter-key as {env_name(model)})")
 
 
-def watch(model, floor=70, window=15, every=60):
+def watch(model, floor=70, window=15, every=60, name=None, var=None):
     """Reads the account log once a minute for the route key's calls; a provider whose last `window` calls cached under
     `floor`% leaves the key (never the last one), and SubRouter routes the next call to the next provider on it. The real
     rates go into subrouter-vetted.json ("live"), a dropped provider is marked so the next vet checks it again."""
-    name = f"tazuna-route-{model}"
+    name, var = name or f"tazuna-route-{model}", var or env_name(model)
     d = api("/api/token/?p=1&page_size=100")
     route = next(k for k in (d["items"] if isinstance(d, dict) else d) if k["name"] == name)
     since = int(time.time())
@@ -209,7 +210,7 @@ def watch(model, floor=70, window=15, every=60):
             seen.setdefault(slug, {})["live"] = {"at": int(time.time()), "calls": len(cs), f"cached_last_{window}": rate}
             if len(cs) >= window and rate < floor and slug in slugs and len(slugs) > 1:
                 slugs = [s for s in slugs if s != slug]
-                key(name, model, slugs, env_name(model))
+                key(name, model, slugs, var, route.get("include_cache_hit_rate", True))
                 seen[slug].update(verdict="dropped", at=int(time.time()))
                 print(f"{time.strftime('%H:%M')} dropped {slug}: {rate}% cached over its last {window} calls; route now {slugs}", flush=True)
         VETTED.write_text(json.dumps(done, indent=1, sort_keys=True) + "\n")
@@ -220,4 +221,5 @@ if __name__ == "__main__":
     model = a[a.index("--model") + 1] if "--model" in a else None
     {"log": lambda: log(int(a[1]) if len(a) > 1 and a[1].isdigit() else 180, model),
      "providers": lambda: providers(a[1]), "keys": keys, "vet": lambda: vet(a[1], "--all" in a),
-     "watch": lambda: watch(a[1])}[a[0]]()
+     "watch": lambda: watch(a[1], name=a[a.index("--key") + 1] if "--key" in a else None,
+                            var=a[a.index("--var") + 1] if "--var" in a else None)}[a[0]]()
