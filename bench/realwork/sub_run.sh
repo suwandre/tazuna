@@ -8,6 +8,10 @@
 MODEL=$1 LABEL=$2 PRICE=$3 CAP=$4 TASK=${5:-rclone-archive-symlinks} KEYENV=${SUB_KEYENV:-SUBROUTER_API_KEY} H=${SUB_HARNESS:-tazuna-ownsubm} EFF=${SUB_EFFORT:-max}
 cd "$(dirname "$0")" || exit 1
 source ~/.subrouter-key
+# the model's vetted route key (subrouter.py vet) when there is one and no harness was chosen: the default smart key once
+# picked PixStudio at 5x the price and a6aa at 13-22% cached (2026-10-24); SUB_ROUTE=0 keeps the default key
+RK=SUBROUTER_ROUTE_$(echo "$MODEL" | tr '[:lower:]' '[:upper:]' | sed -E 's/[^A-Z0-9]+/_/g; s/^_+|_+$//g')_KEY
+if [ -z "$SUB_HARNESS" ] && [ "${SUB_ROUTE:-1}" = 1 ] && [ -n "${!RK}" ]; then H=tazuna-ownsubx; export SUBROUTER_X_KEYENV=$RK; fi
 SESSIONS=~/bench-homes/cc/.local/share/tazuna/sessions
 used() { curl -s -A curl/8 --max-time 15 https://subrouter.ai/v1/dashboard/billing/usage -H "Authorization: Bearer ${!KEYENV}" | python3 -I -c "import json,sys;print(json.load(sys.stdin)['total_usage'])"; }
 # a process and everything under it: tazuna and its engine carry no label on their command line (0.0.76), so they
