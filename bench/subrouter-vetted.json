@@ -131,17 +131,17 @@
    "why": "no: cache test failed: [Errno 54] Connection reset by peer"
   },
   "relai": {
-   "at": 1792885783,
+   "at": 1792920705,
    "cache": null,
-   "calls": 1,
+   "calls": 6,
    "out_price": 0.0411764705882353,
    "price": 0.010294117647058825,
    "served_by": [
     "relai"
    ],
-   "usd": 0.0001,
-   "verdict": "error",
-   "why": "no: cache test failed: [Errno 54] Connection reset by peer"
+   "usd": 0.0007,
+   "verdict": "fail",
+   "why": "no: cache 0%"
   },
   "stableai": {
    "at": 1792886714,
