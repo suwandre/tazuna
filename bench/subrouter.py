@@ -8,8 +8,11 @@
                                              key tazuna-vet, record it in subrouter-vetted.json and limit the route key
                                              tazuna-route-MODEL to those that pass (--all: also those checked within 3 days)
     subrouter.py watch MODEL [--key NAME --var ENV]  during runs on the route key (or the key NAME, its value in ENV):
-                                             drop a provider from it when its last 15 real calls cached under 70% (runs
-                                             until killed)
+                                             drop a provider from it when its last 15 warm calls cached under 70% (runs
+                                             until killed). NOT RELIABLE with several runs on one key: the account log
+                                             does not say which run a call belongs to, and replaying 2026-10-25's log
+                                             it would still drop LingAI at 42% (88% over the day). Not used by the bench;
+                                             the per-run cache rate inside tazuna (0.0.79 routes) is the sound signal.
 
 Credentials: ~/.subrouter-account (SUBROUTER_ACCESS_TOKEN, SUBROUTER_USER_ID; mode 600). The access token controls the
 account: it is sent only to subrouter.ai, never printed. Writes touch only keys named tazuna-vet and tazuna-route-*;
@@ -185,10 +188,13 @@ def vet(model, again=False):
     print(f"route key tazuna-route-{model}: {good or 'unchanged, no provider passed'} (in ~/.subrouter-key as {env_name(model)})")
 
 
-def watch(model, floor=70, window=15, every=60, name=None, var=None):
-    """Reads the account log once a minute for the route key's calls; a provider whose last `window` calls cached under
-    `floor`% leaves the key (never the last one), and SubRouter routes the next call to the next provider on it. The real
-    rates go into subrouter-vetted.json ("live"), a dropped provider is marked so the next vet checks it again."""
+def watch(model, floor=70, window=15, every=60, name=None, var=None, keep=3):
+    """Reads the account log once a minute for the route key's calls; a provider whose last `window` warm calls cached
+    under `floor`% leaves the key (never below `keep` providers), and SubRouter routes the next call to another one. Only
+    warm calls count: one the same provider served the previous turn of (an earlier call within 10 minutes whose prompt
+    is up to 40K tokens smaller). Counting every call dropped 9 of 10 providers in an hour (2026-10-25): six runs share
+    the key, and after each move every run's first call on the new provider is cold. The real rates go into
+    subrouter-vetted.json ("live"); a dropped provider is marked so the next vet checks it again."""
     name, var = name or f"tazuna-route-{model}", var or env_name(model)
     d = api("/api/token/?p=1&page_size=100")
     route = next(k for k in (d["items"] if isinstance(d, dict) else d) if k["name"] == name)
@@ -201,14 +207,16 @@ def watch(model, floor=70, window=15, every=60, name=None, var=None):
         for c in calls((int(time.time()) - since) // 60 + 2, model):
             if int(c["token_id"]) == route["id"] and int(c["created_at"]) >= since:
                 o = json.loads(c.get("other") or "{}")
-                per[o.get("provider_slug", "?")].append((int(c["prompt_tokens"]), o.get("cache_tokens") or 0))
+                p, t, n = o.get("provider_slug", "?"), int(c["created_at"]), int(c["prompt_tokens"])
+                warm = any(t - t2 <= 600 and n - 40_000 <= n2 <= n for t2, n2, _ in per[p])
+                per[p].append((t, n, (o.get("cache_tokens") or 0) if warm else None))
         done = json.loads(VETTED.read_text()) if VETTED.exists() else {}
         seen = done.setdefault(model, {})
         for slug, cs in per.items():
-            last = cs[-window:]
-            rate = 100 * sum(c for _, c in last) // max(1, sum(p for p, _ in last))
-            seen.setdefault(slug, {})["live"] = {"at": int(time.time()), "calls": len(cs), f"cached_last_{window}": rate}
-            if len(cs) >= window and rate < floor and slug in slugs and len(slugs) > 1:
+            last = [(n, c) for _, n, c in cs if c is not None][-window:]
+            rate = 100 * sum(c for _, c in last) // max(1, sum(n for n, _ in last))
+            seen.setdefault(slug, {})["live"] = {"at": int(time.time()), "calls": len(cs), "warm": len(last), f"cached_last_{window}": rate}
+            if len(last) >= window and rate < floor and slug in slugs and len(slugs) > keep:
                 slugs = [s for s in slugs if s != slug]
                 key(name, model, slugs, var, route.get("include_cache_hit_rate", True))
                 seen[slug].update(verdict="dropped", at=int(time.time()))
