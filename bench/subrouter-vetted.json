@@ -1,173 +1,186 @@
 {
  "deepseek-v4.1-flash-1017": {
   "a6aa": {
-   "at": 1792884761,
+   "at": 1792920941,
    "cache": null,
-   "calls": 6,
+   "calls": 2,
+   "check": "blind",
    "out_price": 0.03994117647058824,
    "price": 0.00998529411764706,
    "served_by": [
     "a6aa"
    ],
-   "usd": 0.0015,
-   "verdict": "fail",
-   "why": "no: cache 23%"
+   "usd": 0.0017,
+   "verdict": "pass",
+   "why": ""
   },
   "fate86": {
-   "at": 1792896742,
+   "at": 1792921121,
    "cache": null,
-   "calls": 3,
-   "out_price": 0.11764705882352942,
-   "price": 0.029411764705882356,
+   "calls": 2,
+   "check": "blind",
+   "out_price": 0.05882352941176471,
+   "price": 0.014705882352941178,
    "served_by": [
     "fate86"
    ],
-   "usd": 0.0004,
-   "verdict": "error",
-   "why": "no: cache test failed: [Errno 54] Connection reset by peer"
+   "usd": 0.0024,
+   "verdict": "pass",
+   "why": ""
   },
   "foxrouter": {
-   "at": 1792892333,
+   "at": 1792921385,
    "cache": null,
-   "calls": 6,
+   "calls": 2,
+   "check": "blind",
    "out_price": 0.08411764705882352,
    "price": 0.02102941176470588,
    "served_by": [
     "foxrouter"
    ],
-   "usd": 0.0011,
-   "verdict": "fail",
-   "why": "no: cache 0%"
+   "usd": 0.0034,
+   "verdict": "pass",
+   "why": ""
   },
   "getapi": {
-   "at": 1792893718,
+   "at": 1792921569,
    "cache": 65,
-   "calls": 8,
+   "calls": 1,
+   "check": "blind",
    "out_price": 0.10588235294117647,
    "price": 0.026470588235294117,
    "served_by": [
     "getapi"
    ],
-   "usd": 0.005,
+   "usd": 0.0001,
    "verdict": "fail",
-   "why": ""
+   "why": "no: long call answer 'tch to one of the supported tools above.' is far from 571"
   },
   "kriora": {
-   "at": 1792882827,
+   "at": 1792920939,
    "cache": 57,
-   "calls": 8,
+   "calls": 2,
+   "check": "blind",
    "out_price": 0.03988235294117647,
    "price": 0.009970588235294118,
    "served_by": [
     "kriora"
    ],
-   "usd": 0.0019,
-   "verdict": "fail",
+   "usd": 0.0016,
+   "verdict": "pass",
    "why": ""
   },
   "leapnode": {
-   "at": 1792898694,
+   "at": 1792921722,
    "cache": null,
-   "calls": 8,
+   "calls": 2,
+   "check": "blind",
    "out_price": 0.11764705882352942,
    "price": 0.029411764705882356,
    "served_by": [
     "leapnode"
    ],
-   "usd": 0.0159,
-   "verdict": "error",
-   "why": "no: long reasoning call failed, also streamed, after 1911 s: [Errno 54] Connection reset by peer"
+   "usd": 0.0047,
+   "verdict": "pass",
+   "why": ""
   },
   "lingai": {
-   "at": 1792892529,
+   "at": 1792921432,
    "cache": null,
-   "calls": 1,
+   "calls": 2,
+   "check": "blind",
    "out_price": 0.08823529411764706,
    "price": 0.022058823529411766,
    "served_by": [
     "lingai"
    ],
-   "usd": 0.0001,
-   "verdict": "error",
-   "why": "no: cache test failed: HTTP Error 400: Bad Request"
+   "usd": 0.0113,
+   "verdict": "pass",
+   "why": ""
   },
   "model-share": {
-   "at": 1792892765,
+   "at": 1792921518,
    "cache": null,
    "calls": 1,
+   "check": "blind",
    "out_price": 0.08823529411764706,
    "price": 0.022058823529411766,
    "served_by": [
     "model-share"
    ],
-   "usd": 0.0,
-   "verdict": "error",
-   "why": "no: cache test failed: HTTP Error 400: Bad Request"
+   "usd": 0.0007,
+   "verdict": "fail",
+   "why": "no: over 15 minutes for this group"
   },
   "o2oai": {
-   "at": 1792890050,
+   "at": 1792921146,
    "cache": null,
-   "calls": 5,
+   "calls": 2,
+   "check": "blind",
    "out_price": 0.06352941176470589,
    "price": 0.015882352941176472,
    "served_by": [
     "o2oai"
    ],
-   "usd": 0.0005,
-   "verdict": "error",
-   "why": "no: cache test failed: [Errno 54] Connection reset by peer"
+   "usd": 0.0026,
+   "verdict": "pass",
+   "why": ""
   },
   "quqiai": {
-   "at": 1792888665,
+   "at": 1792921127,
    "cache": null,
-   "calls": 4,
+   "calls": 1,
+   "check": "blind",
    "out_price": 0.05882352941176471,
    "price": 0.014705882352941178,
    "served_by": [
     "quqiai"
    ],
-   "usd": 0.0006,
-   "verdict": "error",
-   "why": "no: cache test failed: [Errno 54] Connection reset by peer"
+   "usd": 0.0001,
+   "verdict": "fail",
+   "why": "no: long call answer 'tch to one of the supported tools above.' is far from 571"
   },
   "relai": {
-   "at": 1792920705,
+   "at": 1792920942,
    "cache": null,
-   "calls": 6,
+   "calls": 3,
+   "check": "blind",
    "out_price": 0.0411764705882353,
    "price": 0.010294117647058825,
    "served_by": [
     "relai"
    ],
-   "usd": 0.0007,
-   "verdict": "fail",
-   "why": "no: cache 0%"
+   "usd": 0.0017,
+   "verdict": "pass",
+   "why": ""
   },
   "stableai": {
-   "at": 1792886714,
+   "at": 1792920944,
    "cache": null,
-   "calls": 6,
+   "calls": 2,
+   "check": "blind",
    "out_price": 0.05184,
    "price": 0.01296,
    "served_by": [
     "stableai"
    ],
-   "usd": 0.0008,
-   "verdict": "error",
-   "why": "no: cache test failed: [Errno 54] Connection reset by peer"
+   "usd": 0.0021,
+   "verdict": "pass",
+   "why": ""
   },
   "tokenx": {
-   "at": 1792891356,
+   "at": 1792921218,
    "cache": null,
-   "calls": 1,
+   "calls": 2,
+   "check": "blind",
    "out_price": 0.06411764705882353,
    "price": 0.016029411764705882,
    "served_by": [
     "tokenx"
    ],
-   "usd": 0.0,
-   "verdict": "error",
-   "why": "no: cache test failed: HTTP Error 400: Bad Request"
+   "usd": 0.0027,
+   "verdict": "pass",
+   "why": ""
   }
  }
 }
