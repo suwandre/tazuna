@@ -16,6 +16,37 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.85 (2026-10-25): DeepSeek's reasoning back in the history; judge +1.5, turns -30%, output -63%, cost ~+25%
+
+Where tazuna's turns before green went on rclone (clean 0.0.83/0.0.84 runs against OpenCode's): without its earlier
+reasoning DeepSeek re-planned on every turn, 15-34 turns a run of 8-26K output tokens followed by one small edit, and
+rewrote its own code (one file 7 times, 20 "final rewrite" announcements in a run); OpenCode keeps the reasoning, plans
+once and edits each place once (73-82 turns against 168-217).
+
+- The own loop sends `reasoning_content` back with the history by default (Chat Completions); a provider that refuses
+  the field gets the history without it for the rest of the route (the reverse fallback, for one that demands it, stays).
+  `TAZUNA_DROP_REASONING` turns it off.
+- A failed `edit` without `old` says so; no "nothing changed" note when one command writes, runs and deletes a probe test.
+
+A/B against 0.0.84 (`reason1.sh`, v348-v359), deepseek-v4.1-flash-1017 at max on the vetted route key, 2 rounds side by
+side. v353 (0.0.85, caddy-retry round 1) read the reference patch from a git worktree of this repo left in ~/bench-homes:
+excluded with its pair, the worktree removed, the sandbox now refuses any `bench/realwork` path and any `solution.patch`.
+Judge `judge.oct.reason1.jsonl` (two passes; anchors Opus v34 4.5-9, Codex Luna 7).
+
+| task | 0.0.84: judge, hidden, turns, output | 0.0.85: judge, hidden, turns, output |
+|---|---|---|
+| rclone r1 | 5.5, 2/3, 207, 454K | 8.5, 3/3, 236, 211K |
+| caddy-unix r1 | 5, 0/7, 118, 318K | 5, 0/7, 47, 93K |
+| rclone r2 | 4, 2/3, 145, 506K | 8, 3/3, 121, 178K |
+| caddy-unix r2 | 4, 0/7, 172, 314K | 5, 0/7, 39, 89K |
+| caddy-retry r2 | 8, 2/2, 75, 130K | 7.5, 2/2, 57, 57K |
+| 5 pairs | judge 5.3, turns 717, output 1.72M, input 15.6M uncached + 50.1M cached | judge 6.8, turns 500, output 0.63M, input 26.5M + 58.0M |
+
+The judge gain (+1.5, over the ±0.75 threshold) is rclone's: both 0.0.84 runs there passed 2 of 3 hidden tests and both
+0.0.85 runs all 3. Input grows with the reasoning in the history and is cached less (69% against 76%): at LingAI's
+prices (cache read assumed ~10% of input) about +25% a run, fractions of a cent; worth it for the quality. Next to try:
+keeping only the last turns' reasoning, for the same planning at less input.
+
 ## SubRouter routes through the account API: vetted provider keys, live drops, 2026-10-25 (bench only)
 
 SubRouter picks the provider per call from a key's settings (subscribed providers, price, its own stability and
