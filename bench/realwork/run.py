@@ -136,8 +136,11 @@ def proxy_env():
 _H = Path.home()
 JAIL_DENY = sorted({json.loads(g.read_text())["repo"] for g in HERE.glob("tasks*/*/git.json")}) + [
     HERE.parent, _H / "go/pkg/mod", _H / ".claude/projects", _H / ".codex/sessions", _H / ".local/share/opencode"]
+# any copy of this directory too: a git worktree of the repo in ~/bench-homes held the tasks' reference patches, and a
+# run read one (v353, 2026-10-25)
 JAIL = "(version 1)(allow default)(deny file-read* " + " ".join(
-    f'(subpath "{os.path.realpath(p)}")' for p in JAIL_DENY) + ")"
+    f'(subpath "{os.path.realpath(p)}")' for p in JAIL_DENY) + ' (regex #"/bench/realwork(/|$)") (regex #"/solution\\.patch$"))'
+
 
 
 def env_for(harness, **extra):
