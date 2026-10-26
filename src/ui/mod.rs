@@ -622,6 +622,7 @@ const VERIFY_FAIL_LINES: usize = 8;
 fn verify_lines(x: &crate::session::Verify, v: &View, th: &Theme) -> Vec<Prefixed> {
     let (glyph, color, state) = match x.ok {
         _ if x.no_tests => ("·", th.faint, "no tests found".to_string()),
+        _ if x.timed_out => ("·", th.faint, format!("timed out after {:.0}s · not verified", x.secs)),
         None => (spinner(v.clock_ms), th.accent2, "running…".to_string()),
         Some(true) => ("✓", th.ok, format!("passed · {:.1}s", x.secs)),
         Some(false) => ("✗", th.err, format!("failed · {:.1}s", x.secs)),

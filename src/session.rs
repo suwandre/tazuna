@@ -18,6 +18,8 @@ pub struct Verify {
     pub cmd: String,
     /// The runner found no tests.
     pub no_tests: bool,
+    /// The tests outran the time limit: no result.
+    pub timed_out: bool,
     pub round: u64,
     /// None while the tests run.
     pub ok: Option<bool>,
@@ -235,13 +237,14 @@ impl Session {
             }
             (Some("harness_interrupt"), _) => self.stopping = true,
             (Some("harness_verify_start"), _) => {
-                self.push(Block::Verify(Verify { cmd: s(&e["cmd"]), no_tests: false, round: e["round"].as_u64().unwrap_or(1), ok: None, secs: 0.0, output: String::new() }));
+                self.push(Block::Verify(Verify { cmd: s(&e["cmd"]), no_tests: false, timed_out: false, round: e["round"].as_u64().unwrap_or(1), ok: None, secs: 0.0, output: String::new() }));
                 self.activity = Activity::Verifying;
             }
             (Some("harness_verify_done"), _) => {
                 if let Some(v) = self.blocks.iter_mut().rev().find_map(|b| if let Block::Verify(v) = b { Some(v) } else { None }) {
                     (v.ok, v.secs, v.output) = (e["ok"].as_bool(), e["secs"].as_f64().unwrap_or(0.0), s(&e["output"]));
                     v.no_tests = e["no_tests"] == true;
+                    v.timed_out = e["timed_out"] == true;
                 }
                 self.finished_tools += 1; // pulse like a finished tool
                 self.activity = if e["final"] == true { Activity::Done } else { Activity::Waiting };

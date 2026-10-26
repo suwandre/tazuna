@@ -931,9 +931,10 @@ impl Live {
     /// Tests are back: pass ends the run; a failure goes back to claude while rounds remain.
     fn after_verify(&mut self, o: verify::Outcome) -> Vec<(f64, Value)> {
         self.verifying = false;
-        if o.no_tests {
-            // the runner found nothing to run: not verified, not failed
-            let mut out = vec![self.record(json!({"type": "harness_verify_done", "cmd": o.cmd, "ok": true, "no_tests": true, "secs": o.secs, "output": "", "final": true}))];
+        if o.no_tests || o.timed_out {
+            // the runner found nothing to run, or the tests outran the time limit: not verified, not failed
+            let mut out = vec![self.record(json!({"type": "harness_verify_done", "cmd": o.cmd, "ok": o.no_tests, "no_tests": o.no_tests,
+                "timed_out": o.timed_out, "secs": o.secs, "output": "", "final": true}))];
             out.extend(self.finish_front());
             return out;
         }

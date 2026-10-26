@@ -20,6 +20,10 @@ pub struct Outcome {
     pub ok: bool,
     /// The test runner found no tests (pytest and unittest exit 5): nothing was verified, nothing failed.
     pub no_tests: bool,
+    /// The tests ran past the time limit and were killed (0.0.89): no result, so no fix round. Before, a whole Go
+    /// package that took over 600 s under load came back as a failure and the model hunted bugs that were not there
+    /// (three prometheus runs, 2026-10-26).
+    pub timed_out: bool,
     pub code: Option<i32>,
     pub secs: f64,
     /// Trimmed to what claude needs to fix the failure.
@@ -145,9 +149,9 @@ pub fn check(cwd: &Path, tests: Option<String>, types: Option<(String, String)>)
     });
     let mut o = tests.map(|c| run(cwd, &c));
     let Some((cmd, errors, secs)) = tc.and_then(|h| h.join().ok()) else {
-        return o.unwrap_or_else(|| Outcome { cmd: String::new(), ok: true, no_tests: true, code: None, secs: 0.0, output: String::new() });
+        return o.unwrap_or_else(|| Outcome { cmd: String::new(), ok: true, no_tests: true, timed_out: false, code: None, secs: 0.0, output: String::new() });
     };
-    let base = o.take().unwrap_or(Outcome { cmd: String::new(), ok: true, no_tests: false, code: Some(0), secs: 0.0, output: String::new() });
+    let base = o.take().unwrap_or(Outcome { cmd: String::new(), ok: true, no_tests: false, timed_out: false, code: Some(0), secs: 0.0, output: String::new() });
     let cmd = if base.cmd.is_empty() { cmd } else { format!("{} + {cmd}", base.cmd) };
     if errors.is_empty() {
         return Outcome { cmd, no_tests: false, secs: base.secs.max(secs), ..base };
@@ -157,7 +161,7 @@ pub fn check(cwd: &Path, tests: Option<String>, types: Option<(String, String)>)
     if !base.ok {
         output = format!("{}\n\n{output}", base.output);
     }
-    Outcome { cmd, ok: false, no_tests: false, code: base.code.filter(|&c| c != 0).or(Some(1)), secs: base.secs.max(secs), output: trim(&output) }
+    Outcome { cmd, ok: false, no_tests: false, timed_out: false, code: base.code.filter(|&c| c != 0).or(Some(1)), secs: base.secs.max(secs), output: trim(&output) }
 }
 
 fn has_python_tests(cwd: &Path) -> bool {
@@ -172,13 +176,22 @@ pub(crate) fn safe_path(p: &str) -> bool {
 
 /// Runs the command (blocking; call from a thread) with a timeout.
 pub fn run(cwd: &Path, cmd: &str) -> Outcome {
-    let (code, output, secs) = run_raw(cwd, cmd);
+    run_for(cwd, cmd, TIMEOUT)
+}
+
+fn run_for(cwd: &Path, cmd: &str, limit: Duration) -> Outcome {
+    let (code, output, secs) = run_limited(cwd, cmd, limit);
     let no_tests = code == Some(5) && (cmd.contains("pytest") || cmd.contains("unittest"));
-    Outcome { cmd: cmd.into(), ok: code == Some(0), no_tests, code, secs, output: trim(&output) }
+    let timed_out = code.is_none() && secs >= limit.as_secs_f64();
+    Outcome { cmd: cmd.into(), ok: code == Some(0), no_tests, timed_out, code, secs, output: trim(&output) }
 }
 
 /// Exit code (None: did not start or timed out), full output, seconds.
 pub fn run_raw(cwd: &Path, cmd: &str) -> (Option<i32>, String, f64) {
+    run_limited(cwd, cmd, TIMEOUT)
+}
+
+fn run_limited(cwd: &Path, cmd: &str, limit: Duration) -> (Option<i32>, String, f64) {
     let t0 = Instant::now();
     let spawned = Command::new("sh").args(["-c", &format!("{cmd} 2>&1")]).current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).spawn();
     let mut child = match spawned {
@@ -195,7 +208,7 @@ pub fn run_raw(cwd: &Path, cmd: &str) -> (Option<i32>, String, f64) {
         if let Ok(Some(st)) = child.try_wait() {
             break Some(st);
         }
-        if t0.elapsed() > TIMEOUT {
+        if t0.elapsed() > limit {
             let _ = child.kill();
             let _ = child.wait();
             break None;
@@ -204,7 +217,7 @@ pub fn run_raw(cwd: &Path, cmd: &str) -> (Option<i32>, String, f64) {
     };
     let mut output = reader.join().unwrap_or_default();
     if status.is_none() {
-        output.push_str(&format!("\n[tazuna: killed after {}s]", TIMEOUT.as_secs()));
+        output.push_str(&format!("\n[tazuna: killed after {}s]", limit.as_secs()));
     }
     (status.and_then(|s| s.code()), output, t0.elapsed().as_secs_f64())
 }
@@ -317,5 +330,12 @@ mod tests {
         assert_eq!(o.code, Some(1));
         assert_eq!(o.output, "--- FAIL: TestB\n    b_test.go:9: want 1\nFAIL");
         assert!(run(Path::new("."), "true").ok);
+    }
+
+    #[test]
+    fn a_run_past_the_limit_is_no_result_not_a_failure() {
+        let o = run_for(Path::new("."), "sleep 5", Duration::from_millis(300));
+        assert!(o.timed_out && !o.ok && o.code.is_none(), "killed at the limit");
+        assert!(!run_for(Path::new("."), "exit 1", Duration::from_secs(5)).timed_out, "a failure is a failure");
     }
 }

@@ -7,7 +7,10 @@ tool's description. This replays a real run up to just before its first edit and
 per arm: (a) 0.0.87's tools, (b) 0.0.88's tools, (c) 0.0.88's plus a rule against changing existing signatures. Same
 history in every arm (the transcript has no reasoning, so none goes back). The plans are saved for reading.
 
-    sigprobe.py RUN_LABEL CUT_TURN N  -> sigprobe-<label>.jsonl
+    sigprobe.py RUN_LABEL CUT_TURN N [ARMS]  -> sigprobe-<label>.jsonl
+
+(d) 0.0.88 with a rule scoped to exported APIs (the first rule, (c), did not stop the internal change and halved the
+exported one).
 """
 import concurrent.futures as cf, json, os, subprocess, sys, urllib.request
 from pathlib import Path
@@ -26,6 +29,8 @@ RULE = ("\n- Keep the signatures of existing functions and methods that other co
 BASH87 = "Run shell command. Working directory persists between calls."
 BASH88 = ("Run shell command. Working directory persists between calls. It stops after 120 s unless you give a timeout in "
           "seconds (up to 1800): give one for long builds and test runs rather than running them in the background.")
+RULE2 = ("\n- Do not change exported APIs (public functions, methods, interfaces and types other packages use) unless the "
+         "task asks for it; changing unexported code is fine when you update every caller.")
 ASK = "Before your next edit, write your plan for the change in a few lines: which functions you will add or modify and how."
 
 
@@ -91,8 +96,10 @@ def main():
     key = os.environ["SUBROUTER_ROUTE_DEEPSEEK_V4_1_FLASH_1017_KEY"]
     cwd, prompt, hist = history(label, cut)
     sys0 = system(cwd)
-    arms = {"a-0.0.87": (sys0, tools(BASH87, False)), "b-0.0.88": (sys0, tools(BASH88, True)), "c-0.0.88+rule": (sys0 + RULE, tools(BASH88, True))}
-    jobs = [(arm, k) for arm in arms for k in range(n)]
+    arms = {"a-0.0.87": (sys0, tools(BASH87, False)), "b-0.0.88": (sys0, tools(BASH88, True)), "c-0.0.88+rule": (sys0 + RULE, tools(BASH88, True)),
+            "d-0.0.88+api-rule": (sys0 + RULE2, tools(BASH88, True))}
+    only = sys.argv[4].split(",") if len(sys.argv) > 4 else list(arms)  # e.g. d-0.0.88+api-rule
+    jobs = [(arm, k) for arm in only for k in range(n)]
     out = Path(__file__).with_name(f"sigprobe-{label}.jsonl")
 
     def one(job):
