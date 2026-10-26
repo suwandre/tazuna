@@ -88,6 +88,7 @@
 {"task": "lazygit-mnemonic-prefix", "harness": "tazuna-handhigh-v41@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "lazygit-mnemonic-prefix", "harness": "tazuna-own-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "lazygit-mnemonic-prefix", "harness": "tazuna-ownplan-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "lazygit-mnemonic-prefix", "harness": "tazuna-ownsubx-v389@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "prometheus-duration-parens", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "prometheus-duration-parens", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "prometheus-duration-parens", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}
@@ -144,5 +145,6 @@
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownbatch-v39@deepseek-v4.1-flash:max", "channels": ["web", "web-blocked"]}
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownsubx-v378@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownsubx-v380@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownsubx-v390@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}

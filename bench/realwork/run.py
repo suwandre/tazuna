@@ -45,7 +45,11 @@ def cur_go_env():
     # rclone versions newer than the tasks' base (with the fixes, fetched by some earlier agent) and runs read the answer
     # there (v237's diff matched the fix byte for byte; 2026-10-24)
     if getattr(_TL, "gomod", None):
-        e["GOMODCACHE"], e["GOPROXY"], e["GOFLAGS"] = str(_TL.gomod), "off", "-mod=mod"
+        e["GOMODCACHE"], e["GOPROXY"] = str(_TL.gomod), "off"
+        # not in workspace mode, which refuses -mod=mod: with it prometheus's go.work stopped every go command until the
+        # agent deleted it (2026-10-24 to 2026-10-26)
+        if not getattr(_TL, "gowork", False):
+            e["GOFLAGS"] = "-mod=mod"
     return e
 
 
@@ -875,6 +879,8 @@ def run_job(task, h, i):
 def _run_job(task, h, i):
     wait_gate()
     _TL.gomod = BENCH_HOMES / "gomod" / task.name
+    g = json.loads((task / "git.json").read_text())
+    _TL.gowork = subprocess.run(["git", "-C", g["repo"], "cat-file", "-e", f"{g['base']}:go.work"]).returncode == 0
     for attempt in range(8):
         with tempfile.TemporaryDirectory(prefix=f"rw-{task.name}-{h}-", ignore_cleanup_errors=True) as d:
             w = Path(d).resolve()
