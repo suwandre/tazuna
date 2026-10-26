@@ -272,6 +272,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-26: 0.0.88 cleared by a replay of the design turn (both versions plan the gc signature change 7-9 times in
+  10; a rule against it does not stop it, it only halves the riskier exported-interface change). 0.0.89 kept: a test
+  check past its limit ends unverified instead of a false failure (both runs 3/3, no fix loop). Next: the API rule as
+  its own A/B on all seven tasks.
+
 - 2026-10-26: bash timeout up to 1800 s (0.0.88) kept: polling gone, prometheus -32% turns and -37% cost, judge within
   noise pooled (6.0 vs 6.35 over ten runs) but -2 on prometheus, where 3 of 4 runs changed a signature the tests call.
   Next: a measured prompt line against changing existing signatures; tazuna's verify treats its own timeout as no result.

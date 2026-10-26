@@ -20,7 +20,7 @@ MODS = Path(os.environ.get("GOMODCACHE", Path.home() / "go/pkg/mod"))
 
 # refusals by run.py's proxy (web) and sandbox (local files): an attempt that got one of these is not a leak
 BLOCKED = re.compile(r"Blocked by the benchmark|CONNECT tunnel failed, response 403|Tunnel connection failed: 403|non 2xx status code \(403"
-                     r"|\[exit 56\]|exit:56\b|Operation not permitted|command not found")  # exit 56: a silent curl refused by the proxy; the last: the fetch never ran (no `timeout`)
+                     r"|\[exit 56\]|exit:56\b|Operation not permitted|command not found|content:,is_error")  # exit 56: a silent curl refused by the proxy; `timeout` missing: the fetch never ran; an empty result: nothing came back (a silent curl piped into head)
 
 
 # labels invalid as a whole: OpenCode v287/v288 ran with the bench directory as their project (no PWD), where the tasks'

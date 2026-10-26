@@ -16,6 +16,28 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.89 (2026-10-26): tazuna's own test check reports a run past its 600 s limit as no result, not a failure
+
+Under four prometheus runs at once the whole tsdb package needs over 600 s; the kill went back to the model as a test
+failure, and round9's runs spent their remaining hours fixing bugs that were not there. Now the run ends unverified
+(`claimed` in the run log), with no fix round; the UI shows "timed out after Ns · not verified".
+
+`round10.sh` (v396-v399): prometheus, 0.0.88 against 0.0.89 twice each, four at once; judged in one pool with
+round8/round9's prometheus runs (`judge.oct.round10.jsonl`). Leak scan clean (v396's GitHub tries were refused; the scan
+now reads an empty fetch result as refused). $0.23 on the account.
+
+| run | check | turns | time | hidden | judge | est. cost |
+|---|---|---|---|---|---|---|
+| v397, 0.0.89 | killed at 653 s: ends unverified | 112 | 54 min | 3/3 | 6.5 | $0.045 |
+| v399, 0.0.89 | killed at 621 s: ends unverified | 83 | 55 min | 3/3 | 7 | $0.051 |
+| v396, 0.0.88 | killed at 606 s, "failed": a fix round, then passed in 328 s | 92 | 77 min | 3/3 | 6.5 | $0.065 |
+| v398, 0.0.88 | passed in 527 s | 75 | 25 min | 0/3 (gc signature) | 3 | $0.030 |
+
+Both 0.0.89 runs met the limit and stopped there with all hidden tests passing: nothing hidden by the early end. The
+0.0.88 run in the same spot spent a fix round (8 turns, ~20 min) on code that already passed; in round9 that loop ran
+to the 3 h limit. Same pool, all prometheus runs since the go.work fix: 0.0.87 6.1 (4), 0.0.88 4.5 (6), 0.0.89 6.75 (2);
+the low scores are the gc-signature runs (hidden tests do not compile), not a version.
+
 ## 0.0.88 (2026-10-26): bash takes a timeout up to 1800 s; polling gone, prometheus -32% turns, judge mixed (open)
 
 At a fixed 120 s the model ran prometheus's slow tests in the background and polled them (`sleep 115; tail`), one turn
