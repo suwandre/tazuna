@@ -110,7 +110,9 @@ fn route_trouble(calls: &[(f64, u64, u64)]) -> Option<String> {
     }
     let last = &calls[calls.len() - 10..];
     let (i, c) = last.iter().fold((0, 0), |(i, c), x| (i + x.1, c + x.2));
-    if (c as f64) < 0.7 * i as f64 {
+    // the cache is judged after a route's first 10 calls (0.0.92): they start cold and grow fast, so LingAI itself
+    // cached 45-98% there and 84-100% over the next 10 (round12); every a6aa run left at call 10
+    if calls.len() >= 20 && (c as f64) < 0.7 * i as f64 {
         return Some(format!("{:.0}% cached over the last 10 calls", 100.0 * c as f64 / i.max(1) as f64));
     }
     let median = |s: &[(f64, u64, u64)]| {
@@ -1109,7 +1111,9 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
                 }
             }
         }
-        if status == 413 && !stream && wait > 0 {
+        // 524: the gateway's own time limit on a reply that is not streamed (SubRouter's Cloudflare, ~100 s; a6aa,
+        // 2026-10-26), which a started stream does not hit
+        if matches!(status, 413 | 524) && !stream && wait > 0 {
             stream = true;
             continue;
         }
@@ -1343,7 +1347,8 @@ mod tests {
         let ok = |n: usize, secs: f64| vec![(secs, 1000u64, 900u64); n];
         assert_eq!(route_trouble(&ok(9, 100.0)), None, "fewer than 10 calls: no verdict");
         assert_eq!(route_trouble(&ok(10, 10.0)), None);
-        assert!(route_trouble(&vec![(5.0, 1000, 500); 10]).unwrap().contains("50% cached"));
+        assert_eq!(route_trouble(&vec![(5.0, 1000, 500); 10]), None, "the first 10 calls start cold: no cache verdict yet");
+        assert!(route_trouble(&vec![(5.0, 1000, 500); 20]).unwrap().contains("50% cached"));
         assert!(route_trouble(&ok(10, 70.0)).unwrap().contains("70 s"), "slow from the start");
         let mut slowed = ok(10, 10.0);
         slowed.extend(ok(10, 45.0));
