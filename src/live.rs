@@ -24,6 +24,11 @@ const MID_PROMPT: &str = "You are a coding agent working in {cwd}. Today is {dat
 - Never run destructive commands (rm -rf outside the working directory, git reset --hard, force push). Do not commit.
 - Finish with a short summary of what changed and how you verified it.";
 
+/// The own loop (0.0.90): code outside the repo implements and calls exported APIs; DeepSeek added a method to
+/// prometheus's exported ExemplarStorage interface in 8 of 10 replayed plans, 4 of 9 with this line (sigprobe.py,
+/// 2026-10-26). Unexported code stays free to change: the compiler checks every caller.
+const API_RULE: &str = "\n- Do not change exported APIs (public functions, methods, interfaces and types other packages use) unless the task asks for it; changing unexported code is fine when you update every caller.";
+
 /// repo-lean only: with Claude Code's own tools the short prompt read ~25% less code and ran the type check less than
 /// Claude Code's own prompt did (company tickets, 2026-10-07), and the judge marked down guessed names.
 const CHECK_RULES: &str = "\n- Before changing code, read the code you change, its callers, and the definition of every name you rely on (database columns, fields, functions, APIs). Never assume one exists.\n- Before finishing, run the repo's type check and the relevant tests.";
@@ -1070,6 +1075,7 @@ impl Live {
             // the own loop has no Grep/Glob tools: its runs searched with grep in bash anyway, and cut file reads at the
             // bash cap (2026-10-24)
             let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", "Search with grep -rn in bash; read whole files with read.");
+            prompt.push_str(API_RULE);
             if self.project_instructions {
                 let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                 prompt.push_str(&text);
