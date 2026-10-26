@@ -16,6 +16,43 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.88 (2026-10-26): bash takes a timeout up to 1800 s; polling gone, prometheus -32% turns, judge mixed (open)
+
+At a fixed 120 s the model ran prometheus's slow tests in the background and polled them (`sleep 115; tail`), one turn
+per poll with the whole history sent again: 33-47 polls and 4-5 timeouts a run in round7. `bash` now takes `timeout`
+(seconds, default 120, up to 1800), its description says to give one for long builds and test runs, and a timeout says
+to give a larger one.
+
+`round8.sh` (v381-v390): prometheus 0.0.87 (tz-v85's binary, same code) against 0.0.88 twice each, and 0.0.88 once on
+the other six tasks, judged in one pool with round7's 0.0.85 runs (`judge.oct.round8.jsonl`). `round9.sh` (v392-v395):
+prometheus twice each again, after the bench fix below (`judge.oct.round9.jsonl`, all eight prometheus runs in one
+pool). deepseek-v4.1-flash-1017 at max on the vetted route key; leak scans clean. Cost at the fixed round price.
+
+| | 0.0.87 | 0.0.88 |
+|---|---|---|
+| prometheus, 4 runs each | judge 6.0 (6, 6.5, 3.5, 8), hidden 3/4 runs, 937 turns, $0.608, polls 10-25 a run | judge 4.0 (3, 2.5, 3.5, 7), hidden 1/4, 634 turns (-32%), $0.382 (-37%), no polls |
+| six other tasks, 1 run each | (0.0.85, round7) judge 6.58, hidden 11/19 | judge 7.33 (+0.75), hidden 19/19 |
+
+- Every prometheus failure is the same mistake: a changed `stripeSeries.gc` signature that the hidden tests (and the
+  base tests) call. 0.0.88 made it 3 times in 4, 0.0.87 once, Opus v34 once in 2: p = 0.24 for 3/4 against 1/4, and
+  nothing in the change touches that design choice (it is made before any long test run). The six other tasks gained
+  +0.75 on runs from different days. Pooled over ten runs a side: 6.0 against 6.35, within noise; turns and cost lower.
+  Kept, with prometheus as the open question: the next step is a measured prompt line against changing the signatures
+  of existing functions the code and tests call (5 of 12 prometheus runs, DeepSeek and Opus, failed on it).
+- Three round9 runs (v392-v394) hit the 3 h limit while tazuna's own check reran the whole tsdb package: under four
+  runs at once it took over 600 s, and tazuna's verify counts its own 600 s kill as a failure, so the model hunted bugs
+  that were not there (v393 and v394 twice). Scored by hand from their partial diffs; v393 had stashed its changes to
+  test the base when stopped, its diff rebuilt by replaying its 38 edits (matches its last `git diff --stat`). Next for
+  tazuna: a verify run killed at its limit reports "no result", not a failure.
+- Bench fix: since the 2026-10-24 module-cache isolation `GOFLAGS=-mod=mod` made go refuse to run in the four prometheus
+  tasks (workspace mode) until the agent deleted go.work; runs that kept it scored 0 hidden tests (v383, corrected to
+  3/3), runs that deleted it were marked down for "unrelated go.work changes". Workspace repos now run without it.
+- LingAI's cache: about 15% of large calls missed and made ~71% of round9's cost; the same history came back counted
+  as ~135K or ~180K tokens, two upstream backends with their own caches. Not ours; a longer per-provider cache check is
+  the next routing step.
+- UnoRouter's a7-supplier group for 1017 (v391, caddy-retry): ~8x cheaper a turn than SubRouter but ~5x slower; its
+  price rose 1.6x mid-run and uno_run.sh stopped it (81 turns, $0.0041). A fallback, not a default.
+
 ## 0.0.87 (2026-10-26): 0.0.85's reasoning back again (all of it); 0.0.86's window measured worse; 0.0.85 -55% cost on 7 tasks
 
 0.0.86 sent back only the last 8-24 turns' reasoning, to cut the input that 0.0.85's full reasoning seemed to add. One

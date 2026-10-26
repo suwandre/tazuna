@@ -272,6 +272,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-26: bash timeout up to 1800 s (0.0.88) kept: polling gone, prometheus -32% turns and -37% cost, judge within
+  noise pooled (6.0 vs 6.35 over ten runs) but -2 on prometheus, where 3 of 4 runs changed a signature the tests call.
+  Next: a measured prompt line against changing existing signatures; tazuna's verify treats its own timeout as no result.
+
 - 2026-10-26: all of DeepSeek's reasoning goes back (0.0.85, again as 0.0.87): on seven tasks same judge as without it
   outside caddy-unix's coin flip, -31% turns, -55% cost; the window (0.0.86) was worse on both. Next: the background
   test poll loop (one turn per `sleep; tail`).

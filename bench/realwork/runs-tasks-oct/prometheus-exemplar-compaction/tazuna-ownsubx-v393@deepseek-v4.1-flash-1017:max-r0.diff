@@ -1,0 +1,693 @@
+diff --git a/tsdb/db_test.go b/tsdb/db_test.go
+index 07d7866..f360e63 100644
+--- a/tsdb/db_test.go
++++ b/tsdb/db_test.go
+@@ -50,6 +50,7 @@ import (
+ 	"go.uber.org/goleak"
+ 
+ 	"github.com/prometheus/prometheus/config"
++	"github.com/prometheus/prometheus/model/exemplar"
+ 	"github.com/prometheus/prometheus/model/histogram"
+ 	"github.com/prometheus/prometheus/model/labels"
+ 	"github.com/prometheus/prometheus/model/metadata"
+@@ -12206,6 +12207,428 @@ func TestCompactSelectedSeries_EvictedSeriesRecordKeptInCheckpoint(t *testing.T)
+ 			"holds sample records referencing this ref")
+ }
+ 
++// queryTestExemplars returns all exemplars matching the provided matchers.
++func queryTestExemplars(t *testing.T, db *DB, matchers ...*labels.Matcher) []exemplar.QueryResult {
++	t.Helper()
++	q, err := db.ExemplarQuerier(context.Background())
++	require.NoError(t, err)
++	res, err := q.Select(math.MinInt64, math.MaxInt64, matchers)
++	require.NoError(t, err)
++	return res
++}
++
++// forceTestCheckpoint drives truncateWAL until a checkpoint is actually produced.
++func forceTestCheckpoint(t *testing.T, db *DB, mint int64) {
++	t.Helper()
++	for range 20 {
++		db.head.lastWALTruncationTime.Store(math.MinInt64) // Force re-truncation each iteration.
++		require.NoError(t, db.head.truncateWAL(mint))
++		if _, _, err := wlog.LastCheckpoint(db.head.wal.Dir()); err == nil {
++			return
++		}
++	}
++	t.Fatalf("no checkpoint produced for mint=%d", mint)
++}
++
++// appendTestSeriesWithExemplar appends one sample and one exemplar using Appender.
++func appendTestSeriesWithExemplar(t *testing.T, db *DB, lset labels.Labels, sampleTs, exemplarTs int64) storage.SeriesRef {
++	t.Helper()
++	app := db.Appender(context.Background())
++	ref, err := app.Append(0, lset, sampleTs, 1.0)
++	require.NoError(t, err)
++	_, err = app.AppendExemplar(ref, lset, exemplar.Exemplar{Value: 1, Ts: exemplarTs})
++	require.NoError(t, err)
++	require.NoError(t, app.Commit())
++	return ref
++}
++
++// appendTestSeriesWithExemplarV2 appends one sample and one exemplar using AppenderV2.
++func appendTestSeriesWithExemplarV2(t *testing.T, db *DB, lset labels.Labels, sampleTs, exemplarTs int64) storage.SeriesRef {
++	t.Helper()
++	app, ok := db.AppenderV2(context.Background()).(storage.ExemplarAppenderV2)
++	require.True(t, ok)
++	ref, err := app.Append(0, lset, 0, sampleTs, 1, nil, nil, storage.AOptions{})
++	require.NoError(t, err)
++	_, err = app.AppendExemplars(ref, lset, []exemplar.Exemplar{{Value: 1, Ts: exemplarTs}})
++	require.NoError(t, err)
++	require.NoError(t, app.Commit())
++	return ref
++}
++
++// appendTestStaleSeriesWithExemplar appends a sample, a stale marker and one exemplar.
++func appendTestStaleSeriesWithExemplar(t *testing.T, db *DB, lset labels.Labels, sampleTs, exemplarTs int64) storage.SeriesRef {
++	t.Helper()
++	app := db.Appender(context.Background())
++	ref, err := app.Append(0, lset, sampleTs, 1.0)
++	require.NoError(t, err)
++	ref, err = app.Append(ref, lset, sampleTs+1, math.Float64frombits(value.StaleNaN))
++	require.NoError(t, err)
++	_, err = app.AppendExemplar(ref, lset, exemplar.Exemplar{Value: 1, Ts: exemplarTs})
++	require.NoError(t, err)
++	require.NoError(t, app.Commit())
++	return ref
++}
++
++// TestHeadCompactionKeepsSeriesForExemplarWALReplay verifies that a compaction that persists a
++// series does not drop its identity while it still has an exemplar that WAL replay would
++// restore. Otherwise a subsequent WAL checkpoint drops the series record while the exemplar
++// record remains in the replayed range, and the exemplar is lost on restart with an unknown
++// series reference.
++//
++// The retention must itself survive a restart: after the exemplar comes back from WAL replay
++// (or from the memory snapshot) a further compaction must keep the series again.
++func TestHeadCompactionKeepsSeriesForExemplarWALReplay(t *testing.T) {
++	const (
++		sampleTs   = 100
++		exemplarTs = 2500
++	)
++	for _, tc := range []struct {
++		name       string
++		appendLset func(t *testing.T, db *DB, lset labels.Labels) storage.SeriesRef
++		// persistAndEvict performs the compaction that must release the chunks.
++		persistAndEvict func(db *DB, selRef storage.SeriesRef) error
++		// checkpointMint is the WAL truncation mint used after the compaction. It is above the
++		// WAL expiry recorded for an evicted series, so without retention the checkpoint would
++		// drop the series record, but at or below the exemplar timestamp, so the exemplar
++		// record is replayed.
++		checkpointMint int64
++		memorySnap     bool
++	}{
++		{
++			name: "head compaction",
++			appendLset: func(t *testing.T, db *DB, lset labels.Labels) storage.SeriesRef {
++				return appendTestSeriesWithExemplar(t, db, lset, sampleTs, exemplarTs)
++			},
++			persistAndEvict: func(db *DB, _ storage.SeriesRef) error {
++				return db.Compact(context.Background())
++			},
++			checkpointMint: 1000,
++		},
++		{
++			name: "head compaction, memory snapshot",
++			appendLset: func(t *testing.T, db *DB, lset labels.Labels) storage.SeriesRef {
++				return appendTestSeriesWithExemplar(t, db, lset, sampleTs, exemplarTs)
++			},
++			persistAndEvict: func(db *DB, _ storage.SeriesRef) error {
++				return db.Compact(context.Background())
++			},
++			checkpointMint: 1000, memorySnap: true,
++		},
++		{
++			name: "head compaction, AppenderV2",
++			appendLset: func(t *testing.T, db *DB, lset labels.Labels) storage.SeriesRef {
++				return appendTestSeriesWithExemplarV2(t, db, lset, sampleTs, exemplarTs)
++			},
++			persistAndEvict: func(db *DB, _ storage.SeriesRef) error {
++				return db.Compact(context.Background())
++			},
++			checkpointMint: 1000,
++		},
++		{
++			name: "selected series",
++			appendLset: func(t *testing.T, db *DB, lset labels.Labels) storage.SeriesRef {
++				return appendTestSeriesWithExemplar(t, db, lset, sampleTs, exemplarTs)
++			},
++			persistAndEvict: func(db *DB, selRef storage.SeriesRef) error {
++				return db.CompactSelectedSeries([]storage.SeriesRef{selRef})
++			},
++			checkpointMint: 2000,
++		},
++		{
++			name: "stale head",
++			appendLset: func(t *testing.T, db *DB, lset labels.Labels) storage.SeriesRef {
++				return appendTestStaleSeriesWithExemplar(t, db, lset, sampleTs, exemplarTs)
++			},
++			persistAndEvict: func(db *DB, _ storage.SeriesRef) error {
++				return db.CompactStaleHead()
++			},
++			checkpointMint: 2000,
++		},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			testHeadCompactionKeepsSeriesForExemplar(t, tc.appendLset, tc.persistAndEvict, tc.checkpointMint, tc.memorySnap, exemplarTs)
++		})
++	}
++}
++
++func testHeadCompactionKeepsSeriesForExemplar(
++	t *testing.T,
++	appendLset func(*testing.T, *DB, labels.Labels) storage.SeriesRef,
++	persistAndEvict func(*DB, storage.SeriesRef) error,
++	checkpointMint int64,
++	memorySnap bool,
++	exemplarTs int64,
++) {
++	const chunkRange = 1000
++	opts := DefaultOptions()
++	opts.MinBlockDuration = chunkRange
++	opts.MaxBlockDuration = chunkRange
++	opts.EnableExemplarStorage = true
++	opts.MaxExemplars = config.DefaultExemplarsConfig.MaxExemplars
++	opts.EnableMemorySnapshotOnShutdown = memorySnap
++	db := newTestDB(t, withOpts(opts))
++	db.DisableCompactions()
++
++	sel := labels.FromStrings("__name__", "exemplar_series")
++	selRef := appendLset(t, db, sel)
++
++	// The filler makes the head compactable by db.Compact. Its chunks start at 800, so the WAL
++	// expiry recorded for an evicted series stays below the checkpoint mint.
++	filler := labels.FromStrings("__name__", "filler")
++	app := db.Appender(context.Background())
++	fillerRef, err := app.Append(0, filler, 800, 1.0)
++	require.NoError(t, err)
++	_, err = app.Append(fillerRef, filler, 1700, 2.0)
++	require.NoError(t, err)
++	require.NoError(t, app.Commit())
++
++	require.NoError(t, persistAndEvict(db, selRef))
++
++	// The persisted series keeps its identity but must not keep its samples in memory.
++	series := db.head.series.getByID(chunks.HeadSeriesRef(selRef))
++	require.NotNil(t, series, "a series with a replayable exemplar must keep its identity through head GC")
++	series.Lock()
++	headChunkCount := series.headChunkCount.Load()
++	mmappedChunkCount := len(series.mmappedChunks)
++	seriesApp := series.app
++	series.Unlock()
++	require.Zero(t, headChunkCount)
++	require.Zero(t, mmappedChunkCount)
++	require.Nil(t, seriesApp)
++
++	// Truncating the WAL forces the checkpoint that, without the retention, would drop the
++	// series record because its WAL expiry is below the truncation mint.
++	forceTestCheckpoint(t, db, checkpointMint)
++
++	// The restart brings the exemplar back from WAL replay or from the memory snapshot.
++	reopen := func() {
++		require.NoError(t, db.Close())
++		db, err = Open(db.Dir(), nil, nil, opts, nil)
++		require.NoError(t, err)
++		t.Cleanup(func() { require.NoError(t, db.Close()) })
++	}
++	reopen()
++
++	res := queryTestExemplars(t, db, labels.MustNewMatcher(labels.MatchEqual, "__name__", "exemplar_series"))
++	require.Len(t, res, 1, "the exemplar must survive the first restart")
++	require.Len(t, res[0].Exemplars, 1)
++	require.Equal(t, exemplarTs, res[0].Exemplars[0].Ts)
++
++	// The protection must survive that restart too. WAL replay may have brought back samples
++	// whose records are still within the replay range; append one more so there is certainly
++	// a chunk to release, then compact again. The chunks must be released while the identity
++	// and the exemplar are kept.
++	nextTs := max(db.head.MaxTime()+1, checkpointMint)
++	app = db.Appender(context.Background())
++	_, err = app.Append(selRef, sel, nextTs, 2.0)
++	require.NoError(t, err)
++	require.NoError(t, app.Commit())
++
++	require.NoError(t, db.CompactSelectedSeries([]storage.SeriesRef{selRef}))
++	series = db.head.series.getByID(chunks.HeadSeriesRef(selRef))
++	require.NotNil(t, series, "a replayed exemplar must keep the series identity through another compaction")
++	series.Lock()
++	headChunkCount = series.headChunkCount.Load()
++	mmappedChunkCount = len(series.mmappedChunks)
++	seriesApp = series.app
++	series.Unlock()
++	require.Zero(t, headChunkCount, "chunks persisted by the second compaction must be released")
++	require.Zero(t, mmappedChunkCount, "chunks persisted by the second compaction must be released")
++	require.Nil(t, seriesApp)
++
++	forceTestCheckpoint(t, db, checkpointMint)
++	reopen()
++
++	res = queryTestExemplars(t, db, labels.MustNewMatcher(labels.MatchEqual, "__name__", "exemplar_series"))
++	require.Len(t, res, 1, "the exemplar must survive a second restart")
++	require.Len(t, res[0].Exemplars, 1)
++	require.Equal(t, exemplarTs, res[0].Exemplars[0].Ts)
++}
++
++// TestHeadGCKeepsSeriesForExemplarAtCutoff verifies that the retention compares exemplar
++// timestamps -- including zero and negative ones -- against the replay cutoff with a signed
++// comparison, and that an exemplar below the cutoff does not keep a series alive.
++func TestHeadGCKeepsSeriesForExemplarAtCutoff(t *testing.T) {
++	for _, tc := range []struct {
++		name       string
++		minValid   int64
++		exemplarTs int64
++		retained   bool
++	}{
++		{name: "exemplar above cutoff", minValid: 0, exemplarTs: 1, retained: true},
++		{name: "zero exemplar at zero cutoff", minValid: 0, exemplarTs: 0, retained: true},
++		{name: "zero exemplar below cutoff", minValid: 1, exemplarTs: 0, retained: false},
++		{name: "negative exemplar at negative cutoff", minValid: -10, exemplarTs: -10, retained: true},
++		{name: "negative exemplar below negative cutoff", minValid: -10, exemplarTs: -11, retained: false},
++		{name: "negative exemplar at zero cutoff", minValid: 0, exemplarTs: -1, retained: false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			opts := DefaultOptions()
++			opts.EnableExemplarStorage = true
++			opts.MaxExemplars = config.DefaultExemplarsConfig.MaxExemplars
++			db := newTestDB(t, withOpts(opts))
++			db.DisableCompactions()
++
++			lset := labels.FromStrings("__name__", "exemplar_series")
++			app := db.Appender(context.Background())
++			ref, err := app.Append(0, lset, tc.exemplarTs, 1.0)
++			require.NoError(t, err)
++			_, err = app.AppendExemplar(ref, lset, exemplar.Exemplar{Value: 1, Ts: tc.exemplarTs})
++			require.NoError(t, err)
++			require.NoError(t, app.Commit())
++
++			// The series' chunks are considered persisted, so gcSeries decides on the
++			// exemplar retention alone.
++			db.head.SetMinValidTime(tc.minValid)
++			db.head.gcSeries([]storage.SeriesRef{ref}, math.MaxInt64, func(*memSeries) bool { return true })
++
++			if tc.retained {
++				require.NotNil(t, db.head.series.getByID(chunks.HeadSeriesRef(ref)),
++					"an exemplar at or after the replay cutoff must keep the series identity")
++			} else {
++				require.Nil(t, db.head.series.getByID(chunks.HeadSeriesRef(ref)),
++					"an exemplar before the replay cutoff must not keep the series")
++			}
++		})
++	}
++}
++
++// TestCompactSelectedSeries_KeepsSeriesWithExemplarAndReleasesChunks verifies that
++// CompactSelectedSeries persists a series with a replayable exemplar, releases its chunks
++// while keeping its identity, and neither writes another block nor counts chunks again when
++// the now-empty series is compacted a second time.
++func TestCompactSelectedSeries_KeepsSeriesWithExemplarAndReleasesChunks(t *testing.T) {
++	const chunkRange = 1000
++	opts := DefaultOptions()
++	opts.MinBlockDuration = chunkRange
++	opts.MaxBlockDuration = chunkRange
++	opts.EnableExemplarStorage = true
++	opts.MaxExemplars = config.DefaultExemplarsConfig.MaxExemplars
++	db := newTestDB(t, withOpts(opts))
++	db.DisableCompactions()
++
++	sel := labels.FromStrings("__name__", "exemplar_series")
++	app := db.Appender(context.Background())
++	var ref storage.SeriesRef
++	var err error
++	for _, ts := range []int64{100, 200, 300} {
++		ref, err = app.Append(ref, sel, ts, float64(ts))
++		require.NoError(t, err)
++	}
++	_, err = app.AppendExemplar(ref, sel, exemplar.Exemplar{Value: 1, Ts: 300})
++	require.NoError(t, err)
++	require.NoError(t, app.Commit())
++
++	require.NoError(t, db.CompactSelectedSeries([]storage.SeriesRef{ref}))
++	require.Len(t, db.Blocks(), 1)
++
++	series := db.head.series.getByID(chunks.HeadSeriesRef(ref))
++	require.NotNil(t, series, "the series identity must be kept for the WAL checkpoint")
++	series.Lock()
++	headChunkCount := series.headChunkCount.Load()
++	mmappedChunkCount := len(series.mmappedChunks)
++	seriesApp := series.app
++	series.Unlock()
++	require.Zero(t, headChunkCount)
++	require.Zero(t, mmappedChunkCount)
++	require.Nil(t, seriesApp)
++
++	chunksRemoved := prom_testutil.ToFloat64(db.head.metrics.chunksRemoved)
++	require.Greater(t, chunksRemoved, 0.0, "released chunks must be counted")
++	require.Zero(t, prom_testutil.ToFloat64(db.head.metrics.chunks))
++
++	// Compacting the retained, now empty series again must not write a block or count chunks.
++	require.NoError(t, db.CompactSelectedSeries([]storage.SeriesRef{ref}))
++	require.Len(t, db.Blocks(), 1, "an empty retained series must not produce a second block")
++	require.Equal(t, chunksRemoved, prom_testutil.ToFloat64(db.head.metrics.chunksRemoved))
++	require.Zero(t, prom_testutil.ToFloat64(db.head.metrics.chunks))
++	require.NotNil(t, db.head.series.getByID(chunks.HeadSeriesRef(ref)))
++}
++
++// TestCompactStaleHead_KeepsSeriesWithExemplarAndReleasesChunks is the CompactStaleHead
++// counterpart of TestCompactSelectedSeries_KeepsSeriesWithExemplarAndReleasesChunks.
++func TestCompactStaleHead_KeepsSeriesWithExemplarAndReleasesChunks(t *testing.T) {
++	const chunkRange = 1000
++	opts := DefaultOptions()
++	opts.MinBlockDuration = chunkRange
++	opts.MaxBlockDuration = chunkRange
++	opts.EnableExemplarStorage = true
++	opts.MaxExemplars = config.DefaultExemplarsConfig.MaxExemplars
++	db := newTestDB(t, withOpts(opts))
++	db.DisableCompactions()
++
++	sel := labels.FromStrings("__name__", "exemplar_series")
++	app := db.Appender(context.Background())
++	ref, err := app.Append(0, sel, 100, 1.0)
++	require.NoError(t, err)
++	ref, err = app.Append(ref, sel, 200, math.Float64frombits(value.StaleNaN))
++	require.NoError(t, err)
++	_, err = app.AppendExemplar(ref, sel, exemplar.Exemplar{Value: 1, Ts: 300})
++	require.NoError(t, err)
++	require.NoError(t, app.Commit())
++
++	require.NoError(t, db.CompactStaleHead())
++	require.Len(t, db.Blocks(), 1)
++
++	series := db.head.series.getByID(chunks.HeadSeriesRef(ref))
++	require.NotNil(t, series, "the series identity must be kept for the WAL checkpoint")
++	series.Lock()
++	headChunkCount := series.headChunkCount.Load()
++	mmappedChunkCount := len(series.mmappedChunks)
++	seriesApp := series.app
++	series.Unlock()
++	require.Zero(t, headChunkCount)
++	require.Zero(t, mmappedChunkCount)
++	require.Nil(t, seriesApp)
++
++	chunksRemoved := prom_testutil.ToFloat64(db.head.metrics.chunksRemoved)
++	require.Greater(t, chunksRemoved, 0.0, "released chunks must be counted")
++	require.Zero(t, prom_testutil.ToFloat64(db.head.metrics.chunks))
++
++	require.NoError(t, db.CompactStaleHead())
++	require.Len(t, db.Blocks(), 1, "an empty retained series must not produce a second block")
++	require.Equal(t, chunksRemoved, prom_testutil.ToFloat64(db.head.metrics.chunksRemoved))
++	require.Zero(t, prom_testutil.ToFloat64(db.head.metrics.chunks))
++}
++
++// TestEmptyRetainedSeriesDoesNotHoldBackMinTime verifies that a series kept alive only by
++// its exemplar does not hold back the head's minimum time: its chunks were released, so the
++// head advances to the oldest remaining chunk.
++func TestEmptyRetainedSeriesDoesNotHoldBackMinTime(t *testing.T) {
++	const chunkRange = 1000
++	opts := DefaultOptions()
++	opts.MinBlockDuration = chunkRange
++	opts.MaxBlockDuration = chunkRange
++	opts.EnableExemplarStorage = true
++	opts.MaxExemplars = config.DefaultExemplarsConfig.MaxExemplars
++	db := newTestDB(t, withOpts(opts))
++	db.DisableCompactions()
++
++	sel := labels.FromStrings("__name__", "exemplar_series")
++	app := db.Appender(context.Background())
++	ref, err := app.Append(0, sel, 100, 1.0)
++	require.NoError(t, err)
++	_, err = app.AppendExemplar(ref, sel, exemplar.Exemplar{Value: 1, Ts: 5000})
++	require.NoError(t, err)
++	require.NoError(t, app.Commit())
++
++	keep := labels.FromStrings("__name__", "kept")
++	app = db.Appender(context.Background())
++	_, err = app.Append(0, keep, 4000, 1.0)
++	require.NoError(t, err)
++	require.NoError(t, app.Commit())
++
++	require.NoError(t, db.CompactSelectedSeries([]storage.SeriesRef{ref}))
++	require.NotNil(t, db.head.series.getByID(chunks.HeadSeriesRef(ref)))
++
++	// The replay cutoff stays below the exemplar, so the series is retained while the head
++	// only looks at the remaining chunks to compute the actual minimum time.
++	require.NoError(t, db.head.truncateMemory(2000))
++	require.Greater(t, db.head.MinTime(), int64(100),
++		"an empty retained series must not hold back the head's minimum time")
++	require.NotNil(t, db.head.series.getByID(chunks.HeadSeriesRef(ref)))
++}
++
+ func TestBeyondSizeRetentionWithPercentage(t *testing.T) {
+ 	const maxBlock = 100
+ 	const numBytesChunks = 1024
+diff --git a/tsdb/exemplar.go b/tsdb/exemplar.go
+index 36b0a7e..f1419a3 100644
+--- a/tsdb/exemplar.go
++++ b/tsdb/exemplar.go
+@@ -226,6 +226,26 @@ func (ce *CircularExemplarStorage) ValidateExemplar(l labels.Labels, e exemplar.
+ 	return ce.validateExemplar(ce.index[string(seriesLabels)], e, false)
+ }
+ 
++// HasExemplarAtOrAfter reports whether the series with the given labels has at
++// least one exemplar with a timestamp at or after mint. Zero and negative
++// timestamps are treated like any other timestamp.
++func (ce *CircularExemplarStorage) HasExemplarAtOrAfter(l labels.Labels, mint int64) bool {
++	ce.lock.RLock()
++	defer ce.lock.RUnlock()
++
++	if len(ce.exemplars) == 0 {
++		return false
++	}
++	var buf [1024]byte
++	idx, ok := ce.index[string(l.Bytes(buf[:]))]
++	if !ok {
++		return false
++	}
++	// The per-series list is ordered by timestamp, so the newest entry has the
++	// highest timestamp.
++	return ce.exemplars[idx.newest].exemplar.Ts >= mint
++}
++
+ // Not thread safe. The appended parameters tells us whether this is an external validation, or internal
+ // as a result of an AddExemplar call, in which case we should update any relevant metrics.
+ func (ce *CircularExemplarStorage) validateExemplar(idx *indexEntry, e exemplar.Exemplar, appended bool) error {
+diff --git a/tsdb/exemplar_test.go b/tsdb/exemplar_test.go
+index 10a0745..8e6a3a0 100644
+--- a/tsdb/exemplar_test.go
++++ b/tsdb/exemplar_test.go
+@@ -77,6 +77,39 @@ func TestValidateExemplar(t *testing.T) {
+ 	require.Equal(t, storage.ErrExemplarLabelLength, es.ValidateExemplar(l, e4))
+ }
+ 
++func TestCircularExemplarStorage_HasExemplarAtOrAfter(t *testing.T) {
++	exs, err := NewCircularExemplarStorage(10, eMetrics, 0)
++	require.NoError(t, err)
++	es := exs.(*CircularExemplarStorage)
++
++	series := labels.FromStrings("service", "asdf")
++	other := labels.FromStrings("service", "zxcv")
++	require.NoError(t, es.AddExemplar(series, exemplar.Exemplar{Ts: -5, Value: 1}))
++	require.NoError(t, es.AddExemplar(series, exemplar.Exemplar{Ts: 0, Value: 2}))
++	require.NoError(t, es.AddExemplar(series, exemplar.Exemplar{Ts: 10, Value: 3}))
++	require.NoError(t, es.AddExemplar(other, exemplar.Exemplar{Ts: 1, Value: 4}))
++
++	for _, tc := range []struct {
++		name   string
++		mint   int64
++		labels labels.Labels
++		want   bool
++	}{
++		{name: "below oldest", mint: -6, labels: series, want: true},
++		{name: "at oldest", mint: -5, labels: series, want: true},
++		{name: "at zero", mint: 0, labels: series, want: true},
++		{name: "between", mint: 5, labels: series, want: true},
++		{name: "at newest", mint: 10, labels: series, want: true},
++		{name: "above newest", mint: 11, labels: series, want: false},
++		{name: "other series", mint: 2, labels: other, want: false},
++		{name: "unknown series", mint: 0, labels: labels.FromStrings("service", "unknown"), want: false},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			require.Equal(t, tc.want, es.HasExemplarAtOrAfter(tc.labels, tc.mint))
++		})
++	}
++}
++
+ func TestCircularExemplarStorage_AddExemplar(t *testing.T) {
+ 	series1 := labels.FromStrings("trace_id", "foo")
+ 	series2 := labels.FromStrings("trace_id", "bar")
+diff --git a/tsdb/head.go b/tsdb/head.go
+index a65bafb..749537c 100644
+--- a/tsdb/head.go
++++ b/tsdb/head.go
+@@ -173,6 +173,9 @@ type ExemplarStorage interface {
+ 	AddExemplar(labels.Labels, exemplar.Exemplar) error
+ 	ValidateExemplar(labels.Labels, exemplar.Exemplar) error
+ 	IterateExemplars(f func(seriesLabels labels.Labels, e exemplar.Exemplar) error) error
++	// HasExemplarAtOrAfter reports whether the series with the given labels has an
++	// exemplar with a timestamp at or after mint.
++	HasExemplarAtOrAfter(labels.Labels, int64) bool
+ }
+ 
+ // HeadOptions are parameters for the Head block.
+@@ -1776,7 +1779,14 @@ func (h *Head) truncateOOO(lastWBLFile int, newMinOOOMmapRef chunks.ChunkDiskMap
+ 		h.WaitForPendingReadersForOOOChunksAtOrBefore(newMinOOOMmapRef)
+ 		h.minOOOMmapRef.Store(uint64(newMinOOOMmapRef))
+ 
+-		if err := h.truncateSeriesAndChunkDiskMapper("truncateOOO"); err != nil {
++		// GC now consults the exemplar storage while holding stripe and series locks,
++		// while ChunkSnapshot iterates the exemplar storage (holding its lock) and looks
++		// series up by hash. Serialize the two, as truncateMemory and truncateSeries do,
++		// so that this lock-order inversion can never deadlock.
++		h.chunkSnapshotMtx.Lock()
++		err := h.truncateSeriesAndChunkDiskMapper("truncateOOO")
++		h.chunkSnapshotMtx.Unlock()
++		if err != nil {
+ 			return err
+ 		}
+ 	}
+@@ -2038,6 +2048,14 @@ func (h *Head) Delete(ctx context.Context, mint, maxt int64, ms ...*labels.Match
+ 	return nil
+ }
+ 
++// hasExemplarAtOrAfter reports whether the series with the given labels has an
++// exemplar at or after the head's minimum valid time, i.e. one that WAL replay
++// would still restore after a restart. Such a series must keep its identity in
++// the head so that the WAL checkpoint retains its series record.
++func (h *Head) hasExemplarAtOrAfter(l labels.Labels) bool {
++	return h.exemplars != nil && h.exemplars.HasExemplarAtOrAfter(l, h.minValidTime.Load())
++}
++
+ // gc removes data before the minimum timestamp from the head.
+ // It returns
+ // * The actual min times of the chunks present in the Head.
+@@ -2052,7 +2070,7 @@ func (h *Head) gc() (actualInOrderMint, minOOOTime int64, minMmapFile int) {
+ 
+ 	// Drop old chunks and remember series IDs and hashes if they can be
+ 	// deleted entirely.
+-	deleted, affected, chunksRemoved, staleSeriesDeleted, histogramSeriesDeleted, histogramBucketsDeleted, actualInOrderMint, minOOOTime, minMmapFile := h.series.gc(mint, minOOOMmapRef)
++	deleted, affected, chunksRemoved, staleSeriesDeleted, histogramSeriesDeleted, histogramBucketsDeleted, actualInOrderMint, minOOOTime, minMmapFile := h.series.gc(mint, minOOOMmapRef, h.hasExemplarAtOrAfter)
+ 	seriesRemoved := len(deleted)
+ 
+ 	h.metrics.seriesRemoved.Add(float64(seriesRemoved))
+@@ -2508,7 +2526,7 @@ func newStripeSeries(stripeSize int, seriesCallback SeriesLifecycleCallback) *st
+ // but the returned map goes into postings.Delete() which expects a map[storage.SeriesRef]struct
+ // and there's no easy way to cast maps.
+ // minMmapFile is the min mmap file number seen in the series (in-order and out-of-order) after gc'ing the series.
+-func (s *stripeSeries) gc(mint int64, minOOOMmapRef chunks.ChunkDiskMapperRef) (_ map[storage.SeriesRef]struct{}, _ map[labels.Label]struct{}, _, _, _, _ int, _, _ int64, minMmapFile int) {
++func (s *stripeSeries) gc(mint int64, minOOOMmapRef chunks.ChunkDiskMapperRef, hasExemplarAtOrAfter func(labels.Labels) bool) (_ map[storage.SeriesRef]struct{}, _ map[labels.Label]struct{}, _, _, _, _ int, _, _ int64, minMmapFile int) {
+ 	var (
+ 		deleted                       = map[storage.SeriesRef]struct{}{}
+ 		affected                      = map[labels.Label]struct{}{}
+@@ -2563,6 +2581,14 @@ func (s *stripeSeries) gc(mint int64, minOOOMmapRef chunks.ChunkDiskMapperRef) (
+ 			}
+ 			return
+ 		}
++		// Keep the series identity (and thus its WAL record) while the exemplar
++		// storage still holds an exemplar that WAL replay would restore. The
++		// series has no chunks left, so no samples are kept in memory. Its
++		// appender is released too, since it referenced a chunk that is gone.
++		if hasExemplarAtOrAfter != nil && hasExemplarAtOrAfter(series.lset) {
++			series.app = nil
++			return
++		}
+ 		// The series is gone entirely. We need to keep the series lock
+ 		// and make sure we have acquired the stripe locks for hash and ID of the
+ 		// series alike.
+@@ -2609,7 +2635,7 @@ func (s *stripeSeries) gc(mint int64, minOOOMmapRef chunks.ChunkDiskMapperRef) (
+ func (h *Head) gcSeries(seriesRefs []storage.SeriesRef, maxt int64, shouldEvict func(*memSeries) bool) map[storage.SeriesRef]struct{} {
+ 	// Drop old chunks and remember series IDs and hashes if they can be
+ 	// deleted entirely.
+-	deleted, affected, chunksRemoved, staleSeriesDeleted, histogramSeriesDeleted, histogramBucketsDeleted := h.series.gcSeries(seriesRefs, maxt, shouldEvict)
++	deleted, affected, chunksRemoved, staleSeriesDeleted, histogramSeriesDeleted, histogramBucketsDeleted := h.series.gcSeries(seriesRefs, maxt, shouldEvict, h.hasExemplarAtOrAfter)
+ 	seriesRemoved := len(deleted)
+ 
+ 	h.metrics.seriesRemoved.Add(float64(seriesRemoved))
+@@ -2732,7 +2758,7 @@ func (h *Head) deleteSeriesByID(refs []chunks.HeadSeriesRef) {
+ // <= maxt, and for which shouldEvict returns true. Returns the set of deleted refs, the set
+ // of label-name/value pairs whose postings are affected, the count of removed chunks, and
+ // the number of deleted series that carried a stale-NaN last value.
+-func (s *stripeSeries) gcSeries(seriesRefs []storage.SeriesRef, maxt int64, shouldEvict func(*memSeries) bool) (_ map[storage.SeriesRef]struct{}, _ map[labels.Label]struct{}, _, _, _, _ int) {
++func (s *stripeSeries) gcSeries(seriesRefs []storage.SeriesRef, maxt int64, shouldEvict func(*memSeries) bool, hasExemplarAtOrAfter func(labels.Labels) bool) (_ map[storage.SeriesRef]struct{}, _ map[labels.Label]struct{}, _, _, _, _ int) {
+ 	var (
+ 		deleted                 = map[storage.SeriesRef]struct{}{}
+ 		affected                = map[labels.Label]struct{}{}
+@@ -2764,6 +2790,19 @@ func (s *stripeSeries) gcSeries(seriesRefs []storage.SeriesRef, maxt int64, shou
+ 			return
+ 		}
+ 
++		// Series that still have an exemplar that WAL replay would restore must keep
++		// their identity so that the WAL checkpoint retains their series record. Their
++		// chunks were just persisted, so release them instead of keeping the samples
++		// in memory.
++		if hasExemplarAtOrAfter != nil && hasExemplarAtOrAfter(series.lset) {
++			wasMmapReady := series.headChunkCount.Load() >= 2
++			rmChunks += series.releaseInOrderChunks()
++			if wasMmapReady {
++				s.decMmapReady(series.ref)
++			}
++			return
++		}
++
+ 		headChunkCount := series.headChunkCount.Load()
+ 		rmChunks += int(headChunkCount)
+ 		rmChunks += len(series.mmappedChunks)
+@@ -3207,6 +3246,21 @@ func (s *memSeries) truncateChunksBefore(mint int64, minOOOMmapRef chunks.ChunkD
+ 	return removedInOrder + removedOOO
+ }
+ 
++// releaseInOrderChunks drops all in-order chunks and the appender from the
++// series while keeping the series itself. It is used after the chunks have been
++// persisted to a block but the series must stay in the head, e.g. because it
++// still has exemplars that WAL replay would restore. Chunk IDs keep advancing,
++// so chunks appended later cannot collide with the released ones. It returns
++// the number of chunks removed.
++func (s *memSeries) releaseInOrderChunks() int {
++	removed := int(s.headChunkCount.Load()) + len(s.mmappedChunks)
++	s.firstChunkID = wrapChunkID(s.firstChunkID + chunks.HeadChunkID(removed))
++	s.setHeadChunks(nil, 0)
++	s.mmappedChunks = nil
++	s.app = nil
++	return removed
++}
++
+ // cleanupAppendIDsBelow cleans up older appendIDs. Has to be called after
+ // acquiring lock.
+ func (s *memSeries) cleanupAppendIDsBelow(bound uint64) {
+diff --git a/tsdb/head_test.go b/tsdb/head_test.go
+index ba80c35..1ff4ee4 100644
+--- a/tsdb/head_test.go
++++ b/tsdb/head_test.go
+@@ -7634,7 +7634,7 @@ func TestStripeSeries_gc(t *testing.T) {
+ 			{mint: 151, minFile: 2, remaining: 1},
+ 			{mint: 251, minFile: math.MaxInt32, remaining: 0},
+ 		} {
+-			_, _, _, _, _, _, _, _, minFile := s.gc(tc.mint, 0)
++			_, _, _, _, _, _, _, _, minFile := s.gc(tc.mint, 0, nil)
+ 			require.Equal(t, tc.minFile, minFile, "mint=%d", tc.mint)
+ 			require.Len(t, series.mmappedChunks, tc.remaining)
+ 		}
+@@ -7644,7 +7644,7 @@ func TestStripeSeries_gc(t *testing.T) {
+ 		s, ms1, ms2 := stripeSeriesWithCollidingSeries(t)
+ 		hash := ms1.lset.Hash()
+ 
+-		s.gc(0, 0)
++		s.gc(0, 0, nil)
+ 
+ 		// Verify that we can get neither ms1 nor ms2 after garbage collection.
+ 		require.Nil(t, s.getByHash(hash, ms1.lset))
+@@ -7672,14 +7672,14 @@ func TestStripeSeries_gc(t *testing.T) {
+ 		require.True(t, created)
+ 		require.Same(t, series, got)
+ 
+-		deleted, _, _, _, _, _, _, _, _ := s.gc(0, 0)
++		deleted, _, _, _, _, _, _, _, _ := s.gc(0, 0, nil)
+ 		require.Empty(t, deleted)
+ 		require.Same(t, series, s.getByID(series.ref))
+ 
+ 		series.Lock()
+ 		require.True(t, series.unmarkPendingCommit())
+ 		series.Unlock()
+-		deleted, _, _, _, _, _, _, _, _ = s.gc(0, 0)
++		deleted, _, _, _, _, _, _, _, _ = s.gc(0, 0, nil)
+ 		require.Contains(t, deleted, storage.SeriesRef(series.ref))
+ 		require.Nil(t, s.getByID(series.ref))
+ 	})
