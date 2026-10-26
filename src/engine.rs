@@ -999,6 +999,13 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
     chat_in(http, url, key, api, body, groups())
 }
 
+/// Whether a call starts streamed (see chat_in). SubRouter too starts unstreamed (0.0.91): a6aa, DeepSeek 1017's
+/// cheapest provider there, cached 87% of unstreamed calls and 73% of streamed ones over real runs, at ~1/4 of LingAI's
+/// cost per call (2026-10-26); LingAI caches the same either way.
+fn streams_by_default(url: &str, api: Api) -> bool {
+    !url.contains("unorouter.com") && !url.contains("subrouter.ai") && !(url.contains("mortera.cloud") && matches!(api, Api::Responses))
+}
+
 fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, groups: &Groups) -> Result<Value> {
     let path = match api {
         Api::Chat => "chat/completions",
@@ -1013,7 +1020,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
     // 0 tokens written with it, 6,286 without), and its streamed Responses carry no usage (GPT-6 Luna looked 0% cached
     // and the cost cap saw nothing), so GPT goes unstreamed there
     let mortera = url.contains("mortera.cloud");
-    let mut stream = std::env::var("TAZUNA_STREAM").map_or(!url.contains("unorouter.com") && !(mortera && matches!(api, Api::Responses)), |v| v != "0");
+    let mut stream = std::env::var("TAZUNA_STREAM").map_or(streams_by_default(url, api), |v| v != "0");
     let mut body = body.clone();
     if mortera {
         body.as_object_mut().map(|o| o.remove("cache_control"));
@@ -1487,6 +1494,15 @@ data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n
         assert!(l.send_reasoning, "kept on for the rest of the run");
         std::fs::remove_dir_all(&dir).ok();
     }
+    #[test]
+    fn subrouter_and_unorouter_start_unstreamed() {
+        use super::{streams_by_default, Api};
+        assert!(!streams_by_default("https://subrouter.ai/v1", Api::Chat));
+        assert!(!streams_by_default("https://api.unorouter.com/v1", Api::Chat));
+        assert!(streams_by_default("https://api.cheaperinference.com/v1", Api::Chat));
+        assert!(!streams_by_default("https://mortera.cloud/v1", Api::Responses) && streams_by_default("https://mortera.cloud/v1", Api::Chat));
+    }
+
     #[test]
     fn reasoning_goes_back_by_default_and_not_where_refused() {
         let dir = std::env::temp_dir().join(format!("tazuna-reasoning2-{}", std::process::id()));
