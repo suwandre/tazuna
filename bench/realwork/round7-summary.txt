@@ -1,0 +1,18 @@
+task                                             0.0.84                      0.0.85                      0.0.86   (turns, pass, judge)
+caddy-retry-match-expr             66 2/2            7        63 2/2          7.5        74 2/2            8
+caddy-unix-socket-close            63 7/7          8.5        66 0/7          4.5       107 0/7          4.5
+gitea-actions-cancelling           65 2/2            7        38 2/2            8        37 2/2          7.5
+lazygit-mnemonic-prefix           179 3/3          7.5       176 3/3            7        89 3/3          6.5
+prometheus-exemplar-compaction                          -       200 3/3          5.5       235 3/3          4.5
+rclone-archive-symlinks           247 3/3            8       110 3/3            8       123 3/3            6
+telegraf-snmp-reconnect           150 1/2            5        75 1/2            4       121 2/2            6
+
+totals:
+0.0.84 runs 6 turns 770 uncached 6.69M cached 65.8M (90.8%) out 1.54M est $0.283 hidden 18/19 judge 7.17 over 6
+0.0.85 runs 7 turns 728 uncached 5.36M cached 61.5M (92.0%) out 0.63M est $0.183 hidden 14/22 judge 6.36 over 7
+0.0.86 runs 7 turns 786 uncached 6.49M cached 60.5M (90.3%) out 0.84M est $0.221 hidden 15/22 judge 6.14 over 7
+
+totals without caddy-unix-socket-close:
+0.0.84 runs 5 turns 707 uncached 6.38M cached 63.3M (90.9%) out 1.21M est $0.250 hidden 11/12 judge 6.90 over 5
+0.0.85 runs 6 turns 662 uncached 4.90M cached 57.6M (92.2%) out 0.57M est $0.167 hidden 14/15 judge 6.67 over 6
+0.0.86 runs 6 turns 679 uncached 5.21M cached 54.7M (91.3%) out 0.63M est $0.176 hidden 15/15 judge 6.42 over 6

@@ -79,6 +79,7 @@ def ask_judge(prompt, model, effort):
 
 def candidates(task_name):
     """The finished runs of a task that JUDGE_ONLY selects (a run without a result row was cancelled or killed)."""
+    sys.path.insert(0, str(HERE))  # python3 -I leaves the script's directory off the path
     from leakscan import leaked
     bad = leaked()  # runs that saw the reference fix are not judged
     results = {(r["harness"], r["run"]): r for r in map(json.loads, RESULTS.read_text().splitlines())

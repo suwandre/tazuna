@@ -30,6 +30,7 @@
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v346@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v353@deepseek-v4.1-flash-1017:max", "channels": ["local", "web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v358@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v367@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxbest2-v286@gpt-6-luna:max", "channels": ["web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v76@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v81@deepseek-v4.1-flash:max", "channels": ["modcache"]}
@@ -64,6 +65,7 @@
 {"task": "caddy-unix-socket-close", "harness": "tazuna-ownsubx-v344@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-ownsubx-v351@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-ownsubx-v357@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-unix-socket-close", "harness": "tazuna-ownsubx-v363@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-ownsubxbest2-v284@gpt-6-luna:max", "channels": ["web"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-ownuno-v76@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-unix-socket-close", "harness": "tazuna-ownuno-v84@deepseek-v4.1-flash:max", "channels": ["web"]}
@@ -140,5 +142,7 @@
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-handmed-v41@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-own-v38@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownbatch-v39@deepseek-v4.1-flash:max", "channels": ["web", "web-blocked"]}
+{"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownsubx-v378@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownsubx-v380@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
