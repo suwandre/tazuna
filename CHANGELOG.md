@@ -39,6 +39,11 @@ pool). deepseek-v4.1-flash-1017 at max on the vetted route key; leak scans clean
   +0.75 on runs from different days. Pooled over ten runs a side: 6.0 against 6.35, within noise; turns and cost lower.
   Kept, with prometheus as the open question: the next step is a measured prompt line against changing the signatures
   of existing functions the code and tests call (5 of 12 prometheus runs, DeepSeek and Opus, failed on it).
+- Decision probe (`sigprobe.py`, $0.08): v384's history up to its first edit, the model asked for its plan 10 times per
+  arm. Extra argument to `stripeSeries.gc`/`gcSeries`: 0.0.87 9/10, 0.0.88 7/9, 0.0.88 with a rule against changing
+  existing signatures 9/10. So the tool text does not drive it; it is the model's default design from that code (an
+  unexported method, all callers updated, which compiles; it fails only the PR's white-box tests). The rule did halve
+  the riskier change, a method added to the exported `ExemplarStorage` interface (avoided 3/10 without, 6/10 with).
 - Three round9 runs (v392-v394) hit the 3 h limit while tazuna's own check reran the whole tsdb package: under four
   runs at once it took over 600 s, and tazuna's verify counts its own 600 s kill as a failure, so the model hunted bugs
   that were not there (v393 and v394 twice). Scored by hand from their partial diffs; v393 had stashed its changes to
