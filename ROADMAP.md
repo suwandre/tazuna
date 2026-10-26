@@ -248,6 +248,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Per-turn model switching | rejected | breaks the prompt cache (per subagent is fine) |
 | LongHarness (arXiv 2610.13075: open questions steer reading, an evidence ledger) | not tested | document QA, not coding; plan tool and elision (nearby ideas) already failed; its backbones did not finish our tasks |
 | Ouro (a harness that writes its own loop via eval) | rejected | thought experiment without guardrails; self-modifying code is against tazuna's safety rules |
+| Reasoning window (only the last 8-24 turns' DeepSeek reasoning back, 0.0.86) | judge -0.1 to -1, cost +27% against all of it | each step breaks the cached history; with less of its own reasoning the model writes more |
 | LobeHub self-improving harness on Kimi K3 | not adopted | preliminary (selected retries); Kimi K3 is $3/$15 at 41 tok/s with a lower Terminal-Bench than DeepSeek; automated tuning on our few tasks would overfit |
 | Boss + Opus high reviewer (tickets) | same judge as boss (5.20), +56% cost | fixes widened the patches (scope −0.4); 0.0.49 follow-up |
 | Impersonating Claude Code | rejected | ban risk; Hermes, OMP, Empryo do it |
@@ -270,6 +271,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Haiku explorer subagent (`--explorer haiku`) | −28% cost, −41% turns, judge −0.25 | default since 0.0.25 (price to performance) |
 
 ## Decision log
+
+- 2026-10-26: all of DeepSeek's reasoning goes back (0.0.85, again as 0.0.87): on seven tasks same judge as without it
+  outside caddy-unix's coin flip, -31% turns, -55% cost; the window (0.0.86) was worse on both. Next: the background
+  test poll loop (one turn per `sleep; tail`).
 
 - 2026-10-24: best of two retested on one route (Luna on OpenAI Pro, both attempts scored): +0.16, not a default. OpenCode's
   free DeepSeek judged 9 or 1 in a fifth of tazuna's turns; next: compare its transcripts with tazuna's on caddy-unix and

@@ -16,6 +16,39 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.87 (2026-10-26): 0.0.85's reasoning back again (all of it); 0.0.86's window measured worse; 0.0.85 -55% cost on 7 tasks
+
+0.0.86 sent back only the last 8-24 turns' reasoning, to cut the input that 0.0.85's full reasoning seemed to add. One
+round of all seven tasks-oct tasks, 0.0.84 (no reasoning back) against 0.0.85 (all) against 0.0.86 (window)
+(`round7.sh`, `round7b.sh`, v360-v380), deepseek-v4.1-flash-1017 at max on the vetted route key without the watcher, so
+each run kept its provider. Leak scan clean (only GitHub tries the proxy refused). Judge `judge.oct.round7.jsonl` and
+`judge.oct.round7p.jsonl` (two passes; anchors Opus v34, Codex Luna). Cost at one fixed price ($0.02/M uncached input,
+$0.0004/M cached, $0.08/M output) so the provider does not skew it; the round spent $0.96 on the account.
+
+| task | 0.0.84: judge, hidden, turns | 0.0.85 | 0.0.86 |
+|---|---|---|---|
+| rclone | 8, 3/3, 247 | 8, 3/3, 110 | 6, 3/3, 123 |
+| caddy-unix | 8.5, 7/7, 63 | 4.5, 0/7, 66 | 4.5, 0/7, 107 |
+| caddy-retry | 7, 2/2, 66 | 7.5, 2/2, 63 | 8, 2/2, 74 |
+| gitea | 7, 2/2, 65 | 8, 2/2, 38 | 7.5, 2/2, 37 |
+| lazygit | 7.5, 3/3, 179 | 7, 3/3, 176 | 6.5, 3/3, 89 |
+| telegraf | 5, 1/2, 150 | 4, 1/2, 75 | 6, 2/2, 121 |
+| prometheus | stopped at 3 h, 352 turns | 5.5, 3/3, 200 | 4.5, 3/3, 235 |
+| 6 tasks (not prometheus) | judge 7.17, 770 turns, output 1.54M, input 6.69M uncached + 65.8M cached (90.8%), $0.283 | 6.50, 528, 0.49M, 3.66M + 38.5M (91.3%), $0.128 | 6.42, 551, 0.69M, 4.70M + 35.4M (88.3%), $0.163 |
+
+- 0.0.84's judge lead is caddy-unix alone: its 7/7 is one of two passes in the last 15 caddy-unix runs, and 0.0.84
+  failed it 0/7 twice the day before (v350, v356). The failing runs rebuild the listener's internal types, which the
+  hidden white-box tests compile against. On the other five tasks: 6.90, 6.90, 6.80.
+- 0.0.85 against 0.0.84: judge -0.67 (within noise, all of it caddy-unix), turns -31%, output -68%, cost -55% (-54%
+  without rclone's 247-turn 0.0.84 run). 0.0.84 did not finish prometheus in 3 h; 0.0.85 did in 200 turns.
+- Correction to 0.0.85's "+25% cost": that A/B ran with `subrouter.py watch`, whose provider moves cold-started the
+  caches. Without it 0.0.85 caches as much as 0.0.84 and its fewer turns make it much cheaper.
+- 0.0.86's window: each step changed the history and lost cache (88.3%), and output rose 40% over 0.0.85; judge -0.08 on
+  six tasks and -1 on prometheus, cost +27%. Reverted: 0.0.87 is 0.0.85's code.
+
+Seen on prometheus: all three versions ran the slow tests in the background and polled them (`sleep 115; tail ...`), one
+turn per poll with the whole history sent again. Next to measure.
+
 ## 0.0.85 (2026-10-25): DeepSeek's reasoning back in the history; judge +1.5, turns -30%, output -63%, cost ~+25%
 
 Where tazuna's turns before green went on rclone (clean 0.0.83/0.0.84 runs against OpenCode's): without its earlier

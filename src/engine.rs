@@ -399,23 +399,6 @@ fn reasoning_back() -> bool {
     std::env::var_os("TAZUNA_DROP_REASONING").is_none()
 }
 
-/// 0.0.86: the reasoning of the last 8-24 turns goes back, not all of it: with all of it the input grew and cached less
-/// (69% against 76%, rclone 2026-10-25). TAZUNA_REASONING_WINDOW=W keeps W/2..W+W/2 turns' worth (0: all); a provider
-/// that requires the whole reasoning switches the window off.
-fn reasoning_window() -> usize {
-    if WINDOW_OFF.load(Ordering::Relaxed) {
-        return 0;
-    }
-    std::env::var("TAZUNA_REASONING_WINDOW").ok().and_then(|v| v.parse().ok()).unwrap_or(16)
-}
-
-static WINDOW_OFF: AtomicBool = AtomicBool::new(false);
-
-/// The first of `n` assistant turns whose reasoning goes back with window `w` (0: all of them).
-fn reasoning_from(n: usize, w: usize) -> usize {
-    if w == 0 { 0 } else { (n / w * w).saturating_sub(w / 2) }
-}
-
 fn headless() -> bool {
     std::env::var_os("TAZUNA_HEADLESS").is_some()
 }
@@ -455,20 +438,16 @@ impl Loop {
     /// The history for Chat Completions: assistant turns with their `reasoning_content` (0.0.85), or without it after a
     /// provider refused the field or with TAZUNA_DROP_REASONING.
     fn chat_messages(&self) -> Value {
-        // the reasoning of assistant turns before `keep` goes; `keep` moves in steps (every `w` turns, to `w/2` turns
-        // back) so the history before it stays the same and cached between steps
-        let n = self.msgs.iter().filter(|m| m["role"] == "assistant").count();
-        let keep = if self.send_reasoning { reasoning_from(n, reasoning_window()) } else { usize::MAX };
-        let mut k = 0;
-        json!(self.msgs.iter().map(|m| {
-            let mut m = m.clone();
-            if m["role"] == "assistant" {
-                if k < keep {
-                    m.as_object_mut().expect("a message is an object").remove("reasoning_content");
-                }
-                k += 1;
+        if self.send_reasoning {
+            return json!(self.msgs);
+        }
+        json!(self.msgs.iter().map(|m| match m.get("reasoning_content") {
+            Some(_) => {
+                let mut m = m.clone();
+                m.as_object_mut().expect("a message is an object").remove("reasoning_content");
+                m
             }
-            m
+            None => m.clone(),
         }).collect::<Vec<_>>())
     }
 
@@ -585,15 +564,9 @@ impl Loop {
                 // either way round: a provider that demands the reasoning back gets it, one that refuses the field gets
                 // the history without it (once each per route)
                 Err(e) if self.api == Api::Chat && format!("{e:#}").contains("reasoning_content") => {
-                    // a provider that requires the reasoning back gets all of it (the window off); one that refuses the
-                    // field gets none
-                    let demands = format!("{e:#}").contains("require");
-                    let subtype = if demands { "reasoning_resent" } else { "reasoning_dropped" };
+                    let subtype = if self.send_reasoning { "reasoning_dropped" } else { "reasoning_resent" };
                     (self.out)(&json!({"type": "system", "subtype": subtype, "message": format!("{e:#}")}));
-                    if demands {
-                        WINDOW_OFF.store(true, Ordering::Relaxed);
-                    }
-                    self.send_reasoning = demands;
+                    self.send_reasoning = !self.send_reasoning;
                     body["messages"] = self.chat_messages();
                     match (self.call)(&body) {
                         Ok(r) => r,
@@ -1514,16 +1487,6 @@ data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n
         assert!(l.send_reasoning, "kept on for the rest of the run");
         std::fs::remove_dir_all(&dir).ok();
     }
-    #[test]
-    fn the_reasoning_window_moves_in_steps() {
-        use super::reasoning_from;
-        assert_eq!(reasoning_from(10, 16), 0, "all of the first turns");
-        assert_eq!((16..32).map(|n| reasoning_from(n, 16)).collect::<std::collections::HashSet<_>>().len(), 1, "one step per 16 turns");
-        assert_eq!(reasoning_from(20, 16), 8);
-        assert_eq!(reasoning_from(32, 16), 24, "8 to 24 turns kept");
-        assert_eq!(reasoning_from(100, 0), 0, "0: all");
-    }
-
     #[test]
     fn reasoning_goes_back_by_default_and_not_where_refused() {
         let dir = std::env::temp_dir().join(format!("tazuna-reasoning2-{}", std::process::id()));
