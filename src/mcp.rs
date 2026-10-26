@@ -15,6 +15,9 @@ use std::{
 
 const CWD_MARK: &str = "\n__LEAN_CWD__";
 const BASH_TIMEOUT: Duration = Duration::from_secs(120);
+/// The longest `timeout` (seconds) a bash call may ask for (0.0.88): at a fixed 120 s the model ran long test runs in the
+/// background and polled them with `sleep 115; tail`, one turn each (33-47 a prometheus run, 2026-10-25).
+const MAX_TIMEOUT: u64 = 1800;
 
 pub fn serve() -> anyhow::Result<()> {
     let mut server = Server::new(std::env::current_dir()?);
@@ -172,7 +175,11 @@ impl Server {
         let path = a["path"].as_str().map(|p| self.resolve(p));
         let s = |k: &str| a[k].as_str().unwrap_or_default();
         let out: Result<String, String> = match name {
-            "bash" => Ok(self.bash(s("command"), BASH_TIMEOUT)),
+            "bash" => {
+                // seconds, a number or a numeric string (some models quote it)
+                let t = a["timeout"].as_u64().or_else(|| a["timeout"].as_str()?.trim().parse().ok());
+                Ok(self.bash(s("command"), t.map_or(BASH_TIMEOUT, |t| Duration::from_secs(t.clamp(1, MAX_TIMEOUT)))))
+            }
             "read" => self.read(path.unwrap_or_default(), a["offset"].as_u64().unwrap_or(1), a["limit"].as_u64()),
             "write" => write(&path.unwrap_or_default(), s("content")),
             "edit" => edit(&path.unwrap_or_default(), s("old"), s("new")),
@@ -274,7 +281,8 @@ impl Server {
         }
         let tail = match status {
             Some(st) => st.code().filter(|&c| c != 0).map(|c| format!("\n[exit {c}]")).unwrap_or_default(),
-            None => format!("\n[timed out after {}s; the command and everything it started were killed]", timeout.as_secs()),
+            None => format!("\n[timed out after {}s; the command and everything it started were killed; give a larger timeout \
+                             (up to {MAX_TIMEOUT} s) for a long run]", timeout.as_secs()),
         };
         let full = format!("{stdout}{stderr}{tail}");
         let shrunk = self.shrink(&full);
@@ -336,8 +344,8 @@ fn read_into(r: &mut impl Read, buf: &std::sync::Mutex<Vec<u8>>) {
 pub(crate) fn tools() -> Value {
     let (s, i) = (json!({"type": "string"}), json!({"type": "integer"}));
     json!([
-        {"name": "bash", "description": "Run shell command. Working directory persists between calls.",
-         "inputSchema": {"type": "object", "properties": {"command": s}, "required": ["command"]}},
+        {"name": "bash", "description": "Run shell command. Working directory persists between calls. It stops after 120 s unless you give a timeout in seconds (up to 1800): give one for long builds and test runs rather than running them in the background.",
+         "inputSchema": {"type": "object", "properties": {"command": s, "timeout": i}, "required": ["command"]}},
         {"name": "read", "description": "Read file: the whole file (up to 2000 lines) unless you give a 1-based offset or a limit. Use it rather than cat, head or sed.",
          "inputSchema": {"type": "object", "properties": {"path": s, "offset": i, "limit": i}, "required": ["path"]}},
         {"name": "write", "description": "Write file, creating dirs.",
@@ -478,7 +486,7 @@ mod tests {
         assert_eq!(ask(&mut s, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#), None);
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).unwrap(),
-            r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"bash","description":"Run shell command. Working directory persists between calls.","inputSchema":{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}},{"name":"read","description":"Read file: the whole file (up to 2000 lines) unless you give a 1-based offset or a limit. Use it rather than cat, head or sed.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},{"name":"write","description":"Write file, creating dirs.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},{"name":"edit","description":"Replace exact unique text in file. Use it for every change to an existing file, rather than sed or scripts.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}},"required":["path","old","new"]}}]}}"#
+            r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"bash","description":"Run shell command. Working directory persists between calls. It stops after 120 s unless you give a timeout in seconds (up to 1800): give one for long builds and test runs rather than running them in the background.","inputSchema":{"type":"object","properties":{"command":{"type":"string"},"timeout":{"type":"integer"}},"required":["command"]}},{"name":"read","description":"Read file: the whole file (up to 2000 lines) unless you give a 1-based offset or a limit. Use it rather than cat, head or sed.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},{"name":"write","description":"Write file, creating dirs.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},{"name":"edit","description":"Replace exact unique text in file. Use it for every change to an existing file, rather than sed or scripts.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}},"required":["path","old","new"]}}]}}"#
         );
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read","arguments":{"path":"f.txt","offset":2,"limit":1}}}"#).unwrap(),
@@ -549,5 +557,15 @@ mod tests {
         assert!(t0.elapsed() < Duration::from_secs(5), "returned at the timeout, not after the child");
         assert!(out.starts_with("started"), "{out}");
         assert!(out.contains("timed out"), "{out}");
+    }
+
+    #[test]
+    fn bash_takes_a_timeout_in_seconds() {
+        let mut s = Server::new(std::env::temp_dir());
+        let call = |s: &mut Server, t: Value| s.call(&json!({"name": "bash", "arguments": {"command": "sleep 2; echo done", "timeout": t}})).unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        let out = call(&mut s, json!(1));
+        assert!(out.contains("timed out after 1s") && out.contains("larger timeout"), "{out}");
+        assert!(call(&mut s, json!("5")).starts_with("done"), "a quoted number counts");
+        assert!(call(&mut s, json!(0)).contains("timed out after 1s"), "at least 1 s");
     }
 }
