@@ -16,6 +16,48 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.90 (2026-10-26): the own loop keeps exported APIs unless the task asks; same judge, -21% turns
+
+One prompt line: "Do not change exported APIs (public functions, methods, interfaces and types other packages use)
+unless the task asks for it; changing unexported code is fine when you update every caller." In sigprobe.py's replay it
+halved how often DeepSeek planned to add a method to prometheus's exported ExemplarStorage interface.
+
+`round11.sh` (v400-v413): all seven tasks-oct tasks once each, 0.0.89 against 0.0.90, fourteen at once; judged in one
+pool per task with the a6aa runs below (`judge.oct.round11.jsonl`). Leak scan clean (v402 and v409's GitHub tries were
+refused; the scan now reads curl -f's 403 and a curl that printed nothing as refused). $0.43 on the account.
+
+| task | 0.0.89: judge, hidden, turns | 0.0.90 |
+|---|---|---|
+| rclone | 8, 3/3, 159 | 4, 1/3, 68 |
+| caddy-unix | 5, 0/7, 44 | 9, 7/7, 32 |
+| caddy-retry | 9, 2/2, 55 | 7, 2/2, 49 |
+| gitea | 5, 2/2, 35 | 7, 2/2, 48 |
+| lazygit | 7, 3/3, 110 | 8, 3/3, 71 |
+| prometheus | 6.5, 3/3, 76 | 5, 2/3, 79 |
+| telegraf | 6, 2/2, 69 | 6, 2/2, 87 |
+| all | judge 6.64, hidden 15/22, 548 turns | 6.57, 19/22, 434 (-21%) |
+
+Judge within noise; none of 0.0.90's lower scores comes from the rule (rclone read --links per call instead of at
+construction; caddy-retry hardcoded proxy placeholder names). Its prometheus run tracked exemplar times on the series
+as the reference does, with no interface change. Kept.
+
+**Provider and streaming (bench only).** `cacheprobe.py` replayed a real history through each vetted provider,
+unstreamed: fate86 100% cached, a6aa 98%, tokenx 99%, o2oai 97%, relai 97%, kriora 95%, foxrouter 96%, LingAI 84%;
+stableai down. Real runs then disagreed for a6aa streamed and agreed unstreamed: 0.0.89 on rclone, caddy-retry and
+telegraf through a key limited to a6aa, streamed (`a6aa1.sh`, v414-v416) and with TAZUNA_STREAM=0 (`a6aa2.sh`,
+v417-v419), next to round11's LingAI runs. From the account log over the whole runs:
+
+| route | calls | cached | per call | per M input |
+|---|---|---|---|---|
+| LingAI, streamed (round11) | 987 | 86% | $0.00038 | $0.0041 |
+| a6aa, streamed | 192 | 73% | $0.00018 | $0.0032 |
+| a6aa, unstreamed | 229 | 87% | $0.00010 | $0.0018 |
+
+a6aa caches streamed calls badly and unstreamed ones like LingAI, at ~1/4 of the cost per call. Judge on the same three
+tasks: a6aa 7.17 streamed, 6.33 unstreamed (3 runs each) against LingAI's 0.0.89 runs 7.67; hidden 12/14 against 7/7.
+Single runs, inside noise; no unstreamed call failed. Next: SubRouter unstreamed by default, a6aa as the first route
+with LingAI behind it (0.0.79's route switching), measured on all seven tasks.
+
 ## 0.0.89 (2026-10-26): tazuna's own test check reports a run past its 600 s limit as no result, not a failure
 
 Under four prometheus runs at once the whole tsdb package needs over 600 s; the kill went back to the model as a test
