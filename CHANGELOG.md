@@ -16,6 +16,36 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.93 (2026-10-27): SubRouter streams again; cheap providers only for single sessions
+
+SubRouter's gateway cuts an unstreamed reply at ~125 s with a 524 (not billed): a counting question at max effort, four
+calls per mode, failed unstreamed every time on LingAI and fate86 and streamed through (LingAI 140-163 s, fate86
+286-348 s, both ~90K characters of reasoning). Every long reasoning call waited two minutes before 0.0.92 sent it again
+streamed. The only reason to start unstreamed was a6aa, which turned out to be the slowest; streaming is back.
+
+`cacheprobe.py` with CACHE_CONC=4 (four conversations at once per provider, replies up to 2000 tokens; $0.34):
+
+| provider | cached | failed | median s/call | real $/M input |
+|---|---|---|---|---|
+| LingAI | 100% | 0 | 14 | 0.0017 |
+| foxrouter | 96% | 0 | 15 | 0.0024 |
+| kriora | 87% | 1 | 16 | 0.0019 |
+| relai | 100% | 4 | 28 | 0.0003 |
+| fate86 | 100% | 15 | 45 | 0.0004 |
+| a6aa | 92% | 51 | 36 | 0.0011 |
+| tokenx | 36% | 35 | 36 | 0.0118 |
+| o2oai | 38% | 42 | 37 | 0.0114 |
+
+(The probe's "tokens per second" divided short outputs by whole-call time and is not generation speed; the counting
+question gives that: fate86 about half LingAI's.) One conversation (`single1.sh`, caddy-retry, 0.0.93 streamed, at the
+same time): fate86 alone 35 turns, 293 s, 92% cached, $0.0025, 2/2, judge 7; LingAI 41 turns, 384 s, 95%, $0.0039, 2/2,
+judge 7 (`judge.oct.single1.jsonl`). A cheap provider holds up for one session (-36% here) and not under parallel runs;
+LingAI stays the route key's provider.
+
+Endpoints (20 interleaved calls each): `subrouter.ai` and the Cloudflare CDN `ai.orbitlink.me` reach the API in the same
+0.31 s (median, /models); a small chat call's first byte 2.79 s and 2.44 s; the EU West Railway relay adds ~0.13 s
+(0.44 s). Under 2% of a 14-45 s call: no change.
+
 ## 0.0.91-0.0.92 (2026-10-26/27): SubRouter unstreamed; route cache judged from call 20, 524 retried streamed
 
 - 0.0.91: calls to SubRouter start unstreamed, like UnoRouter's (streamed again after a 413 or an empty reply).
