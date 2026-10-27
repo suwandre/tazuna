@@ -669,7 +669,7 @@ impl Loop {
                     if !calls.is_empty() {
                         keep["tool_calls"] = json!(calls);
                     }
-                    if let Some(r) = m["reasoning_content"].as_str().filter(|r| !r.is_empty()) {
+                    if let Some(r) = m["reasoning_content"].as_str().or(m["reasoning"].as_str()).filter(|r| !r.is_empty()) {
                         keep["reasoning_content"] = json!(r);
                     }
                     self.msgs.push(keep);
@@ -1231,7 +1231,9 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
         }
         let d = &e["choices"][0]["delta"];
         content.push_str(d["content"].as_str().unwrap_or_default());
-        reasoning.push_str(d["reasoning_content"].as_str().unwrap_or_default());
+        // DeepSeek's field; OpenRouter-style gateways (SubRouter's foxrouter) stream it as `reasoning` instead, and
+        // without it the reasoning never went back (0.0.94: twice the output a call on foxrouter, 2026-10-27)
+        reasoning.push_str(d["reasoning_content"].as_str().filter(|r| !r.is_empty()).or(d["reasoning"].as_str()).unwrap_or_default());
         for t in d["tool_calls"].as_array().into_iter().flatten() {
             // a piece without an index continues the last call
             let i = t["index"].as_u64().or(calls.last().map(|c| c.0)).unwrap_or(0);
@@ -1452,6 +1454,10 @@ data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"fun
 data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n";
         let first = from_stream(&sse(stream).unwrap(), Api::Chat).unwrap();
         assert_eq!(first["choices"][0]["message"]["reasoning_content"], "look at a");
+        // OpenRouter-style gateways stream it as `reasoning`
+        let other = "data: {\"choices\":[{\"delta\":{\"reasoning\":\"look \",\"reasoning_details\":[]}}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"reasoning\":\"at a\"}}]}\n\n";
+        assert_eq!(from_stream(&sse(other).unwrap(), Api::Chat).unwrap()["choices"][0]["message"]["reasoning_content"], "look at a");
 
         let dir = std::env::temp_dir().join(format!("tazuna-reasoning-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
