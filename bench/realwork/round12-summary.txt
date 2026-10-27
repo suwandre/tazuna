@@ -1,0 +1,18 @@
+task                                     0.0.90 LingAI streamed             0.0.91 a6aa unstreamed   (judge, hidden, turns)
+caddy-retry-match-expr              5.5 2/2       37 turns          7 2/2       43 turns
+caddy-unix-socket-close               4 0/7       60 turns        8.5 7/7       36 turns
+gitea-actions-cancelling              8 2/2       90 turns          7 2/2       35 turns
+lazygit-mnemonic-prefix               8 3/3      116 turns          8 3/3       70 turns
+prometheus-exemplar-compaction        6.5 3/3      135 turns          5 2/3       92 turns
+rclone-archive-symlinks             6.5 2/3      106 turns          7 3/3       85 turns
+telegraf-snmp-reconnect               5 1/2      112 turns          6 2/2       87 turns
+0.0.90 LingAI streamed: runs 7 judge 6.21 over 7 hidden 13/22 turns 656 cached 93%
+0.0.92 a6aa unstreamed: runs 7 judge 6.93 over 7 hidden 21/22 turns 448 cached 90%
+
+account log since round12 started (key, provider, stream mode):
+  tazuna-route-deepseek-v4.1-f lingai     stream       471 calls  93% cached  $0.1244  $0.00026/call
+  tazuna-route-deepseek-v4.1-f lingai     unstreamed   379 calls  93% cached  $0.0838  $0.00022/call
+  tazuna-route-test-1017       a6aa       stream        10 calls   5% cached  $0.0031  $0.00031/call
+  tazuna-route-test-1017       a6aa       unstreamed    71 calls  22% cached  $0.0117  $0.00016/call
+
+route switches in the a6aa arm: 7
