@@ -1,0 +1,184 @@
+caddy-quoted-braces: fix in module cache copies none
+hugo-section-slug: fix in module cache copies ['hugo@v0.167.0']
+hugo-template-return: fix in module cache copies none
+k6-run-once: fix in module cache copies none
+prometheus-duration-parens: fix in module cache copies ['prometheus@v0.315.0']
+terraform-import-foreach: fix in module cache copies none
+caddy-tls-automate-names: fix in module cache copies none
+hugo-eq-numeric: fix in module cache copies none
+prometheus-replay-mmap: fix in module cache copies none
+prometheus-wbl-checkpoint: fix in module cache copies none
+caddy-retry-match-expr: fix in module cache copies ['v2@v2.11.8-0.20261017132241-719db53e9461']
+caddy-unix-socket-close: fix in module cache copies ['v2@v2.11.7', 'v2@v2.11.8-0.20261017132241-719db53e9461']
+gitea-actions-cancelling: fix in module cache copies none
+lazygit-mnemonic-prefix: fix in module cache copies none
+prometheus-exemplar-compaction: fix in module cache copies none
+rclone-archive-symlinks: fix in module cache copies none
+telegraf-snmp-reconnect: fix in module cache copies none
+caddy-quoted-braces          tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+caddy-quoted-braces          tazuna-own-v28@deepseek-v4.1-flash:medium                    web
+caddy-retry-match-expr       opencode-v290@deepseek-v4.1-flash-free:max                   web-blocked
+caddy-retry-match-expr       opencode-v291@deepseek-v4.1-flash-free                       web-blocked
+caddy-retry-match-expr       tazuna-cascade-v34@deepseek-v4.1-flash:max                   local,web
+caddy-retry-match-expr       tazuna-cascade-v38@deepseek-v4.1-flash:max                   web
+caddy-retry-match-expr       tazuna-own-v38@deepseek-v4.1-flash:max                       web
+caddy-retry-match-expr       tazuna-own-v50@deepseek-v4.1-flash:max                       web
+caddy-retry-match-expr       tazuna-own-v76@deepseek-v4.1-flash:max                       web
+caddy-retry-match-expr       tazuna-ownel-v50@deepseek-v4.1-flash:max                     web
+caddy-retry-match-expr       tazuna-ownel-v82@deepseek-v4.1-flash-1017:max                web
+caddy-retry-match-expr       tazuna-ownplan-v38@deepseek-v4.1-flash:max                   web
+caddy-retry-match-expr       tazuna-ownsubgate-v216@deepseek-v4.1-flash-1017:max          modcache,web
+caddy-retry-match-expr       tazuna-ownsubgate-v222@deepseek-v4.1-flash-1017:max          modcache
+caddy-retry-match-expr       tazuna-ownsubgate-v240@deepseek-v4.1-flash-1017:max          web
+caddy-retry-match-expr       tazuna-ownsubgate-v246@deepseek-v4.1-flash-1017:max          modcache,web-blocked
+caddy-retry-match-expr       tazuna-ownsubgate-v247@deepseek-v4.1-flash-1017:max          modcache
+caddy-retry-match-expr       tazuna-ownsubgate-v340@deepseek-v4.1-flash-1017:max          web-blocked
+caddy-retry-match-expr       tazuna-ownsubm-v215@deepseek-v4.1-flash-1017:max             modcache,web
+caddy-retry-match-expr       tazuna-ownsubm-v221@deepseek-v4.1-flash-1017:max             web
+caddy-retry-match-expr       tazuna-ownsubm-v239@deepseek-v4.1-flash-1017:max             web
+caddy-retry-match-expr       tazuna-ownsubm-v245@deepseek-v4.1-flash-1017:max             web
+caddy-retry-match-expr       tazuna-ownsubm-v297@deepseek-v4.1-flash:max                  web-blocked
+caddy-retry-match-expr       tazuna-ownsubm-v309@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-retry-match-expr       tazuna-ownsubm-v310@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-retry-match-expr       tazuna-ownsubm-v334@deepseek-v4.1-flash-1017:max             local-blocked,web-blocked
+caddy-retry-match-expr       tazuna-ownsubm-v339@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-retry-match-expr       tazuna-ownsubm-v345@deepseek-v4.1-flash-1017:max             local-blocked,web-blocked
+caddy-retry-match-expr       tazuna-ownsubmbest2-v256@deepseek-v4.1-flash-1017:max        modcache
+caddy-retry-match-expr       tazuna-ownsubx-v346@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-retry-match-expr       tazuna-ownsubx-v353@deepseek-v4.1-flash-1017:max             local,web-blocked
+caddy-retry-match-expr       tazuna-ownsubx-v358@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-retry-match-expr       tazuna-ownsubx-v367@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-retry-match-expr       tazuna-ownsubx-v404@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-retry-match-expr       tazuna-ownsubx-v405@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-retry-match-expr       tazuna-ownsubx-v425@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-retry-match-expr       tazuna-ownsubxbest2-v286@gpt-6-luna:max                      web
+caddy-retry-match-expr       tazuna-ownuno-v76@deepseek-v4.1-flash:max                    web
+caddy-retry-match-expr       tazuna-ownuno-v81@deepseek-v4.1-flash:max                    modcache
+caddy-retry-match-expr       tazuna-ownuno-v83@deepseek-v4.1-flash:max                    modcache,web
+caddy-retry-match-expr       tazuna-ownuno-v86@deepseek-v4.1-flash:max                    modcache,web-blocked
+caddy-retry-match-expr       tazuna-ownunorev-v94@deepseek-v4.1-flash:max                 modcache,web
+caddy-tls-automate-names     tazuna-cascade-v33@deepseek-v4.1-flash:max                   web
+caddy-tls-automate-names     tazuna-own-v31@deepseek-v4.1-flash:max                       web
+caddy-unix-socket-close      opencode-v287@deepseek-v4.1-flash-free                       local
+caddy-unix-socket-close      opencode-v288@deepseek-v4.1-flash-free:max                   local
+caddy-unix-socket-close      opencode-v289@deepseek-v4.1-flash-free                       local,web
+caddy-unix-socket-close      opencode-v291@deepseek-v4.1-flash-free                       web-blocked
+caddy-unix-socket-close      tazuna-cascade-v34@deepseek-v4.1-flash:max                   modcache
+caddy-unix-socket-close      tazuna-cascade-v38@deepseek-v4.1-flash:max                   modcache,web
+caddy-unix-socket-close      tazuna-own-v38@deepseek-v4.1-flash:max                       modcache
+caddy-unix-socket-close      tazuna-own-v50@deepseek-v4.1-flash:max                       modcache
+caddy-unix-socket-close      tazuna-ownbatch-v39@deepseek-v4.1-flash:max                  web
+caddy-unix-socket-close      tazuna-ownbeat-v53@deepseek-v4.1-flash-hc:max                web
+caddy-unix-socket-close      tazuna-ownbeat-v54@deepseek-v4.1-flash-hc:max                web
+caddy-unix-socket-close      tazuna-ownbeat-v57@deepseek-v4.1-flash-hc:max                modcache
+caddy-unix-socket-close      tazuna-ownel-v46@mimo-v2.6-pro:max                           web
+caddy-unix-socket-close      tazuna-ownel-v50@deepseek-v4.1-flash:max                     modcache
+caddy-unix-socket-close      tazuna-ownsubgate-v232@deepseek-v4.1-flash-1017:max          modcache
+caddy-unix-socket-close      tazuna-ownsubm-v213@deepseek-v4.1-flash-1017:max             modcache
+caddy-unix-socket-close      tazuna-ownsubm-v231@deepseek-v4.1-flash-1017:max             web
+caddy-unix-socket-close      tazuna-ownsubm-v237@deepseek-v4.1-flash-1017:max             modcache
+caddy-unix-socket-close      tazuna-ownsubm-v243@deepseek-v4.1-flash-1017:max             web
+caddy-unix-socket-close      tazuna-ownsubm-v296@deepseek-v4.1-flash:max                  web-blocked
+caddy-unix-socket-close      tazuna-ownsubm-v307@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-unix-socket-close      tazuna-ownsubm-v308@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-unix-socket-close      tazuna-ownsubm-v326@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-unix-socket-close      tazuna-ownsubx-v344@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-unix-socket-close      tazuna-ownsubx-v351@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-unix-socket-close      tazuna-ownsubx-v357@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-unix-socket-close      tazuna-ownsubx-v363@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-unix-socket-close      tazuna-ownsubx-v402@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-unix-socket-close      tazuna-ownsubx-v403@deepseek-v4.1-flash-1017:max             web-blocked
+caddy-unix-socket-close      tazuna-ownsubxbest2-v284@gpt-6-luna:max                      web
+caddy-unix-socket-close      tazuna-ownuno-v76@deepseek-v4.1-flash:max                    web
+caddy-unix-socket-close      tazuna-ownuno-v84@deepseek-v4.1-flash:max                    web
+caddy-unix-socket-close      tazuna-ownuno-v90@deepseek-v4.1-flash:max                    modcache
+hugo-eq-numeric              tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+hugo-eq-numeric              tazuna-own-v31@deepseek-v4.1-flash:max                       web
+hugo-section-slug            tazuna-cascade-v33@deepseek-v4.1-flash:max                   modcache,web
+hugo-section-slug            tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+hugo-section-slug            tazuna-own-v28@deepseek-v4.1-flash:medium                    web
+hugo-template-return         tazuna-cascade-v33@deepseek-v4.1-flash:max                   web-blocked
+hugo-template-return         tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+hugo-template-return         tazuna-own-v28@deepseek-v4.1-flash:medium                    web
+hugo-template-return         tazuna-own-v29@deepseek-v4.1-flash:max                       web
+k6-run-once                  tazuna-cascade-v33@deepseek-v4.1-flash:max                   web
+k6-run-once                  tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+k6-run-once                  tazuna-own-v28@deepseek-v4.1-flash:medium                    web
+k6-run-once                  tazuna-own-v29@deepseek-v4.1-flash:max                       web
+lazygit-mnemonic-prefix      tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+lazygit-mnemonic-prefix      tazuna-cascade-v39@deepseek-v4.1-flash:max                   web
+lazygit-mnemonic-prefix      tazuna-handhigh-v41@deepseek-v4.1-flash:max                  web
+lazygit-mnemonic-prefix      tazuna-own-v38@deepseek-v4.1-flash:max                       web
+lazygit-mnemonic-prefix      tazuna-ownplan-v38@deepseek-v4.1-flash:max                   web
+lazygit-mnemonic-prefix      tazuna-ownsubx-v389@deepseek-v4.1-flash-1017:max             web-blocked
+lazygit-mnemonic-prefix      tazuna-ownsubx-v408@deepseek-v4.1-flash-1017:max             web-blocked
+lazygit-mnemonic-prefix      tazuna-ownsubx-v409@deepseek-v4.1-flash-1017:max             web-blocked
+prometheus-duration-parens   tazuna-cascade-v33@deepseek-v4.1-flash:max                   web
+prometheus-duration-parens   tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+prometheus-duration-parens   tazuna-own-v28@deepseek-v4.1-flash:medium                    web
+prometheus-duration-parens   tazuna-own-v29@deepseek-v4.1-flash:max                       web
+prometheus-exemplar-compaction tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+prometheus-exemplar-compaction tazuna-cascade-v38@deepseek-v4.1-flash:max                   web,web-blocked
+prometheus-exemplar-compaction tazuna-ownplan-v38@deepseek-v4.1-flash:max                   web
+prometheus-exemplar-compaction tazuna-ownsubx-v396@deepseek-v4.1-flash-1017:max             web-blocked
+prometheus-exemplar-compaction tazuna-ownsubx-v397@deepseek-v4.1-flash-1017:max             web-blocked
+prometheus-exemplar-compaction tazuna-ownsubx-v399@deepseek-v4.1-flash-1017:max             web-blocked
+prometheus-exemplar-compaction tazuna-ownsubx-v439@deepseek-v4.1-flash-1017:max             web-blocked
+prometheus-replay-mmap       tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+prometheus-replay-mmap       tazuna-own-v31@deepseek-v4.1-flash:max                       web
+prometheus-replay-mmap       tazuna-own-v34@deepseek-v4.1-flash:max                       web
+prometheus-wbl-checkpoint    tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+prometheus-wbl-checkpoint    tazuna-own-v31@deepseek-v4.1-flash:max                       local,web
+prometheus-wbl-checkpoint    tazuna-own-v34@deepseek-v4.1-flash:max                       web
+rclone-archive-symlinks      opencode-v287@deepseek-v4.1-flash-free                       local
+rclone-archive-symlinks      opencode-v289@deepseek-v4.1-flash-free                       web-blocked
+rclone-archive-symlinks      tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+rclone-archive-symlinks      tazuna-cascade-v38@deepseek-v4.1-flash:max                   local,web
+rclone-archive-symlinks      tazuna-own-v38@deepseek-v4.1-flash:max                       web
+rclone-archive-symlinks      tazuna-own-v74@deepseek-v4.1-flash:max                       web
+rclone-archive-symlinks      tazuna-ownbatch-v39@deepseek-v4.1-flash:max                  web
+rclone-archive-symlinks      tazuna-ownbeat-v52@deepseek-v4.1-flash-hc:max                web
+rclone-archive-symlinks      tazuna-ownel-v39@deepseek-v4.1-flash:max                     web
+rclone-archive-symlinks      tazuna-ownel-v50@deepseek-v4.1-flash:max                     web
+rclone-archive-symlinks      tazuna-ownmrt-v98@deepseek-v4.1-flash:max                    web
+rclone-archive-symlinks      tazuna-ownplan-v38@deepseek-v4.1-flash:max                   web
+rclone-archive-symlinks      tazuna-ownshn-v136@gpt-6.1-sol:xhigh                         web
+rclone-archive-symlinks      tazuna-ownsub-v114@deepseek-v4.1-flash-1017:max              web
+rclone-archive-symlinks      tazuna-ownsub-v115@deepseek-v4.1-flash-1017:max              web-blocked
+rclone-archive-symlinks      tazuna-ownsub-v118@deepseek-v4.1-flash-1017:max              web
+rclone-archive-symlinks      tazuna-ownsubgate-v212@deepseek-v4.1-flash-1017:max          web
+rclone-archive-symlinks      tazuna-ownsubgate-v218@deepseek-v4.1-flash-1017:max          web
+rclone-archive-symlinks      tazuna-ownsubla-v117@deepseek-v4.1-flash-1017:max            web
+rclone-archive-symlinks      tazuna-ownsubm-v134@gpt-6.1-sol:xhigh                        web
+rclone-archive-symlinks      tazuna-ownsubm-v211@deepseek-v4.1-flash-1017:max             web-blocked
+rclone-archive-symlinks      tazuna-ownsubm-v241@deepseek-v4.1-flash-1017:max             web
+rclone-archive-symlinks      tazuna-ownsubm-v293@deepseek-v4.1-flash:max                  web-blocked
+rclone-archive-symlinks      tazuna-ownsubm-v306@deepseek-v4.1-flash-1017:max             web-blocked
+rclone-archive-symlinks      tazuna-ownsubm-v324@deepseek-v4.1-flash-1017:max             web-blocked
+rclone-archive-symlinks      tazuna-ownsubm-v330@deepseek-v4.1-flash-1017:max             local-blocked
+rclone-archive-symlinks      tazuna-ownsubm-v335@deepseek-v4.1-flash-1017:max             web-blocked
+rclone-archive-symlinks      tazuna-ownsubm-v341@deepseek-v4.1-flash-1017:max             web-blocked
+rclone-archive-symlinks      tazuna-ownsubx-v342@deepseek-v4.1-flash-1017:max             web-blocked
+rclone-archive-symlinks      tazuna-ownsubx-v354@deepseek-v4.1-flash-1017:max             web-blocked
+rclone-archive-symlinks      tazuna-ownsubx-v400@deepseek-v4.1-flash-1017:max             web-blocked
+rclone-archive-symlinks      tazuna-ownsubx-v401@deepseek-v4.1-flash-1017:max             web-blocked
+rclone-archive-symlinks      tazuna-ownuno-v111@deepseek-v4.1-flash-1017:max              web
+rclone-archive-symlinks      tazuna-ownuno-v187@deepseek-v4.1-flash:max                   web
+rclone-archive-symlinks      tazuna-ownuno-v199@deepseek-v4.1-flash-1017:max              web
+rclone-archive-symlinks      tazuna-ownuno-v56@deepseek-v4.1-flash:max                    web
+rclone-archive-symlinks      tazuna-ownuno-v76@deepseek-v4.1-flash:max                    web
+telegraf-snmp-reconnect      tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+telegraf-snmp-reconnect      tazuna-cascade-v38@deepseek-v4.1-flash:max                   web
+telegraf-snmp-reconnect      tazuna-handhigh-v41@deepseek-v4.1-flash:max                  web
+telegraf-snmp-reconnect      tazuna-handmed-v41@deepseek-v4.1-flash:max                   web
+telegraf-snmp-reconnect      tazuna-own-v38@deepseek-v4.1-flash:max                       web
+telegraf-snmp-reconnect      tazuna-ownbatch-v39@deepseek-v4.1-flash:max                  web,web-blocked
+telegraf-snmp-reconnect      tazuna-ownsubx-v378@deepseek-v4.1-flash-1017:max             web-blocked
+telegraf-snmp-reconnect      tazuna-ownsubx-v380@deepseek-v4.1-flash-1017:max             web-blocked
+telegraf-snmp-reconnect      tazuna-ownsubx-v390@deepseek-v4.1-flash-1017:max             web-blocked
+telegraf-snmp-reconnect      tazuna-ownsubx-v412@deepseek-v4.1-flash-1017:max             web-blocked
+telegraf-snmp-reconnect      tazuna-ownsubx-v413@deepseek-v4.1-flash-1017:max             web-blocked
+telegraf-snmp-reconnect      tazuna-ownsubx-v440@deepseek-v4.1-flash-1017:max             web-blocked
+terraform-import-foreach     tazuna-cascade-v33@deepseek-v4.1-flash:max                   web
+terraform-import-foreach     tazuna-cascade-v34@deepseek-v4.1-flash:max                   web
+166 task/harness pairs saw the fix; written to leaks.jsonl

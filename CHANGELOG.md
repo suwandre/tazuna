@@ -16,6 +16,34 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.91-0.0.92 (2026-10-26/27): SubRouter unstreamed; route cache judged from call 20, 524 retried streamed
+
+- 0.0.91: calls to SubRouter start unstreamed, like UnoRouter's (streamed again after a 413 or an empty reply).
+- 0.0.92: a route's cache is judged from its 20th call (0.0.79 judged the first 10, which start cold: LingAI itself
+  cached 45-98% there and 84-100% over the next 10, and all seven a6aa runs of round12's first start left at call 10);
+  an unstreamed call the gateway cuts with a 524 (SubRouter's Cloudflare, ~100 s) goes again streamed.
+
+`round12.sh` / `night-1026b.sh` overnight: all seven tasks once each, 0.0.90 streamed on the LingAI route key (v420-v432,
+even) against 0.0.92 unstreamed on a key limited to a6aa with the LingAI route key behind it (v434-v440). Leak scan
+clean; judge `judge.oct.round12.jsonl`.
+
+| | 0.0.90, LingAI streamed | 0.0.92, a6aa then LingAI, unstreamed |
+|---|---|---|
+| judge (7) | 6.21 | 6.93 |
+| hidden | 13/22 | 21/22 |
+| turns | 656 | 448 (-32%) |
+| cached (runs) | 93% | 90% |
+| est cost / hours | $0.124 / 11.1 h | $0.111 / 8.0 h |
+
+- a6aa under seven runs at once: calls took ~100 s (unstreamed calls ran into the 524 and went again streamed) and
+  cached 22%; every run left it for LingAI at calls 10-17, on speed this time, not on the cold start. With three runs
+  at once the evening before it cached 87% at 1/4 of LingAI's cost per call. A cheap provider with little capacity:
+  not a default for parallel runs.
+- LingAI unstreamed against streamed over the night: 93% cached both, $0.00022 against $0.00026 a call. Unstreamed is no
+  worse on LingAI and is what a6aa-like providers need; kept.
+- The judge and hidden-test gap is between single runs on different routes and versions whose changes do not touch
+  the model's work (streaming, route rules); read as noise, with 0.0.90's 6.21 against its 6.57 in round11.
+
 ## 0.0.90 (2026-10-26): the own loop keeps exported APIs unless the task asks; same judge, -21% turns
 
 One prompt line: "Do not change exported APIs (public functions, methods, interfaces and types other packages use)

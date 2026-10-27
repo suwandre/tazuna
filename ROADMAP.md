@@ -272,6 +272,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-27: SubRouter unstreamed (0.0.91) kept: LingAI caches the same either way and costs a little less a call;
+  a6aa is cheap only at low load (87% cached with three runs, 22% and ~100 s calls with seven). LingAI stays the route
+  key's provider; route switching now judges the cache from call 20 (0.0.92). Next: per-provider capacity in the cache
+  probe (several conversations at once), then a cheap route for single sessions.
+
 - 2026-10-26: 0.0.88 cleared by a replay of the design turn (both versions plan the gc signature change 7-9 times in
   10; a rule against it does not stop it, it only halves the riskier exported-interface change). 0.0.89 kept: a test
   check past its limit ends unverified instead of a false failure (both runs 3/3, no fix loop). Next: the API rule as
