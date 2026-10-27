@@ -81,7 +81,8 @@ def transcripts():
             p = Path(root) / f
             if f.endswith((".jsonl", ".json")):
                 try:
-                    yield str(p), p.read_text(errors="ignore")
+                    # the model's own reasoning (tazuna 0.0.95 records it) is thinking, not a fetch or a read: left out
+                    yield str(p), "\n".join(l for l in p.read_text(errors="ignore").splitlines() if '"e":{"type":"reasoning"' not in l)
                 except OSError:
                     pass
             elif f == "opencode.db":

@@ -628,6 +628,9 @@ impl Loop {
             (self.out)(&json!({"type": "stream_event", "event": {"type": "message_delta",
                 "usage": {"input_tokens": prompt - cached, "cache_creation_input_tokens": 0, "cache_read_input_tokens": cached, "output_tokens": out}}}));
 
+            // the step's reasoning, for the transcript only (0.0.95): which steps the model deliberates on, and why, could
+            // not be read before (41 of tazuna's 176 calls wrote over 5K tokens against Claude Code's 8 of 190, 2026-10-27)
+            let mut thought = String::new();
             // text and calls as (id, name, arguments), in Chat Completions' shape for both APIs
             let (text, calls): (String, Vec<Value>) = match self.api {
                 Api::Responses => {
@@ -646,6 +649,7 @@ impl Loop {
                     let text = blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n");
                     let calls = blocks.iter().filter(|b| b["type"] == "tool_use")
                         .map(|b| json!({"id": b["id"], "function": {"name": b["name"], "arguments": b["input"]}})).collect();
+                    thought = blocks.iter().filter_map(|b| b["thinking"].as_str()).collect::<Vec<_>>().join("\n");
                     // a turn of thinking alone is not kept: the nudge that follows is the next user turn
                     if blocks.iter().any(|b| b["type"] == "text" || b["type"] == "tool_use") {
                         self.msgs.push(json!({"role": "assistant", "content": blocks}));
@@ -671,6 +675,7 @@ impl Loop {
                     }
                     if let Some(r) = m["reasoning_content"].as_str().or(m["reasoning"].as_str()).filter(|r| !r.is_empty()) {
                         keep["reasoning_content"] = json!(r);
+                        thought = r.to_string();
                     }
                     self.msgs.push(keep);
                     (text, calls)
@@ -691,6 +696,9 @@ impl Loop {
                 .collect();
             for (id, name, input) in &parsed {
                 blocks.push(json!({"type": "tool_use", "id": id, "name": name, "input": input.clone().unwrap_or(json!({}))}));
+            }
+            if !thought.is_empty() {
+                (self.out)(&json!({"type": "reasoning", "text": thought}));
             }
             (self.out)(&json!({"type": "assistant", "message": {"role": "assistant", "model": self.model, "content": blocks}}));
             if parsed.is_empty() {
