@@ -1,6 +1,9 @@
+{"task": "caddy-quoted-braces", "harness": "cc-sub-v476@deepseek-v4.1-flash-1017:max", "channels": ["web"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v459@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v475@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v489@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "opencode-v290@deepseek-v4.1-flash-free:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "opencode-v291@deepseek-v4.1-flash-free", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["local", "web"]}
@@ -100,10 +103,12 @@
 {"task": "lazygit-mnemonic-prefix", "harness": "tazuna-ownsubx-v389@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "lazygit-mnemonic-prefix", "harness": "tazuna-ownsubx-v408@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "lazygit-mnemonic-prefix", "harness": "tazuna-ownsubx-v409@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "prometheus-duration-parens", "harness": "cc-sub-v480@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "prometheus-duration-parens", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "prometheus-duration-parens", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "prometheus-duration-parens", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}
 {"task": "prometheus-duration-parens", "harness": "tazuna-own-v29@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "prometheus-duration-parens", "harness": "tazuna-ownsubx-v479@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "prometheus-exemplar-compaction", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "prometheus-exemplar-compaction", "harness": "tazuna-cascade-v38@deepseek-v4.1-flash:max", "channels": ["web", "web-blocked"]}
 {"task": "prometheus-exemplar-compaction", "harness": "tazuna-ownplan-v38@deepseek-v4.1-flash:max", "channels": ["web"]}

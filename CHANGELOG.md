@@ -16,6 +16,41 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.94-0.0.97 (2026-10-27/28): the model's reasoning, found missing and kept as a note; -63% cost, -61% time
+
+The fast panel against stock Claude Code (deepseek-v4.1-flash-1017 at max on foxrouter, side by side) turned up four
+things, one version each:
+- 0.0.94: foxrouter streams DeepSeek's reasoning as `reasoning`, not `reasoning_content`; tazuna kept none of it. Now both.
+- 0.0.95: the transcript records each step's reasoning (a `reasoning` event, never sent; leakscan.py skips it).
+- No provider passes earlier reasoning to the model: a code word planted in sent-back reasoning was never recalled,
+  through foxrouter and LingAI, Chat and Messages API, with a tool call in between or not. 0.0.85's reasoning-back
+  reaches no model through SubRouter. Without its plan tazuna's model worked out the same design again at every new
+  finding: six times on one caddy-quoted run, 13-26K characters each; it had 41 calls over 5K output tokens where
+  Claude Code had 8 (72% of its output). Ruled out on the way: the API path (identical reasoning on identical history),
+  a brevity line, tazuna's own test check.
+- 0.0.96: a prompt line asking the model to write its plan in the reply: ignored (14 heavy steps against 17).
+- 0.0.97: the end of any step that reasoned over 4000 characters (its last 2500) goes into that turn's reply in the
+  history, once, so the cached history stays the same.
+
+`keep1.sh`, 0.0.97 against 0.0.96 side by side (tasks set, foxrouter):
+
+| | caddy-quoted 0.0.97 | caddy-quoted 0.0.96 | terraform 0.0.97 | terraform 0.0.96 |
+|---|---|---|---|---|
+| hidden | 5/5 | 5/5 | 1/3 | 1/3 |
+| turns | 50 | 92 | 48 | 67 |
+| time | 533 s | 1354 s | 533 s | 1376 s |
+| input / output | 1.73M / 44K | 3.97M / 152K | 1.54M / 40K | 2.94M / 166K |
+| heavy steps (reasoning over 12K chars) | 2 | 15 | 4 | 21 |
+| est. cost (account log, split by tokens) | $0.006 | $0.016 | $0.006 | $0.016 |
+
+Claude Code on the same tasks earlier: caddy-quoted 5/5 in 101-108 turns, 17-19 min, 4.4-5.6M input, 86-92K output;
+terraform 1/3 in 123 turns, 28 min, 6.0M input, 117K output. Single runs; two a side and the judge next.
+
+Fast panel before the fix (tazuna 0.0.93/0.0.94 against Claude Code, `ccpanel*.sh`): caddy-quoted both 5/5 (tazuna
+slower: 26-30 against 15-17 min); terraform tazuna 2/3 against 1/3 (tazuna ~2x the cost); caddy-tls both 0/1 (tazuna 66
+min, Claude Code 48); prometheus-duration tazuna 0/1 in 2.2 h with 1.06M output, Claude Code 1/1 in 2.5 h with 1.11M.
+foxrouter holds about three conversations in the Chinese evening (52-71% cached at five to seven) and four at night.
+
 ## tazuna against Claude Code with DeepSeek, first task; single sessions per provider, 2026-10-27 (bench only)
 
 The roadmap's main item, step 1: the same model in tazuna's own loop and in stock Claude Code (the official CLI, its own
