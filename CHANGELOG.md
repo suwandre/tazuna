@@ -16,6 +16,34 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## tazuna against Claude Code with DeepSeek, first task; single sessions per provider, 2026-10-27 (bench only)
+
+The roadmap's main item, step 1: the same model in tazuna's own loop and in stock Claude Code (the official CLI, its own
+prompt and tools, a fresh config dir: no user settings, plugins or hooks), on SubRouter's Anthropic route
+(`run.py` harness `cc-sub`; a local stub showed only the SubRouter key goes out, no login token). LingAI does not serve
+that route for 1017 (404 "API endpoint not found"); foxrouter, kriora, a6aa, relai and fate86 do, so both ran on
+foxrouter (`ccsub2.sh`, caddy-retry, deepseek-v4.1-flash-1017 at max, side by side; `judge.oct.ccsub1.jsonl`).
+
+| | tazuna 0.0.93 (v455) | Claude Code (v456) |
+|---|---|---|
+| hidden | 2/2 | 2/2 |
+| judge | 7.5 | 7.5 |
+| turns | 74 | 90 |
+| time | 808 s | 1179 s |
+| input (cached) | 3.82M (91%) | 8.74M (94%) |
+| output | 61K | 81K |
+| cost (account log) | $0.0138 | $0.0214 |
+
+Same quality, -36% cost, -31% time, -56% input on one task; tazuna on LingAI at the same time: 2/2, judge 9, 50 turns.
+Claude Code sends ~10-17K tokens of prompt and tools with every call against tazuna's ~2K. Next: more tasks, two runs at
+a time (not fourteen) so neither provider throttles.
+
+Single sessions (`single2.sh`, one conversation per provider, caddy-retry then gitea, 11:57-13:38, Chinese evening):
+all 2/2. Per call from the account log: relai 94% cached, 24 s, $0.00006; LingAI 93%, 9 s, $0.00014; kriora 59%, 41 s,
+$0.00024; fate86 81%, 13 s, $0.00026; a6aa 46%, 31 s, $0.00039. Judge (two tasks, `judge.oct.single2.jsonl`): a6aa 8,
+relai 7.75, LingAI 7.25, kriora 6.75, fate86 5. fate86's caddy-retry run took 62 minutes where it took 5 an hour
+earlier. Only relai is cheaper than LingAI, at 2.5x the time a call; no separate cheap mode for now.
+
 ## 0.0.93 (2026-10-27): SubRouter streams again; cheap providers only for single sessions
 
 SubRouter's gateway cuts an unstreamed reply at ~125 s with a 524 (not billed): a counting question at max effort, four

@@ -34,6 +34,9 @@
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v404@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v405@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v425@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v449@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v453@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v455@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxbest2-v286@gpt-6-luna:max", "channels": ["web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v76@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v81@deepseek-v4.1-flash:max", "channels": ["modcache"]}

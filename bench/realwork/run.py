@@ -372,7 +372,7 @@ def run_cc(h, w, prompt):
     if h.startswith("cc-phased"):
         return run_cc_phased(h, w, prompt)
     model, effort = model_effort(h)
-    base = h.split("@", 1)[0]
+    base = base_name(h)
     if base in ("cc-mid-addons", "cc-addons", "cc-graphify", "cc-allplugins"):
         graphify_build(w)
     with tempfile.TemporaryDirectory() as cfg:
@@ -385,7 +385,20 @@ def run_cc(h, w, prompt):
         # last one alone covers only the last segment (json mode prints only that one)
         cmd = ["claude", "-p", prompt, "--model", model, "--effort", effort, "--output-format", "stream-json", "--verbose",
                "--no-session-persistence", "--dangerously-skip-permissions", *cc_extra(base, w)]
-        r = sh(cmd, w, timeout=TIMEOUT, env=env_for(h, CLAUDE_CONFIG_DIR=cfg))
+        env = env_for(h, CLAUDE_CONFIG_DIR=cfg)
+        if base == "cc-sub":
+            # stock Claude Code (the official CLI, its own prompt and tools) on SubRouter's Anthropic route with a
+            # non-Anthropic model: the harness DeepSeek, GLM and MiniMax recommend (2026-10-27). Only the SubRouter key
+            # goes out (checked against a local stub: Authorization carries it, no x-api-key, no login token)
+            env.pop("ANTHROPIC_API_KEY", None)
+            env.update({"ANTHROPIC_BASE_URL": "https://subrouter.ai", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+                        "ANTHROPIC_AUTH_TOKEN": os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")],
+                        **{f"ANTHROPIC_DEFAULT_{t}_MODEL": model for t in ("HAIKU", "SONNET", "OPUS")}})
+        r = sh(cmd, w, timeout=TIMEOUT, env=env)
+        if base == "cc-sub":  # a transcript where leakscan.py looks (claude keeps none with --no-session-persistence)
+            t = BENCH_HOMES / "cc" / "transcripts"
+            t.mkdir(parents=True, exist_ok=True)
+            (t / f"{w.name}.jsonl").write_text(r.stdout)
     out = sum_results(r.stdout)
     if out is None:
         raise RuntimeError(f"claude rc={r.returncode}: {(r.stdout + r.stderr)[-800:]}")
@@ -880,7 +893,7 @@ def _run_job(task, h, i):
     wait_gate()
     _TL.gomod = BENCH_HOMES / "gomod" / task.name
     g = json.loads((task / "git.json").read_text())
-    _TL.gowork = subprocess.run(["git", "-C", g["repo"], "cat-file", "-e", f"{g['base']}:go.work"]).returncode == 0
+    _TL.gowork = subprocess.run(["git", "-C", g["repo"], "cat-file", "-e", f"{g['base']}:go.work"], capture_output=True).returncode == 0
     for attempt in range(8):
         with tempfile.TemporaryDirectory(prefix=f"rw-{task.name}-{h}-", ignore_cleanup_errors=True) as d:
             w = Path(d).resolve()
