@@ -47,7 +47,7 @@ def tools(bash_desc, timeout):
 
 
 def history(label, cut):
-    f = next(SESS.glob(f"*rw-prometheus*{label}@*"))
+    f = next(SESS.glob(f"*rw-*-{label}@*"))
     msgs, turn, cwd, prompt = [], 0, None, None
     for line in f.open():
         e = json.loads(line).get("e", {})

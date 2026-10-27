@@ -1001,11 +1001,12 @@ fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Res
     chat_in(http, url, key, api, body, groups())
 }
 
-/// Whether a call starts streamed (see chat_in). SubRouter too starts unstreamed (0.0.91): a6aa, DeepSeek 1017's
-/// cheapest provider there, cached 87% of unstreamed calls and 73% of streamed ones over real runs, at ~1/4 of LingAI's
-/// cost per call (2026-10-26); LingAI caches the same either way.
+/// Whether a call starts streamed (see chat_in). SubRouter streams again (0.0.93; unstreamed in 0.0.91-0.0.92): its
+/// gateway cuts an unstreamed reply at ~125 s with a 524, so every long reasoning call waited two minutes for nothing,
+/// and the providers that cached only unstreamed calls (a6aa) took 2-3x LingAI's time a call and failed under four
+/// conversations at once; LingAI caches the same either way (2026-10-27).
 fn streams_by_default(url: &str, api: Api) -> bool {
-    !url.contains("unorouter.com") && !url.contains("subrouter.ai") && !(url.contains("mortera.cloud") && matches!(api, Api::Responses))
+    !url.contains("unorouter.com") && !(url.contains("mortera.cloud") && matches!(api, Api::Responses))
 }
 
 fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, groups: &Groups) -> Result<Value> {
@@ -1500,9 +1501,9 @@ data: {\"choices\":[],\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":3}}\n
         std::fs::remove_dir_all(&dir).ok();
     }
     #[test]
-    fn subrouter_and_unorouter_start_unstreamed() {
+    fn unorouter_starts_unstreamed_subrouter_streams() {
         use super::{streams_by_default, Api};
-        assert!(!streams_by_default("https://subrouter.ai/v1", Api::Chat));
+        assert!(streams_by_default("https://subrouter.ai/v1", Api::Chat));
         assert!(!streams_by_default("https://api.unorouter.com/v1", Api::Chat));
         assert!(streams_by_default("https://api.cheaperinference.com/v1", Api::Chat));
         assert!(!streams_by_default("https://mortera.cloud/v1", Api::Responses) && streams_by_default("https://mortera.cloud/v1", Api::Chat));
