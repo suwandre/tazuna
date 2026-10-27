@@ -1,5 +1,6 @@
 {"task": "caddy-quoted-braces", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}
+{"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v459@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "opencode-v290@deepseek-v4.1-flash-free:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "opencode-v291@deepseek-v4.1-flash-free", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["local", "web"]}
