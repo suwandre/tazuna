@@ -401,6 +401,21 @@ fn reasoning_back() -> bool {
     std::env::var_os("TAZUNA_DROP_REASONING").is_none()
 }
 
+/// The end of a long reasoning step, kept in the history as visible text (0.0.97). Providers drop a model's earlier
+/// reasoning (DeepSeek through SubRouter: a code word planted in it was never recalled), so a design worked out once was
+/// worked out again at every new finding: six times, 13-26K characters each, on one caddy run; telling the model to write
+/// its plan down (0.0.96) changed nothing. A step's conclusion is at its end. Only long steps; appended once, never
+/// changed, so the cached history stays the same.
+fn kept_reasoning(r: &str) -> Option<String> {
+    const LONG: usize = 4000;
+    const TAIL: usize = 2500;
+    if r.chars().count() < LONG {
+        return None;
+    }
+    let start = r.char_indices().rev().nth(TAIL - 1).map_or(0, |(i, _)| i);
+    Some(format!("[the end of my reasoning at this step, kept as a note]\n...{}\n[end of note]\n\n", r[start..].trim()))
+}
+
 fn headless() -> bool {
     std::env::var_os("TAZUNA_HEADLESS").is_some()
 }
@@ -676,6 +691,9 @@ impl Loop {
                     if let Some(r) = m["reasoning_content"].as_str().or(m["reasoning"].as_str()).filter(|r| !r.is_empty()) {
                         keep["reasoning_content"] = json!(r);
                         thought = r.to_string();
+                        if let Some(note) = kept_reasoning(r) {
+                            keep["content"] = json!(format!("{note}{text}"));
+                        }
                     }
                     self.msgs.push(keep);
                     (text, calls)
@@ -1514,6 +1532,15 @@ data: {\"choices\":[{\"delta\":{\"reasoning\":\"at a\"}}]}\n\n";
         assert!(l.send_reasoning, "kept on for the rest of the run");
         std::fs::remove_dir_all(&dir).ok();
     }
+    #[test]
+    fn a_long_reasoning_step_leaves_its_end_as_a_note() {
+        use super::kept_reasoning;
+        assert_eq!(kept_reasoning("short plan"), None, "short steps leave nothing");
+        let long = format!("{}PLAN: add Token.IsBlockOpen and use it in parse.go", "é".repeat(5000));
+        let note = kept_reasoning(&long).unwrap();
+        assert!(note.contains("PLAN: add Token.IsBlockOpen") && note.chars().count() < 2700, "the end, bounded, cut on a char boundary");
+    }
+
     #[test]
     fn unorouter_starts_unstreamed_subrouter_streams() {
         use super::{streams_by_default, Api};
