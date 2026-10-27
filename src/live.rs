@@ -29,6 +29,11 @@ const MID_PROMPT: &str = "You are a coding agent working in {cwd}. Today is {dat
 /// 2026-10-26). Unexported code stays free to change: the compiler checks every caller.
 const API_RULE: &str = "\n- Do not change exported APIs (public functions, methods, interfaces and types other packages use) unless the task asks for it; changing unexported code is fine when you update every caller.";
 
+/// The own loop (0.0.96): providers drop a model's earlier reasoning (DeepSeek through SubRouter's foxrouter and LingAI,
+/// Chat and Messages alike: a code word planted in it was never recalled), so a design worked out once was worked out
+/// again at every new finding (six times, 13-26K characters each, on one caddy run). A plan written in the reply stays.
+const PLAN_RULE: &str = "\n- Your reasoning is not kept between steps. Once you have decided on a design or plan, write it in your reply in 2-4 lines before acting on it, and update it when it changes: that text is all you will see of your thinking later.";
+
 /// repo-lean only: with Claude Code's own tools the short prompt read ~25% less code and ran the type check less than
 /// Claude Code's own prompt did (company tickets, 2026-10-07), and the judge marked down guessed names.
 const CHECK_RULES: &str = "\n- Before changing code, read the code you change, its callers, and the definition of every name you rely on (database columns, fields, functions, APIs). Never assume one exists.\n- Before finishing, run the repo's type check and the relevant tests.";
@@ -1076,6 +1081,7 @@ impl Live {
             // bash cap (2026-10-24)
             let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", "Search with grep -rn in bash; read whole files with read.");
             prompt.push_str(API_RULE);
+            prompt.push_str(PLAN_RULE);
             if self.project_instructions {
                 let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                 prompt.push_str(&text);
