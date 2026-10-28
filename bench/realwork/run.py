@@ -112,6 +112,65 @@ def _proxy_conn(c):
 _PROXY, _PROXY_LOCK = [], threading.Lock()
 
 
+# Models grep `env` (for Go or proxy settings) and the output goes to the provider with the conversation: four SubRouter
+# keys did, 2026-10-28 (pi's own, and three that tazuna runs never used). A harness gets only the credentials it needs.
+SECRET = re.compile("KEY|TOKEN|SECRET")
+
+
+def only_keys(env, *keep):
+    return {k: v for k, v in env.items() if k in keep or not SECRET.search(k)}
+
+
+_RELAYS = {}
+
+
+def relay(target, key):
+    """A localhost base URL forwarding to `target` with `key` as the bearer token: the harness holds a dummy, so its model
+    cannot print the key (pi keeps its key in the environment its tools inherit). Streams the reply as it comes."""
+    import http.client, http.server, urllib.parse
+    with _PROXY_LOCK:
+        if (target, key) in _RELAYS:
+            return _RELAYS[target, key]
+        u = urllib.parse.urlsplit(target)
+
+        class H(http.server.BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = self.rfile.read(int(self.headers.get("content-length", 0)))
+                hd = {k: v for k, v in self.headers.items()
+                      if k.lower() not in ("host", "authorization", "x-api-key", "content-length", "connection", "accept-encoding")}
+                c = http.client.HTTPSConnection(u.hostname, u.port or 443, timeout=900)
+                try:
+                    c.request(self.command, self.path, body or None, {**hd, "Authorization": f"Bearer {key}"})
+                    r = c.getresponse()
+                    self.send_response(r.status)
+                    for k, v in r.getheaders():
+                        if k.lower() not in ("transfer-encoding", "content-length", "connection", "content-encoding"):
+                            self.send_header(k, v)
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.end_headers()
+                    while d := r.read1(65536):
+                        self.wfile.write(b"%x\r\n%s\r\n" % (len(d), d))
+                        self.wfile.flush()
+                    self.wfile.write(b"0\r\n\r\n")
+                except OSError:
+                    self.close_connection = True
+                finally:
+                    c.close()
+            do_GET = do_POST
+
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        srv.daemon_threads = True
+        srv.handle_error = lambda *a: None  # a client that hangs up between requests
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        _RELAYS[target, key] = f"http://127.0.0.1:{srv.server_address[1]}"
+        return _RELAYS[target, key]
+
+
 def proxy_url():
     """Start the blocking CONNECT proxy once per bench process (a thread: it dies with run.py)."""
     import socket
@@ -404,7 +463,7 @@ def run_cc(h, w, prompt):
             # stock Claude Code (the official CLI, its own prompt and tools) on SubRouter's Anthropic route with a
             # non-Anthropic model: the harness DeepSeek, GLM and MiniMax recommend (2026-10-27). Only the SubRouter key
             # goes out (checked against a local stub: Authorization carries it, no x-api-key, no login token)
-            env.pop("ANTHROPIC_API_KEY", None)
+            env = only_keys(env)
             env.update({"ANTHROPIC_BASE_URL": "https://subrouter.ai", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                         "ANTHROPIC_AUTH_TOKEN": os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")],
                         **{f"ANTHROPIC_DEFAULT_{t}_MODEL": model for t in ("HAIKU", "SONNET", "OPUS")}})
@@ -469,10 +528,11 @@ def run_pi_sub(h, w, prompt):
     with only SubRouter's URL and model id changed, in a fresh agent dir (HOME is the bench home: no user settings,
     extensions or skills). Only the SubRouter key goes out (checked against a local stub, 2026-10-28)."""
     model, effort = model_effort(h)
-    agent = BENCH_HOMES / "pi-sub" / ".pi" / "agent"
-    agent.mkdir(parents=True, exist_ok=True)
+    # an agent dir per run (PI_CODING_AGENT_DIR): each run.py has its own relay port
+    agent = Path(tempfile.mkdtemp(prefix="pi-agent-"))
+    url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]) + "/v1"
     (agent / "models.json").write_text(json.dumps({"providers": {"subrouter": {
-        "baseUrl": "https://subrouter.ai/v1", "api": "openai-completions", "apiKey": "$PI_SUB_KEY", "models": [{
+        "baseUrl": url, "api": "openai-completions", "apiKey": "relay", "models": [{
             "id": model, "reasoning": True, "contextWindow": 1000000, "maxTokens": 384000,
             "thinkingLevelMap": {"minimal": None, "low": "low", "medium": None, "high": "high", "max": "max"},
             "cost": {"input": 0.02, "output": 0.08, "cacheRead": 0.0004, "cacheWrite": 0},
@@ -481,10 +541,12 @@ def run_pi_sub(h, w, prompt):
     # the one change from stock: tazuna's patience with provider errors (~16 min) instead of pi's 3 retries in ~14 s, which
     # lost three runs to SubRouter 503s (CPU overload, upstream quota) at 27-45 min on 2026-10-28
     (agent / "settings.json").write_text(json.dumps({"retry": {"enabled": True, "maxRetries": 11, "baseDelayMs": 2000, "maxAgentDelayMs": 120000}}))
-    env = {k: v for k, v in env_for("pi-sub", PI_TELEMETRY="0").items() if not re.search("KEY|TOKEN|SECRET", k)}
-    env["PI_SUB_KEY"] = os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]
-    r = sh(["pi", "-p", prompt, "--mode", "json", "--no-session", "--thinking", effort, "--provider", "subrouter", "--model", model],
-           w, timeout=TIMEOUT, env=env)
+    env = only_keys(env_for("pi-sub", PI_TELEMETRY="0", PI_CODING_AGENT_DIR=str(agent)))
+    try:
+        r = sh(["pi", "-p", prompt, "--mode", "json", "--no-session", "--thinking", effort, "--provider", "subrouter", "--model", model],
+               w, timeout=TIMEOUT, env=env)
+    finally:
+        shutil.rmtree(agent, ignore_errors=True)
     t = BENCH_HOMES / "pi-sub" / "transcripts"  # where leakscan.py looks
     t.mkdir(parents=True, exist_ok=True)
     (t / f"{w.name}.jsonl").write_text(r.stdout)
@@ -634,8 +696,12 @@ def run_harness(h, w, prompt):
         pin = [] if h.startswith("tazuna-route") else ["--model", model, "--effort", effort]
         # claude settings under test, passed through tazuna's environment
         lever = {"tazuna-ttl5m": {"CLAUDE_CODE_PROMPT_CACHE_TTL": "5m"}, "tazuna-ownelide": {"TAZUNA_ELIDE": "1"}, "tazuna-ownbatch": {"TAZUNA_BATCH": "1"}, "tazuna-ownplan": {"TAZUNA_PLAN": "1"}, "tazuna-ownboth": {"TAZUNA_ELIDE": "1", "TAZUNA_PLAN": "1"}, "tazuna-bash8k": {"BASH_MAX_OUTPUT_LENGTH": "8000"}}.get(base_name(h), {})
-        r = sh([str(HARNESS_BIN), "--run", str(pf), *pin, *extra], w, timeout=TIMEOUT,
-               env=env_for("cc", CLAUDE_CONFIG_DIR=cfg, **lever))
+        env = env_for("cc", CLAUDE_CONFIG_DIR=cfg, **lever)
+        if "--key-env" in extra:  # own loop: its key (tazuna drops it from its tools' environment), route keys, claude's login
+            keep = [extra[extra.index("--key-env") + 1], "CLAUDE_CODE_OAUTH_TOKEN",
+                    *(r.split()[1] for r in env.get("TAZUNA_ROUTES", "").replace("\n", ";").split(";") if len(r.split()) > 1)]
+            env = only_keys(env, *keep)
+        r = sh([str(HARNESS_BIN), "--run", str(pf), *pin, *extra], w, timeout=TIMEOUT, env=env)
     try:
         d = json.loads(r.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError):
