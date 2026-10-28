@@ -34,9 +34,62 @@ def leaked():
     """(task, harness) pairs that saw the fix, from the last scan; summaries and the judge leave them out."""
     p = HERE / "leaks.jsonl"
     found = {(d["task"], d["harness"]) for d in map(json.loads, p.read_text().splitlines())
-             if any(not c.endswith("-blocked") for c in d["channels"])} if p.exists() else set()
+             if any(not c.endswith(("-blocked", "-listed")) for c in d["channels"])} if p.exists() else set()
     return found | {(r["task"], r["harness"]) for f in HERE.glob("results*.jsonl")
                     for r in map(json.loads, f.read_text().splitlines()) if r["harness"].startswith(INVALID)}
+
+
+# Another run's work tree (rw-<task>-<harness>-vN@...) or a harness's logs. tazuna v504 copied tests from a killed Claude
+# Code run's tree and ran `git diff` in the one beside it; pi v518 mined an earlier pi transcript (2026-10-28). A command
+# that only lists them (ls, find, a scandir) is "peer-listed", not a leak.
+JAILED_FROM = 526  # first run under run.py's jail_for (2026-10-28)
+RUNDIR = re.compile(r"rw-[a-z0-9-]+?-[a-z][\w-]*?-v(\d+)@[^\s'\"\\]*")
+LOGDIR = re.compile(r"bench-homes/[^\s'\"\\]*?/(?:transcripts|tazuna/sessions|\.claude/projects|opencode|\.codex/sessions)\b")
+READS = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:cd|cat|sed|head|tail|less|more|diff|git|cp|rsync|grep|rg|awk|cut|xxd|od|strings|"
+                   r"python3?|patch|jq|bat|vim?|nano|tar|zip|unzip|base64|go|for|while)\b|open\(|read_text|\.read\(|glob\(")
+
+
+def tool_calls(text):
+    """The arguments of every tool call in a transcript: tazuna's and Claude Code's tool_use, pi's toolCall."""
+    out = []
+    for line in text.splitlines():
+        if '"tool_use"' not in line and '"toolCall"' not in line:
+            continue
+        try:
+            stack = [json.loads(line)]
+        except json.JSONDecodeError:
+            continue
+        while stack:
+            x = stack.pop()
+            if isinstance(x, dict):
+                if x.get("type") in ("tool_use", "toolCall"):
+                    out.append(x.get("input") or x.get("arguments") or {})
+                else:
+                    stack.extend(x.values())
+            elif isinstance(x, list):
+                stack.extend(x)
+    return out
+
+
+def peer(text, own):
+    """'peer' when a tool call reads another run's tree or a harness log, 'peer-listed' when one only lists them."""
+    seen = None
+    for a in tool_calls(text):
+        cmd = a.get("command") if isinstance(a.get("command"), str) else None
+        blob = cmd if cmd is not None else json.dumps(a)
+        # as a path (after a slash), not a grep pattern filtering a listing
+        hits = [m for m in [*(m for m in RUNDIR.finditer(blob) if m.group(1) != own), *LOGDIR.finditer(blob)]
+                if m.start() and blob[m.start() - 1] == "/"]
+        if not hits:
+            continue
+        if cmd is None:  # read, grep, glob, edit tools name what they open
+            return "peer"
+        names = {v for v in re.findall(r"(\w+)=[\"']?[^\s\"';]*rw-|(\w+)=[\"']?[^\s\"';]*bench-homes", cmd) for v in v if v}
+        for seg in re.split(r"&&|\|\||;|\||\n", cmd):  # a path held in a shell variable counts where the variable is used
+            if (any(h.group(0) in seg for h in hits) or any(f"${n}" in seg or f"${{{n}}}" in seg for n in names)) and READS.search(seg):
+                return "peer"
+        seen = "peer-listed"
+    return seen
 
 
 def has_fix(moddir, patch):
@@ -106,6 +159,13 @@ def main(sets=()):
     label = re.compile(r"rw-(" + "|".join(map(re.escape, tasks)) + r")-(\S+?@[\w.-]+(?::[a-z]+)?)-[a-z0-9_]{8}")
     found = {}
     for f, s in transcripts():
+        m = label.search(f) or label.search(s)
+        v = re.search(r"-v(\d+)@", m.group(2)) if m else None
+        p = peer(s, v.group(1)) if v and "company-review" not in f else None
+        if p == "peer" and int(v.group(1)) >= JAILED_FROM:
+            p = "peer-blocked"  # the jail refuses those reads (pi v530 tried 62 times: "Operation not permitted")
+        if p:
+            found.setdefault((m.group(1), m.group(2)), set()).add(p)
         # JSON escapes undone so a match cannot run across lines (Go's `net/url` and a GitHub link in a comment below it
         # once read as a fetch)
         s = s.replace('\\"', "").replace('"', "").replace("\\n", "\n")

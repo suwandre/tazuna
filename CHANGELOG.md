@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Earlier runs audited for reading other runs' work: no kept or dropped version changes, 2026-10-28 (bench only)
+
+leakscan.py now has a `peer` channel: a tool call that reads another run's work tree (`rw-...-vN@`) or a harness's logs
+(`peer-listed` when it only lists them; `peer-blocked` from v526, where the jail refuses the read; `test_leakscan.py`).
+Over every transcript, 19 runs read; leaked() leaves them all out of summaries and the judge from now on. The scored ones
+from v300 on, and what they fed:
+- v349 (0.0.85 A/B, rclone r1, 3/3) read its pair's diff (v348). Without the pair, 0.0.85's judge gain is +1.1 on four
+  pairs instead of +1.5 on five; and 0.0.94-0.0.97 found its mechanism reaches no model through SubRouter anyway.
+- v405 (round11, caddy-retry) read v309's whole diff. 0.0.90 was kept on -21% turns with the judge within noise: holds.
+- v439 (round12, 0.0.92 prometheus, 2/3) diffed and read the 0.0.90 run beside it (v430). That round was read as noise.
+- v449 (single-session provider test) read v309's and v391's diffs: a speed test, no quality decision.
+- v376 (0.0.85 prometheus) saw other runs' changed-file lists; v381 ran a test in another tree while chasing a Go
+  setting; v382 looked for sessions in a path that does not exist. Left out too.
+- Before v300: v53 and v117 (old rounds).
+
 ## tazuna 0.0.97, stock Claude Code and pi with DeepSeek: same quality, tazuna 2-3x cheaper and faster, 2026-10-28 (bench only)
 
 pi 1.4.0 as the third harness (`pi-sub` in run.py): stock pi with its own catalog entry for DeepSeek V4.1 Flash (thinking
