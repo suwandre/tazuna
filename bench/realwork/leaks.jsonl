@@ -47,8 +47,11 @@
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v83@deepseek-v4.1-flash:max", "channels": ["modcache", "web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v86@deepseek-v4.1-flash:max", "channels": ["modcache", "web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownunorev-v94@deepseek-v4.1-flash:max", "channels": ["modcache", "web"]}
+{"task": "caddy-tls-automate-names", "harness": "cc-sub-v501@deepseek-v4.1-flash-1017:max", "channels": ["web"]}
+{"task": "caddy-tls-automate-names", "harness": "cc-sub-v505@deepseek-v4.1-flash-1017:max", "channels": ["web"]}
 {"task": "caddy-tls-automate-names", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-tls-automate-names", "harness": "tazuna-own-v31@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "caddy-tls-automate-names", "harness": "tazuna-ownsubx-v504@deepseek-v4.1-flash-1017:max", "channels": ["local-blocked", "web-blocked"]}
 {"task": "caddy-unix-socket-close", "harness": "opencode-v287@deepseek-v4.1-flash-free", "channels": ["local"]}
 {"task": "caddy-unix-socket-close", "harness": "opencode-v288@deepseek-v4.1-flash-free:max", "channels": ["local"]}
 {"task": "caddy-unix-socket-close", "harness": "opencode-v289@deepseek-v4.1-flash-free", "channels": ["local", "web"]}
@@ -171,5 +174,8 @@
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownsubx-v412@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownsubx-v413@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownsubx-v440@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "terraform-import-foreach", "harness": "cc-sub-v495@deepseek-v4.1-flash-1017:max", "channels": ["web"]}
+{"task": "terraform-import-foreach", "harness": "cc-sub-v499@deepseek-v4.1-flash-1017:max", "channels": ["web"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "terraform-import-foreach", "harness": "tazuna-ownsubx-v498@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}

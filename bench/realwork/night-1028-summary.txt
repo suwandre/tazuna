@@ -1,0 +1,17 @@
+task                         harness        runs  hidden  judge  turns  minutes  input M  output K
+caddy-quoted-braces          Claude Code       2  10/10     8.25     74     12.9     3.62        66
+caddy-quoted-braces          tazuna 0.0.97     2  10/10     8.75     52      7.6     1.92        35
+caddy-retry-match-expr       Claude Code       2  4/4      7.75    100     17.0     4.66        66
+caddy-retry-match-expr       tazuna 0.0.97     2  4/4      8.00     47     10.9     2.26        53
+caddy-tls-automate-names     Claude Code       2  0/2       nan    218     56.6    16.02       335
+caddy-tls-automate-names     tazuna 0.0.97     2  1/2      6.50     94     23.6     6.13        62
+terraform-import-foreach     Claude Code       2  3/6       nan    133     24.6     5.90       129
+terraform-import-foreach     tazuna 0.0.97     2  4/6      6.00     38      6.6     1.21        31
+
+tazuna 0.0.97: 8 runs, hidden 19/22, judge 7.31 over 8, 1.6 h, input 23.0M, output 362K
+
+Claude Code: 8 runs, hidden 17/22, judge 8.00 over 4, 3.7 h, input 60.4M, output 1191K
+
+real cost from the account log (foxrouter key, this night):
+  tazuna 0.0.97: 462 calls, $0.0539
+  Claude Code: 886 calls, $0.1514
