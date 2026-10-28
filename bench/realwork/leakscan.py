@@ -50,10 +50,11 @@ READS = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:cd|cat|sed|head|tail|less|more|diff|g
 
 
 def tool_calls(text):
-    """The arguments of every tool call in a transcript: tazuna's and Claude Code's tool_use, pi's toolCall."""
+    """The arguments of every tool call in a transcript: tazuna's and Claude Code's tool_use, pi's toolCall, Codex's
+    command_execution and file_change items."""
     out = []
     for line in text.splitlines():
-        if '"tool_use"' not in line and '"toolCall"' not in line:
+        if not any(t in line for t in ('"tool_use"', '"toolCall"', '"command_execution"', '"file_change"')):
             continue
         try:
             stack = [json.loads(line)]
@@ -64,6 +65,10 @@ def tool_calls(text):
             if isinstance(x, dict):
                 if x.get("type") in ("tool_use", "toolCall"):
                     out.append(x.get("input") or x.get("arguments") or {})
+                elif x.get("type") == "command_execution" and isinstance(x.get("command"), str):
+                    out.append({"command": x["command"]})
+                elif x.get("type") == "file_change":
+                    out.append({"paths": [c.get("path") for c in x.get("changes") or []]})
                 else:
                     stack.extend(x.values())
             elif isinstance(x, list):
@@ -76,6 +81,8 @@ def peer(text, own):
     seen = None
     for a in tool_calls(text):
         cmd = a.get("command") if isinstance(a.get("command"), str) else None
+        if cmd:  # Codex wraps each command in `bash -lc '...'`
+            cmd = re.sub(r"^\s*(?:/bin/)?(?:ba|z)?sh\s+-l?c\s+(['\"])(.*)\1\s*$", r"\2", cmd, flags=re.S)
         blob = cmd if cmd is not None else json.dumps(a)
         # as a path (after a slash), not a grep pattern filtering a listing
         hits = [m for m in [*(m for m in RUNDIR.finditer(blob) if m.group(1) != own), *LOGDIR.finditer(blob)]

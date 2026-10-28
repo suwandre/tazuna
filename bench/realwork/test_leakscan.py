@@ -13,6 +13,7 @@ CASES = {  # transcript line, own run number, expected
     "listing a tree": ('{"type":"tool_use","input":{"command":"ls -la /T/rw-caddy-tls-automate-names-cc-sub-v505@m:max-k/"}}', "peer-listed"),
     "listing transcripts": ('{"type":"toolCall","arguments":{"command":"find /Users/s/bench-homes/pi-sub/transcripts -type f | head"}}', "peer-listed"),
     "a grep pattern over a listing": ('{"type":"tool_use","input":{"command":"ls /T/ | grep rw-caddy-tls-automate-names-cc-sub-v505@m"}}', None),
+    "Codex reading another tree": ('{"type":"item.completed","item":{"type":"command_execution","command":"bash -lc \'cat /T/rw-x-cc-sub-v505@m:max-k/a.go\'"}}', "peer"),
     "its own tree, mistyped": ('{"type":"tool_use","input":{"command":"cd /T/rw-caddy-tls-automate-names-tazuna-ash-ownsubx-v504@m:max-x && ls"}}', None),
 }
 bad = [n for n, (t, want) in CASES.items() if L.peer(t, "504") != want]

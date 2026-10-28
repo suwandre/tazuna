@@ -523,21 +523,29 @@ def parse_pi_events(stdout, stderr, rc):
     return r
 
 
+# pi's own catalog entry for each SubRouter model: (catalog file, id there)
+PI_CATALOG = {"deepseek-v4.1-flash-1017": ("deepseek", "deepseek-flash"), "gpt-6.1-sol": ("openai", "gpt-6.1-sol")}
+
+
+def pi_entry(model):
+    """pi's settings for the model (API, thinking levels, compat, limits, cost) with SubRouter's model id."""
+    f, mid = PI_CATALOG[model]
+    sub = "node_modules/@earendil-works/pi-ai/dist/providers/data"
+    data = next(d / sub for d in Path(shutil.which("pi")).resolve().parents if (d / sub).is_dir())
+    e = next(m for ms in json.loads((data / f"{f}.json").read_text()).values() for m in ms.values() if m.get("id") == mid)
+    return {k: v for k, v in e.items() if k not in ("provider", "type", "baseUrl")} | {"id": model, "name": model}
+
+
 def run_pi_sub(h, w, prompt):
-    """Stock pi on SubRouter's Chat route: pi's own catalog entry for DeepSeek V4.1 Flash (thinking format, levels, compat)
-    with only SubRouter's URL and model id changed, in a fresh agent dir (HOME is the bench home: no user settings,
-    extensions or skills). Only the SubRouter key goes out (checked against a local stub, 2026-10-28)."""
+    """Stock pi on SubRouter: pi's own catalog entry for the model (API, thinking format and levels, compat) with only
+    SubRouter's URL and model id changed, in a fresh agent dir (HOME is the bench home: no user settings, extensions or
+    skills). Only the SubRouter key goes out (checked against a local stub, 2026-10-28)."""
     model, effort = model_effort(h)
     # an agent dir per run (PI_CODING_AGENT_DIR): each run.py has its own relay port
     agent = Path(tempfile.mkdtemp(prefix="pi-agent-"))
     url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]) + "/v1"
-    (agent / "models.json").write_text(json.dumps({"providers": {"subrouter": {
-        "baseUrl": url, "api": "openai-completions", "apiKey": "relay", "models": [{
-            "id": model, "reasoning": True, "contextWindow": 1000000, "maxTokens": 384000,
-            "thinkingLevelMap": {"minimal": None, "low": "low", "medium": None, "high": "high", "max": "max"},
-            "cost": {"input": 0.02, "output": 0.08, "cacheRead": 0.0004, "cacheWrite": 0},
-            "compat": {"supportsStore": False, "supportsDeveloperRole": False, "maxTokensField": "max_tokens",
-                       "requiresReasoningContentOnAssistantMessages": True, "thinkingFormat": "deepseek", "supportsStrictMode": True}}]}}}))
+    (agent / "models.json").write_text(json.dumps({"providers": {"subrouter": {"baseUrl": url, "apiKey": "relay",
+                                                                         "models": [pi_entry(model)]}}}))
     # the one change from stock: tazuna's patience with provider errors (~16 min) instead of pi's 3 retries in ~14 s, which
     # lost three runs to SubRouter 503s (CPU overload, upstream quota) at 27-45 min on 2026-10-28
     (agent / "settings.json").write_text(json.dumps({"retry": {"enabled": True, "maxRetries": 11, "baseDelayMs": 2000, "maxAgentDelayMs": 120000}}))
@@ -617,13 +625,21 @@ def run_codex_sub(h, w, prompt):
     """Codex CLI with SubRouter as its model provider (Responses API, the shared models key): the same harness as the
     Codex reference run, another provider, to tell the model from the harness."""
     model, effort = model_effort(h)
-    home = BENCH_HOMES / "codex"
-    provider = '{name="SubRouter",base_url="https://subrouter.ai/v1",env_key="SUBROUTER_MODELS_KEY",wire_api="responses"}'
-    r = sh(["codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox",
-            "-m", model, "-c", f'model_reasoning_effort="{effort}"', "-c", 'model_provider="subrouter"',
-            "-c", f"model_providers.subrouter={provider}", prompt], w, timeout=TIMEOUT,
-           env={"PATH": os.environ["PATH"], "HOME": str(home), **cur_go_env(), **proxy_env(), "CODEX_HOME": str(home / ".codex"),
-                "SUBROUTER_MODELS_KEY": os.environ["SUBROUTER_MODELS_KEY"]})
+    # stock Codex with an API key needs no ChatGPT plan. Its own home (bench-homes/codex holds the user's ChatGPT login,
+    # which the model could read), an empty CODEX_HOME per run, the key behind the relay (2026-10-28)
+    home = BENCH_HOMES / "codex-sub"
+    home.mkdir(parents=True, exist_ok=True)
+    url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]) + "/v1"
+    provider = f'{{name="SubRouter",base_url="{url}",env_key="CODEX_RELAY_KEY",wire_api="responses"}}'
+    with tempfile.TemporaryDirectory(prefix="codex-home-") as ch:
+        r = sh(["codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox",
+                "-m", model, "-c", f'model_reasoning_effort="{effort}"', "-c", 'model_provider="subrouter"',
+                "-c", f"model_providers.subrouter={provider}", prompt], w, timeout=TIMEOUT,
+               env={"PATH": os.environ["PATH"], "HOME": str(home), **cur_go_env(), **proxy_env(), "CODEX_HOME": ch,
+                    "CODEX_RELAY_KEY": "relay"})
+    t = home / "transcripts"  # where leakscan.py looks
+    t.mkdir(parents=True, exist_ok=True)
+    (t / f"{w.name}.jsonl").write_text(r.stdout)
     inp = cached = out = turns = 0
     final = ""
     for line in r.stdout.splitlines():
