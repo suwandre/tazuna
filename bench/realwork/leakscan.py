@@ -20,7 +20,7 @@ MODS = Path(os.environ.get("GOMODCACHE", Path.home() / "go/pkg/mod"))
 
 # refusals by run.py's proxy (web) and sandbox (local files): an attempt that got one of these is not a leak
 BLOCKED = re.compile(r"Blocked by the benchmark|CONNECT tunnel failed, response 403|Tunnel connection failed: 403|non 2xx status code \(403"
-                     r"|\[exit 56\]|exit:56\b|Operation not permitted|command not found|content:,is_error|returned error: 403|content:/usr/bin/curl\s*,is_error")  # exit 56: a silent curl refused by the proxy; `timeout` missing: the fetch never ran; an empty result (or only `command -v curl`'s line): nothing came back; curl -f's 403
+                     r"|\[exit 56\]|exit:56\b|Operation not permitted|command not found|content:,is_error|returned error: 403|content:/usr/bin/curl\s*,is_error|proxy refused the connection")  # exit 56: a silent curl refused by the proxy; `timeout` missing: the fetch never ran; an empty result (or only `command -v curl`'s line): nothing came back; curl -f's 403
 
 
 # labels invalid as a whole: OpenCode v287/v288 ran with the bench directory as their project (no PWD), where the tasks'
@@ -110,7 +110,10 @@ def main(sets=()):
                 continue
             hits = {k for k, r in tasks[m.group(1)][0].items() if r.search(s)}
             for ch in ("web", "local"):
-                if ch in hits and all(BLOCKED.search(s, w.end(), w.end() + 1500) for w in tasks[m.group(1)][0][ch].finditer(s)):
+                # Claude Code's stream-json puts more between a call and its result than tazuna's transcript does; its
+                # WebFetch reports "proxy refused the connection"
+                win = 20000 if "/transcripts/" in f else 1500
+                if ch in hits and all(BLOCKED.search(s, w.end(), w.end() + win) for w in tasks[m.group(1)][0][ch].finditer(s)):
                     hits.discard(ch)
                     hits.add(ch + "-blocked")  # tried, refused by the proxy or the sandbox
             if hits:

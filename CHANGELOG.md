@@ -16,6 +16,29 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## tazuna 0.0.97 against stock Claude Code with DeepSeek: better on every task, 2.8x cheaper, 2.3x faster, 2026-10-28 (bench only)
+
+The roadmap's main item, step 1. `night-1028.sh`: deepseek-v4.1-flash-1017 at max, both harnesses on foxrouter
+(tazuna-vet-4; LingAI does not serve SubRouter's Anthropic route), two pairs at a time, two runs a side on four tasks
+(two of them hard ones whose hidden tests split runs). Claude Code is the official CLI with its own prompt and tools and an
+empty config dir (`cc-sub`). Judge: one pool per task, two passes (`judge.night1028.*.jsonl`; terraform and caddy-tls
+re-judged with Claude Code in the pool, `judge.night1028b.*.jsonl`, after the leak scan learned WebFetch's refusal).
+Leak scan clean: four Claude Code runs tried GitHub (curl, git ls-remote, WebFetch), all refused.
+
+| task (2 runs a side) | tazuna: hidden, judge, minutes, turns, input, output | Claude Code |
+|---|---|---|
+| caddy-quoted-braces | 10/10, 8.75, 7.6, 52, 1.92M, 35K | 10/10, 8.25, 12.9, 74, 3.62M, 66K |
+| caddy-retry-match-expr | 4/4, 8.0, 10.9, 47, 2.26M, 53K | 4/4, 7.75, 17.0, 100, 4.66M, 66K |
+| caddy-tls-automate-names | 1/2, 6.5, 23.6, 94, 6.13M, 62K | 0/2, 5.5, 56.6, 218, 16.0M, 335K |
+| terraform-import-foreach | 4/6, 6.5, 6.6, 38, 1.21M, 31K | 3/6, 5.0, 24.6, 133, 5.90M, 129K |
+| all | hidden 19/22, judge 7.44, 1.6 h, $0.054 | 17/22, 6.62, 3.7 h, $0.151 |
+
+(minutes to output: means per run; cost: the account log, foxrouter key, split by request path.) tazuna is ahead on
+every task: judge +0.82 (over the 0.75 line at 8 runs a side, short of the 12 the threshold is set for), hidden 19 against
+17, 2.8x cheaper, 2.3x faster, 0.38x the input, 0.30x the output. Same model, same provider, same night. Next: pi, the
+minimal open harness, as the third in the same panel; then a second model (GLM or MiniMax, which also recommend Claude
+Code).
+
 ## 0.0.94-0.0.97 (2026-10-27/28): the model's reasoning, found missing and kept as a note; -63% cost, -61% time
 
 The fast panel against stock Claude Code (deepseek-v4.1-flash-1017 at max on foxrouter, side by side) turned up four

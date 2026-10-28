@@ -272,6 +272,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-28: main item step 1 met for DeepSeek: tazuna 0.0.97 beats stock Claude Code with the same model on the same
+  provider (4 tasks, 2 runs a side: judge 7.44 vs 6.62, hidden 19/22 vs 17/22, 2.8x cheaper, 2.3x faster). The key was
+  0.0.97: providers drop the model's earlier reasoning, so tazuna keeps the end of long reasoning steps as a note. Next:
+  pi in the same panel, then GLM or MiniMax.
+
 - 2026-10-27: SubRouter unstreamed (0.0.91) kept: LingAI caches the same either way and costs a little less a call;
   a6aa is cheap only at low load (87% cached with three runs, 22% and ~100 s calls with seven). LingAI stays the route
   key's provider; route switching now judges the cache from call 20 (0.0.92). Next: per-provider capacity in the cache
