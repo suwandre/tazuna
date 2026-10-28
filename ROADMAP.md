@@ -272,6 +272,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-28: 0.0.99 narrows the exported-API rule to breaking changes: Sol read the old line as "add nothing exported"
+  and lost caddy-retry by it (judge 5.30 to 7.75 with the new line, level with pi); DeepSeek unchanged on prometheus and
+  the panel. Lesson: a prompt rule tuned on one model is checked on the next one before it is trusted.
 - 2026-10-28: step 3, GPT leg (gpt-6.1-sol at max on SubRouter's shared OpenAI Pro pools): tazuna level with stock Codex
   on quality (judge 5.69 vs 6.31, inside the line; hidden 9/13 vs 10/13) at ~0.7x the cost; pi leads (6.62, 10/13, half
   Codex's cost). tazuna's gap is caddy-retry, where its Sol runs duplicated code and edited existing tests while on

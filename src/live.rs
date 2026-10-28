@@ -25,12 +25,11 @@ const MID_PROMPT: &str = "You are a coding agent working in {cwd}. Today is {dat
 - Finish with a short summary of what changed and how you verified it.";
 
 /// The own loop (0.0.90): code outside the repo implements and calls exported APIs; DeepSeek added a method to
-/// prometheus's exported ExemplarStorage interface in 8 of 10 replayed plans, 4 of 9 with this line (sigprobe.py,
-/// 2026-10-26). Unexported code stays free to change: the compiler checks every caller.
-const API_RULE: &str = "\n- Do not change exported APIs (public functions, methods, interfaces and types other packages use) unless the task asks for it; changing unexported code is fine when you update every caller.";
-
-/// API_RULE narrowed to breaking changes (TAZUNA_API2 A/B): adding to an exported API is not a change other code feels.
-const API_RULE2: &str = "\n- Do not change or remove existing exported APIs (public functions, methods, interfaces and types other packages use), or add methods to exported interfaces, unless the task asks for it; adding a new exported function, or a method on a concrete type, is fine.";
+/// prometheus's exported ExemplarStorage interface in 8 of 10 replayed plans, 4 of 9 with the first version of this line
+/// (sigprobe.py, 2026-10-26). 0.0.99 narrows it to breaking changes: under "do not change exported APIs" gpt-6.1-sol added
+/// nothing exported at all ("This keeps public APIs unchanged") and broke caddy-retry's upstream tests in 2 of 5 runs,
+/// 8/8 and judge 7.75 against 5.30 with this text; DeepSeek on prometheus still left the interface alone.
+const API_RULE: &str = "\n- Do not change or remove existing exported APIs (public functions, methods, interfaces and types other packages use), or add methods to exported interfaces, unless the task asks for it; adding a new exported function, or a method on a concrete type, is fine.";
 
 /// The own loop (0.0.96): providers drop a model's earlier reasoning (DeepSeek through SubRouter's foxrouter and LingAI,
 /// Chat and Messages alike: a code word planted in it was never recalled), so a design worked out once was worked out
@@ -1083,21 +1082,8 @@ impl Live {
             // the own loop has no Grep/Glob tools: its runs searched with grep in bash anyway, and cut file reads at the
             // bash cap (2026-10-24)
             let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", "Search with grep -rn in bash; read whole files with read.");
-            // A/B lever (2026-10-28): gpt-6.1-sol's caddy-retry runs edited existing tests (one changed a test helper's
-            // signature) and copied code instead of reusing it; on the Responses API its reasoning goes back encrypted,
-            // so PLAN_RULE's premise does not hold there
-            let p2 = std::env::var_os("TAZUNA_PROMPT2").is_some();
-            if p2 {
-                prompt = prompt
-                    .replace("the smallest change that follows the existing code style.", "the smallest change that follows the existing code style; reuse existing code rather than copying it.")
-                    .replace("Add or update tests when behavior changes.", "Add tests for the new behavior; change existing tests or test helpers only where the task changes what they check.");
-            }
-            // A/B lever (2026-10-28): under API_RULE gpt-6.1-sol ruled out adding any exported method ("This keeps public
-            // APIs unchanged") and broke caddy-retry's upstream tests in 3 of 4 runs; pi and Codex added the method
-            prompt.push_str(if std::env::var_os("TAZUNA_API2").is_some() { API_RULE2 } else { API_RULE });
-            if !(p2 && self.model.starts_with("gpt-")) {
-                prompt.push_str(PLAN_RULE);
-            }
+            prompt.push_str(API_RULE);
+            prompt.push_str(PLAN_RULE);
             if self.project_instructions {
                 let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                 prompt.push_str(&text);

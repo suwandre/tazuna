@@ -16,6 +16,34 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.99 (2026-10-28): the exported-API rule narrowed to breaking changes; Sol's caddy-retry judge 5.30 to 7.75
+
+0.0.90's line "Do not change exported APIs ... unless the task asks for it; changing unexported code is fine when you
+update every caller" is now "Do not change or remove existing exported APIs ..., or add methods to exported interfaces,
+unless the task asks for it; adding a new exported function, or a method on a concrete type, is fine."
+
+Why: tazuna's Sol runs lost caddy-retry (below). A read of the diffs against the upstream tests (reproduced locally)
+found one mechanism: every passing run (pi, Codex, upstream, all of tazuna's DeepSeek runs) gave `MatchExpression` a
+new exported method; tazuna's Sol runs added nothing exported ("This keeps public APIs unchanged", v568), sorted the
+matchers once in `Handler.Provision` instead, and edited the existing test helper to match, so their own tests passed
+while the upstream tests, which build handlers "bypassing Provision" (the helper's own comment), never retried. Sol reads
+the old line as "add nothing exported"; DeepSeek did not.
+
+| gpt-6.1-sol, caddy-retry-match-expr | runs | judge (one pool, 2 passes) | hidden | suite broken | min | $/run |
+|---|---|---|---|---|---|---|
+| 0.0.98 (old line) | 5 | 5.30 | 8/10 | 2 | 11.8 | 0.0149 |
+| narrowed line | 4 | 7.75 | 8/8 | 0 | 8.5 | 0.0113 |
+
++2.45 judge (pi 8.5, Codex 7.25 on the same task). A second lever tried beside it changed nothing (tests line "change
+existing tests or test helpers only where the task changes what they check", "reuse existing code rather than copying
+it", no plan rule for gpt- models): judge 5.83 against 5.83, hidden 4/6 against 5/6; dropped.
+
+DeepSeek check (deepseek-v4.1-flash-1017 at max, foxrouter): prometheus, the task the line was written for, twice a side:
+3/3 every run, judge 7.0 against 7.5 (inside the line), and neither narrowed run touched the `ExemplarStorage` interface
+(both added an exported method on the concrete `CircularExemplarStorage`, which the line allows). The four panel tasks once
+with the narrowed line: caddy-quoted 5/5 (4.9 min, 28 calls, against 0.0.97's 8.1 and 52), caddy-retry 2/2, caddy-tls
+0/1, terraform 1/3: in 0.0.97's range.
+
 ## gpt-6.1-sol at max: stock Codex, pi and tazuna 0.0.97; pi leads, tazuna level with Codex, 2026-10-28 (bench only)
 
 Step 3's GPT leg, with GPT's own harness: stock Codex CLI on an API key (`codexsub`: no ChatGPT login, an empty
