@@ -20,7 +20,7 @@ MODS = Path(os.environ.get("GOMODCACHE", Path.home() / "go/pkg/mod"))
 
 # refusals by run.py's proxy (web) and sandbox (local files): an attempt that got one of these is not a leak
 BLOCKED = re.compile(r"Blocked by the benchmark|CONNECT tunnel failed, response 403|Tunnel connection failed: 403|non 2xx status code \(403"
-                     r"|\[exit 56\]|exit:56\b|Operation not permitted|command not found|content:,is_error|returned error: 403|content:/usr/bin/curl\s*,is_error|proxy refused the connection")  # exit 56: a silent curl refused by the proxy; `timeout` missing: the fetch never ran; an empty result (or only `command -v curl`'s line): nothing came back; curl -f's 403
+                     r"|\[exit 56\]|exit:56\b|Operation not permitted|command not found|content:,is_error|returned error: 403|content:/usr/bin/curl\s*,is_error|proxy refused the connection|\(no output\)")  # exit 56: a silent curl refused by the proxy; pi's empty result: (no output); `timeout` missing: the fetch never ran; an empty result (or only `command -v curl`'s line): nothing came back; curl -f's 403
 
 
 # labels invalid as a whole: OpenCode v287/v288 ran with the bench directory as their project (no PWD), where the tasks'
@@ -81,8 +81,11 @@ def transcripts():
             p = Path(root) / f
             if f.endswith((".jsonl", ".json")):
                 try:
-                    # the model's own reasoning (tazuna 0.0.95 records it) is thinking, not a fetch or a read: left out
-                    yield str(p), "\n".join(l for l in p.read_text(errors="ignore").splitlines() if '"e":{"type":"reasoning"' not in l)
+                    # the model's own reasoning (tazuna 0.0.95 records it) is thinking, not a fetch or a read: left out; so are
+                    # pi's message_update events, partial copies of a message that its message_end repeats in full (they put
+                    # a refused fetch's result beyond the window, v518)
+                    yield str(p), "\n".join(l for l in p.read_text(errors="ignore").splitlines()
+                                            if '"e":{"type":"reasoning"' not in l and not l.startswith('{"type":"message_update"'))
                 except OSError:
                     pass
             elif f == "opencode.db":

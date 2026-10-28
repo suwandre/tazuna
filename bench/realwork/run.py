@@ -55,7 +55,9 @@ def cur_go_env():
 
 # Hosts an agent could copy the merged upstream fix from (runs did, 2026-10-24: raw files, the commit API, .patch URLs,
 # newer module versions). Agents and harnesses reach the internet through this proxy; these hosts are refused, the rest
-# (model APIs, logins) tunnel through. A command that drops the proxy variables gets past it: leakscan.py is the backstop.
+# (model APIs, logins) tunnel through. Since 2026-10-28 the jail (JAIL below) also refuses any connection that is not to
+# localhost, so a command that drops the proxy variables gets nowhere (pi's model fetched the fix commit with
+# `curl --noproxy '*'`, v514); leakscan.py stays the backstop.
 BLOCKED = ("github.com", "githubusercontent.com", "proxy.golang.org", "goproxy.io", "goproxy.cn", "pkg.go.dev",
            "sourcegraph.com", "gitlab.com", "codeberg.org")
 
@@ -136,15 +138,27 @@ def proxy_env():
 # Places on this machine that hold the tasks' fixes: the bench repos (full history), this directory (reference patches,
 # hidden tests, earlier runs' diffs), the shared module cache (newer releases), and transcripts that quote them. OpenCode
 # applied the fix commit from ~/bench-repos after the proxy blocked GitHub (2026-10-24). Agents run under sandbox-exec
-# with reads of these denied; everything else (network, their HOME, the work tree) is as before.
+# with reads of these denied; outbound connections go only to localhost (the proxy, local test servers); their HOME and the work tree are as before.
 _H = Path.home()
 JAIL_DENY = sorted({json.loads(g.read_text())["repo"] for g in HERE.glob("tasks*/*/git.json")}) + [
     HERE.parent, _H / "go/pkg/mod", _H / ".claude/projects", _H / ".codex/sessions", _H / ".local/share/opencode"]
 # any copy of this directory too: a git worktree of the repo in ~/bench-homes held the tasks' reference patches, and a
 # run read one (v353, 2026-10-25)
 JAIL = "(version 1)(allow default)(deny file-read* " + " ".join(
-    f'(subpath "{os.path.realpath(p)}")' for p in JAIL_DENY) + ' (regex #"/bench/realwork(/|$)") (regex #"/solution\\.patch$"))'
+    f'(subpath "{os.path.realpath(p)}")' for p in JAIL_DENY) + ' (regex #"/bench/realwork(/|$)") (regex #"/solution\\.patch$"))' + \
+    '(deny network-outbound (remote ip "*:*"))(allow network-outbound (remote ip "localhost:*"))'  # the proxy, local servers
 
+
+
+# Other runs' work trees and transcripts hold their solutions: tazuna v504 ran `git diff` in the Claude Code run beside it
+# and copied tests from a killed run's tree left in TMPDIR; pi v518 mined an earlier pi transcript in its own HOME
+# (2026-10-28). A run reads only its own work tree among rw-*; the harnesses' logs can be written and listed, not read.
+LOGS = r"/bench-homes/[^/]+/(transcripts|\.local/share/(tazuna/sessions|opencode)|\.codex/sessions|\.claude/projects)/"
+
+
+def jail_for(w):
+    return (JAIL + '(deny file-read* (regex #"/T/rw-"))' + f'(allow file-read* (subpath "{os.path.realpath(w)}"))'
+            + f'(deny file-read-data (regex #"{LOGS}"))')
 
 
 def env_for(harness, **extra):
@@ -177,7 +191,7 @@ def sh(cmd, cwd, timeout=900, env=None, shell=False):
     # reference fixes and hidden tests there (2026-10-24)
     env = {**(env or {**os.environ, **cur_go_env()}), "PWD": str(cwd)}
     if env.get("BENCH_JAIL"):
-        cmd = ["sandbox-exec", "-p", JAIL, *(["/bin/sh", "-c", cmd] if shell else cmd)]
+        cmd = ["sandbox-exec", "-p", jail_for(cwd), *(["/bin/sh", "-c", cmd] if shell else cmd)]
         shell = False
     p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
                          env=env, shell=shell, start_new_session=True)
@@ -448,6 +462,33 @@ def parse_pi_events(stdout, stderr, rc):
     if r["turns"] == 0:
         raise RuntimeError(f"rc={rc} no assistant messages: {(stdout + stderr)[-800:]}")
     return r
+
+
+def run_pi_sub(h, w, prompt):
+    """Stock pi on SubRouter's Chat route: pi's own catalog entry for DeepSeek V4.1 Flash (thinking format, levels, compat)
+    with only SubRouter's URL and model id changed, in a fresh agent dir (HOME is the bench home: no user settings,
+    extensions or skills). Only the SubRouter key goes out (checked against a local stub, 2026-10-28)."""
+    model, effort = model_effort(h)
+    agent = BENCH_HOMES / "pi-sub" / ".pi" / "agent"
+    agent.mkdir(parents=True, exist_ok=True)
+    (agent / "models.json").write_text(json.dumps({"providers": {"subrouter": {
+        "baseUrl": "https://subrouter.ai/v1", "api": "openai-completions", "apiKey": "$PI_SUB_KEY", "models": [{
+            "id": model, "reasoning": True, "contextWindow": 1000000, "maxTokens": 384000,
+            "thinkingLevelMap": {"minimal": None, "low": "low", "medium": None, "high": "high", "max": "max"},
+            "cost": {"input": 0.02, "output": 0.08, "cacheRead": 0.0004, "cacheWrite": 0},
+            "compat": {"supportsStore": False, "supportsDeveloperRole": False, "maxTokensField": "max_tokens",
+                       "requiresReasoningContentOnAssistantMessages": True, "thinkingFormat": "deepseek", "supportsStrictMode": True}}]}}}))
+    # the one change from stock: tazuna's patience with provider errors (~16 min) instead of pi's 3 retries in ~14 s, which
+    # lost three runs to SubRouter 503s (CPU overload, upstream quota) at 27-45 min on 2026-10-28
+    (agent / "settings.json").write_text(json.dumps({"retry": {"enabled": True, "maxRetries": 11, "baseDelayMs": 2000, "maxAgentDelayMs": 120000}}))
+    env = {k: v for k, v in env_for("pi-sub", PI_TELEMETRY="0").items() if not re.search("KEY|TOKEN|SECRET", k)}
+    env["PI_SUB_KEY"] = os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]
+    r = sh(["pi", "-p", prompt, "--mode", "json", "--no-session", "--thinking", effort, "--provider", "subrouter", "--model", model],
+           w, timeout=TIMEOUT, env=env)
+    t = BENCH_HOMES / "pi-sub" / "transcripts"  # where leakscan.py looks
+    t.mkdir(parents=True, exist_ok=True)
+    (t / f"{w.name}.jsonl").write_text(r.stdout)
+    return parse_pi_events(r.stdout, r.stderr, r.returncode)
 
 
 def run_pi_family(h, w, prompt):
@@ -828,7 +869,7 @@ def run_plan_exec(h, w, prompt):
                 phase_cost={k: round(v, 4) for k, v in costs.items()})
 
 
-HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
+HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "pi-sub": run_pi_sub, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
              "cc": run_cc, "cc-lean": run_cc, "cc-mid": run_cc, "cc-ecc": run_cc, "cc-superpowers": run_cc, "cc-caveman": run_cc,
              "cc-graphify": run_cc, "cc-gstack": run_cc, "cc-allplugins": run_cc}
 

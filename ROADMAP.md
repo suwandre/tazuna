@@ -275,7 +275,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-28: main item step 1 met for DeepSeek: tazuna 0.0.97 beats stock Claude Code with the same model on the same
   provider (4 tasks, 2 runs a side: judge 7.44 vs 6.62, hidden 19/22 vs 17/22, 2.8x cheaper, 2.3x faster). The key was
   0.0.97: providers drop the model's earlier reasoning, so tazuna keeps the end of long reasoning steps as a note. Next:
-  pi in the same panel, then GLM or MiniMax.
+  pi in the same panel, then GLM or MiniMax. Corrected the same day: tazuna's caddy-tls pass (v504) had read Claude
+  Code's work tree; without it hidden 18/21 vs 17/22, judge 7.14 vs 6.62 (under the 0.75 line), 3.1x cheaper and faster
+  per run, Claude Code ahead on caddy-tls. Step 1 holds on hidden tests, cost and time, not on a judge margin. The bench
+  jail now blocks other runs' trees, transcripts and any network but the proxy.
 
 - 2026-10-27: SubRouter unstreamed (0.0.91) kept: LingAI caches the same either way and costs a little less a call;
   a6aa is cheap only at low load (87% cached with three runs, 22% and ~100 s calls with seven). LingAI stays the route

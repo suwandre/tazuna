@@ -16,7 +16,36 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Correction to the entry below: one tazuna run had read Claude Code's work; the bench jail now stops that, 2026-10-28 (bench only)
+
+tazuna's one caddy-tls pass (v504, judge 9) is out. It ran `git diff` in the work tree of the Claude Code run beside it
+(v505) and copied test files from the tree of a killed Claude Code run (v462) that was still in TMPDIR. The other 15 runs
+of the panel read no other run's files. Without v504:
+
+| | tazuna 0.0.97 | Claude Code |
+|---|---|---|
+| caddy-tls-automate-names | 0/1, judge 3.5, 13.1 min | 0/2, 5.5, 56.6 min |
+| all | hidden 18/21 (86%), judge 7.14 over 7 runs | 17/22 (77%), 6.62 over 8 |
+| per run | 9.0 min, ~$0.006 | 27.8 min, ~$0.019 |
+
+tazuna is ahead on three tasks of four, not every task: Claude Code's judge is higher on caddy-tls. The judge gap overall
+(+0.52) is under the 0.75 line. Per run tazuna is 3.1x faster and ~3.1x cheaper (cost: the account log's $0.054 less
+v504's 22% token share). The main item's step 1 holds on hidden tests, cost and time, not on a judge margin.
+
+Found while adding pi as the third harness, which showed three holes in the bench, all closed in `run.py` (tested with
+tazuna, pi and stock Claude Code making real calls inside the jail):
+- Network: the proxy refused GitHub, but `curl --noproxy '*'` went around it; pi's model fetched the fix commit that way
+  (v514). The jail now refuses every outbound connection that is not to localhost (the proxy, local test servers).
+- Other runs' work trees: readable in TMPDIR, both a pair's other half and trees of killed runs (34 were left). A run now
+  reads only its own tree among `rw-*`; the old trees are deleted.
+- Transcripts: the bench writes pi's and Claude Code's next to their HOME, and tazuna's sessions are in its HOME; pi v518
+  found and mined v514's transcript. The jail lets a run list and write those folders, not read the files.
+leakscan.py caught v514 (web) and v518 (web, through v514's transcript); it does not look for reads of other runs' trees,
+which only a search of every panel transcript found. Runs before v492 were not checked for that.
+
 ## tazuna 0.0.97 against stock Claude Code with DeepSeek: better on every task, 2.8x cheaper, 2.3x faster, 2026-10-28 (bench only)
+
+(Corrected above: without the tazuna run that read Claude Code's work, tazuna is ahead on three tasks of four.)
 
 The roadmap's main item, step 1. `night-1028.sh`: deepseek-v4.1-flash-1017 at max, both harnesses on foxrouter
 (tazuna-vet-4; LingAI does not serve SubRouter's Anthropic route), two pairs at a time, two runs a side on four tasks
