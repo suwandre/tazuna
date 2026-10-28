@@ -173,6 +173,9 @@ def main(sets=()):
             p = "peer-blocked"  # the jail refuses those reads (pi v530 tried 62 times: "Operation not permitted")
         if p:
             found.setdefault((m.group(1), m.group(2)), set()).add(p)
+        # the commands the agent ran: a fetch counts only there, not in a file it read (CONTRIBUTING.md's `git clone
+        # https://github.com/...` flagged six Sol runs, 2026-10-28); a transcript with no parsed calls is read whole
+        ran = "\n".join(json.dumps(a) for a in tool_calls(s)).replace('\\"', "").replace('"', "").replace("\\n", "\n")
         # JSON escapes undone so a match cannot run across lines (Go's `net/url` and a GitHub link in a comment below it
         # once read as a fetch)
         s = s.replace('\\"', "").replace('"', "").replace("\\n", "\n")
@@ -180,12 +183,13 @@ def main(sets=()):
             m = label.search(f) or label.search(s)
             if not m or "company-review" in f:
                 continue
-            hits = {k for k, r in tasks[m.group(1)][0].items() if r.search(s)}
+            hits = {k for k, r in tasks[m.group(1)][0].items() if any(k != "web" or not ran or w.group(0) in ran for w in r.finditer(s))}
             for ch in ("web", "local"):
                 # Claude Code's stream-json puts more between a call and its result than tazuna's transcript does; its
                 # WebFetch reports "proxy refused the connection"
                 win = 20000 if "/transcripts/" in f else 1500
-                if ch in hits and all(BLOCKED.search(s, w.end(), w.end() + win) for w in tasks[m.group(1)][0][ch].finditer(s)):
+                if ch in hits and all(BLOCKED.search(s, w.end(), w.end() + win) for w in tasks[m.group(1)][0][ch].finditer(s)
+                                      if ch != "web" or not ran or w.group(0) in ran):
                     hits.discard(ch)
                     hits.add(ch + "-blocked")  # tried, refused by the proxy or the sandbox
             if hits:
