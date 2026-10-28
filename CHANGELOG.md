@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.0.98 (2026-10-28): a conversation whose shared ChatGPT pool goes down moves to another pool (no metric)
+
+SubRouter's shared OpenAI Pro pools (gpt-6.1-sol at ~2% of OpenAI's price, the cheapest Sol route) go down for minutes
+at a time: 503 `shared_route_recovering`, Pro 50 from 15:38 to after 16:00 during the Sol panel. A key listing several
+pools sends a new conversation to one that is up (tested: Pro 50 alone 503, Pro 50 + 52 4/4). A running conversation stays
+on the pool whose account wrote its encrypted reasoning, and while that pool is down every call fails 503
+`responses_source_unavailable` ("original conversation supply is currently unavailable"): it ended a tazuna, a pi and a
+Codex run. tazuna now takes that error at once (no ~16 minutes of retries), drops the encrypted reasoning items, which only
+that account can read, takes a new cache key and sends the call again: the conversation goes on in another pool of the
+key, its visible text and plan notes intact, the first call there uncached (`conversation_moved` in the transcript).
+Route switching (0.0.79) already dropped reasoning items the same way. Two tests: the move itself, and one request
+only against a stub that answers the error. Normal runs never reach this path, so nothing to measure; it shows on the
+next pool outage.
+
 ## Earlier runs audited for reading other runs' work: no kept or dropped version changes, 2026-10-28 (bench only)
 
 leakscan.py now has a `peer` channel: a tool call that reads another run's work tree (`rw-...-vN@`) or a harness's logs

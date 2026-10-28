@@ -310,6 +310,11 @@ fn drop_thinking(msgs: &mut [Value]) -> bool {
     dropped
 }
 
+/// A conversation's pool is gone (SubRouter's shared ChatGPT pools, see the loop).
+fn pinned_away(e: &str) -> bool {
+    e.contains("responses_source_unavailable")
+}
+
 fn empty_reply(reply: &Value, api: Api) -> bool {
     match api {
         Api::Responses => !reply["output"].as_array().is_some_and(|items| items.iter().any(|i| i["type"] == "function_call" || i["type"] == "message")),
@@ -558,6 +563,23 @@ impl Loop {
                 Err(e) if self.api == Api::Messages && format!("{e:#}").contains("400") && drop_thinking(&mut self.msgs) => {
                     (self.out)(&json!({"type": "system", "subtype": "thinking_dropped", "message": format!("{e:#}")}));
                     body["messages"] = json!(self.msgs);
+                    match (self.call)(&body) {
+                        Ok(r) => r,
+                        Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
+                    }
+                }
+                // SubRouter's shared ChatGPT pools: a conversation stays on the pool whose account wrote its encrypted reasoning,
+                // and while that pool is down every call fails 503 "responses_source_unavailable" (a tazuna run ended on it,
+                // 2026-10-28). Without that reasoning and under a new cache key it goes on in another pool of the key, the
+                // first call there uncached
+                Err(e) if self.api == Api::Responses && pinned_away(&format!("{e:#}")) => {
+                    self.msgs.retain(|m| m["type"] != "reasoning");
+                    self.session.push_str("-moved");
+                    (self.out)(&json!({"type": "system", "subtype": "conversation_moved", "message": format!("{e:#}")}));
+                    body["input"] = json!(self.msgs);
+                    if self.cache_key {
+                        body["prompt_cache_key"] = json!(self.session);
+                    }
                     match (self.call)(&body) {
                         Ok(r) => r,
                         Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
@@ -1180,6 +1202,10 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             i -= 1;
             continue;
         }
+        // the pool holding this conversation is down: waiting does not bring it back soon, the caller moves the conversation
+        if pinned_away(&text) {
+            bail!("HTTP {status}: {}", text.chars().take(300).collect::<String>());
+        }
         // Mortera Cloud's 422 "model_unavailable" says not to retry, yet passes within a minute or two (Muse Spark came
         // back after one; it ended a Haiku run at call 38): tried again like a 5xx
         if wait == 0 || permanent || !(status == 429 || status >= 500 || text.contains("model_unavailable")) {
@@ -1424,6 +1450,59 @@ mod tests {
         assert!(switch["message"].as_str().unwrap().contains("b.example") && switch["message"].as_str().unwrap().contains("403"));
         assert_eq!(events.last().unwrap()["subtype"], "success", "the next route finished the turn");
         assert!(l.send_reasoning == reasoning_back() && l.routes.is_empty(), "per-route flags start over; the list is used up");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_conversation_whose_pool_is_gone_moves_without_its_reasoning() {
+        let dir = std::env::temp_dir().join(format!("tazuna-moved-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sent = Rc::new(RefCell::new(vec![]));
+        let s = sent.clone();
+        let events = Rc::new(RefCell::new(vec![]));
+        let ev = events.clone();
+        let mut l = Loop {
+            call: Box::new(move |b: &Value| {
+                s.borrow_mut().push(b.clone());
+                if b["input"].as_array().unwrap().iter().any(|m| m["type"] == "reasoning") {
+                    anyhow::bail!("HTTP 503: {{\"error\":{{\"code\":\"responses_source_unavailable\",\"message\":\"original conversation supply is currently unavailable\"}}}}");
+                }
+                Ok(json!({"output": [{"type": "message", "content": [{"type": "output_text", "text": "done"}]}], "usage": {}}))
+            }),
+            api: Api::Responses,
+            system: "sys".into(),
+            model: "gpt-6.1-sol".into(),
+            effort: Some("max".into()),
+            price: (1e-6, 1e-7, 4e-6),
+            tools: vec![],
+            msgs: vec![json!({"role": "user", "content": "fix it"}), json!({"type": "reasoning", "encrypted_content": "pool-50"}),
+                       json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "plan: parser first"}]})],
+            server: crate::mcp::Server::new(dir.clone()),
+            session: "s1".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
+            send_reasoning: false,
+            cache_key: true,
+            routes: VecDeque::new(),
+            route_calls: vec![],
+            connector: connect_key,
+            out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("go on"), false, &rx);
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 2, "one refused call, one moved");
+        assert_eq!(sent[0]["prompt_cache_key"], "s1");
+        assert!(!sent[1]["input"].as_array().unwrap().iter().any(|m| m["type"] == "reasoning"), "the reasoning stays behind");
+        assert!(sent[1]["input"].as_array().unwrap().iter().any(|m| m["content"][0]["text"] == "plan: parser first"), "the visible text goes along");
+        assert_eq!(sent[1]["prompt_cache_key"], "s1-moved", "a new cache key, so the gateway treats it as a new conversation");
+        let events = events.borrow();
+        assert!(events.iter().any(|e| e["subtype"] == "conversation_moved"));
+        assert_eq!(events.last().unwrap()["subtype"], "success");
+        assert!(pinned_away("HTTP 503: responses_source_unavailable") && !pinned_away("HTTP 503: shared_route_recovering"));
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1723,6 +1802,35 @@ data: {\"type\":\"message_stop\"}\n";
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_gone_pool_is_not_waited_on() {
+        use std::io::Write;
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", server.local_addr().unwrap());
+        server.set_nonblocking(true).unwrap();
+        let seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let s = seen.clone();
+        let t = std::thread::spawn(move || {
+            let end = std::time::Instant::now() + Duration::from_secs(3);
+            while std::time::Instant::now() < end {
+                match server.accept() {
+                    Ok((mut c, _)) => {
+                        c.set_nonblocking(false).unwrap();
+                        read_request(&mut c);
+                        c.write_all(b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n{\"error\":{\"code\":\"responses_source_unavailable\"}}").unwrap();
+                        s.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(20)),
+                }
+            }
+        });
+        let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+        let e = chat(&http, &url, "k", Api::Responses, &json!({"model": "gpt-6.1-sol", "input": []})).unwrap_err();
+        assert!(pinned_away(&format!("{e:#}")));
+        t.join().unwrap();
+        assert_eq!(seen.load(Ordering::Relaxed), 1, "one request: the loop moves the conversation instead of waiting");
     }
 
     #[test]

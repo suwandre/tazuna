@@ -510,8 +510,8 @@ def parse_pi_events(stdout, stderr, rc):
             continue
         m = e.get("message") or {}
         if e.get("type") == "message_end" and m.get("role") == "assistant":
-            if m.get("stopReason") == "error" or m.get("errorMessage"):
-                raise RuntimeError(str(m.get("errorMessage")))
+            # a failed call pi retried is not the end of the run (v537 finished after one, 2026-10-28): only the last counts
+            r["error"] = str(m.get("errorMessage")) if m.get("stopReason") == "error" or m.get("errorMessage") else None
             u = m.get("usage") or {}
             r["inp"] += u.get("input", 0); r["out"] += u.get("output", 0)
             r["cache_r"] += u.get("cacheRead", 0); r["cache_w"] += u.get("cacheWrite", 0)
@@ -520,6 +520,8 @@ def parse_pi_events(stdout, stderr, rc):
             r["final"] = text or r["final"]
     if r["turns"] == 0:
         raise RuntimeError(f"rc={rc} no assistant messages: {(stdout + stderr)[-800:]}")
+    if err := r.pop("error", None):
+        raise RuntimeError(err)
     return r
 
 
@@ -614,7 +616,9 @@ def run_codex(h, w, prompt):
             turns += 1
         if it.get("type") == "agent_message":
             final = it.get("text", "")
-        if e.get("type") in ("error", "turn.failed"):
+        # an "error" event is also Codex's notice of a stream it reconnects ("Reconnecting... 1/5"; v539 finished after
+        # one, 2026-10-28): only a failed turn ends the run
+        if e.get("type") == "turn.failed":
             raise RuntimeError(f"codex: {str(e)[:800]}")
     if not final and r.returncode:
         raise RuntimeError(f"codex rc={r.returncode}: {(r.stdout + r.stderr)[-800:]}")
@@ -657,7 +661,9 @@ def run_codex_sub(h, w, prompt):
             turns += 1
         if it.get("type") == "agent_message":
             final = it.get("text", "")
-        if e.get("type") in ("error", "turn.failed"):
+        # an "error" event is also Codex's notice of a stream it reconnects ("Reconnecting... 1/5"; v539 finished after
+        # one, 2026-10-28): only a failed turn ends the run
+        if e.get("type") == "turn.failed":
             raise RuntimeError(f"codex: {str(e)[:800]}")
     if not final and r.returncode:
         raise RuntimeError(f"codex rc={r.returncode}: {(r.stdout + r.stderr)[-800:]}")
