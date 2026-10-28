@@ -1,0 +1,9 @@
+# MiniMax-M3.1-Flash at max on foxrouter (tazuna-vet-4; probe: 91% cached, both routes, long reasoning back in 25 s); pi
+# talks to it on the Anthropic route (its own catalog), tazuna on Chat, Claude Code on Anthropic
+X=minimax-m3.1-flash
+phase $X SUBROUTER_VET4_KEY 0.024,0.0024,0.097 night-1029-mm.jobs
+python3 -I leakscan.py > leakscan-night1029.out 2>&1
+X_ONLY="$(labels tazuna-ownsubx $X 604 607 610 613)$(labels cc-sub $X 605 608 611 614)$(labels pi-sub $X 606 609 612 615)"
+judge tasks caddy-quoted-braces,terraform-import-foreach "$X_ONLY" judge.night1029.mm.tasks.jsonl 4
+judge tasks-hard caddy-tls-automate-names "$X_ONLY" judge.night1029.mm.tasks-hard.jsonl 2
+judge tasks-oct caddy-retry-match-expr "$X_ONLY" judge.night1029.mm.tasks-oct.jsonl 2

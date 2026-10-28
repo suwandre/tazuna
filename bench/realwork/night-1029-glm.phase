@@ -1,0 +1,8 @@
+# GLM-5.3 at max on a6aa (tazuna-vet-3; probe: 90% cached over four conversations, both routes, long reasoning back in 63 s)
+G=glm-5.3
+phase $G SUBROUTER_VET3_KEY 0.026,0.0026,0.081 night-1029-glm.jobs
+python3 -I leakscan.py > leakscan-night1029.out 2>&1
+G_ONLY="$(labels tazuna-ownsubx $G 592 595 598 601)$(labels cc-sub $G 593 596 599 602)$(labels pi-sub $G 594 597 600 603)"
+judge tasks caddy-quoted-braces,terraform-import-foreach "$G_ONLY" judge.night1029.glm.tasks.jsonl 4
+judge tasks-hard caddy-tls-automate-names "$G_ONLY" judge.night1029.glm.tasks-hard.jsonl 2
+judge tasks-oct caddy-retry-match-expr "$G_ONLY" judge.night1029.glm.tasks-oct.jsonl 2

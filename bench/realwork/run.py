@@ -526,7 +526,8 @@ def parse_pi_events(stdout, stderr, rc):
 
 
 # pi's own catalog entry for each SubRouter model: (catalog file, id there)
-PI_CATALOG = {"deepseek-v4.1-flash-1017": ("deepseek", "deepseek-flash"), "gpt-6.1-sol": ("openai", "gpt-6.1-sol")}
+PI_CATALOG = {"deepseek-v4.1-flash-1017": ("deepseek", "deepseek-flash"), "gpt-6.1-sol": ("openai", "gpt-6.1-sol"),
+              "glm-5.3": ("zai", "glm-5.3"), "minimax-m3.1-flash": ("minimax", "MiniMax-M3.1-Flash")}
 
 
 def pi_entry(model):
@@ -545,9 +546,12 @@ def run_pi_sub(h, w, prompt):
     model, effort = model_effort(h)
     # an agent dir per run (PI_CODING_AGENT_DIR): each run.py has its own relay port
     agent = Path(tempfile.mkdtemp(prefix="pi-agent-"))
-    url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]) + "/v1"
+    entry = pi_entry(model)
+    # the Anthropic client adds /v1/messages itself (pi talks to MiniMax that way); the OpenAI ones take the /v1 base
+    url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]) + (
+        "" if entry["api"] == "anthropic-messages" else "/v1")
     (agent / "models.json").write_text(json.dumps({"providers": {"subrouter": {"baseUrl": url, "apiKey": "relay",
-                                                                         "models": [pi_entry(model)]}}}))
+                                                                         "models": [entry]}}}))
     # the one change from stock: tazuna's patience with provider errors (~16 min) instead of pi's 3 retries in ~14 s, which
     # lost three runs to SubRouter 503s (CPU overload, upstream quota) at 27-45 min on 2026-10-28
     (agent / "settings.json").write_text(json.dumps({"retry": {"enabled": True, "maxRetries": 11, "baseDelayMs": 2000, "maxAgentDelayMs": 120000}}))
