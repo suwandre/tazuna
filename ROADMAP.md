@@ -272,6 +272,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-28: pi joins the DeepSeek panel (stock, pi's own DeepSeek settings, retry patience raised): quality level across
+  all three (hidden 79% tazuna, 77% Claude Code, 73% pi; judge 6.83/6.75/6.25, inside the 0.75 line); tazuna 9 min and
+  ~$0.008 a run against 28 min/$0.018 (Claude Code) and 20 min/$0.023 (pi). Step 1 for DeepSeek: tazuna matches both on
+  quality at a third to a half of the time and cost; it does not beat them on quality. Next: a second model (GLM or
+  MiniMax), where the gap to find is quality, not cost.
 - 2026-10-28: main item step 1 met for DeepSeek: tazuna 0.0.97 beats stock Claude Code with the same model on the same
   provider (4 tasks, 2 runs a side: judge 7.44 vs 6.62, hidden 19/22 vs 17/22, 2.8x cheaper, 2.3x faster). The key was
   0.0.97: providers drop the model's earlier reasoning, so tazuna keeps the end of long reasoning steps as a note. Next:

@@ -25,7 +25,9 @@ BLOCKED = re.compile(r"Blocked by the benchmark|CONNECT tunnel failed, response 
 
 # labels invalid as a whole: OpenCode v287/v288 ran with the bench directory as their project (no PWD), where the tasks'
 # reference fixes and hidden tests lie, whether or not a transcript shows them read
-INVALID = ("opencode-v287@", "opencode-v288@")
+# tazuna v504 read the work tree of the Claude Code run beside it and of a killed one in TMPDIR (2026-10-28; the jail now
+# blocks both, and this scan does not look for it)
+INVALID = ("opencode-v287@", "opencode-v288@", "tazuna-ownsubx-v504@")
 
 
 def leaked():

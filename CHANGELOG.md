@@ -16,6 +16,39 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## tazuna 0.0.97, stock Claude Code and pi with DeepSeek: same quality, tazuna 2-3x cheaper and faster, 2026-10-28 (bench only)
+
+pi 1.4.0 as the third harness (`pi-sub` in run.py): stock pi with its own catalog entry for DeepSeek V4.1 Flash (thinking
+format, levels, compat), only SubRouter's URL and model id changed, a fresh agent dir per run. One change from stock: its
+retry patience raised to tazuna's (11 retries, up to 120 s apart): with pi's 3 retries in ~14 s, SubRouter 503s (CPU
+overload, upstream quota) ended three runs at 27-45 min, and one more ended after the 11. Its key goes through a localhost
+relay (below). deepseek-v4.1-flash-1017 at max on foxrouter, the same four tasks, two pi runs each, today; tazuna 0.0.97 ran
+beside it at the same time (two runs a task), next to last night's tazuna and Claude Code runs. All judged blind in one pool
+per task, two passes (`judge.pi1028.*.jsonl`, `judge-pi.sh`). Valid runs only (see the correction below); runs from v526 on
+ran in the closed jail.
+
+| task (runs: tazuna 4, Claude Code 2, pi 2) | tazuna: hidden, judge, min/run | Claude Code | pi |
+|---|---|---|---|
+| caddy-quoted-braces | 20/20, 8.50, 8.1 | 10/10, 8.25, 12.9 | 10/10, 7.25, 14.7 |
+| caddy-retry-match-expr | 8/8, 8.00, 11.1 | 4/4, 8.00, 17.0 | 4/4, 8.25, 25.9 |
+| caddy-tls-automate-names (tazuna 3) | 0/3, 4.83, 12.0 | 0/2, 6.00, 56.6 | 0/2, 4.50, 15.4 |
+| terraform-import-foreach | 6/12, 5.50, 6.4 | 3/6, 4.75, 24.6 | 2/6, 5.00, 24.1 |
+| all | 34/43 (79%), 6.83 over 15 | 17/22 (77%), 6.75 over 8 | 16/22 (73%), 6.25 over 8 |
+| per run: minutes, calls, input, output, cost | 9.2, 48, 2.0M, 39K, ~$0.008 | 27.8, 132, 7.6M, 149K, ~$0.018 | 20.1, 70, 5.2M, 84K, ~$0.023 |
+
+(cost: tokens at the same SubRouter prices for all three; pi and tazuna share one key and request path, so the account log
+cannot split them.) Quality is level: the judge spread (6.25-6.83) is inside the 0.75 line, and so are hidden tests. tazuna
+takes a third of Claude Code's time and a half of pi's, and costs ~0.45x Claude Code and ~0.35x pi. Same time of day:
+pi against tazuna today 16/22 vs 16/22, judge 6.25 vs 6.44, 20.1 vs 9.3 min; Claude Code against tazuna last night
+17/22 vs 18/21, 6.75 vs 7.29. pi is the costliest of the three: one caddy-retry run took 44 min, 114 calls and 16M input
+for the same 2/2 tazuna got in 8 min. pi's two terraform passes (3/3 each) were the ones that read the fix (below); in
+the jail it scored 1/3 twice, as tazuna did today.
+
+Bench hardening in the same round: each harness gets only its own credentials (models grep `env` for Go and proxy settings,
+and the output goes to the provider: four SubRouter keys did, pi's own and three tazuna runs never used; tazuna already drops
+its own key from its tools' environment). pi keeps its key where its tools can read it, so it holds a dummy and a relay in
+run.py, outside the jail, adds the real one.
+
 ## Correction to the entry below: one tazuna run had read Claude Code's work; the bench jail now stops that, 2026-10-28 (bench only)
 
 tazuna's one caddy-tls pass (v504, judge 9) is out. It ran `git diff` in the work tree of the Claude Code run beside it
