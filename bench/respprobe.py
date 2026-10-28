@@ -1,5 +1,5 @@
 """One provider on SubRouter's Responses route at max effort (respprobe.py PROVIDER VET-KEY-NUMBER [MODEL]): one long reasoning call with tools, streamed; then four agent-like conversations at once, 10 growing calls each. Served-by and cost from the account log. Sol, 2026-10-28: shared-openai-pro-50 88% cached, 0 errors, $0.008; foxrouter 52%, $0.031.
-at once, 10 growing calls each. Served-by and cost from the account log."""
+"""
 import json, os, sys, time, urllib.request, threading
 sys.path.insert(0, "/Users/suwandre/Desktop/agent-chats/tazuna/bench"); import subrouter as s
 M, slug, i = (sys.argv[3] if len(sys.argv) > 3 else "gpt-6.1-sol"), sys.argv[1], int(sys.argv[2])
