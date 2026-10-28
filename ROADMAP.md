@@ -272,6 +272,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-28: step 3, GPT leg (gpt-6.1-sol at max on SubRouter's shared OpenAI Pro pools): tazuna level with stock Codex
+  on quality (judge 5.69 vs 6.31, inside the line; hidden 9/13 vs 10/13) at ~0.7x the cost; pi leads (6.62, 10/13, half
+  Codex's cost). tazuna's gap is caddy-retry, where its Sol runs duplicated code and edited existing tests while on
+  DeepSeek it was best there: the next lever is what in tazuna's prompt or loop pushes Sol that way.
 - 2026-10-28: pi joins the DeepSeek panel (stock, pi's own DeepSeek settings, retry patience raised): quality level across
   all three (hidden 79% tazuna, 77% Claude Code, 73% pi; judge 6.83/6.75/6.25, inside the 0.75 line); tazuna 9 min and
   ~$0.008 a run against 28 min/$0.018 (Claude Code) and 20 min/$0.023 (pi). Step 1 for DeepSeek: tazuna matches both on

@@ -16,6 +16,36 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## gpt-6.1-sol at max: stock Codex, pi and tazuna 0.0.97; pi leads, tazuna level with Codex, 2026-10-28 (bench only)
+
+Step 3's GPT leg, with GPT's own harness: stock Codex CLI on an API key (`codexsub`: no ChatGPT login, an empty
+CODEX_HOME per run, the key behind the relay), pi with its own catalog entry for gpt-6.1-sol (Responses API) and tazuna
+0.0.97, all on SubRouter's shared OpenAI Pro pools (`bench/respprobe.py`: Pro 50 cached 88% over four conversations with
+no errors at 1/3.7 of foxrouter's cost; LingAI and kriora showed no reasoning at max, three others billed a prompt other
+than the one sent). One run per harness per task, caddy-retry twice; judged blind in one pool per task, two passes
+(`judge.sol1028.tasks.jsonl`, `judge.sol1028b.*.jsonl`).
+
+| task | Codex: hidden, judge, min | pi | tazuna |
+|---|---|---|---|
+| caddy-quoted-braces | 5/5, 8.5, 12.8 | 5/5, 9.0, 8.6 | 5/5, 8.5, 9.5 |
+| caddy-retry-match-expr (2 runs) | 4/4, 7.25, 33.0 | 4/4, 8.5, 11.8 | 3/4, 4.75, 13.2 |
+| caddy-tls-automate-names | 0/1, 4.5, 15.6 | 0/1, 4.5, 60.4 (outage) | 0/1, 5.5, 48.6 |
+| terraform-import-foreach | 1/3, 5.0, 7.7 | 1/3, 4.5, 14.7 | 1/3, 4.0, 7.8 |
+| judge (mean of tasks), hidden | 6.31, 10/13 | 6.62, 10/13 | 5.69, 9/13 |
+| per run: calls, input, cost | 116 tool actions, 7.0M, $0.026 | 43, 2.6M, $0.013 | 42, 3.8M, $0.017 |
+
+tazuna is level with Codex on quality (-0.6, inside the line) at ~0.7x its cost; it does not beat GPT's own harness, and
+pi is ahead of both. The gap is caddy-retry, where tazuna on DeepSeek scored best: both of its Sol runs copied CEL's
+placeholder-expansion code instead of reusing it, ran parsing on the hot path and edited existing tests (one changed a
+test helper's signature, which broke the upstream tests' build). pi's two were the closest to the reference. Sol against
+DeepSeek in the same harnesses: 40-70% fewer calls and 3-8x less output for the same hidden tests, ~2x slower calls, and
+about the same cost per run at the shared pools' prices.
+
+Bench fixes on the way: pi's and Codex's parsers threw away two finished runs over one call each had retried (a run fails
+now only on its last message or a failed turn); a pool outage (15:38-15:50, `shared_route_recovering`) ended two runs
+outright (0.0.98 above); leakscan.py counted a `git clone https://github.com/...` line in CONTRIBUTING.md, read by six
+runs, as a fetch (a fetch now counts only in a command the agent ran).
+
 ## 0.0.98 (2026-10-28): a conversation whose shared ChatGPT pool goes down moves to another pool (no metric)
 
 SubRouter's shared OpenAI Pro pools (gpt-6.1-sol at ~2% of OpenAI's price, the cheapest Sol route) go down for minutes
