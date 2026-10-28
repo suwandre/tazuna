@@ -29,6 +29,9 @@ const MID_PROMPT: &str = "You are a coding agent working in {cwd}. Today is {dat
 /// 2026-10-26). Unexported code stays free to change: the compiler checks every caller.
 const API_RULE: &str = "\n- Do not change exported APIs (public functions, methods, interfaces and types other packages use) unless the task asks for it; changing unexported code is fine when you update every caller.";
 
+/// API_RULE narrowed to breaking changes (TAZUNA_API2 A/B): adding to an exported API is not a change other code feels.
+const API_RULE2: &str = "\n- Do not change or remove existing exported APIs (public functions, methods, interfaces and types other packages use), or add methods to exported interfaces, unless the task asks for it; adding a new exported function, or a method on a concrete type, is fine.";
+
 /// The own loop (0.0.96): providers drop a model's earlier reasoning (DeepSeek through SubRouter's foxrouter and LingAI,
 /// Chat and Messages alike: a code word planted in it was never recalled), so a design worked out once was worked out
 /// again at every new finding (six times, 13-26K characters each, on one caddy run). A plan written in the reply stays.
@@ -1089,7 +1092,9 @@ impl Live {
                     .replace("the smallest change that follows the existing code style.", "the smallest change that follows the existing code style; reuse existing code rather than copying it.")
                     .replace("Add or update tests when behavior changes.", "Add tests for the new behavior; change existing tests or test helpers only where the task changes what they check.");
             }
-            prompt.push_str(API_RULE);
+            // A/B lever (2026-10-28): under API_RULE gpt-6.1-sol ruled out adding any exported method ("This keeps public
+            // APIs unchanged") and broke caddy-retry's upstream tests in 3 of 4 runs; pi and Codex added the method
+            prompt.push_str(if std::env::var_os("TAZUNA_API2").is_some() { API_RULE2 } else { API_RULE });
             if !(p2 && self.model.starts_with("gpt-")) {
                 prompt.push_str(PLAN_RULE);
             }
