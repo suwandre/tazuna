@@ -214,7 +214,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   (27 MB instead of ~270 MB). The impersonation rule is unchanged: the update allows the official channels, not reusing
   Claude Code's OAuth token. Waiting on the user (plan, claimed credits, key in `~/.anthropic-key`).
 
-- Hand-off to a fresh session with a structured summary instead of compaction (Amp, pi).
+- Hand-off to a fresh session with a structured summary instead of compaction (Amp, pi): not needed yet (decision log
+  2026-10-29).
 - Checkpoints and rewind (OMP).
 - A careful lane (phased effort): 7.17 vs 6.33 judge at 2.5-3× the cost of Opus medium, in an early test.
 - A heavy profile with subagents (Haiku explorer, Opus planner, Sonnet implementer).
@@ -274,6 +275,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-29: hand-off to a fresh session instead of compaction: not built. 680 own-loop sessions: peak context per
+  call p50 96K, p90 193K, 60 over 200K; two hit a context limit, MiMo (dropped) and MiniMax before 0.1.0 (its resent
+  reasoning, 910K). DeepSeek tops out near 540K with 96% of its input cached, so a cut saves cents and risks the thread
+  of the work. Revisit if a kept model hits its limit or long runs score worse than short ones on the same task.
 - 2026-10-29: housekeeping. The caddy port-collision guess (2026-10-28) ruled out: caddy-retry's and caddy-unix's
   hidden tests passed four parallel runs each on the reference fix. roles.json gains the reviewer (Opus medium) and a
   second judge from another family (Sol xhigh). Own-loop results record the key variables they billed to.
