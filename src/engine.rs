@@ -399,11 +399,13 @@ fn test_note(cmd: &str, out: &str, tree: impl FnOnce() -> Option<(u64, bool)>, g
     note
 }
 
-/// DeepSeek's reasoning goes back with the history by default (0.0.85): without it the model re-planned on every turn,
-/// 8-26K output tokens and then one small edit, 15-34 such turns a run, and rewrote the same code (one file 7 times);
-/// OpenCode keeps it, plans once and edits each place once (rclone, 2026-10-25). TAZUNA_DROP_REASONING turns it off.
+/// The model's earlier reasoning goes back with the history only when TAZUNA_SEND_REASONING is set, or when a provider
+/// demands it (the fallback in the loop). 0.0.85 sent it by default for DeepSeek's re-planning, but no SubRouter provider
+/// passes it to the model and none bills it (2026-10-27/28); 0.0.97's note of a long step's end is what fixed the
+/// re-planning. MiniMax-M3.1-Flash on foxrouter keeps and bills it: 3.6M characters of reasoning took one run's prompt to
+/// 910K tokens and past the context limit (0.1.0, 2026-10-29).
 fn reasoning_back() -> bool {
-    std::env::var_os("TAZUNA_DROP_REASONING").is_none()
+    std::env::var_os("TAZUNA_SEND_REASONING").is_some()
 }
 
 /// The end of a long reasoning step, kept in the history as visible text (0.0.97). Providers drop a model's earlier
@@ -457,8 +459,8 @@ impl Loop {
         false
     }
 
-    /// The history for Chat Completions: assistant turns with their `reasoning_content` (0.0.85), or without it after a
-    /// provider refused the field or with TAZUNA_DROP_REASONING.
+    /// The history for Chat Completions: assistant turns without their `reasoning_content` (0.1.0), or with it when a
+    /// provider demands it or with TAZUNA_SEND_REASONING.
     fn chat_messages(&self) -> Value {
         if self.send_reasoning {
             return json!(self.msgs);
