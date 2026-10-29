@@ -230,6 +230,21 @@ impl Session {
             (Some("system"), Some("compact_boundary")) => {
                 self.push(Block::Notice { text: "── context compacted: earlier turns are now a summary ──".into(), error: false });
             }
+            // the own loop's provider events: shown, not only in the session file (a pool that went down and a conversation
+            // that moved were invisible until a run looked stuck, 2026-10-28)
+            (Some("system"), Some(sub)) if e["message"].is_string() => {
+                let what = match sub {
+                    "route_switch" => "route",
+                    "group_switch" => "provider group",
+                    "conversation_moved" => "conversation moved to another pool, without its reasoning",
+                    "thinking_dropped" => "the provider refused the thinking: sent again without it",
+                    "reasoning_dropped" => "the provider refused the reasoning: sent again without it",
+                    "reasoning_resent" => "the provider asked for the reasoning: sent again with it",
+                    "cache_key_dropped" => "the provider refused the cache key: sent again without it",
+                    _ => return,
+                };
+                self.push(Block::Notice { text: format!("{what} · {}", shown(&s(&e["message"]), 100)), error: false });
+            }
             (Some("harness_user"), _) => {
                 self.last_prompt = s(&e["text"]);
                 self.push(Block::Prompt(s(&e["text"])));
@@ -543,6 +558,18 @@ mod tests {
         assert_eq!(shown(&"x".repeat(10), 4), "xxxx… (+6 chars)");
         assert_eq!(shown("echo hi\u{202E}fr- mr", 100), "echo hi�fr- mr", "a right-to-left override cannot reverse what is shown");
         assert_eq!(shown("a\u{200B}b\u{2028}c", 100), "a�b�c");
+    }
+
+    #[test]
+    fn shows_the_own_loops_provider_events() {
+        use serde_json::json;
+        let mut s = Session::new("", "medium");
+        s.apply(&json!({"type": "system", "subtype": "conversation_moved", "message": "responses_source_unavailable"}), 1.0);
+        let Block::Notice { text, .. } = s.blocks.last().unwrap() else { panic!() };
+        assert_eq!(text, "conversation moved to another pool, without its reasoning · responses_source_unavailable");
+        let n = s.blocks.len();
+        s.apply(&json!({"type": "system", "subtype": "hook_response", "message": "x"}), 2.0);
+        assert_eq!(s.blocks.len(), n, "other system events stay out of the transcript");
     }
 
     #[test]

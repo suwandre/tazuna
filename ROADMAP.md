@@ -111,7 +111,8 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
      to Opus with the cheap attempt (cross-engine escalation, reusing the router's `escalate`).
    - **Planner → executor:** Opus plans in plan mode (files, exact changes, how to verify), a cheap model executes the plan
      (DeepSeek on the own loop; Haiku for code that must stay on the subscription), Opus is called again only when
-     verification fails. Untested so far; differs from the failed Haiku + Opus *reviewer* run, which reviewed after the fact.
+     verification fails. ~~Tried 2026-10-10~~ (`plan-haiku`, `plan-ds`: 1.6× the default's cost, lower judge; dropped). On
+     the own loop the reviewer does this job cheaper: Opus medium after DeepSeek, not a plan before it (2026-10-29).
    - ~~**Cheap explorer for Claude:**~~ an MCP tool backed by a DeepSeek sub-loop (0.0.48, `--explorer MODEL@URL`): +9% cost,
      same quality, slower; Opus kept reading itself. Opt-in.
 6. **Stock Claude Code with popular efficiency plugins vs tazuna** (user idea, 2026-10-09): caveman, headroom (context
