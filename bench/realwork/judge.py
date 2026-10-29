@@ -60,6 +60,8 @@ def guard_allows():
 
 
 def ask_judge(prompt, model, effort):
+    if "@" in model:
+        return verdict_json(ask_api(prompt, model, effort))
     guard_allows()
     with tempfile.TemporaryDirectory() as cfg, tempfile.TemporaryDirectory() as cwd:
         cmd = ["claude", "-p", prompt, "--model", model, "--effort", effort, "--output-format", "json",
@@ -71,10 +73,45 @@ def ask_judge(prompt, model, effort):
     d = json.loads(out.strip().splitlines()[-1])
     if d.get("is_error"):
         raise RuntimeError(d.get("result"))
-    m = re.search(r"\{.*\}", d["result"], re.S)
+    return verdict_json(d["result"])
+
+
+def verdict_json(text):
+    m = re.search(r"\{.*\}", text, re.S)
     if not m:
-        raise RuntimeError("judge returned no JSON: " + d["result"][:300])
+        raise RuntimeError("judge returned no JSON: " + text[:300])
     return json.loads(m.group(0))
+
+
+def ask_api(prompt, model, effort):
+    """--model MODEL@URL: one streamed call on the provider's Responses route, key from the variable JUDGE_KEY_ENV names.
+    A judge from another family than Opus, for results where Opus is also a contestant (2026-10-29: Opus as reviewer)."""
+    import urllib.request
+    m, url = model.split("@", 1)
+    body = {"model": m, "instructions": SYSTEM_NOREF if NOREF else SYSTEM, "input": prompt,
+            "reasoning": {"effort": effort}, "store": False, "stream": True}
+    q = urllib.request.Request(url.rstrip("/") + "/responses", data=json.dumps(body).encode(), headers={
+        "Authorization": f"Bearer {os.environ[os.environ['JUDGE_KEY_ENV']]}", "Content-Type": "application/json",
+        "Accept": "text/event-stream", "User-Agent": "tazuna-bench/1"})
+    for attempt in range(3):  # a shared pool's stream sometimes ends without its last event
+        done, text = None, []
+        try:
+            with urllib.request.urlopen(q, timeout=1800) as r:
+                for line in r:
+                    if line.startswith(b"data: {"):
+                        e = json.loads(line[6:])
+                        if e.get("type") == "response.output_text.delta":
+                            text.append(e.get("delta", ""))
+                        elif e.get("type") in ("response.completed", "response.failed", "response.incomplete"):
+                            done = e["response"]
+        except OSError as e:
+            print(f"judge stream broke ({e}), attempt {attempt + 1}", file=sys.stderr, flush=True)
+        if done and done.get("status") == "completed":
+            return "".join(c.get("text", "") for o in done["output"] if o.get("type") == "message" for c in o.get("content", []))
+        if not done and "".join(text).rstrip().endswith("}"):  # the answer streamed in full; only the closing event is missing
+            return "".join(text)
+        print(f"judge call ended {done and done.get('status')}: {done and done.get('error')}, attempt {attempt + 1}", file=sys.stderr, flush=True)
+    raise RuntimeError("judge call failed three times")
 
 
 def candidates(task_name):
@@ -153,7 +190,7 @@ def main():
     a = ap.parse_args()
     if a.summary:
         return summarize()
-    if not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
+    if "@" not in a.model and not os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"):
         sys.exit("CLAUDE_CODE_OAUTH_TOKEN not set")
     done = set() if a.rejudge or not JUDGE.exists() else {json.loads(l)["task"] for l in JUDGE.read_text().splitlines()}
     import threading

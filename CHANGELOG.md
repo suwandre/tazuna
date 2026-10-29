@@ -45,6 +45,12 @@ $0.032 implementing + $6.89 at list for three Opus reviews ($1.43-$3.04 each; th
   one cap. One Opus answer came as prose without the JSON ("no Critical or Major defects"): read as a failed review,
   harmless here.
 
+Opus judging an arm Opus reviewed: the same diffs judged again by GPT-6.1 Sol at xhigh (`judge.py --model
+gpt-6.1-sol@URL`, `rejudge-sol.sh`; 8 calls, $0.02; Sol at max hit the route's 900 s limit). Means on the three
+tasks: none 7.67, Astra 8.17, Opus 8.33 (Opus judge 7.00, 7.17, 7.67). Same order, same +0.67 for the Opus arm over no
+review; Sol scores everything ~0.7 higher. Opus rated its own arm above Sol only on terraform (8.5 against 7.5) and below
+on caddy-quoted (7.5 against 9.5): no self-preference beyond noise. caddy-tls: Sol 7.0 none, 6.5 Opus arm.
+
 Within noise (+0.17 and +0.67 on three tasks, one run each); stays opt-in. Per review Astra costs ~1/140 of Opus at the
 same catch on terraform. Next: Astra at xhigh for latency, and findings held to the task's acceptance criteria (both
 quality losses came from findings beyond them).
