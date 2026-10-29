@@ -215,8 +215,10 @@ JAIL = "(version 1)(allow default)(deny file-read* " + " ".join(
 LOGS = r"/bench-homes/[^/]+/(transcripts|\.local/share/(tazuna/sessions|opencode)|\.codex/sessions|\.claude/projects)/"
 
 
-def jail_for(w):
+def jail_for(w, also=None):
+    """`also`: one more rw- directory of this run's own (Kimi Code's home with its sessions), closed to the others."""
     return (JAIL + '(deny file-read* (regex #"/T/rw-"))' + f'(allow file-read* (subpath "{os.path.realpath(w)}"))'
+            + (f'(allow file-read* (subpath "{os.path.realpath(also)}"))' if also else "")
             + f'(deny file-read-data (regex #"{LOGS}"))')
 
 
@@ -250,7 +252,7 @@ def sh(cmd, cwd, timeout=900, env=None, shell=False):
     # reference fixes and hidden tests there (2026-10-24)
     env = {**(env or {**os.environ, **cur_go_env()}), "PWD": str(cwd)}
     if env.get("BENCH_JAIL"):
-        cmd = ["sandbox-exec", "-p", jail_for(cwd), *(["/bin/sh", "-c", cmd] if shell else cmd)]
+        cmd = ["sandbox-exec", "-p", jail_for(cwd, env.get("BENCH_JAIL_ALSO")), *(["/bin/sh", "-c", cmd] if shell else cmd)]
         shell = False
     p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
                          env=env, shell=shell, start_new_session=True)
@@ -566,6 +568,55 @@ def run_pi_sub(h, w, prompt):
     t.mkdir(parents=True, exist_ok=True)
     (t / f"{w.name}.jsonl").write_text(r.stdout)
     return parse_pi_events(r.stdout, r.stderr, r.returncode)
+
+
+KIMI = Path.home() / "bench-homes/kimi-code-bin/node_modules/.bin/kimi"
+
+
+def run_kimi_sub(h, w, prompt):
+    """Stock Kimi Code (Moonshot's own CLI, 2.4.0) on SubRouter: an OpenAI-type provider through the relay (the CLI holds a
+    dummy key), thinking on at the run's effort, a fresh KIMI_CODE_HOME (no user config, skills or sessions; rw-, so other
+    runs cannot read it). Headless `-p`, stream-json: no token counts, so cost comes from the account log, one key per harness."""
+    model, effort = model_effort(h)
+    home = Path(tempfile.mkdtemp(prefix="rw-kimi-"))
+    url = relay("https://subrouter.ai/v1", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")])
+    (home / "config.toml").write_text(f"""default_model = "sub/{model}"
+
+[providers.sub]
+type = "openai"
+base_url = "{url}"
+api_key = "relay"
+
+[models."sub/{model}"]
+provider = "sub"
+model = "{model}"
+max_context_size = 262144
+capabilities = ["thinking", "tool_use"]
+support_efforts = ["{effort}"]
+default_effort = "{effort}"
+
+[thinking]
+enabled = true
+effort = "{effort}"
+""")
+    env = only_keys(env_for("kimi-sub", KIMI_CODE_HOME=str(home), BENCH_JAIL_ALSO=str(home)))
+    try:
+        r = sh([str(KIMI), "-p", prompt, "--output-format", "stream-json"], w, timeout=TIMEOUT, env=env)
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+    t = BENCH_HOMES / "kimi-sub" / "transcripts"  # where leakscan.py looks
+    t.mkdir(parents=True, exist_ok=True)
+    (t / f"{w.name}.jsonl").write_text(r.stdout)
+    msgs = []
+    for line in r.stdout.splitlines():
+        try:
+            msgs.append(json.loads(line))
+        except json.JSONDecodeError:
+            pass
+    final = next((m["content"] for m in reversed(msgs) if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"]), "")
+    if r.returncode or not final:
+        raise RuntimeError(f"kimi rc={r.returncode}: {(r.stdout[-400:] + r.stderr[-400:])}")
+    return dict(inp=0, cache_w=0, cache_r=0, out=0, turns=sum(m.get("role") == "assistant" for m in msgs), reported_cost=0, final=final)
 
 
 def run_pi_family(h, w, prompt):
@@ -966,7 +1017,7 @@ def run_plan_exec(h, w, prompt):
                 phase_cost={k: round(v, 4) for k, v in costs.items()})
 
 
-HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubxp2": run_harness, "tazuna-ownsubxa2": run_harness, "tazuna-ownsubxr": run_harness, "tazuna-ownsubxrev": run_harness, "tazuna-ownsubxopus": run_harness, "tazuna-reviewed": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "pi-sub": run_pi_sub, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
+HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubxp2": run_harness, "tazuna-ownsubxa2": run_harness, "tazuna-ownsubxr": run_harness, "tazuna-ownsubxrev": run_harness, "tazuna-ownsubxopus": run_harness, "tazuna-reviewed": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "pi-sub": run_pi_sub, "kimi-sub": run_kimi_sub, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
              "cc": run_cc, "cc-lean": run_cc, "cc-mid": run_cc, "cc-ecc": run_cc, "cc-superpowers": run_cc, "cc-caveman": run_cc,
              "cc-graphify": run_cc, "cc-gstack": run_cc, "cc-allplugins": run_cc}
 

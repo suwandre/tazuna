@@ -51,10 +51,10 @@ READS = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:cd|cat|sed|head|tail|less|more|diff|g
 
 def tool_calls(text):
     """The arguments of every tool call in a transcript: tazuna's and Claude Code's tool_use, pi's toolCall, Codex's
-    command_execution and file_change items."""
+    command_execution and file_change items, Kimi Code's OpenAI-style tool_calls."""
     out = []
     for line in text.splitlines():
-        if not any(t in line for t in ('"tool_use"', '"toolCall"', '"command_execution"', '"file_change"')):
+        if not any(t in line for t in ('"tool_use"', '"toolCall"', '"command_execution"', '"file_change"', '"tool_calls"')):
             continue
         try:
             stack = [json.loads(line)]
@@ -67,6 +67,12 @@ def tool_calls(text):
                     out.append(x.get("input") or x.get("arguments") or {})
                 elif x.get("type") == "command_execution" and isinstance(x.get("command"), str):
                     out.append({"command": x["command"]})
+                elif x.get("type") == "function" and isinstance(x.get("function"), dict):  # Kimi Code: OpenAI tool_calls
+                    try:
+                        a = json.loads(x["function"].get("arguments") or "{}")
+                    except json.JSONDecodeError:
+                        a = {"raw": x["function"].get("arguments")}
+                    out.append(a if isinstance(a, dict) else {"raw": a})
                 elif x.get("type") == "file_change":
                     out.append({"paths": [c.get("path") for c in x.get("changes") or []]})
                 else:

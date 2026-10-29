@@ -1,0 +1,12 @@
+SUBROUTER_VET1_KEY tasks-oct tazuna-ownsubx kimi-k3.1-pro rclone-archive-symlinks 665
+SUBROUTER_VET2_KEY tasks-oct kimi-sub kimi-k3.1-pro rclone-archive-symlinks 666
+SUBROUTER_VET4_KEY tasks-oct tazuna-ownsubx grok-4.7 rclone-archive-symlinks 667
+SUBROUTER_VET1_KEY tasks tazuna-ownsubx kimi-k3.1-pro caddy-quoted-braces 668
+SUBROUTER_VET2_KEY tasks kimi-sub kimi-k3.1-pro caddy-quoted-braces 669
+SUBROUTER_VET4_KEY tasks tazuna-ownsubx grok-4.7 caddy-quoted-braces 670
+SUBROUTER_VET1_KEY tasks tazuna-ownsubx kimi-k3.1-pro terraform-import-foreach 671
+SUBROUTER_VET2_KEY tasks kimi-sub kimi-k3.1-pro terraform-import-foreach 672
+SUBROUTER_VET4_KEY tasks tazuna-ownsubx grok-4.7 terraform-import-foreach 673
+SUBROUTER_VET1_KEY tasks-oct tazuna-ownsubx kimi-k3.1-pro caddy-retry-match-expr 674
+SUBROUTER_VET2_KEY tasks-oct kimi-sub kimi-k3.1-pro caddy-retry-match-expr 675
+SUBROUTER_VET4_KEY tasks-oct tazuna-ownsubx grok-4.7 caddy-retry-match-expr 676
