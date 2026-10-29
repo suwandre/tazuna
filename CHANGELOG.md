@@ -16,6 +16,64 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.0 (2026-10-29): the model's reasoning no longer goes back with the history by default; MiniMax 70 to 9 min
+
+0.0.85 sent each step's `reasoning_content` back on the Chat route. No SubRouter provider passes it to DeepSeek's model
+(0.0.94-0.0.97 entry) and none bills it on a short history (DeepSeek, GLM-5.3 and MiniMax prompt tokens identical with
+and without ~1K tokens of it), but MiniMax-M3.1-Flash reacted to its own long thinking by thinking longer: with it,
+20K characters of reasoning per step and 3.7K output tokens a call, the prompt at 177K tokens by call 30; one run reached
+910K tokens and failed on the context limit. Now it goes back only with TAZUNA_SEND_REASONING or when a provider demands
+it (the existing fallback); 0.0.97's note of a long step's end stays. GPT on the Responses route is unaffected (its
+encrypted reasoning items still go back).
+
+| MiniMax-M3.1-Flash, caddy-quoted (foxrouter) | hidden | min | calls | input | output |
+|---|---|---|---|---|---|
+| 0.0.99 (v604) | 5/5 | 70.5 | 79 | 6.7M | 293K |
+| 0.1.0 (v616) | 5/5 | 8.8 | 38 | 1.27M | 18K |
+
+One run a side (MiniMax was then dropped as a target: too slow and costly for its result at max, and foxrouter cached it
+23-81%). DeepSeek check on 0.1.0: caddy-quoted 5/5 in 9.7 min and 47 calls (0.0.97: 8.1, 52), caddy-retry 2/2 (27.5
+min, through a foxrouter outage and a move to LingAI mid-run); no regression.
+
+## The other models, 2026-10-29 (bench only)
+
+Same four tasks, deepseek-style method: probe first (`bench/chatprobe.py` for the Chat and Anthropic routes,
+`bench/respprobe.py` for Responses), one run per harness per task, judged blind per task with two passes.
+
+GPT-6.1 Sol with tazuna 0.0.99 (`night-1029.sh`, two tazuna runs a task, judged with the earlier Codex and pi runs):
+
+| | judge (mean of tasks) | hidden | min/run | $/run |
+|---|---|---|---|---|
+| tazuna 0.0.99 | 6.81 | 16/22 | 8.3 | 0.0126 |
+| pi | 6.88 | 10/13 | 21.5 | 0.0130 |
+| Codex | 6.50 | 10/13 | 20.4 | 0.0258 |
+
+GLM-5.3 at max on a6aa (90% cached in the probe; kriora 20% and empty answers on the Anthropic route): judge tazuna 5.62
+(4 runs), stock Claude Code 6.00 (3), pi 6.00 (3); hidden tied; tazuna 30 min a run against 33-36. tazuna best on
+caddy-quoted (8.0 against 6.5/7.5), behind on caddy-retry (5.0 against Claude Code's 7.5): its own test check failed in
+`caddytest/integration` and the fix round took 69 min and 29M input (a collision of parallel runs on the integration
+tests' fixed ports is the guess; unconfirmed, the output kept was too short). Lost: Claude Code caddy-tls (provider
+stream error after 112 min), pi caddy-retry (`find /` without a time limit for 2 h; pi's bash has none by default).
+
+MiniMax-M3.1-Flash at max on foxrouter: not judged. Every harness slow (30-126 min a run, up to 845K output tokens for
+Claude Code); passes where finished (caddy-quoted 5/5 tazuna and Claude Code, caddy-retry 2/2 all three, terraform 2/3
+Claude Code); several runs lost to the context limit (tazuna, the cause of 0.1.0), pi's unretried `incomplete_stream`,
+a provider gap, pi's 3 h limit and the 08:00 stop.
+
+GPT-6 Astra at max on the shared OpenAI Pro pools (92% cached, ~$0.001 a call; laoliu billed 5x for 10x the
+reasoning), tazuna 0.1.0 (`astra.sh`):
+
+| | judge (mean of tasks) | hidden | min/run | calls | $/run |
+|---|---|---|---|---|---|
+| Codex | 6.88 | 8/11 | 9.7 | 70 tool actions | 0.047 |
+| tazuna 0.1.0 | 6.38 | 8/11 | 17.1 | 32 | 0.090 |
+| pi | 6.12 | 8/11 | 12.6 | 33 | 0.079 |
+
+Codex leads on its own model: judge within noise, but half tazuna's input per run (0.7-1.4M against 1.3-4.6M) and
+faster. tazuna won caddy-retry (9.0, fastest) and lost most on caddy-tls (32 min, $0.17, the same miss). Where tazuna
+stands: ahead of Claude Code and level with pi on DeepSeek and Sol at a fraction of the time; level on GLM; behind Codex
+on Astra on efficiency, not on hidden tests.
+
 ## 0.0.99 (2026-10-28): the exported-API rule narrowed to breaking changes; Sol's caddy-retry judge 5.30 to 7.75
 
 0.0.90's line "Do not change exported APIs ... unless the task asks for it; changing unexported code is fine when you

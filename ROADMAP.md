@@ -272,6 +272,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-29: 0.1.0 stops sending the model's reasoning back by default (MiniMax thought ever longer on its own
+  thinking: 70 to 9 min on caddy-quoted; DeepSeek unchanged). Step 3 so far: tazuna ahead of or level with each model's
+  own harness on quality everywhere, faster and cheaper on DeepSeek, Sol and GLM; on GPT-6 Astra Codex is leaner (half
+  the input, faster). MiniMax dropped as a target (cost and time for its result). Next lever: tazuna's input per run on
+  the Responses route (whole-file reads, its test check's extra rounds) against Codex.
 - 2026-10-28: 0.0.99 narrows the exported-API rule to breaking changes: Sol read the old line as "add nothing exported"
   and lost caddy-retry by it (judge 5.30 to 7.75 with the new line, level with pi); DeepSeek unchanged on prometheus and
   the panel. Lesson: a prompt rule tuned on one model is checked on the next one before it is trusted.

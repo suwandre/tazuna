@@ -527,7 +527,8 @@ def parse_pi_events(stdout, stderr, rc):
 
 # pi's own catalog entry for each SubRouter model: (catalog file, id there)
 PI_CATALOG = {"deepseek-v4.1-flash-1017": ("deepseek", "deepseek-flash"), "gpt-6.1-sol": ("openai", "gpt-6.1-sol"),
-              "glm-5.3": ("zai", "glm-5.3"), "minimax-m3.1-flash": ("minimax", "MiniMax-M3.1-Flash")}
+              "glm-5.3": ("zai", "glm-5.3"), "minimax-m3.1-flash": ("minimax", "MiniMax-M3.1-Flash"),
+              "gpt-6-astra": ("openai", "gpt-6-astra")}
 
 
 def pi_entry(model):
