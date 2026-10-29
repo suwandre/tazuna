@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Tried and dropped: reads cut at 12K characters, 2026-10-29 (bench only)
+
+Why tazuna sends GPT-6 Astra twice Codex's input: its whole-file reads (13-30K characters) stay in a history every call
+sends again, where Codex's command output reaches the model cut to ~10 KB. A/B with reads stopping at whole lines after
+12,000 characters (`readcap.sh`, TAZUNA_READ_MAX, not kept): Astra input over the four tasks 9.25M against 9.17M (no
+change; terraform -50%, caddy-quoted +73%), 13.9 against 17.1 min a run, and judge 6.00 against 6.75 (caddy-tls 3.5
+against 5.0; Codex 7.50, pi 6.50 in the same pools). DeepSeek on LingAI: caddy-quoted 1.41M against 1.90M, caddy-retry
+1.97M against 1.58M. Reads are not where the gap is; next: how many calls Codex makes and what each one carries, with one
+key per harness so the account log splits them.
+
 ## 0.1.0 (2026-10-29): the model's reasoning no longer goes back with the history by default; MiniMax 70 to 9 min
 
 0.0.85 sent each step's `reasoning_content` back on the Chat route. No SubRouter provider passes it to DeepSeek's model

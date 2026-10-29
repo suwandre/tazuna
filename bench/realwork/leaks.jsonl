@@ -67,6 +67,7 @@
 {"task": "caddy-tls-automate-names", "harness": "tazuna-ownsubx-v529@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-tls-automate-names", "harness": "tazuna-ownsubx-v544@gpt-6.1-sol:max", "channels": ["peer-listed", "web-blocked"]}
 {"task": "caddy-tls-automate-names", "harness": "tazuna-ownsubxa2-v583@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-tls-automate-names", "harness": "tazuna-ownsubxr-v638@gpt-6-astra:max", "channels": ["web-blocked"]}
 {"task": "caddy-unix-socket-close", "harness": "opencode-v287@deepseek-v4.1-flash-free", "channels": ["local"]}
 {"task": "caddy-unix-socket-close", "harness": "opencode-v288@deepseek-v4.1-flash-free:max", "channels": ["local"]}
 {"task": "caddy-unix-socket-close", "harness": "opencode-v289@deepseek-v4.1-flash-free", "channels": ["local", "web-blocked"]}
