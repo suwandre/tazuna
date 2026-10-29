@@ -16,6 +16,29 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Reviewer recall on 13 earlier DeepSeek diffs: Opus medium, GPT-6 Astra xhigh, both, 2026-10-29 (bench only)
+
+`replay-review.py --set recall`: 13 diffs from earlier no-review DeepSeek runs (not leaked), 7 that failed hidden tests
+and 6 that passed them all with judge 8 or more, each reviewed by Opus 5.5 medium (claude) and GPT-6 Astra xhigh in the
+jail. `grade-review.py`: GPT-6.1 Sol xhigh (not a contestant) sees the task, the reference fix, the diff, its test result
+and both reviewers' findings (anonymous, shuffled), classes each finding as gap (real, asked for), beyond (real, not asked
+for) or wrong, and says per failed diff whether a reviewer named the cause.
+
+| reviewer | cause named (7 failed diffs) | findings on passing diffs | all findings: gap / beyond / wrong | time a review | cost |
+|---|---|---|---|---|---|
+| Opus medium | 6/7 | 5 (all gap) | 13 / 4 / 1 | 31-157 s | $5.88 at list for 13 |
+| Astra xhigh | 3/7 | 3 (2 gap) | 7 / 4 / 0 | 358-771 s; 6 of 13 hit the 15-minute cap | $0.10 real for the 7 that answered |
+| both | 7/7 | 8 | 20 / 8 / 1 | | |
+
+- Opus medium is the reviewer: it named the cause on six of seven failed diffs and answered every time inside three
+  minutes. The one it missed (telegraf, no findings) Astra caught.
+- Astra at xhigh still runs past 15 minutes on larger diffs (6 of 13 here, from 12K input up), so it cannot be relied on
+  alone; where it answers, its findings are mostly real.
+- Passing all hidden tests is not the same as clean: on the six passing diffs both reviewers found real gaps the task asks
+  for (graded against the reference), none wrong.
+- Two harness bugs found on the way: Executor.map cancels queued jobs after one fails (a diff with a binary fixture),
+  and judge.py's API path always sent the judge's own instructions (the grader got scores back); both fixed.
+
 ## 0.1.2 (2026-10-29): `--review-only`; the review's JSON read past a note after it; Opus medium is reviewer enough
 
 `tazuna --review-only --run TASK-FILE --review-model M` reviews the uncommitted change in the current directory and

@@ -273,6 +273,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-29: reviewer recall on 13 earlier DeepSeek diffs (graded by Sol against the reference): Opus medium named
+  the cause of 6 of 7 test failures in 31-157 s, Astra xhigh 3 of 7 with 6 of 13 reviews past the 15-minute cap; both
+  together 7 of 7. `--preset reviewed` (DeepSeek implements, Opus medium reviews) is the setup to use; Astra as a second
+  reviewer only once it answers reliably (smaller input or a faster effort).
 - 2026-10-29: reviews replayed on the same diffs (0.1.2 `--review-only`): Opus 5.5 max flags nothing on good diffs
   and finds the real gap; Astra xhigh finds the gap too, answers inside 15 minutes, costs ~$0.014 a review, but also
   flags points beyond the task. Holding findings to the task (prompt lever) dropped: no change on Opus, mixed on Astra.

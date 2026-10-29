@@ -83,12 +83,12 @@ def verdict_json(text):
     return json.loads(m.group(0))
 
 
-def ask_api(prompt, model, effort):
+def ask_api(prompt, model, effort, system=None):
     """--model MODEL@URL: one streamed call on the provider's Responses route, key from the variable JUDGE_KEY_ENV names.
     A judge from another family than Opus, for results where Opus is also a contestant (2026-10-29: Opus as reviewer)."""
     import urllib.request
     m, url = model.split("@", 1)
-    body = {"model": m, "instructions": SYSTEM_NOREF if NOREF else SYSTEM, "input": prompt,
+    body = {"model": m, "instructions": system or (SYSTEM_NOREF if NOREF else SYSTEM), "input": prompt,
             "reasoning": {"effort": effort}, "store": False, "stream": True}
     q = urllib.request.Request(url.rstrip("/") + "/responses", data=json.dumps(body).encode(), headers={
         "Authorization": f"Bearer {os.environ[os.environ['JUDGE_KEY_ENV']]}", "Content-Type": "application/json",
