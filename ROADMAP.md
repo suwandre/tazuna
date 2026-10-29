@@ -274,6 +274,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-29: housekeeping. The caddy port-collision guess (2026-10-28) ruled out: caddy-retry's and caddy-unix's
+  hidden tests passed four parallel runs each on the reference fix. roles.json gains the reviewer (Opus medium) and a
+  second judge from another family (Sol xhigh). Own-loop results record the key variables they billed to.
 - 2026-10-29: Sonnet 5.5 as reviewer (medium/xhigh/max) on the recall set: causes named 2, 4 and 2 of 7 against Opus
   medium's 5, at 1-2x the cost (xhigh, max) and, at max, half the reviews past 15 minutes. A higher public score did not
   carry over to diff review; Opus medium stays the reviewer.

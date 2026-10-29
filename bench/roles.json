@@ -43,11 +43,27 @@
       "profile": "implementer"
     },
     {
+      "role": "reviewer (--review-model, preset reviewed)",
+      "pick": "claude-opus-5-5",
+      "effort": "medium",
+      "why": "recall set of 13 DeepSeek diffs: named the cause of 5-6 of 7 test failures in 31-157 s; max same findings at ~15x the cost; Sonnet 5.5 medium/xhigh/max 2/4/2 of 7, GPT-6 Astra xhigh 3 of 7 with half the reviews past 15 min (2026-10-29)",
+      "pool": "anthropic",
+      "profile": "judge"
+    },
+    {
       "role": "benchmark judge",
       "pick": "claude-opus-5-5",
       "effort": "xhigh",
       "why": "blind judge; one pass for screening, two for decisions (2026-10-12)",
       "pool": "anthropic",
+      "profile": "judge"
+    },
+    {
+      "role": "second judge (another family)",
+      "pick": "gpt-6.1-sol",
+      "effort": "xhigh",
+      "why": "for results where Opus is also a contestant: same order as the Opus judge on the reviewer arms, ~0.7 higher overall, $0.02 for 8 calls; at max the route's 900 s limit cut calls (2026-10-29)",
+      "pool": "cheap",
       "profile": "judge"
     },
     {

@@ -740,7 +740,10 @@ def run_harness(h, w, prompt):
     return dict(inp=u.get("input_tokens", 0), cache_w=u.get("cache_creation_input_tokens", 0),
                 cache_r=u.get("cache_read_input_tokens", 0), out=u.get("output_tokens", 0),
                 turns=d.get("num_turns", 0), reported_cost=d.get("total_cost_usd", 0), final=d.get("result") or "",
-                verify=((d.get("tazuna") or {}).get("verify") or {}).get("status"))
+                verify=((d.get("tazuna") or {}).get("verify") or {}).get("status"),
+                # the key variables the run billed to: real costs come from the provider's account log per key (Codex and
+                # tazuna's own usage figures can differ from it, 2026-10-29)
+                **{k: extra[extra.index(f"--{k.replace('_', '-')}") + 1] for k in ("key_env", "review_key_env") if f"--{k.replace('_', '-')}" in extra})
 
 
 def run_opencode(h, w, prompt):
