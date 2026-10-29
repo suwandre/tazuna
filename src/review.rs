@@ -101,7 +101,15 @@ fn run_api(cwd: &Path, task: &str, model: &str, url: &str, effort: &str, key: Op
     let system = SYSTEM.replace("Read the task, the diff, and any code you need with your read-only tools, including code outside the diff.",
         "Read the task, the diff and the changed files in full below; you have no tools, so reason about code outside them from what they call.");
     let prompt = format!("# Task\n\n{task}\n\n# The change (against HEAD; new files in full)\n\n```diff\n{}\n```\n\n# The changed files now\n\n{}", diff(cwd), changed_files(cwd));
-    match crate::engine::ask(url, key, model, effort, &system, &prompt) {
+    // the same limit as the claude path: a call that stalls (one Astra review ran past 30 minutes and the run was taken for
+    // hung, 2026-10-29) leaves the run unreviewed instead of holding it
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (url, key, model, effort) = (url.to_string(), key.to_string(), model.to_string(), effort.to_string());
+    std::thread::spawn(move || {
+        let _ = tx.send(crate::engine::ask(&url, &key, &model, &effort, &system, &prompt));
+    });
+    let Ok(answer) = rx.recv_timeout(TIMEOUT) else { return fail(format!("timed out after {}s", TIMEOUT.as_secs())) };
+    match answer {
         Err(e) => fail(format!("{e:#}")),
         Ok((text, (input, cached, out))) => {
             let price: Vec<f64> = std::env::var("TAZUNA_REVIEW_PRICE").unwrap_or_default().split(',').filter_map(|x| x.trim().parse().ok()).collect();
