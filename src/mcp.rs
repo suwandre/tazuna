@@ -65,6 +65,8 @@ pub(crate) struct Server {
     /// sending the text again. (Claude Code may compact the conversation, so the claude path does not use this.)
     seen: Option<std::collections::HashMap<(PathBuf, u64, u64), (u64, usize)>>,
     reads: usize,
+    /// The last call (hash of name and arguments) and how many times in a row it came.
+    last: (u64, u32),
     /// Processes a command left running in the background (`server &`): (pid, start time). Killed when the server
     /// ends; also kept in a file, so the next tazuna start can kill them if this one was killed outright.
     left: Vec<(u32, String)>,
@@ -142,7 +144,7 @@ const READ_WINDOW: u64 = 2000;
 
 impl Server {
     pub(crate) fn new(cwd: PathBuf) -> Self {
-        Server { cwd, max: max_output(), cap: bash_cap(), saved: 0, out_dir: None, seen: None, reads: 0, left: vec![], left_at: left_file(std::process::id()) }
+        Server { cwd, max: max_output(), cap: bash_cap(), saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) }
     }
 
     /// One JSON-RPC message in, at most one reply out (notifications get none).
@@ -172,6 +174,19 @@ impl Server {
     pub(crate) fn call(&mut self, params: &Value) -> Result<Value, (i64, String)> {
         let name = params["name"].as_str().unwrap_or_default();
         let a = &params["arguments"];
+        let key = {
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (name, a.to_string()).hash(&mut h);
+            h.finish()
+        };
+        self.last = (key, if self.last.0 == key { self.last.1 + 1 } else { 1 });
+        // a model that asks the same thing again and again (Grok 4.7: one grep 41 times, one read over 100 times,
+        // 2026-10-29) is told so, from the third time on
+        let again = match self.last.1 {
+            n if n >= 3 => format!("[the same call {n} times in a row: use what it returned, or do something different]\n"),
+            _ => String::new(),
+        };
         let path = a["path"].as_str().map(|p| self.resolve(p));
         let s = |k: &str| a[k].as_str().unwrap_or_default();
         let out: Result<String, String> = match name {
@@ -186,8 +201,8 @@ impl Server {
             _ => return Err((-32000, format!("unknown tool {name}"))),
         };
         Ok(match out {
-            Ok(text) => json!({"content": [{"type": "text", "text": text}]}),
-            Err(e) => json!({"content": [{"type": "text", "text": e}], "isError": true}),
+            Ok(text) => json!({"content": [{"type": "text", "text": again + &text}]}),
+            Err(e) => json!({"content": [{"type": "text", "text": again + &e}], "isError": true}),
         })
     }
 
@@ -469,6 +484,16 @@ mod tests {
     }
 
     #[test]
+    fn a_call_repeated_three_times_in_a_row_is_named() {
+        let mut s = Server::new(std::env::temp_dir());
+        let mut call = |cmd: &str| s.call(&json!({"name": "bash", "arguments": {"command": cmd}})).unwrap()["content"][0]["text"].as_str().unwrap().to_string();
+        assert_eq!(call("echo hi"), "hi\n");
+        assert_eq!(call("echo hi"), "hi\n");
+        assert!(call("echo hi").starts_with("[the same call 3 times in a row"));
+        assert_eq!(call("echo other"), "other\n", "a different call starts over");
+    }
+
+    #[test]
     fn read_takes_the_line_numbers_models_send() {
         let r = |o: Value, l: Value| super::read_range(&o, &l);
         assert_eq!(r(json!(100), Value::Null), Ok((100, None)));
@@ -509,7 +534,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tazuna-mcp-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("f.txt"), "line1\nline2\nline3\n").unwrap();
-        let mut s = Server { cwd: dir.canonicalize().unwrap(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, left: vec![], left_at: left_file(std::process::id()) };
+        let mut s = Server { cwd: dir.canonicalize().unwrap(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
         let ask = |s: &mut Server, req: &str| s.handle(req);
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}"#).unwrap(),
@@ -563,7 +588,7 @@ mod tests {
 
     #[test]
     fn shrinks_long_output_and_saves_it() {
-        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: 2000, saved: 0, out_dir: None, seen: None, reads: 0, left: vec![], left_at: left_file(std::process::id()) };
+        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: 2000, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
         let out = s.bash("for i in $(seq 1 400); do echo \"=== RUN   TestN$i\"; echo \"--- PASS: TestN$i\"; done; echo '--- FAIL: TestBroken'; echo '    x_test.go:3: boom'; seq 1 500; exit 1", Duration::from_secs(30));
         assert!(out.chars().count() < 2600, "shrunk to about the cap: {}", out.chars().count());
         assert!(out.contains("--- FAIL: TestBroken") || out.contains("800 lines of passing-test output removed"), "{out}");
@@ -575,14 +600,14 @@ mod tests {
         let dir = Path::new(file).parent().unwrap();
         assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700, "owner-only directory");
         assert!(saved.contains("=== RUN   TestN1\n") && saved.contains("TestBroken"), "the full output is kept");
-        let mut off = Server { cwd: std::env::temp_dir(), max: 30000, cap: 0, saved: 0, out_dir: None, seen: None, reads: 0, left: vec![], left_at: left_file(std::process::id()) };
+        let mut off = Server { cwd: std::env::temp_dir(), max: 30000, cap: 0, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
         assert_eq!(off.bash("seq 1 3000 | wc -l", Duration::from_secs(10)).trim(), "3000");
         assert!(off.bash("seq 1 3000", Duration::from_secs(10)).chars().count() > 13000, "cap 0 leaves output alone");
     }
 
     #[test]
     fn timeout_kills_the_whole_command() {
-        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, left: vec![], left_at: left_file(std::process::id()) };
+        let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
         let t0 = Instant::now();
         // the background sleep would outlive a plain kill of bash
         let out = s.bash("sleep 30 & echo started; wait", Duration::from_millis(500));
