@@ -266,12 +266,18 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Haiku tester subagent (`--tester haiku`) | −14% cost, judge −0.40 | Fable judge agrees (lower, −0.21 of 5 vs Opus −0.32); the gap is one no-change run on T-946, even without it; saving at the noise line: opt-in |
 | Earlier compaction (at ~80k) | at most −9% reads, before the summary's cost | median run peaks at 58k; only 8.8% of read tokens sit above 80k (313 runs, no benchmark) |
 | Fable 5.1 xhigh reviewer (`--review-model`) | 3.4× cost, same judge (1 ticket) | the review costs twice the run; it talked Opus out of the root-cause fix |
+| GPT-6 Astra or Opus 5.5 max reviewer behind DeepSeek 1017 (`tazuna-ownsubxrev`, `-ownsubxopus`) | judge 7.17 / 7.67 vs 7.00 alone, hidden 10/10 vs 9/10 (3 tasks × 1, 2026-10-29) | both caught terraform's gap; out-of-task findings cost −2.0 once each; Astra ~$0.016 a review but stalls at max |
 | Best of two cheap attempts, Opus picks with their test results (`tazuna-ownsubxbest2`) | judge 7.08 vs 6.92 one run (Luna, 3 tasks x 2, 2026-10-24); the pick took the better attempt 4 of 5 times | +0.16 within noise for twice the calls and the slower attempt's time; at most an opt-in for hard tasks |
 | Five-lens review + one fix round on the own loop (DeepSeek 1017 implementing, Opus 5.5 high reviewing, `tazuna-ownsubgate`) | judge 6.6 vs 8.2 alone, hidden tests 5/9 vs 9/9, +46% turns (3 tasks × 3 runs, 2026-10-22; 5 of those gate runs saw the reference fix). Clean redo on 0.0.83 (2026-10-25, 1 round): 6.5 vs 7.3 alone, same hidden tests, turns 355 vs 414 | findings in 3 of 9 runs; every fixed run judged lower (the fix widens the patch); the cheap model alone beat Opus on these tasks, and still does with clean runs |
 | Haiku explorer subagent (`--explorer haiku`) | −28% cost, −41% turns, judge −0.25 | default since 0.0.25 (price to performance) |
 
 ## Decision log
 
+- 2026-10-29: a max-effort reviewer behind DeepSeek (0.1.1): GPT-6 Astra 7.17 and Opus 5.5 7.67 against 7.00 alone
+  (3 tasks, one run each; hidden 10/10 against 9/10). Both catch the implementer's blind spot (terraform +3.5/+4.5) and
+  both cost quality when their finding goes beyond the task (−2.0 each once). Astra costs ~$0.016 a review against
+  ~$2.30 for Opus but stalls at max (one of five reviews under 15 minutes). Stays opt-in; next Astra at xhigh and
+  findings held to the task's acceptance criteria.
 - 2026-10-29: Codex's own usage report covers about a fifteenth of its real traffic (one key per harness, account
   log): on GPT-6 Astra it costs ~4x tazuna and ~5x pi per run; its judge lead (7.50 against 6.75) stands. Harness costs
   come from the account log from now on, one key per harness. SubRouter balance ran out ($0.03).

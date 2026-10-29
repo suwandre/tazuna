@@ -16,6 +16,39 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## A reviewer behind DeepSeek: GPT-6 Astra and Opus 5.5 at max, 2026-10-29 (bench only)
+
+DeepSeek V4.1 Flash 1017 at max implementing on tazuna 0.1.1, three arms on separate keys: no review
+(`tazuna-ownsubx`), GPT-6 Astra max through the provider's API (`tazuna-ownsubxrev`), Opus 5.5 max through claude
+(`tazuna-ownsubxopus`). One run per task and arm; blind Opus judge, two passes.
+
+| task | no review | Astra review | Opus review |
+|---|---|---|---|
+| caddy-quoted | 8.0, 5/5, 7.6 min | 6.0, 5/5, 30.9 min (1 finding, outside the task) | 7.5, 5/5, 18.1 min (no finding) |
+| caddy-retry | 9.0, 2/2, 7.3 min | 8.0, 2/2, 26.6 min (review timed out) | 7.0, 2/2, 19.0 min (1 finding) |
+| terraform-import | 4.0, 2/3, 12.3 min | 7.5, 3/3, 26.3 min (2 findings) | 8.5, 3/3, 19.3 min (2 findings) |
+| mean of the three | 7.00, 9/10, 27 min | 7.17, 10/10, 84 min | 7.67, 10/10, 56 min |
+| caddy-tls (unsolved by all) | 4.5, 0/1, 13.8 min | run stalled in review, not rerun | 5.0, 0/1, 30.5 min (review timed out) |
+
+Real cost (account log, one key per arm): no review $0.031 for four tasks; Astra arm $0.054 implementing (two killed
+runs included) + $0.065 for the four reviews that answered (~$0.016 each; timed-out calls were not billed); Opus arm
+$0.032 implementing + $6.89 at list for three Opus reviews ($1.43-$3.04 each; the fourth timed out).
+
+- Where DeepSeek had a blind spot, both reviewers found it and the fix landed: on terraform both named the same two
+  gaps (dynamic for_each import targets dropped, module instance keys missing from the dedup key); judge +3.5 and +4.5,
+  hidden tests 2/3 to 3/3.
+- Where DeepSeek was already right, a finding cost quality: Astra's (quoted braces through import arguments, real but not
+  asked) became an unrequested feature, judge −2.0; Opus's (the CEL expression re-parsed per response) led to a
+  redesign the judge liked less, −2.0 (different implementer runs, one each).
+- Astra at max is too slow for a reviewer: one of five reviews answered inside 15 minutes (823 s); the others took 24
+  minutes, stalled past 30 (two runs killed by the hang watch before the 15-minute cap) or hit the cap. Opus: 289-672 s,
+  one cap. One Opus answer came as prose without the JSON ("no Critical or Major defects"): read as a failed review,
+  harmless here.
+
+Within noise (+0.17 and +0.67 on three tasks, one run each); stays opt-in. Per review Astra costs ~1/140 of Opus at the
+same catch on terraform. Next: Astra at xhigh for latency, and findings held to the task's acceptance criteria (both
+quality losses came from findings beyond them).
+
 ## 0.1.1 (2026-10-29): the independent reviewer on any provider's API (not measured yet)
 
 `--review-model MODEL@URL --review-key-env VAR` runs the reviewer as one call to that provider (Responses for gpt-,
