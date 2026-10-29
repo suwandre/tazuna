@@ -153,9 +153,12 @@ fn changed_files(cwd: &Path) -> String {
     out
 }
 
-/// `{"verdict": .., "issues": [..]}` anywhere in the reply. "fix" with no issues counts as ok.
+/// `{"verdict": .., "issues": [..]}` anywhere in the reply. "fix" with no issues counts as ok. The first such object wins:
+/// prose after it can hold braces of its own (Opus's "ok" followed by a note quoting `{args[0]}`, 2026-10-29).
 fn parse(text: &str) -> Option<(bool, Vec<String>)> {
-    let v: Value = serde_json::from_str(&text[text.find('{')?..=text.rfind('}')?]).ok()?;
+    let v = text.match_indices('{').find_map(|(i, _)| {
+        serde_json::Deserializer::from_str(&text[i..]).into_iter::<Value>().next()?.ok().filter(|v| v.get("issues").is_some())
+    })?;
     let issues: Vec<String> = v["issues"].as_array()?.iter().filter_map(|i| i.as_str().map(String::from)).collect();
     Some((v["verdict"] != "fix" || issues.is_empty(), issues))
 }
@@ -196,6 +199,7 @@ mod tests {
         assert_eq!(parse("Here:\n```json\n{\"verdict\": \"fix\", \"issues\": [\"a.ts: x is never set\"]}\n```"), Some((false, vec!["a.ts: x is never set".into()])));
         assert_eq!(parse(r#"{"verdict": "fix", "issues": []}"#), Some((true, vec![])), "nothing concrete to fix");
         assert_eq!(parse("looks fine"), None);
+        assert_eq!(parse("```json\n{\"verdict\": \"ok\", \"issues\": []}\n```\n\nI checked `{args[0]}` and \"{\"."), Some((true, vec![])));
         let r = Review { ok: false, issues: vec!["one".into(), "two".into()], cost: 0.0, secs: 0.0, error: None };
         assert!(feedback(&r).contains("1. one\n2. two"));
     }

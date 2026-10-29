@@ -276,7 +276,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-10-29: reviews replayed on the same diffs (0.1.2 `--review-only`): Opus 5.5 max flags nothing on good diffs
   and finds the real gap; Astra xhigh finds the gap too, answers inside 15 minutes, costs ~$0.014 a review, but also
   flags points beyond the task. Holding findings to the task (prompt lever) dropped: no change on Opus, mixed on Astra.
-  Reviewer default when one is wanted: Opus through the subscription; Astra xhigh as the paid fallback.
+  Reviewer default when one is wanted: Opus through the subscription at medium (the default effort: same findings as
+  max on these diffs at ~1/15 the cost, under a minute); Astra xhigh as the paid fallback.
 - 2026-10-29: a max-effort reviewer behind DeepSeek (0.1.1): GPT-6 Astra 7.17 and Opus 5.5 7.67 against 7.00 alone
   (3 tasks, one run each; hidden 10/10 against 9/10). Both catch the implementer's blind spot (terraform +3.5/+4.5) and
   both cost quality when their finding goes beyond the task (−2.0 each once). Astra costs ~$0.016 a review against

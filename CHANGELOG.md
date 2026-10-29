@@ -16,7 +16,7 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
-## 0.1.2 (2026-10-29): `--review-only`; findings held to the task tried and dropped
+## 0.1.2 (2026-10-29): `--review-only`; the review's JSON read past a note after it; Opus medium is reviewer enough
 
 `tazuna --review-only --run TASK-FILE --review-model M` reviews the uncommitted change in the current directory and
 prints the verdict as JSON, without an agent run. The bench uses it to put each reviewer and prompt on the same diff
@@ -36,8 +36,13 @@ a lever holding findings to the task ("a gap the task does not ask about is not 
   the task (import arguments, again); the lever did not stop the latter. Dropped: no change on Opus, mixed on Astra.
 - Astra at xhigh: 190-887 s, all inside the 15-minute cap (at max, four of five ran past it). Six reviews $0.084 real
   (~$0.014 each); Opus $1.96-3.52 a review at list.
-- Opus twice answered "no Critical or Major defects" in prose without the JSON; read as a failed review, which has the
-  same effect (no feedback) as an empty one.
+- Opus at high and medium (tazuna's default), current prompt: the same two terraform gaps and nothing on the good
+  diffs, in 29-99 s and $0.09-0.52 a review at list, against 360-640 s and $1.96-3.52 at max. Medium stays the default;
+  the bench's max reviewer arms paid ~15x for the same findings. (Three diffs, one with a real gap: none of the Opus
+  efforts saw the suffix check Astra found.)
+- Opus answered "ok" in prose without the JSON twice at max (a failed review: no feedback, as with an empty one), and
+  once at high with the JSON followed by a note quoting braces, which the parser took as unreadable. Now the first JSON
+  object with `issues` wins (one test).
 
 ## A reviewer behind DeepSeek: GPT-6 Astra and Opus 5.5 at max, 2026-10-29 (bench only)
 

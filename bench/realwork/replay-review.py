@@ -4,7 +4,7 @@ the reviewer, not the implementer's run. Diffs: the no-review arm of the 2026-10
 Inside the bench jail, like the runs. Appends to replay-review.jsonl. The scoped arm needs tz-v102r (the
 TAZUNA_REVIEW_SCOPED lever, dropped in 0.1.2).
 
-  replay-review.py [--dry-run]
+  replay-review.py [--dry-run] [ARM ...]   # ARM from ARMS (default opus, astra); opus-high and opus-medium run the current prompt only
 """
 import json, os, subprocess, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
@@ -14,11 +14,12 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE)); sys.path.insert(0, str(HERE.parent))
 import run, judge, subrouter
 
-TZ = os.path.expanduser("~/bench-homes/tz-v102r")
+TZ = os.path.expanduser(os.environ.get("REPLAY_TZ", "~/bench-homes/tz-v102r"))
 M = "deepseek-v4.1-flash-1017"
 DIFFS = [("tasks", "caddy-quoted-braces", "v648"), ("tasks-oct", "caddy-retry-match-expr", "v654"),
          ("tasks", "terraform-import-foreach", "v651")]
-ARMS = {"opus": ["claude-opus-5-5", "max"], "astra": ["gpt-6-astra@https://subrouter.ai/v1", "xhigh"]}
+ARMS = {"opus": ["claude-opus-5-5", "max"], "astra": ["gpt-6-astra@https://subrouter.ai/v1", "xhigh"],
+        "opus-high": ["claude-opus-5-5", "high"], "opus-medium": ["claude-opus-5-5", "medium"]}
 OUT, lock = HERE / "replay-review.jsonl", threading.Lock()
 
 
@@ -56,14 +57,14 @@ def one(job):
 
 
 if __name__ == "__main__":
-    jobs = [(d, a, s) for d in DIFFS for a in ARMS for s in (False, True)]
-    print(f"{len(jobs)} reviews: {sum(a == 'opus' for _, a, _ in jobs)} Opus max (subscription), "
-          f"{sum(a == 'astra' for _, a, _ in jobs)} Astra xhigh (SubRouter)", flush=True)
+    arms = [a for a in sys.argv[1:] if a in ARMS] or ["opus", "astra"]
+    jobs = [(d, a, s) for d in DIFFS for a in arms for s in ((False,) if a.startswith("opus-") else (False, True))]
+    print(f"{len(jobs)} reviews: " + ", ".join(f"{sum(j[1] == a for j in jobs)} {a} {ARMS[a][1]}" for a in arms), flush=True)
     if "--dry-run" in sys.argv:
         sys.exit()
-    vid = subrouter.key("tazuna-vet-1", "gpt-6-astra", ["shared-openai-pro-50", "shared-openai-pro-52"], "SUBROUTER_VET1_KEY")
-    k = subrouter.api(f"/api/token/{vid}")
-    if not k.get("include_shared_subscriptions"):
+    vid = "astra" in arms and subrouter.key("tazuna-vet-1", "gpt-6-astra", ["shared-openai-pro-50", "shared-openai-pro-52"], "SUBROUTER_VET1_KEY")
+    k = vid and subrouter.api(f"/api/token/{vid}")
+    if k and not k.get("include_shared_subscriptions"):
         subrouter.api("/api/token/", "PUT", {**k, "include_shared_subscriptions": True})
     with ThreadPoolExecutor(len(jobs)) as ex:
         list(ex.map(one, jobs))
