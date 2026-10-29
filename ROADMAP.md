@@ -32,7 +32,8 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
   $2.18, with boss 5.25 at $1.38 (judge within noise, cost −37%). Go tasks: tazuna without boss 7.46 (judge without
   reference) at $3.97 for 6 tasks vs stock 7.58 at $5.46; boss 7.33 at $2.70. No plugin (ECC, superpowers,
   caveman, graphify, GStack) beat stock; the Sonnet + Opus advisor stays opt-in (−0.6 judge on tickets).
-- **Cascade (code that may leave the machine; `--preset cascade`, or any `--provider`).** tazuna's own loop with DeepSeek
+- **Cascade (code that may leave the machine; any `--provider`; `--preset reviewed` since 0.1.4: DeepSeek 1017 on
+  SubRouter plus the Opus medium reviewer, replacing `--preset cascade`).** tazuna's own loop with DeepSeek
   V4.1 Flash at max effort on CheaperInference, no time limit, $1 per task; a task it cannot finish goes to Opus 5.5 medium
   on claude (high measured: 3-10x the cost, no gain). October tasks (merged after DeepSeek's release, 14 runs): 13/14 fully
   solved, judge 7.79 / 8.32 (without / with reference), $8.36, vs tazuna on Opus 9/14, 6.79 / 6.93, $38.90. Best quality
@@ -115,7 +116,8 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
      the own loop the reviewer does this job cheaper: Opus medium after DeepSeek, not a plan before it (2026-10-29).
    - ~~**Cheap explorer for Claude:**~~ an MCP tool backed by a DeepSeek sub-loop (0.0.48, `--explorer MODEL@URL`): +9% cost,
      same quality, slower; Opus kept reading itself. Opt-in.
-6. **Stock Claude Code with popular efficiency plugins vs tazuna** (user idea, 2026-10-09): caveman, headroom (context
+6. **Stock Claude Code with popular efficiency plugins vs tazuna** (user idea, 2026-10-09; done 2026-10-11 for ECC,
+   superpowers, caveman, graphify and GStack, none beat stock: decision log; only headroom left): caveman, headroom (context
    compression between Claude Code and the API), superpowers, ECC (affaan-m/ECC: discipline hooks, memory), GStack
    (garrytan/gstack: role team, /review, /qa), graphify alone (only tested with ponytail and agent-skills); ponytail + graphify + agent-skills already measured (−1.2
    judge, 2× slower). Same Go tasks and company tickets, 2 runs each, Opus xhigh judge; one plugin per 5-hour window.
@@ -275,6 +277,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-29: `--preset cascade` retired into `--preset reviewed` (0.1.4): same hand-over to Opus on failing tests,
+  DeepSeek 1017 on SubRouter instead of V4.1 Flash on CheaperInference, the Opus medium reviewer, and the trusted-provider
+  check instead of `--data any`. Review and hand-over together are not measured yet (the reviewer arms ran without it).
 - 2026-10-29: hand-off to a fresh session instead of compaction: not built. 680 own-loop sessions: peak context per
   call p50 96K, p90 193K, 60 over 200K; two hit a context limit, MiMo (dropped) and MiniMax before 0.1.0 (its resent
   reasoning, 910K). DeepSeek tops out near 540K with 96% of its input cached, so a cut saves cents and risks the thread

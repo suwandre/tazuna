@@ -26,7 +26,7 @@
 //!          [--review-only]   # with --run TASK-FILE and --review-model: review the uncommitted change here, verdict as JSON
 //!          [--escalate MODEL[:EFFORT]]   # when tests still fail, the fix rounds run on MODEL (with --provider: the cheap
 //!                                       # model's work is handed to MODEL on claude)
-//!          [--preset default|boss|max|cascade|reviewed|NAME]   # a bundle of model/effort per role; add your own in
+//!          [--preset default|boss|max|reviewed|NAME]   # a bundle of model/effort per role; add your own in
 //!                                                     # ~/.config/tazuna/presets ("name: --flag value ...")
 //!          [--data trusted|any]   # trusted (default): --provider only for hosts in ~/.config/tazuna/trusted-providers;
 //!                                 # any: also providers that may store or use the code
@@ -150,12 +150,12 @@ struct Args {
 /// `reviewed`: DeepSeek 1017 implements on SubRouter, Opus (claude, the default medium effort) reviews the diff once:
 /// the reviewer caught DeepSeek's blind spot (terraform, hidden tests 2/3 to 3/3) and flagged nothing on good diffs at
 /// medium (2026-10-29). No `--data any`: SubRouter has to be on the trusted list, so a work repo's code does not go there
-/// by accident.
-const PRESETS: [(&str, &str); 5] = [
+/// by accident. It replaced `cascade` (DeepSeek V4.1 Flash on CheaperInference with `--data any`, 2026-10-29): the same
+/// hand-over to Opus when tests fail, a newer model, the reviewer, and the data check.
+const PRESETS: [(&str, &str); 4] = [
     ("default", ""),
     ("boss", "--boss haiku"),
     ("max", "--model claude-opus-5-5 --effort max"),
-    ("cascade", "--data any --provider https://api.cheaperinference.com/v1 --key-env CHEAPER_INFERENCE_API_KEY --model deepseek-v4.1-flash --effort max"),
     ("reviewed", "--provider https://subrouter.ai/v1 --key-env SUBROUTER_API_KEY --model deepseek-v4.1-flash-1017 --effort max --review-model claude-opus-5-5"),
 ];
 
@@ -183,7 +183,7 @@ fn with_preset(args: Vec<String>) -> Result<Vec<String>> {
         .find(|(n, _)| n.trim() == name)
         .map(|(_, f)| f.to_string())
         .or_else(|| PRESETS.iter().find(|(n, _)| *n == name).map(|(_, f)| f.to_string()))
-        .with_context(|| format!("no preset {name} (built in: default, boss, max, cascade, reviewed; yours: {})", file.display()))?;
+        .with_context(|| format!("no preset {name} (built in: default, boss, max, reviewed; yours: {})", file.display()))?;
     let mut out: Vec<String> = flags.split_whitespace().map(String::from).collect();
     out.extend(args.into_iter().enumerate().filter(|(j, _)| *j != i && *j != i + 1).map(|(_, a)| a));
     Ok(out)
