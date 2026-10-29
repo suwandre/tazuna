@@ -16,6 +16,23 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Correction: Codex reports a fraction of its usage; on GPT-6 Astra it costs ~4x tazuna, 2026-10-29 (bench only)
+
+One key per harness on the same shared Pro pools (`perkey.sh`, gpt-6-astra, caddy-quoted and caddy-retry) lets the
+account log split real usage by harness. pi's and tazuna's own counts match it to the token; Codex's do not:
+
+| | model calls | prompt tokens (cached share) | output | real cost | self-reported input |
+|---|---|---|---|---|---|
+| Codex (1.5 runs) | 183 | 15.38M (95%) | 85K | $0.521 | 0.91M |
+| tazuna 0.1.0 (2 runs) | 71 | 4.35M (95%) | 31K | $0.155 | 4.35M |
+| pi (2 runs) | 47 | 2.24M (94%) | 25K | $0.095 | 2.24M |
+
+Codex's `turn.completed` usage covers only part of its model calls (here about a fifteenth): every Codex token and cost
+figure above taken from it is far too low, so "Codex leaner on Astra" is withdrawn. On real cost Codex is the costliest
+of the three on Astra and very likely on Sol (its Sol runs shared a key with the others; not split). Its quality lead on
+Astra (judge 7.50 against 6.75) stands. Codex's second run here ended on SubRouter's 402 "insufficient balance": the
+account was empty ($0.03 left).
+
 ## Tried and dropped: reads cut at 12K characters, 2026-10-29 (bench only)
 
 Why tazuna sends GPT-6 Astra twice Codex's input: its whole-file reads (13-30K characters) stay in a history every call

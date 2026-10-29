@@ -272,6 +272,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-29: Codex's own usage report covers about a fifteenth of its real traffic (one key per harness, account
+  log): on GPT-6 Astra it costs ~4x tazuna and ~5x pi per run; its judge lead (7.50 against 6.75) stands. Harness costs
+  come from the account log from now on, one key per harness. SubRouter balance ran out ($0.03).
 - 2026-10-29: 0.1.0 stops sending the model's reasoning back by default (MiniMax thought ever longer on its own
   thinking: 70 to 9 min on caddy-quoted; DeepSeek unchanged). Step 3 so far: tazuna ahead of or level with each model's
   own harness on quality everywhere, faster and cheaper on DeepSeek, Sol and GLM; on GPT-6 Astra Codex is leaner (half
