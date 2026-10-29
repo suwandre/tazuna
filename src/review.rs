@@ -36,8 +36,12 @@ pub struct Review {
     pub error: Option<String>,
 }
 
-/// Blocking; call from a thread.
-pub fn run(cwd: &Path, task: &str, model: &str, effort: &str) -> Review {
+/// Blocking; call from a thread. `model@url` reviews through that provider's API with the key in `key_env` (one call, the
+/// changed files in the prompt instead of tools); a plain model name through `claude -p`.
+pub fn run(cwd: &Path, task: &str, model: &str, effort: &str, key_env: Option<&str>) -> Review {
+    if let Some((m, url)) = model.split_once('@') {
+        return run_api(cwd, task, m, url, effort, key_env.unwrap_or("OPENAI_API_KEY"));
+    }
     let t0 = Instant::now();
     let prompt = format!("# Task\n\n{task}\n\n# The change (against HEAD; new files in full)\n\n```diff\n{}\n```", diff(cwd));
     // TAZUNA_REVIEWER: a stand-in for `claude` (tests of the feedback path need a reviewer that finds something)
@@ -87,6 +91,49 @@ pub fn run(cwd: &Path, task: &str, model: &str, effort: &str) -> Review {
     }
 }
 
+/// The reviewer on a provider's API (2026-10-29: GPT-6 Astra on SubRouter as a reviewer for a cheap implementer). It has
+/// no tools, so the changed files come in full after the diff. Cost from TAZUNA_REVIEW_PRICE (USD per million: input,
+/// cached, output) when set.
+fn run_api(cwd: &Path, task: &str, model: &str, url: &str, effort: &str, key_env: &str) -> Review {
+    let t0 = Instant::now();
+    let fail = |e: String| Review { ok: true, issues: vec![], cost: 0.0, secs: t0.elapsed().as_secs_f64(), error: Some(e) };
+    let Ok(key) = std::env::var(key_env) else { return fail(format!("{key_env} not set")) };
+    let system = SYSTEM.replace("Read the task, the diff, and any code you need with your read-only tools, including code outside the diff.",
+        "Read the task, the diff and the changed files in full below; you have no tools, so reason about code outside them from what they call.");
+    let prompt = format!("# Task\n\n{task}\n\n# The change (against HEAD; new files in full)\n\n```diff\n{}\n```\n\n# The changed files now\n\n{}", diff(cwd), changed_files(cwd));
+    match crate::engine::ask(url, &key, model, effort, &system, &prompt) {
+        Err(e) => fail(format!("{e:#}")),
+        Ok((text, (input, cached, out))) => {
+            let price: Vec<f64> = std::env::var("TAZUNA_REVIEW_PRICE").unwrap_or_default().split(',').filter_map(|x| x.trim().parse().ok()).collect();
+            let cost = match price[..] {
+                [i, c, o] => ((input - cached) as f64 * i + cached as f64 * c + out as f64 * o) / 1e6,
+                _ => 0.0,
+            };
+            let secs = t0.elapsed().as_secs_f64();
+            match parse(&text) {
+                Some((ok, issues)) => Review { ok, issues, cost, secs, error: None },
+                None => Review { cost, ..fail(format!("unreadable answer: {}", text.chars().take(200).collect::<String>())) },
+            }
+        }
+    }
+}
+
+/// Every changed or new text file in full, each under its path, cut at MAX_DIFF in all.
+fn changed_files(cwd: &Path) -> String {
+    let git = |args: &[&str]| Command::new("git").args(args).current_dir(cwd).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    let mut out = String::new();
+    for f in git(&["diff", "HEAD", "--name-only"]).lines().chain(git(&["ls-files", "--others", "--exclude-standard"]).lines()) {
+        if let Ok(text) = std::fs::read_to_string(cwd.join(f)) {
+            if out.len() + text.len() > MAX_DIFF {
+                out.push_str(&format!("## {f}\n[left out: over the size limit]\n\n"));
+                continue;
+            }
+            out.push_str(&format!("## {f}\n```\n{text}\n```\n\n"));
+        }
+    }
+    out
+}
+
 /// `{"verdict": .., "issues": [..]}` anywhere in the reply. "fix" with no issues counts as ok.
 fn parse(text: &str) -> Option<(bool, Vec<String>)> {
     let v: Value = serde_json::from_str(&text[text.find('{')?..=text.rfind('}')?]).ok()?;
@@ -132,6 +179,52 @@ mod tests {
         assert_eq!(parse("looks fine"), None);
         let r = Review { ok: false, issues: vec!["one".into(), "two".into()], cost: 0.0, secs: 0.0, error: None };
         assert!(feedback(&r).contains("1. one\n2. two"));
+    }
+
+    #[test]
+    fn reviews_through_a_providers_api() {
+        use std::io::{BufRead, BufReader};
+        let repo = std::env::temp_dir().join(format!("tazuna-review-api-{}", std::process::id()));
+        std::fs::create_dir_all(&repo).unwrap();
+        let sh = |c: &str| assert!(Command::new("sh").args(["-c", c]).current_dir(&repo).status().unwrap().success());
+        sh("git init -q && echo 'fn a() {}' > lib.rs && git add -A && git -c user.name=t -c user.email=t@t commit -qm base");
+        std::fs::write(repo.join("lib.rs"), "fn a() { b() }\nfn b() {}\n").unwrap();
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1", server.local_addr().unwrap());
+        let got = std::thread::spawn(move || {
+            let (c, _) = server.accept().unwrap();
+            let mut r = BufReader::new(c.try_clone().unwrap());
+            let (mut len, mut line, mut auth) = (0, String::new(), String::new());
+            while r.read_line(&mut line).unwrap() > 2 {
+                let l = line.to_lowercase();
+                if let Some(v) = l.strip_prefix("content-length:") { len = v.trim().parse().unwrap() }
+                if l.starts_with("authorization:") { auth = line.trim().to_string() }
+                line.clear();
+            }
+            let mut body = vec![0; len];
+            r.read_exact(&mut body).unwrap();
+            let reply = serde_json::json!({"output": [{"type": "message", "content": [{"type": "output_text",
+                "text": "{\"verdict\": \"fix\", \"issues\": [\"Major: b is dead code. lib.rs:2. Fix: remove it.\"]}"}]}],
+                "usage": {"input_tokens": 1000, "input_tokens_details": {"cached_tokens": 400}, "output_tokens": 100}}).to_string();
+            let mut c = c;
+            write!(c, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()).unwrap();
+            (serde_json::from_slice::<Value>(&body).unwrap(), auth)
+        });
+        // SAFETY: no other test reads these two variables
+        unsafe {
+            std::env::set_var("TAZUNA_TEST_REVIEW_KEY", "rk");
+            std::env::set_var("TAZUNA_REVIEW_PRICE", "2,0.2,10");
+        }
+        let r = run(&repo, "make a call b", &format!("gpt-6-astra@{url}"), "max", Some("TAZUNA_TEST_REVIEW_KEY"));
+        let (body, auth) = got.join().unwrap();
+        assert_eq!(auth.to_lowercase(), "authorization: bearer rk");
+        assert_eq!((body["model"].as_str(), body["reasoning"]["effort"].as_str()), (Some("gpt-6-astra"), Some("max")));
+        assert!(body["instructions"].as_str().unwrap().contains("you have no tools") && !body["instructions"].as_str().unwrap().contains("read-only tools"));
+        let prompt = body["input"][0]["content"].as_str().unwrap();
+        assert!(prompt.contains("make a call b") && prompt.contains("+fn b() {}") && prompt.contains("## lib.rs\n```\nfn a() { b() }"), "{prompt}");
+        assert!(!r.ok && r.issues == ["Major: b is dead code. lib.rs:2. Fix: remove it."] && r.error.is_none(), "{:?}", r.error);
+        assert!((r.cost - (600.0 * 2.0 + 400.0 * 0.2 + 100.0 * 10.0) / 1e6).abs() < 1e-12, "{}", r.cost);
+        std::fs::remove_dir_all(&repo).ok();
     }
 
     #[test]

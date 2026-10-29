@@ -806,6 +806,35 @@ fn connect(url: &str, key_env: &str, model: &str) -> Result<(Box<dyn FnMut(&Valu
     connect_key(url, &key, model)
 }
 
+/// One call with no tools and no history: the independent reviewer on a provider's API (review.rs). The API follows the
+/// model's name as for the own loop; returns the reply's text and (input, cached, output) tokens.
+pub fn ask(url: &str, key: &str, model: &str, effort: &str, system: &str, prompt: &str) -> Result<(String, (u64, u64, u64))> {
+    let api = if model.starts_with("claude-") { Api::Messages } else if model.starts_with("gpt-") { Api::Responses } else { Api::Chat };
+    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(CALL_TIMEOUT)).http_status_as_error(false).build().into();
+    let body = match api {
+        Api::Responses => json!({"model": model, "instructions": system, "input": [{"role": "user", "content": prompt}], "store": false,
+            "reasoning": {"effort": effort}}),
+        Api::Messages => json!({"model": model, "max_tokens": MAX_OUTPUT, "system": system, "messages": [{"role": "user", "content": prompt}],
+            "thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}),
+        Api::Chat => json!({"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+            "reasoning_effort": effort}),
+    };
+    let r = chat(&http, url.trim_end_matches('/'), key, api, &body)?;
+    let blocks = |v: &Value, kind: &str| v.as_array().into_iter().flatten().filter(|b| b["type"] == kind)
+        .filter_map(|b| b["text"].as_str().map(String::from)).collect::<Vec<_>>().join("\n");
+    let text = match api {
+        Api::Responses => r["output"].as_array().into_iter().flatten().filter(|i| i["type"] == "message")
+            .map(|i| blocks(&i["content"], "output_text")).collect::<Vec<_>>().join("\n"),
+        Api::Messages => blocks(&r["content"], "text"),
+        Api::Chat => r["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_string(),
+    };
+    let u = &r["usage"];
+    let n = |a: &Value, b: &Value| a.as_u64().or(b.as_u64()).unwrap_or(0);
+    let cached = n(&u["input_tokens_details"]["cached_tokens"], &u["prompt_tokens_details"]["cached_tokens"]) + u["cache_read_input_tokens"].as_u64().unwrap_or(0);
+    let input = n(&u["input_tokens"], &u["prompt_tokens"]) + if api == Api::Messages { cached } else { 0 };
+    Ok((text, (input, cached.min(input), n(&u["output_tokens"], &u["completion_tokens"]))))
+}
+
 /// `connect` with the key itself (a later route's, read at start).
 fn connect_key(url: &str, key: &str, model: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, Api, Price)> {
     let key = key.to_string();

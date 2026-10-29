@@ -22,6 +22,7 @@
 //!          [--mode auto|ask|edits|plan]   # permissions: never ask (default), ask before edits and commands, ask before
 //!                                         # commands only, or plan read-only first; shift-tab cycles them live
 //!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once
+//!          [--review-key-env VAR]  # with M as MODEL@URL: the reviewer on that provider's API, its key in VAR
 //!          [--escalate MODEL[:EFFORT]]   # when tests still fail, the fix rounds run on MODEL (with --provider: the cheap
 //!                                       # model's work is handed to MODEL on claude)
 //!          [--preset default|boss|max|cascade|NAME]   # a bundle of model/effort per role; add your own in
@@ -110,6 +111,7 @@ struct Args {
     diagnostics: bool,
     self_review: bool,
     review_model: Option<String>,
+    review_key_env: Option<String>,
     /// Own loop: base URL and the environment variable with the key.
     provider: Option<(String, String)>,
     /// `Some(None)`: this repo's latest session; `Some(Some(id))`: that session.
@@ -200,6 +202,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         diagnostics: true,
         self_review: false,
         review_model: None,
+        review_key_env: None,
         provider: None,
         resume: None,
         mode: "bypassPermissions".into(),
@@ -243,6 +246,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--no-diagnostics" => a.diagnostics = false,
             "--self-review" => a.self_review = true,
             "--review-model" => a.review_model = Some(val()?),
+            "--review-key-env" => a.review_key_env = Some(val()?),
             "--provider" => a.provider = Some((val()?, a.provider.take().map_or("OPENAI_API_KEY".into(), |p| p.1))),
             "--key-env" => a.provider = Some((a.provider.take().map_or(String::new(), |p| p.0), val()?)),
             "-c" | "--continue" => a.resume = Some(None),
@@ -406,6 +410,7 @@ fn main() -> Result<()> {
             live.diagnostics = a.diagnostics;
             live.self_review = a.self_review;
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
+            live.review_key_env = a.review_key_env.clone();
             live.provider = a.provider.clone();
             live.project_instructions = a.project_instructions;
             live.cache_ttl = a.cache_ttl.clone();
@@ -539,6 +544,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.diagnostics = a.diagnostics;
     live.self_review = a.self_review;
     live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
+    live.review_key_env = a.review_key_env.clone();
     live.provider = a.provider.clone();
     live.project_instructions = a.project_instructions;
     live.cache_ttl = a.cache_ttl.clone();

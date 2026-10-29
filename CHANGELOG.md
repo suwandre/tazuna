@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.1 (2026-10-29): the independent reviewer on any provider's API (not measured yet)
+
+`--review-model MODEL@URL --review-key-env VAR` runs the reviewer as one call to that provider (Responses for gpt-,
+Messages for claude-, Chat otherwise) instead of `claude -p`: the same instructions, the task, the diff and the changed
+files in full (it has no tools), the verdict back to the implementer once as before. Cost from TAZUNA_REVIEW_PRICE. The
+reviewer's key is read in tazuna's own process and removed from the implementer's environment. Made for GPT-6 Astra as a
+reviewer behind a cheap implementer: on Astra, Codex's lead over tazuna was code quality and scope (dead code left,
+convoluted logic where a helper existed, thin tests; judge notes), the kind a diff review catches. Bench harnesses
+`tazuna-ownsubxrev` (Astra reviewer) and `tazuna-ownsubxopus` (Opus 5.5 reviewer through claude). One test against a
+local stub provider (request shape, key, verdict, cost).
+
 ## Correction: Codex reports a fraction of its usage; on GPT-6 Astra it costs ~4x tazuna, 2026-10-29 (bench only)
 
 One key per harness on the same shared Pro pools (`perkey.sh`, gpt-6-astra, caddy-quoted and caddy-retry) lets the

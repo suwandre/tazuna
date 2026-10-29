@@ -307,6 +307,9 @@ pub struct Live {
     tasks_done: Option<Instant>,
     /// Independent reviewer: model and effort (`--review-model`, `--review-effort`).
     pub review_model: Option<(String, String)>,
+    /// The environment variable with the reviewer's key when it runs on a provider's API (`--review-key-env`); kept out of
+    /// the implementer's environment.
+    pub review_key_env: Option<String>,
     /// Own loop instead of claude (`--provider`): base URL and the environment variable with the key.
     pub provider: Option<(String, String)>,
     /// The user's last message and whether the reviewer has seen it: wake-up runs get no review of their own.
@@ -386,6 +389,7 @@ impl Live {
             diagnostics: false,
             self_review: false,
             review_model: None,
+            review_key_env: None,
             provider: None,
             task: String::new(),
             task_reviewed: false,
@@ -894,9 +898,9 @@ impl Live {
             self.task_reviewed = true;
             self.verifying = true;
             let (tx, g, cwd, task) = (self.tx.clone(), self.generation, self.cwd.clone(), self.task.clone());
-            let (m, e) = (model.clone(), effort.clone());
+            let (m, e, k) = (model.clone(), effort.clone(), self.review_key_env.clone());
             std::thread::spawn(move || {
-                let _ = tx.send((g, Msg::Reviewed(review::run(&cwd, &task, &m, &e))));
+                let _ = tx.send((g, Msg::Reviewed(review::run(&cwd, &task, &m, &e, k.as_deref()))));
             });
             return vec![self.record(json!({"type": "harness_review_start", "model": model, "effort": effort}))];
         }
@@ -1210,6 +1214,9 @@ impl Live {
 
     /// Starts the agent process and the threads that read its output.
     fn start(&mut self, mut cmd: Command) -> Result<()> {
+        if let Some(k) = &self.review_key_env {
+            cmd.env_remove(k); // the implementer's commands must not see the reviewer's key
+        }
         let mut child = cmd
             .current_dir(&self.cwd)
             .stdin(Stdio::piped())
