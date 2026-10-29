@@ -23,6 +23,7 @@
 //!                                         # commands only, or plan read-only first; shift-tab cycles them live
 //!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once
 //!          [--review-key-env VAR]  # with M as MODEL@URL: the reviewer on that provider's API, its key in VAR
+//!          [--review-only]   # with --run TASK-FILE and --review-model: review the uncommitted change here, verdict as JSON
 //!          [--escalate MODEL[:EFFORT]]   # when tests still fail, the fix rounds run on MODEL (with --provider: the cheap
 //!                                       # model's work is handed to MODEL on claude)
 //!          [--preset default|boss|max|cascade|NAME]   # a bundle of model/effort per role; add your own in
@@ -112,6 +113,7 @@ struct Args {
     self_review: bool,
     review_model: Option<String>,
     review_key_env: Option<String>,
+    review_only: bool,
     /// The reviewer's key itself, read at start and gone from the environment by then (see main).
     review_key: Option<String>,
     /// Own loop: base URL and the environment variable with the key.
@@ -205,6 +207,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         self_review: false,
         review_model: None,
         review_key_env: None,
+        review_only: false,
         review_key: None,
         provider: None,
         resume: None,
@@ -250,6 +253,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--self-review" => a.self_review = true,
             "--review-model" => a.review_model = Some(val()?),
             "--review-key-env" => a.review_key_env = Some(val()?),
+            "--review-only" => a.review_only = true,
             "--provider" => a.provider = Some((val()?, a.provider.take().map_or("OPENAI_API_KEY".into(), |p| p.1))),
             "--key-env" => a.provider = Some((a.provider.take().map_or(String::new(), |p| p.0), val()?)),
             "-c" | "--continue" => a.resume = Some(None),
@@ -362,6 +366,13 @@ fn main() -> Result<()> {
         a.review_key = Some(std::env::var(&var).with_context(|| format!("{var} not set"))?);
         // SAFETY: no other thread has started yet
         unsafe { std::env::remove_var(&var) };
+    }
+    if a.review_only {
+        let task = std::fs::read_to_string(a.run.as_ref().context("--review-only needs --run TASK-FILE")?)?;
+        let model = a.review_model.as_deref().context("--review-only needs --review-model")?;
+        let r = review::run(&std::env::current_dir()?, &task, model, &a.review_effort, a.review_key.as_deref());
+        println!("{}", json!({"ok": r.ok, "issues": r.issues, "cost": r.cost, "secs": r.secs, "error": r.error}));
+        return Ok(());
     }
     if let Some((url, _)) = &a.provider {
         check_data(url, a.data_any)?;

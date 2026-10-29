@@ -16,6 +16,29 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.2 (2026-10-29): `--review-only`; findings held to the task tried and dropped
+
+`tazuna --review-only --run TASK-FILE --review-model M` reviews the uncommitted change in the current directory and
+prints the verdict as JSON, without an agent run. The bench uses it to put each reviewer and prompt on the same diff
+(`replay-review.py`, in the jail), so the reviewer is compared, not the implementer's run: the diffs of the no-review
+arm below (DeepSeek 1017 max), Opus 5.5 max through claude and GPT-6 Astra xhigh, each with the current prompt and with
+a lever holding findings to the task ("a gap the task does not ask about is not a defect here, even if real").
+
+| diff | Opus | Opus held to task | Astra | Astra held to task |
+|---|---|---|---|---|
+| terraform (the gap, hidden 2/3) | 3, gap found | 2, gap found | 2, gap found | 2, gap found |
+| caddy-quoted (judge 8.0) | 0 | 0 | 1 (import arguments) | 2 (import arguments; the quoted-address suffix check the reference fixes) |
+| caddy-retry (judge 9.0) | 0 | 0 | 2 | 1 |
+
+- Opus is already precise: nothing on the two good diffs with either prompt, both terraform gaps found. The −2.0 behind
+  its caddy-retry review last round was that run's own diff, not Opus finding things on good ones.
+- Astra finds more on good diffs, partly real (the suffix check, which the judge noted as missed) and partly beyond
+  the task (import arguments, again); the lever did not stop the latter. Dropped: no change on Opus, mixed on Astra.
+- Astra at xhigh: 190-887 s, all inside the 15-minute cap (at max, four of five ran past it). Six reviews $0.084 real
+  (~$0.014 each); Opus $1.96-3.52 a review at list.
+- Opus twice answered "no Critical or Major defects" in prose without the JSON; read as a failed review, which has the
+  same effect (no feedback) as an empty one.
+
 ## A reviewer behind DeepSeek: GPT-6 Astra and Opus 5.5 at max, 2026-10-29 (bench only)
 
 DeepSeek V4.1 Flash 1017 at max implementing on tazuna 0.1.1, three arms on separate keys: no review
