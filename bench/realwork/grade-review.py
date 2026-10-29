@@ -16,7 +16,7 @@ sys.path.insert(0, str(HERE))
 import judge
 
 MODEL, EFFORT = os.environ.get("GRADE_MODEL", "gpt-6.1-sol@https://subrouter.ai/v1"), "xhigh"  # MODEL@URL only
-OUT, lock = HERE / "grade-review.jsonl", threading.Lock()
+OUT, lock = HERE / os.environ.get("GRADE_OUT", "grade-review.jsonl"), threading.Lock()  # every reviewer of a diff in one call
 SYSTEM = """You grade code reviews of one candidate patch. You get the task (a real GitHub issue), the reference fix (the merged PR's non-test changes; one valid solution, not the only one), the candidate patch, the candidate's hidden PR test result, and the findings of anonymous reviewers.
 
 For each finding decide:
@@ -26,7 +26,7 @@ For each finding decide:
 
 If hidden tests failed, also say for each reviewer whether any of its findings names the cause of the failure.
 
-Reply with only JSON: {"findings": {"<finding id>": {"class": "gap|beyond|wrong", "note": "<one sentence>"}, ...}, "cause": {"<reviewer id>": true|false, ...}}"""
+Write notes without double quotes (quote code with backticks). Reply with only JSON: {"findings": {"<finding id>": {"class": "gap|beyond|wrong", "note": "<one sentence>"}, ...}, "cause": {"<reviewer id>": true|false, ...}}"""
 
 
 def result(bset, task, diff):
@@ -58,7 +58,13 @@ def main():
         for rid, r in zip(names, revs):
             issues = r.get("issues") or []
             parts.append(f"# Reviewer {rid}\n" + ("\n".join(f"- {rid}-{j + 1}: {i}" for j, i in enumerate(issues)) or "(no findings: verdict ok)"))
-        v = judge.verdict_json(judge.ask_api("\n\n".join(parts), MODEL, EFFORT, SYSTEM))
+        for attempt in range(3):  # a reply with an unescaped quote in a note is not JSON; a new sample usually is
+            try:
+                v = judge.verdict_json(judge.ask_api("\n\n".join(parts), MODEL, EFFORT, SYSTEM))
+                break
+            except ValueError:
+                if attempt == 2:
+                    raise
         g = dict(raw=v, task=task, diff=diff, passed=res["passed"], total=res["total"], regress=res.get("regress"), grader=MODEL,
                  reviewers={arm: dict(n=len(r.get("issues") or []), error=r.get("error"), cause=v.get("cause", {}).get(rid),
                                       classes=[v["findings"].get(f"{rid}-{j + 1}", {}).get("class") for j in range(len(r.get("issues") or []))],
@@ -85,7 +91,10 @@ def table():
         good = [g for g in gs if g["passed"] == g["total"]]
         rv = lambda g: ({"n": sum(x["n"] for x in g["reviewers"].values()), "cause": any(x["cause"] for x in g["reviewers"].values()),
                          "classes": [c for x in g["reviewers"].values() for c in x["classes"]]} if a == "both" else g["reviewers"][a])
-        cls = [c for g in gs for c in rv(g)["classes"]]
+        gs_a = [g for g in gs if a == "both" or a in g["reviewers"]]  # a reviewer the usage guard skipped on a diff
+        gap = [g for g in gs_a if g["passed"] < g["total"]]
+        good = [g for g in gs_a if g["passed"] == g["total"]]
+        cls = [c for g in gs_a for c in rv(g)["classes"]]
         print(f"{a:12} cause found {sum(bool(rv(g)['cause']) for g in gap)}/{len(gap)} gap diffs | findings on good diffs "
               f"{sum(rv(g)['n'] for g in good)} ({sum(c == 'gap' for g in good for c in rv(g)['classes'])} gap) | all findings "
               f"{len(cls)}: gap {cls.count('gap')}, beyond {cls.count('beyond')}, wrong {cls.count('wrong')}")

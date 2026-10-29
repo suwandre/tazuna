@@ -273,6 +273,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-29: Sonnet 5.5 as reviewer (medium/xhigh/max) on the recall set: causes named 2, 4 and 2 of 7 against Opus
+  medium's 5, at 1-2x the cost (xhigh, max) and, at max, half the reviews past 15 minutes. A higher public score did not
+  carry over to diff review; Opus medium stays the reviewer.
 - 2026-10-29: reviewer recall on 13 earlier DeepSeek diffs (graded by Sol against the reference): Opus medium named
   the cause of 6 of 7 test failures in 31-157 s, Astra xhigh 3 of 7 with 6 of 13 reviews past the 15-minute cap; both
   together 7 of 7. `--preset reviewed` (DeepSeek implements, Opus medium reviews) is the setup to use; Astra as a second

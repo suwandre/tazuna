@@ -16,6 +16,25 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Sonnet 5.5 as reviewer (medium, xhigh, max) against Opus 5.5 medium, 2026-10-29 (bench only)
+
+The recall set below again, Sonnet 5.5 at three efforts added (it leads Opus on vals.ai), then all five reviewers of a
+diff graded together by GPT-6.1 Sol (`GRADE_OUT=grade-review-all.jsonl`; notes without double quotes, or the reply is
+not JSON). The usage guard paused at 70% of the 5-hour window: four Sonnet reviews of passing diffs were skipped.
+
+| reviewer | cause named (7 failed diffs) | findings: gap / beyond / wrong | median time | over 15 min | cost at list |
+|---|---|---|---|---|---|
+| Opus medium | 5/7 | 13 / 4 / 1 | 68 s | 0 of 13 | $5.88 |
+| Sonnet medium | 2/7 | 5 / 2 / 1 | 22 s | 0 of 12 | $1.12 |
+| Sonnet xhigh | 4/7 | 8 / 1 / 1 | 246 s | 0 of 12 | $10.44 |
+| Sonnet max | 2/7 | 5 / 1 / 1 | 900 s | 6 of 11 | $9.88 |
+| Astra xhigh | 3/7 | 7 / 3 / 1 | 771 s | 6 of 13 | ~$0.10 real |
+
+Opus medium stays the reviewer: the most causes named at the lowest cost per catch. Sonnet xhigh comes closest at
+nearly twice the cost and four times the time; at max half its reviews ran past the cap. Grader noise: graded twice
+(with two and with five reviewers), Sol changed its call on 2 of 14 cause verdicts (caddy-unix for Opus and Astra,
+terraform for Astra), so one diff either way is within noise.
+
 ## Reviewer recall on 13 earlier DeepSeek diffs: Opus medium, GPT-6 Astra xhigh, both, 2026-10-29 (bench only)
 
 `replay-review.py --set recall`: 13 diffs from earlier no-review DeepSeek runs (not leaked), 7 that failed hidden tests

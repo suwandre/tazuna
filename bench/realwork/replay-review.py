@@ -36,7 +36,8 @@ RECALL = [("tasks-oct", "rclone-archive-symlinks", f"tazuna-ownsubx-v348@{M}:max
           ("tasks-oct", "gitea-actions-cancelling", "tazuna-own-v38@deepseek-v4.1-flash:max-r0"),
           ("tasks-oct", "lazygit-mnemonic-prefix", f"tazuna-ownsubx-v409@{M}:max-r0")]
 ARMS = {"opus": ["claude-opus-5-5", "max"], "astra": ["gpt-6-astra@https://subrouter.ai/v1", "xhigh"],
-        "opus-high": ["claude-opus-5-5", "high"], "opus-medium": ["claude-opus-5-5", "medium"]}
+        "opus-high": ["claude-opus-5-5", "high"], "opus-medium": ["claude-opus-5-5", "medium"],
+        **{f"sonnet-{e}": ["claude-sonnet-5-5", e] for e in ("medium", "xhigh", "max")}}
 OUT, lock = HERE / "replay-review.jsonl", threading.Lock()
 
 
@@ -81,7 +82,7 @@ if __name__ == "__main__":
     dset = "recall" if "recall" in sys.argv else "first"
     jobs = [(d, a, s, dset) for d in (RECALL if dset == "recall" else DIFFS) for a in arms
             if os.environ.get("REPLAY_ONLY", "") in d[2]
-            for s in ((False, True) if "--scoped" in sys.argv and not a.startswith("opus-") else (False,))]
+            for s in ((False, True) if "--scoped" in sys.argv and a in ("opus", "astra") else (False,))]
     print(f"{len(jobs)} reviews: " + ", ".join(f"{sum(j[1] == a for j in jobs)} {a} {ARMS[a][1]}" for a in arms), flush=True)
     if "--dry-run" in sys.argv:
         sys.exit()
