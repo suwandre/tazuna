@@ -112,6 +112,8 @@ struct Args {
     self_review: bool,
     review_model: Option<String>,
     review_key_env: Option<String>,
+    /// The reviewer's key itself, read at start and gone from the environment by then (see main).
+    review_key: Option<String>,
     /// Own loop: base URL and the environment variable with the key.
     provider: Option<(String, String)>,
     /// `Some(None)`: this repo's latest session; `Some(Some(id))`: that session.
@@ -203,6 +205,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         self_review: false,
         review_model: None,
         review_key_env: None,
+        review_key: None,
         provider: None,
         resume: None,
         mode: "bypassPermissions".into(),
@@ -350,7 +353,16 @@ fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("diag") {
         return diag::hook(std::path::Path::new(&std::env::args().nth(2).unwrap_or_default()));
     }
-    let a = args()?;
+    let mut a = args()?;
+    // a reviewer on a provider's API reads the code too; its key leaves the environment before anything starts, so the
+    // agent's commands and the test runs on its code never see it
+    if let Some((_, url)) = a.review_model.as_deref().and_then(|m| m.split_once('@')) {
+        check_data(url, a.data_any)?;
+        let var = a.review_key_env.clone().context("--review-model MODEL@URL needs --review-key-env VAR")?;
+        a.review_key = Some(std::env::var(&var).with_context(|| format!("{var} not set"))?);
+        // SAFETY: no other thread has started yet
+        unsafe { std::env::remove_var(&var) };
+    }
     if let Some((url, _)) = &a.provider {
         check_data(url, a.data_any)?;
         // every other route sees the code too (0.0.79, `TAZUNA_ROUTES`)
@@ -410,7 +422,7 @@ fn main() -> Result<()> {
             live.diagnostics = a.diagnostics;
             live.self_review = a.self_review;
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
-            live.review_key_env = a.review_key_env.clone();
+            live.review_key = a.review_key.clone();
             live.provider = a.provider.clone();
             live.project_instructions = a.project_instructions;
             live.cache_ttl = a.cache_ttl.clone();
@@ -544,7 +556,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.diagnostics = a.diagnostics;
     live.self_review = a.self_review;
     live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
-    live.review_key_env = a.review_key_env.clone();
+    live.review_key = a.review_key.clone();
     live.provider = a.provider.clone();
     live.project_instructions = a.project_instructions;
     live.cache_ttl = a.cache_ttl.clone();

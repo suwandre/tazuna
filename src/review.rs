@@ -36,11 +36,11 @@ pub struct Review {
     pub error: Option<String>,
 }
 
-/// Blocking; call from a thread. `model@url` reviews through that provider's API with the key in `key_env` (one call, the
-/// changed files in the prompt instead of tools); a plain model name through `claude -p`.
-pub fn run(cwd: &Path, task: &str, model: &str, effort: &str, key_env: Option<&str>) -> Review {
+/// Blocking; call from a thread. `model@url` reviews through that provider's API with `key` (one call, the changed files
+/// in the prompt instead of tools); a plain model name through `claude -p`.
+pub fn run(cwd: &Path, task: &str, model: &str, effort: &str, key: Option<&str>) -> Review {
     if let Some((m, url)) = model.split_once('@') {
-        return run_api(cwd, task, m, url, effort, key_env.unwrap_or("OPENAI_API_KEY"));
+        return run_api(cwd, task, m, url, effort, key);
     }
     let t0 = Instant::now();
     let prompt = format!("# Task\n\n{task}\n\n# The change (against HEAD; new files in full)\n\n```diff\n{}\n```", diff(cwd));
@@ -94,14 +94,14 @@ pub fn run(cwd: &Path, task: &str, model: &str, effort: &str, key_env: Option<&s
 /// The reviewer on a provider's API (2026-10-29: GPT-6 Astra on SubRouter as a reviewer for a cheap implementer). It has
 /// no tools, so the changed files come in full after the diff. Cost from TAZUNA_REVIEW_PRICE (USD per million: input,
 /// cached, output) when set.
-fn run_api(cwd: &Path, task: &str, model: &str, url: &str, effort: &str, key_env: &str) -> Review {
+fn run_api(cwd: &Path, task: &str, model: &str, url: &str, effort: &str, key: Option<&str>) -> Review {
     let t0 = Instant::now();
     let fail = |e: String| Review { ok: true, issues: vec![], cost: 0.0, secs: t0.elapsed().as_secs_f64(), error: Some(e) };
-    let Ok(key) = std::env::var(key_env) else { return fail(format!("{key_env} not set")) };
+    let Some(key) = key else { return fail("no key for the reviewer (--review-key-env)".into()) };
     let system = SYSTEM.replace("Read the task, the diff, and any code you need with your read-only tools, including code outside the diff.",
         "Read the task, the diff and the changed files in full below; you have no tools, so reason about code outside them from what they call.");
     let prompt = format!("# Task\n\n{task}\n\n# The change (against HEAD; new files in full)\n\n```diff\n{}\n```\n\n# The changed files now\n\n{}", diff(cwd), changed_files(cwd));
-    match crate::engine::ask(url, &key, model, effort, &system, &prompt) {
+    match crate::engine::ask(url, key, model, effort, &system, &prompt) {
         Err(e) => fail(format!("{e:#}")),
         Ok((text, (input, cached, out))) => {
             let price: Vec<f64> = std::env::var("TAZUNA_REVIEW_PRICE").unwrap_or_default().split(',').filter_map(|x| x.trim().parse().ok()).collect();
@@ -118,12 +118,23 @@ fn run_api(cwd: &Path, task: &str, model: &str, url: &str, effort: &str, key_env
     }
 }
 
+/// A changed file's text, only when it is a regular file inside the work tree: the implementer could leave a symlink to a
+/// secret elsewhere (a key file, ~/.ssh), and the review goes to a third party.
+fn read_inside(cwd: &Path, f: &str) -> Option<String> {
+    let p = cwd.join(f);
+    let meta = std::fs::symlink_metadata(&p).ok()?;
+    if !meta.file_type().is_file() || !p.canonicalize().ok()?.starts_with(cwd.canonicalize().ok()?) {
+        return None;
+    }
+    std::fs::read_to_string(p).ok()
+}
+
 /// Every changed or new text file in full, each under its path, cut at MAX_DIFF in all.
 fn changed_files(cwd: &Path) -> String {
     let git = |args: &[&str]| Command::new("git").args(args).current_dir(cwd).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
     let mut out = String::new();
     for f in git(&["diff", "HEAD", "--name-only"]).lines().chain(git(&["ls-files", "--others", "--exclude-standard"]).lines()) {
-        if let Ok(text) = std::fs::read_to_string(cwd.join(f)) {
+        if let Some(text) = read_inside(cwd, f) {
             if out.len() + text.len() > MAX_DIFF {
                 out.push_str(&format!("## {f}\n[left out: over the size limit]\n\n"));
                 continue;
@@ -146,7 +157,7 @@ fn diff(cwd: &Path) -> String {
     let git = |args: &[&str]| Command::new("git").args(args).current_dir(cwd).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
     let mut d = git(&["diff", "HEAD"]);
     for f in git(&["ls-files", "--others", "--exclude-standard"]).lines() {
-        if let Ok(text) = std::fs::read_to_string(cwd.join(f)) {
+        if let Some(text) = read_inside(cwd, f) {
             d.push_str(&format!("\n--- /dev/null\n+++ b/{f}\n{}", text.lines().map(|l| format!("+{l}\n")).collect::<String>()));
         }
     }
@@ -210,12 +221,9 @@ mod tests {
             write!(c, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()).unwrap();
             (serde_json::from_slice::<Value>(&body).unwrap(), auth)
         });
-        // SAFETY: no other test reads these two variables
-        unsafe {
-            std::env::set_var("TAZUNA_TEST_REVIEW_KEY", "rk");
-            std::env::set_var("TAZUNA_REVIEW_PRICE", "2,0.2,10");
-        }
-        let r = run(&repo, "make a call b", &format!("gpt-6-astra@{url}"), "max", Some("TAZUNA_TEST_REVIEW_KEY"));
+        // SAFETY: no other test reads this variable
+        unsafe { std::env::set_var("TAZUNA_REVIEW_PRICE", "2,0.2,10") };
+        let r = run(&repo, "make a call b", &format!("gpt-6-astra@{url}"), "max", Some("rk"));
         let (body, auth) = got.join().unwrap();
         assert_eq!(auth.to_lowercase(), "authorization: bearer rk");
         assert_eq!((body["model"].as_str(), body["reasoning"]["effort"].as_str()), (Some("gpt-6-astra"), Some("max")));
@@ -225,6 +233,22 @@ mod tests {
         assert!(!r.ok && r.issues == ["Major: b is dead code. lib.rs:2. Fix: remove it."] && r.error.is_none(), "{:?}", r.error);
         assert!((r.cost - (600.0 * 2.0 + 400.0 * 0.2 + 100.0 * 10.0) / 1e6).abs() < 1e-12, "{}", r.cost);
         std::fs::remove_dir_all(&repo).ok();
+    }
+
+    #[test]
+    fn a_symlink_out_of_the_tree_is_not_read() {
+        let base = std::env::temp_dir().join(format!("tazuna-review-link-{}", std::process::id()));
+        let repo = base.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(base.join("secret.txt"), "TOPSECRET\n").unwrap();
+        let sh = |c: &str| assert!(Command::new("sh").args(["-c", c]).current_dir(&repo).status().unwrap().success());
+        sh("git init -q && echo a > a.txt && git add -A && git -c user.name=t -c user.email=t@t commit -qm base");
+        std::os::unix::fs::symlink(base.join("secret.txt"), repo.join("leak.txt")).unwrap();
+        std::fs::write(repo.join("a.txt"), "b\n").unwrap();
+        let (d, files) = (diff(&repo), changed_files(&repo));
+        assert!(!d.contains("TOPSECRET") && !files.contains("TOPSECRET"), "{d}\n{files}");
+        assert!(files.contains("## a.txt"), "{files}");
+        std::fs::remove_dir_all(&base).ok();
     }
 
     #[test]

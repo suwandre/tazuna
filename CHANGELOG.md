@@ -21,7 +21,10 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 `--review-model MODEL@URL --review-key-env VAR` runs the reviewer as one call to that provider (Responses for gpt-,
 Messages for claude-, Chat otherwise) instead of `claude -p`: the same instructions, the task, the diff and the changed
 files in full (it has no tools), the verdict back to the implementer once as before. Cost from TAZUNA_REVIEW_PRICE. The
-reviewer's key is read in tazuna's own process and removed from the implementer's environment. Made for GPT-6 Astra as a
+reviewer's key is read once at start and removed from tazuna's environment before anything starts, so neither the
+agent's commands nor the test runs on its code can see it; `MODEL@URL` without `--review-key-env` is refused, and the
+reviewer's provider passes the same data check as the provider and the explorer. Only regular files inside the work tree
+go into the review (a symlink to a key file elsewhere would otherwise be sent to the provider). Made for GPT-6 Astra as a
 reviewer behind a cheap implementer: on Astra, Codex's lead over tazuna was code quality and scope (dead code left,
 convoluted logic where a helper existed, thin tests; judge notes), the kind a diff review catches. Bench harnesses
 `tazuna-ownsubxrev` (Astra reviewer) and `tazuna-ownsubxopus` (Opus 5.5 reviewer through claude). One test against a
