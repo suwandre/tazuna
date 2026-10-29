@@ -180,7 +180,7 @@ impl Server {
                 let t = a["timeout"].as_u64().or_else(|| a["timeout"].as_str()?.trim().parse().ok());
                 Ok(self.bash(s("command"), t.map_or(BASH_TIMEOUT, |t| Duration::from_secs(t.clamp(1, MAX_TIMEOUT)))))
             }
-            "read" => self.read(path.unwrap_or_default(), a["offset"].as_u64().unwrap_or(1), a["limit"].as_u64()),
+            "read" => read_range(&a["offset"], &a["limit"]).and_then(|(o, l)| self.read(path.unwrap_or_default(), o, l)),
             "write" => write(&path.unwrap_or_default(), s("content")),
             "edit" => edit(&path.unwrap_or_default(), s("old"), s("new")),
             _ => return Err((-32000, format!("unknown tool {name}"))),
@@ -361,6 +361,26 @@ fn io_err(path: &Path, e: std::io::Error) -> String {
 
 /// Lines `offset..offset+limit`, stopping early at whole lines when `max` characters are reached: the note at the end says
 /// where to go on, which a plain cut would not.
+/// offset and limit as the model sent them: numbers, numeric strings, or a line range in offset ("100,200", "100-200").
+/// Grok 4.7 sent "100,200", which was read as line 1; the same call then came back "unchanged" and Grok asked 134 times
+/// without an edit (2026-10-29). Anything else is an error that says what to send, not a silent read from line 1.
+fn read_range(offset: &Value, limit: &Value) -> Result<(u64, Option<u64>), String> {
+    let num = |v: &Value| v.as_u64().or_else(|| v.as_str()?.trim().parse().ok());
+    let bad = |v: &Value| format!("read: offset and limit are line numbers (for example offset 100, limit 50), not {v}");
+    let limit = if limit.is_null() { None } else { Some(num(limit).ok_or_else(|| bad(limit))?) };
+    if offset.is_null() {
+        return Ok((1, limit));
+    }
+    if let Some(o) = num(offset) {
+        return Ok((o, limit));
+    }
+    let range = offset.as_str().and_then(|r| r.split_once([',', '-', ':'])).and_then(|(a, b)| Some((a.trim().parse::<u64>().ok()?, b.trim().parse::<u64>().ok()?)));
+    match range {
+        Some((a, b)) if b >= a => Ok((a, Some(limit.unwrap_or(b - a + 1)))),
+        _ => Err(bad(offset)),
+    }
+}
+
 fn read(path: &Path, offset: u64, limit: Option<u64>, max: usize) -> Result<String, String> {
     let bytes = std::fs::read(path).map_err(|e| io_err(path, e))?;
     let text = String::from_utf8_lossy(&bytes);
@@ -446,6 +466,18 @@ mod tests {
         std::thread::sleep(Duration::from_millis(300));
         assert!(!processes().iter().any(|p| p.0 == pid), "killed when the server ended");
         assert!(!file.exists());
+    }
+
+    #[test]
+    fn read_takes_the_line_numbers_models_send() {
+        let r = |o: Value, l: Value| super::read_range(&o, &l);
+        assert_eq!(r(json!(100), Value::Null), Ok((100, None)));
+        assert_eq!(r(json!(" 100 "), json!("50")), Ok((100, Some(50))));
+        assert_eq!(r(json!("100,200"), Value::Null), Ok((100, Some(101))), "a range in offset (Grok 4.7)");
+        assert_eq!(r(json!("100-200"), json!(10)), Ok((100, Some(10))));
+        assert_eq!(r(Value::Null, Value::Null), Ok((1, None)));
+        assert!(r(json!("the top"), Value::Null).unwrap_err().contains("line numbers"), "not a silent read from line 1");
+        assert!(r(json!("200,100"), Value::Null).is_err());
     }
 
     #[test]
