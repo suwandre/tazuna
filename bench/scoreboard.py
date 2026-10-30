@@ -43,7 +43,10 @@ def build():
         create table runs(date text, set_name text, task text, harness text, base text, model text, effort text,
                           passed int, total int, regress int, judge real, cost real, minutes real, turns int, key_env text);
     """)
-    for f in sorted((STATE / "history").glob("public-*.jsonl.gz")):
+    # the daily launchd job keeps its own state (model_check_daily.sh); a hand run keeps bench/.model-check
+    snaps = {f.name: f for d in (Path.home() / ".local/share/tazuna/model-check/state/history", STATE / "history")
+             for f in d.glob("public-*.jsonl.gz")}
+    for f in (snaps[k] for k in sorted(snaps)):
         day = f.name[7:17]
         with gzip.open(f, "rt") as rows:
             db.executemany("insert into public values (?,?,?,?,?,?,?)",
