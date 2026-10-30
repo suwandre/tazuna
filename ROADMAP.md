@@ -277,6 +277,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-30: omp's lead confirmed only in part: two runs a task, 7.81 against 7.25 (inside noise), but tests 4.81
+  against 3.94 again. Next lever: a workflow prompt for tests and completeness ("thorough"), judged by score, cost and
+  time per run together; kept as a preset if it buys score with cost, made the default if it dominates.
 - 2026-10-30: on DeepSeek 1017, oh-my-pi (omp) beat tazuna by 1.1 (8.62 against 7.50, one run a task, tests 5.00 against
   4.38), at ~4x tazuna's cost; Command Code 6.88, OpenCode 5.12. First rival that clearly leads tazuna on its main model:
   confirm with more runs, then study what omp does differently. A prompt lever and a tests nudge, tried the same day for

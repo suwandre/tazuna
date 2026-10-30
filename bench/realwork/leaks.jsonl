@@ -1,5 +1,6 @@
 {"task": "caddy-quoted-braces", "harness": "cc-sub-v476@deepseek-v4.1-flash-1017:max", "channels": ["web"]}
 {"task": "caddy-quoted-braces", "harness": "omp-sub-v737@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-quoted-braces", "harness": "omp-sub-v747@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "opencode-sub-v730@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "pi-sub-v508@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "pi-sub-v606@minimax-m3.1-flash:max", "channels": ["web-blocked"]}
@@ -10,6 +11,7 @@
 {"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v489@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v521@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-ownsubxopus-v650@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-retry-match-expr", "harness": "omp-sub-v748@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "opencode-sub-v739@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "opencode-v290@deepseek-v4.1-flash-free:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "opencode-v291@deepseek-v4.1-flash-free", "channels": ["web-blocked"]}
@@ -157,6 +159,7 @@
 {"task": "prometheus-wbl-checkpoint", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "prometheus-wbl-checkpoint", "harness": "tazuna-own-v31@deepseek-v4.1-flash:max", "channels": ["local", "web"]}
 {"task": "prometheus-wbl-checkpoint", "harness": "tazuna-own-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
+{"task": "rclone-archive-symlinks", "harness": "omp-sub-v749@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "rclone-archive-symlinks", "harness": "opencode-sub-v732@deepseek-v4.1-flash-1017:max", "channels": ["peer-listed", "web-blocked"]}
 {"task": "rclone-archive-symlinks", "harness": "opencode-v287@deepseek-v4.1-flash-free", "channels": ["local"]}
 {"task": "rclone-archive-symlinks", "harness": "opencode-v289@deepseek-v4.1-flash-free", "channels": ["web-blocked"]}

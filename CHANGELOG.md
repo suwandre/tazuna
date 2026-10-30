@@ -35,8 +35,16 @@ omp leads by 1.1, past the noise line, on one run a task: terraform 9 (tazuna 4 
 min), tests 5.00 on every task. tazuna is faster and ~4x cheaper per run than omp and Command Code. Provider errors
 (SubRouter/LingAI 403/499/502/503) ended nine rival runs today and none of tazuna's sixteen: omp, OpenCode and Command Code
 retry briefly; those runs ran again. OpenCode reaches for its own webfetch and websearch (all refused here; leakscan reads
-OpenCode's refusals since this round). Next: confirm omp's lead with a second run a task, then find what it does that
-tazuna does not (prompt, tools, checks).
+OpenCode's refusals since this round).
+
+Second omp run a task (v747-v750, terraform once more after a provider error), judged in one pool per task with both omp
+runs and tazuna's two: omp 7.81, tazuna 7.25 (+0.56, inside noise); tests 4.81 against 3.94, edge cases 4.25 against
+3.75, code quality level (4.00), scope tazuna 4.50 against 3.75; hidden 25/26 against 23/26; 28 against 20 min a run.
+omp's lead is mostly its tests. Its system prompt (~10.5K characters against tazuna's ~600) asks for a failing-before /
+passing-after regression test, tests on boundaries, invariants and precedence, every acceptance criterion, and a clean
+cutover (callers migrated, obsolete code removed); its runs read 17-38 files and run 11-25 builds or tests against
+tazuna's 2-10 and 3-13. Next: a "thorough" workflow prompt for tazuna in that spirit, measured on score, cost and time
+per run (a default if it dominates, an opt-in preset if it trades cost for score).
 
 ## Tried and dropped: a nudge for tests, 2026-10-30 (bench only)
 
