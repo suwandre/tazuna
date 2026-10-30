@@ -59,6 +59,7 @@
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v83@deepseek-v4.1-flash:max", "channels": ["modcache", "web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v86@deepseek-v4.1-flash:max", "channels": ["modcache", "web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownunorev-v94@deepseek-v4.1-flash:max", "channels": ["modcache", "web"]}
+{"task": "caddy-retry-match-expr", "harness": "tazuna-reviewed-v663@deepseek-v4.1-flash-1017:max", "channels": ["peer-blocked"]}
 {"task": "caddy-tls-automate-names", "harness": "cc-sub-v501@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-tls-automate-names", "harness": "codexsub-v542@gpt-6.1-sol:max", "channels": ["peer-blocked"]}
 {"task": "caddy-tls-automate-names", "harness": "pi-sub-v516@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
@@ -211,3 +212,4 @@
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubx-v519@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubxa2-v581@deepseek-v4.1-flash-1017:max", "channels": ["local-blocked", "web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubxrev-v652@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "terraform-import-foreach", "harness": "tazuna-reviewed-v662@deepseek-v4.1-flash-1017:max", "channels": ["local-blocked", "peer-blocked", "web-blocked"]}

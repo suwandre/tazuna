@@ -16,6 +16,61 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.5-0.1.6 (2026-10-30): read takes line ranges; a call repeated three times in a row is named
+
+Found with Grok 4.7 on tazuna's own loop. **0.1.5:** `read` takes `offset`/`limit` as numbers, numeric strings or a range in
+`offset` ("100,200", "100-200"); anything else is an error saying what to send. Grok sent "100,200", tazuna read it as line
+1, every repeat came back "unchanged since read #2", and Grok asked 134 times without an edit (v667). **0.1.6:** from the
+third identical call in a row the result starts with "[the same call N times in a row: use what it returned, or do
+something different]". In earlier own-loop sessions a call came three times in a row in 5 of 10 Grok sessions, 9 of 275
+DeepSeek 1017 sessions and none of Sol's, Luna's or Astra's. Not measured on DeepSeek (it touches ~3% of its sessions);
+on Grok it did not help (below). One test each.
+
+## Kimi K3.1 Pro: tazuna against Kimi Code; Grok 4.7 on today's routes, 2026-10-29/30 (bench only)
+
+Kimi K3.1 Pro on SubRouter (znu: 32/32 answered, 90% cached, reasoning on, 30 s a call in the probe), tazuna 0.1.4 against
+Moonshot's own Kimi Code 2.4.0 (`kimi-sub`: an OpenAI-type provider through the relay, a fresh sealed home, headless
+stream-json), one run per task, a key per harness, blind Opus judge two passes:
+
+| task | tazuna | Kimi Code |
+|---|---|---|
+| rclone | 7.5, 3/3, 21 min | 6.0, 3/3, 34 min |
+| caddy-quoted | 8.0, 5/5, 15 min | 9.0, 5/5, 17 min |
+| terraform | 4.0, 1/3, 11 min | 5.0, 1/3, 12 min |
+| caddy-retry | 8.0, 2/2, 9 min | 9.0, 2/2, 19 min |
+| mean | 6.88, 11/13, 57 min | 7.25, 11/13, 82 min |
+| real cost (account log) | $0.18 (161 calls, 7.3M input) | $0.45 (196 calls, 20.3M input) |
+
+Level on quality (Kimi Code +0.38, inside noise; same hidden tests), tazuna 30% faster at 2.5x less. In the same pools
+DeepSeek 1017 scored 8-9 on the caddy tasks at a fraction of Kimi's price.
+
+**Grok 4.7** (miletechx; one run on fate86): it loops in tazuna on today's routes. Four runs on miletechx stopped at 240
+calls without an edit (0.1.4 to 0.1.6), one fate86 run alternated two reads; the repeat note (0.1.6) was ignored, up to
+145 identical calls in a row. Not the request format: tool results reach the model (streamed and not, empty or null
+assistant content, 43K tokens of history: answered from the result each time). Not the effort: streamed with tools it
+reasons at none, high and max (~1,200-2,200 reasoning tokens, right answer). What changed is how much it reasons inside an
+agent run: ~38 output tokens a call by the account log (981 calls), against ~1,600 a turn in October's run (v161, X Premium+
+pool, 3/3, judge 6, rescored 5 now). That pool is gone (model_not_found). Grok is not usable as an implementer on these
+routes; tazuna's two fixes above came out of it.
+
+## `--preset reviewed` as shipped, 2026-10-29 (bench only)
+
+DeepSeek 1017 max on SubRouter, Opus medium reviewing, hand-over to Opus when the repo's tests still fail (tazuna 0.1.4);
+against the earlier no-review and Opus-max-review arms, Opus judge two passes:
+
+| task | no review | Opus max review | reviewed |
+|---|---|---|---|
+| caddy-quoted | 8.5, 5/5 | 8.5, 5/5 | 8.5, 5/5 |
+| terraform | 4.0, 2/3 | 9.0, 3/3 | 5.5, 2/3 |
+| caddy-retry | 9.0, 2/2 | 7.0, 2/2 | 8.0, 2/2 |
+| caddy-tls | 4.5, 0/1 | 5.0, 0/1 | 5.5, 0/1 |
+| mean | 6.50, 9/11 | 7.38, 10/11 | 6.88, 9/11 |
+
+Opus medium reviewed in 38-80 s for $0.21-0.50 at list; it raised a real gap on terraform and caddy-tls and nothing on
+caddy-retry. The hand-over never fired: the repo's own tests passed in all four runs (the hidden tests are not among them),
+so it cannot rescue caddy-tls. One run per cell: the three arms are within noise. Three of the four runs were first killed
+by the account-wide spend stop when the Kimi round started beside them, and rerun (v677-v679).
+
 ## Sonnet 5.5 as reviewer (medium, xhigh, max) against Opus 5.5 medium, 2026-10-29 (bench only)
 
 The recall set below again, Sonnet 5.5 at three efforts added (it leads Opus on vals.ai), then all five reviewers of a

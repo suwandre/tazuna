@@ -277,6 +277,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-30: Kimi K3.1 Pro: tazuna level with Moonshot's Kimi Code on quality (6.88 against 7.25, same hidden tests) at
+  2.5x less and 30% faster; step 3 of the main item done for Kimi. Grok 4.7 loops on today's SubRouter routes (reasons
+  little inside agent runs; October's pool gone): not usable, but it found two tazuna bugs (0.1.5 read ranges, 0.1.6 repeat
+  note). `--preset reviewed` as shipped: 6.88 against 6.50 without review, inside noise; the hand-over never fires when the
+  repo's own tests pass.
 - 2026-10-29: `--preset cascade` retired into `--preset reviewed` (0.1.4): same hand-over to Opus on failing tests,
   DeepSeek 1017 on SubRouter instead of V4.1 Flash on CheaperInference, the Opus medium reviewer, and the trusted-provider
   check instead of `--data any`. Review and hand-over together are not measured yet (the reviewer arms ran without it).
