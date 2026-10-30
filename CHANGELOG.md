@@ -16,6 +16,29 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Why tazuna trails other harnesses by a little, and a prompt lever that did not close it, 2026-10-30 (bench only)
+
+Every judge pool since v500 where tazuna and another harness ran the same model on the same task (106 pairs: pi, Codex,
+Claude Code, Kimi Code): tazuna −0.32 overall. By dimension: tests −0.26 (negative against every rival, Claude Code
+included, which tazuna beats overall), code quality −0.17, correctness and edge cases −0.12 each, scope +0.07. tazuna adds
+~18% fewer test lines (median 167 against 203), and the judge names replaced code left unused in 13% of its diffs (0% of
+the rivals'), e.g. the old `FindImportStatements` kept beside its replacement.
+
+Lever TAZUNA_PROMPT3 (own loop): "a focused change" instead of "the smallest change", "remove what your change leaves
+unused unless something else still uses it", "tests for the new behavior and its edge cases", and the exported-API rule
+limited to code outside the repository (internal packages are not an API). DeepSeek 1017 max, four tasks, two runs per
+arm, a key per arm, Opus judge two passes:
+
+| arm | judge | tests | code quality | edge cases | correctness | hidden | time | real cost |
+|---|---|---|---|---|---|---|---|---|
+| current prompt (n=7) | 6.57 | 4.07 | 3.57 | 3.50 | 3.86 | 14/19 | 185 min | $0.19 |
+| PROMPT3 (n=7) | 6.50 | 4.14 | 3.64 | 4.00 | 4.14 | 14/19 | 219 min | $0.22 |
+
+No change overall or in the two dimensions it aimed at; edge cases +0.50 is inside noise; +18% time and +17% cost
+(the PROMPT3 cost includes a run killed at 95 minutes). Dropped. One current-prompt run tried to fetch the upstream
+terraform source (curl, `go mod download`); the jail blocked it and the leak scan left the run out. The runs of one prompt
+spread widely (terraform 1/3 and 3/3, judge 4 and 10), so a gap of 0.3 needs many more runs to pin down than to find.
+
 ## 0.1.5-0.1.6 (2026-10-30): read takes line ranges; a call repeated three times in a row is named
 
 Found with Grok 4.7 on tazuna's own loop. **0.1.5:** `read` takes `offset`/`limit` as numbers, numeric strings or a range in

@@ -277,6 +277,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-30: tazuna trails other harnesses by 0.32 on the same model (106 pairs), mostly in tests (−0.26, ~18% fewer
+  test lines) and code quality; it leads on scope and on cost. A prompt lever aimed at both (focused change, remove what
+  a change leaves unused, edge-case tests, API rule limited to code outside the repo) moved nothing (6.50 against 6.57,
+  +18% time): dropped. The gap is inside run-to-run spread; closing it needs a better lever than wording.
 - 2026-10-30: Kimi K3.1 Pro: tazuna level with Moonshot's Kimi Code on quality (6.88 against 7.25, same hidden tests) at
   2.5x less and 30% faster; step 3 of the main item done for Kimi. Grok 4.7 loops on today's SubRouter routes (reasons
   little inside agent runs; October's pool gone): not usable, but it found two tazuna bugs (0.1.5 read ranges, 0.1.6 repeat
