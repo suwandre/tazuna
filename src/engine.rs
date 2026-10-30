@@ -334,6 +334,8 @@ Otherwise continue now and make the change with the tools.";
 /// their own code, diffs, builds and repros, and 7-15 test runs with nothing changed since the last pass (2026-10-24).
 const GREEN: &str = "The tests pass and your change includes tests. Check the diff against the request once, \
 then finish with a short summary. Run tests, builds or linters again only if you change code.";
+const TESTS: &str = "Your change adds or updates no test. Add a test that fails without your change and passes with it, \
+run it, then finish with a short summary. If the change cannot be tested, reply DONE and say why.";
 const RERUN: &str = "Nothing changed since the last passing run, so this run told you nothing new.";
 
 fn is_test(cmd: &str) -> bool {
@@ -360,6 +362,17 @@ fn tree_state() -> Option<(u64, bool)> {
 }
 
 fn tree_state_in(dir: &std::path::Path) -> Option<(u64, bool)> {
+    tree_kinds(dir).map(|(h, tests, code)| (h, tests && code))
+}
+
+/// A change to code with no test file in it (lever TAZUNA_TEST_NUDGE): against other harnesses on the same model tazuna
+/// lost most in tests (judge −0.26 over 106 pairs, ~18% fewer test lines, 2026-10-30).
+fn untested_change() -> bool {
+    std::env::current_dir().ok().and_then(|d| tree_kinds(&d)).is_some_and(|(_, tests, code)| code && !tests)
+}
+
+/// The tree's hash, whether the changes hold a test file, and whether they hold other code.
+fn tree_kinds(dir: &std::path::Path) -> Option<(u64, bool, bool)> {
     use std::hash::{Hash, Hasher};
     let git = |args: &[&str]| std::process::Command::new("git").arg("-C").arg(dir).args(args).output().ok().filter(|o| o.status.success()).map(|o| o.stdout);
     let (diff, status) = (git(&["diff", "HEAD"])?, git(&["status", "--porcelain", "-uall"])?);
@@ -376,7 +389,7 @@ fn tree_state_in(dir: &std::path::Path) -> Option<(u64, bool)> {
             (path, m.len(), m.modified().ok()).hash(&mut h);
         }
     }
-    Some((h.finish(), tests && code))
+    Some((h.finish(), tests, code))
 }
 
 /// The note a test run's result gets, if any: GREEN at the first pass with tests and code in the change, RERUN for a pass with the
@@ -483,6 +496,7 @@ impl Loop {
         }
         let ((began, start), mut turns, mut usage) = (self.task, 0, [0u64; 3]);
         let mut nudges = 0;
+        let mut asked_tests = std::env::var_os("TAZUNA_TEST_NUDGE").is_none();
         let (mut green, mut told) = (None, false);
         let end = |s: &mut Self, subtype: &str, text: String, turns: usize, usage: [u64; 3]| {
             (s.out)(&json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "result": text,
@@ -750,6 +764,12 @@ impl Loop {
                     nudges += 1;
                     self.msgs.push(json!({"role": "user", "content": NUDGE}));
                     (self.out)(&json!({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": NUDGE}]}}));
+                    continue;
+                }
+                if !asked_tests && !followup && headless() && untested_change() {
+                    asked_tests = true;
+                    self.msgs.push(json!({"role": "user", "content": TESTS}));
+                    (self.out)(&json!({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": TESTS}]}}));
                     continue;
                 }
                 return end(self, "success", text, turns, usage);
@@ -1419,11 +1439,14 @@ mod tests {
         git(&["add", "."]);
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
         std::fs::write(dir.join("a_test.go"), "package a\n").unwrap();
+        assert!(matches!(super::tree_kinds(&dir), Some((_, true, false))), "a test file only: no nudge for tests");
         let (h1, both) = super::tree_state_in(&dir).unwrap();
         assert!(!both, "test file only");
         std::fs::write(dir.join("a.go"), "package a\n\nfunc F() {}\n").unwrap();
         let (h2, both) = super::tree_state_in(&dir).unwrap();
         assert!(both && h1 != h2, "test and code");
+        std::fs::remove_file(dir.join("a_test.go")).unwrap();
+        assert!(matches!(super::tree_kinds(&dir), Some((_, false, true))), "code without a test: the tests nudge applies");
         std::fs::remove_dir_all(&dir).ok();
     }
 
