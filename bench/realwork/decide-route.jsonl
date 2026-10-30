@@ -1,0 +1,17 @@
+{"task": "caddy-quoted-braces", "arms": {"opus-claude": {"n": 3, "pass_rate": 1.0, "cost": 0.3881, "minutes": 9.7}, "deepseek-own": {"n": 17, "pass_rate": 1.0, "cost": 0.0126, "minutes": 14.5}, "deepseek+opus-review": {"n": 2, "pass_rate": 1.0, "cost": 1.7148, "minutes": 21.3}}}
+{"task": "caddy-retry-match-expr", "arms": {"opus-claude": {"n": 1, "pass_rate": 1.0, "cost": 0.5245, "minutes": 4.7}, "deepseek-own": {"n": 45, "pass_rate": 0.989, "cost": 0.0198, "minutes": 27.2}, "deepseek+opus-review": {"n": 2, "pass_rate": 1.0, "cost": 1.3314, "minutes": 20.8}}}
+{"task": "caddy-tls-automate-names", "arms": {"opus-claude": {"n": 1, "pass_rate": 0.0, "cost": 0.688, "minutes": 5.6}, "deepseek-own": {"n": 6, "pass_rate": 0.0, "cost": 0.0212, "minutes": 25.9}, "deepseek+opus-review": {"n": 2, "pass_rate": 0.0, "cost": 0.2663, "minutes": 27.2}}}
+{"task": "caddy-unix-socket-close", "arms": {"opus-claude": {"n": 1, "pass_rate": 0.0, "cost": 0.9271, "minutes": 6.7}, "deepseek-own": {"n": 22, "pass_rate": 0.273, "cost": 0.0376, "minutes": 46.8}}}
+{"task": "gitea-actions-cancelling", "arms": {"opus-claude": {"n": 1, "pass_rate": 1.0, "cost": 0.5845, "minutes": 4.9}, "deepseek-own": {"n": 15, "pass_rate": 1.0, "cost": 0.0155, "minutes": 28.8}}}
+{"task": "hugo-eq-numeric", "arms": {"opus-claude": {"n": 1, "pass_rate": 1.0, "cost": 0.6066, "minutes": 15.3}}}
+{"task": "hugo-section-slug", "arms": {"opus-claude": {"n": 4, "pass_rate": 1.0, "cost": 0.4967, "minutes": 26.5}}}
+{"task": "hugo-template-return", "arms": {"opus-claude": {"n": 3, "pass_rate": 0.833, "cost": 1.1871, "minutes": 24.5}}}
+{"task": "k6-run-once", "arms": {"opus-claude": {"n": 3, "pass_rate": 1.0, "cost": 0.6108, "minutes": 13.9}}}
+{"task": "lazygit-mnemonic-prefix", "arms": {"opus-claude": {"n": 1, "pass_rate": 1.0, "cost": 4.5074, "minutes": 47.1}, "deepseek-own": {"n": 8, "pass_rate": 1.0, "cost": 0.016, "minutes": 47.9}}}
+{"task": "prometheus-duration-parens", "arms": {"opus-claude": {"n": 3, "pass_rate": 1.0, "cost": 0.6544, "minutes": 10.1}, "deepseek-own": {"n": 2, "pass_rate": 0.5, "cost": 0.0624, "minutes": 86.4}}}
+{"task": "prometheus-exemplar-compaction", "arms": {"opus-claude": {"n": 1, "pass_rate": 1.0, "cost": 12.7139, "minutes": 516.2}, "deepseek-own": {"n": 18, "pass_rate": 0.704, "cost": 0.0545, "minutes": 96.0}}}
+{"task": "prometheus-replay-mmap", "arms": {"opus-claude": {"n": 1, "pass_rate": 1.0, "cost": 2.1078, "minutes": 66.2}}}
+{"task": "prometheus-wbl-checkpoint", "arms": {"opus-claude": {"n": 1, "pass_rate": 1.0, "cost": 4.6286, "minutes": 148.5}}}
+{"task": "rclone-archive-symlinks", "arms": {"opus-claude": {"n": 1, "pass_rate": 0.5, "cost": 1.1624, "minutes": 7.3}, "deepseek-own": {"n": 54, "pass_rate": 0.932, "cost": 0.067, "minutes": 56.8}}}
+{"task": "telegraf-snmp-reconnect", "arms": {"opus-claude": {"n": 1, "pass_rate": 1.0, "cost": 0.8015, "minutes": 6.2}, "deepseek-own": {"n": 10, "pass_rate": 0.8, "cost": 0.0114, "minutes": 46.7}}}
+{"task": "terraform-import-foreach", "arms": {"opus-claude": {"n": 4, "pass_rate": 0.5, "cost": 1.4537, "minutes": 25.1}, "deepseek-own": {"n": 16, "pass_rate": 0.542, "cost": 0.0228, "minutes": 20.7}, "deepseek+opus-review": {"n": 2, "pass_rate": 0.833, "cost": 0.8909, "minutes": 32.6}}}
