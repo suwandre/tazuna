@@ -31,6 +31,18 @@ const MID_PROMPT: &str = "You are a coding agent working in {cwd}. Today is {dat
 /// 8/8 and judge 7.75 against 5.30 with this text; DeepSeek on prometheus still left the interface alone.
 const API_RULE: &str = "\n- Do not change or remove existing exported APIs (public functions, methods, interfaces and types other packages use), or add methods to exported interfaces, unless the task asks for it; adding a new exported function, or a method on a concrete type, is fine.";
 
+/// Lever (TAZUNA_THOROUGH, 2026-10-30): a workflow for tests and completeness. oh-my-pi led tazuna on DeepSeek by 0.56
+/// over two runs a task, nearly all of it in tests (4.81 against 3.94); its prompt asks for a failing-before/passing-after
+/// regression test, tests on boundaries and precedence, every acceptance criterion and a clean cutover. In tazuna's words.
+const THOROUGH: &str = "
+Workflow:
+- Before editing, find every place the change touches: the code paths the task names, their callers, and other code that reads or writes the same data.
+- For a bug, reproduce it first (a failing test or a short script), fix the cause, then show the same check passing.
+- Keep a regression test that fails without your change and passes with it. Cover what a user of the code could get wrong: boundaries, empty and invalid input, ordering and precedence between rules, errors. No tests that only restate the code (copies, wiring, mocks echoing their input).
+- Done means every behaviour the task states works end to end, not a subset: check each requirement against your change before finishing.
+- When your change replaces code, migrate every caller and remove the old code (unless it is an exported API other packages may use); leave no unused functions, shims or duplicate paths.
+- Do not widen the task: no features, rewrites or hardening it did not ask for.";
+
 /// The own loop (0.0.96): providers drop a model's earlier reasoning (DeepSeek through SubRouter's foxrouter and LingAI,
 /// Chat and Messages alike: a code word planted in it was never recalled), so a design worked out once was worked out
 /// again at every new finding (six times, 13-26K characters each, on one caddy run). A plan written in the reply stays.
@@ -1088,6 +1100,9 @@ impl Live {
             let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", "Search with grep -rn in bash; read whole files with read.");
             prompt.push_str(API_RULE);
             prompt.push_str(PLAN_RULE);
+            if std::env::var_os("TAZUNA_THOROUGH").is_some() {
+                prompt.push_str(THOROUGH);
+            }
             if self.project_instructions {
                 let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                 prompt.push_str(&text);
