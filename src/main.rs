@@ -150,13 +150,13 @@ struct Args {
 /// `reviewed`: DeepSeek 1017 implements on SubRouter, Opus (claude, the default medium effort) reviews the diff once:
 /// the reviewer caught DeepSeek's blind spot (terraform, hidden tests 2/3 to 3/3) and flagged nothing on good diffs at
 /// medium (2026-10-29). No `--data any`: SubRouter has to be on the trusted list, so a work repo's code does not go there
-/// by accident. It replaced `cascade` (DeepSeek V4.1 Flash on CheaperInference with `--data any`, 2026-10-29): the same
+/// by accident. DeepSeek at xhigh: the same judge as max, 41% faster, 32% cheaper (2026-10-31). It replaced `cascade` (DeepSeek V4.1 Flash on CheaperInference with `--data any`, 2026-10-29): the same
 /// hand-over to Opus when tests fail, a newer model, the reviewer, and the data check.
 const PRESETS: [(&str, &str); 4] = [
     ("default", ""),
     ("boss", "--boss haiku"),
     ("max", "--model claude-opus-5-5 --effort max"),
-    ("reviewed", "--provider https://subrouter.ai/v1 --key-env SUBROUTER_API_KEY --model deepseek-v4.1-flash-1017 --effort max --review-model claude-opus-5-5"),
+    ("reviewed", "--provider https://subrouter.ai/v1 --key-env SUBROUTER_API_KEY --model deepseek-v4.1-flash-1017 --effort xhigh --review-model claude-opus-5-5"),
 ];
 
 /// Replaces `--preset NAME` with the preset's flags, placed first so the user's own flags override them.

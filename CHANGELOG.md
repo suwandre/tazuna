@@ -16,6 +16,11 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.7 (2026-10-31): `--preset reviewed` runs DeepSeek at xhigh
+
+The own-loop round below: the same judge as max, 41% faster, 32% cheaper. `--effort max` on the command line still wins
+over the preset.
+
 ## Own-loop time: DeepSeek at xhigh, and jevgrep, 2026-10-30/31 (bench only)
 
 `timesplit.py`: 86% of a DeepSeek 1017 run's wall time is the model (91% in October), tests and builds 7.5%, other shell
