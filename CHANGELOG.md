@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Tried and dropped: a nudge for tests, 2026-10-30 (bench only)
+
+Lever TAZUNA_TEST_NUDGE: a headless own-loop run that ends with a code change and no test file is asked once to add a test
+that fails without the change. DeepSeek 1017 max, terraform, caddy-quoted, caddy-retry, rclone, two runs per arm, a key per
+arm, Opus judge two passes: with the nudge 7.69 (hidden 25/26), without 7.19 (23/26), tests 4.44 against 4.38, median test
+lines 184 against 201, time +9%. The nudge fired in one run of eight (caddy-retry, scored like the arm without it): DeepSeek
+wrote tests in all sixteen runs. The +0.50 came from terraform (9 and 7.5 against 4.5 and 4), where it never fired: run
+spread, not the lever. Dropped. The tests gap against other harnesses is in how much the tests cover, not whether there are
+any. Same day, same tasks, the current prompt scored 7.19 here and 6.57 in the PROMPT3 round below: one arm moves ~0.6
+between rounds.
+
 ## Why tazuna trails other harnesses by a little, and a prompt lever that did not close it, 2026-10-30 (bench only)
 
 Every judge pool since v500 where tazuna and another harness ran the same model on the same task (106 pairs: pi, Codex,

@@ -63,8 +63,8 @@ def tool_calls(text):
         while stack:
             x = stack.pop()
             if isinstance(x, dict):
-                if x.get("type") in ("tool_use", "toolCall"):
-                    out.append(x.get("input") or x.get("arguments") or {})
+                if x.get("type") in ("tool_use", "toolCall"):  # OpenCode's tool_use event keeps it in part.state.input
+                    out.append(x.get("input") or x.get("arguments") or ((x.get("part") or {}).get("state") or {}).get("input") or {})
                 elif x.get("type") == "command_execution" and isinstance(x.get("command"), str):
                     out.append({"command": x["command"]})
                 elif x.get("type") == "function" and isinstance(x.get("function"), dict):  # Kimi Code: OpenAI tool_calls

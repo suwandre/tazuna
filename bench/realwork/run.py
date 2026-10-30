@@ -124,13 +124,14 @@ def only_keys(env, *keep):
 _RELAYS = {}
 
 
-def relay(target, key):
+def relay(target, key, add=None):
     """A localhost base URL forwarding to `target` with `key` as the bearer token: the harness holds a dummy, so its model
-    cannot print the key (pi keeps its key in the environment its tools inherit). Streams the reply as it comes."""
+    cannot print the key (pi keeps its key in the environment its tools inherit). Streams the reply as it comes. `add`:
+    fields set on JSON request bodies that lack them (Command Code sends no reasoning effort for a BYOK model)."""
     import http.client, http.server, urllib.parse
     with _PROXY_LOCK:
-        if (target, key) in _RELAYS:
-            return _RELAYS[target, key]
+        if (target, key, str(add)) in _RELAYS:
+            return _RELAYS[target, key, str(add)]
         u = urllib.parse.urlsplit(target)
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -141,6 +142,13 @@ def relay(target, key):
 
             def do_POST(self):
                 body = self.rfile.read(int(self.headers.get("content-length", 0)))
+                if add and body:
+                    try:
+                        b = json.loads(body)
+                        if isinstance(b, dict) and "model" in b:
+                            body = json.dumps({**add, **b}).encode()
+                    except ValueError:
+                        pass
                 hd = {k: v for k, v in self.headers.items()
                       if k.lower() not in ("host", "authorization", "x-api-key", "content-length", "connection", "accept-encoding")}
                 c = http.client.HTTPSConnection(u.hostname, u.port or 443, timeout=900)
@@ -167,8 +175,8 @@ def relay(target, key):
         srv.daemon_threads = True
         srv.handle_error = lambda *a: None  # a client that hangs up between requests
         threading.Thread(target=srv.serve_forever, daemon=True).start()
-        _RELAYS[target, key] = f"http://127.0.0.1:{srv.server_address[1]}"
-        return _RELAYS[target, key]
+        _RELAYS[target, key, str(add)] = f"http://127.0.0.1:{srv.server_address[1]}"
+        return _RELAYS[target, key, str(add)]
 
 
 def proxy_url():
@@ -818,9 +826,55 @@ def run_opencode_sub(h, w, prompt):
     url = relay("https://subrouter.ai/v1", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")])
     cfg = {"provider": {"subrouter": {"npm": "@ai-sdk/openai-compatible", "name": "SubRouter", "options": {"baseURL": url, "apiKey": "relay"},
                                       "models": {model: {"name": model, "reasoning": True, "tool_call": True, "options": {"reasoningEffort": effort}}}}}}
-    env = only_keys(env_for("opencode-sub", OPENCODE_CONFIG_CONTENT=json.dumps(cfg), OPENCODE_DISABLE_AUTOUPDATE="1"))
-    r = sh(["opencode", "run", "--standalone", "--auto", "--format", "json", "-m", f"subrouter/{model}", prompt], w, timeout=TIMEOUT, env=env)
+    # its data (the session database) in a sealed folder of the run's own: the jail closes OpenCode's usual one, where other
+    # runs' sessions live, and the standalone server would not start without it
+    data = Path(tempfile.mkdtemp(prefix="rw-opencode-"))
+    env = only_keys(env_for("opencode-sub", OPENCODE_CONFIG_CONTENT=json.dumps(cfg), OPENCODE_DISABLE_AUTOUPDATE="1",
+                            XDG_DATA_HOME=str(data), BENCH_JAIL_ALSO=str(data)))
+    try:
+        r = sh(["opencode", "run", "--standalone", "--auto", "--format", "json", "-m", f"subrouter/{model}", prompt], w, timeout=TIMEOUT, env=env)
+    finally:
+        shutil.rmtree(data, ignore_errors=True)
+    t = BENCH_HOMES / "opencode-sub" / "transcripts"  # where leakscan.py looks
+    t.mkdir(parents=True, exist_ok=True)
+    (t / f"{w.name}.jsonl").write_text(r.stdout)
     return parse_opencode(r)
+
+
+def run_cmd_sub(h, w, prompt):
+    """Stock Command Code (1.88) on SubRouter, BYOK and local-only: a provider through the relay (the CLI holds a dummy key
+    in an env reference), the user's Command Code login copied into a sealed per-run HOME (it refuses to run without one),
+    no turn cap (its -p default is 100). It sends no reasoning effort for a BYOK model; the relay adds the run's."""
+    model, effort = model_effort(h)
+    home = Path(tempfile.mkdtemp(prefix="rw-cmd-"))
+    (home / ".commandcode").mkdir()
+    shutil.copy(BENCH_HOMES / "command-code-sub" / ".commandcode" / "auth.json", home / ".commandcode" / "auth.json")
+    url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")], {"reasoning_effort": effort}) + "/v1"
+    (home / ".commandcode" / "providers.json").write_text(json.dumps({"provider": {"subrouter": {"name": "SubRouter", "baseURL": url,
+                                                                    "apiKey": "$CMD_RELAY_KEY", "models": {model: {}}}}}))
+    env = only_keys({**env_for("command-code-sub", CMD_RELAY_KEY="relay", BENCH_JAIL_ALSO=str(home)), "HOME": str(home)}, "CMD_RELAY_KEY")
+    try:
+        r = sh(["command-code", "-p", prompt, "--output-format", "json", "--local-only", "--yolo", "--skip-onboarding", "--no-auto-update",
+                "--no-session", "--max-turns", "1000", "-m", f"subrouter/{model}"], w, timeout=TIMEOUT, env=env)
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+    t = BENCH_HOMES / "command-code-sub" / "transcripts"  # where leakscan.py looks
+    t.mkdir(parents=True, exist_ok=True)
+    (t / f"{w.name}.jsonl").write_text(r.stdout)
+    res, turns = {}, 0
+    for line in r.stdout.splitlines():
+        try:
+            e = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        turns += e.get("type") == "model_request_end"
+        if e.get("type") == "result":
+            res = e
+    if r.returncode or res.get("subtype") != "success":
+        raise RuntimeError(f"command-code rc={r.returncode}: {res.get('error') or (r.stdout + r.stderr)[-600:]}")
+    u = res.get("usage") or {}
+    return dict(inp=u.get("inputTokens", 0) - u.get("cacheReadTokens", 0), cache_w=u.get("cacheWriteTokens", 0), cache_r=u.get("cacheReadTokens", 0),
+                out=u.get("outputTokens", 0), turns=turns, reported_cost=0.0, final=res.get("finalText") or "")
 
 
 def run_omp_sub(h, w, prompt):
@@ -1057,7 +1111,7 @@ def run_plan_exec(h, w, prompt):
                 phase_cost={k: round(v, 4) for k, v in costs.items()})
 
 
-HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubxp2": run_harness, "tazuna-ownsubxa2": run_harness, "tazuna-ownsubxr": run_harness, "tazuna-ownsubxrev": run_harness, "tazuna-ownsubxopus": run_harness, "tazuna-reviewed": run_harness, "tazuna-ownsubxp3": run_harness, "tazuna-ownsubxtn": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "pi-sub": run_pi_sub, "kimi-sub": run_kimi_sub, "omp-sub": run_omp_sub, "opencode-sub": run_opencode_sub, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
+HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubxp2": run_harness, "tazuna-ownsubxa2": run_harness, "tazuna-ownsubxr": run_harness, "tazuna-ownsubxrev": run_harness, "tazuna-ownsubxopus": run_harness, "tazuna-reviewed": run_harness, "tazuna-ownsubxp3": run_harness, "tazuna-ownsubxtn": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "pi-sub": run_pi_sub, "kimi-sub": run_kimi_sub, "omp-sub": run_omp_sub, "opencode-sub": run_opencode_sub, "cmd-sub": run_cmd_sub, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
              "cc": run_cc, "cc-lean": run_cc, "cc-mid": run_cc, "cc-ecc": run_cc, "cc-superpowers": run_cc, "cc-caveman": run_cc,
              "cc-graphify": run_cc, "cc-gstack": run_cc, "cc-allplugins": run_cc}
 
