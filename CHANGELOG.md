@@ -16,6 +16,28 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## omp, OpenCode and Command Code against tazuna with DeepSeek 1017, 2026-10-30 (bench only)
+
+Stock oh-my-pi 18.14 (`omp-sub`: pi's catalog entry, "openai" thinking format, own sealed agent dir), OpenCode 2.2.3
+(`opencode-sub`: inline config, its data in a sealed folder of the run's own) and Command Code 1.88 (`cmd-sub`: BYOK
+local-only, the user's login in a sealed per-run HOME, the relay adding reasoning_effort max, which it does not send for a
+BYOK model), DeepSeek 1017 max on SubRouter LingAI, a key per harness, one run per task; tazuna 0.1.6 with the two
+current-prompt runs per task from the tests-nudge round the same day. One judge pool per task, Opus two passes:
+
+| harness | judge | tests | code quality | edge cases | hidden | min/run | real cost per key, failed attempts included |
+|---|---|---|---|---|---|---|---|
+| omp (n=4) | 8.62 | 5.00 | 4.25 | 4.75 | 13/13 | 32 | $0.18 |
+| tazuna (n=8) | 7.50 | 4.38 | 4.06 | 3.94 | 23/26 | 20 | $0.08 for eight |
+| Command Code (n=4) | 6.88 | 4.00 | 3.50 | 3.50 | 12/13 | 37 | $0.19 |
+| OpenCode (n=4) | 5.12 | 3.12 | 3.00 | 2.88 | 10/13 | 28 | $0.09 |
+
+omp leads by 1.1, past the noise line, on one run a task: terraform 9 (tazuna 4 and 6), rclone 9, caddy-retry 8.5 (70
+min), tests 5.00 on every task. tazuna is faster and ~4x cheaper per run than omp and Command Code. Provider errors
+(SubRouter/LingAI 403/499/502/503) ended nine rival runs today and none of tazuna's sixteen: omp, OpenCode and Command Code
+retry briefly; those runs ran again. OpenCode reaches for its own webfetch and websearch (all refused here; leakscan reads
+OpenCode's refusals since this round). Next: confirm omp's lead with a second run a task, then find what it does that
+tazuna does not (prompt, tools, checks).
+
 ## Tried and dropped: a nudge for tests, 2026-10-30 (bench only)
 
 Lever TAZUNA_TEST_NUDGE: a headless own-loop run that ends with a code change and no test file is asked once to add a test

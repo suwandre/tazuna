@@ -277,6 +277,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-30: on DeepSeek 1017, oh-my-pi (omp) beat tazuna by 1.1 (8.62 against 7.50, one run a task, tests 5.00 against
+  4.38), at ~4x tazuna's cost; Command Code 6.88, OpenCode 5.12. First rival that clearly leads tazuna on its main model:
+  confirm with more runs, then study what omp does differently. A prompt lever and a tests nudge, tried the same day for
+  tazuna's tests gap, moved nothing.
 - 2026-10-30: tazuna trails other harnesses by 0.32 on the same model (106 pairs), mostly in tests (−0.26, ~18% fewer
   test lines) and code quality; it leads on scope and on cost. A prompt lever aimed at both (focused change, remove what
   a change leaves unused, edge-case tests, API rule limited to code outside the repo) moved nothing (6.50 against 6.57,
