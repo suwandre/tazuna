@@ -1228,7 +1228,7 @@ def _run_job(task, h, i):
     (out / f"{h}-r{i}.final.txt").write_text(r.pop("final"))
     model, effort = model_effort(h)
     cost = r["reported_cost"] if "@" in h else norm_cost(r)  # sweep: Claude Code's own per-model pricing
-    row = dict(task=task.name, harness=h, run=i, model=model, effort=effort, cost=round(cost, 4), **r)
+    row = dict(task=task.name, harness=h, run=i, model=model, effort=effort, cost=round(cost, 4), ts=int(t0), **r)
     with LOCK:
         with RESULTS.open("a") as f:
             f.write(json.dumps(row) + "\n")

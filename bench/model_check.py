@@ -14,7 +14,7 @@ categories (bench/roles.json). A candidate is compared with the pick only on ben
 cost-per-task columns, else the token price. A flag is a lead, not a decision: it starts a gauge run on our benchmark, and only that may change a
 pick.
 """
-import csv, io, json, os, re, sys, time, urllib.request, zipfile
+import gzip, csv, io, json, os, re, sys, time, urllib.request, zipfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -213,6 +213,19 @@ def cost_ratio(costs, own, cand_base, cand_eff, pick_base, pick_eff, price, pick
     return None, "no cost data"
 
 
+def snapshot(rows):
+    """Today's public scores, once a day, kept: the sources overwrite theirs, so drift (a model scored lower later, a
+    provider serving a weaker one) needs our own dated copies. bench/scoreboard.py reads them."""
+    f = STATE / "history" / f"public-{time.strftime('%Y-%m-%d')}.jsonl.gz"
+    if f.exists():
+        return
+    f.parent.mkdir(parents=True, exist_ok=True)
+    # ponytail: a full copy a day (~1 MB gz), outside git; keep only changes if the folder grows past what is useful
+    with gzip.open(f, "wt") as out:
+        for base, effort, bench, score, creator, price in rows:
+            out.write(json.dumps(dict(model=base, effort=effort, benchmark=bench, score=score, creator=creator, price=price)) + "\n")
+
+
 def table(rows):
     """{(base, effort): {benchmark: score}} plus {base: (creator, price)}; Artificial Analysis wins a name clash."""
     scores, info = {}, {}
@@ -310,6 +323,7 @@ def main():
         print("note: ARTIFICIAL_ANALYSIS_API_KEY not set, Epoch AI data only")
     epoch = cached("epoch.zip", lambda: fetch(EPOCH_URL))
     rows += load_epoch(epoch)
+    snapshot(rows)
     scores, info = table(rows)
     costs = load_epoch_costs(epoch)
     own = load_own_costs(sorted((HERE / "realwork").glob("results*.jsonl")))
