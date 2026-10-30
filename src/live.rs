@@ -31,6 +31,16 @@ const MID_PROMPT: &str = "You are a coding agent working in {cwd}. Today is {dat
 /// 8/8 and judge 7.75 against 5.30 with this text; DeepSeek on prometheus still left the interface alone.
 const API_RULE: &str = "\n- Do not change or remove existing exported APIs (public functions, methods, interfaces and types other packages use), or add methods to exported interfaces, unless the task asks for it; adding a new exported function, or a method on a concrete type, is fine.";
 
+/// Lever (TAZUNA_PROMPT3, 2026-10-30): against other harnesses on the same model the judge put tazuna 0.32 behind (106
+/// pairs), most of it in tests (-0.26; ~18% fewer test lines) and code quality, with replaced code left unused in 13% of
+/// its diffs (0% of theirs): "smallest change" and the exported-API rule kept old functions alive.
+fn prompt3(p: &str) -> String {
+    p.replace("Fix root causes with the smallest change that follows the existing code style.",
+            "Fix the root cause with a focused change that follows the existing code style. When your change replaces code, remove what it leaves unused, unless something else still uses it.")
+        .replace("Add or update tests when behavior changes.", "Add or update tests for the new behavior and its edge cases.")
+        .replace("(public functions, methods, interfaces and types other packages use)", "that code outside this repository may use (public functions, methods, interfaces and types; code in internal packages is not such an API)")
+}
+
 /// The own loop (0.0.96): providers drop a model's earlier reasoning (DeepSeek through SubRouter's foxrouter and LingAI,
 /// Chat and Messages alike: a code word planted in it was never recalled), so a design worked out once was worked out
 /// again at every new finding (six times, 13-26K characters each, on one caddy run). A plan written in the reply stays.
@@ -1088,6 +1098,9 @@ impl Live {
             let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", "Search with grep -rn in bash; read whole files with read.");
             prompt.push_str(API_RULE);
             prompt.push_str(PLAN_RULE);
+            if std::env::var_os("TAZUNA_PROMPT3").is_some() {
+                prompt = prompt3(&prompt);
+            }
             if self.project_instructions {
                 let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                 prompt.push_str(&text);
@@ -1344,6 +1357,14 @@ pub fn in_git_repo() -> bool {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn prompt3_changes_the_three_lines() {
+        let base = format!("{}{API_RULE}", MID_PROMPT);
+        let p = super::prompt3(&base);
+        assert!(p.contains("focused change") && p.contains("remove what it leaves unused") && p.contains("its edge cases") && p.contains("internal packages"));
+        assert!(!p.contains("smallest change") && !p.contains("other packages use"), "every replaced line matched");
+    }
 
     #[test]
     fn message_ids_are_version_4_uuids() {
