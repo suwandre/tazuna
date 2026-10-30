@@ -42,7 +42,11 @@ def build():
         create table public(date text, model text, effort text, benchmark text, score real, creator text, price real);
         create table runs(date text, set_name text, task text, harness text, base text, model text, effort text,
                           passed int, total int, regress int, judge real, cost real, minutes real, turns int, key_env text);
+        create table canary(date text, model text, route text, effort text, set_name text, item text, ok int, secs real);
     """)
+    if (STATE / "canary.jsonl").exists():  # canary.py: the fixed small benchmark per model and route
+        db.executemany("insert into canary values (?,?,?,?,?,?,?,?)", ((r["date"], r["model"], r["route"], r.get("effort"), r["set"],
+                       r["id"], int(bool(r["ok"])), r.get("secs")) for r in map(json.loads, (STATE / "canary.jsonl").open())))
     # the daily launchd job keeps its own state (model_check_daily.sh); a hand run keeps bench/.model-check
     snaps = {f.name: f for d in (Path.home() / ".local/share/tazuna/model-check/state/history", STATE / "history")
              for f in d.glob("public-*.jsonl.gz")}
@@ -74,9 +78,9 @@ def build():
                 r.get("regress"), sum(j) / len(j) if j else None, r.get("cost"), round((r.get("secs") or 0) / 60, 1),
                 r.get("turns"), r.get("key_env")))
     db.commit()
-    n = {t: db.execute(f"select count(*) from {t}").fetchone()[0] for t in ("public", "runs")}
+    n = {t: db.execute(f"select count(*) from {t}").fetchone()[0] for t in ("public", "runs", "canary")}
     days = db.execute("select count(distinct date) from public").fetchone()[0]
-    print(f"{DB}: {n['public']} public scores over {days} day(s), {n['runs']} own runs")
+    print(f"{DB}: {n['public']} public scores over {days} day(s), {n['runs']} own runs, {n['canary']} canary answers")
     return db
 
 
@@ -87,6 +91,10 @@ def drift(db, model):
     for row in db.execute("select model, effort, benchmark, group_concat(date || ' ' || round(score, 3), ' | ') from public "
                           "where model like ? group by model, effort, benchmark order by model, effort, benchmark limit 60", (plain,)):
         print("  ", *row)
+    print(f"canary runs with models matching {model!r} (per day and route):")
+    for row in db.execute("select date, model, route, effort, set_name, sum(ok), count(*) from canary where model like ? "
+                          "group by 1, 2, 3, 4, 5 order by 1, 2, 3, 5", (like,)):
+        print("   {} {} {} {} {}: {}/{}".format(*row))
     print(f"own bench runs with models matching {model!r} (per week):")
     for row in db.execute("select strftime('%Y-W%W', date), model, effort, count(*), round(avg(1.0 * passed / total), 2), "
                           "round(avg(judge), 2), round(avg(cost), 3), round(avg(minutes), 1) from runs where model like ? and total > 0 "
