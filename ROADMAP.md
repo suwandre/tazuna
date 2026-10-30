@@ -277,6 +277,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-30: decision models in the own loop, replayed offline: run state does not predict failure (113 of 114
+  failures are silent), and Jev cannot tell from the task and the diff which diffs miss something (no better than random,
+  213 diffs, $0.06). Review-or-not stays a rule (`--preset reviewed` reviews every diff). The Jev router stays parked for
+  routing tasks by their text, after real-use labels.
 - 2026-10-30: the "thorough" workflow prompt (omp's ideas in tazuna's words) moved nothing on DeepSeek (7.06 against
   7.62, tests 4.44 against 4.62): dropped, not kept as a preset. Prompt wording is exhausted as a lever for the tests gap;
   where tazuna stands: ~93% of omp's score at ~1/3 its cost and faster, ahead of OpenCode, Command Code, pi and Claude Code.

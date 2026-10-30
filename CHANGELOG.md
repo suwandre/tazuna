@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## A decision model in the own loop: what it could decide, and Jev on "does this diff need a review", 2026-10-30 (bench only)
+
+`decide_data.py`: 336 own-loop runs with known outcomes, a checkpoint every 20 model calls. Rules for "this run will
+fail" barely beat the base rate (34% of runs fail): 60+ calls since the last edit flags 54 runs, 25% of them failing;
+120+ calls 74, 35%. 113 of the 114 failed runs ended on their own, sure they were done: the failures are silent (the
+hidden tests check what the run did not see), so stuck detection mid-run has little to find.
+
+`decide_jev.py`: TypeSafe's Jev (jev-1.14.0, one `noul` question with the task and the diff as state) on 213 DeepSeek
+diffs, truth = all hidden tests passed. Ranked by Jev's probability, reviewing 30/50/70% of the diffs would catch 23/46/66%
+of the failures (random 30/50/70%); within the same task 39/54/65%. Its probabilities sit at a mean 0.49 for passing and
+failing diffs alike. Simple rules do no better (fewest test lines 27/46/70%). 1.44M input tokens, ~$0.06, 8 seconds for
+all 213. A decision model does not see what an implementation misses; the Opus review, reading the code, does (5-6 of 7).
+Decision models stay for decisions they can see: routing a task by its text, once labels from real use exist (the bench
+has 11 tasks with both a DeepSeek and an Opus arm, too few).
+
 ## Tried and dropped: a "thorough" workflow prompt, 2026-10-30 (bench only)
 
 Lever TAZUNA_THOROUGH (own loop), ~1,000 characters in the spirit of oh-my-pi's prompt: find every place the change

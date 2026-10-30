@@ -94,7 +94,7 @@ def evaluate(rows):
             print(f"{name:26} {30:3}% / {50:3}% / {70:3}%")
             continue
         ranked = [(f(r), r["ok"]) for r in rows]
-        within = [sum(caught([(f(r), r["ok"]) for r in rs], b) for rs in mixed) / len(mixed) for b in (0.3, 0.5, 0.7)]
+        within = [sum(caught([(f(r), r["ok"]) for r in rs], b) for rs in mixed) / max(len(mixed), 1) for b in (0.3, 0.5, 0.7)]
         print(f"{name:26} " + " / ".join(f"{100 * caught(ranked, b):3.0f}%" for b in (0.3, 0.5, 0.7))
               + " | " + " / ".join(f"{100 * w:3.0f}%" for w in within) + f"  ({len(mixed)} tasks)")
 
