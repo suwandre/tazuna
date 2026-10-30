@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Own-loop time: DeepSeek at xhigh, and jevgrep, 2026-10-30/31 (bench only)
+
+`timesplit.py`: 86% of a DeepSeek 1017 run's wall time is the model (91% in October), tests and builds 7.5%, other shell
+5%; ~61 calls a run at ~1,000 output tokens each, mostly reasoning at max; half the calls and half the time come before
+the first edit. Two levers on that, tazuna 0.1.6, SubRouter LingAI, four tasks x two runs, a key per arm, Opus judge two
+passes (xh.sh, jg.sh; the max runs serve both):
+
+| arm | judge | tests | hidden | min/run | calls/run | real cost (8 runs) |
+|---|---|---|---|---|---|---|
+| max | 7.19 | 4.31 | 22/26 | 13.8 | 59 | $0.148 |
+| **xhigh** | 7.06 | 4.00 | 24/26 | **8.1** | 51 | **$0.101** |
+| max + jevgrep (`jg` on PATH, one search at the start) | 7.19 | 4.00 | 23/26 | 12.4 | 58 | $0.140 + Jev cents |
+
+xhigh: the same score inside noise (−0.13), 41% faster and 32% cheaper: on the frontier rule it dominates max. jevgrep:
+the model used it once a run; 10% faster, the score level (+0.19 against the same max runs, 7.00 there), cost level; it
+sends code excerpts to TypeSafe. Not adopted (small gain, data leaves for one more party); xhigh as the own loop's DeepSeek
+effort is the candidate.
+
 ## A decision model in the own loop: what it could decide, and Jev on "does this diff need a review", 2026-10-30 (bench only)
 
 `decide_data.py`: 336 own-loop runs with known outcomes, a checkpoint every 20 model calls. Rules for "this run will

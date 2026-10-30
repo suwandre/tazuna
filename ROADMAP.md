@@ -277,6 +277,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-31: own-loop time is 86% the model. DeepSeek 1017 at xhigh: same score as max (7.06 against 7.19), 41% faster,
+  32% cheaper; candidate for `--preset reviewed` (waits on the user: their rule was max for cheap models). jevgrep: 10%
+  faster at the same score, not adopted. Benchmark history: daily public snapshots, scoreboard.py, and a canary (130 fixed
+  items) per model and route; first: DeepSeek 1017 on LingAI, AIME 2025 28/30 (2 cut by HTTP 524, fixed), MMLU-Pro 91/100.
 - 2026-10-30: decision models in the own loop, replayed offline: run state does not predict failure (113 of 114
   failures are silent), and Jev cannot tell from the task and the diff which diffs miss something (no better than random,
   213 diffs, $0.06). Review-or-not stays a rule (`--preset reviewed` reviews every diff). The Jev router stays parked for

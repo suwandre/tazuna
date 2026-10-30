@@ -10,6 +10,8 @@
 {"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v475@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v489@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v521@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v771@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-quoted-braces", "harness": "tazuna-ownsubxjg-v801@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-ownsubxopus-v650@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "omp-sub-v748@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "opencode-sub-v739@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
@@ -60,6 +62,7 @@
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v761@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxa2-v582@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxbest2-v286@gpt-6-luna:max", "channels": ["web"]}
+{"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxjg-v804@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxopus-v656@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxp3-v696@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxth-v760@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
@@ -195,6 +198,7 @@
 {"task": "rclone-archive-symlinks", "harness": "tazuna-ownsubx-v400@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "rclone-archive-symlinks", "harness": "tazuna-ownsubx-v401@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "rclone-archive-symlinks", "harness": "tazuna-ownsubx-v703@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "rclone-archive-symlinks", "harness": "tazuna-ownsubxjg-v805@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "rclone-archive-symlinks", "harness": "tazuna-ownuno-v111@deepseek-v4.1-flash-1017:max", "channels": ["web"]}
 {"task": "rclone-archive-symlinks", "harness": "tazuna-ownuno-v187@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "rclone-archive-symlinks", "harness": "tazuna-ownuno-v199@deepseek-v4.1-flash-1017:max", "channels": ["web"]}
@@ -228,6 +232,7 @@
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubx-v691@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubx-v705@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubxa2-v581@deepseek-v4.1-flash-1017:max", "channels": ["local-blocked", "web-blocked"]}
+{"task": "terraform-import-foreach", "harness": "tazuna-ownsubxjg-v799@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubxp3-v690@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubxp3-v692@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubxrev-v652@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
