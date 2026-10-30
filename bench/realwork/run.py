@@ -807,6 +807,46 @@ def run_opencode(h, w, prompt):
     if effort:  # OpenCode sets effort as a model variant (`#max`); without one the model's default (the free DeepSeek: max, high)
         model += "#" + effort
     r = sh(["opencode", "run", "--standalone", "--auto", "--format", "json", "-m", model, prompt], w, timeout=TIMEOUT, env=env_for("opencode"))
+    return parse_opencode(r)
+
+
+def run_opencode_sub(h, w, prompt):
+    """Stock OpenCode on SubRouter: an OpenAI-compatible provider through the relay (the CLI holds a dummy key), its config
+    inline (OPENCODE_CONFIG_CONTENT, one per run), the run's effort as reasoningEffort, its own bench HOME (its sessions
+    there, read by leakscan)."""
+    model, effort = model_effort(h)
+    url = relay("https://subrouter.ai/v1", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")])
+    cfg = {"provider": {"subrouter": {"npm": "@ai-sdk/openai-compatible", "name": "SubRouter", "options": {"baseURL": url, "apiKey": "relay"},
+                                      "models": {model: {"name": model, "reasoning": True, "tool_call": True, "options": {"reasoningEffort": effort}}}}}}
+    env = only_keys(env_for("opencode-sub", OPENCODE_CONFIG_CONTENT=json.dumps(cfg), OPENCODE_DISABLE_AUTOUPDATE="1"))
+    r = sh(["opencode", "run", "--standalone", "--auto", "--format", "json", "-m", f"subrouter/{model}", prompt], w, timeout=TIMEOUT, env=env)
+    return parse_opencode(r)
+
+
+def run_omp_sub(h, w, prompt):
+    """Stock oh-my-pi (omp) on SubRouter: pi's catalog entry for the model with omp's thinking format ("openai"; omp has no
+    "deepseek" one), through the relay, in a fresh agent dir per run (PI_CODING_AGENT_DIR, rw-: closed to other runs). Its
+    JSON events are pi's."""
+    model, effort = model_effort(h)
+    agent = Path(tempfile.mkdtemp(prefix="rw-omp-"))
+    entry = pi_entry(model)
+    entry["compat"]["thinkingFormat"] = "openai"
+    entry["compat"].pop("requiresReasoningContentOnAssistantMessages", None)
+    url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]) + "/v1"
+    (agent / "models.yml").write_text(json.dumps({"providers": {"subrouter": {"baseUrl": url, "apiKey": "relay", "api": "openai-completions", "models": [entry]}}}))
+    env = only_keys(env_for("omp-sub", PI_CODING_AGENT_DIR=str(agent), BENCH_JAIL_ALSO=str(agent)))
+    try:
+        r = sh(["omp", "-p", "--mode", "json", "--no-session", "--thinking", effort, "--model", f"subrouter/{model}", "--approval-mode", "yolo", prompt],
+               w, timeout=TIMEOUT, env=env)
+    finally:
+        shutil.rmtree(agent, ignore_errors=True)
+    t = BENCH_HOMES / "omp-sub" / "transcripts"  # where leakscan.py looks
+    t.mkdir(parents=True, exist_ok=True)
+    (t / f"{w.name}.jsonl").write_text(r.stdout)
+    return parse_pi_events(r.stdout, r.stderr, r.returncode)
+
+
+def parse_opencode(r):
     tok, turns, final = dict(inp=0, cache_w=0, cache_r=0, out=0), 0, ""
     for line in r.stdout.splitlines():
         try:
@@ -1017,7 +1057,7 @@ def run_plan_exec(h, w, prompt):
                 phase_cost={k: round(v, 4) for k, v in costs.items()})
 
 
-HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubxp2": run_harness, "tazuna-ownsubxa2": run_harness, "tazuna-ownsubxr": run_harness, "tazuna-ownsubxrev": run_harness, "tazuna-ownsubxopus": run_harness, "tazuna-reviewed": run_harness, "tazuna-ownsubxp3": run_harness, "tazuna-ownsubxtn": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "pi-sub": run_pi_sub, "kimi-sub": run_kimi_sub, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
+HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubxp2": run_harness, "tazuna-ownsubxa2": run_harness, "tazuna-ownsubxr": run_harness, "tazuna-ownsubxrev": run_harness, "tazuna-ownsubxopus": run_harness, "tazuna-reviewed": run_harness, "tazuna-ownsubxp3": run_harness, "tazuna-ownsubxtn": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "pi-sub": run_pi_sub, "kimi-sub": run_kimi_sub, "omp-sub": run_omp_sub, "opencode-sub": run_opencode_sub, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
              "cc": run_cc, "cc-lean": run_cc, "cc-mid": run_cc, "cc-ecc": run_cc, "cc-superpowers": run_cc, "cc-caveman": run_cc,
              "cc-graphify": run_cc, "cc-gstack": run_cc, "cc-allplugins": run_cc}
 
