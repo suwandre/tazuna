@@ -19,7 +19,7 @@ MODS = Path(os.environ.get("GOMODCACHE", Path.home() / "go/pkg/mod"))
 
 
 # refusals by run.py's proxy (web) and sandbox (local files): an attempt that got one of these is not a leak
-BLOCKED = re.compile(r"Blocked by the benchmark|CONNECT tunnel failed, response 403|Tunnel connection failed: 403|non 2xx status code \(403"
+BLOCKED = re.compile(r"Blocked by the benchmark|Transport error \(GET|Web search cancelled|CONNECT tunnel failed, response 403|Tunnel connection failed: 403|non 2xx status code \(403"
                      r"|\[exit 56\]|exit:56\b|Operation not permitted|command not found|content:,is_error|returned error: 403|content:/usr/bin/curl\s*,is_error|proxy refused the connection|\(no output\)")  # exit 56: a silent curl refused by the proxy; pi's empty result: (no output); `timeout` missing: the fetch never ran; an empty result (or only `command -v curl`'s line): nothing came back; curl -f's 403
 
 
@@ -140,6 +140,22 @@ def task_rules(tdir):
     return rules, fixed
 
 
+def drop_raw_input(line):
+    try:
+        e = json.loads(line)
+    except json.JSONDecodeError:
+        return line
+    stack = [e]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, dict):
+            x.pop("rawInput", None)
+            stack.extend(x.values())
+        elif isinstance(x, list):
+            stack.extend(x)
+    return json.dumps(e)
+
+
 def transcripts():
     """(name, text) of every transcript: JSON(L) files, and OpenCode's sessions (sqlite, one text per session)."""
     import sqlite3
@@ -152,8 +168,11 @@ def transcripts():
                     # the model's own reasoning (tazuna 0.0.95 records it) is thinking, not a fetch or a read: left out; so are
                     # pi's message_update events, partial copies of a message that its message_end repeats in full (they put
                     # a refused fetch's result beyond the window, v518)
-                    yield str(p), "\n".join(l for l in p.read_text(errors="ignore").splitlines()
-                                            if '"e":{"type":"reasoning"' not in l and not l.startswith('{"type":"message_update"'))
+                    lines = [l for l in p.read_text(errors="ignore").splitlines()
+                             if '"e":{"type":"reasoning"' not in l and not l.startswith('{"type":"message_update"')]
+                    if "/opencode-sub/transcripts/" in str(p):  # OpenCode repeats each call's input as rawInput after its result
+                        lines = [drop_raw_input(l) for l in lines]
+                    yield str(p), "\n".join(lines)
                 except OSError:
                     pass
             elif f == "opencode.db":
@@ -192,9 +211,10 @@ def main(sets=()):
             hits = {k for k, r in tasks[m.group(1)][0].items() if any(k != "web" or not ran or w.group(0) in ran for w in r.finditer(s))}
             for ch in ("web", "local"):
                 # Claude Code's stream-json puts more between a call and its result than tazuna's transcript does; its
-                # WebFetch reports "proxy refused the connection"
+                # WebFetch reports "proxy refused the connection"; OpenCode's names the URL inside its error ("Transport error (GET <url>)"), so
+                # the search starts just before the match
                 win = 20000 if "/transcripts/" in f else 1500
-                if ch in hits and all(BLOCKED.search(s, w.end(), w.end() + win) for w in tasks[m.group(1)][0][ch].finditer(s)
+                if ch in hits and all(BLOCKED.search(s, max(0, w.start() - 40), w.end() + win) for w in tasks[m.group(1)][0][ch].finditer(s)
                                       if ch != "web" or not ran or w.group(0) in ran):
                     hits.discard(ch)
                     hits.add(ch + "-blocked")  # tried, refused by the proxy or the sandbox

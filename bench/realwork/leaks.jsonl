@@ -1,5 +1,6 @@
 {"task": "caddy-quoted-braces", "harness": "cc-sub-v476@deepseek-v4.1-flash-1017:max", "channels": ["web"]}
-{"task": "caddy-quoted-braces", "harness": "opencode-sub-v730@deepseek-v4.1-flash-1017:max", "channels": ["web"]}
+{"task": "caddy-quoted-braces", "harness": "omp-sub-v737@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-quoted-braces", "harness": "opencode-sub-v730@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "pi-sub-v508@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "pi-sub-v606@minimax-m3.1-flash:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
@@ -9,6 +10,7 @@
 {"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v489@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-ownsubx-v521@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-quoted-braces", "harness": "tazuna-ownsubxopus-v650@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-retry-match-expr", "harness": "opencode-sub-v739@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "opencode-v290@deepseek-v4.1-flash-free:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "opencode-v291@deepseek-v4.1-flash-free", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "pi-sub-v515@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
@@ -207,7 +209,7 @@
 {"task": "telegraf-snmp-reconnect", "harness": "tazuna-ownsubx-v440@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "cc-sub-v495@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "cc-sub-v608@minimax-m3.1-flash:max", "channels": ["web"]}
-{"task": "terraform-import-foreach", "harness": "opencode-sub-v729@deepseek-v4.1-flash-1017:max", "channels": ["web"]}
+{"task": "terraform-import-foreach", "harness": "opencode-sub-v729@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "pi-sub-v510@deepseek-v4.1-flash-1017:max", "channels": ["peer"]}
 {"task": "terraform-import-foreach", "harness": "pi-sub-v514@deepseek-v4.1-flash-1017:max", "channels": ["peer", "web"]}
 {"task": "terraform-import-foreach", "harness": "pi-sub-v518@deepseek-v4.1-flash-1017:max", "channels": ["peer"]}
