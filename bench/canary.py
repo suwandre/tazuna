@@ -62,17 +62,26 @@ def grade(item, text):
 
 
 def ask(model, key, effort, text):
-    body = {"model": model, "messages": [{"role": "user", "content": text}], "max_tokens": 32000, "stream": False}
+    # streamed: an unstreamed call that thinks past ~100 s is cut at the edge (HTTP 524, two AIME items, 2026-10-31)
+    body = {"model": model, "messages": [{"role": "user", "content": text}], "max_tokens": 32000, "stream": True,
+            "stream_options": {"include_usage": True}}
     if effort:
         body["reasoning_effort"] = effort
     q = urllib.request.Request("https://subrouter.ai/v1/chat/completions", data=json.dumps(body).encode(),
-                               headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "curl/8"})
+                               headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "curl/8",
+                                        "Accept": "text/event-stream"})
     err = None
     for attempt in range(3):
         try:
+            text, usage = [], {}
             with urllib.request.urlopen(q, timeout=900) as r:
-                d = json.load(r)
-            return d["choices"][0]["message"].get("content") or "", d.get("usage") or {}
+                for line in r:
+                    if line.startswith(b"data: {"):
+                        d = json.loads(line[6:])
+                        for ch in d.get("choices") or []:
+                            text.append((ch.get("delta") or {}).get("content") or "")
+                        usage = d.get("usage") or usage
+            return "".join(text), usage
         except Exception as e:
             err = e
             time.sleep(5 * (attempt + 1))
