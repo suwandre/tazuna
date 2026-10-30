@@ -57,7 +57,7 @@ def grade(item, text):
     m = re.findall(r"Answer:\s*\**\s*([A-J]|-?\d+)", text or "")
     got = m[-1] if m else None
     if got and item["set"] == "aime25":
-        return got.lstrip("0") or "0" == item["answer"], got
+        return (got.lstrip("0") or "0") == item["answer"], got
     return got == item["answer"], got
 
 
