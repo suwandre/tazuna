@@ -51,7 +51,8 @@ assistant content, 43K tokens of history: answered from the result each time). N
 reasons at none, high and max (~1,200-2,200 reasoning tokens, right answer). What changed is how much it reasons inside an
 agent run: ~38 output tokens a call by the account log (981 calls), against ~1,600 a turn in October's run (v161, X Premium+
 pool, 3/3, judge 6, rescored 5 now). That pool is gone (model_not_found). Grok is not usable as an implementer on these
-routes; tazuna's two fixes above came out of it.
+routes; tazuna's two fixes above came out of it. Overnight on fate86 at max (v687) and at high, October's effort (v688): both
+stopped at 240+ calls without an edit, so the effort is not the cause; the rclone pool rescored October's run 6, Kimi 8.
 
 ## `--preset reviewed` as shipped, 2026-10-29 (bench only)
 
