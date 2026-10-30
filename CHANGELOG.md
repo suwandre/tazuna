@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Tried and dropped: a "thorough" workflow prompt, 2026-10-30 (bench only)
+
+Lever TAZUNA_THOROUGH (own loop), ~1,000 characters in the spirit of oh-my-pi's prompt: find every place the change
+touches, reproduce a bug first, a regression test that fails without the change, tests on boundaries, invalid input and
+precedence, every stated behaviour checked, callers migrated and replaced code removed, no widening. DeepSeek 1017 max,
+four tasks, two fresh runs per arm, a key per arm, Opus judge two passes:
+
+| arm | judge | tests | code quality | edge cases | hidden | min/run | test lines | real cost/run |
+|---|---|---|---|---|---|---|---|---|
+| current prompt | 7.62 | 4.62 | 4.00 | 4.00 | 24/26 | 11.7 | 180 | $0.016 |
+| thorough | 7.06 | 4.44 | 3.88 | 3.88 | 23/26 | 11.7 | 198 | $0.017 |
+
+Nothing it aimed at moved (tests −0.18, +10% test lines); the −0.56 overall is terraform (current 10 and 4.5, thorough 5
+and 5), inside noise. Dropped, and not kept as a preset: a preset has to buy score. Three prompt levers today (PROMPT3,
+the tests nudge, this) left DeepSeek's tests where they were; the current arm itself scored 6.57, 7.19, 7.25 and 7.62 in
+four rounds. omp's lead in tests (+0.87 over two runs a task) is not in its wording alone: its runs read 2-4x the files
+and run 2x the builds and tests, with more tools (LSP diagnostics, todo, subagents).
+
 ## omp, OpenCode and Command Code against tazuna with DeepSeek 1017, 2026-10-30 (bench only)
 
 Stock oh-my-pi 18.14 (`omp-sub`: pi's catalog entry, "openai" thinking format, own sealed agent dir), OpenCode 2.2.3

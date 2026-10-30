@@ -57,10 +57,12 @@
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v531@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v695@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v715@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubx-v761@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxa2-v582@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxbest2-v286@gpt-6-luna:max", "channels": ["web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxopus-v656@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxp3-v696@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "caddy-retry-match-expr", "harness": "tazuna-ownsubxth-v760@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v391@deepseek-v4.1-flash-1017:max", "channels": ["peer"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v76@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "caddy-retry-match-expr", "harness": "tazuna-ownuno-v81@deepseek-v4.1-flash:max", "channels": ["modcache"]}
@@ -229,5 +231,6 @@
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubxp3-v690@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubxp3-v692@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubxrev-v652@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
+{"task": "terraform-import-foreach", "harness": "tazuna-ownsubxth-v752@deepseek-v4.1-flash-1017:max", "channels": ["web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-ownsubxtn-v708@deepseek-v4.1-flash-1017:max", "channels": ["local-blocked", "web-blocked"]}
 {"task": "terraform-import-foreach", "harness": "tazuna-reviewed-v662@deepseek-v4.1-flash-1017:max", "channels": ["local-blocked", "peer-blocked", "web-blocked"]}

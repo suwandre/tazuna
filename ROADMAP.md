@@ -277,6 +277,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-10-30: the "thorough" workflow prompt (omp's ideas in tazuna's words) moved nothing on DeepSeek (7.06 against
+  7.62, tests 4.44 against 4.62): dropped, not kept as a preset. Prompt wording is exhausted as a lever for the tests gap;
+  where tazuna stands: ~93% of omp's score at ~1/3 its cost and faster, ahead of OpenCode, Command Code, pi and Claude Code.
+  Next candidates are structural (what omp's runs do: more reading, more test runs, LSP diagnostics), each judged by score,
+  cost and time per run together.
 - 2026-10-30: omp's lead confirmed only in part: two runs a task, 7.81 against 7.25 (inside noise), but tests 4.81
   against 3.94 again. Next lever: a workflow prompt for tests and completeness ("thorough"), judged by score, cost and
   time per run together; kept as a preset if it buys score with cost, made the default if it dominates.
