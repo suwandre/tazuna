@@ -32,6 +32,13 @@ Judge level across all three (inside noise; last night's pool had the boss arm a
 cheapest, no boss buys 28% less time for 37% more cost, Claude Code is the fastest and the dearest. Defaults stay: the
 boss for headless runs (nobody waits), no boss when someone does.
 
+Where the time goes (cct.sh: stock Claude Code again at the same hour as the no-boss runs, v815-v822, with a timestamped
+transcript, `BENCH_STAMP`; timesplit.py now reads the Claude path). Claude Code took 4.8 minutes a run in the afternoon
+against 4.2 at midnight, so most of the gap was the hour: at the same hour tazuna without the boss is 1.15x (5.5 against
+4.8). Per run: model 2.6 against 2.2 minutes, the agent's own tests 2.4 against 2.5, the Haiku explorer 0.3 (used in
+3 of 8 runs, ~45 s each while Opus waits; Claude Code started no subagent), tazuna's final check 0.1. Same hidden tests
+(20/26). Nothing tazuna adds costs much time; the explorer is the largest part and saves cost. No change.
+
 ## 0.1.8 (2026-10-31): a shell a subagent leaves running no longer holds a session open
 
 The rclone run above: an explorer subagent's search command went to the background, the subagent finished, the search

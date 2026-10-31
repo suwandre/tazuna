@@ -22,14 +22,18 @@ def split(path):
         except ValueError:
             continue
         t, e = d.get("t", 0), d.get("e", {})
+        if e.get("parent_tool_use_id"):  # the Claude path: a subagent's own events; its time counts as its Agent call
+            continue
         typ = e.get("type")
         if typ == "assistant":
             kinds["model"] += t - t_prev
             model_calls += 1
             for b in e["message"].get("content", []):
                 if b.get("type") == "tool_use":
-                    cmd = (b.get("input") or {}).get("command", "") if b["name"] == "bash" else ""
-                    open_calls[b["id"]] = (t, "tests/builds" if BUILD.search(cmd or "") else "shell" if b["name"] == "bash" else "file ops")
+                    bash = b["name"].lower().split("__")[-1] == "bash"  # own loop: bash; Claude path: Bash, mcp__lean__bash
+                    cmd = (b.get("input") or {}).get("command", "") if bash else ""
+                    kind = "subagent" if b["name"] in ("Agent", "Task") else "tests/builds" if BUILD.search(cmd or "") else "shell" if bash else "file ops"
+                    open_calls[b["id"]] = (t, kind)
             t_prev = t
         elif typ == "user":
             for b in e["message"].get("content", []) if isinstance(e["message"].get("content"), list) else []:
@@ -52,7 +56,7 @@ def split(path):
 def main():
     pat = re.compile(sys.argv[1] if len(sys.argv) > 1 else r"tazuna-own[a-z]*-v(689|69\d|7[0-6]\d)@deepseek-v4.1-flash-1017")
     runs = []
-    for f in SESSIONS.glob("*.jsonl"):
+    for f in [*SESSIONS.glob("*.jsonl"), *(SESSIONS.parents[3] / "stamped").glob("*.jsonl")]:  # stamped: stock Claude Code (run.py BENCH_STAMP)
         if pat.search(f.name):
             kinds, total, calls = split(f)
             if total and calls:
@@ -60,7 +64,7 @@ def main():
     if not runs:
         sys.exit("no sessions match")
     total = sum(r[2] for r in runs)
-    keys = ["model", "tests/builds", "shell", "file ops", "harness test check", "review"]
+    keys = ["model", "subagent", "tests/builds", "shell", "file ops", "harness test check", "review"]
     print(f"{len(runs)} runs, {total / 60000 / len(runs):.1f} min a run on average, {st.mean(r[3] for r in runs):.0f} model calls a run")
     for k in keys:
         v = sum(r[1].get(k, 0) for r in runs)

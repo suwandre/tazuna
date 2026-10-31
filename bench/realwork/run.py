@@ -253,7 +253,7 @@ def descendants(root):
     return out
 
 
-def sh(cmd, cwd, timeout=900, env=None, shell=False):
+def sh(cmd, cwd, timeout=900, env=None, shell=False, stamp=None):
     # own session: on a timeout the whole tree goes (the harness, its engine, servers the agent left running), not only
     # the direct child; an orphaned engine once kept running for a day and a half
     # PWD follows cwd: the inherited one pointed at bench/realwork, which OpenCode took for its project, finding the tasks'
@@ -262,6 +262,8 @@ def sh(cmd, cwd, timeout=900, env=None, shell=False):
     if env.get("BENCH_JAIL"):
         cmd = ["sandbox-exec", "-p", jail_for(cwd, env.get("BENCH_JAIL_ALSO")), *(["/bin/sh", "-c", cmd] if shell else cmd)]
         shell = False
+    if stamp:  # a timestamped copy of the JSON lines on stdout (stamp.py, outside the jail)
+        cmd = [sys.executable, "-I", str(HERE / "stamp.py"), str(stamp), *cmd]
     p = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, stdin=subprocess.DEVNULL,
                          env=env, shell=shell, start_new_session=True)
     try:
@@ -477,7 +479,11 @@ def run_cc(h, w, prompt):
             env.update({"ANTHROPIC_BASE_URL": "https://subrouter.ai", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                         "ANTHROPIC_AUTH_TOKEN": os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")],
                         **{f"ANTHROPIC_DEFAULT_{t}_MODEL": model for t in ("HAIKU", "SONNET", "OPUS")}})
-        r = sh(cmd, w, timeout=TIMEOUT, env=env)
+        stamp = None
+        if os.environ.get("BENCH_STAMP"):  # Claude Code's timeline, for timesplit.py (2026-10-31)
+            stamp = BENCH_HOMES / "cc" / "stamped" / f"{w.name}.jsonl"
+            stamp.parent.mkdir(parents=True, exist_ok=True)
+        r = sh(cmd, w, timeout=TIMEOUT, env=env, stamp=stamp)
         if base == "cc-sub":  # a transcript where leakscan.py looks (claude keeps none with --no-session-persistence)
             t = BENCH_HOMES / "cc" / "transcripts"
             t.mkdir(parents=True, exist_ok=True)
