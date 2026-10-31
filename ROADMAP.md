@@ -278,9 +278,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 ## Decision log
 
 - 2026-10-31: the Claude path ties stock Claude Code 2.1.314 on Opus medium (6.88 against 6.94, hidden 20/26 each) at
-  −44% cost but 1.8x the time (boss mode). Open bug: a headless run that passed its final check can hang while a background
-  shell keeps `claude` open; it should end the session then. Weekly canary script ready (DeepSeek 1017 and Sol at xhigh;
-  the user installs the launchd schedule).
+  −44% cost but 1.8x the time (boss mode). Bug (fixed in 0.1.8): a headless run that passed its final check hung while a
+  shell a finished subagent had left running was still counted as work claude would wake up for. Weekly canary script
+  ready (DeepSeek 1017 and Sol at xhigh; the user installs the launchd schedule).
 - 2026-10-31: own-loop time is 86% the model. DeepSeek 1017 at xhigh: same score as max (7.06 against 7.19), 41% faster,
   32% cheaper; candidate for `--preset reviewed` (waits on the user: their rule was max for cheap models). jevgrep: 10%
   faster at the same score, not adopted. Benchmark history: daily public snapshots, scoreboard.py, and a canary (130 fixed

@@ -291,8 +291,10 @@ pub struct Live {
     allowed: std::collections::HashSet<String>,
     requests_sent: u64,
     /// Commands claude started that have not finished: claude wakes up again for background ones, so the session is
-    /// not idle until they are done.
-    tasks: std::collections::HashSet<String>,
+    /// not idle until they are done. Each with the subagent that started it, if one did: nobody wakes up for a shell
+    /// that outlives its subagent, so it stops counting when the subagent ends (a search a subagent left running held a
+    /// headless run 25 minutes after its final check passed, 2026-10-31).
+    tasks: std::collections::HashMap<String, Option<String>>,
     /// Every background task of this session, oldest first: the ctrl-b view.
     pub bg: Vec<BgTask>,
     /// The messages the user sent in this process's conversation, oldest first: what /rewind offers.
@@ -772,7 +774,8 @@ impl Live {
                     }
                     match (e["type"].as_str(), e["subtype"].as_str(), e["task_id"].as_str()) {
                         (Some("system"), Some("task_started"), Some(id)) => {
-                            self.tasks.insert(id.to_string());
+                            let owner = e["parent_task_id"].as_str().filter(|_| e["owned_by_subagent"] == true).map(String::from);
+                            self.tasks.insert(id.to_string(), owner);
                             if !self.bg.iter().any(|t| t.id == id) {
                                 self.bg.push(BgTask { id: id.to_string(), kind: e["task_type"].as_str().unwrap_or("task").to_string(),
                                     description: e["description"].as_str().unwrap_or_default().to_string(), status: "running".into(),
@@ -788,7 +791,9 @@ impl Live {
                             }
                         }
                         (Some("system"), Some("task_notification"), Some(id)) => {
-                            if self.tasks.remove(id) && self.tasks.is_empty() {
+                            let before = self.tasks.len();
+                            self.tasks.retain(|t, owner| t != id && owner.as_deref() != Some(id));
+                            if self.tasks.len() < before && self.tasks.is_empty() {
                                 self.tasks_done = Some(Instant::now());
                             }
                             if let Some(t) = self.bg.iter_mut().find(|t| t.id == id) {
@@ -1405,6 +1410,26 @@ mod tests {
         assert!(starts_turn(&json!({"type": "assistant", "message": {}})));
         assert!(!starts_turn(&json!({"type": "result"})));
         assert!(!starts_turn(&json!({"type": "system", "subtype": "init"})));
+    }
+
+    #[test]
+    fn a_shell_stops_counting_when_its_subagent_ends() {
+        let mut live = Live::new("", "").unwrap();
+        let line = |e: Value| (0, Msg::Line(e.to_string()));
+        for e in [
+            json!({"type": "system", "subtype": "task_started", "task_id": "agent", "task_type": "local_agent"}),
+            json!({"type": "system", "subtype": "task_started", "task_id": "search", "task_type": "local_bash", "owned_by_subagent": true, "parent_task_id": "agent"}),
+            json!({"type": "system", "subtype": "task_started", "task_id": "server", "task_type": "local_bash"}),
+            json!({"type": "system", "subtype": "task_notification", "task_id": "agent", "status": "completed"}),
+        ] {
+            live.tx.send(line(e)).unwrap();
+        }
+        live.poll();
+        assert_eq!(live.tasks.keys().collect::<Vec<_>>(), ["server"], "the subagent's shell is dropped, claude's own stays");
+        live.tx.send(line(json!({"type": "system", "subtype": "task_notification", "task_id": "server", "status": "completed"}))).unwrap();
+        live.poll();
+        assert!(live.tasks.is_empty() && live.tasks_done.is_some());
+        std::fs::remove_file(&live.rec_path).ok();
     }
 
     const ALL: &[&str] = &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"];

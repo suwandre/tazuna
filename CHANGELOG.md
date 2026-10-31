@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.8 (2026-10-31): a shell a subagent leaves running no longer holds a session open
+
+The rclone run above: an explorer subagent's search command went to the background, the subagent finished, the search
+kept running. tazuna counts background commands as work in flight (claude wakes up when one ends), so the headless run
+waited 25 minutes after its final check had passed. Nobody wakes up for a shell whose subagent has ended: it now stops
+counting when its subagent ends. Shells claude itself started still count (it wakes up for them). Time per run only;
+the agent's work is unchanged.
+
 ## The Claude path against stock Claude Code 2.1.314; canaries, 2026-10-31 (bench only)
 
 tazuna 0.1.6's default on Opus 5.5 medium (headless: the Haiku boss, the Haiku explorer) against stock Claude Code 2.1.314,
