@@ -1443,8 +1443,8 @@ mod tests {
         assert_eq!(super::edit_in("printf 'edited\\n' >", "draft").unwrap(), "edited");
         assert_eq!(super::edit_in("true", "keep me").unwrap(), "keep me");
         assert!(super::edit_in("false", "x").is_err());
-        // the file the editor gets is private to the user (macOS stat syntax, like the rest of the UI's helpers)
-        let mode = super::edit_in("sh -c 'stat -f %Lp \"$0\" > \"$0.mode\"; cp \"$0.mode\" \"$0\"; rm \"$0.mode\"'", "x").unwrap();
+        // the file the editor gets is private to the user (GNU stat on Linux, BSD stat on macOS)
+        let mode = super::edit_in("sh -c '(stat -c %a \"$0\" 2>/dev/null || stat -f %Lp \"$0\") > \"$0.mode\"; cp \"$0.mode\" \"$0\"; rm \"$0.mode\"'", "x").unwrap();
         assert_eq!(mode, "600");
     }
 
