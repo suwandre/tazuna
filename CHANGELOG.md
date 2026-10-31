@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## The Claude path against stock Claude Code 2.1.314; canaries, 2026-10-31 (bench only)
+
+tazuna 0.1.6's default on Opus 5.5 medium (headless: the Haiku boss, the Haiku explorer) against stock Claude Code 2.1.314,
+the subscription, four tasks x two runs (cp.sh), Opus judge two passes: tazuna 6.88, Claude Code 6.94 (level), hidden
+20/26 each, task by task the same; cost at list $0.44 against $0.79 a run (−44%), but 7.6 minutes against 4.2. Claude Code
+got much faster since October; tazuna's boss mode trades time for cost. One tazuna run (rclone) passed its final check
+at 12 minutes and then never ended: a background shell left in Claude Code kept `claude` open; ended by hand at 25 minutes
+and scored from its diff (2/3). Bug: a headless run should end once its final check passes.
+
+Canary (canary.py, 130 fixed items), first runs: DeepSeek 1017 on LingAI at max AIME 2025 28/30 (2 cut by HTTP 524, since
+streamed) and MMLU-Pro 91/100; at xhigh 30/30 and 90/100; GPT-6.1 Sol on the shared Pro pools at xhigh 30/30 and 87/100.
+No public AIME or MMLU-Pro reference without an Artificial Analysis key (Epoch has none for these models).
+
 ## 0.1.7 (2026-10-31): `--preset reviewed` runs DeepSeek at xhigh
 
 The own-loop round below: the same judge as max, 41% faster, 32% cheaper. `--effort max` on the command line still wins
