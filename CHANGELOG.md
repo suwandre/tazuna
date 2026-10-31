@@ -16,6 +16,22 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## The Claude path without boss mode, 2026-10-31 (bench only)
+
+tazuna 0.1.8 `--no-boss` (Opus medium works itself, the Haiku explorer stays; what interactive sessions always run, since
+the boss is on only for `--run` on Opus) against cp.sh's runs, the same four tasks x two runs (np.sh, v807-v814), one judge
+pool per task over all three arms, Opus two passes:
+
+| arm | judge | hidden | $ a run | min a run |
+|---|---|---|---|---|
+| stock Claude Code 2.1.314 | 6.88 | 20/26 | 0.79 | 4.2 |
+| tazuna, boss (headless default) | 7.19 | 20/26 | 0.44 | 7.6 |
+| tazuna, no boss (interactive default) | 6.81 | 20/26 | 0.60 | 5.5 |
+
+Judge level across all three (inside noise; last night's pool had the boss arm at 6.88). No arm dominates: the boss is the
+cheapest, no boss buys 28% less time for 37% more cost, Claude Code is the fastest and the dearest. Defaults stay: the
+boss for headless runs (nobody waits), no boss when someone does.
+
 ## 0.1.8 (2026-10-31): a shell a subagent leaves running no longer holds a session open
 
 The rclone run above: an explorer subagent's search command went to the background, the subagent finished, the search
