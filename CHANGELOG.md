@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.9 (2026-10-31): `/loop` and `tazuna --loop`; `--preset reviewed` works outside the bench
+
+`/loop [PRESET|FLAGS]` in a session (or `tazuna --loop [FLAGS]` from a shell) builds TODO.md's unchecked items one at a
+time, each in a fresh headless run with those flags, and commits each item its run ticked. Without TODO.md it first asks
+the session for PRD.md and TODO.md. It stops when everything is ticked, when an item is still open after two runs, at
+$25 (`TAZUNA_LOOP_USD`), or when Claude's 5-hour window passes 85% (read from the run's `rate_limit_event`: past the
+limit the plan goes on as paid extra usage); a notification at the end. When a reply leaves TODO.md with three or more
+open items, the session says that `/loop` can build them. First run: a three-item Python tool with `--preset reviewed`:
+3/3 built and committed, 31 tests passing, $0.22, about 6 minutes. Not measured against anything yet.
+
+`--preset reviewed` stopped every run at the start outside the bench: SubRouter's model list has no prices and the own
+loop's dollar cap needs one (the bench always set `TAZUNA_PRICE`). New `--price IN,CACHED,OUT`; the preset carries
+SubRouter's price for DeepSeek 1017.
+
 ## The Claude path without boss mode, 2026-10-31 (bench only)
 
 tazuna 0.1.8 `--no-boss` (Opus medium works itself, the Haiku explorer stays; what interactive sessions always run, since

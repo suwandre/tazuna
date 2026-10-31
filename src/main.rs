@@ -34,6 +34,7 @@
 //!                                             # is the provider's model id; key from VAR (default OPENAI_API_KEY);
 //!                                             # a task it fails goes to Opus 5.5 medium on claude (the cascade)
 //!          [--no-escalate]   # with --provider: no hand-over, the own loop's result stands
+//!          [--price IN,CACHED,OUT]   # own loop: USD per million tokens, for providers whose model list has no prices
 //!          [--max-minutes N]   # own loop: stop (or with --escalate, hand over) after N minutes per task; default: no
 //!                              # time limit, only the $1 cap per task (TAZUNA_MAX_USD; cheap models are slow but
 //!                              # cost cents)
@@ -44,6 +45,8 @@
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
 //!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
+//!   tazuna --loop [FLAGS]   # build TODO.md's open items one by one (fresh headless run each, with FLAGS, e.g.
+//!                           # --preset reviewed), commit each; in a session: /loop [PRESET|FLAGS], /loop stop
 //!   tazuna --log [N]   # the last N runs from the run log (~/.local/share/tazuna/runs.jsonl)
 //!   tazuna --verdict good|bad [--note "..."] [--id RUN]   # label a run (default: the latest); in the UI: /good, /bad
 //!   tazuna --label-git   # label older runs from git: kept (committed) or discarded
@@ -58,6 +61,7 @@ mod editor;
 mod engine;
 mod labels;
 mod live;
+mod looprun;
 mod mcp;
 mod outcap;
 mod replay;
@@ -151,12 +155,14 @@ struct Args {
 /// the reviewer caught DeepSeek's blind spot (terraform, hidden tests 2/3 to 3/3) and flagged nothing on good diffs at
 /// medium (2026-10-29). No `--data any`: SubRouter has to be on the trusted list, so a work repo's code does not go there
 /// by accident. DeepSeek at xhigh: the same judge as max, 41% faster, 32% cheaper (2026-10-31). It replaced `cascade` (DeepSeek V4.1 Flash on CheaperInference with `--data any`, 2026-10-29): the same
-/// hand-over to Opus when tests fail, a newer model, the reviewer, and the data check.
+/// hand-over to Opus when tests fail, a newer model, the reviewer, and the data check. SubRouter's model list has no prices,
+/// so the preset carries the one its dollar cap counts with (SubRouter's for 1017, 2026-10-31; without it every run
+/// stopped at the start: the bench always set one, real use did not).
 const PRESETS: [(&str, &str); 4] = [
     ("default", ""),
     ("boss", "--boss haiku"),
     ("max", "--model claude-opus-5-5 --effort max"),
-    ("reviewed", "--provider https://subrouter.ai/v1 --key-env SUBROUTER_API_KEY --model deepseek-v4.1-flash-1017 --effort xhigh --review-model claude-opus-5-5"),
+    ("reviewed", "--provider https://subrouter.ai/v1 --key-env SUBROUTER_API_KEY --model deepseek-v4.1-flash-1017 --effort xhigh --price 0.022,0.0022,0.088 --review-model claude-opus-5-5"),
 ];
 
 /// Replaces `--preset NAME` with the preset's flags, placed first so the user's own flags override them.
@@ -283,6 +289,13 @@ fn parse(argv: Vec<String>) -> Result<Args> {
                 // SAFETY: flags are parsed before any thread starts; the own loop (a child process) reads it
                 unsafe { std::env::set_var("TAZUNA_MAX_MINUTES", n) };
             }
+            "--price" => {
+                let v = val()?;
+                let ok = v.split(',').filter(|x| x.trim().parse::<f64>().is_ok()).count() == 3 && v.split(',').count() == 3;
+                anyhow::ensure!(ok, "--price takes input,cached,output in USD per million tokens, not {v}");
+                // SAFETY: flags are parsed before any thread starts; the own loop (a child process) reads it
+                unsafe { std::env::set_var("TAZUNA_PRICE", v) };
+            }
             "--no-escalate" => a.no_escalate = true,
             "--no-boss" => a.no_boss = true,
             "--escalate" => {
@@ -361,6 +374,19 @@ fn main() -> Result<()> {
     }
     if std::env::args().nth(1).as_deref() == Some("diag") {
         return diag::hook(std::path::Path::new(&std::env::args().nth(2).unwrap_or_default()));
+    }
+    // `tazuna --loop [FLAGS]`: TODO.md's open items, one fresh headless run each, with FLAGS (looprun.rs)
+    let all: Vec<String> = std::env::args().skip(1).collect();
+    if all.iter().any(|x| x == "--loop") {
+        let flags: Vec<String> = all.into_iter().filter(|x| x != "--loop").collect();
+        parse(flags.clone())?; // a wrong flag fails here, not in every run
+        if !live::in_git_repo() {
+            bail!("--loop commits each item: run it inside a git repo");
+        }
+        let end = looprun::run(&std::env::current_dir()?, &flags, &std::sync::atomic::AtomicBool::new(false), &mut |m| eprintln!("{m}"))?;
+        looprun::notify(&end);
+        println!("{end}");
+        return Ok(());
     }
     let mut a = args()?;
     // a reviewer on a provider's API reads the code too; its key leaves the environment before anything starts, so the
@@ -904,6 +930,11 @@ fn run_live(
     let (mut tasks_open, mut task_sel, mut outputs_read) = (false, 0usize, Instant::now());
     // /rewind: the picker's selected message, while it is open
     let mut rewind_sel: Option<usize> = None;
+    // /loop: the running loop (its stop flag, its progress), or the flags of one waiting for PRD.md and TODO.md; and
+    // TODO.md's open items when the /loop hint last showed
+    let mut looping: Option<(std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::mpsc::Receiver<String>)> = None;
+    let mut loop_after_plan: Option<Vec<String>> = None;
+    let mut hinted = 0usize;
     // /vim: modal editing in the composer (remembered across sessions); `normal` and a pending operator (d, c)
     let vim_flag = labels::dir().map(|d| d.join("vim")).ok();
     let mut vim = vim_flag.as_ref().is_some_and(|f| f.exists());
@@ -950,6 +981,40 @@ fn run_live(
         last = Instant::now();
         for (t, e) in live.poll() {
             s.apply(&e, t);
+            // a plan in TODO.md: say once that /loop can build it
+            if e["type"] == "result" && looping.is_none() && loop_after_plan.is_none() {
+                let n = looprun::open_items(&std::fs::read_to_string("TODO.md").unwrap_or_default()).len();
+                if n >= 3 && n != hinted {
+                    s.apply(&json!({"type": "harness_info", "text": format!("TODO.md has {n} open items: /loop builds them one by one without you (/loop reviewed: on DeepSeek)")}), t);
+                }
+                hinted = n;
+            }
+        }
+        if let Some((_, rx)) = &looping {
+            let mut over = false;
+            loop {
+                match rx.try_recv() {
+                    Ok(m) => s.apply(&json!({"type": "harness_info", "text": m}), live.elapsed_ms()),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        over = true;
+                        break;
+                    }
+                }
+            }
+            if over {
+                looping = None;
+            }
+        }
+        if loop_after_plan.is_some() && live.idle() {
+            let flags = loop_after_plan.take().unwrap_or_default();
+            let msg = if looprun::open_items(&std::fs::read_to_string("TODO.md").unwrap_or_default()).is_empty() {
+                "no open items in TODO.md: the loop did not start".to_string()
+            } else {
+                looping = Some(start_loop(flags));
+                LOOP_STARTED.to_string()
+            };
+            s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
         }
         v.clock_ms = live.elapsed_ms();
         term.draw(|f| {
@@ -1225,6 +1290,40 @@ fn run_live(
                     }
                     continue;
                 }
+                if text == "/loop" || text.starts_with("/loop ") {
+                    let rest = text["/loop".len()..].trim();
+                    let msg = if rest == "stop" {
+                        match &looping {
+                            Some((stop, _)) => {
+                                stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                                "the loop stops after the current item".to_string()
+                            }
+                            None => "no loop running".to_string(),
+                        }
+                    } else if looping.is_some() || loop_after_plan.is_some() {
+                        "a loop is already running (/loop stop ends it after the current item)".to_string()
+                    } else {
+                        // flags are checked by each run (parsing them here would set the own loop's variables in
+                        // this process, with threads running): a wrong one stops the loop after two quick failures
+                        let flags = looprun::flags(rest);
+                        match () {
+                            _ if looprun::open_items(&std::fs::read_to_string("TODO.md").unwrap_or_default()).is_empty() => {
+                                match live.send(looprun::PLAN) {
+                                    Ok((t, e)) => s.apply(&e, t),
+                                    Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),
+                                }
+                                loop_after_plan = Some(flags);
+                                "no open items in TODO.md yet: asking for PRD.md and TODO.md first; the loop starts once they are written".to_string()
+                            }
+                            _ => {
+                                looping = Some(start_loop(flags));
+                                LOOP_STARTED.to_string()
+                            }
+                        }
+                    };
+                    s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
+                    continue;
+                }
                 if let Some(rest) = text.strip_prefix("/good").or_else(|| text.strip_prefix("/bad")) {
                     // rate the last run locally; never sent to claude
                     let verdict = if text.starts_with("/good") { "good" } else { "bad" };
@@ -1290,6 +1389,26 @@ fn run_live(
             _ => {}
         }
     }
+}
+
+const LOOP_STARTED: &str = "loop started: one fresh run per TODO.md item, a commit each, a notification at the end; messages you \
+    send meanwhile edit the same files (/loop stop ends it after the current item)";
+
+/// Runs the PRD loop on a thread of its own; its progress lines come through the receiver, which closes when it ends.
+fn start_loop(flags: Vec<String>) -> (std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::mpsc::Receiver<String>) {
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (tx, rx) = std::sync::mpsc::channel();
+    let flag = stop.clone();
+    std::thread::spawn(move || {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let end = looprun::run(&cwd, &flags, &flag, &mut |m| {
+            let _ = tx.send(m);
+        })
+        .unwrap_or_else(|e| format!("failed: {e:#}"));
+        looprun::notify(&format!("loop {end}"));
+        let _ = tx.send(format!("loop {end}"));
+    });
+    (stop, rx)
 }
 
 #[cfg(test)]
