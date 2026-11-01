@@ -122,7 +122,7 @@ def judge(q, answer, key):
     return None
 
 
-def run(model, key_env, effort):
+def run(model, key_env, effort, n=100):
     key, jkey, day = os.environ[key_env], os.environ["SUBROUTER_LCR_JUDGE_KEY"], time.strftime("%Y-%m-%d")
 
     def one(q):
@@ -142,8 +142,9 @@ def run(model, key_env, effort):
         return row
 
     with ThreadPoolExecutor(8) as ex:
-        done = list(ex.map(one, questions()))
+        done = list(ex.map(one, questions()[:n]))
     show(done)
+    return done
 
 
 def aa_scores(metric="lcr"):

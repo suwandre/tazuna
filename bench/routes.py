@@ -21,6 +21,12 @@ sys.path.insert(0, str(HERE))
 import subrouter as s  # noqa: E402
 
 MODELS = ["deepseek-v4.1-flash-1017", "gpt-6.1-sol", "gpt-6-luna", "gpt-6.1-terra"]
+# The quality gate: the first QUALITY_N long-context questions (canary_lcr.py) through a provider that passed the run
+# checks, at the effort AA measured; it passes at AA's LCR score minus QUALITY_MARGIN (40 questions: +-15 points). Without
+# it the first refresh swapped DeepSeek's checked LingAI route for a provider listed at $0 and for RelAI, which caps max
+# and got fewer answers right (2026-11-01). A provider's verdict holds VERIFIED_DAYS.
+QUALITY_N, QUALITY_MARGIN, VERIFIED_DAYS = 40, 0.15, 30
+AA_EFFORT = {"deepseek-v4.1-flash-1017": "max"}  # AA lists DeepSeek 1017 at max only; GPT models at each level (xhigh used)
 CANDIDATES = 4  # the cheapest four by input price (agent calls are mostly input)
 OUT = Path.home() / ".local/share/tazuna/routes.json"
 # effort levels the model really has (bench/effortprobe.py, 2026-11-01); others take low ... max
@@ -35,9 +41,36 @@ def probe(model, slug, i):
     served = re.findall(r"served by \[([^\]]*)\]", out)
     served = [x.strip(" '") for x in served[-1].split(",")] if served else []
     ok, errors, cached = (int(g) for g in m.groups()) if m else (0, 99, 0)
-    # a shared pool is served as "openai-pro" in the account log
-    where = served == [slug] or (slug.startswith("shared-") and served == ["openai-pro"])
+    # a shared pool is served as "openai-pro" or "openai-plus" in the account log
+    where = served == [slug] or (slug.startswith("shared-") and len(served) == 1 and served[0].startswith("openai-"))
     return dict(slug=slug, ok=ok, errors=errors, cached=cached, served=served, passed=ok > 0 and errors <= 2 and cached >= 70 and where)
+
+
+def quality(model, slug, routes):
+    """The long-context gate for one provider, through the test key tazuna-vet-1; remembered in routes.json."""
+    seen = routes.setdefault("verified", {}).setdefault(model, {})
+    v = seen.get(slug)
+    if v and time.time() - v["at"] < VERIFIED_DAYS * 86400:
+        return v["pass"]
+    import canary_lcr
+    effort = AA_EFFORT.get(model, "xhigh")
+    aa = canary_lcr.aa_scores("lcr")
+    base = model.replace(".", "-")
+    ref = aa.get(f"{base}-{effort}") or aa.get(base)
+    if not ref:
+        print(f"  {slug}: no public LCR score for {model}: quality not checked, left out")
+        return False
+    vid = s.key("tazuna-vet-1", model, [slug], "SUBROUTER_VET1_KEY")
+    k = s.api(f"/api/token/{vid}")
+    if bool(k.get("include_shared_subscriptions")) != slug.startswith("shared-"):
+        s.api("/api/token/", "PUT", {**k, "include_shared_subscriptions": slug.startswith("shared-")})
+    rows = canary_lcr.run(model, "SUBROUTER_VET1_KEY", effort, QUALITY_N)
+    acc = sum(r["ok"] for r in rows) / max(1, len(rows))
+    seen[slug] = dict(at=int(time.time()), lcr=round(acc, 3), aa=ref, n=len(rows), pass_=None)
+    seen[slug]["pass"] = acc >= ref - QUALITY_MARGIN
+    del seen[slug]["pass_"]
+    print(f"  {slug:22} quality {'pass' if seen[slug]['pass'] else 'FAIL'}: long context {100 * acc:.0f}% of {len(rows)} (AA {100 * ref:.0f}%)", flush=True)
+    return seen[slug]["pass"]
 
 
 def refresh(models):
@@ -47,7 +80,10 @@ def refresh(models):
         if model not in listed:
             print(f"{model}: not on SubRouter")
             continue
-        provs = sorted(listed[model]["providers"], key=lambda p: (p["min_input_price"], p["min_output_price"]))[:CANDIDATES]
+        # the cheapest few, plus every provider that passed the quality gate lately (kept unless it fails the run checks)
+        ok_before = {g for g, v in routes.get("verified", {}).get(model, {}).items() if v["pass"] and time.time() - v["at"] < VERIFIED_DAYS * 86400}
+        ranked = sorted(listed[model]["providers"], key=lambda p: (p["min_input_price"], p["min_output_price"]))
+        provs = (ranked[:CANDIDATES] + [p for p in ranked[CANDIDATES:] if p["provider_slug"] in ok_before])[:CANDIDATES + 2]
         print(f"{model}: checking {', '.join(p['provider_slug'] for p in provs)}", flush=True)
         with ThreadPoolExecutor(4) as ex:  # one test key (tazuna-vet-1..4) each
             checks = list(ex.map(lambda ip: probe(model, ip[1]["provider_slug"], ip[0] + 1), enumerate(provs)))
@@ -56,6 +92,7 @@ def refresh(models):
             print(f"  {c['slug']:22} {'pass' if c['passed'] else 'fail'}  cached {c['cached']}%  errors {c['errors']}  served by {c['served']}"
                   f"  ${price[c['slug']][0]}/${price[c['slug']][1]} per M", flush=True)
         good = [c["slug"] for c in checks if c["passed"]]
+        good = [g for g in good if quality(model, g, routes)]
         if not good:
             print(f"  no provider passed: the route key keeps its providers")
             continue
