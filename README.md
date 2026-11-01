@@ -130,9 +130,8 @@ Requires the `claude` CLI (logged in). Nothing else: the lean tools are built in
 
 On Windows (cmd or PowerShell) tazuna needs Git for Windows: like Claude Code there, it runs commands in Git Bash
 (`TAZUNA_BASH` or `CLAUDE_CODE_GIT_BASH_PATH` point elsewhere). Install Claude Code with its native installer (`claude.exe`;
-the npm package's `claude.cmd` is not found). Take `tazuna.exe` from the windows workflow's last run (`gh run download -n
-tazuna-windows`; `gh workflow run windows.yml` makes a fresh one): a clone fails on Windows, where the bench's file names
-(`harness@model:effort`) are invalid. Not on Windows yet: desktop
+the npm package's `claude.cmd` is not found). Build with `cargo install --path .`, or take `tazuna.exe` from the windows
+workflow's last run (`gh run download -n tazuna-windows`; `gh workflow run windows.yml` makes a fresh one). Not on Windows yet: desktop
 notifications, and reaping background processes an agent left running.
 
 tazuna only runs inside a git repo by default: the agent edits without asking, so `git diff` is the review step.
