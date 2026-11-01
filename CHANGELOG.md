@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.13 (2026-11-01): `--preset reviewed` on a checked route; two DeepSeek routes in `/model`
+
+DeepSeek on znu (the gated refresh's pick: long context 88% vs AA 83%), the same four tasks x two runs as LingAI on
+2026-10-30/31, one judge pool per task: judge 6.56 vs 6.94 (level, inside noise; terraform 1/3 vs 2/3), hidden 22/26 vs
+24/26, ~40% cheaper ($0.024 for the eight runs), 13.6 against 8.1 minutes a run (busier machine, another day, and likely a
+slower provider). A trade, not a win: the route key for DeepSeek keeps znu + stableai (cheapest), and a second route
+"deepseek-v4.1-flash-1017 · fast" on LingAI (tazuna-route-deepseek-fast) sits next to it in `/model`.
+
+`--preset reviewed` used SUBROUTER_API_KEY, which lets SubRouter pick any DeepSeek provider: among them ones that cached
+22% or billed four times their listing. It now uses the fast route's key (LingAI, where every DeepSeek measurement ran).
+Same model, effort and provider as measured.
+
 ## 0.1.12 (2026-11-01): cost split into money and plan; plan limits on screen
 
 The cost shows who pays: "$0.50 + $7.46 on plan" (own-loop providers in money; claude at API prices, covered by the

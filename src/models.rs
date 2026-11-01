@@ -52,8 +52,11 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
     let file: Value = std::fs::read_to_string(routes).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     let mut rs: Vec<(&String, &Value)> = file["routes"].as_object().map(|o| o.iter().collect()).unwrap_or_default();
     rs.sort_by_key(|(m, _)| m.to_string());
-    for (model, r) in rs {
+    for (name, r) in rs {
         let (Some(url), Some(var)) = (r["url"].as_str(), r["key_env"].as_str()) else { continue };
+        // a second route for one model ("deepseek-v4.1-flash-1017@fast": another provider set) names its model
+        let model = r["model"].as_str().map(String::from).unwrap_or_else(|| name.clone());
+        let label = name.split_once('@').map_or(name.clone(), |(m, v)| format!("{m} · {v}"));
         let (input, output) = (r["price"][0].as_f64().unwrap_or(0.0), r["price"][1].as_f64().unwrap_or(0.0));
         let host = url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or_default();
         let days = now.saturating_sub(r["vetted_at"].as_u64().unwrap_or(0)) / 86_400;
@@ -67,8 +70,8 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             State::Ready
         };
         out.push(Choice {
-            model: model.clone(),
-            label: model.clone(),
+            model,
+            label,
             // the cached-input price is not in the provider list: a tenth of input, the usual discount
             route: Some((url.to_string(), var.to_string(), format!("{input},{},{output}", (input / 10.0 * 1e6).round() / 1e6))),
             place: format!("SubRouter · {}", providers.join(", ")),
@@ -105,12 +108,16 @@ mod tests {
         std::fs::write(&f, r#"{"routes": {
             "deepseek-v4.1-flash-1017": {"url": "https://subrouter.ai/v1", "key_env": "TAZUNA_TEST_NO_SUCH_KEY", "providers": ["lingai"],
                 "price": [0.022, 0.088], "cached": 81, "efforts": ["high", "max"], "vetted_at": 1000000},
+            "deepseek-v4.1-flash-1017@fast": {"model": "deepseek-v4.1-flash-1017", "url": "https://subrouter.ai/v1", "key_env": "PATH",
+                "providers": ["lingai"], "price": [0.022, 0.088], "cached": 89, "efforts": ["high", "max"], "vetted_at": 1000000},
             "gpt-6.1-sol": {"url": "https://subrouter.ai/v1", "key_env": "PATH", "providers": ["kriora"],
                 "price": [0.0387, 0.1935], "cached": 91, "efforts": ["low", "high", "xhigh", "max"], "vetted_at": 1000000}}}"#).unwrap();
         let now = 1000000 + 9 * 86_400;
         let c = catalog(&f, |h| h == "subrouter.ai", now);
         assert_eq!(c.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
-                   ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.1", "deepseek-v4.1-flash-1017", "gpt-6.1-sol"]);
+                   ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.1", "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017 · fast", "gpt-6.1-sol"]);
+        assert_eq!((c[5].model.as_str(), c[5].place.as_str()), ("deepseek-v4.1-flash-1017", "SubRouter · lingai"));
+        let c: Vec<Choice> = c.into_iter().filter(|c| !c.label.ends_with("fast")).collect();
         assert!(c[0].route.is_none() && c[0].state == State::Ready);
         assert_eq!(c[4].state, State::NoKey, "no key in the environment");
         assert_eq!((c[5].state, c[5].stale), (State::Ready, true), "key set (PATH stands in), host trusted, checked 9 days ago");
