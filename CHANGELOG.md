@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.20 (2026-11-02): the own loop's thinking on screen
+
+The own loop's reasoning before each message now shows as a "thinking" row with its estimated size, like claude's, so a
+run on DeepSeek or GPT reads the same as one on Claude: thinking, tool calls (reads, searches, commands), replies. Display
+only.
+
 ## 0.1.19 (2026-11-01): the own loop's replies and tool calls on screen; costs under a cent; key hints that fit
 
 After `/model` switched a live session to DeepSeek, a message ran four turns (it ran `cargo test` and answered) and the

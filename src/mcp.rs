@@ -611,8 +611,9 @@ mod tests {
         let mut s = Server { cwd: std::env::temp_dir(), max: 30000, cap: DEFAULT_BASH_CAP, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
         let t0 = Instant::now();
         // the background sleep would outlive a plain kill of bash
-        let out = s.bash("sleep 30 & echo started; wait", Duration::from_millis(500));
-        assert!(t0.elapsed() < Duration::from_secs(5), "returned at the timeout, not after the child");
+        // 2 s: a login shell under a full parallel test run took over 500 ms to print "started" (flaky until 0.1.20)
+        let out = s.bash("sleep 30 & echo started; wait", Duration::from_secs(2));
+        assert!(t0.elapsed() < Duration::from_secs(8), "returned at the timeout, not after the child");
         assert!(out.starts_with("started"), "{out}");
         assert!(out.contains("timed out"), "{out}");
     }

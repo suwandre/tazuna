@@ -358,6 +358,8 @@ impl Session {
                 self.push(Block::Notice { text: format!("mode: {}", self.mode), error: false });
             }
             (Some("harness_info"), _) => self.push(Block::Notice { text: s(&e["text"]), error: false }),
+            // the own loop's reasoning before a message: a thinking row like claude's, its size estimated (~4 characters a token)
+            (Some("reasoning"), _) => self.push(Block::Thinking { tokens: (s(&e["text"]).chars().count() / 4) as u64, live: false }),
             (Some("harness_switch"), _) => {
                 // /model: the old process is gone
                 self.close_process();
@@ -633,6 +635,7 @@ mod tests {
         assert_eq!(s.blocks.len(), n, "other system events stay out of the transcript");
         // the own loop sends whole messages, no content blocks: its text and tool calls are drawn from them, once
         s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 3.0);
+        s.apply(&json!({"type": "reasoning", "text": "Ambiguous; likely run the tests."}), 3.5);
         s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "I'll run the tests."},
             {"type": "tool_use", "id": "c1", "name": "bash", "input": {"command": "cargo test"}}]}}), 4.0);
         s.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "content": "94 passed"}]}}), 5.0);
@@ -644,9 +647,10 @@ mod tests {
             Block::Text { text, .. } => text.clone(),
             Block::Tool(t) => format!("{} {} -> {}", t.name, t.input["command"].as_str().unwrap_or(""), t.result.as_deref().unwrap_or("")),
             Block::Done(d) => format!("done {:.1}s", d.secs),
+            Block::Thinking { tokens, .. } => format!("thinking ~{tokens}"),
             _ => "?".into(),
         }).collect();
-        assert_eq!(shown, ["I'll run the tests.", "bash cargo test -> 94 passed", "All 94 pass.", "done 33.5s"]);
+        assert_eq!(shown, ["thinking ~8", "I'll run the tests.", "bash cargo test -> 94 passed", "All 94 pass.", "done 33.5s"]);
         assert_eq!(crate::ui::cost_str(&s), "$0.00019");
         assert_eq!([0.0, 0.004321, 0.0123, 1.5].map(crate::ui::usd), ["$0", "$0.0043", "$0.01", "$1.50"]);
     }
