@@ -61,9 +61,9 @@ def grade(item, text):
     return got == item["answer"], got
 
 
-def ask(model, key, effort, text):
+def ask(model, key, effort, text, max_tokens=32000):
     # streamed: an unstreamed call that thinks past ~100 s is cut at the edge (HTTP 524, two AIME items, 2026-10-31)
-    body = {"model": model, "messages": [{"role": "user", "content": text}], "max_tokens": 32000, "stream": True,
+    body = {"model": model, "messages": [{"role": "user", "content": text}], "max_tokens": max_tokens, "stream": True,
             "stream_options": {"include_usage": True}}
     if effort:
         body["reasoning_effort"] = effort

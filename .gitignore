@@ -12,3 +12,9 @@
 /bench/.model-check/
 /bench/night-mimo.log
 __pycache__/
+# local tool and round leftovers a `git add .` swept in once (2026-11-01): never meant for git
+.serena/
+/night-*.log
+/bench/**/*.out
+/bench/realwork/*.groups
+/bench/realwork/*.tried

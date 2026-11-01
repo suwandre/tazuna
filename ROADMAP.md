@@ -285,6 +285,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-01: eight models x high/xhigh/max on two unused tasks, then Luna xhigh against DeepSeek on four more: DeepSeek
+  xhigh stays the own loop's default (Luna's telegraf lead was one lucky run; DeepSeek xhigh 6.25 vs Luna 4.88 over four
+  tasks). Sol max and Sonnet max reached the top judge on the hard task at higher time; Terra was strong but the dearest;
+  Grok 4.7 cannot edit files in the own loop. SubRouter routes match Artificial Analysis on long-context reasoning (LCR)
+  and roughly on HLE: no sign of degraded providers. Canaries now compare against AA's LCR and HLE.
 - 2026-10-31: own-loop time is 86% the model. DeepSeek 1017 at xhigh: same score as max (7.06 against 7.19), 41% faster,
   32% cheaper; candidate for `--preset reviewed` (waits on the user: their rule was max for cheap models). jevgrep: 10%
   faster at the same score, not adopted. Benchmark history: daily public snapshots, scoreboard.py, and a canary (130 fixed

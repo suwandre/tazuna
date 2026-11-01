@@ -16,6 +16,43 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Eight models x three efforts, a Luna check, and provider checks against public scores, 2026-10-31/11-01 (bench only)
+
+**Models x effort** (mx*.sh): tazuna 0.1.8, own loop on SubRouter (routes vetted first: output under $0.50 per M, 70%+
+cached; GPT models on the shared OpenAI Pro pools, Terra on Pro 52 alone) or the Claude path on the subscription
+(Sonnet, Haiku), high / xhigh / max, two tasks no recent round used (telegraf-snmp-reconnect, gitea-actions-cancelling),
+one run per cell (Haiku two). Judge: one Opus xhigh pool per task and effort (eight runs), two passes.
+
+| model | telegraf judge h/x/m | gitea judge h/x/m | hidden h/x/m (of 4) | min a run h/x/m | real $ (6 runs) |
+|---|---|---|---|---|---|
+| GPT-6.1 Terra | 7.0 / 7.0 / 7.0 | 7.75 / 7.5 / 5.5 | 4 / 4 / 4 | 26 / 28 / 44 | ~1.70 |
+| GPT-6.1 Sol | 5.5 / 5.5 / 8.0 | 6.75 / 8.0 / 8.0 | 3 / 3 / 4 | 9 / 11 / 17 | ~0.10 |
+| Sonnet 5.5 (sub) | 5.0 / 6.0 / 8.0 | 6.0 / 8.0 / 4.5 | 3 / 3 / 3 | 14 / 14 / 42 | plan |
+| Kimi K3.1 Pro | 6.5 / 2.5 / 6.0 | 8.0 / 3.75 / 6.75 | 4 / 3 / 4 | 22 / 27 / 19 | 0.49 |
+| GPT-6 Luna | 4.5 / 7.5 / 6.5 | 2.75 / 6.0 / 6.0 | 1 / 4 / 4 | 18 / 8 / 15 | ~0.01 |
+| Haiku 5.5 (sub) | 4.8 / 5.2 / 4.5 | 6.9 / 6.9 / 6.0 | 6 / 6 / 5 (of 8) | 10 / 18 / 33 | plan |
+| DeepSeek 1017 | 4.0 / 5.0 / 4.5 | 6.5 / 7.5 / 5.0 | 3 / 3 / 3 | 22 / 18 / 32 | ~0.10 |
+| Grok 4.7 | no change in any run | | 0 / 0 / 0 | 12 / 11 / 13 | 0.09 |
+
+One run per cell is noise-sized (a judge point either way). What holds: max is the slowest everywhere and the best only
+for Sol (and Sonnet on telegraf); breaking one existing telegraf test is common to every model; Grok 4.7 in the own loop
+wrote its fixes into its replies and never edited a file (0 of 12, both providers). Kimi costs ~5x DeepSeek for the same
+level. Two slips of mine: a pause meant for Kimi froze Grok's block 66 minutes (rerun clean), and Haiku ran twice
+(subscription only); the gitea pools were judged twice (a scheduling slip; the scores average four passes).
+
+**Luna xhigh against DeepSeek** (lx.sh): Luna at xhigh led telegraf on one run, against its public scores (AA index 23 vs
+DeepSeek's 32.5, Terminal-Bench 8% vs 34%). Four other tasks, two runs each, one judge pool per task: DeepSeek xhigh 6.25
+judge and 23/30 hidden, DeepSeek max 5.25 and 16/30, Luna xhigh 4.88 and 15/36 (k6 3.5 vs 6.0, caddy-unix 4.5 vs 6.0,
+lazygit level). DeepSeek timed out at the 1-hour cap on prometheus-exemplar in all four runs (Luna finished it, 3/3 and
+0/3). The telegraf lead was a fluke; DeepSeek xhigh stays the cheap default, and max again lost to xhigh.
+
+**Providers against public scores** (canary_lcr.py, canary_hle.py; Artificial Analysis now publishes LCR and HLE for these
+models, not MMLU-Pro or AIME). AA-LCR v1.1 (100 long-document questions, AA's prompts and checker): DeepSeek 1017 max on
+LingAI 81% (AA 82.7%), Sol xhigh on the shared Pro pools 82% (AA 79.7%). HLE (200 of a fixed 400 text-only questions,
+HLE's judge prompt): DeepSeek 37.0% (AA 43.3%; 7 questions thought past 128k tokens and answered nothing; 38.3% of the
+answered), Sol 41.5% (AA 52.6%), but 34 of its calls came back empty within a minute (the shared pool, not the model):
+50.0% of the answered. No route shows a cut-down model; DeepSeek sits ~5 points under AA on HLE, inside the interval.
+
 ## 0.1.9 (2026-10-31): `/loop` and `tazuna --loop`; `--preset reviewed` works outside the bench
 
 `/loop [PRESET|FLAGS]` in a session (or `tazuna --loop [FLAGS]` from a shell) builds TODO.md's unchecked items one at a
