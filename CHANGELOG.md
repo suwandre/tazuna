@@ -16,6 +16,11 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.10 (2026-11-01): `--preset reviewed` names DeepSeek's effort as high
+
+DeepSeek V4 has high and max only; the preset's "xhigh" already ran as high (below). The preset now says so. Same
+requests, no metric change.
+
 ## Why xhigh beat max: what each route does with the effort it is sent, 2026-11-01 (bench only)
 
 bench/effortprobe.py: three hard AIME 2025 problems, twice per effort, plus a made-up level ("ultra"); median reasoning

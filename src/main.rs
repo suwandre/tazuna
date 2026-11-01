@@ -154,7 +154,8 @@ struct Args {
 /// `reviewed`: DeepSeek 1017 implements on SubRouter, Opus (claude, the default medium effort) reviews the diff once:
 /// the reviewer caught DeepSeek's blind spot (terraform, hidden tests 2/3 to 3/3) and flagged nothing on good diffs at
 /// medium (2026-10-29). No `--data any`: SubRouter has to be on the trusted list, so a work repo's code does not go there
-/// by accident. DeepSeek at xhigh: the same judge as max, 41% faster, 32% cheaper (2026-10-31). It replaced `cascade` (DeepSeek V4.1 Flash on CheaperInference with `--data any`, 2026-10-29): the same
+/// by accident. DeepSeek at high: the same judge as max, 41% faster, 32% cheaper (2026-10-31, measured as "xhigh", which
+/// DeepSeek does not have and runs as high, its default; bench/effortprobe.py, 2026-11-01). It replaced `cascade` (DeepSeek V4.1 Flash on CheaperInference with `--data any`, 2026-10-29): the same
 /// hand-over to Opus when tests fail, a newer model, the reviewer, and the data check. SubRouter's model list has no prices,
 /// so the preset carries the one its dollar cap counts with (SubRouter's for 1017, 2026-10-31; without it every run
 /// stopped at the start: the bench always set one, real use did not).
@@ -162,7 +163,7 @@ const PRESETS: [(&str, &str); 4] = [
     ("default", ""),
     ("boss", "--boss haiku"),
     ("max", "--model claude-opus-5-5 --effort max"),
-    ("reviewed", "--provider https://subrouter.ai/v1 --key-env SUBROUTER_API_KEY --model deepseek-v4.1-flash-1017 --effort xhigh --price 0.022,0.0022,0.088 --review-model claude-opus-5-5"),
+    ("reviewed", "--provider https://subrouter.ai/v1 --key-env SUBROUTER_API_KEY --model deepseek-v4.1-flash-1017 --effort high --price 0.022,0.0022,0.088 --review-model claude-opus-5-5"),
 ];
 
 /// Replaces `--preset NAME` with the preset's flags, placed first so the user's own flags override them.
