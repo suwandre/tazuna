@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.12 (2026-11-01): cost split into money and plan; plan limits on screen
+
+The cost shows who pays: "$0.50 + $7.46 on plan" (own-loop providers in money; claude at API prices, covered by the
+subscription), "$7.46 on plan" or "$0.50" when only one ran. Claude's 5-hour and 7-day plan windows come from the
+`claude` CLI's own rate_limit_event (no login token involved): "5h 3% · 7d 1% (+2%)", the rise since the session's first
+reading in brackets; warning colour at 70%, error at 85% (where the benchmark guard pauses). A `/model` switch now closes
+the old process's cost (the new one reports from $0; before, the total dropped after a switch). Display only.
+
 ## Route refresh with a quality gate and billed prices, 2026-11-01 (bench only)
 
 bench/routes.py now lets a provider into a route only after the run checks (cache 70%+, few errors, served where asked),

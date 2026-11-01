@@ -124,6 +124,16 @@ pub struct Session {
     pub exact_cost: Option<f64>,
     /// Cost of processes that already exited: claude reports cost cumulatively per process, from $0 after a restart.
     cost_base: f64,
+    /// The same split by who pays: own-loop providers (`paid`, real money) and claude on the plan (`plan`, at API prices),
+    /// of exited processes (`_base`) and of the current one (`_now`).
+    paid_base: f64,
+    plan_base: f64,
+    paid_now: f64,
+    plan_now: f64,
+    /// Claude's plan usage, 0-100: the 5-hour and 7-day windows as its last rate_limit_event reported them, and as the
+    /// first one in this session did (the difference is this session's share, plus whatever else used the plan meanwhile).
+    pub limits: Option<(f64, f64)>,
+    pub limits_start: Option<(f64, f64)>,
     usage_at_result: Usage,
     /// An interrupt was requested; the next result ends a stopped run.
     stopping: bool,
@@ -163,6 +173,12 @@ impl Session {
             activity: if prompt.trim().is_empty() { Activity::Ready } else { Activity::Starting },
             exact_cost: None,
             cost_base: 0.0,
+            paid_base: 0.0,
+            plan_base: 0.0,
+            paid_now: 0.0,
+            plan_now: 0.0,
+            limits: None,
+            limits_start: None,
             usage_at_result: Usage::default(),
             stopping: false,
             new_blocks: 1,
@@ -174,6 +190,18 @@ impl Session {
             todos: Vec::new(),
             last_prompt: String::new(),
         }
+    }
+
+    /// Real money (own-loop providers) and plan use at API prices (claude), both exact as reported.
+    pub fn split_cost(&self) -> (f64, f64) {
+        (self.paid_base + self.paid_now, self.plan_base + self.plan_now)
+    }
+
+    /// A process ended (restart, escalation, model switch): its reported costs are final, the next one starts from $0.
+    fn close_process(&mut self) {
+        self.cost_base = self.exact_cost.unwrap_or(self.cost_base);
+        (self.paid_base, self.plan_base) = (self.paid_base + self.paid_now, self.plan_base + self.plan_now);
+        (self.paid_now, self.plan_now) = (0.0, 0.0);
     }
 
     /// Exact cost so far plus an estimate for tokens used since the last reported result.
@@ -279,7 +307,7 @@ impl Session {
             }
             (Some("harness_escalate"), _) => {
                 // the old process is gone: its reported cost is final
-                self.cost_base = self.exact_cost.unwrap_or(self.cost_base);
+                self.close_process();
                 (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
                 let text = format!("↑ tests failed on the cheap lane: fixing on {} {}", self.model.trim_start_matches("claude-"), self.effort);
                 self.push(Block::Notice { text, error: false });
@@ -327,11 +355,24 @@ impl Session {
                 self.push(Block::Notice { text: format!("mode: {}", self.mode), error: false });
             }
             (Some("harness_info"), _) => self.push(Block::Notice { text: s(&e["text"]), error: false }),
+            (Some("harness_switch"), _) => {
+                // /model: the old process is gone
+                self.close_process();
+                (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
+                self.push(Block::Notice { text: s(&e["text"]), error: false });
+            }
+            (Some("rate_limit_event"), _) => {
+                let w = &e["rate_limit_info"]["unifiedWindows"];
+                if let (Some(h5), Some(d7)) = (w["five_hour"]["utilization"].as_f64(), w["seven_day"]["utilization"].as_f64()) {
+                    self.limits = Some((h5 * 100.0, d7 * 100.0));
+                    self.limits_start.get_or_insert((h5 * 100.0, d7 * 100.0));
+                }
+            }
             (Some("harness_notice"), _) => {
                 self.stopping = false;
                 self.push(Block::Notice { text: s(&e["text"]), error: e["error"].as_bool().unwrap_or(false) });
                 // the process ended: its reported cost is final, the next one starts from $0
-                self.cost_base = self.exact_cost.unwrap_or(self.cost_base);
+                self.close_process();
                 for b in &mut self.blocks {
                     if let Block::Tool(t) = b {
                         if t.result.is_none() {
@@ -391,6 +432,12 @@ impl Session {
                 if let Some(c) = e["total_cost_usd"].as_f64() {
                     self.exact_cost = Some(self.cost_base + c);
                     self.usage_at_result = self.usage;
+                    // tazuna marks the own loop's results; older recordings: a model that is not claude's
+                    if e["tazuna_paid"] == true || !self.model.is_empty() && !self.model.starts_with("claude-") {
+                        self.paid_now = c;
+                    } else {
+                        self.plan_now = c;
+                    }
                 }
                 if let Some(w) = e["modelUsage"].as_object().and_then(|m| m.values().next()).and_then(|m| m["contextWindow"].as_u64()) {
                     self.context_window = w;
@@ -613,6 +660,22 @@ mod tests {
         assert!(tools.iter().all(|t| t.secs().unwrap() >= 0.0));
         assert!(matches!(s.blocks.last(), Some(Block::Done(d)) if d.ok));
         assert!((s.usage.estimate() - s.exact_cost.unwrap()).abs() / s.exact_cost.unwrap() < 0.1, "estimate within 10%");
+    }
+
+    #[test]
+    fn cost_splits_into_money_and_plan_and_limits_show_the_session_share() {
+        use serde_json::json;
+        let mut s = Session::new("", "");
+        s.apply(&json!({"type": "rate_limit_event", "rate_limit_info": {"unifiedWindows": {"five_hour": {"utilization": 0.01}, "seven_day": {"utilization": 0.05}}}}), 0.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 2.0}), 1.0); // claude on the plan
+        s.apply(&json!({"type": "harness_switch", "model": "deepseek-v4.1-flash-1017", "effort": "high", "text": "model: deepseek"}), 2.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.1, "tazuna_paid": true}), 3.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.3, "tazuna_paid": true}), 4.0); // cumulative
+        s.apply(&json!({"type": "rate_limit_event", "rate_limit_info": {"unifiedWindows": {"five_hour": {"utilization": 0.04}, "seven_day": {"utilization": 0.06}}}}), 5.0);
+        let (paid, plan) = s.split_cost();
+        assert!((paid - 0.3).abs() < 1e-9 && (plan - 2.0).abs() < 1e-9, "{paid} {plan}");
+        assert!((s.exact_cost.unwrap() - 2.3).abs() < 1e-9, "the switch closed the first process's cost");
+        assert_eq!((s.limits, s.limits_start), (Some((4.0, 6.0)), Some((1.0, 5.0))));
     }
 
     #[test]

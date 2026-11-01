@@ -32,6 +32,10 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         dot(),
         Span::styled(cost_str(s), st(th.accent)),
     ]);
+    let mut right = right;
+    if let Some((t, color)) = limits_str(s, th) {
+        right.spans.extend([dot(), Span::styled(t, st(color))]);
+    }
     split_row(f, top, Line::from(Span::styled("tazuna", st(th.faint).add_modifier(Modifier::ITALIC))), right, None);
 
     let (lines, last_rows) = transcript(s, v, th, &OPTS, body.width as usize);

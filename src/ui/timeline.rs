@@ -47,6 +47,10 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         seg(format!("CACHE {:.0}%", u.cache_hit() * 100.0), th.text, th.surface),
         seg(cost_str(s), th.bg, th.ok),
     ]);
+    let mut left = left;
+    if let Some((text, color)) = limits_str(s, th) {
+        left.spans.push(seg(text, color, th.surface));
+    }
     let play = if v.paused { "⏸".to_string() } else { format!("▶ {:.1}×", v.speed) };
     let right = Line::from(vec![Span::styled(format!("{play}  "), st(th.dim)), seg(clock_str(v.clock_ms), th.bg, th.accent)]);
     split_row(f, status, left, right, Some(th.bg));

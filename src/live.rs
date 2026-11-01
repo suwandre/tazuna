@@ -550,7 +550,7 @@ impl Live {
             self.session_id = None;
             format!("model: {model} at {effort}: a new conversation (only claude can carry one over to another model)")
         };
-        Ok(self.record(json!({"type": "harness_info", "text": text})))
+        Ok(self.record(json!({"type": "harness_switch", "model": model, "effort": effort, "text": text})))
     }
 
     /// `--escalate MODEL[:EFFORT]`: fix rounds after failed tests run on MODEL (with `--provider`: on claude).
@@ -743,7 +743,7 @@ impl Live {
             }
             match msg {
                 Msg::Line(l) => {
-                    let Ok(e) = serde_json::from_str::<Value>(&l) else { continue };
+                    let Ok(mut e) = serde_json::from_str::<Value>(&l) else { continue };
                     if e["type"] == "system" && e["subtype"] == "init" {
                         self.session_id = e["session_id"].as_str().map(String::from);
                         self.claude_version = e["claude_code_version"].as_str().map(String::from);
@@ -841,6 +841,9 @@ impl Live {
                         run.observe(&e);
                     }
                     let is_result = e["type"] == "result";
+                    if is_result && self.provider.is_some() {
+                        e["tazuna_paid"] = json!(true); // the own loop spends money; claude's cost is on the plan
+                    }
                     if is_result {
                         self.interrupting = None;
                         let total = e["total_cost_usd"].as_f64().unwrap_or(self.proc_cost);

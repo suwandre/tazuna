@@ -396,11 +396,24 @@ fn last_tool_name(s: &Session) -> String {
     s.blocks.iter().rev().find_map(|b| if let Block::Tool(t) = b { Some(short_name(&t.name).to_string()) } else { None }).unwrap_or_default()
 }
 
+/// Money and plan apart: "$0.50 + $7.46 on plan"; "$7.46 on plan" when only claude ran, "$0.50" when only the own loop did.
 pub fn cost_str(s: &Session) -> String {
+    let (paid, plan) = s.split_cost();
     match s.exact_cost {
-        Some(c) => format!("${c:.2}"),
         None => format!("≈${:.2}", s.cost()),
+        Some(_) if paid > 0.0 && plan > 0.0 => format!("${paid:.2} + ${plan:.2} on plan"),
+        Some(_) if paid > 0.0 => format!("${paid:.2}"),
+        Some(c) => format!("${c:.2} on plan"),
     }
+}
+
+/// Claude's plan windows: "5h 3% · 7d 1% (+2%)" (the 5-hour window's rise since this session's first reading), and the
+/// colour to show it in: warning at 70%, error at 85% (where the benchmark guard pauses).
+pub fn limits_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
+    let (h5, d7) = s.limits?;
+    let rise = s.limits_start.map_or(0.0, |(a, _)| h5 - a);
+    let color = match h5.max(d7) { x if x >= 85.0 => th.err, x if x >= 70.0 => th.warn, _ => th.dim };
+    Some((format!("5h {h5:.0}% · 7d {d7:.0}%{}", if rise >= 1.0 { format!(" (+{rise:.0}%)") } else { String::new() }), color))
 }
 
 pub fn clock_str(ms: f64) -> String {
