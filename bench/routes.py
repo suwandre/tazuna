@@ -9,7 +9,7 @@ result goes to ~/.local/share/tazuna/routes.json, which tazuna's model picker re
 SubRouter labels some price lists CNY, but its billing counts those numbers as USD (DeepSeek on LingAI, listed 0.0882
 "CNY" per M output, billed $0.09 per M, 2026-11-01), so they are taken as USD here.
 
-  routes.py refresh [MODEL ...]   default: MODELS; about $0.01-0.10 a provider
+  routes.py refresh [MODEL ...] [--budget USD]   default: MODELS, $0.40; stops spending at the budget
   routes.py show                  routes.json as a table
 """
 import json, re, subprocess, sys, time
@@ -21,7 +21,8 @@ sys.path.insert(0, str(HERE))
 import subrouter as s  # noqa: E402
 
 MODELS = ["deepseek-v4.1-flash-1017", "gpt-6.1-sol", "gpt-6-luna", "gpt-6.1-terra"]
-# The quality gate: the first QUALITY_N long-context questions (canary_lcr.py) through a provider that passed the run
+# The quality gate: about QUALITY_N long-context questions (canary_lcr.py: whole document sets, so most of the input is
+# read from cache; ~42 questions in 7 sets) through a provider that passed the run
 # checks, at the effort AA measured; it passes at AA's LCR score minus QUALITY_MARGIN (40 questions: +-15 points). Without
 # it the first refresh swapped DeepSeek's checked LingAI route for a provider listed at $0 and for RelAI, which caps max
 # and got fewer answers right (2026-11-01). A provider's verdict holds VERIFIED_DAYS.
@@ -77,24 +78,49 @@ def quality(model, slug, routes):
     return seen[slug]["pass"]
 
 
-def refresh(models):
+def spent_fen():
+    """The account's usage counter (fen, ~700 a dollar; sub_guard.sh reads the same)."""
+    import os, urllib.request
+    q = urllib.request.Request("https://subrouter.ai/v1/dashboard/billing/usage", headers={"Authorization": f"Bearer {os.environ['SUBROUTER_MODELS_KEY']}", "User-Agent": "curl/8"})
+    return float(json.load(urllib.request.urlopen(q, timeout=30))["total_usage"])
+
+
+def refresh(models, budget):
+    """Checks providers listed under the route's cheapest verified one (all the way down, four at a time), keeps the
+    verified ones that still pass, and stops spending at `budget` dollars: a quality test whose estimate (40 questions,
+    ~3.8M input tokens at the listed price) would pass it is left for the next refresh."""
     routes = json.loads(OUT.read_text()) if OUT.exists() else {"routes": {}}
     listed = {m["model_name"]: m for m in s.api("/api/user/self/subrouter/models")}
+    start = spent_fen()
+    left = lambda: budget - (spent_fen() - start) / 700
     for model in models:
         if model not in listed:
             print(f"{model}: not on SubRouter")
             continue
-        # the cheapest few, plus every provider that passed the quality gate lately (kept unless it fails the run checks)
-        ok_before = {g for g, v in routes.get("verified", {}).get(model, {}).items() if v["pass"] and time.time() - v["at"] < VERIFIED_DAYS * 86400}
+        now = time.time()
+        verdicts = routes.setdefault("verified", {}).get(model, {})
+        ok_before = {g for g, v in verdicts.items() if v["pass"] and now - v["at"] < VERIFIED_DAYS * 86400}
+        failed = {g for g, v in verdicts.items() if not v["pass"] and now - v["at"] < VERIFIED_DAYS * 86400}
+        recent_fail = {g for g, v in routes.setdefault("checked", {}).setdefault(model, {}).items() if not v["passed"] and now - v["at"] < 7 * 86400}
         ranked = sorted(listed[model]["providers"], key=lambda p: (p["min_input_price"], p["min_output_price"]))
-        provs = (ranked[:CANDIDATES] + [p for p in ranked[CANDIDATES:] if p["provider_slug"] in ok_before])[:CANDIDATES + 2]
-        print(f"{model}: checking {', '.join(p['provider_slug'] for p in provs)}", flush=True)
-        with ThreadPoolExecutor(4) as ex:  # one test key (tazuna-vet-1..4) each
-            checks = list(ex.map(lambda ip: probe(model, ip[1]["provider_slug"], ip[0] + 1), enumerate(provs)))
-        price = {p["provider_slug"]: (round(p["min_input_price"], 5), round(p["min_output_price"], 5)) for p in provs}
-        for c in checks:
-            print(f"  {c['slug']:22} {'pass' if c['passed'] else 'fail'}  cached {c['cached']}%  errors {c['errors']}  served by {c['served']}"
-                  f"  ${price[c['slug']][0]}/${price[c['slug']][1]} per M", flush=True)
+        price = {p["provider_slug"]: (round(p["min_input_price"], 5), round(p["min_output_price"], 5)) for p in ranked}
+        ref = min((price[g][0] for g in ok_before if g in price), default=None)
+        # cheaper than the cheapest verified provider (all of them if none is verified yet), plus the verified ones
+        todo = [p["provider_slug"] for p in ranked if (ref is None or p["min_input_price"] < ref) and p["provider_slug"] not in failed | recent_fail]
+        todo = (todo if ref is not None else todo[:2 * CANDIDATES]) + sorted(g for g in ok_before if g in price)
+        print(f"{model}: {len(todo)} providers to check (${left():.2f} of the budget left)", flush=True)
+        checks = []
+        for i in range(0, len(todo), 4):
+            if left() <= 0.02:
+                print(f"  budget spent: {', '.join(todo[i:])} wait for the next refresh")
+                break
+            with ThreadPoolExecutor(4) as ex:  # one test key (tazuna-vet-1..4) each
+                batch = list(ex.map(lambda ip: probe(model, ip[1], ip[0] + 1), enumerate(todo[i:i + 4])))
+            for c in batch:
+                routes["checked"][model][c["slug"]] = dict(at=int(time.time()), passed=c["passed"], cached=c["cached"], errors=c["errors"])
+                print(f"  {c['slug']:22} {'pass' if c['passed'] else 'fail'}  cached {c['cached']}%  errors {c['errors']}  served by {c['served']}"
+                      f"  ${price[c['slug']][0]}/${price[c['slug']][1]} per M", flush=True)
+            checks += batch
         good = [c["slug"] for c in checks if c["passed"]]
         # billed, not listed: cybersol listed DeepSeek at $0 and billed ~4x LingAI a call (2026-11-01). A provider whose
         # check cost over 1.5x the cheapest passing one's is left out (SubRouter would pick it by its listing)
@@ -104,24 +130,35 @@ def refresh(models):
             for g in [g for g in good if cost.get(g, floor) > 1.5 * floor]:
                 print(f"  {g:22} left out: billed ${cost[g]:.5f} a call, {cost[g] / floor:.1f}x the cheapest passing provider")
             good = [g for g in good if cost.get(g, floor) <= 1.5 * floor]
-        good = [g for g in good if quality(model, g, routes)]
-        if not good:
+        passed = []
+        for g in good:
+            fresh = verdicts.get(g) and now - verdicts[g]["at"] < VERIFIED_DAYS * 86400
+            # ~4M input tokens, about a sixth of them uncached once a set's documents are cached; ~120k output
+            estimate = 0.7 * price[g][0] + 3.3 * price[g][0] * 0.1 + 0.12 * price[g][1]
+            if not fresh and (price[g][0] == 0 or estimate > left()):
+                print(f"  {g:22} quality test left for later ({'no listed price' if price[g][0] == 0 else f'~${estimate:.2f}, ${left():.2f} left'})")
+                continue
+            if quality(model, g, routes):
+                passed.append(g)
+        if not passed:
             print(f"  no provider passed: the route key keeps its providers")
             continue
         name, var = "tazuna-route-" + re.sub(r"[^a-z0-9]+", "-", model).strip("-"), s.env_name(model)
-        kid = s.key(name, model, good, var)
+        kid = s.key(name, model, passed, var)
         k = s.api(f"/api/token/{kid}")
-        shared = any(g.startswith("shared-") for g in good)
+        shared = any(g.startswith("shared-") for g in passed)
         if bool(k.get("include_shared_subscriptions")) != shared:
             s.api("/api/token/", "PUT", {**k, "include_shared_subscriptions": shared})
-        cheapest = min(good, key=lambda g: cost.get(g) or price[g][0])
-        routes["routes"][model] = dict(via="subrouter", url="https://subrouter.ai/v1", key_env=var, providers=good,
-                                       price=list(price[cheapest]), cached=max(c["cached"] for c in checks if c["passed"]),
+        cheapest = min(passed, key=lambda g: cost.get(g) or price[g][0])
+        routes["routes"][model] = dict(via="subrouter", url="https://subrouter.ai/v1", key_env=var, providers=passed,
+                                       price=list(price[cheapest]), cached=max(c["cached"] for c in checks if c["slug"] in passed),
                                        efforts=EFFORTS.get(model, ["low", "medium", "high", "xhigh", "max"]), vetted_at=int(time.time()))
-        print(f"  route {name} ({var}): {good}", flush=True)
+        print(f"  route {name} ({var}): {passed}", flush=True)
+        OUT.write_text(json.dumps(routes, indent=1, sort_keys=True) + "\n")
     routes["updated"] = int(time.time())
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(routes, indent=1, sort_keys=True) + "\n")
+    print(f"spent ${(spent_fen() - start) / 700:.2f} of ${budget:.2f}")
     show()
 
 
@@ -136,7 +173,9 @@ def show():
 if __name__ == "__main__":
     a = sys.argv[1:]
     if a[:1] == ["refresh"]:
-        refresh(a[1:] or MODELS)
+        budget = float(a[a.index("--budget") + 1]) if "--budget" in a else 0.40
+        names = [x for x in a[1:] if not x.startswith("--") and x != str(a[a.index("--budget") + 1] if "--budget" in a else "")]
+        refresh(names or MODELS, budget)
     elif a[:1] == ["show"]:
         show()
     else:

@@ -141,8 +141,20 @@ def run(model, key_env, effort, n=100):
             f.write(json.dumps(row) + "\n")
         return row
 
+    # a document set's questions one after another (eight sets at once): AA's template puts the documents first, so the
+    # second question on a set reads them from the provider's cache (~10% of the input price). In question order, eight
+    # at a time, the cache barely helped (38% cached, 2026-11-01). N questions: whole sets, largest first, until N.
+    sets = defaultdict(list)
+    for q in questions():
+        sets[(q["document_category"], q["document_set_id"])].append(q)
+    chosen, count = [], 0
+    for g in sorted(sets.values(), key=len, reverse=True):
+        if count >= n:
+            break
+        chosen.append(g)
+        count += len(g)
     with ThreadPoolExecutor(8) as ex:
-        done = list(ex.map(one, questions()[:n]))
+        done = [r for rs in ex.map(lambda g: [one(q) for q in g], chosen) for r in rs]
     show(done)
     return done
 
