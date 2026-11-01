@@ -38,8 +38,10 @@ pub struct Choice {
     pub note: String,
     pub stale: bool,
     pub state: State,
-    /// "bench 6.8 (308) · AA 32" where known.
-    pub scores: String,
+    /// Our bench's judge and its number of runs ("6.8 (308)"), Artificial Analysis' intelligence index ("32"); empty where
+    /// unknown.
+    pub bench: String,
+    pub aa: String,
 }
 
 /// Artificial Analysis' slug for a model name: lower case, dots as dashes.
@@ -47,15 +49,18 @@ fn slug(model: &str) -> String {
     model.to_lowercase().replace('.', "-")
 }
 
-fn scores(file: &Value, model: &str) -> String {
-    let mut parts = vec![];
-    if let Some(j) = file["bench"][model]["judge"].as_f64() {
-        parts.push(format!("bench {j:.1} ({})", file["bench"][model]["runs"].as_u64().unwrap_or(0)));
+fn scores(file: &Value, model: &str) -> (String, String) {
+    let bench = file["bench"][model]["judge"].as_f64().map(|j| format!("{j:.1} ({})", file["bench"][model]["runs"].as_u64().unwrap_or(0)));
+    (bench.unwrap_or_default(), file["aa"][slug(model)].as_f64().map(|a| format!("{a:.0}")).unwrap_or_default())
+}
+
+/// A price per M tokens in three significant digits, without the dollar sign: 0.01296 is 0.013, 1.17647 is 1.18.
+fn per_m(x: f64) -> String {
+    if x <= 0.0 {
+        return "0".into();
     }
-    if let Some(a) = file["aa"][slug(model)].as_f64() {
-        parts.push(format!("AA {a:.0}"));
-    }
-    parts.join(" · ")
+    let s = format!("{x:.*}", (2 - x.log10().floor() as i32).max(0) as usize);
+    if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
 }
 
 /// Claude's models, then the checked routes, then the unchecked SubRouter models that have a public score; `trusted` says
@@ -72,7 +77,8 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
         note: String::new(),
         stale: false,
         state: State::Ready,
-        scores: scores(&file, m),
+        bench: scores(&file, m).0,
+        aa: scores(&file, m).1,
     }).collect();
     let mut rs: Vec<(&String, &Value)> = file["routes"].as_object().map(|o| o.iter().collect()).unwrap_or_default();
     rs.sort_by_key(|(m, _)| m.to_string());
@@ -100,7 +106,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             route: Some((url.to_string(), var.to_string(), format!("{input},{},{output}", (input / 10.0 * 1e6).round() / 1e6))),
             place: format!("SubRouter · {}", providers.join(", ")),
             efforts,
-            price: format!("${input} / ${output}"),
+            price: format!("{} / {}", per_m(input), per_m(output)),
             note: format!("cached {}% · checked {}", r["cached"].as_u64().unwrap_or(0), match days {
                 0 => "today".to_string(),
                 1 => "yesterday".to_string(),
@@ -108,7 +114,8 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             }),
             stale: days > STALE_DAYS,
             state,
-            scores: scores(&file, r["model"].as_str().unwrap_or(name)),
+            bench: scores(&file, r["model"].as_str().unwrap_or(name)).0,
+            aa: scores(&file, r["model"].as_str().unwrap_or(name)).1,
         });
     }
     // every other SubRouter model with a public score (the list also holds image and video models), best first
@@ -126,11 +133,12 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             route: Some(("https://subrouter.ai/v1".into(), key.into(), format!("{input},{},{output}", (input / 10.0 * 1e6).round() / 1e6))),
             place: format!("SubRouter · {} providers", c["providers"].as_u64().unwrap_or(0)),
             efforts: LEVELS.iter().map(|e| e.to_string()).collect(),
-            price: format!("from ${input} / ${output}"),
-            note: "unchecked: SubRouter picks the provider".into(),
+            price: format!("{} / {}", per_m(input), per_m(output)),
+            note: "unchecked: SubRouter picks the provider (the price is the cheapest one's)".into(),
             stale: false,
             state: if std::env::var_os(key).is_none() { State::NoKey } else if !trusted("subrouter.ai") { State::Untrusted } else { State::Unchecked },
-            scores: scores(&file, model),
+            bench: scores(&file, model).0,
+            aa: scores(&file, model).1,
         });
     }
     out
@@ -170,8 +178,9 @@ mod tests {
         assert_eq!(c.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
                    ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.1", "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017 · fast", "gpt-6.1-sol", "glm-5.3"],
                    "routed models once; unchecked ones only with a public score (no video model)");
-        assert_eq!(c[6].scores, "bench 6.6 (51) · AA 54");
-        assert_eq!((c[7].route.as_ref().unwrap().1.as_str(), c[7].note.as_str()), ("SUBROUTER_API_KEY", "unchecked: SubRouter picks the provider"));
+        assert_eq!((c[6].bench.as_str(), c[6].aa.as_str(), c[6].price.as_str()), ("6.6 (51)", "54", "0.0387 / 0.194"));
+        assert_eq!((c[7].route.as_ref().unwrap().1.as_str(), c[7].price.as_str()), ("SUBROUTER_API_KEY", "0.1 / 0.4"));
+        assert_eq!([0.01296, 0.02206, 1.17647, 0.003, 12.5, 120.0].map(per_m), ["0.013", "0.0221", "1.18", "0.003", "12.5", "120"]);
         let c: Vec<Choice> = c.into_iter().filter(|c| c.label != "glm-5.3").collect();
         assert_eq!((c[5].model.as_str(), c[5].place.as_str()), ("deepseek-v4.1-flash-1017", "SubRouter · lingai"));
         let c: Vec<Choice> = c.into_iter().filter(|c| !c.label.ends_with("fast")).collect();

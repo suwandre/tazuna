@@ -996,7 +996,7 @@ fn run_live(
             rows: shown(cs, filter).into_iter().map(|i| {
                 let c = &cs[i];
                 ui::ModelRow { label: c.label.clone(), place: c.place.clone(), effort: c.efforts.get(eff[i]).cloned().unwrap_or_else(|| "default".into()),
-                    price: c.price.clone(), note: c.note.clone(), scores: c.scores.clone(),
+                    price: c.price.clone(), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
                     state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3 },
                     stale: c.stale, current: c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
             }).collect(),

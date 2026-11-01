@@ -16,12 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
-## 0.1.16 (2026-11-01): `/model` rows fit the screen; the selected row's details below the list
+## 0.1.16 (2026-11-01): `/model` fits any width; the selected row's details below the list
 
-The picker's rows ran past a 95-column panel and cut every price off (the scores column was one character too narrow and
-the provider list and note came first). Rows now hold model, effort, scores and price in columns as wide as their longest
-entry; the selected row's provider, price, cache share, age and the reason it cannot be picked show below the list.
-"per M" moved to the legend. Display only.
+The picker's rows ran past the panel and cut every price off (seen at 95 and 70 columns). Now a table with a header:
+model, effort, price ($ per M in / out, three significant digits), bench (runs), AA. The columns fit the panel: the label
+gives way first (cut in the middle, so "· fast" stays), then the scores go; the price always shows. The selected row in
+full (price, scores, providers, cache share and age, or why it cannot be picked) wraps below the list. Tested at 50, 78
+and 120 columns. Display only.
 
 ## 0.1.15 (2026-11-01): runs on Windows (cmd, PowerShell)
 
