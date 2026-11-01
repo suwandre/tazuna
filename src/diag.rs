@@ -132,8 +132,11 @@ mod tests {
     fn reports_only_new_errors_once() {
         let repo = std::env::temp_dir().join(format!("tazuna-diag-test-{}", std::process::id()));
         std::fs::create_dir_all(&repo).unwrap();
-        // a fake type check: prints a known error, plus one per line of new.ts
-        std::fs::write(repo.join("package.json"), r#"{"scripts": {"typecheck": "echo 'old.ts(1,1): error TS1: known'; [ -f new.ts ] && sed 's/^/new.ts(1,1): error TS2: /' new.ts; exit 2"}}"#).unwrap();
+        // a fake type check: prints a known error, plus one per line of new.ts (node: npm runs scripts in cmd on Windows)
+        std::fs::write(repo.join("package.json"), r#"{"scripts": {"typecheck": "node check.js"}}"#).unwrap();
+        std::fs::write(repo.join("check.js"), "const fs = require('fs');\nconsole.log('old.ts(1,1): error TS1: known');\n\
+            if (fs.existsSync('new.ts')) for (const l of fs.readFileSync('new.ts', 'utf8').split('\\n').filter(Boolean)) console.log('new.ts(1,1): error TS2: ' + l);\n\
+            process.exit(2);\n").unwrap();
         sh(&repo, "git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm base");
         let dir = prepare(&repo).unwrap();
         for _ in 0..100 {
