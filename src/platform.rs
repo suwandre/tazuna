@@ -3,6 +3,7 @@
 //! a hook. Windows runs commands in Git Bash, as Claude Code itself does there, so the agent's commands, the test check
 //! and `!` read the same on every platform.
 
+use std::ffi::OsStr;
 use std::fs::{File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -13,48 +14,61 @@ pub fn home() -> Option<PathBuf> {
     std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).filter(|h| !h.is_empty()).map(PathBuf::from)
 }
 
-/// bash. On Windows Git Bash: TAZUNA_BASH, CLAUDE_CODE_GIT_BASH_PATH (Claude Code's own setting), Git's usual install
-/// folders; never System32's bash.exe, which starts WSL instead.
-pub fn bash() -> Command {
-    #[cfg(windows)]
-    {
-        let found = [std::env::var_os("TAZUNA_BASH"), std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH")]
-            .into_iter()
-            .flatten()
-            .map(PathBuf::from)
-            .chain(["C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files (x86)\\Git\\bin\\bash.exe"].map(PathBuf::from))
-            .find(|p| p.is_file());
-        let mut c = Command::new(found.unwrap_or_else(|| PathBuf::from("bash.exe")));
-        c.env("CHERE_INVOKING", "1"); // a login shell (-l) stays in the folder it was started in
-        // arguments reach the command as given (MSYS expands *.go in a program's arguments by default)
-        c.env("MSYS", format!("{} noglob", std::env::var("MSYS").unwrap_or_default()).trim_start());
-        c
-    }
-    #[cfg(not(windows))]
-    Command::new("bash")
+/// Git Bash: TAZUNA_BASH, CLAUDE_CODE_GIT_BASH_PATH (Claude Code's own setting), Git's usual install folders; never
+/// System32's bash.exe, which starts WSL instead. The script and its arguments go in an environment variable: on the
+/// command line MSYS would re-parse quotes and backslashes its own way and expand wildcards (a failing CI run showed both).
+/// The fixed command line turns off splitting and wildcards just long enough to hand the script to eval.
+#[cfg(windows)]
+fn git_bash(login: bool, script: &str, args: &[&OsStr]) -> Command {
+    let found = [std::env::var_os("TAZUNA_BASH"), std::env::var_os("CLAUDE_CODE_GIT_BASH_PATH")]
+        .into_iter()
+        .flatten()
+        .map(PathBuf::from)
+        .chain(["C:\\Program Files\\Git\\bin\\bash.exe", "C:\\Program Files (x86)\\Git\\bin\\bash.exe"].map(PathBuf::from))
+        .find(|p| p.is_file());
+    let mut c = Command::new(found.unwrap_or_else(|| PathBuf::from("bash.exe")));
+    let words: Vec<String> = args.iter().map(|a| format!("'{}'", a.to_string_lossy().replace('\'', r"'\''"))).collect();
+    c.env("CHERE_INVOKING", "1") // a login shell stays in the folder it was started in
+        .env("TAZUNA_SH", format!("set +f; unset IFS TAZUNA_SH; set -- {}\n{script}", words.join(" ")))
+        .args([if login { "-lc" } else { "-c" }, "set -f;IFS=;eval $TAZUNA_SH"]);
+    c
 }
 
 /// A command line through the shell: `sh -c` on Unix, Git Bash on Windows. `args` become $1, $2 ... (never part of the
 /// command line itself, so a path with spaces or quotes stays one word).
-pub fn shell(cmd: &str, args: &[&std::ffi::OsStr]) -> Command {
+pub fn shell(cmd: &str, args: &[&OsStr]) -> Command {
     #[cfg(windows)]
-    let mut c = bash();
+    return git_bash(false, cmd, args);
     #[cfg(not(windows))]
-    let mut c = Command::new("sh");
-    c.arg("-c").arg(cmd).arg("sh").args(args);
-    c
+    {
+        let mut c = Command::new("sh");
+        c.arg("-c").arg(cmd).arg("sh").args(args);
+        c
+    }
+}
+
+/// `bash -lc`: the agent's commands, in a login shell like a terminal's.
+pub fn login_bash(cmd: &str) -> Command {
+    #[cfg(windows)]
+    return git_bash(true, cmd, &[]);
+    #[cfg(not(windows))]
+    {
+        let mut c = Command::new("bash");
+        c.args(["-lc", cmd]);
+        c
+    }
 }
 
 /// grep, find and the like with their GNU flags: on Windows Git's, through Git Bash (Windows has a `find` of its own).
-pub fn unix_tool(name: &str) -> Command {
+pub fn tool(name: &str, args: &[&OsStr]) -> Command {
     #[cfg(windows)]
+    return git_bash(false, &format!("exec /usr/bin/{name} \"$@\""), args);
+    #[cfg(not(windows))]
     {
-        let mut c = bash();
-        c.args(["-c", "exec /usr/bin/\"$0\" \"$@\"", name]);
+        let mut c = Command::new(name);
+        c.args(args);
         c
     }
-    #[cfg(not(windows))]
-    Command::new(name)
 }
 
 /// A path as tools print it: on Windows without the \\?\ prefix canonicalize adds, with forward slashes (Git's tools
@@ -188,8 +202,8 @@ mod tests {
 
     #[test]
     fn shell_args_stay_one_word_and_quoting_survives() {
-        let out = shell("printf '%s|' \"$1\" \"$2\"", &["a b".as_ref(), "it's".as_ref()]).output().unwrap();
-        assert_eq!(String::from_utf8_lossy(&out.stdout), "a b|it's|");
+        let out = shell("printf '%s|' \"$1\" \"$2\" *.none", &["a b".as_ref(), "it's \"q\" C:\\x".as_ref()]).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "a b|it's \"q\" C:\\x|*.none|");
         let q = sh_quote(Path::new("/tmp/it's here/tazuna"));
         let out = shell(&format!("printf '%s' {q}"), &[]).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), "/tmp/it's here/tazuna");

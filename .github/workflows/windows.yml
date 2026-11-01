@@ -12,12 +12,15 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          sparse-checkout: src
+          sparse-checkout: |
+            src
+            recordings
       - uses: actions/upload-artifact@v7
         with:
           name: source
           path: |
             src
+            recordings
             Cargo.toml
             Cargo.lock
           retention-days: 1

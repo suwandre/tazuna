@@ -237,7 +237,7 @@ impl Server {
         // Git Bash's $PWD is /c/...; `pwd -W` gives the C:/... path Windows programs read
         let pwd = if cfg!(windows) { "$(pwd -W)" } else { "$PWD" };
         let script = format!("{command}\n__rc=$?; printf '\\n__LEAN_CWD__%s' \"{pwd}\" >&2; exit $__rc");
-        let spawned = crate::platform::own_group(crate::platform::bash().args(["-lc", &script]))
+        let spawned = crate::platform::own_group(&mut crate::platform::login_bash(&script))
             .current_dir(&self.cwd)
             // commands the agent runs must not see the auth token claude was started with
             .env_remove("CLAUDE_CODE_OAUTH_TOKEN")

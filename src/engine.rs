@@ -889,24 +889,25 @@ fn explore_tool(name: &str, input: &Value, cwd: &std::path::Path) -> (String, bo
     #[cfg(windows)]
     let path = std::path::PathBuf::from(crate::platform::plain(&path));
     let glob = input["glob"].as_str().filter(|g| !g.is_empty());
-    let (mut cmd, max) = if name == "search" {
-        let mut c = crate::platform::unix_tool("grep");
-        c.args(["-rnIE", "--exclude-dir=.git", "--exclude-dir=node_modules", "--exclude-dir=vendor"]);
+    let mut args: Vec<std::ffi::OsString> = vec![];
+    let (tool, max) = if name == "search" {
+        args.extend(["-rnIE", "--exclude-dir=.git", "--exclude-dir=node_modules", "--exclude-dir=vendor"].map(Into::into));
         if let Some(g) = glob {
-            c.arg(format!("--include={g}"));
+            args.push(format!("--include={g}").into());
         }
-        c.arg("--").arg(input["pattern"].as_str().unwrap_or_default()).arg(&path);
-        (c, 200)
+        args.extend(["--".into(), input["pattern"].as_str().unwrap_or_default().into(), path.into_os_string()]);
+        ("grep", 200)
     } else {
         let depth = input["depth"].as_u64().unwrap_or(3).clamp(1, 6).to_string();
-        let mut c = crate::platform::unix_tool("find");
-        c.arg(&path).args(["-maxdepth", &depth, "-not", "-path", "*/.git/*", "-not", "-name", ".git"]);
+        args.push(path.into_os_string());
+        args.extend(["-maxdepth", &depth, "-not", "-path", "*/.git/*", "-not", "-name", ".git"].map(Into::into));
         if let Some(g) = glob {
-            c.args(["-name", g]);
+            args.extend(["-name", g].map(Into::into));
         }
-        (c, 500)
+        ("find", 500)
     };
-    let out = match cmd.current_dir(cwd).output() {
+    let args: Vec<&std::ffi::OsStr> = args.iter().map(|a| a.as_os_str()).collect();
+    let out = match crate::platform::tool(tool, &args).current_dir(cwd).output() {
         Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
         Err(e) => return (format!("{name} failed: {e}"), true),
     };
