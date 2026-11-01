@@ -479,10 +479,22 @@ fn last_tool_name(s: &Session) -> String {
 pub fn cost_str(s: &Session) -> String {
     let (paid, plan) = s.split_cost();
     match s.exact_cost {
-        None => format!("≈${:.2}", s.cost()),
-        Some(_) if paid > 0.0 && plan > 0.0 => format!("${paid:.2} + ${plan:.2} on plan"),
-        Some(_) if paid > 0.0 => format!("${paid:.2}"),
-        Some(c) => format!("${c:.2} on plan"),
+        None => format!("≈{}", usd(s.cost())),
+        Some(_) if paid > 0.0 && plan > 0.0 => format!("{} + {} on plan", usd(paid), usd(plan)),
+        Some(_) if paid > 0.0 => usd(paid),
+        Some(c) => format!("{} on plan", usd(c)),
+    }
+}
+
+/// Dollars in cents, and below a cent in two significant digits: a cheap model's whole task ($0.00019 on DeepSeek,
+/// 2026-11-01) read as $0.00.
+pub fn usd(x: f64) -> String {
+    if x <= 0.0 {
+        "$0".into()
+    } else if x < 0.01 {
+        format!("${x:.*}", (1 - x.log10().floor() as i32) as usize)
+    } else {
+        format!("${x:.2}")
     }
 }
 
@@ -682,7 +694,7 @@ fn turn_divider(s: &Session, th: &Theme, turn: u64) -> Line<'static> {
     let mut spans = vec![Span::raw("      "), Span::styled("├─ ", st(th.border)), Span::styled(format!("turn {turn}"), st(th.dim).add_modifier(Modifier::BOLD))];
     if let Some(u) = s.turn_usage.get(turn as usize - 1).filter(|u| u.total_in() > 0) {
         spans.push(Span::styled(
-            format!("  ↑ {}  ↓ {}  ≈${:.3}", human(u.total_in()), human(u.output), u.estimate()),
+            format!("  ↑ {}  ↓ {}  ≈{}", human(u.total_in()), human(u.output), usd(u.estimate())),
             st(th.faint),
         ));
     }
@@ -754,7 +766,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Pr
                     Line::from(vec![
                         Span::styled(format!("{glyph} {word}"), st(color).add_modifier(Modifier::BOLD)),
                         Span::styled(
-                            format!("   {}m {:02}s · {} turn{} · ${:.2}", d.secs as u64 / 60, d.secs as u64 % 60, d.turns, if d.turns == 1 { "" } else { "s" }, d.cost),
+                            format!("   {}m {:02}s · {} turn{} · {}", d.secs as u64 / 60, d.secs as u64 % 60, d.turns, if d.turns == 1 { "" } else { "s" }, usd(d.cost)),
                             st(th.text),
                         ),
                     ]),
@@ -1049,7 +1061,22 @@ pub fn wrap(mut line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Ve
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · ctrl-x stash · /rewind · /vim · ↑↓ history · esc stop · drag to copy · ctrl-t design · ctrl-o expand";
+pub const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · ctrl-x stash · /model · /rewind · /loop · /vim · ↑↓ history · esc stop · drag to copy · ctrl-t design · ctrl-o expand";
+
+/// As many whole key hints as fit in `room` columns, most used first; "/keys all" ends them when some are left out.
+fn fitted_keys(keys: &str, room: usize) -> String {
+    let all: Vec<&str> = keys.split(" · ").collect();
+    let mut shown: Vec<&str> = vec![];
+    for (i, k) in all.iter().enumerate() {
+        let more = if i + 1 < all.len() { " · /keys all".width() } else { 0 };
+        if shown.iter().map(|s| s.width() + 3).sum::<usize>() + k.width() + more > room {
+            shown.push("/keys all");
+            return shown.join(" · ");
+        }
+        shown.push(k);
+    }
+    shown.join(" · ")
+}
 
 /// The composer row: typed text with a cursor in live mode, a placeholder and key hints otherwise.
 pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Line<'static> {
@@ -1077,7 +1104,9 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
         if v.bg_running > 0 {
             spans.push(Span::styled(format!("  [{} background · ctrl-b]", v.bg_running), st(th.accent)));
         }
-        spans.push(Span::styled(format!("   {}", if v.live { LIVE_KEYS } else { REPLAY_KEYS }), st(th.faint)));
+        let used: usize = spans.iter().map(|s| s.content.width()).sum::<usize>() + 3;
+        let keys = if v.live { fitted_keys(LIVE_KEYS, (width as usize).saturating_sub(used)) } else { REPLAY_KEYS.to_string() };
+        spans.push(Span::styled(format!("   {keys}"), st(th.faint)));
     }
     Line::from(spans)
 }
@@ -1251,6 +1280,15 @@ mod tests {
             p.selected = i;
             assert!(draw(&p, 78).concat().contains(want), "row {i}: {want}");
         }
+    }
+
+    #[test]
+    fn key_hints_fit_whole_and_point_to_the_rest() {
+        assert_eq!(fitted_keys("a · bb · cc", 100), "a · bb · cc");
+        assert_eq!(fitted_keys("a · bb · cc", 16), "a · /keys all", "never a hint cut in half");
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "" };
+        let line: String = composer_line(&v, Design::Cockpit.theme(), "›", "Message tazuna…", 90).spans.iter().map(|s| s.content.to_string()).collect();
+        assert!(line.width() <= 90 && line.ends_with("/keys all"), "{line}");
     }
 
     #[test]

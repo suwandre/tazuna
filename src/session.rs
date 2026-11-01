@@ -1,6 +1,6 @@
 //! Session state built from Claude Code `stream-json` events.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 pub enum Block {
     Prompt(String),
@@ -152,6 +152,8 @@ pub struct Session {
     pub todos: Vec<(String, String)>,
     /// The last thing the user sent, to tell what a command result belongs to.
     last_prompt: String,
+    /// The current model message arrived as content blocks (claude streams them; the own loop sends whole messages).
+    streamed: bool,
 }
 
 impl Session {
@@ -186,9 +188,10 @@ impl Session {
             results: 0,
             profile: String::new(),
             mode: "auto".into(),
-            commands: vec!["bad".into(), "good".into(), "loop".into(), "model".into()],
+            commands: vec!["bad".into(), "good".into(), "keys".into(), "loop".into(), "model".into()],
             todos: Vec::new(),
             last_prompt: String::new(),
+            streamed: false,
         }
     }
 
@@ -243,7 +246,7 @@ impl Session {
                 self.model = s(&e["model"]);
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
-                cmds.extend(["good".to_string(), "bad".to_string(), "loop".to_string(), "model".to_string()]);
+                cmds.extend(["good".to_string(), "bad".to_string(), "keys".to_string(), "loop".to_string(), "model".to_string()]);
                 cmds.sort();
                 cmds.dedup();
                 self.commands = cmds;
@@ -384,7 +387,17 @@ impl Session {
             }
             (Some("stream_event"), _) => self.stream(&e["event"]),
             (Some("assistant"), _) => {
-                // Full message: tool inputs arrive complete here (partial JSON is not worth rendering).
+                // Full message: tool inputs arrive complete here (partial JSON is not worth rendering). The own loop
+                // streams no content blocks, only the message: its text and tool calls are drawn from here.
+                if !self.streamed {
+                    for c in e["message"]["content"].as_array().into_iter().flatten() {
+                        match c["type"].as_str() {
+                            Some("text") if !s(&c["text"]).trim().is_empty() => self.push(Block::Text { text: s(&c["text"]), live: false }),
+                            Some("tool_use") => self.stream(&json!({"type": "content_block_start", "content_block": c})),
+                            _ => {}
+                        }
+                    }
+                }
                 for c in e["message"]["content"].as_array().into_iter().flatten() {
                     if c["type"] == "tool_use" && c["name"] == "TodoWrite" {
                         self.todos = c["input"]["todos"].as_array().into_iter().flatten().map(|t| (s(&t["status"]), s(&t["content"]))).collect();
@@ -469,10 +482,12 @@ impl Session {
     fn stream(&mut self, ev: &Value) {
         match ev["type"].as_str() {
             Some("message_start") => {
+                self.streamed = false;
                 self.turns += 1;
                 self.turn_usage.push(Usage::default());
             }
             Some("content_block_start") => {
+                self.streamed = true;
                 let b = &ev["content_block"];
                 match b["type"].as_str() {
                     Some("text") => {
@@ -609,7 +624,6 @@ mod tests {
 
     #[test]
     fn shows_the_own_loops_provider_events() {
-        use serde_json::json;
         let mut s = Session::new("", "medium");
         s.apply(&json!({"type": "system", "subtype": "conversation_moved", "message": "responses_source_unavailable"}), 1.0);
         let Block::Notice { text, .. } = s.blocks.last().unwrap() else { panic!() };
@@ -617,6 +631,24 @@ mod tests {
         let n = s.blocks.len();
         s.apply(&json!({"type": "system", "subtype": "hook_response", "message": "x"}), 2.0);
         assert_eq!(s.blocks.len(), n, "other system events stay out of the transcript");
+        // the own loop sends whole messages, no content blocks: its text and tool calls are drawn from them, once
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 3.0);
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "I'll run the tests."},
+            {"type": "tool_use", "id": "c1", "name": "bash", "input": {"command": "cargo test"}}]}}), 4.0);
+        s.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "content": "94 passed"}]}}), 5.0);
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 6.0);
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "All 94 pass."}]}}), 7.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "result": "All 94 pass.", "num_turns": 2, "total_cost_usd": 0.000187,
+            "duration_ms": 33500, "tazuna_paid": true}), 8.0);
+        let shown: Vec<String> = s.blocks[n..].iter().map(|b| match b {
+            Block::Text { text, .. } => text.clone(),
+            Block::Tool(t) => format!("{} {} -> {}", t.name, t.input["command"].as_str().unwrap_or(""), t.result.as_deref().unwrap_or("")),
+            Block::Done(d) => format!("done {:.1}s", d.secs),
+            _ => "?".into(),
+        }).collect();
+        assert_eq!(shown, ["I'll run the tests.", "bash cargo test -> 94 passed", "All 94 pass.", "done 33.5s"]);
+        assert_eq!(crate::ui::cost_str(&s), "$0.00019");
+        assert_eq!([0.0, 0.004321, 0.0123, 1.5].map(crate::ui::usd), ["$0", "$0.0043", "$0.01", "$1.50"]);
     }
 
     #[test]

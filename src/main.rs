@@ -1360,6 +1360,11 @@ fn run_live(
                     pick = Some(open_picker(live)?);
                     continue;
                 }
+                if text == "/keys" {
+                    let all = ui::LIVE_KEYS.split(" · ").collect::<Vec<_>>().join("\n");
+                    s.apply(&json!({"type": "harness_info", "text": format!("keys:\n{all}")}), live.elapsed_ms());
+                    continue;
+                }
                 if text == "/rewind" {
                     if live.checkpoints.is_empty() {
                         s.apply(&json!({"type": "harness_info", "text": "nothing to rewind yet: no message sent in this conversation"}), live.elapsed_ms());

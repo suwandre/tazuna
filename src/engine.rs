@@ -491,7 +491,7 @@ impl Loop {
         let (mut green, mut told) = (None, false);
         let end = |s: &mut Self, subtype: &str, text: String, turns: usize, usage: [u64; 3]| {
             (s.out)(&json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "result": text,
-                "num_turns": turns, "total_cost_usd": s.cost, "session_id": s.session,
+                "num_turns": turns, "total_cost_usd": s.cost, "session_id": s.session, "duration_ms": began.elapsed().as_millis() as u64,
                 "usage": {"input_tokens": usage[0], "cache_creation_input_tokens": 0, "cache_read_input_tokens": usage[1], "output_tokens": usage[2]}}));
         };
         loop {

@@ -108,7 +108,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let per_turn = if s.turns > 0 { s.cost() / s.turns as f64 } else { 0.0 };
     f.render_widget(
         Paragraph::new(vec![
-            Line::from(vec![Span::styled(cost_str(s), st(th.ok).add_modifier(Modifier::BOLD)), Span::styled(format!("   ${per_turn:.3}/turn"), st(th.dim))]),
+            Line::from(vec![Span::styled(cost_str(s), st(th.ok).add_modifier(Modifier::BOLD)), Span::styled(format!("   {}/turn", usd(per_turn)), st(th.dim))]),
             match limits_str(s, th) {
                 Some((t, color)) => Line::from(Span::styled(format!("plan {t}"), st(color))),
                 None => Line::from(Span::styled(if s.exact_cost.is_some() { "exact (reported)" } else { "estimate (list prices)" }, st(th.faint))),

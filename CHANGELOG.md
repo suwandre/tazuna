@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.19 (2026-11-01): the own loop's replies and tool calls on screen; costs under a cent; key hints that fit
+
+After `/model` switched a live session to DeepSeek, a message ran four turns (it ran `cargo test` and answered) and the
+screen showed only "Done 0m 00s · 4 turns · $0.00": the transcript is drawn from claude's streamed content blocks, and the
+own loop sends whole messages. Their text and tool calls are now drawn from the message when nothing was streamed. The own
+loop's result now carries its duration, and costs under a cent show two significant digits ($0.00019, not $0.00). The key
+hints under the composer were one line cut at the screen's edge ("tab comp"); now as many whole hints as fit, then
+"/keys all", and `/keys` lists every key. Display only.
+
 ## 0.1.18 (2026-11-01): pin one checked provider in `/model` (tab); the picker as wide as its table
 
 A route's key lets SubRouter pick among the providers that passed the route check, call by call. Now each of those
