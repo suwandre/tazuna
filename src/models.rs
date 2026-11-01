@@ -1,6 +1,6 @@
 //! The model picker's list (`/model`): Claude's models through the `claude` CLI, and the own loop's routes that
-//! bench/routes.py checked (~/.local/share/tazuna/routes.json: providers, price, cache share, the effort levels the model
-//! really has, when checked), then every other SubRouter model with a public score, unchecked (SubRouter picks its
+//! bench/routes.py checked (~/.local/share/tazuna/routes.json: providers, price, cache share, the effort levels that differ
+//! (every level can be picked), when checked), then every other SubRouter model with a public score, unchecked (SubRouter picks its
 //! provider). Each row carries our bench's judge where we have runs and Artificial Analysis' intelligence index. A route is
 //! ready when its key is in the environment and its host on the trusted list; otherwise it is listed, greyed out or
 //! marked, with the reason.
@@ -91,7 +91,13 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
         let host = url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or_default();
         let days = now.saturating_sub(r["vetted_at"].as_u64().unwrap_or(0)) / 86_400;
         let providers: Vec<&str> = r["providers"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-        let efforts: Vec<String> = r["efforts"].as_array().into_iter().flatten().filter_map(|e| e.as_str().map(String::from)).collect();
+        // every level can be picked (a level the model lacks acts like one it has); the ones that differ are named
+        let distinct: Vec<&str> = r["efforts"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+        let levels = match distinct.len() {
+            0 => " · effort is ignored".to_string(),
+            n if n < LEVELS.len() => format!(" · only {} and {} differ", distinct[..n - 1].join(", "), distinct[n - 1]),
+            _ => String::new(),
+        };
         let state = if std::env::var_os(var).is_none() {
             State::NoKey
         } else if !trusted(host) {
@@ -105,9 +111,9 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             // the cached-input price is not in the provider list: a tenth of input, the usual discount
             route: Some((url.to_string(), var.to_string(), format!("{input},{},{output}", (input / 10.0 * 1e6).round() / 1e6))),
             place: format!("SubRouter · {}", providers.join(", ")),
-            efforts,
+            efforts: LEVELS.iter().map(|e| e.to_string()).collect(),
             price: format!("{} / {}", per_m(input), per_m(output)),
-            note: format!("cached {}% · checked {}", r["cached"].as_u64().unwrap_or(0), match days {
+            note: format!("cached {}% · checked {}{levels}", r["cached"].as_u64().unwrap_or(0), match days {
                 0 => "today".to_string(),
                 1 => "yesterday".to_string(),
                 d => format!("{d} days ago"),
@@ -187,7 +193,8 @@ mod tests {
         assert!(c[0].route.is_none() && c[0].state == State::Ready);
         assert_eq!(c[4].state, State::NoKey, "no key in the environment");
         assert_eq!((c[5].state, c[5].stale), (State::Ready, true), "key set (PATH stands in), host trusted, checked 9 days ago");
-        assert_eq!(c[4].efforts, ["high", "max"]);
+        assert_eq!((c[4].efforts.len(), c[4].note.ends_with("· only high and max differ")), (5, true), "every level, the distinct ones named");
+        assert!(c[5].note.ends_with("· only low, high, xhigh and max differ"), "{}", c[5].note);
         assert_eq!(c[5].route.as_ref().unwrap().2, "0.0387,0.00387,0.1935");
         assert_eq!(catalog(&f, |_| false, now)[5].state, State::Untrusted);
         assert_eq!(c[4].efforts[start_effort(&c[4], "claude-opus-5-5", "medium")], "high");

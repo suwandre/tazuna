@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.17 (2026-11-01): every effort level on every model in `/model`
+
+Routes offered only the levels that measurably differ (DeepSeek V4.1 Flash: high and max), so a cheap model could not be
+picked at low for a quick question. Every row now cycles low ... max; a level the model lacks acts like one it has (the
+provider maps it; the own loop already lowers a rejected max to xhigh). The note names the levels that differ ("only high
+and max differ"). Presets and boss mode are unchanged. Display and choice only.
+
 ## 0.1.16 (2026-11-01): `/model` fits any width; the selected row's details below the list
 
 The picker's rows ran past the panel and cut every price off (seen at 95 and 70 columns). Now a table with a header:
