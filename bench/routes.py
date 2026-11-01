@@ -41,9 +41,13 @@ def probe(model, slug, i):
     served = re.findall(r"served by \[([^\]]*)\]", out)
     served = [x.strip(" '") for x in served[-1].split(",")] if served else []
     ok, errors, cached = (int(g) for g in m.groups()) if m else (0, 99, 0)
+    # what the account log billed for the check's calls: the same conversations on every provider, so comparable
+    billed = re.findall(r"account log: (\d+) calls, .*\$([0-9.]+)", out)
+    per_call = float(billed[-1][1]) / max(1, int(billed[-1][0])) if billed else None
     # a shared pool is served as "openai-pro" or "openai-plus" in the account log
     where = served == [slug] or (slug.startswith("shared-") and len(served) == 1 and served[0].startswith("openai-"))
-    return dict(slug=slug, ok=ok, errors=errors, cached=cached, served=served, passed=ok > 0 and errors <= 2 and cached >= 70 and where)
+    return dict(slug=slug, ok=ok, errors=errors, cached=cached, served=served, per_call=per_call,
+                passed=ok > 0 and errors <= 2 and cached >= 70 and where)
 
 
 def quality(model, slug, routes):
@@ -92,6 +96,14 @@ def refresh(models):
             print(f"  {c['slug']:22} {'pass' if c['passed'] else 'fail'}  cached {c['cached']}%  errors {c['errors']}  served by {c['served']}"
                   f"  ${price[c['slug']][0]}/${price[c['slug']][1]} per M", flush=True)
         good = [c["slug"] for c in checks if c["passed"]]
+        # billed, not listed: cybersol listed DeepSeek at $0 and billed ~4x LingAI a call (2026-11-01). A provider whose
+        # check cost over 1.5x the cheapest passing one's is left out (SubRouter would pick it by its listing)
+        cost = {c["slug"]: c["per_call"] for c in checks if c["passed"] and c["per_call"]}
+        if cost:
+            floor = min(cost.values())
+            for g in [g for g in good if cost.get(g, floor) > 1.5 * floor]:
+                print(f"  {g:22} left out: billed ${cost[g]:.5f} a call, {cost[g] / floor:.1f}x the cheapest passing provider")
+            good = [g for g in good if cost.get(g, floor) <= 1.5 * floor]
         good = [g for g in good if quality(model, g, routes)]
         if not good:
             print(f"  no provider passed: the route key keeps its providers")
@@ -102,7 +114,7 @@ def refresh(models):
         shared = any(g.startswith("shared-") for g in good)
         if bool(k.get("include_shared_subscriptions")) != shared:
             s.api("/api/token/", "PUT", {**k, "include_shared_subscriptions": shared})
-        cheapest = min(good, key=lambda g: price[g])
+        cheapest = min(good, key=lambda g: cost.get(g) or price[g][0])
         routes["routes"][model] = dict(via="subrouter", url="https://subrouter.ai/v1", key_env=var, providers=good,
                                        price=list(price[cheapest]), cached=max(c["cached"] for c in checks if c["passed"]),
                                        efforts=EFFORTS.get(model, ["low", "medium", "high", "xhigh", "max"]), vetted_at=int(time.time()))

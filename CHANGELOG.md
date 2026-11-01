@@ -16,6 +16,25 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Route refresh with a quality gate and billed prices, 2026-11-01 (bench only)
+
+bench/routes.py now lets a provider into a route only after the run checks (cache 70%+, few errors, served where asked),
+40 long-context questions within 15 points of Artificial Analysis' LCR score, and a billed cost per call (from the account
+log, same conversations on every provider) within 1.5x the cheapest passing one. First pass:
+
+| model | provider | run checks | long context (AA) | billed | in the route |
+|---|---|---|---|---|---|
+| DeepSeek 1017 | LingAI | 89% cached | 81% of 100 (83%) | the reference | yes |
+| DeepSeek 1017 | cybersol | 90% cached | 85% of 40 | listed $0, billed ~4x LingAI a call | no |
+| DeepSeek 1017 | RelAI, a6aa, manxueai | 31%, 22%, errors | | | no |
+| GPT-6.1 Sol | Kriora | 88% cached | 85% of 40 (80%) | listed 35% under the pools | yes |
+| GPT-6.1 Sol | shared Pro 50/52 | 92% / 81% | 82% of 100 | | yes |
+| GPT-6.1 Sol | manxueai | 86% cached | **20% of 40** | | no |
+| GPT-6.1 Sol | laoliu, quqiai | 52%, 69% cached | | | no |
+
+Two of the cheapest-listed providers would have been wrong picks: one billed four times its listing, one answered long
+documents at a quarter of the model's public score. Luna's and Terra's routes were set before the gate (run checks only).
+
 ## 0.1.11 (2026-11-01): `/model`, a model picker; routes kept fresh
 
 `/model` in a session lists Claude's models (the subscription) and the own loop's routes that bench/routes.py checked
