@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## GPT-6.1 Sol against DeepSeek as the own loop's cheap model, 2026-11-01 (bench only)
+
+Sol at xhigh on its checked route (Kriora and the shared Pro pools) on the four tasks x two runs DeepSeek ran on LingAI
+and on znu; one judge pool per task with all six runs, Opus two passes:
+
+| | judge | hidden | min a run | billed a run |
+|---|---|---|---|---|
+| DeepSeek 1017 high, LingAI (`--preset reviewed`) | **7.00** | **24/26** | **8.1** | ~$0.005 |
+| GPT-6.1 Sol xhigh | 6.50 | 22/26 | 11.7 | ~$0.017 |
+| DeepSeek 1017 high, znu | 6.38 | 22/26 | 13.6 | ~$0.003 |
+
+Sol led caddy-quoted (9.0 vs 7.2) and trailed on rclone (4.5 vs 7.0). DeepSeek on LingAI stays the cheap model: the best
+judge and hidden tests, the fastest, and a third of Sol's cost. Sol's lead in the eight-model round (two tasks, one run
+each) did not hold over four tasks.
+
 ## 0.1.14 (2026-11-01): the picker lists every scored SubRouter model, with bench and AA scores; `--pick`
 
 `/model` now also lists every other SubRouter model that has a public score (the list holds 504 models, image and video

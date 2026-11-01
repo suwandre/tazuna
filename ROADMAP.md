@@ -290,6 +290,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   tasks). Sol max and Sonnet max reached the top judge on the hard task at higher time; Terra was strong but the dearest;
   Grok 4.7 cannot edit files in the own loop. SubRouter routes match Artificial Analysis on long-context reasoning (LCR)
   and roughly on HLE: no sign of degraded providers. Canaries now compare against AA's LCR and HLE.
+- 2026-11-01: the own loop's cheap model stays DeepSeek 1017 high on LingAI (`--preset reviewed`): against GPT-6.1 Sol xhigh
+  over four tasks it had the better judge (7.00 vs 6.50), hidden tests (24 vs 22 of 26) and time (8 vs 12 min) at a third
+  of the cost. Routes are now re-checked weekly with a quality gate (long-context test against AA) and billed-cost check;
+  DeepSeek on znu is the cheapest checked route (level judge, slower).
 - 2026-10-31: own-loop time is 86% the model. DeepSeek 1017 at xhigh: same score as max (7.06 against 7.19), 41% faster,
   32% cheaper; candidate for `--preset reviewed` (waits on the user: their rule was max for cheap models). jevgrep: 10%
   faster at the same score, not adopted. Benchmark history: daily public snapshots, scoreboard.py, and a canary (130 fixed
