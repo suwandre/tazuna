@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.14 (2026-11-01): the picker lists every scored SubRouter model, with bench and AA scores; `--pick`
+
+`/model` now also lists every other SubRouter model that has a public score (the list holds 504 models, image and video
+ones among them), best Artificial Analysis index first, dimmed and marked "unchecked: SubRouter picks the provider"
+(picking one says so; `bench/routes.py refresh MODEL` checks it). Every row shows our bench's judge over the last 30 days
+with its number of runs, and AA's intelligence index ("bench 6.8 (308) · AA 32"); bench/routes.py catalog writes them
+into routes.json (no model calls). `tazuna --pick` opens the picker before the first message. Display only.
+
 ## 0.1.13 (2026-11-01): `--preset reviewed` on a checked route; two DeepSeek routes in `/model`
 
 DeepSeek on znu (the gated refresh's pick: long context 88% vs AA 83%), the same four tasks x two runs as LingAI on

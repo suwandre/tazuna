@@ -10,6 +10,7 @@ SubRouter labels some price lists CNY, but its billing counts those numbers as U
 "CNY" per M output, billed $0.09 per M, 2026-11-01), so they are taken as USD here.
 
   routes.py refresh [MODEL ...] [--budget USD]   default: MODELS, $0.40; stops spending at the budget
+  routes.py catalog               the picker's list of every SubRouter model, bench scores, AA index (no model calls)
   routes.py show                  routes.json as a table
 """
 import json, re, subprocess, sys, time
@@ -171,8 +172,32 @@ def refresh(models, budget):
         print(f"  route {name} ({var}): {passed}", flush=True)
         save(routes, model)
     save(routes, None)
+    catalog()
     print(f"spent ${(spent_fen() - start) / 700:.2f} of ${budget:.2f}")
     show()
+
+
+def catalog():
+    """What the model picker shows beside the checked routes, all into routes.json (no model calls): every model SubRouter
+    offers with its cheapest listed price and provider count; our bench's judge and minutes a run per model over the last
+    30 days (scoreboard.sqlite, rebuilt first); Artificial Analysis' intelligence index (model_check.py's aa.json)."""
+    import sqlite3
+    cur = json.loads(OUT.read_text()) if OUT.exists() else {"routes": {}}
+    cur["catalog"] = {m["model_name"]: dict(price=[round(min(p["min_input_price"] for p in m["providers"]), 5),
+                                                 round(min(p["min_output_price"] for p in m["providers"]), 5)],
+                                          providers=len(m["providers"]))
+                      for m in s.api("/api/user/self/subrouter/models") if m.get("providers")}
+    subprocess.run([sys.executable, "-I", str(HERE / "scoreboard.py")], capture_output=True, timeout=600)
+    db = sqlite3.connect(HERE / ".model-check" / "scoreboard.sqlite")
+    cur["bench"] = {m: dict(judge=j, runs=n, minutes=mi) for m, n, j, mi in db.execute(
+        "select model, count(*), round(avg(judge), 1), round(avg(minutes)) from runs where judge is not null "
+        "and date >= date('now', '-30 day') group by model")}
+    aa = HERE / ".model-check" / "aa.json"
+    rows = json.loads(aa.read_text())["data"] if aa.exists() else []
+    cur["aa"] = {m["slug"]: (m.get("evaluations") or {}).get("artificial_analysis_intelligence_index") for m in rows}
+    cur["aa"] = {k: v for k, v in cur["aa"].items() if v is not None}
+    OUT.write_text(json.dumps(cur, indent=1, sort_keys=True) + "\n")
+    print(f"catalog: {len(cur['catalog'])} SubRouter models, bench for {len(cur['bench'])}, AA index for {len(cur['aa'])}")
 
 
 def show():
@@ -189,6 +214,8 @@ if __name__ == "__main__":
         budget = float(a[a.index("--budget") + 1]) if "--budget" in a else 0.40
         names = [x for x in a[1:] if not x.startswith("--") and x != str(a[a.index("--budget") + 1] if "--budget" in a else "")]
         refresh(names or MODELS, budget)
+    elif a[:1] == ["catalog"]:
+        catalog()
     elif a[:1] == ["show"]:
         show()
     else:

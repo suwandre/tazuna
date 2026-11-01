@@ -131,7 +131,9 @@ pub struct ModelRow {
     pub effort: String,
     pub price: String,
     pub note: String,
-    /// 0 ready, 1 no key, 2 provider not trusted (the code would go there)
+    /// "bench 6.8 (308) · AA 32" where known.
+    pub scores: String,
+    /// 0 ready, 1 no key, 2 provider not trusted (the code would go there), 3 unchecked route
     pub state: u8,
     pub stale: bool,
     pub current: bool,
@@ -257,7 +259,7 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     let first = p.selected.saturating_sub(room.saturating_sub(1));
     let filter = if p.filter.is_empty() { "all models".to_string() } else { format!("filter: {}", p.filter) };
     let mut lines: Vec<Line<'static>> = vec![
-        Line::from(Span::styled(format!("{filter} · grey: no key · yellow: provider not trusted, the code would go there"), st(th.faint))),
+        Line::from(Span::styled(format!("{filter} · bench: our judge (runs) · AA: public index · dim: unchecked route · grey: no key · yellow: not trusted or stale"), st(th.faint))),
         Line::from(""),
     ];
     for (i, r) in p.rows.iter().enumerate().skip(first).take(room) {
@@ -269,8 +271,9 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
             _ if r.stale => format!("stale · {}", r.note),
             _ => r.note.clone(),
         };
-        let row = format!("{mark} {:<24} {:<8} {:<22} {:<24} {tail}", r.label, format!("‹{}›", r.effort), r.price, r.place);
-        let color = match r.state { 1 => th.faint, 2 => th.warn, _ if r.stale => th.warn, _ => th.text };
+        // what decides a pick first (model, effort, scores, price, the reason or the route's state); where it runs last
+        let row = format!("{mark} {:<26} {:<8} {:<22} {:<24} {:<38} {}", r.label, format!("‹{}›", r.effort), r.scores, r.price, tail, r.place);
+        let color = match r.state { 1 => th.faint, 2 => th.warn, 3 => th.dim, _ if r.stale => th.warn, _ => th.text };
         let style = if i == p.selected { st(color).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(color) };
         lines.push(Line::from(Span::styled(row.chars().take(inner.width as usize).collect::<String>(), style)));
     }
@@ -1141,7 +1144,7 @@ mod tests {
     #[test]
     fn model_picker_shows_rows_effort_and_why_not() {
         let row = |label: &str, state: u8, stale: bool| ModelRow { label: label.into(), place: "SubRouter · lingai".into(), effort: "high".into(),
-            price: "$0.022 / $0.088 per M".into(), note: "cached 81% · checked today".into(), state, stale, current: false };
+            price: "$0.022 / $0.088 per M".into(), note: "cached 81% · checked today".into(), scores: "bench 6.8 (308) · AA 32".into(), state, stale, current: false };
         let p = ModelsPanel { rows: vec![row("Opus 5.5", 0, false), row("deepseek-v4.1-flash-1017", 1, false), row("gpt-6.1-sol", 2, true), row("gpt-6-luna", 0, true)], selected: 0, filter: String::new() };
         for w in [40u16, 120] {  // narrow and wide terminals: rows are cut, never overflow
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 20)).unwrap();

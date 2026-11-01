@@ -1,7 +1,9 @@
 //! The model picker's list (`/model`): Claude's models through the `claude` CLI, and the own loop's routes that
 //! bench/routes.py checked (~/.local/share/tazuna/routes.json: providers, price, cache share, the effort levels the model
-//! really has, when checked). A route is ready when its key is in the environment and its host on the trusted list;
-//! otherwise it is listed, greyed out or marked, with the reason.
+//! really has, when checked), then every other SubRouter model with a public score, unchecked (SubRouter picks its
+//! provider). Each row carries our bench's judge where we have runs and Artificial Analysis' intelligence index. A route is
+//! ready when its key is in the environment and its host on the trusted list; otherwise it is listed, greyed out or
+//! marked, with the reason.
 
 use serde_json::Value;
 use std::path::Path;
@@ -20,6 +22,8 @@ pub enum State {
     NoKey,
     /// The provider is not on the trusted list: the code would go there.
     Untrusted,
+    /// Usable, but no route was checked: SubRouter picks the provider (cache, price and quality unknown).
+    Unchecked,
 }
 
 #[derive(Clone, Debug)]
@@ -34,10 +38,30 @@ pub struct Choice {
     pub note: String,
     pub stale: bool,
     pub state: State,
+    /// "bench 6.8 (308) · AA 32" where known.
+    pub scores: String,
 }
 
-/// Claude's models, then the checked routes; `trusted` says whether a provider host may see the code.
+/// Artificial Analysis' slug for a model name: lower case, dots as dashes.
+fn slug(model: &str) -> String {
+    model.to_lowercase().replace('.', "-")
+}
+
+fn scores(file: &Value, model: &str) -> String {
+    let mut parts = vec![];
+    if let Some(j) = file["bench"][model]["judge"].as_f64() {
+        parts.push(format!("bench {j:.1} ({})", file["bench"][model]["runs"].as_u64().unwrap_or(0)));
+    }
+    if let Some(a) = file["aa"][slug(model)].as_f64() {
+        parts.push(format!("AA {a:.0}"));
+    }
+    parts.join(" · ")
+}
+
+/// Claude's models, then the checked routes, then the unchecked SubRouter models that have a public score; `trusted` says
+/// whether a provider host may see the code.
 pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<Choice> {
+    let file: Value = std::fs::read_to_string(routes).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     let mut out: Vec<Choice> = CLAUDE.iter().map(|(m, l)| Choice {
         model: m.to_string(),
         label: l.to_string(),
@@ -48,8 +72,8 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
         note: String::new(),
         stale: false,
         state: State::Ready,
+        scores: scores(&file, m),
     }).collect();
-    let file: Value = std::fs::read_to_string(routes).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
     let mut rs: Vec<(&String, &Value)> = file["routes"].as_object().map(|o| o.iter().collect()).unwrap_or_default();
     rs.sort_by_key(|(m, _)| m.to_string());
     for (name, r) in rs {
@@ -84,6 +108,29 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             }),
             stale: days > STALE_DAYS,
             state,
+            scores: scores(&file, r["model"].as_str().unwrap_or(name)),
+        });
+    }
+    // every other SubRouter model with a public score (the list also holds image and video models), best first
+    let routed: Vec<String> = out.iter().map(|c| c.model.clone()).collect();
+    let mut rest: Vec<(f64, &String, &Value)> = file["catalog"].as_object().into_iter().flatten()
+        .filter(|(m, _)| !routed.contains(m))
+        .filter_map(|(m, c)| file["aa"][slug(m)].as_f64().map(|a| (a, m, c))).collect();
+    rest.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let key = "SUBROUTER_API_KEY";
+    for (_, model, c) in rest {
+        let (input, output) = (c["price"][0].as_f64().unwrap_or(0.0), c["price"][1].as_f64().unwrap_or(0.0));
+        out.push(Choice {
+            model: model.clone(),
+            label: model.clone(),
+            route: Some(("https://subrouter.ai/v1".into(), key.into(), format!("{input},{},{output}", (input / 10.0 * 1e6).round() / 1e6))),
+            place: format!("SubRouter · {} providers", c["providers"].as_u64().unwrap_or(0)),
+            efforts: LEVELS.iter().map(|e| e.to_string()).collect(),
+            price: format!("from ${input} / ${output} per M"),
+            note: "unchecked: SubRouter picks the provider".into(),
+            stale: false,
+            state: if std::env::var_os(key).is_none() { State::NoKey } else if !trusted("subrouter.ai") { State::Untrusted } else { State::Unchecked },
+            scores: scores(&file, model),
         });
     }
     out
@@ -113,9 +160,19 @@ mod tests {
             "gpt-6.1-sol": {"url": "https://subrouter.ai/v1", "key_env": "PATH", "providers": ["kriora"],
                 "price": [0.0387, 0.1935], "cached": 91, "efforts": ["low", "high", "xhigh", "max"], "vetted_at": 1000000}}}"#).unwrap();
         let now = 1000000 + 9 * 86_400;
+        let mut d: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
+        d["catalog"] = serde_json::json!({"glm-5.3": {"price": [0.1, 0.4], "providers": 3}, "seadance-video": {"price": [1, 1], "providers": 1},
+                                          "gpt-6.1-sol": {"price": [0.03, 0.2], "providers": 40}});
+        d["aa"] = serde_json::json!({"glm-5-3": 41.0, "gpt-6-1-sol": 54.5});
+        d["bench"] = serde_json::json!({"gpt-6.1-sol": {"judge": 6.6, "runs": 51, "minutes": 19}});
+        std::fs::write(&f, d.to_string()).unwrap();
         let c = catalog(&f, |h| h == "subrouter.ai", now);
         assert_eq!(c.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
-                   ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.1", "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017 · fast", "gpt-6.1-sol"]);
+                   ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.1", "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017 · fast", "gpt-6.1-sol", "glm-5.3"],
+                   "routed models once; unchecked ones only with a public score (no video model)");
+        assert_eq!(c[6].scores, "bench 6.6 (51) · AA 54");
+        assert_eq!((c[7].route.as_ref().unwrap().1.as_str(), c[7].note.as_str()), ("SUBROUTER_API_KEY", "unchecked: SubRouter picks the provider"));
+        let c: Vec<Choice> = c.into_iter().filter(|c| c.label != "glm-5.3").collect();
         assert_eq!((c[5].model.as_str(), c[5].place.as_str()), ("deepseek-v4.1-flash-1017", "SubRouter · lingai"));
         let c: Vec<Choice> = c.into_iter().filter(|c| !c.label.ends_with("fast")).collect();
         assert!(c[0].route.is_none() && c[0].state == State::Ready);

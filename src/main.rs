@@ -34,6 +34,7 @@
 //!                                             # is the provider's model id; key from VAR (default OPENAI_API_KEY);
 //!                                             # a task it fails goes to Opus 5.5 medium on claude (the cascade)
 //!          [--no-escalate]   # with --provider: no hand-over, the own loop's result stands
+//!          [--pick]   # open the model picker (/model) before the first message
 //!          [--price IN,CACHED,OUT]   # own loop: USD per million tokens, for providers whose model list has no prices
 //!          [--max-minutes N]   # own loop: stop (or with --escalate, hand over) after N minutes per task; default: no
 //!                              # time limit, only the $1 cap per task (TAZUNA_MAX_USD; cheap models are slow but
@@ -134,6 +135,8 @@ struct Args {
     tester: Option<String>,
     boss: Option<String>,
     no_boss: bool,
+    /// `--pick`: open the model picker before the first message.
+    pick: bool,
     advisor: Option<String>,
     escalate: Option<(String, String)>,
     no_escalate: bool,
@@ -234,6 +237,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         tester: None,
         boss: None,
         no_boss: false,
+        pick: false,
         advisor: None,
         escalate: None,
         no_escalate: false,
@@ -302,6 +306,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             }
             "--no-escalate" => a.no_escalate = true,
             "--no-boss" => a.no_boss = true,
+            "--pick" => a.pick = true,
             "--escalate" => {
                 let v = val()?;
                 let (m, e) = v.split_once(':').unwrap_or((&v, "medium"));
@@ -945,6 +950,9 @@ fn run_live(
     let mut loop_after_plan: Option<Vec<String>> = None;
     // /model: the choices, the selected row (in the filtered list), each choice's effort and what has been typed to filter
     let mut pick: Option<(Vec<models::Choice>, usize, Vec<usize>, String)> = None;
+    if a.pick {
+        pick = Some(open_picker(live)?);
+    }
     let mut hinted = 0usize;
     // /vim: modal editing in the composer (remembered across sessions); `normal` and a pending operator (d, c)
     let vim_flag = labels::dir().map(|d| d.join("vim")).ok();
@@ -992,7 +1000,8 @@ fn run_live(
             rows: shown(cs, filter).into_iter().map(|i| {
                 let c = &cs[i];
                 ui::ModelRow { label: c.label.clone(), place: c.place.clone(), effort: c.efforts.get(eff[i]).cloned().unwrap_or_else(|| "default".into()),
-                    price: c.price.clone(), note: c.note.clone(), state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2 },
+                    price: c.price.clone(), note: c.note.clone(), scores: c.scores.clone(),
+                    state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3 },
                     stale: c.stale, current: c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
             }).collect(),
             selected: *sel,
@@ -1128,6 +1137,11 @@ fn run_live(
                     models::State::Untrusted => Err(anyhow::anyhow!("{}: the provider is not on the trusted list (~/.config/tazuna/trusted-providers), so the code may not go there", c.label)),
                     // a model without levels (the API ignores them) keeps the session's
                     models::State::Ready => live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()),
+                    models::State::Unchecked => live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()).map(|(t, e)| {
+                        let text = format!("{} · unchecked route: SubRouter picks the provider, so cache, price and quality are unknown \
+                            (bench/routes.py refresh {} checks it)", e["text"].as_str().unwrap_or_default(), c.model);
+                        (t, json!({"type": "harness_switch", "model": e["model"], "effort": e["effort"], "text": text}))
+                    }),
                 };
                 match msg {
                     Ok((t, e)) => s.apply(&e, t),
@@ -1344,11 +1358,7 @@ fn run_live(
                     continue;
                 }
                 if text == "/model" {
-                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-                    let cs = models::catalog(&labels::dir()?.join("routes.json"), trusted_host, now);
-                    let eff: Vec<usize> = cs.iter().map(|c| models::start_effort(c, &live.model, &live.effort)).collect();
-                    let sel = shown(&cs, "").iter().position(|&i| cs[i].model == live.model).unwrap_or(0);
-                    pick = Some((cs, sel, eff, String::new()));
+                    pick = Some(open_picker(live)?);
                     continue;
                 }
                 if text == "/rewind" {
@@ -1458,6 +1468,15 @@ fn run_live(
             _ => {}
         }
     }
+}
+
+/// The /model picker's state, opened on the session's model.
+fn open_picker(live: &live::Live) -> Result<(Vec<models::Choice>, usize, Vec<usize>, String)> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let cs = models::catalog(&labels::dir()?.join("routes.json"), trusted_host, now);
+    let eff: Vec<usize> = cs.iter().map(|c| models::start_effort(c, &live.model, &live.effort)).collect();
+    let sel = shown(&cs, "").iter().position(|&i| cs[i].model == live.model).unwrap_or(0);
+    Ok((cs, sel, eff, String::new()))
 }
 
 /// The picker rows that match what was typed (label or place, any case), as indices into the choices.
