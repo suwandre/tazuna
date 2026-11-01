@@ -139,17 +139,18 @@ mod tests {
             process.exit(2);\n").unwrap();
         sh(&repo, "git init -q && git add -A && git -c user.name=t -c user.email=t@t commit -qm base");
         let dir = prepare(&repo).unwrap();
-        for _ in 0..100 {
+        for _ in 0..600 {
             if dir.join("baseline.txt").exists() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
+        let baseline = std::fs::read_to_string(dir.join("baseline.txt")).expect("the baseline type check finishes within 30 s");
         assert_eq!(check(&dir, &repo).unwrap(), None, "nothing changed yet");
         std::fs::write(repo.join("readme.md"), "x").unwrap();
         assert_eq!(check(&dir, &repo).unwrap(), None, "a change that cannot affect types");
         std::fs::write(repo.join("new.ts"), "bad thing\n").unwrap();
-        let msg = check(&dir, &repo).unwrap().expect("the new error is reported");
+        let msg = check(&dir, &repo).unwrap().unwrap_or_else(|| panic!("the new error is reported; baseline {baseline:?}, now {:?}", verify::run_raw(&repo, "npm run typecheck --silent").1));
         assert!(msg.contains("1 type/compile error") && msg.contains("new.ts(1,1): error TS2: bad thing") && !msg.contains("known"), "{msg}");
         std::fs::write(repo.join("new.ts"), "bad thing\n").unwrap();
         std::fs::write(repo.join("other.ts"), "x").unwrap();
