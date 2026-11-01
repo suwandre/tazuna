@@ -4,7 +4,7 @@
   PAUSE file  -> runners stop starting new jobs (5h window >= threshold, or meter unreadable)
   ABORT file  -> extra-usage credits rose: runners exit, guard kills in-flight `claude -p` children
 
-Reads the meter with pi's bench login (pi refreshes it without a model call).
+Reads the meter from the official claude CLI's rate_limit_event (see meter()).
 """
 import json, os, signal, subprocess, time
 from datetime import datetime, timezone
@@ -16,22 +16,69 @@ PAUSE_AT = float(os.environ.get("GUARD_PAUSE_AT", 70))
 KILL_AT = float(os.environ.get("GUARD_KILL_AT", 100))  # % of the tighter limit: kill the agents here (100: before paid usage)   # % of 5h window; leaves headroom for in-flight runs
 POLL = int(os.environ.get("GUARD_POLL", 150))
 EXTRA_ALLOW = float(os.environ.get("GUARD_EXTRA_ALLOW", 0))  # credits of extra usage a run may spend on purpose (pi, Hermes)
-PI_HOME = Path.home() / "bench-homes/pi"
+
+
+SESSIONS = [Path.home() / "bench-homes/cc/.local/share/tazuna/sessions", Path.home() / ".local/share/tazuna/sessions"]
+FRESH = 600         # a rate_limit_event older than this (by its file's last write) is not used
+PROBE_EVERY = 600   # with none fresh, one tiny `claude -p` call at most this often
+
+
+def latest_event():
+    """The newest rate_limit_event a claude process wrote into a tazuna session file lately (bench runs, live sessions)."""
+    best, now = None, time.time()
+    for d in SESSIONS:
+        for f in (d.glob("*.jsonl") if d.exists() else []):
+            m = f.stat().st_mtime
+            if now - m > FRESH or (best and m <= best[0]):
+                continue
+            with open(f, "rb") as fh:
+                fh.seek(max(0, f.stat().st_size - 400_000))
+                tail = fh.read().decode(errors="replace")
+            for line in reversed(tail.splitlines()):
+                if '"rate_limit_event"' in line:
+                    try:
+                        best = (m, json.loads(line)["e"]["rate_limit_info"])
+                    except (ValueError, KeyError):
+                        continue
+                    break
+    return best
+
+
+def probe():
+    """One tiny call through the official claude CLI (Haiku, no tools, a one-line system prompt, no project settings):
+    its stream carries the plan's rate_limit_event. The CLI's own bench login (~/.bench-token, `claude setup-token`)."""
+    env = dict(os.environ)
+    for line in (Path.home() / ".bench-token").read_text().splitlines():
+        if line.startswith("export ") and "=" in line:
+            k, v = line[7:].split("=", 1)
+            env.setdefault(k, v.strip().strip('"'))
+    with __import__("tempfile").TemporaryDirectory() as cwd:
+        r = subprocess.run(["claude", "-p", "Reply with: ok", "--model", "claude-haiku-5-5", "--output-format", "stream-json", "--verbose",
+                            "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config", "--tools", "",
+                            "--system-prompt", "Reply briefly."], cwd=cwd, env=env, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=180)
+    for line in r.stdout.splitlines():
+        if '"rate_limit_event"' in line:
+            return json.loads(line)["rate_limit_info"]
+    raise RuntimeError(f"no rate_limit_event from claude -p (exit {r.returncode}): {r.stderr[-160:]}")
 
 
 def meter():
-    tok = subprocess.run(["pi", "auth", "print-bearer-token", "--provider", "anthropic", "--min-expiry", "10m"],
-                         env={**os.environ, "HOME": str(PI_HOME)}, capture_output=True, text=True,
-                         stdin=subprocess.DEVNULL, timeout=60).stdout.strip().splitlines()[-1]
-    r = subprocess.run(["curl", "-s", "-m", "30", "https://api.anthropic.com/api/oauth/usage", "-H", f"Authorization: Bearer {tok}",
-                        "-H", "anthropic-beta: oauth-2025-04-20", "-H", "User-Agent: tazuna-guard/1"],
-                       capture_output=True, text=True, timeout=60)
-    d = json.loads(r.stdout)
-    # the tighter of the 5h window and the weekly limit: either one running out spills into extra usage
-    meters = [d[k] for k in ("five_hour", "seven_day") if isinstance(d.get(k), dict) and d[k].get("utilization") is not None]
-    top = max(meters, key=lambda m: float(m["utilization"]))
-    meter.each = {k: float(d[k]["utilization"]) for k in ("five_hour", "seven_day") if isinstance(d.get(k), dict) and d[k].get("utilization") is not None}
-    return float(top["utilization"]), top["resets_at"], float(d["extra_usage"]["used_credits"])
+    """The plan meter from the official `claude` CLI's rate_limit_event (2026-11-01): until then the guard read Anthropic's
+    usage endpoint with pi's subscription login, which stopped resolving (and third-party tools may no longer use a
+    subscription login). The newest event in a session file if one is fresh, else a probe every PROBE_EVERY seconds,
+    else the last reading. Returns (the tighter window %, its reset time, 1 when the plan runs on paid extra usage)."""
+    got = latest_event()
+    if got:
+        meter.last = got[1]
+    elif not getattr(meter, "last", None) or time.time() - getattr(meter, "probed", 0) >= PROBE_EVERY:
+        meter.last, meter.probed = probe(), time.time()
+    info = meter.last
+    w = info["unifiedWindows"]
+    meter.each = {k: round(100 * float(w[k]["utilization"]), 1) for k in ("five_hour", "seven_day") if k in w}
+    top = max(meter.each, key=meter.each.get)
+    reset = datetime.fromtimestamp(int(w[top]["resetsAt"]), tz=timezone.utc).isoformat()
+    return meter.each[top], reset, 1.0 if info.get("isUsingOverage") else 0.0
 
 
 # every agent a benchmark starts (and the judge, which is `claude -p` too); never an interactive session
