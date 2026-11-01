@@ -24,7 +24,8 @@ stopping a timed-out command with everything it started (process group and `kill
 on Unix; the user profile's permissions on Windows), the clipboard image (PowerShell on Windows), hook paths for Git Bash,
 the own loop's `search`/`list` through Git's grep and find (Windows has its own `find`).
 Windows type-checks locally (`cargo check --target x86_64-pc-windows-gnu` with stub C headers for ring); build and tests run
-in a GitHub Actions workflow on windows-latest. macOS and Linux behaviour unchanged: 94 tests pass on both (2 new; Linux on InstaBox), release binary 3,684,208
+in a GitHub Actions workflow on windows-latest: 92 tests pass there (the 2 Unix-only ones skipped). Git Bash gets its
+script through an environment variable: on the command line MSYS re-parsed quotes and backslashes and broke 6 tests. macOS and Linux behaviour unchanged: 94 tests pass on both (2 new; Linux on InstaBox), release binary 3,684,208
 bytes (-16), clippy warnings unchanged. Not on Windows yet: notifications, reaping an agent's leftover background
 processes.
 
