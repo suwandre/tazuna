@@ -7,7 +7,6 @@
 use serde_json::{Value, json};
 use std::{
     io::{BufRead, Read, Write},
-    os::unix::process::CommandExt,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant},
@@ -95,7 +94,7 @@ fn processes() -> Vec<(u32, u32, String)> {
 fn kill_matching(left: &[(u32, String)]) {
     for (pid, _, start) in processes() {
         if left.iter().any(|(p, s)| *p == pid && *s == start) {
-            let _ = Command::new("kill").args(["-KILL", &pid.to_string()]).status();
+            crate::platform::kill(pid);
         }
     }
 }
@@ -105,8 +104,7 @@ fn kill_matching(left: &[(u32, String)]) {
 fn left_dir() -> PathBuf {
     let d = crate::labels::dir().unwrap_or_else(|_| std::env::temp_dir()).join("left");
     if std::fs::create_dir_all(&d).is_ok() {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&d, std::fs::Permissions::from_mode(0o700));
+        crate::platform::make_private(&d);
     }
     d
 }
@@ -236,17 +234,17 @@ impl Server {
     }
 
     fn bash(&mut self, command: &str, timeout: Duration) -> String {
-        let script = format!("{command}\n__rc=$?; printf '\\n__LEAN_CWD__%s' \"$PWD\" >&2; exit $__rc");
-        let spawned = Command::new("bash")
-            .args(["-lc", &script])
+        // Git Bash's $PWD is /c/...; `pwd -W` gives the C:/... path Windows programs read
+        let pwd = if cfg!(windows) { "$(pwd -W)" } else { "$PWD" };
+        let script = format!("{command}\n__rc=$?; printf '\\n__LEAN_CWD__%s' \"{pwd}\" >&2; exit $__rc");
+        let spawned = crate::platform::own_group(crate::platform::bash().args(["-lc", &script]))
             .current_dir(&self.cwd)
             // commands the agent runs must not see the auth token claude was started with
             .env_remove("CLAUDE_CODE_OAUTH_TOKEN")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .process_group(0) // own group, so a timeout can kill everything the command started
-            .spawn();
+            .spawn(); // in a group of its own, so a timeout can kill everything the command started
         let mut child = match spawned {
             Ok(c) => c,
             Err(e) => return cap(&format!("\n[{e}]"), self.max),
@@ -260,7 +258,7 @@ impl Server {
             match child.try_wait() {
                 Ok(Some(st)) => break Some(st),
                 Ok(None) if t0.elapsed() >= timeout => {
-                    let _ = Command::new("kill").args(["-KILL", "--", &format!("-{}", child.id())]).status();
+                    crate::platform::kill_tree(child.id());
                     let _ = child.wait();
                     break None;
                 }
@@ -329,16 +327,15 @@ impl Server {
     /// Saves into a private directory (0700, unpredictable name) with new 0600 files: on a shared /tmp nobody else can read
     /// the output or plant a symlink for it to be written through.
     fn save(&mut self, full: &str) -> Option<String> {
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
         if self.out_dir.is_none() {
             let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.subsec_nanos();
             let dir = std::env::temp_dir().join(format!("tazuna-output-{}-{nanos:x}", std::process::id()));
-            std::fs::DirBuilder::new().mode(0o700).create(&dir).ok()?; // fails if it already exists
+            crate::platform::private_dir(&dir, false).ok()?; // fails if it already exists
             self.out_dir = Some(dir);
         }
         self.saved += 1;
         let f = self.out_dir.as_ref()?.join(format!("bash-{}.txt", self.saved));
-        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&f).ok()?;
+        let mut file = crate::platform::private_file(&f, true).ok()?;
         file.write_all(full.as_bytes()).ok()?;
         Some(f.to_string_lossy().into_owned())
     }
@@ -467,6 +464,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(unix)] // leftovers are found with ps; none are reaped on Windows
     fn background_processes_neither_block_nor_outlive_the_server() {
         let mut s = Server::new(std::env::temp_dir());
         let t0 = Instant::now();
@@ -595,10 +593,13 @@ mod tests {
         assert!(out.ends_with("500\n[exit 1]") || out.contains("[exit 1]"), "the end survives: {out}");
         let file = out.split("full output: ").nth(1).and_then(|r| r.split(' ').next()).map(|f| f.trim_end_matches(']')).expect("points to the saved file");
         let saved = std::fs::read_to_string(file).unwrap();
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600, "owner-only file");
-        let dir = Path::new(file).parent().unwrap();
-        assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700, "owner-only directory");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(file).unwrap().permissions().mode() & 0o777, 0o600, "owner-only file");
+            let dir = Path::new(file).parent().unwrap();
+            assert_eq!(std::fs::metadata(dir).unwrap().permissions().mode() & 0o777, 0o700, "owner-only directory");
+        }
         assert!(saved.contains("=== RUN   TestN1\n") && saved.contains("TestBroken"), "the full output is kept");
         let mut off = Server { cwd: std::env::temp_dir(), max: 30000, cap: 0, saved: 0, out_dir: None, seen: None, reads: 0, last: (0, 0), left: vec![], left_at: left_file(std::process::id()) };
         assert_eq!(off.bash("seq 1 3000 | wc -l", Duration::from_secs(10)).trim(), "3000");

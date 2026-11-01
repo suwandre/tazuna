@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
     io::Read,
-    os::unix::fs::DirBuilderExt,
     path::{Path, PathBuf},
 };
 
@@ -22,7 +21,7 @@ const MAX_SHOWN: usize = 30;
 pub fn prepare(cwd: &Path) -> Result<PathBuf> {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
     let dir = std::env::temp_dir().join(format!("tazuna-diag-{}-{nanos}", std::process::id()));
-    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+    crate::platform::private_dir(&dir, false)?;
     write_snapshot(&dir, &runlog::git_snapshot(cwd).unwrap_or_default())?;
     if let Some(cmd) = verify::typecheck_command(&verify::Mode::Auto, cwd) {
         let (cwd, dir) = (cwd.to_path_buf(), dir.clone());
@@ -37,7 +36,7 @@ pub fn prepare(cwd: &Path) -> Result<PathBuf> {
 
 /// The `--settings` value that installs the hook.
 pub fn settings(exe: &Path, dir: &Path) -> String {
-    let q = |p: &Path| format!("'{}'", p.to_string_lossy().replace('\'', r"'\''"));
+    let q = crate::platform::sh_quote;
     json!({"hooks": {"PostToolUse": [{"matcher": MATCHER, "hooks": [{"type": "command", "command": format!("{} diag {}", q(exe), q(dir)), "timeout": 600}]}]}})
         .to_string()
 }
@@ -126,7 +125,7 @@ mod tests {
     use super::*;
 
     fn sh(dir: &Path, cmd: &str) {
-        assert!(std::process::Command::new("sh").args(["-c", cmd]).current_dir(dir).status().unwrap().success(), "{cmd}");
+        assert!(crate::platform::shell(cmd, &[]).current_dir(dir).status().unwrap().success(), "{cmd}");
     }
 
     #[test]

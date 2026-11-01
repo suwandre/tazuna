@@ -193,7 +193,7 @@ pub fn run_raw(cwd: &Path, cmd: &str) -> (Option<i32>, String, f64) {
 
 fn run_limited(cwd: &Path, cmd: &str, limit: Duration) -> (Option<i32>, String, f64) {
     let t0 = Instant::now();
-    let spawned = Command::new("sh").args(["-c", &format!("{cmd} 2>&1")]).current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).spawn();
+    let spawned = crate::platform::shell(&format!("{cmd} 2>&1"), &[]).current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).spawn();
     let mut child = match spawned {
         Ok(c) => c,
         Err(e) => return (None, format!("could not start: {e}"), 0.0),

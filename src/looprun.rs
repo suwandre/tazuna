@@ -109,10 +109,9 @@ fn five_hour(pid: u32) -> Option<f64> {
         .find(|d| d["e"]["type"] == "rate_limit_event")?["e"]["rate_limit_info"]["unifiedWindows"]["five_hour"]["utilization"].as_f64()
 }
 
-/// A macOS notification, for a loop that ends while nobody watches.
+/// A notification (macOS), for a loop that ends while nobody watches.
 pub fn notify(text: &str) {
-    let script = format!("display notification \"{}\" with title \"tazuna\"", text.replace(['"', '\\'], "'"));
-    let _ = Command::new("osascript").args(["-e", &script]).output();
+    crate::platform::notify("tazuna", text);
 }
 
 #[cfg(test)]

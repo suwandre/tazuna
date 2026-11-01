@@ -149,7 +149,7 @@ mod tests {
         std::fs::create_dir_all(repo.join("api/src")).unwrap();
         std::fs::write(repo.join("api/src/ledger.ts"), "export function syncDeal() {}\n").unwrap();
         std::fs::write(repo.join("api/src/other.ts"), "export function unrelated() {}\n").unwrap();
-        let ok = Command::new("sh").args(["-c", "git init -q && git add -A"]).current_dir(&repo).status().unwrap().success();
+        let ok = crate::platform::shell("git init -q && git add -A", &[]).current_dir(&repo).status().unwrap().success();
         assert!(ok);
         let map = build(&repo, "The Ledger deal sync is broken").unwrap();
         assert!(map.contains("- api/src/ledger.ts: syncDeal") && !map.contains("other.ts"), "{map}");

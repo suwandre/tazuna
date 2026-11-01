@@ -66,6 +66,7 @@ mod looprun;
 mod mcp;
 mod models;
 mod outcap;
+mod platform;
 mod replay;
 mod repomap;
 mod review;
@@ -188,7 +189,7 @@ fn escalation(provider: bool, escalate: Option<(String, String)>, no_escalate: b
 fn with_preset(args: Vec<String>) -> Result<Vec<String>> {
     let Some(i) = args.iter().position(|a| a == "--preset") else { return Ok(args) };
     let name = args.get(i + 1).context("--preset needs a name")?.clone();
-    let file = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config/tazuna/presets");
+    let file = platform::home().unwrap_or_default().join(".config/tazuna/presets");
     let user = std::fs::read_to_string(&file).unwrap_or_default();
     let flags = user
         .lines()
@@ -581,7 +582,7 @@ fn check_data(url: &str, any: bool) -> Result<()> {
     }
     let host = host_of(url);
     if !trusted_host(&host) {
-        let file = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config/tazuna/trusted-providers");
+        let file = platform::home().unwrap_or_default().join(".config/tazuna/trusted-providers");
         bail!("{host} is not on the trusted list ({}): it may store or use your code. Add it there, or run with --data any", file.display());
     }
     Ok(())
@@ -589,7 +590,7 @@ fn check_data(url: &str, any: bool) -> Result<()> {
 
 /// A provider host on the trusted list (~/.config/tazuna/trusted-providers): it may see the code under `--data trusted`.
 fn trusted_host(host: &str) -> bool {
-    let file = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config/tazuna/trusted-providers");
+    let file = platform::home().unwrap_or_default().join(".config/tazuna/trusted-providers");
     std::fs::read_to_string(&file).unwrap_or_default().lines().any(|l| l.trim() == host)
 }
 
@@ -836,14 +837,10 @@ fn busy(s: &Session) -> bool {
 /// Saves the clipboard's image (macOS) as a PNG in a private temp folder.
 fn paste_image() -> Result<std::path::PathBuf> {
     let dir = std::env::temp_dir().join(format!("tazuna-images-{}", std::process::id()));
-    std::os::unix::fs::DirBuilderExt::mode(&mut std::fs::DirBuilder::new(), 0o700).recursive(true).create(&dir)?;
+    platform::private_dir(&dir, true)?;
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
     let path = dir.join(format!("paste-{nanos}.png"));
-    let script = format!(
-        "set f to (open for access POSIX file \"{}\" with write permission)\ntry\nwrite (the clipboard as «class PNGf») to f\nend try\nclose access f",
-        path.display()
-    );
-    std::process::Command::new("osascript").args(["-e", &script]).output()?;
+    platform::clipboard_image(&path)?;
     match std::fs::metadata(&path) {
         Ok(m) if m.len() > 0 => Ok(path),
         _ => {
@@ -889,13 +886,12 @@ fn edit_in(editor: &str, text: &str) -> Result<String> {
         .find_map(|i| {
             let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
             let path = std::env::temp_dir().join(format!("tazuna-message-{}-{nanos:x}-{i}.md", std::process::id()));
-            use std::os::unix::fs::OpenOptionsExt;
-            std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path).ok().map(|f| (path, f))
+            platform::private_file(&path, true).ok().map(|f| (path, f))
         })
         .context("could not create a private temporary file")?;
     std::io::Write::write_all(&mut file, text.as_bytes())?;
     drop(file);
-    let status = std::process::Command::new("sh").arg("-c").arg(format!("{editor} \"$1\"")).arg("sh").arg(&path).status();
+    let status = platform::shell(&format!("{editor} \"$1\""), &[path.as_os_str()]).status();
     let saved = std::fs::read_to_string(&path);
     let _ = std::fs::remove_file(&path);
     match status {
@@ -1538,7 +1534,9 @@ mod tests {
         assert_eq!(super::edit_in("true", "keep me").unwrap(), "keep me");
         assert!(super::edit_in("false", "x").is_err());
         // the file the editor gets is private to the user (GNU stat on Linux, BSD stat on macOS)
+        #[cfg(unix)]
         let mode = super::edit_in("sh -c '(stat -c %a \"$0\" 2>/dev/null || stat -f %Lp \"$0\") > \"$0.mode\"; cp \"$0.mode\" \"$0\"; rm \"$0.mode\"'", "x").unwrap();
+        #[cfg(unix)]
         assert_eq!(mode, "600");
     }
 

@@ -209,7 +209,7 @@ mod tests {
         use std::io::{BufRead, BufReader};
         let repo = std::env::temp_dir().join(format!("tazuna-review-api-{}", std::process::id()));
         std::fs::create_dir_all(&repo).unwrap();
-        let sh = |c: &str| assert!(Command::new("sh").args(["-c", c]).current_dir(&repo).status().unwrap().success());
+        let sh = |c: &str| assert!(crate::platform::shell(c, &[]).current_dir(&repo).status().unwrap().success());
         sh("git init -q && echo 'fn a() {}' > lib.rs && git add -A && git -c user.name=t -c user.email=t@t commit -qm base");
         std::fs::write(repo.join("lib.rs"), "fn a() { b() }\nfn b() {}\n").unwrap();
         let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -248,12 +248,13 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)] // symlinks need admin rights on Windows
     fn a_symlink_out_of_the_tree_is_not_read() {
         let base = std::env::temp_dir().join(format!("tazuna-review-link-{}", std::process::id()));
         let repo = base.join("repo");
         std::fs::create_dir_all(&repo).unwrap();
         std::fs::write(base.join("secret.txt"), "TOPSECRET\n").unwrap();
-        let sh = |c: &str| assert!(Command::new("sh").args(["-c", c]).current_dir(&repo).status().unwrap().success());
+        let sh = |c: &str| assert!(crate::platform::shell(c, &[]).current_dir(&repo).status().unwrap().success());
         sh("git init -q && echo a > a.txt && git add -A && git -c user.name=t -c user.email=t@t commit -qm base");
         std::os::unix::fs::symlink(base.join("secret.txt"), repo.join("leak.txt")).unwrap();
         std::fs::write(repo.join("a.txt"), "b\n").unwrap();
@@ -267,7 +268,7 @@ mod tests {
     fn diff_includes_new_files() {
         let repo = std::env::temp_dir().join(format!("tazuna-review-{}", std::process::id()));
         std::fs::create_dir_all(&repo).unwrap();
-        let sh = |c: &str| assert!(Command::new("sh").args(["-c", c]).current_dir(&repo).status().unwrap().success());
+        let sh = |c: &str| assert!(crate::platform::shell(c, &[]).current_dir(&repo).status().unwrap().success());
         sh("git init -q && echo a > old.txt && git add -A && git -c user.name=t -c user.email=t@t commit -qm base");
         std::fs::write(repo.join("old.txt"), "b\n").unwrap();
         std::fs::write(repo.join("new.txt"), "fresh\n").unwrap();

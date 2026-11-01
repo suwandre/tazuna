@@ -195,7 +195,13 @@ pub struct Checkpoint {
 /// A random version-4 UUID (claude takes the message ids it is given, and they must be UUIDs).
 fn new_uuid() -> String {
     let mut b = [0u8; 16];
-    let _ = std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b));
+    if std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b)).is_err() {
+        // Windows: std's random hash keys, seeded per process and fresh for every RandomState
+        use std::hash::BuildHasher;
+        for (i, c) in b.chunks_mut(8).enumerate() {
+            c.copy_from_slice(&std::collections::hash_map::RandomState::new().hash_one(i).to_le_bytes());
+        }
+    }
     b[6] = (b[6] & 0x0f) | 0x40;
     b[8] = (b[8] & 0x3f) | 0x80;
     let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
@@ -1103,7 +1109,7 @@ impl Live {
     }
 
     fn mid_prompt(&self) -> String {
-        let date = Command::new("date").arg("+%Y-%m-%d").output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+        let date = crate::platform::shell("date +%Y-%m-%d", &[]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
         let mut p = MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date);
         if self.self_review {
             p.push_str("\n- ");
@@ -1229,7 +1235,7 @@ impl Live {
         }
         if self.boss.is_some() && self.profile == Profile::Repo {
             let exe = std::env::current_exe().context("locating the tazuna binary")?;
-            let q = format!("'{}'", exe.to_string_lossy().replace('\'', r"'\''"));
+            let q = crate::platform::sh_quote(&exe);
             settings["hooks"]["PreToolUse"] = json!([{"matcher": "", "hooks": [{"type": "command", "command": format!("{q} boss-hook")}]}]);
         }
         if let Some(m) = &self.advisor {
@@ -1304,8 +1310,7 @@ fn host() -> &'static str {
 }
 
 fn data_dir() -> Result<PathBuf> {
-    let home = std::env::var_os("HOME").context("HOME not set")?;
-    let d = Path::new(&home).join(".local/share/tazuna");
+    let d = crate::platform::home().context("HOME not set")?.join(".local/share/tazuna");
     std::fs::create_dir_all(&d)?;
     Ok(d)
 }
@@ -1323,17 +1328,16 @@ const MAX_INSTRUCTIONS: usize = 80_000;
 // ponytail: one small file per distinct prompt is kept; prune by age if the folder ever grows
 fn prompt_file(prompt: &str) -> Result<PathBuf> {
     use std::hash::{Hash, Hasher};
-    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
-    let dir = PathBuf::from(std::env::var("HOME").context("HOME")?).join(".cache/tazuna/prompts");
-    std::fs::DirBuilder::new().mode(0o700).recursive(true).create(&dir).context("creating the prompt folder")?;
-    std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))?; // also when it existed
+    let dir = crate::platform::home().context("HOME")?.join(".cache/tazuna/prompts");
+    crate::platform::private_dir(&dir, true).context("creating the prompt folder")?;
+    crate::platform::make_private(&dir); // also when it existed
     let mut h = std::collections::hash_map::DefaultHasher::new();
     prompt.hash(&mut h);
     let path = dir.join(format!("{:016x}.md", h.finish()));
     if std::fs::read_to_string(&path).ok().as_deref() != Some(prompt) {
         // written beside and renamed: a reader never sees half a prompt
         let tmp = dir.join(format!("{:016x}.{}.tmp", h.finish(), std::process::id()));
-        let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(&tmp).context("writing the prompt file")?;
+        let mut f = crate::platform::private_file(&tmp, false).context("writing the prompt file")?;
         std::io::Write::write_all(&mut f, prompt.as_bytes())?;
         std::fs::rename(&tmp, &path).context("writing the prompt file")?;
     }
@@ -1427,8 +1431,11 @@ mod tests {
         assert_eq!(prompt_file("rules\n# AGENTS.md\nintegration tests").unwrap(), a, "the same prompt reuses its file");
         assert_ne!(prompt_file("other").unwrap(), a);
         assert!(!a.to_string_lossy().contains("integration"), "the path carries none of the text");
-        use std::os::unix::fs::PermissionsExt;
-        assert_eq!(std::fs::metadata(a.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700, "a private folder");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(a.parent().unwrap()).unwrap().permissions().mode() & 0o777, 0o700, "a private folder");
+        }
     }
 
     #[test]
@@ -1508,16 +1515,19 @@ mod tests {
         assert!(project_instructions(&dir, ALL).0.contains("instructions cut here"));
         std::fs::remove_file(dir.join("CLAUDE.md")).unwrap();
         std::fs::remove_file(dir.join("AGENTS.md")).unwrap();
-        std::fs::write(dir.join("secret.txt"), "TOP SECRET").unwrap();
-        std::os::unix::fs::symlink(dir.join("secret.txt"), dir.join("CLAUDE.md")).unwrap();
-        assert!(!project_instructions(&dir, ALL).0.contains("TOP SECRET"), "symlinked instruction files are never read");
-        std::fs::remove_file(dir.join("CLAUDE.md")).unwrap();
-        let outside = std::env::temp_dir().join(format!("tazuna-outside-{}", std::process::id()));
-        std::fs::create_dir_all(&outside).unwrap();
-        std::fs::write(outside.join("CLAUDE.md"), "OUTSIDE SECRET").unwrap();
-        std::os::unix::fs::symlink(&outside, dir.join(".claude")).unwrap();
-        assert!(!project_instructions(&dir, ALL).0.contains("OUTSIDE SECRET"), "a symlinked .claude directory is not followed");
-        std::fs::remove_dir_all(&outside).ok();
+        #[cfg(unix)] // symlinks need admin rights on Windows
+        {
+            std::fs::write(dir.join("secret.txt"), "TOP SECRET").unwrap();
+            std::os::unix::fs::symlink(dir.join("secret.txt"), dir.join("CLAUDE.md")).unwrap();
+            assert!(!project_instructions(&dir, ALL).0.contains("TOP SECRET"), "symlinked instruction files are never read");
+            std::fs::remove_file(dir.join("CLAUDE.md")).unwrap();
+            let outside = std::env::temp_dir().join(format!("tazuna-outside-{}", std::process::id()));
+            std::fs::create_dir_all(&outside).unwrap();
+            std::fs::write(outside.join("CLAUDE.md"), "OUTSIDE SECRET").unwrap();
+            std::os::unix::fs::symlink(&outside, dir.join(".claude")).unwrap();
+            assert!(!project_instructions(&dir, ALL).0.contains("OUTSIDE SECRET"), "a symlinked .claude directory is not followed");
+            std::fs::remove_dir_all(&outside).ok();
+        }
         std::fs::remove_dir_all(&dir).ok();
     }
 }

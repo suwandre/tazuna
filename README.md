@@ -128,6 +128,12 @@ tazuna ~/.local/share/tazuna/sessions/<file>.jsonl           # replay a session 
 
 Requires the `claude` CLI (logged in). Nothing else: the lean tools are built into the tazuna binary.
 
+On Windows (cmd or PowerShell) tazuna needs Git for Windows: like Claude Code there, it runs commands in Git Bash
+(`TAZUNA_BASH` or `CLAUDE_CODE_GIT_BASH_PATH` point elsewhere). Install Claude Code with its native installer (`claude.exe`;
+the npm package's `claude.cmd` is not found). Build with `cargo install --path .` (Rust's MSVC toolchain), or take
+`tazuna.exe` from the windows workflow's last run (`gh run download -n tazuna-windows`). Not on Windows yet: desktop
+notifications, and reaping background processes an agent left running.
+
 tazuna only runs inside a git repo by default: the agent edits without asking, so `git diff` is the review step.
 
 Repo instructions are trusted: `CLAUDE.md` / `AGENTS.md` go into the prompt of an agent that runs commands without asking

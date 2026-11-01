@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.15 (2026-11-01): runs on Windows (cmd, PowerShell)
+
+What differed between Unix and Windows now lives in src/platform.rs: the home folder (HOME, else USERPROFILE), the shell
+(`sh -c` on Unix; Git Bash on Windows, as Claude Code uses there, so agent commands, test checks and `!` read the same),
+stopping a timed-out command with everything it started (process group and `kill`; `taskkill /T`), private files (0600/0700
+on Unix; the user profile's permissions on Windows), the clipboard image (PowerShell on Windows), hook paths for Git Bash,
+the own loop's `search`/`list` through Git's grep and find (Windows has its own `find`).
+Windows type-checks locally (`cargo check --target x86_64-pc-windows-gnu` with stub C headers for ring); build and tests run
+in a GitHub Actions workflow on windows-latest. macOS and Linux behaviour unchanged: 94 tests pass on both (2 new; Linux on InstaBox), release binary 3,684,208
+bytes (-16), clippy warnings unchanged. Not on Windows yet: notifications, reaping an agent's leftover background
+processes.
+
 ## GPT-6.1 Sol against DeepSeek as the own loop's cheap model, 2026-11-01 (bench only)
 
 Sol at xhigh on its checked route (Kriora and the shared Pro pools) on the four tasks x two runs DeepSeek ran on LingAI

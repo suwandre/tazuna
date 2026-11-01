@@ -11,7 +11,7 @@ use std::{collections::HashMap, io::Write, path::{Path, PathBuf}, process::Comma
 const DISCARD_AFTER_SECS: u64 = 24 * 3600;
 
 pub fn dir() -> Result<PathBuf> {
-    Ok(PathBuf::from(std::env::var("HOME").context("HOME")?).join(".local/share/tazuna"))
+    Ok(crate::platform::home().context("HOME")?.join(".local/share/tazuna"))
 }
 
 fn now() -> u64 {

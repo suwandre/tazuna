@@ -886,9 +886,11 @@ fn explore_tool(name: &str, input: &Value, cwd: &std::path::Path) -> (String, bo
     let Some(path) = inside(cwd, input["path"].as_str().unwrap_or(".")) else {
         return ("That path is outside the repository or does not exist.".into(), true);
     };
+    #[cfg(windows)]
+    let path = std::path::PathBuf::from(crate::platform::plain(&path));
     let glob = input["glob"].as_str().filter(|g| !g.is_empty());
     let (mut cmd, max) = if name == "search" {
-        let mut c = std::process::Command::new("grep");
+        let mut c = crate::platform::unix_tool("grep");
         c.args(["-rnIE", "--exclude-dir=.git", "--exclude-dir=node_modules", "--exclude-dir=vendor"]);
         if let Some(g) = glob {
             c.arg(format!("--include={g}"));
@@ -897,7 +899,7 @@ fn explore_tool(name: &str, input: &Value, cwd: &std::path::Path) -> (String, bo
         (c, 200)
     } else {
         let depth = input["depth"].as_u64().unwrap_or(3).clamp(1, 6).to_string();
-        let mut c = std::process::Command::new("find");
+        let mut c = crate::platform::unix_tool("find");
         c.arg(&path).args(["-maxdepth", &depth, "-not", "-path", "*/.git/*", "-not", "-name", ".git"]);
         if let Some(g) = glob {
             c.args(["-name", g]);
@@ -908,7 +910,7 @@ fn explore_tool(name: &str, input: &Value, cwd: &std::path::Path) -> (String, bo
         Ok(o) => String::from_utf8_lossy(&o.stdout).into_owned(),
         Err(e) => return (format!("{name} failed: {e}"), true),
     };
-    let root = cwd.canonicalize().map(|r| format!("{}/", r.display())).unwrap_or_default();
+    let root = cwd.canonicalize().map(|r| format!("{}/", crate::platform::plain(&r))).unwrap_or_default();
     let lines: Vec<&str> = out.lines().collect();
     let mut text = lines.iter().take(max).map(|l| l.replacen(&root, "", 1)).collect::<Vec<_>>().join("\n");
     if lines.len() > max {
