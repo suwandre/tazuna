@@ -78,6 +78,20 @@ def quality(model, slug, routes):
     return seen[slug]["pass"]
 
 
+def save(routes, model):
+    """Into routes.json without losing what others wrote there since this refresh began (a pinned route like
+    deepseek-v4.1-flash-1017@fast went missing once): this model's route and the check records are merged in."""
+    cur = json.loads(OUT.read_text()) if OUT.exists() else {"routes": {}}
+    if model:
+        cur.setdefault("routes", {})[model] = routes["routes"][model]
+    for k in ("verified", "checked"):
+        for m, v in routes.get(k, {}).items():
+            cur.setdefault(k, {}).setdefault(m, {}).update(v)
+    cur["updated"] = int(time.time())
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    OUT.write_text(json.dumps(cur, indent=1, sort_keys=True) + "\n")
+
+
 def spent_fen():
     """The account's usage counter (fen, ~700 a dollar; sub_guard.sh reads the same)."""
     import os, urllib.request
@@ -108,6 +122,7 @@ def refresh(models, budget):
         # cheaper than the cheapest verified provider (all of them if none is verified yet), plus the verified ones
         todo = [p["provider_slug"] for p in ranked if (ref is None or p["min_input_price"] < ref) and p["provider_slug"] not in failed | recent_fail]
         todo = (todo if ref is not None else todo[:2 * CANDIDATES]) + sorted(g for g in ok_before if g in price)
+        todo = list(dict.fromkeys(todo))  # once each: LingAI listed at the verified price came in twice (2026-11-01)
         print(f"{model}: {len(todo)} providers to check (${left():.2f} of the budget left)", flush=True)
         checks = []
         for i in range(0, len(todo), 4):
@@ -154,10 +169,8 @@ def refresh(models, budget):
                                        price=list(price[cheapest]), cached=max(c["cached"] for c in checks if c["slug"] in passed),
                                        efforts=EFFORTS.get(model, ["low", "medium", "high", "xhigh", "max"]), vetted_at=int(time.time()))
         print(f"  route {name} ({var}): {passed}", flush=True)
-        OUT.write_text(json.dumps(routes, indent=1, sort_keys=True) + "\n")
-    routes["updated"] = int(time.time())
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(json.dumps(routes, indent=1, sort_keys=True) + "\n")
+        save(routes, model)
+    save(routes, None)
     print(f"spent ${(spent_fen() - start) / 700:.2f} of ${budget:.2f}")
     show()
 
