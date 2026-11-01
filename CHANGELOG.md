@@ -16,6 +16,29 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Why xhigh beat max: what each route does with the effort it is sent, 2026-11-01 (bench only)
+
+bench/effortprobe.py: three hard AIME 2025 problems, twice per effort, plus a made-up level ("ultra"); median reasoning
+tokens (right answers of 6):
+
+| route | low | high | xhigh | max | "ultra" |
+|---|---|---|---|---|---|
+| DeepSeek 1017, LingAI (our route) | 5.1k (6) | 10.1k (6) | 8.9k (6) | **25.9k** (6) | 11.1k (6) |
+| DeepSeek 1017, RelAI | 0.7k (3) | 5.2k (4) | 9.9k (5) | 10.4k (5) | 20.6k (3) |
+| Kimi K3.1 Pro, a6aa | 14.3k | 14.9k | 10.6k | 9.2k | 8.7k |
+| GPT-6.1 Sol, shared Pro pools | 1.1k (4) | 0.9k (6) | 3.6k (5) | 2.6k (4) | HTTP 400 |
+| GPT-6 Luna, shared Pro pools | 1.7k (2) | 3.7k (5) | 4.8k (6) | 3.6k (5) | HTTP 400 |
+| GPT-6.1 Terra, Pro 52 | 1.9k (3) | 3.1k (5) | 2.8k (4) | 3.6k (4) | HTTP 400 |
+
+DeepSeek V4 has two levels, high (the default) and max; xhigh and unknown values run as high. On LingAI max is real
+(2.6x high), so "DeepSeek xhigh" in every round was DeepSeek high, and it beat max in agent work because max thinks
+longer per call (1,434 against 956 output tokens a call), makes more calls (90 against 70) and takes twice the time
+(37 against 18 minutes a run), which hit the one-hour cap on prometheus, without better code. Other providers map
+levels their own way (RelAI clamps max to ~xhigh and got fewer right). Kimi K3.1 Pro on a6aa ignores the effort: its
+high/xhigh/max runs were three runs of the same setting. The GPT pools validate levels but max did not think longer than
+xhigh on these problems, so their effort comparison is open. A route's effort levels are now probed before an effort
+comparison is read.
+
 ## Eight models x three efforts, a Luna check, and provider checks against public scores, 2026-10-31/11-01 (bench only)
 
 **Models x effort** (mx*.sh): tazuna 0.1.8, own loop on SubRouter (routes vetted first: output under $0.50 per M, 70%+
