@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.11 (2026-11-01): `/model`, a model picker; routes kept fresh
+
+`/model` in a session lists Claude's models (the subscription) and the own loop's routes that bench/routes.py checked
+(~/.local/share/tazuna/routes.json): providers, price, cache share, when checked, and only the effort levels the model
+really has (DeepSeek: high, max). Type to filter, ←→ for effort, enter to switch. Grey: the route's key is not set;
+yellow: the provider is not on the trusted list (the code would go there) or the route was checked over a week ago.
+Between Claude models the conversation goes on (resumed on the new model); onto the own loop it starts afresh.
+
+bench/routes.py refresh: provider prices move by the day (GPT-6.1 Sol's cheapest went from the shared Pro pools to Kriora
+within days), so each model's four cheapest providers are checked like a real run (four agent-like conversations: cache
+share, errors, where the calls went) and the route key is set to every one that passes; SubRouter then takes the
+cheapest of them per call. First refresh: Sol on Kriora, laoliu and manxueai (cached 80-88%; quqiai failed). These pass
+the run checks, not a quality check; the long-context canary (canary_lcr.py) is the one for that.
+
 ## 0.1.10 (2026-11-01): `--preset reviewed` names DeepSeek's effort as high
 
 DeepSeek V4 has high and max only; the preset's "xhigh" already ran as high (below). The preset now says so. Same

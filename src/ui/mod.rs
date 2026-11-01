@@ -106,6 +106,8 @@ pub struct View {
     pub tasks: Option<TasksPanel>,
     /// The /rewind picker, when open.
     pub rewind: Option<RewindPanel>,
+    /// The /model picker, when open.
+    pub models: Option<ModelsPanel>,
     /// Vim mode's state for the composer ("NORMAL", "INSERT"); empty when vim mode is off.
     pub vim: &'static str,
 }
@@ -114,6 +116,25 @@ pub struct RewindPanel {
     /// The messages sent so far, oldest first.
     pub items: Vec<String>,
     pub selected: usize,
+}
+
+pub struct ModelsPanel {
+    pub rows: Vec<ModelRow>,
+    pub selected: usize,
+    /// What has been typed to narrow the list.
+    pub filter: String,
+}
+
+pub struct ModelRow {
+    pub label: String,
+    pub place: String,
+    pub effort: String,
+    pub price: String,
+    pub note: String,
+    /// 0 ready, 1 no key, 2 provider not trusted (the code would go there)
+    pub state: u8,
+    pub stale: bool,
+    pub current: bool,
 }
 
 pub struct TasksPanel {
@@ -153,6 +174,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
     }
     if let Some(p) = &v.rewind {
         draw_rewind(f, p, th);
+    }
+    if let Some(p) = &v.models {
+        draw_models(f, p, th);
     }
     areas
 }
@@ -213,6 +237,45 @@ fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme) {
         let row = format!("{mark} {:>2}. {}", i + 1, plain(text).replace('\n', " ⏎ "));
         let style = if i == p.selected { st(th.accent).add_modifier(Modifier::BOLD) } else { st(th.text) };
         lines.push(Line::from(Span::styled(row.chars().take(inner.width as usize).collect::<String>(), style)));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// /model: Claude's models and the checked routes; ready ones in the text colour, a missing key greyed out, an untrusted
+/// provider (the code would go there) in the warning colour, a route checked long ago marked stale.
+fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
+    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+    let full = f.area();
+    let (w, h) = ((full.width * 9 / 10).max(20).min(full.width), ((p.rows.len() as u16 + 7).min(full.height * 8 / 10)).max(8).min(full.height));
+    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
+    f.render_widget(Clear, area);
+    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
+        .title(Span::styled(" model · type to filter · ↑↓ select · ←→ effort · enter switch · esc ", st(th.accent).add_modifier(Modifier::BOLD)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let room = inner.height.saturating_sub(3) as usize;
+    let first = p.selected.saturating_sub(room.saturating_sub(1));
+    let filter = if p.filter.is_empty() { "all models".to_string() } else { format!("filter: {}", p.filter) };
+    let mut lines: Vec<Line<'static>> = vec![
+        Line::from(Span::styled(format!("{filter} · grey: no key · yellow: provider not trusted, the code would go there"), st(th.faint))),
+        Line::from(""),
+    ];
+    for (i, r) in p.rows.iter().enumerate().skip(first).take(room) {
+        let mark = if i == p.selected { "›" } else if r.current { "•" } else { " " };
+        // the reason a row cannot be picked comes first, before the cache and age it would have
+        let tail = match r.state {
+            1 => "no key".to_string(),
+            2 => "not trusted: the code would go there".to_string(),
+            _ if r.stale => format!("stale · {}", r.note),
+            _ => r.note.clone(),
+        };
+        let row = format!("{mark} {:<24} {:<8} {:<22} {:<24} {tail}", r.label, format!("‹{}›", r.effort), r.price, r.place);
+        let color = match r.state { 1 => th.faint, 2 => th.warn, _ if r.stale => th.warn, _ => th.text };
+        let style = if i == p.selected { st(color).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(color) };
+        lines.push(Line::from(Span::styled(row.chars().take(inner.width as usize).collect::<String>(), style)));
+    }
+    if p.rows.is_empty() {
+        lines.push(Line::from(Span::styled("no model matches", st(th.faint))));
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -1063,8 +1126,26 @@ mod tests {
     }
 
     #[test]
+    fn model_picker_shows_rows_effort_and_why_not() {
+        let row = |label: &str, state: u8, stale: bool| ModelRow { label: label.into(), place: "SubRouter · lingai".into(), effort: "high".into(),
+            price: "$0.022 / $0.088 per M".into(), note: "cached 81% · checked today".into(), state, stale, current: false };
+        let p = ModelsPanel { rows: vec![row("Opus 5.5", 0, false), row("deepseek-v4.1-flash-1017", 1, false), row("gpt-6.1-sol", 2, true), row("gpt-6-luna", 0, true)], selected: 0, filter: String::new() };
+        for w in [40u16, 120] {  // narrow and wide terminals: rows are cut, never overflow
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 20)).unwrap();
+            term.draw(|f| draw_models(f, &p, Design::Cockpit.theme())).unwrap();
+            let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+            assert!(text.contains("Opus"), "{w}: {text}");
+            if w == 120 {
+                for want in ["‹high›", "no key", "not trusted", "stale"] {
+                    assert!(text.contains(want), "{want} missing in: {text}");
+                }
+            }
+        }
+    }
+
+    #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, vim: "" };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "" };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();

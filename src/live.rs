@@ -314,6 +314,8 @@ pub struct Live {
     pub review_key: Option<String>,
     /// Own loop instead of claude (`--provider`): base URL and the environment variable with the key.
     pub provider: Option<(String, String)>,
+    /// The own loop's price ("in,cached,out" USD per M) for a route picked with /model (`--price` sets the whole process's).
+    pub price: Option<String>,
     /// The user's last message and whether the reviewer has seen it: wake-up runs get no review of their own.
     task: String,
     task_reviewed: bool,
@@ -393,6 +395,7 @@ impl Live {
             review_model: None,
             review_key: None,
             provider: None,
+            price: None,
             task: String::new(),
             task_reviewed: false,
             tasks: Default::default(),
@@ -524,6 +527,30 @@ impl Live {
         self.generation += 1;
         self.proc_cost = 0.0;
         (self.model, self.effort) = (model, effort);
+    }
+
+    /// `/model`: the rest of the session on another model. Between Claude models the conversation goes on, resumed on the
+    /// new model; onto or within the own loop it starts afresh (the engine resumes no conversation). `route`: (provider URL,
+    /// key variable, price) for the own loop, None for claude.
+    pub fn switch(&mut self, model: String, effort: String, route: Option<(String, String, String)>) -> Result<(f64, Value)> {
+        if !self.idle() {
+            bail!("wait until the run has finished (or stop it with esc), then switch");
+        }
+        if route.is_some() && self.permission_mode == "plan" {
+            bail!("the own loop has no plan mode yet: leave plan mode first (shift-tab)");
+        }
+        // claude resumes its session on the new model; the own loop starts its engine without one
+        let goes_on = route.is_none() && self.provider.is_none();
+        self.respawn(model.clone(), effort.clone());
+        self.provider = route.as_ref().map(|(u, k, _)| (u.clone(), k.clone()));
+        self.price = route.map(|r| r.2);
+        let text = if goes_on {
+            format!("model: {model} at {effort} for the rest of the session (the conversation goes on; its cache is rebuilt once)")
+        } else {
+            self.session_id = None;
+            format!("model: {model} at {effort}: a new conversation (only claude can carry one over to another model)")
+        };
+        Ok(self.record(json!({"type": "harness_info", "text": text})))
     }
 
     /// `--escalate MODEL[:EFFORT]`: fix rounds after failed tests run on MODEL (with `--provider`: on claude).
@@ -1102,6 +1129,9 @@ impl Live {
             cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--permission-mode", &self.permission_mode])
                 .env("TAZUNA_SYSTEM_PROMPT", &prompt)
                 .env("LEAN_BASH_CAP", self.bash_cap.to_string());
+            if let Some(p) = &self.price {
+                cmd.env("TAZUNA_PRICE", p);
+            }
             if self.mode == "headless" {
                 cmd.env("TAZUNA_HEADLESS", "1"); // a task, not a conversation: stopping without a change gets a nudge
             }

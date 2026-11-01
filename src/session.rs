@@ -170,7 +170,7 @@ impl Session {
             results: 0,
             profile: String::new(),
             mode: "auto".into(),
-            commands: vec!["bad".into(), "good".into(), "loop".into()],
+            commands: vec!["bad".into(), "good".into(), "loop".into(), "model".into()],
             todos: Vec::new(),
             last_prompt: String::new(),
         }
@@ -215,7 +215,7 @@ impl Session {
                 self.model = s(&e["model"]);
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
-                cmds.extend(["good".to_string(), "bad".to_string(), "loop".to_string()]);
+                cmds.extend(["good".to_string(), "bad".to_string(), "loop".to_string(), "model".to_string()]);
                 cmds.sort();
                 cmds.dedup();
                 self.commands = cmds;

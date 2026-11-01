@@ -63,6 +63,7 @@ mod labels;
 mod live;
 mod looprun;
 mod mcp;
+mod models;
 mod outcap;
 mod replay;
 mod repomap;
@@ -572,12 +573,17 @@ fn check_data(url: &str, any: bool) -> Result<()> {
         return Ok(());
     }
     let host = host_of(url);
-    let file = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config/tazuna/trusted-providers");
-    let listed = std::fs::read_to_string(&file).unwrap_or_default().lines().any(|l| l.trim() == host);
-    if !listed {
+    if !trusted_host(&host) {
+        let file = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config/tazuna/trusted-providers");
         bail!("{host} is not on the trusted list ({}): it may store or use your code. Add it there, or run with --data any", file.display());
     }
     Ok(())
+}
+
+/// A provider host on the trusted list (~/.config/tazuna/trusted-providers): it may see the code under `--data trusted`.
+fn trusted_host(host: &str) -> bool {
+    let file = std::path::Path::new(&std::env::var("HOME").unwrap_or_default()).join(".config/tazuna/trusted-providers");
+    std::fs::read_to_string(&file).unwrap_or_default().lines().any(|l| l.trim() == host)
 }
 
 fn host_of(url: &str) -> String {
@@ -696,7 +702,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, vim: "" }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "" }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -935,6 +941,8 @@ fn run_live(
     // TODO.md's open items when the /loop hint last showed
     let mut looping: Option<(std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::mpsc::Receiver<String>)> = None;
     let mut loop_after_plan: Option<Vec<String>> = None;
+    // /model: the choices, the selected row (in the filtered list), each choice's effort and what has been typed to filter
+    let mut pick: Option<(Vec<models::Choice>, usize, Vec<usize>, String)> = None;
     let mut hinted = 0usize;
     // /vim: modal editing in the composer (remembered across sessions); `normal` and a pending operator (d, c)
     let vim_flag = labels::dir().map(|d| d.join("vim")).ok();
@@ -978,6 +986,16 @@ fn run_live(
         });
         v.vim = if !vim { "" } else if normal { "NORMAL" } else { "INSERT" };
         v.rewind = rewind_sel.map(|i| ui::RewindPanel { items: live.checkpoints.iter().map(|c| c.text.clone()).collect(), selected: i });
+        v.models = pick.as_ref().map(|(cs, sel, eff, filter)| ui::ModelsPanel {
+            rows: shown(cs, filter).into_iter().map(|i| {
+                let c = &cs[i];
+                ui::ModelRow { label: c.label.clone(), place: c.place.clone(), effort: c.efforts.get(eff[i]).cloned().unwrap_or_else(|| "default".into()),
+                    price: c.price.clone(), note: c.note.clone(), state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2 },
+                    stale: c.stale, current: c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
+            }).collect(),
+            selected: *sel,
+            filter: filter.clone(),
+        });
         let dt = last.elapsed();
         last = Instant::now();
         for (t, e) in live.poll() {
@@ -1076,6 +1094,46 @@ fn run_live(
         // ignored, and keys in the first moment after it appears count for nothing (typing must not approve by accident)
         // ctrl-c and ctrl-d still stop or quit: stopping answers every open question with no
         let stop_key = ctrl && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'));
+        // the /model picker owns the keyboard while open
+        if let (Some((cs, sel, eff, filter)), false) = (pick.as_mut(), stop_key) {
+            let rows = shown(cs, filter);
+            let at = rows.get(*sel).copied();
+            let mut chosen = None;
+            match key.code {
+                KeyCode::Up => *sel = sel.saturating_sub(1),
+                KeyCode::Down => *sel = (*sel + 1).min(rows.len().saturating_sub(1)),
+                KeyCode::Left => if let Some(i) = at { eff[i] = eff[i].saturating_sub(1) },
+                KeyCode::Right => if let Some(i) = at { eff[i] = (eff[i] + 1).min(cs[i].efforts.len().saturating_sub(1)) },
+                KeyCode::Backspace => {
+                    filter.pop();
+                    *sel = 0;
+                }
+                KeyCode::Char(c) if !ctrl => {
+                    filter.push(c);
+                    *sel = 0;
+                }
+                KeyCode::Enter => chosen = at.map(|i| (cs[i].clone(), cs[i].efforts.get(eff[i]).cloned())),
+                KeyCode::Esc => chosen = None,
+                _ => {}
+            }
+            if matches!(key.code, KeyCode::Enter | KeyCode::Esc) {
+                pick = None;
+            }
+            if let Some((c, effort)) = chosen {
+                let msg = match c.state {
+                    models::State::NoKey => Err(anyhow::anyhow!("{}: its key ({}) is not set: `source ~/.subrouter-key` before starting tazuna",
+                        c.label, c.route.as_ref().map(|r| r.1.as_str()).unwrap_or_default())),
+                    models::State::Untrusted => Err(anyhow::anyhow!("{}: the provider is not on the trusted list (~/.config/tazuna/trusted-providers), so the code may not go there", c.label)),
+                    // a model without levels (the API ignores them) keeps the session's
+                    models::State::Ready => live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()),
+                };
+                match msg {
+                    Ok((t, e)) => s.apply(&e, t),
+                    Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
+                }
+            }
+            continue;
+        }
         // the /rewind picker owns the keyboard while open
         if let (Some(i), false) = (rewind_sel, stop_key) {
             let last = live.checkpoints.len().saturating_sub(1);
@@ -1283,6 +1341,14 @@ fn run_live(
                     s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
                     continue;
                 }
+                if text == "/model" {
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+                    let cs = models::catalog(&labels::dir()?.join("routes.json"), trusted_host, now);
+                    let eff: Vec<usize> = cs.iter().map(|c| models::start_effort(c, &live.model, &live.effort)).collect();
+                    let sel = shown(&cs, "").iter().position(|&i| cs[i].model == live.model).unwrap_or(0);
+                    pick = Some((cs, sel, eff, String::new()));
+                    continue;
+                }
                 if text == "/rewind" {
                     if live.checkpoints.is_empty() {
                         s.apply(&json!({"type": "harness_info", "text": "nothing to rewind yet: no message sent in this conversation"}), live.elapsed_ms());
@@ -1390,6 +1456,12 @@ fn run_live(
             _ => {}
         }
     }
+}
+
+/// The picker rows that match what was typed (label or place, any case), as indices into the choices.
+fn shown(cs: &[models::Choice], filter: &str) -> Vec<usize> {
+    let f = filter.to_lowercase();
+    (0..cs.len()).filter(|&i| f.is_empty() || cs[i].label.to_lowercase().contains(&f) || cs[i].place.to_lowercase().contains(&f)).collect()
 }
 
 const LOOP_STARTED: &str = "loop started: one fresh run per TODO.md item, a commit each, a notification at the end; messages you \
