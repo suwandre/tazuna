@@ -100,7 +100,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             route: Some((url.to_string(), var.to_string(), format!("{input},{},{output}", (input / 10.0 * 1e6).round() / 1e6))),
             place: format!("SubRouter · {}", providers.join(", ")),
             efforts,
-            price: format!("${input} / ${output} per M"),
+            price: format!("${input} / ${output}"),
             note: format!("cached {}% · checked {}", r["cached"].as_u64().unwrap_or(0), match days {
                 0 => "today".to_string(),
                 1 => "yesterday".to_string(),
@@ -126,7 +126,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             route: Some(("https://subrouter.ai/v1".into(), key.into(), format!("{input},{},{output}", (input / 10.0 * 1e6).round() / 1e6))),
             place: format!("SubRouter · {} providers", c["providers"].as_u64().unwrap_or(0)),
             efforts: LEVELS.iter().map(|e| e.to_string()).collect(),
-            price: format!("from ${input} / ${output} per M"),
+            price: format!("from ${input} / ${output}"),
             note: "unchecked: SubRouter picks the provider".into(),
             stale: false,
             state: if std::env::var_os(key).is_none() { State::NoKey } else if !trusted("subrouter.ai") { State::Untrusted } else { State::Unchecked },

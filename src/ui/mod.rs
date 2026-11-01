@@ -244,43 +244,60 @@ fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme) {
 }
 
 /// /model: Claude's models and the checked routes; ready ones in the text colour, a missing key greyed out, an untrusted
-/// provider (the code would go there) in the warning colour, a route checked long ago marked stale.
+/// provider (the code would go there) in the warning colour, a route checked long ago marked stale. Each row holds what
+/// decides a pick (model, effort, scores, price); the selected row's provider, cache share, age and the reason it cannot
+/// be picked show below the list, so the price is never pushed off a narrow screen.
 fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
-    let (w, h) = ((full.width * 9 / 10).max(20).min(full.width), ((p.rows.len() as u16 + 7).min(full.height * 8 / 10)).max(8).min(full.height));
+    let (w, h) = ((full.width * 9 / 10).max(20).min(full.width), ((p.rows.len() as u16 + 8).min(full.height * 8 / 10)).max(9).min(full.height));
     let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
     f.render_widget(Clear, area);
     let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
         .title(Span::styled(" model · type to filter · ↑↓ select · ←→ effort · enter switch · esc ", st(th.accent).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let room = inner.height.saturating_sub(3) as usize;
+    let room = inner.height.saturating_sub(5) as usize;
     let first = p.selected.saturating_sub(room.saturating_sub(1));
     let filter = if p.filter.is_empty() { "all models".to_string() } else { format!("filter: {}", p.filter) };
+    let cut = |s: String| s.chars().take(inner.width as usize).collect::<String>();
     let mut lines: Vec<Line<'static>> = vec![
-        Line::from(Span::styled(format!("{filter} · bench: our judge (runs) · AA: public index · dim: unchecked route · grey: no key · yellow: not trusted or stale"), st(th.faint))),
+        Line::from(Span::styled(cut(format!("{filter} · bench: our judge (runs) · AA: public index · price: $ in / out per M tokens")), st(th.faint))),
         Line::from(""),
     ];
+    // columns as wide as their longest entry (a long label is cut), so every row's price starts at the same place
+    let width = |f: &dyn Fn(&ModelRow) -> usize| p.rows.iter().map(f).max().unwrap_or(0);
+    let lw = width(&|r| r.label.chars().count()).min(32);
+    let ew = width(&|r| r.effort.chars().count() + 2);
+    let sw = width(&|r| r.scores.chars().count());
     for (i, r) in p.rows.iter().enumerate().skip(first).take(room) {
         let mark = if i == p.selected { "›" } else if r.current { "•" } else { " " };
-        // the reason a row cannot be picked comes first, before the cache and age it would have
-        let tail = match r.state {
-            1 => "no key".to_string(),
-            2 => "not trusted: the code would go there".to_string(),
-            _ if r.stale => format!("stale · {}", r.note),
-            _ => r.note.clone(),
-        };
-        // what decides a pick first (model, effort, scores, price, the reason or the route's state); where it runs last
-        let row = format!("{mark} {:<26} {:<8} {:<22} {:<24} {:<38} {}", r.label, format!("‹{}›", r.effort), r.scores, r.price, tail, r.place);
+        let label = if r.label.chars().count() > lw { format!("{}…", r.label.chars().take(lw - 1).collect::<String>()) } else { r.label.clone() };
+        let row = format!("{mark} {label:<lw$} {:<ew$} {:<sw$} {}", format!("‹{}›", r.effort), r.scores, r.price);
         let color = match r.state { 1 => th.faint, 2 => th.warn, 3 => th.dim, _ if r.stale => th.warn, _ => th.text };
         let style = if i == p.selected { st(color).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(color) };
-        lines.push(Line::from(Span::styled(row.chars().take(inner.width as usize).collect::<String>(), style)));
+        lines.push(Line::from(Span::styled(cut(row), style)));
     }
     if p.rows.is_empty() {
         lines.push(Line::from(Span::styled("no model matches", st(th.faint))));
     }
     f.render_widget(Paragraph::new(lines), inner);
+    // the selected row in full: where it runs and its price, then why it cannot be picked (or its cache and age)
+    if let Some(r) = p.rows.get(p.selected) {
+        let why = match r.state {
+            1 => "no key: its key variable is not set".to_string(),
+            2 => "not trusted: the code would go there (add the host to ~/.config/tazuna/trusted-providers)".to_string(),
+            _ if r.stale => format!("stale: {}", r.note),
+            _ => r.note.clone(),
+        };
+        let color = match r.state { 1 => th.faint, 2 => th.warn, _ if r.stale => th.warn, _ => th.dim };
+        let detail = vec![
+            Line::from(Span::styled(cut(format!("{} · {} · {} per M tokens", r.label, r.place, r.price)), st(th.text))),
+            Line::from(Span::styled(cut(why), st(color))),
+        ];
+        let at = Rect::new(inner.x, inner.y + inner.height.saturating_sub(2), inner.width, inner.height.min(2));
+        f.render_widget(Paragraph::new(detail), at);
+    }
 }
 
 /// Command output (untrusted: whatever a command printed) as plain text for the screen. Escape sequences go entirely:
@@ -1144,18 +1161,25 @@ mod tests {
     #[test]
     fn model_picker_shows_rows_effort_and_why_not() {
         let row = |label: &str, state: u8, stale: bool| ModelRow { label: label.into(), place: "SubRouter · lingai".into(), effort: "high".into(),
-            price: "$0.022 / $0.088 per M".into(), note: "cached 81% · checked today".into(), scores: "bench 6.8 (308) · AA 32".into(), state, stale, current: false };
-        let p = ModelsPanel { rows: vec![row("Opus 5.5", 0, false), row("deepseek-v4.1-flash-1017", 1, false), row("gpt-6.1-sol", 2, true), row("gpt-6-luna", 0, true)], selected: 0, filter: String::new() };
-        for w in [40u16, 120] {  // narrow and wide terminals: rows are cut, never overflow
+            price: "$0.022 / $0.088".into(), note: "cached 81% · checked today".into(), scores: "bench 6.8 (308) · AA 32".into(), state, stale, current: false };
+        let mut p = ModelsPanel { rows: vec![row("Opus 5.5", 0, false), row("deepseek-v4.1-flash-1017 · fast", 1, false), row("gpt-6.1-sol", 2, true), row("gpt-6-luna", 0, true)], selected: 0, filter: String::new() };
+        let draw = |p: &ModelsPanel, w: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 20)).unwrap();
-            term.draw(|f| draw_models(f, &p, Design::Cockpit.theme())).unwrap();
-            let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
-            assert!(text.contains("Opus"), "{w}: {text}");
-            if w == 120 {
-                for want in ["‹high›", "no key", "not trusted", "stale"] {
-                    assert!(text.contains(want), "{want} missing in: {text}");
-                }
-            }
+            term.draw(|f| draw_models(f, p, Design::Cockpit.theme())).unwrap();
+            let b = term.backend().buffer().clone();
+            (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>()
+        };
+        assert!(draw(&p, 40).concat().contains("Opus"), "a narrow terminal cuts rows, never overflows");
+        // 100 columns (the user's screenshot, 2026-11-01): every row's price is whole, in one column
+        let lines = draw(&p, 100);
+        let rows: Vec<&String> = lines.iter().filter(|l| l.contains("‹high›")).collect();
+        assert_eq!(rows.len(), 4);
+        let at: Vec<usize> = rows.iter().map(|l| l[..l.find("$0.022 / $0.088").expect("whole price")].chars().count()).collect();
+        assert!(at.windows(2).all(|w| w[0] == w[1]), "{rows:?}");
+        for (i, want) in [(0, "cached 81%"), (1, "no key"), (2, "not trusted"), (3, "stale")] {
+            p.selected = i;
+            let text = draw(&p, 100).concat();
+            assert!(text.contains(want) && text.contains("SubRouter · lingai"), "row {i}: {want} missing in: {text}");
         }
     }
 
