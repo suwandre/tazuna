@@ -1,6 +1,7 @@
 #!/bin/zsh
-# The weekly canary: canary.py on the routes tazuna uses, each on a key of its own (account log per key), at the effort tazuna
-# uses them. SubRouter only (no Claude plan usage). Results in .model-check/canary.jsonl, read by scoreboard.py.
+# The weekly canary: the routes re-checked (routes.py, $0.35 budget), then canary.py on the routes tazuna uses, each on a
+# key of its own (account log per key), at the effort tazuna uses them. SubRouter only (no Claude plan usage), under $0.50
+# a week. Results in .model-check/canary.jsonl, read by scoreboard.py.
 #   bench/canary_weekly.sh install   # launchd, Sundays 10:00 (rerun install after changing this file)
 #   bench/canary_weekly.sh           # one run now
 export PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
@@ -24,6 +25,10 @@ fi
 cd "$HERE" || exit 1
 source ~/.subrouter-key
 echo "$(date '+%Y-%m-%d %H:%M') canary run"
-python3 -I canary.py run deepseek-v4.1-flash-1017 --key-env SUBROUTER_CANARY_DS_KEY --effort xhigh
+# routes first (routes.py: providers re-checked, new ones through the quality gate). The week's SubRouter spend stays under
+# $0.50: $0.35 hard budget for the routes (routes.py stops at it), ~$0.10 for the two canaries below (2026-11-01 estimate,
+# with room to spare). Verdicts hold 30 days, so most weeks the routes cost cents.
+python3 -I routes.py refresh deepseek-v4.1-flash-1017 gpt-6.1-sol gpt-6-luna --budget 0.35  # Terra only on request (dearest)
+python3 -I canary.py run deepseek-v4.1-flash-1017 --key-env SUBROUTER_CANARY_DS_KEY --effort high
 python3 -I canary.py run gpt-6.1-sol --key-env SUBROUTER_CANARY_SOL_KEY --effort xhigh
 python3 -I scoreboard.py > /dev/null
