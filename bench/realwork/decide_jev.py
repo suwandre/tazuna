@@ -36,7 +36,7 @@ def items():
     sets = {t.parent.name: t.parent.parent.name for t in HERE.glob("tasks*/*/prompt.txt")}
     for (task, h), s in sorted(runs.items()):
         bset = sets.get(task)
-        d = HERE / ("runs" if bset == "tasks" else f"runs-{bset}") / task / f"{h}-r0.diff"
+        d = HERE / ("runs" if bset == "tasks" else f"runs-{bset}") / task / f"{h.replace(':', '~')}-r0.diff"
         if not bset or not d.exists():
             continue
         diff = d.read_text(errors="replace")

@@ -124,8 +124,9 @@ def candidates(task_name):
     cands = []
     only = set(filter(None, os.environ.get("JUDGE_ONLY", "").split(",")))
     for f in sorted((RUNS / task_name).glob("*.diff")):
-        h, run = f.stem.rsplit("-r", 1)
-        if only and h not in only and f.stem not in only:  # a harness, or one run of it (<harness>-rN)
+        stem = f.stem.replace("~", ":")  # run.py fname: ':' is '~' in file names
+        h, run = stem.rsplit("-r", 1)
+        if only and h not in only and stem not in only:  # a harness, or one run of it (<harness>-rN)
             continue
         r = results.get((h, int(run)))
         if r:

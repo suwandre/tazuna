@@ -43,7 +43,7 @@ OUT, lock = HERE / "replay-review.jsonl", threading.Lock()
 
 def one(job):
     (bset, task, v), arm, scoped, dset = job
-    diff = HERE / ("runs" if bset == "tasks" else f"runs-{bset}") / task / f"{v}.diff"
+    diff = HERE / ("runs" if bset == "tasks" else f"runs-{bset}") / task / f"{v.replace(':', '~')}.diff"
     w = Path(tempfile.mkdtemp(prefix="rw-replay-"))  # rw-: other jailed runs cannot read it
     side = Path(tempfile.mkdtemp(prefix="replay-side-"))  # the task file and claude's config, outside the work tree
     g = json.loads((HERE / bset / task / "git.json").read_text())  # setup_workdir without the module download (no build)

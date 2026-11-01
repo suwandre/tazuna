@@ -54,7 +54,7 @@ def main():
                  f"# Reference fix\n```diff\n{judge.reference(HERE / bset / task)[:judge.MAX_DIFF]}\n```",
                  f"# Candidate (hidden PR tests {res['passed']}/{res['total']}"
                  + ("" if res.get("regress") is None else (", package suite FAILED" if res["regress"] else ", package suite passed"))
-                 + f")\n```diff\n{(HERE / ('runs' if bset == 'tasks' else f'runs-{bset}') / task / f'{diff}.diff').read_text()[:judge.MAX_DIFF]}\n```"]
+                 + f")\n```diff\n{(HERE / ('runs' if bset == 'tasks' else f'runs-{bset}') / task / f'{diff.replace(":", "~")}.diff').read_text()[:judge.MAX_DIFF]}\n```"]
         for rid, r in zip(names, revs):
             issues = r.get("issues") or []
             parts.append(f"# Reviewer {rid}\n" + ("\n".join(f"- {rid}-{j + 1}: {i}" for j, i in enumerate(issues)) or "(no findings: verdict ok)"))

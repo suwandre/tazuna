@@ -409,6 +409,11 @@ def graphify_build(w):
         f.write("graphify-out/\n")
 
 
+def fname(label):
+    """A run's label as a file name: ':' (model:effort) is not allowed in Windows file names."""
+    return label.replace(":", "~")
+
+
 def model_effort(h):
     if "@" in h:
         m, _, e = h.split("@", 1)[1].partition(":")
@@ -1034,7 +1039,7 @@ def run_best2(h, w, prompt):
                 shutil.rmtree(s, ignore_errors=True)
             att = h.replace("best2-", "att" + "ab"[i] + "-", 1)
             (RUNS / task.name).mkdir(parents=True, exist_ok=True)
-            (RUNS / task.name / f"{att}-r0.diff").write_text(diffs[i])
+            (RUNS / task.name / f"{fname(att)}-r0.diff").write_text(diffs[i])
             model, effort = model_effort(att)
             row = dict(task=task.name, harness=att, run=0, model=model, effort=effort, cost=round(res[i]["reported_cost"], 4),
                        **{k: res[i][k] for k in ("inp", "cache_w", "cache_r", "out", "turns", "reported_cost", "verify")},
@@ -1224,14 +1229,14 @@ def _run_job(task, h, i):
                 try:  # a run stopped by its budget or timeout keeps its work for a look (judge.py reads *.diff only)
                     out = RUNS / task.name
                     out.mkdir(parents=True, exist_ok=True)
-                    (out / f"{h}-r{i}.diff.partial").write_text(capture_diff(w))
+                    (out / f"{fname(h)}-r{i}.diff.partial").write_text(capture_diff(w))
                 except Exception:
                     pass
                 return
     out = RUNS / task.name
     out.mkdir(parents=True, exist_ok=True)
-    (out / f"{h}-r{i}.diff").write_text(diff)
-    (out / f"{h}-r{i}.final.txt").write_text(r.pop("final"))
+    (out / f"{fname(h)}-r{i}.diff").write_text(diff)
+    (out / f"{fname(h)}-r{i}.final.txt").write_text(r.pop("final"))
     model, effort = model_effort(h)
     cost = r["reported_cost"] if "@" in h else norm_cost(r)  # sweep: Claude Code's own per-model pricing
     row = dict(task=task.name, harness=h, run=i, model=model, effort=effort, cost=round(cost, 4), ts=int(t0), **r)
@@ -1273,7 +1278,7 @@ def rescore(task_names):
         with tempfile.TemporaryDirectory() as d:
             w = Path(d)
             setup_workdir(task, w)
-            diff = RUNS / r["task"] / f"{r['harness']}-r{r['run']}.diff"
+            diff = RUNS / r["task"] / f"{fname(r['harness'])}-r{r['run']}.diff"
             ap = sh(["git", "apply", "--whitespace=nowarn", str(diff)], w)
             if ap.returncode:
                 raise RuntimeError(f"apply failed {diff}: {ap.stderr[-300:]}")

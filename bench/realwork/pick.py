@@ -63,7 +63,7 @@ def main():
         if not ok:
             sys.exit(f"guard: stale or over 85% (5h {s.get('five_hour')}%): stopping")
         first, second = (x, y) if rng.random() < 0.5 else (y, x)  # the order shown, against position bias
-        diff = lambda h: (RUNS / task / f"{h}-r0.diff").read_text()
+        diff = lambda h: (RUNS / task / f"{h.replace(':', '~')}-r0.diff").read_text()
         p, why, cost = pick(task, diff(first), diff(second))
         chosen, other = (first, second) if p == "A" else (second, first)
         row = dict(task=task, shown_a=first, shown_b=second, pick=chosen, other=other, why=why, api_usd=cost,
