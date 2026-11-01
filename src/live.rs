@@ -1072,6 +1072,7 @@ impl Live {
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
             "claude_version": self.claude_version, "cwd": self.cwd, "session_id": self.session_id, "recording": self.rec_path,
+            "host": host(),
         })
     }
 
@@ -1291,6 +1292,15 @@ impl Drop for Live {
             let _ = c.wait();
         }
     }
+}
+
+/// The machine's name, in each run's log row: runs from several machines (synced to one for analysis) stay apart.
+fn host() -> &'static str {
+    static HOST: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HOST.get_or_init(|| {
+        Command::new("hostname").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).filter(|h| !h.is_empty())
+            .unwrap_or_else(|| "unknown".into())
+    })
 }
 
 fn data_dir() -> Result<PathBuf> {
