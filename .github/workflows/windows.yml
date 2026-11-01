@@ -6,13 +6,28 @@ on:
     paths: ["src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/windows.yml"]
   workflow_dispatch:
 jobs:
-  build:
-    runs-on: windows-latest
+  # Windows cannot check this repo out (892 bench files have a ':' in their name): Linux hands it the code
+  source:
+    runs-on: ubuntu-latest
     steps:
-      # src only: 892 bench files have a ':' in their name, which Windows cannot write (cone mode adds the root files)
       - uses: actions/checkout@v7
         with:
           sparse-checkout: src
+      - uses: actions/upload-artifact@v7
+        with:
+          name: source
+          path: |
+            src
+            Cargo.toml
+            Cargo.lock
+          retention-days: 1
+  build:
+    needs: source
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: source
       - run: cargo build --release
       - run: cargo test
       - uses: actions/upload-artifact@v7
