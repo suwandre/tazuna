@@ -10,6 +10,7 @@ SubRouter labels some price lists CNY, but its billing counts those numbers as U
 "CNY" per M output, billed $0.09 per M, 2026-11-01), so they are taken as USD here.
 
   routes.py refresh [MODEL ...] [--budget USD]   default: MODELS, $0.40; stops spending at the budget
+  routes.py pin [ROUTE ...]       a key per checked provider of each route, for pinning one in the picker (no model calls)
   routes.py catalog               the picker's list of every SubRouter model, bench scores, AA index (no model calls)
   routes.py show                  routes.json as a table
 """
@@ -93,6 +94,23 @@ def save(routes, model):
     OUT.write_text(json.dumps(cur, indent=1, sort_keys=True) + "\n")
 
 
+def pin(name, route, price):
+    """A key of its own for each checked provider of a route with several (tazuna-route-<route>-<provider>, one provider
+    each), so the picker can pin one without touching the route's key, which other sessions may be using. Keys cost
+    nothing; their values go to ~/.subrouter-key like the route's."""
+    route.pop("pinned", None)
+    if len(route["providers"]) < 2:
+        return
+    base = "tazuna-route-" + re.sub(r"[^a-z0-9]+", "-", name).strip("-")
+    route["pinned"] = {}
+    for g in route["providers"]:
+        var = s.env_name(f"{name}-{g}")
+        kid = s.key(f"{base}-{re.sub(r'[^a-z0-9]+', '-', g).strip('-')}", route.get("model", name), [g], var)
+        if g.startswith("shared-"):  # a shared subscription pool serves only keys that allow them
+            s.api("/api/token/", "PUT", {**s.api(f"/api/token/{kid}"), "include_shared_subscriptions": True})
+        route["pinned"][g] = dict(key_env=var, price=list(price.get(g, route["price"])))
+
+
 def spent_fen():
     """The account's usage counter (fen, ~700 a dollar; sub_guard.sh reads the same)."""
     import os, urllib.request
@@ -169,6 +187,7 @@ def refresh(models, budget):
         routes["routes"][model] = dict(via="subrouter", url="https://subrouter.ai/v1", key_env=var, providers=passed,
                                        price=list(price[cheapest]), cached=max(c["cached"] for c in checks if c["slug"] in passed),
                                        efforts=EFFORTS.get(model, ["low", "medium", "high", "xhigh", "max"]), vetted_at=int(time.time()))
+        pin(model, routes["routes"][model], price)
         print(f"  route {name} ({var}): {passed}", flush=True)
         save(routes, model)
     save(routes, None)
@@ -214,6 +233,16 @@ if __name__ == "__main__":
         budget = float(a[a.index("--budget") + 1]) if "--budget" in a else 0.40
         names = [x for x in a[1:] if not x.startswith("--") and x != str(a[a.index("--budget") + 1] if "--budget" in a else "")]
         refresh(names or MODELS, budget)
+    elif a[:1] == ["pin"]:
+        routes = json.loads(OUT.read_text())
+        listed = {m["model_name"]: m for m in s.api("/api/user/self/subrouter/models")}
+        for name, r in routes["routes"].items():
+            if a[1:] and name not in a[1:]:
+                continue
+            ps = listed.get(r.get("model", name), {}).get("providers", [])
+            pin(name, r, {p["provider_slug"]: (round(p["min_input_price"], 5), round(p["min_output_price"], 5)) for p in ps})
+            save(routes, name)
+            print(f"{name}: {', '.join(f'{g} ({p['key_env']})' for g, p in r.get('pinned', {}).items()) or 'one provider, nothing to pin'}")
     elif a[:1] == ["catalog"]:
         catalog()
     elif a[:1] == ["show"]:

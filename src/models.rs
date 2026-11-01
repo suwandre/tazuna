@@ -42,6 +42,43 @@ pub struct Choice {
     /// unknown.
     pub bench: String,
     pub aa: String,
+    /// The route's checked providers, each with a key of its own (bench/routes.py pin): one can be pinned in the picker.
+    pub pins: Vec<Pin>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Pin {
+    pub provider: String,
+    pub key_env: String,
+    /// Input and output, USD per M tokens.
+    pub price: (f64, f64),
+    pub state: State,
+}
+
+/// The cached-input price is not in the provider list: a tenth of input, the usual discount.
+fn route_price(input: f64, output: f64) -> String {
+    format!("{input},{},{output}", (input / 10.0 * 1e6).round() / 1e6)
+}
+
+/// The choice with its route pinned to its `i`-th checked provider (1..): that provider's key, price and state. 0: the
+/// route as it is, SubRouter picking among the checked providers call by call.
+pub fn pinned(c: &Choice, i: usize) -> Choice {
+    let mut c = c.clone();
+    let Some(p) = i.checked_sub(1).and_then(|i| c.pins.get(i)).cloned() else {
+        if !c.pins.is_empty() {
+            c.place.push_str(" · tab: pin one");
+        }
+        return c;
+    };
+    if let Some(r) = c.route.as_mut() {
+        r.1 = p.key_env.clone();
+        r.2 = route_price(p.price.0, p.price.1);
+    }
+    c.label = format!("{} · {}", c.label, p.provider);
+    c.place = format!("SubRouter · {} only (pinned; tab: next)", p.provider);
+    c.price = format!("{} / {}", per_m(p.price.0), per_m(p.price.1));
+    c.state = p.state;
+    c
 }
 
 /// Artificial Analysis' slug for a model name: lower case, dots as dashes.
@@ -79,6 +116,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
         state: State::Ready,
         bench: scores(&file, m).0,
         aa: scores(&file, m).1,
+        pins: vec![],
     }).collect();
     let mut rs: Vec<(&String, &Value)> = file["routes"].as_object().map(|o| o.iter().collect()).unwrap_or_default();
     rs.sort_by_key(|(m, _)| m.to_string());
@@ -98,18 +136,25 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             n if n < LEVELS.len() => format!(" · only {} and {} differ", distinct[..n - 1].join(", "), distinct[n - 1]),
             _ => String::new(),
         };
-        let state = if std::env::var_os(var).is_none() {
+        let state_of = |var: &str| if std::env::var_os(var).is_none() {
             State::NoKey
         } else if !trusted(host) {
             State::Untrusted
         } else {
             State::Ready
         };
+        let state = state_of(var);
+        let mut pins: Vec<Pin> = r["pinned"].as_object().into_iter().flatten().filter_map(|(g, p)| Some(Pin {
+            provider: g.clone(),
+            key_env: p["key_env"].as_str()?.to_string(),
+            price: (p["price"][0].as_f64()?, p["price"][1].as_f64()?),
+            state: state_of(p["key_env"].as_str()?),
+        })).collect();
+        pins.sort_by(|a, b| a.price.0.total_cmp(&b.price.0).then(a.provider.cmp(&b.provider)));
         out.push(Choice {
             model,
             label,
-            // the cached-input price is not in the provider list: a tenth of input, the usual discount
-            route: Some((url.to_string(), var.to_string(), format!("{input},{},{output}", (input / 10.0 * 1e6).round() / 1e6))),
+            route: Some((url.to_string(), var.to_string(), route_price(input, output))),
             place: format!("SubRouter · {}", providers.join(", ")),
             efforts: LEVELS.iter().map(|e| e.to_string()).collect(),
             price: format!("{} / {}", per_m(input), per_m(output)),
@@ -122,6 +167,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             state,
             bench: scores(&file, r["model"].as_str().unwrap_or(name)).0,
             aa: scores(&file, r["model"].as_str().unwrap_or(name)).1,
+            pins,
         });
     }
     // every other SubRouter model with a public score (the list also holds image and video models), best first
@@ -136,7 +182,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
         out.push(Choice {
             model: model.clone(),
             label: model.clone(),
-            route: Some(("https://subrouter.ai/v1".into(), key.into(), format!("{input},{},{output}", (input / 10.0 * 1e6).round() / 1e6))),
+            route: Some(("https://subrouter.ai/v1".into(), key.into(), route_price(input, output))),
             place: format!("SubRouter · {} providers", c["providers"].as_u64().unwrap_or(0)),
             efforts: LEVELS.iter().map(|e| e.to_string()).collect(),
             price: format!("{} / {}", per_m(input), per_m(output)),
@@ -145,6 +191,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             state: if std::env::var_os(key).is_none() { State::NoKey } else if !trusted("subrouter.ai") { State::Untrusted } else { State::Unchecked },
             bench: scores(&file, model).0,
             aa: scores(&file, model).1,
+            pins: vec![],
         });
     }
     out
@@ -171,8 +218,10 @@ mod tests {
                 "price": [0.022, 0.088], "cached": 81, "efforts": ["high", "max"], "vetted_at": 1000000},
             "deepseek-v4.1-flash-1017@fast": {"model": "deepseek-v4.1-flash-1017", "url": "https://subrouter.ai/v1", "key_env": "PATH",
                 "providers": ["lingai"], "price": [0.022, 0.088], "cached": 89, "efforts": ["high", "max"], "vetted_at": 1000000},
-            "gpt-6.1-sol": {"url": "https://subrouter.ai/v1", "key_env": "PATH", "providers": ["kriora"],
-                "price": [0.0387, 0.1935], "cached": 91, "efforts": ["low", "high", "xhigh", "max"], "vetted_at": 1000000}}}"#).unwrap();
+            "gpt-6.1-sol": {"url": "https://subrouter.ai/v1", "key_env": "PATH", "providers": ["kriora", "shared-openai-pro-50"],
+                "price": [0.0387, 0.1935], "cached": 91, "efforts": ["low", "high", "xhigh", "max"], "vetted_at": 1000000,
+                "pinned": {"shared-openai-pro-50": {"key_env": "TAZUNA_TEST_NO_SUCH_KEY", "price": [0.05, 0.25]},
+                           "kriora": {"key_env": "HOME", "price": [0.0387, 0.1935]}}}}}"#).unwrap();
         let now = 1000000 + 9 * 86_400;
         let mut d: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
         d["catalog"] = serde_json::json!({"glm-5.3": {"price": [0.1, 0.4], "providers": 3}, "seadance-video": {"price": [1, 1], "providers": 1},
@@ -199,6 +248,14 @@ mod tests {
         assert_eq!(catalog(&f, |_| false, now)[5].state, State::Untrusted);
         assert_eq!(c[4].efforts[start_effort(&c[4], "claude-opus-5-5", "medium")], "high");
         assert_eq!(c[0].efforts[start_effort(&c[0], "claude-opus-5-5", "xhigh")], "xhigh");
+        // pinning: the cheapest provider first, its own key and price; a pinned key that is not set says so
+        assert_eq!(c[5].pins.iter().map(|p| p.provider.as_str()).collect::<Vec<_>>(), ["kriora", "shared-openai-pro-50"]);
+        assert!(pinned(&c[5], 0).place.ends_with("tab: pin one") && pinned(&c[5], 0).route == c[5].route);
+        let k = pinned(&c[5], 1);
+        assert_eq!((k.label.as_str(), k.route.as_ref().unwrap().1.as_str(), k.state), ("gpt-6.1-sol · kriora", "HOME", State::Ready));
+        let s = pinned(&c[5], 2);
+        assert_eq!((s.price.as_str(), s.route.as_ref().unwrap().2.as_str(), s.state), ("0.05 / 0.25", "0.05,0.005,0.25", State::NoKey));
+        assert_eq!(pinned(&c[4], 1).label, c[4].label, "no pins: the route as it is");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

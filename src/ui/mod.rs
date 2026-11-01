@@ -251,34 +251,7 @@ fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme) {
 fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
-    let (w, h) = ((full.width * 9 / 10).max(20).min(full.width), ((p.rows.len() as u16 + 12).min(full.height * 8 / 10)).max(10).min(full.height));
-    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
-    f.render_widget(Clear, area);
-    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(" model · type to filter · ↑↓ select · ←→ effort · enter switch · esc ", st(th.accent).add_modifier(Modifier::BOLD)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    let iw = inner.width as usize;
-    let cut = |s: String| s.chars().take(iw).collect::<String>();
-    // the selected row in full, wrapped: its height decides how many rows the list has
-    let detail: Vec<Line<'static>> = p.rows.get(p.selected).map(|r| {
-        let price = if r.price == "plan" { "on the plan".to_string() } else { format!("${} per M tokens (in / out)", r.price.replace(" / ", " / $")) };
-        let scores = [(!r.bench.is_empty()).then(|| format!("bench {}", r.bench)), (!r.aa.is_empty()).then(|| format!("AA {}", r.aa))];
-        let why = match r.state {
-            1 => "no key: its key variable is not set".to_string(),
-            2 => "not trusted: the code would go there (add the host to ~/.config/tazuna/trusted-providers)".to_string(),
-            _ if r.stale => format!("stale: {}", r.note),
-            _ => r.note.clone(),
-        };
-        let color = match r.state { 1 => th.faint, 2 => th.warn, _ if r.stale => th.warn, _ => th.dim };
-        let head: Vec<String> = [Some(r.label.clone()), Some(price)].into_iter().chain(scores).flatten().collect();
-        [(head.join(" · "), th.text), (r.place.clone(), th.dim), (why, color)].into_iter()
-            .flat_map(|(text, c)| wrap_words(&text, iw).into_iter().map(move |l| Line::from(Span::styled(l, st(c)))))
-            .collect()
-    }).unwrap_or_default();
-    let dh = (detail.len() as u16).min(inner.height.saturating_sub(4) / 2);
-    let room = inner.height.saturating_sub(2 + dh + u16::from(dh > 0)) as usize; // filter, header; a gap before the details
-    let first = p.selected.saturating_sub(room.saturating_sub(1));
+    let title = " model · type to filter · ←→ effort · tab provider · enter · esc ";
     // column widths: as wide as their header or longest entry
     let width = |head: &str, f: &dyn Fn(&ModelRow) -> usize| p.rows.iter().map(f).chain([head.chars().count()]).max().unwrap_or(0);
     let ew = width("effort", &|r| r.effort.chars().count() + 2);
@@ -286,9 +259,44 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     let bw = width("bench (runs)", &|r| r.bench.chars().count());
     let aw = width("AA", &|r| r.aa.chars().count());
     let longest = width("model", &|r| r.label.chars().count());
+    // as wide as the table (and its title), at most 9/10 of the screen: no empty band beside the columns on a wide screen
+    let table = 2 + longest + 1 + ew + 1 + pw + 1 + bw + 1 + aw;
+    let w = (table.max(title.chars().count()) as u16 + 2).min(full.width * 9 / 10).max(20).min(full.width);
+    let iw = w.saturating_sub(2) as usize;
+    let cut = |s: String| s.chars().take(iw).collect::<String>();
+    // the selected row in full, wrapped: its height decides how many rows the list has
+    let detail: Vec<Line<'static>> = p.rows.get(p.selected).map(|r| {
+        let price = if r.price == "plan" { "on the plan".to_string() } else { format!("${} per M tokens (in / out)", r.price.replace(" / ", " / $")) };
+        let scores = [(!r.bench.is_empty()).then(|| format!("bench {}", r.bench)), (!r.aa.is_empty()).then(|| format!("AA {}", r.aa))];
+        let why = match r.state {
+            1 => "no key: its key variable is not set (`source ~/.subrouter-key` before starting tazuna)".to_string(),
+            2 => "not trusted: the code would go there (add the host to ~/.config/tazuna/trusted-providers)".to_string(),
+            _ if r.stale => format!("stale: {}", r.note),
+            _ => r.note.clone(),
+        };
+        let color = match r.state { 1 => th.faint, 2 => th.warn, _ if r.stale => th.warn, _ => th.dim };
+        let head: Vec<String> = [Some(r.label.clone()), Some(price)].into_iter().chain(scores).flatten().collect();
+        [(head.join(" · "), th.text), (r.place.clone(), th.dim), (why, color)].into_iter()
+            .filter(|(text, _)| !text.is_empty())
+            .flat_map(|(text, c)| wrap_words(&text, iw).into_iter().map(move |l| Line::from(Span::styled(l, st(c)))))
+            .collect()
+    }).unwrap_or_default();
+    // as tall as its rows, the details and their gap need (filter and header lines, borders), at most 8/10 of the screen
+    let want = p.rows.len().max(1) + 2 + detail.len() + usize::from(!detail.is_empty()) + 2;
+    let h = (want as u16).min(full.height * 8 / 10).max(10).min(full.height);
+    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
+    f.render_widget(Clear, area);
+    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
+        .title(Span::styled(title, st(th.accent).add_modifier(Modifier::BOLD)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let dh = (detail.len() as u16).min(inner.height.saturating_sub(4)); // at least one row stays
+    let room = inner.height.saturating_sub(2 + dh + u16::from(dh > 0)) as usize; // filter, header; a gap before the details
+    let first = p.selected.saturating_sub(room.saturating_sub(1));
     let fixed = 2 + ew + 1 + pw;
     let scores = iw >= fixed + 1 + bw + 1 + aw + 1 + 16.min(longest); // room for the scores and a 16-character label
-    let lw = iw.saturating_sub(fixed + 1 + if scores { bw + 1 + aw + 1 } else { 0 }).min(longest).max(4);
+    // the label column takes what is left, so the table spans the panel (the title can make it wider than the table)
+    let lw = iw.saturating_sub(fixed + 1 + if scores { bw + 1 + aw + 1 } else { 0 }).max(4);
     let fit = |s: &str| {
         let n = s.chars().count();
         if n <= lw {
@@ -1235,6 +1243,10 @@ mod tests {
             assert!(text.contains("shared-openai-pro-52"), "{w}: the provider list wraps whole: {lines:#?}");
         }
         assert_eq!(wrap_words("ab cd efghij k", 4), ["ab", "cd", "efgh", "ij k"]);
+        // a wide screen (the user's, 2026-11-01): the panel ends where the table does, not at 9/10 of the screen
+        let wide = draw(&p, 200);
+        let border = wide.iter().find(|l| l.contains('┌')).unwrap();
+        assert!(border.trim().chars().count() < 120, "{border}");
         for (i, want) in [(0, "cached 81%"), (1, "no key"), (2, "not trusted"), (3, "stale")] {
             p.selected = i;
             assert!(draw(&p, 78).concat().contains(want), "row {i}: {want}");

@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.18 (2026-11-01): pin one checked provider in `/model` (tab); the picker as wide as its table
+
+A route's key lets SubRouter pick among the providers that passed the route check, call by call. Now each of those
+providers also has a key of its own (`bench/routes.py pin`, run by every refresh; no model calls, keys cost nothing:
+tazuna-route-<route>-<provider>, 12 made for DeepSeek, Luna, Sol and Terra), and tab in the picker cycles a row through
+"any checked provider" and each one pinned, with its own price ("gpt-6.1-sol · kriora"). Picking a pinned provider leaves
+the route's key, which other sessions may use, as it is. Only checked providers are offered.
+
+The picker was 9/10 of the screen wide with the table at its natural width, so a wide screen showed an empty band beside
+the columns. It is now as wide as the table (or its title), the label column taking what is left, and as tall as its rows
+and the details need. Display and choice only.
+
 ## 0.1.17 (2026-11-01): every effort level on every model in `/model`
 
 Routes offered only the levels that measurably differ (DeepSeek V4.1 Flash: high and max), so a cheap model could not be

@@ -945,7 +945,7 @@ fn run_live(
     let mut looping: Option<(std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::mpsc::Receiver<String>)> = None;
     let mut loop_after_plan: Option<Vec<String>> = None;
     // /model: the choices, the selected row (in the filtered list), each choice's effort and what has been typed to filter
-    let mut pick: Option<(Vec<models::Choice>, usize, Vec<usize>, String)> = None;
+    let mut pick: Option<Picker> = None;
     if a.pick {
         pick = Some(open_picker(live)?);
     }
@@ -992,9 +992,9 @@ fn run_live(
         });
         v.vim = if !vim { "" } else if normal { "NORMAL" } else { "INSERT" };
         v.rewind = rewind_sel.map(|i| ui::RewindPanel { items: live.checkpoints.iter().map(|c| c.text.clone()).collect(), selected: i });
-        v.models = pick.as_ref().map(|(cs, sel, eff, filter)| ui::ModelsPanel {
+        v.models = pick.as_ref().map(|Picker { cs, sel, eff, prov, filter }| ui::ModelsPanel {
             rows: shown(cs, filter).into_iter().map(|i| {
-                let c = &cs[i];
+                let c = &models::pinned(&cs[i], prov[i]);
                 ui::ModelRow { label: c.label.clone(), place: c.place.clone(), effort: c.efforts.get(eff[i]).cloned().unwrap_or_else(|| "default".into()),
                     price: c.price.clone(), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
                     state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3 },
@@ -1102,7 +1102,7 @@ fn run_live(
         // ctrl-c and ctrl-d still stop or quit: stopping answers every open question with no
         let stop_key = ctrl && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'));
         // the /model picker owns the keyboard while open
-        if let (Some((cs, sel, eff, filter)), false) = (pick.as_mut(), stop_key) {
+        if let (Some(Picker { cs, sel, eff, prov, filter }), false) = (pick.as_mut(), stop_key) {
             let rows = shown(cs, filter);
             let at = rows.get(*sel).copied();
             let mut chosen = None;
@@ -1111,6 +1111,9 @@ fn run_live(
                 KeyCode::Down => *sel = (*sel + 1).min(rows.len().saturating_sub(1)),
                 KeyCode::Left => if let Some(i) = at { eff[i] = eff[i].saturating_sub(1) },
                 KeyCode::Right => if let Some(i) = at { eff[i] = (eff[i] + 1).min(cs[i].efforts.len().saturating_sub(1)) },
+                // tab: the next checked provider pinned (after the last, any of them again); shift-tab: back
+                KeyCode::Tab => if let Some(i) = at { prov[i] = (prov[i] + 1) % (cs[i].pins.len() + 1) },
+                KeyCode::BackTab => if let Some(i) = at { prov[i] = (prov[i] + cs[i].pins.len()) % (cs[i].pins.len() + 1) },
                 KeyCode::Backspace => {
                     filter.pop();
                     *sel = 0;
@@ -1119,7 +1122,7 @@ fn run_live(
                     filter.push(c);
                     *sel = 0;
                 }
-                KeyCode::Enter => chosen = at.map(|i| (cs[i].clone(), cs[i].efforts.get(eff[i]).cloned())),
+                KeyCode::Enter => chosen = at.map(|i| (models::pinned(&cs[i], prov[i]), cs[i].efforts.get(eff[i]).cloned())),
                 KeyCode::Esc => chosen = None,
                 _ => {}
             }
@@ -1467,12 +1470,24 @@ fn run_live(
 }
 
 /// The /model picker's state, opened on the session's model.
-fn open_picker(live: &live::Live) -> Result<(Vec<models::Choice>, usize, Vec<usize>, String)> {
+/// The /model picker: the choices, the selected row, each row's effort and pinned provider (0: any checked one), the filter.
+struct Picker {
+    cs: Vec<models::Choice>,
+    sel: usize,
+    eff: Vec<usize>,
+    prov: Vec<usize>,
+    filter: String,
+}
+
+fn open_picker(live: &live::Live) -> Result<Picker> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let cs = models::catalog(&labels::dir()?.join("routes.json"), trusted_host, now);
     let eff: Vec<usize> = cs.iter().map(|c| models::start_effort(c, &live.model, &live.effort)).collect();
+    // a session on a pinned provider's key opens with that provider pinned
+    let key = live.provider.as_ref().map(|p| p.1.as_str());
+    let prov: Vec<usize> = cs.iter().map(|c| c.pins.iter().position(|p| Some(p.key_env.as_str()) == key).map_or(0, |i| i + 1)).collect();
     let sel = shown(&cs, "").iter().position(|&i| cs[i].model == live.model).unwrap_or(0);
-    Ok((cs, sel, eff, String::new()))
+    Ok(Picker { cs, sel, eff, prov, filter: String::new() })
 }
 
 /// The picker rows that match what was typed (label or place, any case), as indices into the choices.
