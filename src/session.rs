@@ -64,6 +64,24 @@ pub struct Summary {
     pub stopped: bool,
 }
 
+/// One model call's timing: how long until its first token (known on claude, which says when it sends the request),
+/// how long it then generated, and its output tokens.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CallTime {
+    pub ttft_ms: Option<f64>,
+    pub gen_ms: f64,
+    pub out: u64,
+}
+
+/// (mean time to first token in ms, output tokens a second while generating) over `calls`; None where unknown.
+pub fn speed(calls: &[CallTime]) -> (Option<f64>, Option<f64>) {
+    let firsts: Vec<f64> = calls.iter().filter_map(|c| c.ttft_ms).collect();
+    let ttft = (!firsts.is_empty()).then(|| firsts.iter().sum::<f64>() / firsts.len() as f64);
+    let gen_ms: f64 = calls.iter().map(|c| c.gen_ms).sum();
+    let tps = (gen_ms > 0.0).then(|| calls.iter().map(|c| c.out).sum::<u64>() as f64 / gen_ms * 1000.0);
+    (ttft, tps)
+}
+
 #[derive(Default, Clone, Copy)]
 pub struct Usage {
     pub input: u64,
@@ -149,6 +167,10 @@ pub struct Session {
     /// in progress began (ms into the session).
     busy_ms: f64,
     run_since: Option<f64>,
+    /// Every model call's timing, in order; the one in flight: when it was sent, and when its first token came.
+    pub calls: Vec<CallTime>,
+    call_start: Option<f64>,
+    first_token: Option<f64>,
     usage_at_result: Usage,
     /// An interrupt was requested; the next result ends a stopped run.
     stopping: bool,
@@ -228,6 +250,9 @@ impl Session {
             estimated: false,
             busy_ms: 0.0,
             run_since: None,
+            calls: vec![],
+            call_start: None,
+            first_token: None,
             usage_at_result: Usage::default(),
             stopping: false,
             new_blocks: 1,
@@ -343,6 +368,10 @@ impl Session {
             (Some("system"), Some("status")) => {
                 if let Some(m) = e["permissionMode"].as_str() {
                     self.mode = mode_name(m).to_string();
+                }
+                // claude says when it sends a request: the clock for the call's first token starts here
+                if e["status"] == "requesting" {
+                    (self.call_start, self.first_token) = (Some(at_ms), None);
                 }
                 self.activity = Activity::Waiting;
             }
@@ -590,6 +619,13 @@ impl Session {
             Some("message_start") => {
                 self.streamed = false;
                 self.turns += 1;
+                // claude's stream opens with the first tokens; the own loop sends this when its request goes out
+                match self.call_start {
+                    Some(_) => {
+                        self.first_token.get_or_insert(self.now_ms);
+                    }
+                    None => self.call_start = Some(self.now_ms),
+                }
                 self.turn_usage.push(Usage::default());
             }
             Some("content_block_start") => {
@@ -649,6 +685,10 @@ impl Session {
                 self.usage.cache_read += t.cache_read;
                 self.usage.output += t.output;
                 self.context = t.total_in();
+                if let Some(start) = self.call_start.take() {
+                    let first = self.first_token.take();
+                    self.calls.push(CallTime { ttft_ms: first.map(|f| f - start), gen_ms: self.now_ms - first.unwrap_or(start), out: t.output });
+                }
                 if let Some(last) = self.turn_usage.last_mut() {
                     *last = t;
                 }
@@ -787,6 +827,17 @@ mod tests {
         t.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "estimated_tokens": 100}})), 1000.0);
         t.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "estimated_tokens": 200}})), 2000.0);
         assert_eq!([2000.0, 2250.0, 2500.0, 3000.0, 4000.0].map(|ms| t.thinking_shown(300, ms)), [100, 187, 250, 300, 300]);
+        // a call's timing: claude says when it sends the request; its stream opens with the first tokens
+        let mut c = Session::new("", "medium");
+        c.apply(&json!({"type": "system", "subtype": "status", "status": "requesting"}), 1000.0);
+        c.apply(&ev(json!({"type": "message_start"})), 2400.0);
+        c.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 10, "output_tokens": 360}})), 7400.0);
+        // the own loop: no request note, so its message_start is the request, and the first token is unknown
+        c.apply(&ev(json!({"type": "message_start"})), 8000.0);
+        c.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 10, "output_tokens": 100}})), 10000.0);
+        assert_eq!(c.calls, [CallTime { ttft_ms: Some(1400.0), gen_ms: 5000.0, out: 360 }, CallTime { ttft_ms: None, gen_ms: 2000.0, out: 100 }]);
+        let (first, rate) = speed(&c.calls);
+        assert_eq!((first, rate.map(|r| r.round())), (Some(1400.0), Some(66.0)), "460 tokens over 7 s");
         let text = s.blocks.iter().find_map(|b| if let Block::Text { text, .. } = b { Some(text.clone()) } else { None });
         assert_eq!(text.as_deref(), Some("Hello"), "the text after the notice is not lost");
     }

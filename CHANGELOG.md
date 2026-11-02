@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.35 (2026-11-02): time to first token and tokens a second; a compact run summary; cache read and write by name
+
+- Each model call is timed: claude says when it sends a request ("requesting"), and its stream opens with the first
+  tokens, so time to first token is known on claude; the own loop sends no such note, so it gets only its generation
+  time. The cockpit's tokens panel shows the latest call ("last first token 0.9s · 127 tok/s"); a replayed live session
+  of 27 calls averaged 1.2 s to first token and 109 tok/s on Opus 5.5.
+- The run summary is one compact row: "↑ 1.25M · 18 calls · cache 94% (1.18M) · ↓ 23.6k · 9 files · first token 1.2s ·
+  109 tok/s" (it was "session: sent 1.25M over 18 calls (94% from cache) · out 23.6k · 9 files touched").
+- The context panel names the cache's two sides: "cache read 1.18M 94%" (read back at a tenth of the price; its share of
+  all sent) and "cache write 74.1k" (new content, written once at a premium); the tokens panel reads "↑ 1.25M sent ↓ 23.6k
+  out". Display only.
+
 ## 0.1.34 (2026-11-02): files as a total with `/diff`; side panels aligned; the Claude plan named
 
 - The files panel listed every file a tool named (temp files too), as many as fit. It now shows what this conversation

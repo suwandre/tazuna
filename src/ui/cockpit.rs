@@ -45,7 +45,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let [p_session, p_context, p_tokens, p_cost, p_tools, p_files] = Layout::vertical([
         Constraint::Length(5),
         Constraint::Length(5),
-        Constraint::Length(7),
+        Constraint::Length(8),
         Constraint::Length(5),
         Constraint::Length(tools.len().max(1) as u16 + 3),
         Constraint::Min(3),
@@ -75,7 +75,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let [g1, g2, g3] = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).areas(a);
     // the window as the model reports it: none until claude's first result, none on the own loop
     let (ctx, window) = s.context_window.map_or((0.0, String::new()), |w| (s.context as f64 / w as f64, format!(" / {}", human(w))));
-    gauge(f, g1, ctx, &format!("{:<8}{}{window}", "ctx", human(s.context)), th.accent, th);
+    gauge(f, g1, ctx, &format!("{:<12}{}{window}", "ctx", human(s.context)), th.accent, th);
     let misses = s.cache_misses();
     let miss = match misses {
         0 => String::new(),
@@ -84,25 +84,34 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     };
     // of everything sent, the share read back from claude's cache (a tenth of the price); what went into the cache is
     // its own line: written once at a premium, it is most of what a turn adds
-    gauge(f, g2, s.usage.cache_hit(), &format!("{:<8}{:.0}% of sent", "cached", s.usage.cache_hit() * 100.0), if misses == 0 { th.ok } else { th.warn }, th);
-    f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!("{:<8}", "written"), st(th.text)), Span::styled(human(s.usage.cache_write), st(th.text)), Span::styled(miss, st(th.warn))])), g3);
+    // read back from claude's cache (a tenth of the price; its share of all sent) and written into it (new content,
+    // once, at a premium)
+    gauge(f, g2, s.usage.cache_hit(), &format!("{:<12}{} {:.0}%", "cache read", human(s.usage.cache_read), s.usage.cache_hit() * 100.0), if misses == 0 { th.ok } else { th.warn }, th);
+    f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!("{:<12}", "cache write"), st(th.text)), Span::styled(human(s.usage.cache_write), st(th.text)), Span::styled(miss, st(th.warn))])), g3);
 
     // tokens per turn
     let b = panel("tokens", th);
     let a = b.inner(p_tokens).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_tokens);
-    let [t1, spark, caption] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)]).areas(a);
+    let [t1, spark, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)]).areas(a);
     f.render_widget(
         Paragraph::new(Line::from(vec![
             // sent: every call's whole input added up (each call sends the conversation again), not the context's size
-            Span::styled("sent ", st(th.faint)),
+            Span::styled("↑ ", st(th.faint)),
             Span::styled(human(s.usage.total_in()), st(th.text)),
-            Span::styled("  out ", st(th.faint)),
+            Span::styled(" sent  ↓ ", st(th.faint)),
             Span::styled(human(s.usage.output), st(th.text)),
+            Span::styled(" out", st(th.faint)),
         ])),
         t1,
     );
     f.render_widget(Paragraph::new(Span::styled(format!("output per call ({})", s.turn_usage.len()), st(th.faint))), caption);
+    // the latest call: time to its first token (claude) and how fast it then wrote
+    if let Some(c) = s.calls.last() {
+        let first = c.ttft_ms.map_or(String::new(), |t| format!("first token {:.1}s · ", t / 1000.0));
+        let rate = if c.gen_ms > 0.0 { format!("{:.0} tok/s", c.out as f64 / c.gen_ms * 1000.0) } else { String::new() };
+        f.render_widget(Paragraph::new(Line::from(vec![Span::styled("last ", st(th.faint)), Span::styled(format!("{first}{rate}"), st(th.text))])), pace);
+    }
     let data: Vec<u64> = s.turn_usage.iter().map(|u| u.output).collect();
     let tail = &data[data.len().saturating_sub(spark.width as usize)..];
     f.render_widget(Sparkline::default().data(tail.iter().copied()).style(st(th.accent2)), spark);

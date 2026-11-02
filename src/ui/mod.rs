@@ -988,6 +988,16 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             };
             let u = &d.usage;
             let files = files_touched(s).len();
+            // the session in one row: sent ↑, calls, the cache's share and size, output ↓, files, and how fast
+            let (ttft, tps) = crate::session::speed(&s.calls);
+            let mut facts = vec![format!("↑ {}", human(u.total_in())), format!("{} call{}", s.turns, if s.turns == 1 { "" } else { "s" }),
+                format!("cache {:.0}% ({})", u.cache_hit() * 100.0, human(u.cache_read)), format!("↓ {}", human(u.output)), files_n(files)];
+            if let Some(f) = ttft {
+                facts.push(format!("first token {:.1}s", f / 1000.0));
+            }
+            if let Some(r) = tps {
+                facts.push(format!("{r:.0} tok/s"));
+            }
             vec![
                 (
                     Line::from(vec![
@@ -1001,7 +1011,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
                 ),
                 (
                     Line::from(Span::styled(
-                        format!("  session: sent {} over {} call{} ({:.0}% from cache) · out {} · {files} file{} touched", human(u.total_in()), s.turns, if s.turns == 1 { "" } else { "s" }, u.cache_hit() * 100.0, human(u.output), if files == 1 { "" } else { "s" }),
+                        format!("  {}", facts.join(" · ")),
                         st(th.dim),
                     )),
                     vec![],
