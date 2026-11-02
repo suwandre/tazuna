@@ -197,6 +197,22 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
     out
 }
 
+/// SubRouter's balance in USD, read with an API key (SUBROUTER_API_KEY, else any route key; none set: nothing is
+/// sent), never the account login. Its billing endpoints count in CNY at 6.8 to the dollar: (granted - used) / 6.8
+/// matched the account page to the cent (2026-11-02).
+pub fn subrouter_balance() -> Option<f64> {
+    let key = std::env::var("SUBROUTER_API_KEY").ok()
+        .or_else(|| std::env::vars().find(|(k, _)| k.starts_with("SUBROUTER_ROUTE_") && k.ends_with("_KEY")).map(|(_, v)| v))?;
+    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
+    let get = |path: &str| -> Option<Value> {
+        let mut r = http.get(format!("https://subrouter.ai{path}")).header("Authorization", format!("Bearer {key}")).call().ok()?;
+        serde_json::from_str(&r.body_mut().read_to_string().ok()?).ok()
+    };
+    let granted = get("/v1/dashboard/billing/subscription")?["hard_limit_usd"].as_f64()?;
+    let used = get("/v1/dashboard/billing/usage")?["total_usage"].as_f64()?;
+    Some((granted - used / 100.0) / 6.8)
+}
+
 /// The effort a row starts at: the session's own when it is that model, else medium on Claude and the model's high (its
 /// default where it has few levels) on a route.
 pub fn start_effort(c: &Choice, current_model: &str, current_effort: &str) -> usize {

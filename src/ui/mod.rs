@@ -478,11 +478,12 @@ fn last_tool_name(s: &Session) -> String {
 /// Money and plan apart: "$0.50 + $7.46 on plan"; "$7.46 on plan" when only claude ran, "$0.50" when only the own loop did.
 pub fn cost_str(s: &Session) -> String {
     let (paid, plan) = s.split_cost();
+    let about = if s.estimated { "≈" } else { "" };
     match s.exact_cost {
         None => format!("≈{}", usd(s.cost())),
-        Some(_) if paid > 0.0 && plan > 0.0 => format!("{} + {} on plan", usd(paid), usd(plan)),
-        Some(_) if paid > 0.0 => usd(paid),
-        Some(c) => format!("{} on plan", usd(c)),
+        Some(_) if paid > 0.0 && plan > 0.0 => format!("{about}{} + {} on plan", usd(paid), usd(plan)),
+        Some(_) if paid > 0.0 => format!("{about}{}", usd(paid)),
+        Some(c) => format!("{about}{} on plan", usd(c)),
     }
 }
 
@@ -501,10 +502,23 @@ pub fn usd(x: f64) -> String {
 /// Claude's plan windows: "5h 3% · 7d 1% (+2%)" (the 5-hour window's rise since this session's first reading), and the
 /// colour to show it in: warning at 70%, error at 85% (where the benchmark guard pauses).
 pub fn limits_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
-    let (h5, d7) = s.limits?;
-    let rise = s.limits_start.map_or(0.0, |(a, _)| h5 - a);
-    let color = match h5.max(d7) { x if x >= 85.0 => th.err, x if x >= 70.0 => th.warn, _ => th.dim };
-    Some((format!("5h {h5:.0}% · 7d {d7:.0}%{}", if rise >= 1.0 { format!(" (+{rise:.0}%)") } else { String::new() }), color))
+    let mut parts = vec![];
+    let mut color = th.dim;
+    if let Some((h5, d7)) = s.limits {
+        let rise = s.limits_start.map_or(0.0, |(a, _)| h5 - a);
+        color = match h5.max(d7) { x if x >= 85.0 => th.err, x if x >= 70.0 => th.warn, _ => th.dim };
+        // claude reports the windows only now and then: an older reading says how old it is
+        let age = s.limits_at.map(|t| crate::session::unix_now().saturating_sub(t)).filter(|a| *a >= 600).map_or(String::new(), |a| match a {
+            0..3600 => format!(" ({}m ago)", a / 60),
+            3600..86_400 => format!(" ({}h ago)", a / 3600),
+            _ => format!(" ({}d ago)", a / 86_400),
+        });
+        parts.push(format!("5h {h5:.0}% · 7d {d7:.0}%{}{age}", if rise >= 1.0 { format!(" (+{rise:.0}%)") } else { String::new() }));
+    }
+    if let Some(b) = s.balance {
+        parts.push(format!("SubRouter {} left", usd(b)));
+    }
+    (!parts.is_empty()).then(|| (parts.join(" · "), color))
 }
 
 pub fn clock_str(ms: f64) -> String {

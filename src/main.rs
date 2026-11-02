@@ -923,6 +923,12 @@ fn run_live(
     s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     s.apply(&route.1, route.0);
     s.mode = session::mode_name(&live.permission_mode).to_string();
+    // the plan's windows as last read (claude reports them only now and then); SubRouter's balance, on a thread
+    if let Some((h5, d7, at)) = labels::dir().ok().and_then(|d| session::last_limits(&d.join("sessions"))) {
+        (s.limits, s.limits_at) = (Some((h5, d7)), Some(at));
+    }
+    let (status_tx, status_rx) = std::sync::mpsc::channel::<serde_json::Value>();
+    fetch_balance(&status_tx);
     let mut v = view(a.design, true, 1.0);
     let mut fx = Fx::new();
     let mut quit_at: Option<Instant> = None;
@@ -1007,6 +1013,9 @@ fn run_live(
         last = Instant::now();
         for (t, e) in live.poll() {
             s.apply(&e, t);
+            if e["type"] == "result" && e["tazuna_paid"] == true {
+                fetch_balance(&status_tx); // a run on SubRouter spent some of it
+            }
             // a plan in TODO.md: say once that /loop can build it
             if e["type"] == "result" && looping.is_none() && loop_after_plan.is_none() {
                 let n = looprun::open_items(&std::fs::read_to_string("TODO.md").unwrap_or_default()).len();
@@ -1014,6 +1023,16 @@ fn run_live(
                     s.apply(&json!({"type": "harness_info", "text": format!("TODO.md has {n} open items: /loop builds them one by one without you (/loop reviewed: on DeepSeek)")}), t);
                 }
                 hinted = n;
+            }
+        }
+        while let Ok(e) = status_rx.try_recv() {
+            match e["type"].as_str() {
+                Some("tazuna_balance") => s.balance = e["usd"].as_f64(),
+                Some("tazuna_usage_done") => {
+                    let text = ui::limits_str(&s, v.design.theme()).map_or("no reading: claude sent none, and no SubRouter key is set".into(), |(t, _)| t);
+                    s.apply(&json!({"type": "harness_info", "text": format!("usage: {text}")}), live.elapsed_ms());
+                }
+                _ => s.apply(&e, live.elapsed_ms()),
             }
         }
         if let Some((_, rx)) = &looping {
@@ -1360,6 +1379,30 @@ fn run_live(
                     pick = Some(open_picker(live)?);
                     continue;
                 }
+                if text == "/usage" {
+                    s.apply(&json!({"type": "harness_info", "text": "reading the plan's windows (one short Haiku call through claude) and SubRouter's balance…"}), live.elapsed_ms());
+                    let tx = status_tx.clone();
+                    std::thread::spawn(move || {
+                        if let Some(e) = plan_reading() {
+                            let _ = tx.send(e);
+                        }
+                        if let Some(b) = models::subrouter_balance() {
+                            let _ = tx.send(json!({"type": "tazuna_balance", "usd": b}));
+                        }
+                        let _ = tx.send(json!({"type": "tazuna_usage_done"}));
+                    });
+                    continue;
+                }
+                // a command typed short ("/mo") would go to claude as a message, at a model turn's cost
+                if let Some(word) = text.strip_prefix('/').filter(|w| !w.is_empty() && !w.contains(char::is_whitespace)) {
+                    let like: Vec<&String> = s.commands.iter().filter(|c| c.starts_with(word)).collect();
+                    if !like.is_empty() && !like.iter().any(|c| *c == word) {
+                        let names: Vec<String> = like.iter().take(4).map(|c| format!("/{c}")).collect();
+                        s.apply(&json!({"type": "harness_info", "text": format!("no command /{word}: did you mean {}? (nothing was sent; tab completes)", names.join(", "))}), live.elapsed_ms());
+                        ed.insert(&text);
+                        continue;
+                    }
+                }
                 if text == "/keys" {
                     let all = ui::LIVE_KEYS.split(" · ").collect::<Vec<_>>().join("\n");
                     s.apply(&json!({"type": "harness_info", "text": format!("keys:\n{all}")}), live.elapsed_ms());
@@ -1475,6 +1518,27 @@ fn run_live(
 }
 
 /// The /model picker's state, opened on the session's model.
+/// SubRouter's balance, read on a thread of its own; it arrives through `tx`.
+fn fetch_balance(tx: &std::sync::mpsc::Sender<serde_json::Value>) {
+    let tx = tx.clone();
+    std::thread::spawn(move || {
+        if let Some(b) = models::subrouter_balance() {
+            let _ = tx.send(json!({"type": "tazuna_balance", "usd": b}));
+        }
+    });
+}
+
+/// The plan's windows now: one short Haiku call through the official `claude` CLI, which reports them in its
+/// rate_limit_event (bench/guard.py reads them the same way). None when it sends none.
+fn plan_reading() -> Option<serde_json::Value> {
+    let dir = std::env::temp_dir();
+    let out = std::process::Command::new("claude")
+        .args(["-p", "Reply with: ok", "--model", "claude-haiku-5-5", "--output-format", "stream-json", "--verbose", "--no-session-persistence",
+               "--setting-sources", "", "--strict-mcp-config", "--tools", "", "--system-prompt", "Reply briefly."])
+        .current_dir(dir).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok()?;
+    String::from_utf8_lossy(&out.stdout).lines().filter(|l| l.contains("\"rate_limit_event\"")).find_map(|l| serde_json::from_str(l).ok())
+}
+
 /// The /model picker: the choices, the selected row, each row's effort and pinned provider (0: any checked one), the filter.
 struct Picker {
     cs: Vec<models::Choice>,

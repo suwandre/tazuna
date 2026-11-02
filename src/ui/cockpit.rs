@@ -110,7 +110,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Paragraph::new(vec![
             Line::from(vec![Span::styled(cost_str(s), st(th.ok).add_modifier(Modifier::BOLD)), Span::styled(format!("   {}/turn", usd(per_turn)), st(th.dim))]),
             match limits_str(s, th) {
-                Some((t, color)) => Line::from(Span::styled(format!("plan {t}"), st(color))),
+                Some((t, color)) => Line::from(Span::styled(if s.limits.is_some() { format!("plan {t}") } else { t }, st(color))),
                 None => Line::from(Span::styled(if s.exact_cost.is_some() { "exact (reported)" } else { "estimate (list prices)" }, st(th.faint))),
             },
         ]),

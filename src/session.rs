@@ -134,6 +134,13 @@ pub struct Session {
     /// first one in this session did (the difference is this session's share, plus whatever else used the plan meanwhile).
     pub limits: Option<(f64, f64)>,
     pub limits_start: Option<(f64, f64)>,
+    /// When the plan windows were read (Unix seconds): claude reports them only now and then, so a session opens with the
+    /// last reading of any earlier one.
+    pub limits_at: Option<u64>,
+    /// SubRouter's balance in USD, where a SubRouter key is set.
+    pub balance: Option<f64>,
+    /// Part of the cost is priced at list rates: a stopped turn reported $0.
+    pub estimated: bool,
     usage_at_result: Usage,
     /// An interrupt was requested; the next result ends a stopped run.
     stopping: bool,
@@ -154,6 +161,32 @@ pub struct Session {
     last_prompt: String,
     /// The current model message arrived as content blocks (claude streams them; the own loop sends whole messages).
     streamed: bool,
+}
+
+pub fn unix_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// The newest plan reading in the session recordings under `dir` (claude's rate_limit_event): (5-hour %, 7-day %, read
+/// at). A window whose reset time has passed since counts from 0.
+pub fn last_limits(dir: &std::path::Path) -> Option<(f64, f64, u64)> {
+    let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir).ok()?.filter_map(|e| e.ok().map(|e| e.path())).collect();
+    files.sort();
+    let now = unix_now();
+    // the newest files first; a file's name starts with the second it began, each line carries its offset in ms
+    for f in files.iter().rev().take(200) {
+        let began: u64 = f.file_name()?.to_str()?.split('-').next()?.parse().ok()?;
+        let text = std::fs::read_to_string(f).unwrap_or_default();
+        let Some(line) = text.lines().rev().find(|l| l.contains("\"rate_limit_event\"")) else { continue };
+        let d: Value = serde_json::from_str(line).ok()?;
+        let w = &d["e"]["rate_limit_info"]["unifiedWindows"];
+        let pct = |k: &str| {
+            let u = w[k]["utilization"].as_f64()? * 100.0;
+            Some(if w[k]["resetsAt"].as_u64().is_some_and(|r| r < now) { 0.0 } else { u })
+        };
+        return Some((pct("five_hour")?, pct("seven_day")?, began + d["t"].as_u64().unwrap_or(0) / 1000));
+    }
+    None
 }
 
 impl Session {
@@ -181,6 +214,9 @@ impl Session {
             plan_now: 0.0,
             limits: None,
             limits_start: None,
+            limits_at: None,
+            balance: None,
+            estimated: false,
             usage_at_result: Usage::default(),
             stopping: false,
             new_blocks: 1,
@@ -188,7 +224,7 @@ impl Session {
             results: 0,
             profile: String::new(),
             mode: "auto".into(),
-            commands: vec!["bad".into(), "good".into(), "keys".into(), "loop".into(), "model".into()],
+            commands: vec!["bad".into(), "good".into(), "keys".into(), "loop".into(), "model".into(), "rewind".into(), "usage".into(), "vim".into()],
             todos: Vec::new(),
             last_prompt: String::new(),
             streamed: false,
@@ -246,7 +282,7 @@ impl Session {
                 self.model = s(&e["model"]);
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
-                cmds.extend(["good".to_string(), "bad".to_string(), "keys".to_string(), "loop".to_string(), "model".to_string()]);
+                cmds.extend(["good", "bad", "keys", "loop", "model", "rewind", "usage", "vim"].map(String::from));
                 cmds.sort();
                 cmds.dedup();
                 self.commands = cmds;
@@ -371,6 +407,7 @@ impl Session {
                 if let (Some(h5), Some(d7)) = (w["five_hour"]["utilization"].as_f64(), w["seven_day"]["utilization"].as_f64()) {
                     self.limits = Some((h5 * 100.0, d7 * 100.0));
                     self.limits_start.get_or_insert((h5 * 100.0, d7 * 100.0));
+                    self.limits_at = Some(unix_now());
                 }
             }
             (Some("harness_notice"), _) => {
@@ -444,11 +481,21 @@ impl Session {
                         self.push(Block::Text { text, live: false });
                     }
                 }
-                if let Some(c) = e["total_cost_usd"].as_f64() {
+                if let Some(mut c) = e["total_cost_usd"].as_f64() {
+                    // tazuna marks the own loop's results; older recordings: a model that is not claude's
+                    let paid = e["tazuna_paid"] == true || !self.model.is_empty() && !self.model.starts_with("claude-");
+                    let prev = if paid { self.paid_now } else { self.plan_now };
+                    let (u, b) = (self.usage, self.usage_at_result);
+                    let since = Usage { input: u.input - b.input, cache_write: u.cache_write - b.cache_write, cache_read: u.cache_read - b.cache_read, output: u.output - b.output };
+                    // a stopped turn reports nothing for itself (claude: total_cost_usd 0 after 21k tokens, 2026-11-02):
+                    // its tokens are priced at list rates instead, and the cost is marked as an estimate
+                    if c <= prev && since.total_in() + since.output > 0 {
+                        c = prev + since.estimate();
+                        self.estimated = true;
+                    }
                     self.exact_cost = Some(self.cost_base + c);
                     self.usage_at_result = self.usage;
-                    // tazuna marks the own loop's results; older recordings: a model that is not claude's
-                    if e["tazuna_paid"] == true || !self.model.is_empty() && !self.model.starts_with("claude-") {
+                    if paid {
                         self.paid_now = c;
                     } else {
                         self.plan_now = c;
@@ -712,6 +759,26 @@ mod tests {
         assert!((paid - 0.3).abs() < 1e-9 && (plan - 2.0).abs() < 1e-9, "{paid} {plan}");
         assert!((s.exact_cost.unwrap() - 2.3).abs() < 1e-9, "the switch closed the first process's cost");
         assert_eq!((s.limits, s.limits_start), (Some((4.0, 6.0)), Some((1.0, 5.0))));
+        assert!(!s.estimated);
+        // a stopped turn: claude reports $0 for 21k tokens; they are priced at list rates instead
+        let mut s = Session::new("", "");
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_delta", "usage": {"input_tokens": 2, "cache_creation_input_tokens": 8067,
+            "cache_read_input_tokens": 13295, "output_tokens": 4}}}), 1.0);
+        s.apply(&json!({"type": "result", "subtype": "error_during_execution", "total_cost_usd": 0, "terminal_reason": "aborted_streaming"}), 2.0);
+        assert!(s.estimated && (s.split_cost().1 - (2.0 * 4.0 + 8067.0 * 6.0 + 13295.0 * 0.4 + 4.0 * 20.0) / 1e6).abs() < 1e-9, "{:?}", s.split_cost());
+        assert_eq!(crate::ui::cost_str(&s), "≈$0.05 on plan");
+        // the last plan reading of an earlier session, a window past its reset counting from 0
+        let dir = std::env::temp_dir().join(format!("tazuna-limits-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let now = unix_now();
+        let ev = |h5: f64, reset: u64| json!({"t": 5000, "e": {"type": "rate_limit_event", "rate_limit_info": {"unifiedWindows": {
+            "five_hour": {"utilization": h5, "resetsAt": reset}, "seven_day": {"utilization": 0.14, "resetsAt": now + 9999}}}}}).to_string();
+        std::fs::write(dir.join(format!("{}-a-1.jsonl", now - 7200)), format!("{{}}\n{}\n", ev(0.5, now + 99))).unwrap();
+        std::fs::write(dir.join(format!("{}-b-2.jsonl", now - 600)), format!("{{}}\n{}\n", ev(0.12, now - 1))).unwrap();
+        std::fs::write(dir.join(format!("{}-c-3.jsonl", now - 60)), "{}\n").unwrap();
+        let (h5, d7, at) = last_limits(&dir).unwrap();
+        assert_eq!((h5, (d7 * 10.0).round(), at), (0.0, 140.0, now - 600 + 5), "the newest reading; its 5-hour window has reset");
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

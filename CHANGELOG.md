@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.21 (2026-11-02): plan windows and SubRouter balance on screen; stopped turns priced; short commands caught
+
+- A stopped turn: claude reported $0 for 21.4k tokens (8k of them written to cache), so the session read "$0 on plan".
+  Such a turn's tokens are now priced at list rates and the cost marked "≈".
+- The plan's 5-hour and 7-day windows: claude reports them only now and then (1 of the last 8 sessions), so a session
+  showed none. It now opens with the newest reading from earlier sessions, with its age ("5h 12% · 7d 14% (2h ago)"; a
+  window past its reset counts from 0), and `/usage` reads them now (one short Haiku call through claude).
+- SubRouter's balance ("SubRouter $8.82 left") beside them, read with an API key at start and after each own-loop task
+  (the billing endpoints, CNY at 6.8 to the dollar: matched the account page to the cent). No account login.
+- "/mo" went to Opus as a message. A command typed short is now caught before anything is sent ("did you mean /model?").
+
 ## 0.1.20 (2026-11-02): the own loop's thinking on screen
 
 The own loop's reasoning before each message now shows as a "thinking" row with its estimated size, like claude's, so a
