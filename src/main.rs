@@ -736,7 +736,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -1119,16 +1119,19 @@ fn run_live(
             outputs_read = Instant::now();
         }
         task_sel = task_sel.min(live.bg.len().saturating_sub(1));
-        v.tasks = tasks_open.then(|| ui::TasksPanel {
-            selected: task_sel,
-            rows: live.bg.iter().map(|t| ui::TaskRow {
-                kind: t.kind.clone(),
-                description: t.description.clone(),
-                status: t.status.clone(),
-                secs: t.ended.unwrap_or_else(Instant::now).duration_since(t.started).as_secs(),
-                output: t.output.clone(),
-            }).collect(),
-        });
+        let row = |t: &live::BgTask| ui::TaskRow {
+            kind: t.kind.clone(),
+            description: t.description.clone(),
+            status: t.status.clone(),
+            secs: t.ended.unwrap_or_else(Instant::now).duration_since(t.started).as_secs(),
+            output: t.output.clone(),
+            agent: t.agent.clone(),
+            tokens: t.tokens,
+            tools: t.tools,
+            doing: t.doing.clone(),
+        };
+        v.running = live.bg.iter().filter(|t| t.ended.is_none()).map(row).collect();
+        v.tasks = tasks_open.then(|| ui::TasksPanel { selected: task_sel, rows: live.bg.iter().map(row).collect() });
         v.vim = if !vim { "" } else if normal { "NORMAL" } else { "INSERT" };
         v.sessions = resume_pick.as_ref().map(|(l, i)| ui::SessionsPanel { rows: l.iter().map(Earlier::row).collect(), selected: *i });
         v.rewind = rewind_sel.map(|i| ui::RewindPanel { items: live.checkpoints.iter().map(|c| c.text.clone()).collect(), selected: i });

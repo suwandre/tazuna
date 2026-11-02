@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.31 (2026-11-02): background tasks live under the transcript; thinking counts smoothly; clearer numbers
+
+- While background tasks run, the transcript ends in a slowly pulsing "waiting on 2 background tasks" and one row per
+  task: a subagent's type, what it was asked, its time, tokens and tool calls, and its current step (claude's
+  task_progress); a command's time. The screen looked still while the agent waited on them.
+- Thinking: claude reports it in steps of 50-200 tokens about once a second; the count now runs up to each new total over
+  the second after it, eased.
+- A tool call's counts ("· 1 line · 18.2s ▸") get a row of their own when the call does not fit on one; "1 line", not
+  "1 lines".
+- The context window shows only as the model reports it: none until claude's first result, and none after a switch to
+  the own loop (its providers report none). It was Opus 5.5's 1M whatever ran.
+- The cockpit's context panel says what its cache figure is ("cached 82% of sent": of everything sent, read back from
+  cache) and shows what went into the cache ("written 45.2k"); the tokens panel's "out/call" is now a caption under its
+  bars ("output per call"). Display only.
+
 ## 0.1.30 (2026-11-02): a `/new` hint for large conversations; `--batch-calls` (opt-in, under measurement)
 
 - After a task, once the conversation passes 60k tokens (then at each doubling), tazuna says so and that `/new` starts

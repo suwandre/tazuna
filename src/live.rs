@@ -230,6 +230,12 @@ pub struct BgTask {
     pub ended: Option<Instant>,
     /// The end of the output (at most 8 KiB) the last `get_task_output` returned.
     pub output: String,
+    /// A background subagent's type ("explorer") and its progress as claude reports it: tokens, tool calls, what it is
+    /// doing now ("Running Show Ledger tick workflow").
+    pub agent: String,
+    pub tokens: u64,
+    pub tools: u64,
+    pub doing: String,
 }
 
 enum Msg {
@@ -850,7 +856,15 @@ impl Live {
                             if !self.bg.iter().any(|t| t.id == id) {
                                 self.bg.push(BgTask { id: id.to_string(), kind: e["task_type"].as_str().unwrap_or("task").to_string(),
                                     description: e["description"].as_str().unwrap_or_default().to_string(), status: "running".into(),
-                                    started: Instant::now(), ended: None, output: String::new() });
+                                    started: Instant::now(), ended: None, output: String::new(),
+                                    agent: e["subagent_type"].as_str().unwrap_or_default().to_string(), tokens: 0, tools: 0, doing: String::new() });
+                            }
+                        }
+                        (Some("system"), Some("task_progress"), Some(id)) => {
+                            if let Some(t) = self.bg.iter_mut().find(|t| t.id == id) {
+                                t.tokens = e["usage"]["total_tokens"].as_u64().unwrap_or(t.tokens);
+                                t.tools = e["usage"]["tool_uses"].as_u64().unwrap_or(t.tools);
+                                t.doing = e["description"].as_str().unwrap_or_default().to_string();
                             }
                         }
                         (Some("system"), Some("task_updated"), Some(id)) => {

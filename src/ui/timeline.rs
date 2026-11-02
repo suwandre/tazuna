@@ -35,14 +35,14 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     let (glyph, label, color) = activity(s, v, th);
     let u = &s.usage;
-    let ctx = s.context as f64 / s.context_window as f64 * 100.0;
+    let ctx = s.context_window.map_or(format!("CTX {}", human(s.context)), |w| format!("CTX {:.1}%", s.context as f64 / w as f64 * 100.0));
     let act = seg(format!("{glyph} {}", label.to_uppercase()), th.bg, color);
     let act_w = act.width() as u16;
     let left = Line::from(vec![
         act,
         seg(format!("T{}", s.turns), th.text, th.border),
         seg(format!("↑{} ↓{}", human(u.total_in()), human(u.output)), th.text, th.surface),
-        seg(format!("CTX {ctx:.1}%"), th.text, th.border),
+        seg(ctx, th.text, th.border),
         seg(format!("CACHE {:.0}%", u.cache_hit() * 100.0), th.text, th.surface),
         seg(cost_str(s), th.bg, th.ok),
     ]);

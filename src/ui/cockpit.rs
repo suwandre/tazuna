@@ -44,8 +44,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let tools = tool_tally(s);
     let [p_session, p_context, p_tokens, p_cost, p_tools, p_files] = Layout::vertical([
         Constraint::Length(5),
-        Constraint::Length(4),
-        Constraint::Length(6),
+        Constraint::Length(5),
+        Constraint::Length(7),
         Constraint::Length(5),
         Constraint::Length(tools.len().max(1) as u16 + 3),
         Constraint::Min(3),
@@ -72,22 +72,26 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let b = panel("context", th);
     let a = b.inner(p_context).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_context);
-    let [g1, g2] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(a);
-    let ctx = s.context as f64 / s.context_window as f64;
-    gauge(f, g1, ctx, &format!("ctx {:>6} / {}", human(s.context), human(s.context_window)), th.accent, th);
+    let [g1, g2, g3] = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).areas(a);
+    // the window as the model reports it: none until claude's first result, none on the own loop
+    let (ctx, window) = s.context_window.map_or((0.0, String::new()), |w| (s.context as f64 / w as f64, format!(" / {}", human(w))));
+    gauge(f, g1, ctx, &format!("ctx {:>6}{window}", human(s.context)), th.accent, th);
     let misses = s.cache_misses();
     let miss = match misses {
         0 => String::new(),
         1 => " · 1 miss".to_string(),
         n => format!(" · {n} misses"),
     };
-    gauge(f, g2, s.usage.cache_hit(), &format!("cache {:>4.0}%{miss}", s.usage.cache_hit() * 100.0), if misses == 0 { th.ok } else { th.warn }, th);
+    // of everything sent, the share read back from claude's cache (a tenth of the price); what went into the cache is
+    // its own line: written once at a premium, it is most of what a turn adds
+    gauge(f, g2, s.usage.cache_hit(), &format!("cached {:>3.0}% of sent", s.usage.cache_hit() * 100.0), if misses == 0 { th.ok } else { th.warn }, th);
+    f.render_widget(Paragraph::new(Line::from(vec![Span::styled("written ", st(th.faint)), Span::styled(human(s.usage.cache_write), st(th.text)), Span::styled(miss, st(th.warn))])), g3);
 
     // tokens per turn
     let b = panel("tokens", th);
     let a = b.inner(p_tokens).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_tokens);
-    let [t1, spark] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(a);
+    let [t1, spark, caption] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)]).areas(a);
     f.render_widget(
         Paragraph::new(Line::from(vec![
             // sent: every call's whole input added up (each call sends the conversation again), not the context's size
@@ -95,10 +99,10 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             Span::styled(human(s.usage.total_in()), st(th.text)),
             Span::styled("  out ", st(th.faint)),
             Span::styled(human(s.usage.output), st(th.text)),
-            Span::styled("  out/call", st(th.faint)),
         ])),
         t1,
     );
+    f.render_widget(Paragraph::new(Span::styled(format!("output per call ({})", s.turn_usage.len()), st(th.faint))), caption);
     let data: Vec<u64> = s.turn_usage.iter().map(|u| u.output).collect();
     let tail = &data[data.len().saturating_sub(spark.width as usize)..];
     f.render_widget(Sparkline::default().data(tail.iter().copied()).style(st(th.accent2)), spark);

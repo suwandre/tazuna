@@ -112,7 +112,11 @@ pub struct Session {
     pub turn_usage: Vec<Usage>,
     /// Tokens in the latest request: how full the context is.
     pub context: u64,
-    pub context_window: u64,
+    /// The model's context window, as claude's result reports it; None until then and after a switch (the own loop's
+    /// providers report none).
+    pub context_window: Option<u64>,
+    /// The live thinking count before its latest step and when that step came (ms): the screen counts up between them.
+    think_from: (u64, f64),
     now_ms: f64,
     pub model: String,
     pub effort: String,
@@ -202,7 +206,8 @@ impl Session {
             turn_usage: Vec::new(),
             context: 0,
             // ponytail: Opus 5.5's window as the default until the result event reports the real one
-            context_window: 1_000_000,
+            context_window: None,
+            think_from: (0, 0.0),
             now_ms: 0.0,
             model: String::new(),
             effort: effort.to_string(),
@@ -245,6 +250,18 @@ impl Session {
         (s.model, s.cwd, s.profile, s.mode, s.commands) = (self.model.clone(), self.cwd.clone(), self.profile.clone(), self.mode.clone(), self.commands.clone());
         (s.limits, s.limits_at, s.balance, s.context_window) = (self.limits, self.limits_at, self.balance, self.context_window);
         s
+    }
+
+    /// The live thinking count to show at `now_ms`: from the total before the latest step up to `tokens` over the second
+    /// after that step came, eased, so it reads as counting rather than jumping by 50-200.
+    pub fn thinking_shown(&self, tokens: u64, now_ms: f64) -> u64 {
+        let (from, at) = self.think_from;
+        if from >= tokens {
+            return tokens;
+        }
+        let p = ((now_ms - at) / 1000.0).clamp(0.0, 1.0);
+        let eased = 1.0 - (1.0 - p) * (1.0 - p);
+        from + ((tokens - from) as f64 * eased) as u64
     }
 
     /// Time the agent has spent working by `now_ms` (into the session): finished runs plus the one in progress. Next to
@@ -436,6 +453,7 @@ impl Session {
                 // /model: the old process is gone
                 self.close_process();
                 (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
+                self.context_window = None; // the next model reports its own (the own loop's: none)
                 self.push(Block::Notice { text: s(&e["text"]), error: false });
             }
             (Some("rate_limit_event"), _) => {
@@ -538,7 +556,7 @@ impl Session {
                     }
                 }
                 if let Some(w) = e["modelUsage"].as_object().and_then(|m| m.values().next()).and_then(|m| m["contextWindow"].as_u64()) {
-                    self.context_window = w;
+                    self.context_window = Some(w);
                 }
                 let ok = e["subtype"] == "success" && !e["is_error"].as_bool().unwrap_or(false);
                 let secs = e["duration_ms"].as_f64().unwrap_or(0.0) / 1000.0;
@@ -608,7 +626,11 @@ impl Session {
                     (Some("text_delta"), Some(Block::Text { text, .. })) => text.push_str(d["text"].as_str().unwrap_or_default()),
                     // each delta carries the tokens thought since the last one (50, 100, 150 ...): they add up, as in
                     // Claude Code's own counter
-                    (Some("thinking_delta"), Some(Block::Thinking { tokens, .. })) => *tokens += d["estimated_tokens"].as_u64().unwrap_or(0),
+                    (Some("thinking_delta"), Some(Block::Thinking { tokens, .. })) => {
+                        let before = *tokens;
+                        *tokens += d["estimated_tokens"].as_u64().unwrap_or(0);
+                        self.think_from = (before, self.now_ms);
+                    }
                     _ => {}
                 }
             }
@@ -759,6 +781,12 @@ mod tests {
         s.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "lo"}})), 10.0);
         let thinking = s.blocks.iter().find_map(|b| if let Block::Thinking { tokens, live } = b { Some((*tokens, *live)) } else { None });
         assert_eq!(thinking, Some((600, false)), "50+100+150+100+200, closed by its stop");
+        // while live, the count runs from the last total to the new one over a second (eased), not in one jump
+        let mut t = Session::new("", "medium");
+        t.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "thinking"}})), 0.0);
+        t.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "estimated_tokens": 100}})), 1000.0);
+        t.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "estimated_tokens": 200}})), 2000.0);
+        assert_eq!([2000.0, 2250.0, 2500.0, 3000.0, 4000.0].map(|ms| t.thinking_shown(300, ms)), [100, 187, 250, 300, 300]);
         let text = s.blocks.iter().find_map(|b| if let Block::Text { text, .. } = b { Some(text.clone()) } else { None });
         assert_eq!(text.as_deref(), Some("Hello"), "the text after the notice is not lost");
     }
@@ -800,7 +828,7 @@ mod tests {
         assert_eq!(s.turns, 16);
         assert_eq!(s.turn_usage.len(), 16);
         assert_eq!(s.turn_usage.iter().map(|u| u.output).sum::<u64>(), s.usage.output);
-        assert_eq!(s.context_window, 1_000_000);
+        assert_eq!(s.context_window, Some(1_000_000));
         assert!(tools.iter().all(|t| t.secs().unwrap() >= 0.0));
         assert!(matches!(s.blocks.last(), Some(Block::Done(d)) if d.ok));
         assert!((s.usage.estimate() - s.exact_cost.unwrap()).abs() / s.exact_cost.unwrap() < 0.1, "estimate within 10%");

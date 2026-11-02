@@ -107,6 +107,8 @@ pub struct View {
     pub hints: Vec<String>,
     /// Background tasks still running (shown by the composer).
     pub bg_running: usize,
+    /// Those tasks: a footer under the transcript follows them live.
+    pub running: Vec<TaskRow>,
     /// The ctrl-b view of background tasks, when open.
     pub tasks: Option<TasksPanel>,
     /// The /rewind picker, when open.
@@ -163,6 +165,11 @@ pub struct TaskRow {
     pub status: String,
     pub secs: u64,
     pub output: String,
+    /// A subagent's type, tokens and tool calls so far, and what it is doing now.
+    pub agent: String,
+    pub tokens: u64,
+    pub tools: u64,
+    pub doing: String,
 }
 
 /// Screen regions the effects target.
@@ -769,7 +776,58 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
         last_rows = lines.len() - before;
         i = group_end;
     }
+    let footer = background_lines(s, v, th, width);
+    if !footer.is_empty() {
+        last_rows = 0; // the newest block is no longer the bottom rows: no effect on them
+        owners.resize(lines.len() + footer.len(), None);
+        lines.extend(footer);
+    }
     (lines, last_rows, owners)
+}
+
+/// Under the transcript while background tasks run: a slowly pulsing line (the screen otherwise looks still while the
+/// agent waits on them), then one row per task with what Claude Code shows for it: its time, and for a subagent its
+/// tokens, tool calls and current step, as they come.
+fn background_lines(s: &Session, v: &View, th: &Theme, width: usize) -> Vec<Line<'static>> {
+    let n = v.running.len();
+    if n == 0 {
+        return vec![];
+    }
+    let pulse = lerp(th.dim, th.accent, 0.5 + 0.5 * (v.clock_ms / 1600.0 * std::f64::consts::TAU).sin());
+    let waiting = matches!(s.activity, Activity::Ready | Activity::Done);
+    let head = format!("{} {}{n} background task{}", spinner(v.clock_ms), if waiting { "waiting on " } else { "" }, if n == 1 { "" } else { "s" });
+    let mut out = vec![Line::default(), Line::from(vec![Span::styled(head, st(pulse).add_modifier(Modifier::ITALIC)), Span::styled("  ctrl-b: all of them", st(th.faint))])];
+    let cut = |s: String| if s.width() > width { format!("{}…", s.chars().take(width.saturating_sub(1)).collect::<String>()) } else { s };
+    for t in v.running.iter().take(4) {
+        let who = if !t.agent.is_empty() { t.agent.clone() } else { t.kind.trim_start_matches("local_").to_string() };
+        let time = if t.secs >= 60 { format!("{}m {:02}s", t.secs / 60, t.secs % 60) } else { format!("{}s", t.secs) };
+        let mut facts = vec![time];
+        if t.tokens > 0 {
+            facts.push(format!("{} tokens", human(t.tokens)));
+        }
+        if t.tools > 0 {
+            facts.push(format!("{} tool call{}", t.tools, if t.tools == 1 { "" } else { "s" }));
+        }
+        out.push(Line::from(vec![Span::styled(cut(format!("  {who} · {} · {}", t.description, facts.join(" · "))), st(th.dim))]));
+        if !t.doing.is_empty() {
+            out.push(Line::from(Span::styled(cut(format!("    ⎿ {}", t.doing)), st(th.faint))));
+        }
+    }
+    if n > 4 {
+        out.push(Line::from(Span::styled(format!("  +{} more", n - 4), st(th.faint))));
+    }
+    out
+}
+
+/// A colour between `a` (t = 0) and `b` (t = 1); `b` itself when either is not RGB.
+fn lerp(a: Color, b: Color, t: f64) -> Color {
+    match (a, b) {
+        (Color::Rgb(r1, g1, b1), Color::Rgb(r2, g2, b2)) => {
+            let m = |x: u8, y: u8| (x as f64 + (y as f64 - x as f64) * t.clamp(0.0, 1.0)).round() as u8;
+            Color::Rgb(m(r1, r2), m(g1, g2), m(b1, b2))
+        }
+        _ => b,
+    }
 }
 
 fn node(b: &Block, v: &View, th: &Theme) -> (&'static str, Color) {
@@ -851,12 +909,15 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
         Block::Thinking { tokens, live } => {
             let glyph = if *live { spinner(v.clock_ms) } else { "✻" };
             let mut spans = vec![Span::styled(format!("{glyph} "), st(th.warn)), Span::styled("thinking", st(th.dim).add_modifier(Modifier::ITALIC))];
-            if *tokens > 0 {
-                spans.push(Span::styled(format!(" · ~{tokens} tok"), st(th.faint)));
+            // claude reports thinking in steps of 50-200 tokens about once a second: while live, the count runs up to
+            // each new total over the second after it, as Claude Code's does
+            let shown = if *live { s.thinking_shown(*tokens, v.clock_ms) } else { *tokens };
+            if shown > 0 {
+                spans.push(Span::styled(format!(" · ~{shown} tok"), st(th.faint)));
             }
             vec![(Line::from(spans), vec![])]
         }
-        Block::Tool(t) => tool_lines(t, s, v, th, o, open),
+        Block::Tool(t) => tool_lines(t, s, v, th, o, open, width),
         Block::Done(d) => {
             let (glyph, word, color) = match (d.stopped, d.ok) {
                 (true, _) => ("■", "Stopped", th.warn),
@@ -955,7 +1016,7 @@ fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, width: usize) -> Vec
     out
 }
 
-fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool) -> Vec<Prefixed> {
+fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool, width: usize) -> Vec<Prefixed> {
     let arg = |k: &str| tool_arg(t, k);
     let name = short_name(&t.name);
     let (glyph, gcolor) = match (&t.result, t.error) {
@@ -966,8 +1027,8 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool)
     let mut meta = match (&t.result, name) {
         (Some(_), _) if t.error => "error".to_string(),
         (Some(_), "edit") => format!("-{} +{}", arg("old").lines().count(), arg("new").lines().count()),
-        (Some(_), "write") => format!("{} lines", arg("content").lines().count()),
-        (Some(r), _) => format!("{} lines", r.lines().count()),
+        (Some(_), "write") => lines_n(arg("content").lines().count()),
+        (Some(r), _) => lines_n(r.lines().count()),
         (None, _) => String::new(),
     };
     if let Some((n, last)) = &t.sub {
@@ -989,15 +1050,22 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool)
     if more && !matches!(name, "edit" | "TodoWrite") {
         meta.push_str(if open { "  ▾" } else { "  ▸" });
     }
-    let mut out = vec![(
-        Line::from(vec![
-            Span::styled(format!("{glyph} "), st(gcolor)),
-            Span::styled(format!("{name:<6}"), st(th.accent2).add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" {summary}"), st(th.dim)),
-            Span::styled(if meta.is_empty() { String::new() } else { format!("  · {meta}") }, st(th.faint)),
-        ]),
-        vec![Span::raw("         ")],
-    )];
+    // the counts and time on the same row when it all fits, else on a row of their own under the summary (wrapped
+    // straight after a long command they were hard to find)
+    let meta = if meta.is_empty() { String::new() } else { format!("  · {meta}") };
+    let fits = 2 + name.width().max(6) + 1 + summary.width() + meta.width() <= width;
+    let mut head = vec![
+        Span::styled(format!("{glyph} "), st(gcolor)),
+        Span::styled(format!("{name:<6}"), st(th.accent2).add_modifier(Modifier::BOLD)),
+        Span::styled(format!(" {summary}"), st(th.dim)),
+    ];
+    if fits {
+        head.push(Span::styled(meta.clone(), st(th.faint)));
+    }
+    let mut out = vec![(Line::from(head), vec![Span::raw("         ")])];
+    if !fits && !meta.is_empty() {
+        out.push((Line::from(vec![Span::raw("         "), Span::styled(meta.trim_start().to_string(), st(th.faint))]), vec![Span::raw("         ")]));
+    }
     let body: Vec<(String, Color)> = match name {
         // edits always show their diff: it is the most useful thing on screen
         "edit" => arg("old").lines().map(|l| (format!("- {l}"), th.err)).chain(arg("new").lines().map(|l| (format!("+ {l}"), th.ok))).collect(),
@@ -1031,10 +1099,15 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool)
     }
     if body.len() > limit {
         let mut spans = gutter();
-        spans.push(Span::styled(format!("… +{} lines", body.len() - limit), st(th.faint)));
+        spans.push(Span::styled(format!("… +{}", lines_n(body.len() - limit)), st(th.faint)));
         out.push((Line::from(spans), gutter()));
     }
     out
+}
+
+/// "1 line", "2 lines".
+fn lines_n(n: usize) -> String {
+    if n == 1 { "1 line".into() } else { format!("{n} lines") }
 }
 
 /// One quiet line for a run of tool calls: "⌁ ran 4 commands · bash ×3 read ×1 · 210 lines".
@@ -1064,7 +1137,7 @@ fn group_lines(blocks: &[Block], s: &Session, v: &View, th: &Theme) -> Vec<Prefi
     let mut spans = vec![
         Span::styled(if busy { format!("{} ", spinner(v.clock_ms)) } else { "⌁ ".into() }, st(th.accent2)),
         Span::styled(what, st(th.dim)),
-        Span::styled(if tools.is_empty() { String::new() } else { format!("   {mix}   {lines} lines") }, st(th.faint)),
+        Span::styled(if tools.is_empty() { String::new() } else { format!("   {mix}   {}", lines_n(lines)) }, st(th.faint)),
     ];
     if thought > 0 {
         spans.push(Span::styled(format!("   thought ~{thought} tok"), st(th.faint)));
@@ -1593,7 +1666,7 @@ mod tests {
         s.limits = Some((12.0, 14.0));
         s.balance = Some(8.816);
         for d in [Design::Cockpit, Design::Aurora, Design::Zen, Design::Timeline] {
-            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
+            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
             term.draw(|f| { draw(f, &s, &v); }).unwrap();
             let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
@@ -1613,13 +1686,14 @@ mod tests {
         s.blocks.push(Block::Tool(Tool { id: "b".into(), name: "Bash".into(), input: serde_json::json!({"command": format!("gh run view 1 --jq '{}'", "x".repeat(400))}),
             result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(4300.0), sub: None }));
         s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
         let text = |v: &View| { let (l, _, owners) = transcript(&s, v, Design::Cockpit.theme(), &cockpit::OPTS, 100); (l.iter().map(|l| l.spans.iter().map(|x| x.content.to_string()).collect::<String>()).collect::<Vec<_>>(), owners) };
         let (closed, owners) = text(&v);
         // closed: the subagent as who and what for (its 25-row prompt hidden), the long command cut, both marked ▸
         assert!(closed[0].contains("explorer: Inspect load-secrets.sh retry impact") && closed[0].contains("▸") && !closed.concat().contains("fetch_secret"), "{closed:#?}");
         assert!(closed.len() <= 6, "{} rows: {closed:#?}", closed.len());
         assert_eq!((owners[0], owners.last().copied().flatten()), (Some(0), Some(1)));
+        assert!(closed.last().unwrap().starts_with("         · 1 line · 4.3s"), "a long call's counts on a row of their own: {closed:#?}");
         v.open.insert(0);
         let (opened, _) = text(&v);
         assert!(opened.concat().contains("How is fetch_secret invoked") && opened.concat().contains("It runs sequentially") && opened[0].contains("▾"), "{opened:#?}");
@@ -1654,7 +1728,7 @@ mod tests {
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Text { text: "Sources: [GitHub changelog](https://github.blog/c)".into(), live: false });
         s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
         let mut areas = None;
         term.draw(|f| areas = Some(draw(f, &s, &v))).unwrap();
@@ -1668,7 +1742,7 @@ mod tests {
     #[test]
     fn the_session_picker_lists_and_marks_the_selected_one() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
         v.sessions = Some(SessionsPanel { rows: vec!["8m ago · 2 messages · review PR 1370  (4cb8a388)".into(), "2h ago · 5 messages · fix the login  (aa11bb22)".into()], selected: 1 });
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         term.draw(|f| { draw(f, &s, &v); }).unwrap();
@@ -1677,17 +1751,34 @@ mod tests {
     }
 
     #[test]
+    fn background_tasks_show_live_under_the_transcript() {
+        let s = Session::new("", "medium");
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 400.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
+        let row = |agent: &str, kind: &str, secs, tokens, tools, doing: &str| TaskRow { kind: kind.into(), description: "Tick workflows loss window check".into(), status: "running".into(), secs, output: String::new(), agent: agent.into(), tokens, tools, doing: doing.into() };
+        assert!(transcript(&s, &v, Design::Cockpit.theme(), &cockpit::OPTS, 100).0.is_empty(), "nothing while none run");
+        v.running = vec![row("explorer", "local_agent", 72, 21_129, 3, "Running Show Ledger tick workflow"), row("", "local_bash", 12, 0, 0, "")];
+        let (lines, last, owners) = transcript(&s, &v, Design::Cockpit.theme(), &cockpit::OPTS, 100);
+        let text: Vec<String> = lines.iter().map(|l| l.spans.iter().map(|x| x.content.to_string()).collect()).collect();
+        assert!(text[1].contains("waiting on 2 background tasks"), "{text:#?}");
+        assert_eq!(text[2], "  explorer · Tick workflows loss window check · 1m 12s · 21.1k tokens · 3 tool calls");
+        assert_eq!(text[3], "    ⎿ Running Show Ledger tick workflow");
+        assert_eq!(text[4], "  bash · Tick workflows loss window check · 12s");
+        assert_eq!((last, owners.iter().all(Option::is_none)), (0, true));
+        assert_eq!(lines_n(1), "1 line");
+    }
+
+    #[test]
     fn key_hints_fit_whole_and_point_to_the_rest() {
         assert_eq!(fitted_keys("a · bb · cc", 100), "a · bb · cc");
         assert_eq!(fitted_keys("a · bb · cc", 16), "a · /keys all", "never a hint cut in half");
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
         let line: String = composer_line(&v, Design::Cockpit.theme(), "›", "Message tazuna…", 90).spans.iter().map(|s| s.content.to_string()).collect();
         assert!(line.width() <= 90 && line.ends_with("/keys all"), "{line}");
     }
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();
