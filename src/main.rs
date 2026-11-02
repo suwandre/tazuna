@@ -38,6 +38,7 @@
 //!          [--repo-tools core|all]   # repo profile: Claude Code's coding tools only (core) or all of them (default)
 //!          [--rtk]   # claude's Bash commands through rtk (shortened output; rtk must be installed)
 //!          [--batch-calls]   # repo profile: claude told to make independent tool calls in one turn
+//!          [--boss-effort LEVEL]   # boss mode's workers at LEVEL (default: the session's effort); /boss switches it live
 //!          [--price IN,CACHED,OUT]   # own loop: USD per million tokens, for providers whose model list has no prices
 //!          [--max-minutes N]   # own loop: stop (or with --escalate, hand over) after N minutes per task; default: no
 //!                              # time limit, only the $1 cap per task (TAZUNA_MAX_USD; cheap models are slow but
@@ -128,6 +129,8 @@ struct Args {
     rtk: bool,
     /// `--batch-calls`: claude told to make independent tool calls in one turn. Under measurement.
     batch_calls: bool,
+    /// `--boss-effort LEVEL`: the boss's workers at LEVEL (unset: the session's effort).
+    boss_effort: Option<String>,
     review_model: Option<String>,
     review_key_env: Option<String>,
     review_only: bool,
@@ -237,6 +240,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         repo_tools_core: false,
         rtk: false,
         batch_calls: false,
+        boss_effort: None,
         review_model: None,
         review_key_env: None,
         review_only: false,
@@ -304,6 +308,13 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--explorer-key-env" => a.explorer_key_env = val()?,
             "--tester" => a.tester = Some(val()?),
             "--boss" => a.boss = Some(val()?),
+            "--boss-effort" => {
+                let e = val()?;
+                if !models::LEVELS.contains(&e.as_str()) {
+                    bail!("--boss-effort low|medium|high|xhigh|max, not {e}");
+                }
+                a.boss_effort = Some(e);
+            }
             "--advisor" => a.advisor = Some(val()?),
             "--data" => {
                 a.data_any = match val()?.as_str() {
@@ -505,6 +516,7 @@ fn main() -> Result<()> {
             set_explorer(&mut live, &a);
             live.tester = a.tester.clone();
             live.boss = boss;
+            live.boss_effort = a.boss_effort.clone();
             live.advisor = a.advisor.clone();
             if let Some((m, e)) = a.escalate.clone() {
                 live.set_escalate(m, e);
@@ -648,6 +660,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.tester = a.tester.clone();
     live.advisor = a.advisor.clone();
     live.boss = boss;
+    live.boss_effort = a.boss_effort.clone();
     if let Some((m, e)) = a.escalate.clone() {
         live.set_escalate(m, e);
     }
@@ -1580,6 +1593,21 @@ fn run_live(
                     }
                 }
                 // /new: a fresh conversation; /resume: a picker of this repo's sessions (/resume ID opens one directly)
+                // /boss: boss mode on (haiku workers, or /boss MODEL) or off for the rest of the session
+                if text == "/boss" || text.starts_with("/boss ") {
+                    let arg = text["/boss".len()..].trim();
+                    let want = match arg {
+                        "" => if live.boss.is_some() { None } else { Some("haiku".to_string()) },
+                        "off" => None,
+                        m => Some(m.to_string()),
+                    };
+                    let msg = live.set_boss(want);
+                    match msg {
+                        Ok((t, e)) => s.apply(&e, t),
+                        Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
+                    }
+                    continue;
+                }
                 if text == "/new" {
                     new_conversation(live, &mut s, &mut v, None);
                     ctx_hint = 0;

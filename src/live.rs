@@ -89,8 +89,9 @@ fn boss_denies(v: &Value) -> Option<&'static str> {
         .then_some("You are the lead: delegate this. Ask the explorer to read or search, the implementer to edit, the tester to run checks.")
 }
 
-/// The `--agents` JSON for the subagents that are on (`implementer` only in `--boss`).
-fn subagents(explorer: Option<&str>, tester: Option<&str>, implementer: Option<&str>) -> String {
+/// The `--agents` JSON for the subagents that are on (`implementer` only in `--boss`). `effort`: theirs, else they run
+/// at the session's (Claude Code's rule for a subagent without one: a session at xhigh ran its Haiku workers at xhigh).
+fn subagents(explorer: Option<&str>, tester: Option<&str>, implementer: Option<&str>, effort: Option<&str>) -> String {
     let mut agents = serde_json::Map::new();
     if let Some(model) = implementer {
         agents.insert("implementer".into(), json!({
@@ -115,6 +116,11 @@ fn subagents(explorer: Option<&str>, tester: Option<&str>, implementer: Option<&
             "tools": ["Bash", "Read", "Grep", "Glob"],
             "model": model,
         }));
+    }
+    if let Some(e) = effort {
+        for a in agents.values_mut() {
+            a["effort"] = json!(e);
+        }
     }
     serde_json::Value::Object(agents).to_string()
 }
@@ -290,6 +296,8 @@ pub struct Live {
     pub tester: Option<String>,
     /// `--boss MODEL`: the main model only directs; explorer, implementer and tester subagents on MODEL do the work.
     pub boss: Option<String>,
+    /// `--boss-effort LEVEL`: the boss's workers at LEVEL; unset, they run at the session's effort.
+    pub boss_effort: Option<String>,
     /// `--advisor MODEL`: Claude Code's advisor tool; the main model can ask MODEL for advice when it is stuck.
     pub advisor: Option<String>,
     pub verify: verify::Mode,
@@ -414,6 +422,7 @@ impl Live {
                 SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0))),
             tester: None,
             boss: None,
+            boss_effort: None,
             advisor: None,
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
@@ -581,6 +590,25 @@ impl Live {
             format!("model: {model} at {effort}: a new conversation (only claude can carry one over to another model)")
         };
         Ok(self.record(json!({"type": "harness_switch", "model": model, "effort": effort, "text": text})))
+    }
+
+    /// `/boss`: the rest of the session with boss mode on (Some: the workers' model) or off. claude restarts with the
+    /// subagents and rules of the new mode; the conversation goes on.
+    pub fn set_boss(&mut self, boss: Option<String>) -> Result<(f64, Value)> {
+        if !self.idle() {
+            bail!("wait until the run has finished (or stop it with esc)");
+        }
+        if self.provider.is_some() || self.profile != Profile::Repo {
+            bail!("boss mode is for claude in the repo profile (this session: {})", if self.provider.is_some() { "the own loop" } else { "another profile" });
+        }
+        self.boss = boss;
+        self.respawn(self.model.clone(), self.effort.clone());
+        let text = match &self.boss {
+            Some(m) => format!("boss mode on: {} directs, {m} subagents read, edit and run the checks{} (the conversation goes on)",
+                self.model.trim_start_matches("claude-"), self.boss_effort.as_ref().map_or(String::new(), |e| format!(" at {e}"))),
+            None => format!("boss mode off: {} works itself again (the conversation goes on)", self.model.trim_start_matches("claude-")),
+        };
+        Ok(self.record(json!({"type": "harness_info", "text": text})))
     }
 
     /// `/new` (no id) and `/resume ID`: the next message starts a fresh conversation, or continues an earlier claude one,
@@ -1125,7 +1153,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "batch_calls": self.batch_calls, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "batch_calls": self.batch_calls, "boss_effort": self.boss_effort, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -1244,9 +1272,9 @@ impl Live {
                     cmd.args(["--append-system-prompt", &append.join("\n")]);
                 }
                 if let Some(m) = self.boss.as_deref() {
-                    cmd.args(["--agents", &subagents(Some(m), Some(m), Some(m))]);
+                    cmd.args(["--agents", &subagents(Some(m), Some(m), Some(m), self.boss_effort.as_deref())]);
                 } else if self.explorer.is_some() || self.tester.is_some() {
-                    cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref(), None)]);
+                    cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref(), None, None)]);
                 }
             }
             Profile::RepoLean => {
@@ -1509,9 +1537,12 @@ mod tests {
 
     #[test]
     fn subagents_only_the_ones_on() {
-        let both: Value = serde_json::from_str(&subagents(Some("haiku"), Some("sonnet"), None)).unwrap();
+        let both: Value = serde_json::from_str(&subagents(Some("haiku"), Some("sonnet"), None, None)).unwrap();
         assert_eq!((both["explorer"]["model"].as_str(), both["tester"]["model"].as_str()), (Some("haiku"), Some("sonnet")));
-        let one: Value = serde_json::from_str(&subagents(None, Some("haiku"), None)).unwrap();
+        let one: Value = serde_json::from_str(&subagents(None, Some("haiku"), None, None)).unwrap();
+        assert!(both["explorer"].get("effort").is_none(), "no effort: the session's");
+        let boss: Value = serde_json::from_str(&subagents(Some("haiku"), Some("haiku"), Some("haiku"), Some("high"))).unwrap();
+        assert!(["explorer", "implementer", "tester"].iter().all(|a| boss[*a]["effort"] == "high"));
         assert!(one.get("explorer").is_none() && one["tester"]["tools"][0] == "Bash");
     }
 

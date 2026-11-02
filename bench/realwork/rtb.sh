@@ -1,15 +1,14 @@
 #!/bin/bash
-# 2026-11-02 night: `--batch-calls` (claude told to make independent tool calls in one turn), the repo profile without boss
+# 2026-11-02, 16:00 (the user's start time): `--batch-calls` (claude told to make independent tool calls in one turn), the repo profile without boss
 # mode, claude-opus-5-5 medium on the subscription, the six tasks/ tasks x two runs (v1245-v1256, rtb.jobs), eight at a
 # time, tazuna 0.1.30 frozen in ~/bench-homes/tz-v130. Its baseline is the same day's all-tools arm (rt.sh, v1209-v1231
-# odd); the judge pools both by hand tomorrow, calls counted first. Waits until 23:00; gated on the usage guard (5h 85%,
-# week 95%: a job over it waits); starts no run below 15 GB free disk. Keeps the Mac awake, then sleeps it once done and
-# idle 10 minutes, or stops the runs and sleeps it below 5% battery unplugged (start rtb.sh again to continue: finished
-# labels are skipped). Started with nohup.
+# odd); the judge pools both by hand, calls counted first. Waits until 16:00; gated on the usage guard (5h 85%, week
+# 95%: a job over it waits); starts no run below 15 GB free disk. Keeps the Mac awake while it runs; below 5% battery
+# unplugged it stops the runs and sleeps it (start rtb.sh again to continue: finished labels are skipped). nohup.
 cd "$(dirname "$0")"; source ~/.bench-token
 log() { echo "$(date +%H:%M) $*" >> rtb.log; }
-target=$(date -j -f "%Y-%m-%d %H:%M" "$(date +%F) 23:00" +%s)
-log "waiting until 23:00"
+target=$(date -j -f "%Y-%m-%d %H:%M" "$(date +%F) 16:00" +%s)
+log "waiting until 16:00"
 while [ "$(date +%s)" -lt "$target" ]; do sleep 60; done
 caffeinate -ims -w $$ &
 log "start; claude $(claude --version 2>/dev/null | head -1); $(df -g ~ | awk 'NR==2{print $4}') GB free"
@@ -36,5 +35,3 @@ while [ "$(running)" -gt 0 ]; do low_battery && stop_sleep "battery under 5%"; s
 log "runs over: $(for v in $(seq 1245 1256); do grep -h ' r0:\|ERROR' bench.v$v.log | tail -1 | awk '{print $3, $5}' | sed "s/@$M:medium//"; done | tr '\n' ';')"
 python3 -I leakscan.py > leakscan-rtb.out 2>&1
 log "RTB-DONE ($(df -g ~ | awk 'NR==2{print $4}') GB free)"
-idle=$(( $(ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {print $NF; exit}') / 1000000000 ))
-if [ "$idle" -gt 600 ]; then log "idle ${idle}s: sleeping"; pmset sleepnow; else log "in use (idle ${idle}s): not sleeping"; fi

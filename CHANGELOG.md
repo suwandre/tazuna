@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.32 (2026-11-02): `/boss` mid-session; `--boss-effort` for its workers
+
+- `/boss` turns boss mode on (Haiku workers; `/boss MODEL` for others) or off for the rest of a live session: claude
+  restarts with the subagents and rules of the new mode, and the conversation goes on. Repo profile on claude only.
+- `--boss-effort LEVEL` sets the effort of boss mode's explorer, implementer and tester. Unset, they run at the session's
+  (Claude Code's rule for a subagent without one), so a session at xhigh ran its Haiku workers at xhigh. Under
+  measurement.
+
 ## 0.1.31 (2026-11-02): background tasks live under the transcript; thinking counts smoothly; clearer numbers
 
 - While background tasks run, the transcript ends in a slowly pulsing "waiting on 2 background tasks" and one row per
