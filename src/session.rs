@@ -224,7 +224,7 @@ impl Session {
             results: 0,
             profile: String::new(),
             mode: "auto".into(),
-            commands: vec!["bad".into(), "good".into(), "keys".into(), "loop".into(), "model".into(), "rewind".into(), "usage".into(), "vim".into()],
+            commands: vec!["bad".into(), "good".into(), "keys".into(), "loop".into(), "model".into(), "new".into(), "resume".into(), "rewind".into(), "usage".into(), "vim".into()],
             todos: Vec::new(),
             last_prompt: String::new(),
             streamed: false,
@@ -282,7 +282,7 @@ impl Session {
                 self.model = s(&e["model"]);
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
-                cmds.extend(["good", "bad", "keys", "loop", "model", "rewind", "usage", "vim"].map(String::from));
+                cmds.extend(["good", "bad", "keys", "loop", "model", "new", "resume", "rewind", "usage", "vim"].map(String::from));
                 cmds.sort();
                 cmds.dedup();
                 self.commands = cmds;

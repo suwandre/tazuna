@@ -865,6 +865,26 @@ fn question(req: &serde_json::Value) -> String {
 }
 
 /// The latest session this repo ran (or the one whose id starts with `id`): claude's session id and tazuna's recording.
+/// This repo's claude sessions, newest first: (session id, its first message, when it began, messages sent). The own
+/// loop's are left out: its engine resumes no conversation.
+fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<(String, String, u64, usize)> {
+    let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let mut out: Vec<(String, String, u64, usize)> = vec![];
+    for r in std::fs::read_to_string(base.join("runs.jsonl")).unwrap_or_default().lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
+        let m = &r["meta"];
+        let Some(sid) = m["session_id"].as_str().filter(|s| !s.starts_with("own-")) else { continue };
+        if !m["cwd"].as_str().map(std::path::PathBuf::from).is_some_and(|c| c.canonicalize().unwrap_or(c) == cwd) {
+            continue;
+        }
+        match out.iter_mut().find(|s| s.0 == sid) {
+            Some(s) => s.3 += 1,
+            None => out.push((sid.to_string(), r["prompt"].as_str().unwrap_or_default().to_string(), r["ts"].as_u64().unwrap_or(0), 1)),
+        }
+    }
+    out.reverse();
+    out
+}
+
 fn previous_session(base: &std::path::Path, cwd: &std::path::Path, id: Option<&str>) -> Option<(String, Option<std::path::PathBuf>)> {
     let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
     let log = std::fs::read_to_string(base.join("runs.jsonl")).ok()?;
@@ -1403,6 +1423,34 @@ fn run_live(
                         continue;
                     }
                 }
+                // /new: a fresh conversation; /resume: this repo's recent ones, /resume N (or an id) continues one
+                if text == "/new" || text == "/resume" || text.starts_with("/resume ") {
+                    let pick = text.strip_prefix("/resume").map(str::trim);
+                    let list = sessions_of(&labels::dir()?, &std::env::current_dir()?);
+                    let msg = match pick {
+                        None => live.restart(None),
+                        Some("") => {
+                            let rows: Vec<String> = list.iter().take(8).enumerate().map(|(i, (sid, prompt, ts, n))| {
+                                let ago = session::unix_now().saturating_sub(*ts) / 60;
+                                let when = if ago < 60 { format!("{ago}m") } else if ago < 1440 { format!("{}h", ago / 60) } else { format!("{}d", ago / 1440) };
+                                format!("{}  {when} ago · {n} message{} · {}  ({})", i + 1, if *n == 1 { "" } else { "s" },
+                                    session::shown(prompt.lines().next().unwrap_or_default(), 60), &sid[..8.min(sid.len())])
+                            }).collect();
+                            let text = if rows.is_empty() { "no earlier claude session in this repo".into() } else { format!("recent sessions (/resume N continues one):\n{}", rows.join("\n")) };
+                            Ok((live.elapsed_ms(), json!({"type": "harness_info", "text": text})))
+                        }
+                        Some(p) => match p.parse::<usize>().ok().and_then(|n| list.get(n.wrapping_sub(1))).map(|s| s.0.clone())
+                            .or_else(|| list.iter().find(|s| s.0.starts_with(p)).map(|s| s.0.clone())) {
+                            Some(sid) => live.restart(Some(sid)),
+                            None => Err(anyhow::anyhow!("no session {p} in this repo: /resume lists them")),
+                        },
+                    };
+                    match msg {
+                        Ok((t, e)) => s.apply(&e, t),
+                        Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
+                    }
+                    continue;
+                }
                 if text == "/keys" {
                     let all = ui::LIVE_KEYS.split(" · ").collect::<Vec<_>>().join("\n");
                     s.apply(&json!({"type": "harness_info", "text": format!("keys:\n{all}")}), live.elapsed_ms());
@@ -1655,6 +1703,8 @@ mod tests {
         assert_eq!(previous_session(&base, &repo, None).unwrap().0, "ccc-3", "this repo's latest");
         assert_eq!(previous_session(&base, &repo, Some("aaa")).unwrap().0, "aaa-1", "by id prefix");
         assert!(previous_session(&base, &base.join("none"), None).is_none());
+        let list = sessions_of(&base, &repo);
+        assert_eq!(list.iter().map(|s| s.0.as_str()).collect::<Vec<_>>().first(), Some(&"ccc-3"), "newest first, this repo only");
         std::fs::remove_dir_all(&base).ok();
     }
 }

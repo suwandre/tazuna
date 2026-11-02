@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.22 (2026-11-02): `/new` and `/resume` in a live session
+
+`/new` starts a fresh conversation on the same model, effort and route (the old one stays resumable). `/resume` lists this
+repo's recent claude sessions (first message, age, messages sent); `/resume N` or `/resume <id>` continues one on claude.
+Until now only `tazuna -c` / `--resume ID` at start did that, and claude's `/clear` cleared without a way back.
+
 ## 0.1.21 (2026-11-02): plan windows and SubRouter balance on screen; stopped turns priced; short commands caught
 
 - A stopped turn: claude reported $0 for 21.4k tokens (8k of them written to cache), so the session read "$0 on plan".

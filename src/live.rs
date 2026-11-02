@@ -559,6 +559,26 @@ impl Live {
         Ok(self.record(json!({"type": "harness_switch", "model": model, "effort": effort, "text": text})))
     }
 
+    /// `/new` (no id) and `/resume ID`: the next message starts a fresh conversation, or continues an earlier claude one,
+    /// on the same model, effort and route. The conversation left behind stays resumable.
+    pub fn restart(&mut self, resume: Option<String>) -> Result<(f64, Value)> {
+        if !self.idle() {
+            bail!("wait until the run has finished (or stop it with esc)");
+        }
+        if resume.is_some() && self.provider.is_some() {
+            bail!("only claude can continue an earlier conversation: /model to a Claude model first");
+        }
+        self.respawn(self.model.clone(), self.effort.clone());
+        self.checkpoints.clear();
+        let text = match &resume {
+            Some(id) => format!("── resumed session {} ──", id.chars().take(8).collect::<String>()),
+            None => "── new conversation ──".to_string(),
+        };
+        self.session_id = resume;
+        // a notice also closes the old process's cost: the next one reports from $0
+        Ok(self.record(json!({"type": "harness_notice", "text": text, "error": false})))
+    }
+
     /// `--escalate MODEL[:EFFORT]`: fix rounds after failed tests run on MODEL (with `--provider`: on claude).
     pub fn set_escalate(&mut self, model: String, effort: String) {
         self.escalate = Some((model, effort));
