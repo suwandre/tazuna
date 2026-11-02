@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block as Panel, BorderType, LineGauge, Sparkline},
 };
 
-const OPTS: Opts = Opts { marker: "▸", prompt: PromptStyle::Bar, group_tools: false, timeline: false, durations: true };
+pub(super) const OPTS: Opts = Opts { marker: "▸", prompt: PromptStyle::Bar, group_tools: false, timeline: false, durations: true };
 const SIDEBAR: u16 = 38;
 
 fn panel<'a>(title: &'a str, th: &Theme) -> Panel<'a> {
@@ -38,8 +38,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let frame = panel("transcript", th);
     let inner = frame.inner(main).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(frame, main);
-    let (lines, last_rows) = transcript(s, v, th, &OPTS, inner.width as usize);
-    let last_block = render_transcript(f, inner, lines, last_rows, v.scroll);
+    let (last_block, trows) = render_transcript(f, inner, transcript(s, v, th, &OPTS, inner.width as usize), v.scroll);
 
     let files = files_touched(s);
     let tools = tool_tally(s);
@@ -158,7 +157,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
-    Areas { pulse: p_tools, last_block, transcript: inner }
+    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows }
 }
 
 fn kv(k: &str, v: &str, th: &Theme) -> Span<'static> {

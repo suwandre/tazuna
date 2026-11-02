@@ -269,15 +269,28 @@ impl Session {
 
     fn push(&mut self, b: Block) {
         self.end_live();
+        self.push_aside(b);
+    }
+
+    /// A block beside the model's stream (tazuna's own notices: "copied 12 chars", a hint): the text or thinking being
+    /// streamed stays live. Through `push` such a notice ended it: the spinner froze and what came after was dropped.
+    fn push_aside(&mut self, b: Block) {
         self.blocks.push(b);
         self.meta.push(Meta { at_ms: self.now_ms, turn: self.turns });
         self.new_blocks += 1;
     }
 
     fn end_live(&mut self) {
-        if let Some(Block::Text { live, .. } | Block::Thinking { live, .. }) = self.blocks.last_mut() {
+        if let Some(Block::Text { live, .. } | Block::Thinking { live, .. }) = self.live_block() {
             *live = false;
         }
+    }
+
+    /// The text or thinking block still being streamed: the newest live one, not simply the last block (a notice such as
+    /// "copied 12 chars" can land after it mid-stream, and the stream then went into the notice: the thinking counter
+    /// stopped and text written meanwhile was lost, 2026-11-02).
+    fn live_block(&mut self) -> Option<&mut Block> {
+        self.blocks.iter_mut().rev().find(|b| matches!(b, Block::Text { live: true, .. } | Block::Thinking { live: true, .. }))
     }
 
     /// Apply one event that happened `at_ms` into the run.
@@ -406,7 +419,7 @@ impl Session {
                 self.mode = mode_name(e["mode"].as_str().unwrap_or_default()).to_string();
                 self.push(Block::Notice { text: format!("mode: {}", self.mode), error: false });
             }
-            (Some("harness_info"), _) => self.push(Block::Notice { text: s(&e["text"]), error: false }),
+            (Some("harness_info"), _) => self.push_aside(Block::Notice { text: s(&e["text"]), error: false }),
             // the own loop's reasoning before a message: a thinking row like claude's, its size estimated (~4 characters a token)
             (Some("reasoning"), _) => self.push(Block::Thinking { tokens: (s(&e["text"]).chars().count() / 4) as u64, live: false }),
             (Some("harness_switch"), _) => {
@@ -581,11 +594,11 @@ impl Session {
             }
             Some("content_block_delta") => {
                 let d = &ev["delta"];
-                match (d["type"].as_str(), self.blocks.last_mut()) {
+                match (d["type"].as_str(), self.live_block()) {
                     (Some("text_delta"), Some(Block::Text { text, .. })) => text.push_str(d["text"].as_str().unwrap_or_default()),
-                    (Some("thinking_delta"), Some(Block::Thinking { tokens, .. })) => {
-                        *tokens = d["estimated_tokens"].as_u64().unwrap_or(*tokens)
-                    }
+                    // each delta carries the tokens thought since the last one (50, 100, 150 ...): they add up, as in
+                    // Claude Code's own counter
+                    (Some("thinking_delta"), Some(Block::Thinking { tokens, .. })) => *tokens += d["estimated_tokens"].as_u64().unwrap_or(0),
                     _ => {}
                 }
             }
@@ -716,6 +729,28 @@ mod tests {
         assert_eq!(shown, ["thinking ~8", "I'll run the tests.", "bash cargo test -> 94 passed", "All 94 pass.", "done 33.5s"]);
         assert_eq!(crate::ui::cost_str(&s), "$0.00019");
         assert_eq!([0.0, 0.004321, 0.0123, 1.5].map(crate::ui::usd), ["$0", "$0.0043", "$0.01", "$1.50"]);
+    }
+
+    #[test]
+    fn thinking_counts_up_and_a_notice_mid_stream_does_not_take_the_stream() {
+        let mut s = Session::new("", "medium");
+        let ev = |e: Value| json!({"type": "stream_event", "event": e});
+        s.apply(&ev(json!({"type": "message_start"})), 1.0);
+        s.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "thinking"}})), 2.0);
+        for est in [50, 100, 150, 100] {
+            s.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "estimated_tokens": est}})), 3.0);
+        }
+        s.apply(&json!({"type": "harness_info", "text": "copied 12 chars"}), 4.0);
+        s.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "estimated_tokens": 200}})), 5.0);
+        s.apply(&ev(json!({"type": "content_block_stop"})), 6.0);
+        s.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 7.0);
+        s.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hel"}})), 8.0);
+        s.apply(&json!({"type": "harness_info", "text": "copied 3 chars"}), 9.0);
+        s.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "lo"}})), 10.0);
+        let thinking = s.blocks.iter().find_map(|b| if let Block::Thinking { tokens, live } = b { Some((*tokens, *live)) } else { None });
+        assert_eq!(thinking, Some((600, false)), "50+100+150+100+200, closed by its stop");
+        let text = s.blocks.iter().find_map(|b| if let Block::Text { text, .. } = b { Some(text.clone()) } else { None });
+        assert_eq!(text.as_deref(), Some("Hello"), "the text after the notice is not lost");
     }
 
     #[test]

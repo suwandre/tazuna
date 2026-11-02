@@ -698,8 +698,8 @@ impl Fx {
         Fx { mgr: EffectManager::default(), boot: true, blocks: 0, tools: 0, results: 0 }
     }
 
-    /// Draws one frame; returns where the transcript is.
-    fn frame(&mut self, f: &mut Frame, s: &Session, v: &View, dt: Duration) -> ratatui::layout::Rect {
+    /// Draws one frame; returns where the transcript is and the block on each of its rows.
+    fn frame(&mut self, f: &mut Frame, s: &Session, v: &View, dt: Duration) -> (ratatui::layout::Rect, Vec<Option<usize>>) {
         let areas = ui::draw(f, s, v);
         let d = v.design;
         if self.boot {
@@ -724,12 +724,12 @@ impl Fx {
         }
         let area = f.area();
         self.mgr.process_effects(dt.into(), f.buffer_mut(), area);
-        areas.transcript
+        (areas.transcript, areas.rows)
     }
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "" }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -825,6 +825,12 @@ fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args)
 }
 
 /// Trackpad and mouse wheel scroll the transcript.
+/// The transcript block on screen at (column, row), if any.
+fn block_at(area: ratatui::layout::Rect, rows: &[Option<usize>], column: u16, row: u16) -> Option<usize> {
+    let inside = column >= area.x && column < area.x + area.width && row >= area.y;
+    inside.then(|| rows.get((row - area.y) as usize).copied().flatten()).flatten()
+}
+
 fn scroll_mouse(v: &mut View, kind: MouseEventKind) {
     match kind {
         MouseEventKind::ScrollUp => v.scroll += 3,
@@ -979,6 +985,8 @@ fn run_live(
     let mut asked_at: Option<Instant> = None;
     // mouse selection in the transcript: drag selects, release copies
     let mut transcript = ratatui::layout::Rect::default();
+    // the block on each transcript row, from the last frame: a click there opens or closes it, hovering shades it
+    let mut rows: Vec<Option<usize>> = vec![];
     let mut sel: Option<select::Selection> = None;
     let (mut copy_now, mut copied) = (false, None::<String>);
     // ctrl-b: the background-task view (which row is selected, when its output was last asked for)
@@ -1102,7 +1110,7 @@ fn run_live(
         }
         v.clock_ms = live.elapsed_ms();
         term.draw(|f| {
-            transcript = fx.frame(f, &s, &v, dt);
+            (transcript, rows) = fx.frame(f, &s, &v, dt);
             if let Some(sel) = &sel {
                 sel.highlight(f.buffer_mut());
                 if copy_now {
@@ -1143,8 +1151,17 @@ fn run_live(
                     }
                     MouseEventKind::Up(MouseButton::Left) => match &sel {
                         Some(x) if !x.is_empty() => copy_now = true,
-                        _ => sel = None,
+                        // a click without a drag: the block under it opens or closes
+                        _ => {
+                            sel = None;
+                            if let Some(b) = block_at(transcript, &rows, m.column, m.row)
+                                && !v.open.remove(&b)
+                            {
+                                v.open.insert(b);
+                            }
+                        }
                     },
+                    MouseEventKind::Moved => v.hover = block_at(transcript, &rows, m.column, m.row),
                     k => scroll_mouse(&mut v, k),
                 }
                 continue;

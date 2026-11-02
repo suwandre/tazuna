@@ -36,8 +36,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         split_row(f, under, Line::default(), Line::from(Span::styled(t, st(color))), None);
     }
 
-    let (lines, last_rows) = transcript(s, v, th, &OPTS, body.width as usize);
-    let last_block = render_transcript(f, body, lines, last_rows, v.scroll);
+    let (last_block, trows) = render_transcript(f, body, transcript(s, v, th, &OPTS, body.width as usize), v.scroll);
 
     f.render_widget(Paragraph::new(Span::styled("─".repeat(rule.width as usize), st(th.border))), rule);
     let (glyph, label, color) = activity(s, v, th);
@@ -53,5 +52,5 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     ]);
     split_row(f, input, left, right, None);
 
-    Areas { pulse: top, last_block, transcript: body }
+    Areas { pulse: top, last_block, transcript: body, rows: trows }
 }

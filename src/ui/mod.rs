@@ -84,6 +84,9 @@ impl Design {
 pub struct View {
     pub design: Design,
     pub expand_all: bool,
+    /// Blocks opened by a click (their full input and output), and the block under the mouse (shaded: a click opens it).
+    pub open: std::collections::HashSet<usize>,
+    pub hover: Option<usize>,
     /// Lines scrolled up from the bottom; 0 follows the live tail.
     pub scroll: usize,
     pub clock_ms: f64,
@@ -161,6 +164,8 @@ pub struct Areas {
     pub last_block: Option<Rect>,
     /// Where the transcript is drawn: mouse selection stays inside it.
     pub transcript: Rect,
+    /// The block shown on each row of the transcript (None: a gap), for clicks and hovering.
+    pub rows: Vec<Option<usize>>,
 }
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
@@ -619,9 +624,17 @@ pub fn tool_summary(t: &Tool, s: &Session) -> String {
         "bash" => arg("command").lines().next().unwrap_or_default().to_string(),
         "read" | "write" | "edit" => rel(s, arg("path")),
         "Grep" | "Glob" => format!("{} {}", arg("pattern"), rel(s, arg("path"))).trim().to_string(),
+        // a subagent: who and what for; its prompt shows when the call is opened
+        "Agent" | "Task" => format!("{}: {}", i["subagent_type"].as_str().unwrap_or("agent"), i["description"].as_str().unwrap_or_default()),
+        "WebSearch" | "ToolSearch" => i["query"].as_str().unwrap_or_default().to_string(),
+        "WebFetch" => i["url"].as_str().unwrap_or_default().to_string(),
+        "Skill" => i["skill"].as_str().or(i["name"].as_str()).unwrap_or_default().to_string(),
         _ => i.to_string(),
     }
 }
+
+/// A closed call's summary is cut to this many characters (about two rows); opened, it shows whole.
+const SUMMARY_CHARS: usize = 160;
 
 // ---------------------------------------------------------------- transcript
 
@@ -651,8 +664,10 @@ const TOOL_LINES: usize = 10;
 const GUTTER: usize = 8;
 
 /// Builds the wrapped transcript; also returns how many rows the newest block takes.
-pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> (Vec<Line<'static>>, usize) {
+pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> (Vec<Line<'static>>, usize, Vec<Option<usize>>) {
     let mut lines: Vec<Line<'static>> = Vec::new();
+    // the block each line belongs to (None: the gap between blocks)
+    let mut owners: Vec<Option<usize>> = Vec::new();
     let mut last_rows = 0;
     let mut i = 0;
     let mut prev_turn = 0;
@@ -662,22 +677,26 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
         // a run of tool calls collapses into one line in grouped designs
         let foldable = |b: &Block| matches!(b, Block::Tool(_) | Block::Thinking { .. });
         let mut group_end = i + 1;
-        if o.group_tools && !v.expand_all && foldable(b) {
-            while group_end < s.blocks.len() && foldable(&s.blocks[group_end]) {
+        // an opened block stays out of a folded run
+        if o.group_tools && !v.expand_all && foldable(b) && !v.open.contains(&i) {
+            while group_end < s.blocks.len() && foldable(&s.blocks[group_end]) && !v.open.contains(&group_end) {
                 group_end += 1;
             }
         }
-        let grouped = o.group_tools && !v.expand_all && foldable(b);
+        let grouped = o.group_tools && !v.expand_all && foldable(b) && !v.open.contains(&i);
+        let open = v.expand_all || v.open.contains(&i);
         let after_tool = i > 0 && matches!((&s.blocks[i - 1], b), (Block::Tool(_), Block::Tool(_)));
         if o.timeline && meta.turn != prev_turn && meta.turn > 0 {
             prev_turn = meta.turn;
             lines.push(turn_divider(s, th, meta.turn));
+            owners.push(None);
         } else if i > 0 && !after_tool {
             // the timeline keeps its rail unbroken between steps
             lines.push(if o.timeline { Line::from(vec![Span::raw("      "), Span::styled("│", st(th.border))]) } else { Line::default() });
+            owners.push(None);
         }
         let before = lines.len();
-        let body = if grouped { group_lines(&s.blocks[i..group_end], s, v, th) } else { block_lines(b, s, v, th, o) };
+        let body = if grouped { group_lines(&s.blocks[i..group_end], s, v, th) } else { block_lines(b, s, v, th, o, open) };
         let gutter_w = if o.timeline { GUTTER } else { 0 };
         for (k, (mut l, mut cont)) in body.into_iter().enumerate() {
             if o.timeline {
@@ -701,10 +720,17 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
             }
             lines.extend(wrap(l, width.max(gutter_w + 10), &cont));
         }
+        // the block under the mouse is shaded: a click opens or closes it
+        if v.hover.is_some_and(|h| (i..group_end).contains(&h)) {
+            for l in &mut lines[before..] {
+                l.style = l.style.bg(th.surface);
+            }
+        }
+        owners.resize(lines.len(), Some(i));
         last_rows = lines.len() - before;
         i = group_end;
     }
-    (lines, last_rows)
+    (lines, last_rows, owners)
 }
 
 fn node(b: &Block, v: &View, th: &Theme) -> (&'static str, Color) {
@@ -737,20 +763,24 @@ fn turn_divider(s: &Session, th: &Theme, turn: u64) -> Line<'static> {
 }
 
 /// Draws the transcript tail (or the scrolled position); returns the newest block's rows when following.
-pub fn render_transcript(f: &mut Frame, area: Rect, lines: Vec<Line<'static>>, last_rows: usize, scroll: usize) -> Option<Rect> {
+/// Draws the transcript's lines that fit, `scroll` rows up from the end. Returns the newest block's rows (when at the
+/// bottom) and the block on each screen row.
+pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): (Vec<Line<'static>>, usize, Vec<Option<usize>>), scroll: usize) -> (Option<Rect>, Vec<Option<usize>>) {
     let h = area.height as usize;
     let max_scroll = lines.len().saturating_sub(h);
     let start = max_scroll.saturating_sub(scroll.min(max_scroll));
     let visible: Vec<Line> = lines.into_iter().skip(start).take(h).collect();
     let shown = visible.len();
     f.render_widget(Paragraph::new(visible), area);
-    (scroll == 0 && last_rows > 0 && shown > 0).then(|| {
+    let rows = owners.into_iter().skip(start).take(h).collect();
+    let last = (scroll == 0 && last_rows > 0 && shown > 0).then(|| {
         let rows = last_rows.min(shown) as u16;
         Rect { y: area.y + shown as u16 - rows, height: rows, ..area }
-    })
+    });
+    (last, rows)
 }
 
-fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Prefixed> {
+fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool) -> Vec<Prefixed> {
     match b {
         Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o),
         Block::Verify(x) => verify_lines(x, v, th),
@@ -787,7 +817,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Pr
             }
             vec![(Line::from(spans), vec![])]
         }
-        Block::Tool(t) => tool_lines(t, s, v, th, o),
+        Block::Tool(t) => tool_lines(t, s, v, th, o, open),
         Block::Done(d) => {
             let (glyph, word, color) = match (d.stopped, d.ok) {
                 (true, _) => ("■", "Stopped", th.warn),
@@ -886,7 +916,7 @@ fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts) -> Vec<Prefixed> {
     out
 }
 
-fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Prefixed> {
+fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool) -> Vec<Prefixed> {
     let arg = |k: &str| tool_arg(t, k);
     let name = short_name(&t.name);
     let (glyph, gcolor) = match (&t.result, t.error) {
@@ -910,11 +940,21 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Pref
         meta.push_str(&format!(" · {secs:.1}s"));
     }
     let gutter = || vec![Span::raw("    "), Span::styled("│ ", st(th.faint))];
+    // closed, the call is one short summary (a subagent's whole prompt ran 25 rows, 2026-11-02); opened (a click, or
+    // ctrl-o for all), its full input and output
+    let summary = tool_summary(t, s);
+    let cut = !open && summary.chars().count() > SUMMARY_CHARS;
+    let summary = if cut { format!("{}…", summary.chars().take(SUMMARY_CHARS).collect::<String>()) } else { summary };
+    let prompt = if matches!(name, "Agent" | "Task") { t.input["prompt"].as_str().unwrap_or_default() } else { "" };
+    let more = cut || !prompt.is_empty() || t.result.as_deref().is_some_and(|r| !r.trim().is_empty());
+    if more && !matches!(name, "edit" | "TodoWrite") {
+        meta.push_str(if open { "  ▾" } else { "  ▸" });
+    }
     let mut out = vec![(
         Line::from(vec![
             Span::styled(format!("{glyph} "), st(gcolor)),
             Span::styled(format!("{name:<6}"), st(th.accent2).add_modifier(Modifier::BOLD)),
-            Span::styled(format!(" {}", tool_summary(t, s)), st(th.dim)),
+            Span::styled(format!(" {summary}"), st(th.dim)),
             Span::styled(if meta.is_empty() { String::new() } else { format!("  · {meta}") }, st(th.faint)),
         ]),
         vec![Span::raw("         ")],
@@ -922,7 +962,10 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Pref
     let body: Vec<(String, Color)> = match name {
         // edits always show their diff: it is the most useful thing on screen
         "edit" => arg("old").lines().map(|l| (format!("- {l}"), th.err)).chain(arg("new").lines().map(|l| (format!("+ {l}"), th.ok))).collect(),
-        "write" if v.expand_all => arg("content").lines().map(|l| (format!("+ {l}"), th.ok)).collect(),
+        "write" if open => arg("content").lines().map(|l| (format!("+ {l}"), th.ok)).collect(),
+        // an opened subagent: its prompt, then its answer
+        "Agent" | "Task" if open => prompt.lines().map(|l| (l.to_string(), th.text))
+            .chain(t.result.as_deref().unwrap_or_default().lines().map(|l| (l.to_string(), th.dim))).collect(),
         // the to-do list as a checklist, always: it is short and it is the plan
         "TodoWrite" => t.input["todos"]
             .as_array()
@@ -937,10 +980,11 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Pref
                 (format!("{mark} {}", x["content"].as_str().unwrap_or_default()), c)
             })
             .collect(),
-        _ if v.expand_all => t.result.as_deref().unwrap_or_default().lines().map(|l| (l.to_string(), if t.error { th.err } else { th.dim })).collect(),
+        _ if open => t.result.as_deref().unwrap_or_default().lines().map(|l| (l.to_string(), if t.error { th.err } else { th.dim })).collect(),
         _ => vec![],
     };
-    let limit = if name == "edit" && !v.expand_all { TOOL_LINES } else if name == "TodoWrite" { 30 } else { TOOL_LINES * 2 };
+    // a click opens one call whole; ctrl-o opens all, each up to a screenful
+    let limit = if name == "edit" && !open { TOOL_LINES } else if name == "TodoWrite" { 30 } else if v.open.is_empty() || v.expand_all { TOOL_LINES * 2 } else { 400 };
     for (l, c) in body.iter().take(limit) {
         let mut spans = gutter();
         spans.push(Span::styled(l.replace('\t', "    "), st(*c)));
@@ -1323,7 +1367,7 @@ mod tests {
         s.limits = Some((12.0, 14.0));
         s.balance = Some(8.816);
         for d in [Design::Cockpit, Design::Aurora, Design::Zen, Design::Timeline] {
-            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "" };
+            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None };
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
             term.draw(|f| { draw(f, &s, &v); }).unwrap();
             let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
@@ -1333,17 +1377,43 @@ mod tests {
     }
 
     #[test]
+    fn long_calls_close_to_a_line_and_open_on_a_click() {
+        let mut s = Session::new("", "medium");
+        let prompt = "Repo: /x. Read scripts/load-secrets.sh from the PR branch.\n\nAnswer with line numbers:\n".to_string() + &"1. How is fetch_secret invoked? ".repeat(40);
+        s.blocks.push(Block::Tool(Tool { id: "a".into(), name: "Agent".into(),
+            input: serde_json::json!({"subagent_type": "explorer", "description": "Inspect load-secrets.sh retry impact", "prompt": prompt}),
+            result: Some("It runs sequentially.".into()), error: false, started_ms: 0.0, done_ms: Some(6700.0), sub: None }));
+        s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
+        s.blocks.push(Block::Tool(Tool { id: "b".into(), name: "Bash".into(), input: serde_json::json!({"command": format!("gh run view 1 --jq '{}'", "x".repeat(400))}),
+            result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(4300.0), sub: None }));
+        s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None };
+        let text = |v: &View| { let (l, _, owners) = transcript(&s, v, Design::Cockpit.theme(), &cockpit::OPTS, 100); (l.iter().map(|l| l.spans.iter().map(|x| x.content.to_string()).collect::<String>()).collect::<Vec<_>>(), owners) };
+        let (closed, owners) = text(&v);
+        // closed: the subagent as who and what for (its 25-row prompt hidden), the long command cut, both marked ▸
+        assert!(closed[0].contains("explorer: Inspect load-secrets.sh retry impact") && closed[0].contains("▸") && !closed.concat().contains("fetch_secret"), "{closed:#?}");
+        assert!(closed.len() <= 6, "{} rows: {closed:#?}", closed.len());
+        assert_eq!((owners[0], owners.last().copied().flatten()), (Some(0), Some(1)));
+        v.open.insert(0);
+        let (opened, _) = text(&v);
+        assert!(opened.concat().contains("How is fetch_secret invoked") && opened.concat().contains("It runs sequentially") && opened[0].contains("▾"), "{opened:#?}");
+        v.hover = Some(1);
+        let (l, _, _) = transcript(&s, &v, Design::Cockpit.theme(), &cockpit::OPTS, 100);
+        assert_eq!(l.last().unwrap().style.bg, Some(Design::Cockpit.theme().surface), "the block under the mouse is shaded");
+    }
+
+    #[test]
     fn key_hints_fit_whole_and_point_to_the_rest() {
         assert_eq!(fitted_keys("a · bb · cc", 100), "a · bb · cc");
         assert_eq!(fitted_keys("a · bb · cc", 16), "a · /keys all", "never a hint cut in half");
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "" };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None };
         let line: String = composer_line(&v, Design::Cockpit.theme(), "›", "Message tazuna…", 90).spans.iter().map(|s| s.content.to_string()).collect();
         assert!(line.width() <= 90 && line.ends_with("/keys all"), "{line}");
     }
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "" };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();

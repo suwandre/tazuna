@@ -25,8 +25,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     split_row(f, header, left, Line::from(vec![Span::styled("aurora · ", st(th.faint)), Span::styled(format!("{dir} "), st(th.dim))]), None);
 
     let area = body.inner(Margin { horizontal: 2, vertical: 0 });
-    let (lines, last_rows) = transcript(s, v, th, &OPTS, area.width as usize);
-    let last_block = render_transcript(f, area, lines, last_rows, v.scroll);
+    let (last_block, trows) = render_transcript(f, area, transcript(s, v, th, &OPTS, area.width as usize), v.scroll);
 
     let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.border));
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(4));
@@ -57,5 +56,5 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     let mut pulse = status;
     pulse.width = pulse.width.min(28);
-    Areas { pulse, last_block, transcript: area }
+    Areas { pulse, last_block, transcript: area, rows: trows }
 }

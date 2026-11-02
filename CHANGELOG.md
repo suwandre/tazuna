@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.27 (2026-11-02): thinking counts up; copying no longer freezes the stream; long calls close to a line
+
+- Thinking: claude sends the tokens thought since its last update (50, 100, 150 ...), and the counter showed each one
+  instead of their sum. They now add up, as in Claude Code.
+- Copying text mid-run added a "copied 12 chars" notice, which ended the live thinking or text block: the spinner froze
+  and what the model streamed next went nowhere (text could be lost). tazuna's own notices now leave the stream alone.
+- A tool call is one short line until opened: a subagent shows who and what for ("explorer: Inspect load-secrets.sh retry
+  impact"; its 25-row prompt was on screen in full), long inputs are cut at 160 characters, and ▸ marks a call with more.
+  A click opens or closes one call (its whole input and output; ▾), the call under the mouse is shaded, ctrl-o still
+  opens all. Display only.
+
 ## 0.1.26 (2026-11-02): working time beside elapsed; token totals named for what they are
 
 The session showed one clock, the time since it began (the user's reading and typing included). Every design now also
