@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.30 (2026-11-02): a `/new` hint for large conversations; `--batch-calls` (opt-in, under measurement)
+
+- After a task, once the conversation passes 60k tokens (then at each doubling), tazuna says so and that `/new` starts
+  fresh for an unrelated task: every message re-reads the whole conversation (a review session sent 1.16M tokens over 16
+  calls at 94k). Only a hint; `/resume` comes back.
+- `--batch-calls` appends one rule to the repo profile's prompt: make independent tool calls in the same turn. A run's
+  cost is about a third each reading back the cache, writing to it, and output; fewer turns cut the first two. Tested so
+  far only on DeepSeek in the own loop (mixed: rclone 39 against 77 turns, caddy-unix 71 against 60).
+
 ## `--repo-tools core` and `--rtk` against all tools, 2026-11-02 (bench only)
 
 tasks/ (six Go tasks) x two runs per setup, claude-opus-5-5 medium on the subscription, the repo profile without boss mode

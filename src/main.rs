@@ -37,6 +37,7 @@
 //!          [--pick]   # open the model picker (/model) before the first message
 //!          [--repo-tools core|all]   # repo profile: Claude Code's coding tools only (core) or all of them (default)
 //!          [--rtk]   # claude's Bash commands through rtk (shortened output; rtk must be installed)
+//!          [--batch-calls]   # repo profile: claude told to make independent tool calls in one turn
 //!          [--price IN,CACHED,OUT]   # own loop: USD per million tokens, for providers whose model list has no prices
 //!          [--max-minutes N]   # own loop: stop (or with --escalate, hand over) after N minutes per task; default: no
 //!                              # time limit, only the $1 cap per task (TAZUNA_MAX_USD; cheap models are slow but
@@ -125,6 +126,8 @@ struct Args {
     repo_tools_core: bool,
     /// `--rtk`: claude's Bash commands through rtk (its output shortened). Under measurement.
     rtk: bool,
+    /// `--batch-calls`: claude told to make independent tool calls in one turn. Under measurement.
+    batch_calls: bool,
     review_model: Option<String>,
     review_key_env: Option<String>,
     review_only: bool,
@@ -233,6 +236,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         self_review: false,
         repo_tools_core: false,
         rtk: false,
+        batch_calls: false,
         review_model: None,
         review_key_env: None,
         review_only: false,
@@ -281,6 +285,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--no-diagnostics" => a.diagnostics = false,
             "--self-review" => a.self_review = true,
             "--rtk" => a.rtk = true,
+            "--batch-calls" => a.batch_calls = true,
             "--repo-tools" => match val()?.as_str() {
                 "core" => a.repo_tools_core = true,
                 "all" => a.repo_tools_core = false,
@@ -490,6 +495,7 @@ fn main() -> Result<()> {
             live.self_review = a.self_review;
             live.repo_tools_core = a.repo_tools_core;
             live.rtk = a.rtk;
+            live.batch_calls = a.batch_calls;
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
             live.review_key = a.review_key.clone();
             live.provider = a.provider.clone();
@@ -631,6 +637,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.self_review = a.self_review;
     live.repo_tools_core = a.repo_tools_core;
     live.rtk = a.rtk;
+    live.batch_calls = a.batch_calls;
     live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
     live.review_key = a.review_key.clone();
     live.provider = a.provider.clone();
@@ -890,6 +897,9 @@ fn question(req: &serde_json::Value) -> String {
 }
 
 /// The latest session this repo ran (or the one whose id starts with `id`): claude's session id and tazuna's recording.
+/// A conversation this large gets the /new hint after a task (then again at twice the size).
+const CTX_HINT: u64 = 60_000;
+
 /// One of this repo's earlier claude sessions (`/resume`): its id, first message, when it was last used, messages sent,
 /// and the recordings that hold it (one per tazuna run it went through).
 struct Earlier {
@@ -1077,6 +1087,8 @@ fn run_live(
         pick = Some(open_picker(live)?);
     }
     let mut hinted = 0usize;
+    // the context size at which /new was last suggested (0: not yet in this conversation)
+    let mut ctx_hint = 0u64;
     // /vim: modal editing in the composer (remembered across sessions); `normal` and a pending operator (d, c)
     let vim_flag = labels::dir().map(|d| d.join("vim")).ok();
     let mut vim = vim_flag.as_ref().is_some_and(|f| f.exists());
@@ -1145,6 +1157,12 @@ fn run_live(
                     s.apply(&json!({"type": "harness_info", "text": format!("TODO.md has {n} open items: /loop builds them one by one without you (/loop reviewed: on DeepSeek)")}), t);
                 }
                 hinted = n;
+            }
+            // a large conversation: every message re-reads all of it (a review session sent 1.16M tokens over 16 calls
+            // at 94k, 2026-11-02), so a new, unrelated task is cheaper in a fresh one. Said at 60k, then at each doubling.
+            if e["type"] == "result" && s.context >= CTX_HINT.max(ctx_hint * 2) {
+                ctx_hint = s.context;
+                s.apply(&json!({"type": "harness_info", "text": format!("this conversation is {} tokens, and every message re-reads all of it: for an unrelated task, /new starts fresh (/resume comes back)", ui::human(s.context))}), t);
             }
         }
         while let Ok(e) = status_rx.try_recv() {
@@ -1316,6 +1334,7 @@ fn run_live(
                     let (list, i) = resume_pick.take().expect("open");
                     if let Some(e) = list.get(i) {
                         new_conversation(live, &mut s, &mut v, Some(e));
+                        ctx_hint = 0;
                     }
                 }
                 KeyCode::Esc => resume_pick = None,
@@ -1560,6 +1579,7 @@ fn run_live(
                 // /new: a fresh conversation; /resume: a picker of this repo's sessions (/resume ID opens one directly)
                 if text == "/new" {
                     new_conversation(live, &mut s, &mut v, None);
+                    ctx_hint = 0;
                     continue;
                 }
                 if text == "/resume" || text.starts_with("/resume ") {
@@ -1567,7 +1587,10 @@ fn run_live(
                     match text["/resume".len()..].trim() {
                         "" => resume_pick = Some((list, 0)),
                         id => match list.iter().find(|e| e.id.starts_with(id)) {
-                            Some(e) => new_conversation(live, &mut s, &mut v, Some(e)),
+                            Some(e) => {
+                                new_conversation(live, &mut s, &mut v, Some(e));
+                                ctx_hint = 0;
+                            }
                             None => s.apply(&json!({"type": "harness_info", "text": format!("no session {id} in this repo: /resume lists them")}), live.elapsed_ms()),
                         },
                     }

@@ -46,6 +46,10 @@ const CHECK_RULES: &str = "\n- Before changing code, read the code you change, i
 /// workflows, Monitor, DesignSync, ReportFindings, ListAgents. TaskStop and ToolSearch stay: background tasks and deferred
 /// tools need them.
 const REPO_CORE_TOOLS: &str = "Task,TaskStop,ToolSearch,AskUserQuestion,Bash,Read,Edit,Write,NotebookEdit,EnterPlanMode,ExitPlanMode,Skill,WebFetch,WebSearch";
+/// `--batch-calls`: fewer turns, each of which re-reads the whole conversation (a run's cost is about a third reading back
+/// the cache, 2026-11-02). Measured on DeepSeek in the own loop only (TAZUNA_BATCH: rclone 39 against 77 turns, caddy-unix
+/// 71 against 60).
+const BATCH_RULE: &str = "Make independent tool calls together in one turn: read all the files you need at once, and run commands that do not depend on each other at once, instead of one call per turn. Only wait for a result when the next call depends on it.";
 const FINISH_RULES: &str = "Finish only when the task is fully done: every requirement and acceptance criterion in the request is met and checked. Do not stop to ask for confirmation or leave steps for the user. Before relying on a name you have not read (a database column, function, field, API), read where it is defined.";
 
 /// `--explorer`: reading code is most of a run's cost (each turn re-reads everything read so far at the main model's
@@ -291,6 +295,8 @@ pub struct Live {
     pub self_review: bool,
     /// The repo profile with Claude Code's coding tools only (`--repo-tools core`).
     pub repo_tools_core: bool,
+    /// `--batch-calls`: claude is told to make independent tool calls in the same turn. Under measurement.
+    pub batch_calls: bool,
     /// `--rtk`: claude's Bash commands go through rtk (`rtk hook claude`), which shortens their output. Under measurement.
     pub rtk: bool,
     /// Permission mode as claude names it: bypassPermissions (tazuna's "auto"), default ("ask"), acceptEdits ("edits"),
@@ -409,6 +415,7 @@ impl Live {
             self_review: false,
             repo_tools_core: false,
             rtk: false,
+            batch_calls: false,
             review_model: None,
             review_key: None,
             provider: None,
@@ -1104,7 +1111,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "batch_calls": self.batch_calls, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -1215,7 +1222,7 @@ impl Live {
                     cmd.arg("--mcp-config").arg(server.to_string());
                 }
                 let explore_rule = self.explorer_provider.as_ref().map(|_| EXPLORE_TOOL_RULE).or(self.explorer.as_ref().map(|_| EXPLORER_RULE));
-                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE)]
+                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE)]
                     .into_iter()
                     .flatten()
                     .collect();
