@@ -502,6 +502,21 @@ pub fn usd(x: f64) -> String {
 /// Claude's plan windows: "5h 3% · 7d 1% (+2%)" (the 5-hour window's rise since this session's first reading), and the
 /// colour to show it in: warning at 70%, error at 85% (where the benchmark guard pauses).
 pub fn limits_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
+    match (plan_str(s, th), balance_str(s)) {
+        (Some((p, color)), Some(b)) => Some((format!("{p} · {b}"), color)),
+        (Some(p), None) => Some(p),
+        (None, Some(b)) => Some((b, th.dim)),
+        (None, None) => None,
+    }
+}
+
+/// "SubRouter $8.82 left", where a SubRouter key is set.
+pub fn balance_str(s: &Session) -> Option<String> {
+    s.balance.map(|b| format!("SubRouter {} left", usd(b)))
+}
+
+/// The plan's windows alone: "5h 12% · 7d 14% (2h ago)".
+pub fn plan_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
     let mut parts = vec![];
     let mut color = th.dim;
     if let Some((h5, d7)) = s.limits {
@@ -514,9 +529,6 @@ pub fn limits_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
             _ => format!(" ({}d ago)", a / 86_400),
         });
         parts.push(format!("5h {h5:.0}% · 7d {d7:.0}%{}{age}", if rise >= 1.0 { format!(" (+{rise:.0}%)") } else { String::new() }));
-    }
-    if let Some(b) = s.balance {
-        parts.push(format!("SubRouter {} left", usd(b)));
     }
     (!parts.is_empty()).then(|| (parts.join(" · "), color))
 }
@@ -1293,6 +1305,21 @@ mod tests {
         for (i, want) in [(0, "cached 81%"), (1, "no key"), (2, "not trusted"), (3, "stale")] {
             p.selected = i;
             assert!(draw(&p, 78).concat().contains(want), "row {i}: {want}");
+        }
+    }
+
+    #[test]
+    fn plan_and_balance_show_whole_in_every_design() {
+        let mut s = Session::new("", "medium");
+        s.limits = Some((12.0, 14.0));
+        s.balance = Some(8.816);
+        for d in [Design::Cockpit, Design::Aurora, Design::Zen, Design::Timeline] {
+            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "" };
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
+            term.draw(|f| { draw(f, &s, &v); }).unwrap();
+            let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+            // the cockpit's sidebar cut "SubRouter $8.82 left" to "$8" when it shared the plan's line (2026-11-02)
+            assert!(text.contains("SubRouter $8.82 left") && text.contains("5h 12%"), "design {}", d as u8);
         }
     }
 

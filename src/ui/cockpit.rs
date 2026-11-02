@@ -47,7 +47,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Constraint::Length(5),
         Constraint::Length(4),
         Constraint::Length(6),
-        Constraint::Length(4),
+        Constraint::Length(5),
         Constraint::Length(tools.len().max(1) as u16 + 3),
         Constraint::Min(3),
     ])
@@ -109,10 +109,13 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     f.render_widget(
         Paragraph::new(vec![
             Line::from(vec![Span::styled(cost_str(s), st(th.ok).add_modifier(Modifier::BOLD)), Span::styled(format!("   {}/turn", usd(per_turn)), st(th.dim))]),
-            match limits_str(s, th) {
-                Some((t, color)) => Line::from(Span::styled(if s.limits.is_some() { format!("plan {t}") } else { t }, st(color))),
+            // the plan's windows and SubRouter's balance on lines of their own: on one line the sidebar cut the balance
+            // to "$8" (2026-11-02)
+            match plan_str(s, th) {
+                Some((t, color)) => Line::from(Span::styled(format!("plan {t}"), st(color))),
                 None => Line::from(Span::styled(if s.exact_cost.is_some() { "exact (reported)" } else { "estimate (list prices)" }, st(th.faint))),
             },
+            Line::from(Span::styled(balance_str(s).unwrap_or_default(), st(th.dim))),
         ]),
         a,
     );

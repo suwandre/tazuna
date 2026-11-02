@@ -16,6 +16,11 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.23 (2026-11-02): SubRouter's balance shown whole in the cockpit
+
+The cockpit's cost panel put the plan's windows and the balance on one line, which its 38-column sidebar cut to
+"SubRouter $8". They now have a line each; every design is tested to show "SubRouter $8.82 left" whole. Display only.
+
 ## 0.1.22 (2026-11-02): `/new` and `/resume` in a live session
 
 `/new` starts a fresh conversation on the same model, effort and route (the old one stays resumable). `/resume` lists this
