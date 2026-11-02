@@ -535,7 +535,16 @@ pub fn plan_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
 
 pub fn clock_str(ms: f64) -> String {
     let secs = (ms / 1000.0) as u64;
-    format!("{:02}:{:02}", secs / 60, secs % 60)
+    if secs >= 3600 {
+        format!("{}:{:02}:{:02}", secs / 3600, secs / 60 % 60, secs % 60)
+    } else {
+        format!("{:02}:{:02}", secs / 60, secs % 60)
+    }
+}
+
+/// The session's elapsed time and, beside it, the agent's working time (message to last token): "26:51 · 06:08 working".
+pub fn times_str(s: &Session, v: &View) -> String {
+    format!("{} · {} working", clock_str(v.clock_ms), clock_str(s.busy(v.clock_ms)))
 }
 
 pub fn human(n: u64) -> String {
@@ -800,7 +809,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts) -> Vec<Pr
                 ),
                 (
                     Line::from(Span::styled(
-                        format!("  session: in {} ({:.0}% cached) · out {} · {files} file{} touched", human(u.total_in()), u.cache_hit() * 100.0, human(u.output), if files == 1 { "" } else { "s" }),
+                        format!("  session: sent {} over {} call{} ({:.0}% from cache) · out {} · {files} file{} touched", human(u.total_in()), s.turns, if s.turns == 1 { "" } else { "s" }, u.cache_hit() * 100.0, human(u.output), if files == 1 { "" } else { "s" }),
                         st(th.dim),
                     )),
                     vec![],

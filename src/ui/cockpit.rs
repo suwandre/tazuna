@@ -61,8 +61,10 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     f.render_widget(
         Paragraph::new(vec![
             Line::from(vec![Span::styled(format!("{glyph} "), st(color)), Span::styled(label, st(color).add_modifier(Modifier::BOLD))]),
-            Line::from(vec![kv("elapsed", &clock_str(v.clock_ms), th), Span::raw("  "), kv("turn", &s.turns.to_string(), th)]),
-            Line::from(vec![if v.live { kv("mode", &format!("live · {} · {}", if s.profile.is_empty() { "lean" } else { &s.profile }, s.mode), th) } else { kv("replay", &play, th) }]),
+            // elapsed: the whole session, the user's own time too; working: message to last token, summed
+            Line::from(vec![kv("elapsed", &clock_str(v.clock_ms), th), Span::raw("  "), kv("working", &clock_str(s.busy(v.clock_ms)), th)]),
+            Line::from(vec![kv("turn", &s.turns.to_string(), th), Span::raw("  "),
+                if v.live { Span::styled(format!("live · {} · {}", if s.profile.is_empty() { "lean" } else { &s.profile }, s.mode), st(th.text)) } else { kv("replay", &play, th) }]),
         ]),
         a,
     );
@@ -89,11 +91,12 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let [t1, spark] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(a);
     f.render_widget(
         Paragraph::new(Line::from(vec![
-            Span::styled("↑ ", st(th.faint)),
+            // sent: every call's whole input added up (each call sends the conversation again), not the context's size
+            Span::styled("sent ", st(th.faint)),
             Span::styled(human(s.usage.total_in()), st(th.text)),
-            Span::styled("   ↓ ", st(th.faint)),
+            Span::styled("  out ", st(th.faint)),
             Span::styled(human(s.usage.output), st(th.text)),
-            Span::styled("   out/turn", st(th.faint)),
+            Span::styled("  out/call", st(th.faint)),
         ])),
         t1,
     );

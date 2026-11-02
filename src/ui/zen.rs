@@ -10,7 +10,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let full = f.area();
     let w = full.width.saturating_sub(4).min(MAX_WIDTH);
     let col = Rect { x: full.x + (full.width - w) / 2, width: w, ..full };
-    let [top, _, body, _, rule, input] = Layout::vertical([
+    let [top, under, body, _, rule, input] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(3),
@@ -20,23 +20,21 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     ])
     .areas(col);
 
-    let u = &s.usage;
     let dot = || Span::styled("  ·  ", st(th.faint));
     let right = Line::from(vec![
         Span::styled(model_short(&s.model), st(th.dim)),
         Span::styled(format!(" {}", s.effort), st(th.faint)),
         dot(),
-        Span::styled(clock_str(v.clock_ms), st(th.dim)),
-        dot(),
-        Span::styled(format!("{} ↑  {} ↓", human(u.total_in()), human(u.output)), st(th.dim)),
+        // zen's narrow column: time, cost and the plan; the token totals are in the other designs and the run summary
+        Span::styled(times_str(s, v), st(th.dim)),
         dot(),
         Span::styled(cost_str(s), st(th.accent)),
     ]);
-    let mut right = right;
-    if let Some((t, color)) = limits_str(s, th) {
-        right.spans.extend([dot(), Span::styled(t, st(color))]);
-    }
     split_row(f, top, Line::from(Span::styled("tazuna", st(th.faint).add_modifier(Modifier::ITALIC))), right, None);
+    // the plan's windows and SubRouter's balance under it: on the one row they ran past the 92-column column
+    if let Some((t, color)) = limits_str(s, th) {
+        split_row(f, under, Line::default(), Line::from(Span::styled(t, st(color))), None);
+    }
 
     let (lines, last_rows) = transcript(s, v, th, &OPTS, body.width as usize);
     let last_block = render_transcript(f, body, lines, last_rows, v.scroll);

@@ -141,6 +141,10 @@ pub struct Session {
     pub balance: Option<f64>,
     /// Part of the cost is priced at list rates: a stopped turn reported $0.
     pub estimated: bool,
+    /// Time the agent spent working (message to its last token), summed over finished runs; `run_since`: when the run
+    /// in progress began (ms into the session).
+    busy_ms: f64,
+    run_since: Option<f64>,
     usage_at_result: Usage,
     /// An interrupt was requested; the next result ends a stopped run.
     stopping: bool,
@@ -217,6 +221,8 @@ impl Session {
             limits_at: None,
             balance: None,
             estimated: false,
+            busy_ms: 0.0,
+            run_since: None,
             usage_at_result: Usage::default(),
             stopping: false,
             new_blocks: 1,
@@ -229,6 +235,12 @@ impl Session {
             last_prompt: String::new(),
             streamed: false,
         }
+    }
+
+    /// Time the agent has spent working by `now_ms` (into the session): finished runs plus the one in progress. Next to
+    /// the session's elapsed time, which includes the user's own.
+    pub fn busy(&self, now_ms: f64) -> f64 {
+        self.busy_ms + self.run_since.map_or(0.0, |r| (now_ms - r).max(0.0))
     }
 
     /// Real money (own-loop providers) and plan use at API prices (claude), both exact as reported.
@@ -313,6 +325,7 @@ impl Session {
                 self.push(Block::Notice { text: format!("{what} · {}", shown(&s(&e["message"]), 100)), error: false });
             }
             (Some("harness_user"), _) => {
+                self.run_since.get_or_insert(at_ms);
                 self.last_prompt = s(&e["text"]);
                 self.push(Block::Prompt(s(&e["text"])));
                 self.activity = Activity::Waiting;
@@ -506,6 +519,9 @@ impl Session {
                 }
                 let ok = e["subtype"] == "success" && !e["is_error"].as_bool().unwrap_or(false);
                 let secs = e["duration_ms"].as_f64().unwrap_or(0.0) / 1000.0;
+                let ran = if secs > 0.0 { secs * 1000.0 } else { self.run_since.map_or(0.0, |r| (at_ms - r).max(0.0)) };
+                self.busy_ms += ran;
+                self.run_since = None;
                 let turns = e["num_turns"].as_u64().unwrap_or(0);
                 let stopped = std::mem::take(&mut self.stopping);
                 self.push(Block::Done(Summary { ok, secs, turns, cost: self.cost(), usage: self.usage, stopped }));
@@ -760,6 +776,15 @@ mod tests {
         assert!((s.exact_cost.unwrap() - 2.3).abs() < 1e-9, "the switch closed the first process's cost");
         assert_eq!((s.limits, s.limits_start), (Some((4.0, 6.0)), Some((1.0, 5.0))));
         assert!(!s.estimated);
+        // working time: message to result, finished runs plus the one in progress; the user's idle time left out
+        let mut w = Session::new("", "");
+        w.apply(&json!({"type": "harness_user", "text": "a"}), 60_000.0);
+        assert_eq!(w.busy(90_000.0), 30_000.0, "a run in progress counts up");
+        w.apply(&json!({"type": "result", "subtype": "success", "duration_ms": 45_000, "total_cost_usd": 0.1}), 105_000.0);
+        w.apply(&json!({"type": "harness_user", "text": "b"}), 3_600_000.0);
+        w.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.2}), 3_620_000.0);
+        assert_eq!(w.busy(7_200_000.0), 65_000.0);
+        assert_eq!(crate::ui::clock_str(3_725_000.0), "1:02:05");
         // a stopped turn: claude reports $0 for 21k tokens; they are priced at list rates instead
         let mut s = Session::new("", "");
         s.apply(&json!({"type": "stream_event", "event": {"type": "message_delta", "usage": {"input_tokens": 2, "cache_creation_input_tokens": 8067,

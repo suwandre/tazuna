@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.26 (2026-11-02): working time beside elapsed; token totals named for what they are
+
+The session showed one clock, the time since it began (the user's reading and typing included). Every design now also
+shows the agent's working time: message to last token, summed over runs, the run in progress counting up ("elapsed 26:51
+working 06:08"; past an hour h:mm:ss). The token totals beside "ctx 27.4k" read as a contradiction (119.7k in): they are
+every call's whole input added up, each call sending the conversation again, so they now say "sent 119.7k over 5 calls
+(89% from cache)". Zen keeps the plan and balance on a row of their own (its 92-column line ran out). Display only.
+
 ## 0.1.25 (2026-11-02): `--rtk` (opt-in, under measurement); the plan line without a session share
 
 `--rtk` installs rtk's own Claude Code hook (`rtk hook claude`, PreToolUse on Bash) in the repo profiles, so claude's
