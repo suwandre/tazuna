@@ -36,6 +36,7 @@
 //!          [--no-escalate]   # with --provider: no hand-over, the own loop's result stands
 //!          [--pick]   # open the model picker (/model) before the first message
 //!          [--repo-tools core|all]   # repo profile: Claude Code's coding tools only (core) or all of them (default)
+//!          [--rtk]   # claude's Bash commands through rtk (shortened output; rtk must be installed)
 //!          [--price IN,CACHED,OUT]   # own loop: USD per million tokens, for providers whose model list has no prices
 //!          [--max-minutes N]   # own loop: stop (or with --escalate, hand over) after N minutes per task; default: no
 //!                              # time limit, only the $1 cap per task (TAZUNA_MAX_USD; cheap models are slow but
@@ -122,6 +123,8 @@ struct Args {
     /// `--repo-tools core`: the repo profile with Claude Code's coding tools only (Bash, Read, Edit, Write, Task, plan mode,
     /// web, Skill, AskUserQuestion): 29 tools to 11, 20.1k to 14.6k tokens a call (2026-11-02). Under measurement.
     repo_tools_core: bool,
+    /// `--rtk`: claude's Bash commands through rtk (its output shortened). Under measurement.
+    rtk: bool,
     review_model: Option<String>,
     review_key_env: Option<String>,
     review_only: bool,
@@ -229,6 +232,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         diagnostics: true,
         self_review: false,
         repo_tools_core: false,
+        rtk: false,
         review_model: None,
         review_key_env: None,
         review_only: false,
@@ -276,6 +280,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--diagnostics" => a.diagnostics = true,
             "--no-diagnostics" => a.diagnostics = false,
             "--self-review" => a.self_review = true,
+            "--rtk" => a.rtk = true,
             "--repo-tools" => match val()?.as_str() {
                 "core" => a.repo_tools_core = true,
                 "all" => a.repo_tools_core = false,
@@ -484,6 +489,7 @@ fn main() -> Result<()> {
             live.diagnostics = a.diagnostics;
             live.self_review = a.self_review;
             live.repo_tools_core = a.repo_tools_core;
+            live.rtk = a.rtk;
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
             live.review_key = a.review_key.clone();
             live.provider = a.provider.clone();
@@ -624,6 +630,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.diagnostics = a.diagnostics;
     live.self_review = a.self_review;
     live.repo_tools_core = a.repo_tools_core;
+    live.rtk = a.rtk;
     live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
     live.review_key = a.review_key.clone();
     live.provider = a.provider.clone();

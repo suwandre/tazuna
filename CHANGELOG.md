@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.25 (2026-11-02): `--rtk` (opt-in, under measurement); the plan line without a session share
+
+`--rtk` installs rtk's own Claude Code hook (`rtk hook claude`, PreToolUse on Bash) in the repo profiles, so claude's
+commands run through rtk, which shortens their output (rtk counted -49% of command output on this Mac, 21,837 commands).
+Whether that lowers the whole task's cost is open: capping Bash output at 8,000 characters cost +30% (2026-10-08), the
+agent re-running commands to see what was cut. The plan line dropped its "(+2%)": the windows are the whole account's
+(Claude Code beside tazuna counts too), and the number read as tazuna's own share.
+
 ## 0.1.24 (2026-11-02): `--repo-tools core` (opt-in, under measurement)
 
 The repo profile loads all of Claude Code's tools (32 live, 29 under `-p`), most of them scheduling, messaging, worktrees

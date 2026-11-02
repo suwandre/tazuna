@@ -291,6 +291,8 @@ pub struct Live {
     pub self_review: bool,
     /// The repo profile with Claude Code's coding tools only (`--repo-tools core`).
     pub repo_tools_core: bool,
+    /// `--rtk`: claude's Bash commands go through rtk (`rtk hook claude`), which shortens their output. Under measurement.
+    pub rtk: bool,
     /// Permission mode as claude names it: bypassPermissions (tazuna's "auto"), default ("ask"), acceptEdits ("edits"),
     /// plan. Every mode but auto routes claude's permission questions to tazuna (`--permission-prompt-tool stdio`).
     pub permission_mode: String,
@@ -406,6 +408,7 @@ impl Live {
             diagnostics: false,
             self_review: false,
             repo_tools_core: false,
+            rtk: false,
             review_model: None,
             review_key: None,
             provider: None,
@@ -1101,7 +1104,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -1268,6 +1271,12 @@ impl Live {
             let exe = std::env::current_exe().context("locating the tazuna binary")?;
             let q = crate::platform::sh_quote(&exe);
             settings["hooks"]["PreToolUse"] = json!([{"matcher": "", "hooks": [{"type": "command", "command": format!("{q} boss-hook")}]}]);
+        }
+        if self.rtk && self.profile != Profile::Lean {
+            // the hook rtk's own `rtk init` installs for Claude Code: it rewrites a Bash command to run through rtk
+            let mut pre = settings["hooks"]["PreToolUse"].as_array().cloned().unwrap_or_default();
+            pre.push(json!({"matcher": "Bash", "hooks": [{"type": "command", "command": "rtk hook claude"}]}));
+            settings["hooks"]["PreToolUse"] = json!(pre);
         }
         if let Some(m) = &self.advisor {
             settings["advisorModel"] = json!(m);
