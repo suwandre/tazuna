@@ -75,7 +75,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let [g1, g2, g3] = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).areas(a);
     // the window as the model reports it: none until claude's first result, none on the own loop
     let (ctx, window) = s.context_window.map_or((0.0, String::new()), |w| (s.context as f64 / w as f64, format!(" / {}", human(w))));
-    gauge(f, g1, ctx, &format!("ctx {:>6}{window}", human(s.context)), th.accent, th);
+    gauge(f, g1, ctx, &format!("{:<8}{}{window}", "ctx", human(s.context)), th.accent, th);
     let misses = s.cache_misses();
     let miss = match misses {
         0 => String::new(),
@@ -84,8 +84,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     };
     // of everything sent, the share read back from claude's cache (a tenth of the price); what went into the cache is
     // its own line: written once at a premium, it is most of what a turn adds
-    gauge(f, g2, s.usage.cache_hit(), &format!("cached {:>3.0}% of sent", s.usage.cache_hit() * 100.0), if misses == 0 { th.ok } else { th.warn }, th);
-    f.render_widget(Paragraph::new(Line::from(vec![Span::styled("written ", st(th.faint)), Span::styled(human(s.usage.cache_write), st(th.text)), Span::styled(miss, st(th.warn))])), g3);
+    gauge(f, g2, s.usage.cache_hit(), &format!("{:<8}{:.0}% of sent", "cached", s.usage.cache_hit() * 100.0), if misses == 0 { th.ok } else { th.warn }, th);
+    f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!("{:<8}", "written"), st(th.text)), Span::styled(human(s.usage.cache_write), st(th.text)), Span::styled(miss, st(th.warn))])), g3);
 
     // tokens per turn
     let b = panel("tokens", th);
@@ -117,11 +117,15 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             Line::from(vec![Span::styled(cost_str(s), st(th.ok).add_modifier(Modifier::BOLD)), Span::styled(format!("   {}/turn", usd(per_turn)), st(th.dim))]),
             // the plan's windows and SubRouter's balance on lines of their own: on one line the sidebar cut the balance
             // to "$8" (2026-11-02)
+            // each account named in its own colour, its numbers beside it
             match plan_str(s, th) {
-                Some((t, color)) => Line::from(Span::styled(format!("plan {t}"), st(color))),
+                Some((t, color)) => Line::from(vec![Span::styled("Claude", st(th.warn).add_modifier(Modifier::BOLD)), Span::styled(t.trim_start_matches("Claude").to_string(), st(color))]),
                 None => Line::from(Span::styled(if s.exact_cost.is_some() { "exact (reported)" } else { "estimate (list prices)" }, st(th.faint))),
             },
-            Line::from(Span::styled(balance_str(s).unwrap_or_default(), st(th.dim))),
+            match balance_str(s) {
+                Some(b) => Line::from(vec![Span::styled("SubRouter", st(th.accent2).add_modifier(Modifier::BOLD)), Span::styled(b.trim_start_matches("SubRouter").to_string(), st(th.dim))]),
+                None => Line::default(),
+            },
         ]),
         a,
     );
@@ -130,11 +134,15 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let b = panel("tools", th);
     let a = b.inner(p_tools).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_tools);
+    // the name column as wide as the longest name ("ScheduleWakeup" ran into its count), cut only when the panel is
+    // too narrow for the counts beside it
+    let nw = tools.iter().map(|t| t.0.width()).max().unwrap_or(0).min((a.width as usize).saturating_sub(18)).max(4);
     let mut rows: Vec<Line> = tools
         .iter()
         .map(|(n, c, err, secs)| {
+            let name: String = if n.width() > nw { format!("{}…", n.chars().take(nw - 1).collect::<String>()) } else { n.clone() };
             Line::from(vec![
-                Span::styled(format!("{n:<7}"), st(th.accent2).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{name:<nw$} "), st(th.accent2).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("×{c:<3}"), st(th.text)),
                 Span::styled(if *err > 0 { format!(" {err} failed") } else { " ✓".into() }, st(if *err > 0 { th.err } else { th.ok })),
                 Span::styled(format!("  {secs:.1}s"), st(th.faint)),
@@ -146,11 +154,31 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     }
     f.render_widget(Paragraph::new(rows), a);
 
-    // files
+    // files: what this conversation changed (git) as a total and the files that fit, each with its counts; a click
+    // here (or /diff) opens all of them with their diffs. Outside git: the files its tools named.
     let b = panel("files", th);
     let a = b.inner(p_files).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_files);
-    let rows: Vec<Line> = if files.is_empty() {
+    let rows: Vec<Line> = if !v.changed.is_empty() {
+        let (add, del) = v.changed.iter().fold((0, 0), |(x, y), c| (x + c.added, y + c.removed));
+        let mut rows = vec![Line::from(vec![
+            Span::styled(format!("{} ", files_n(v.changed.len())), st(th.text)),
+            Span::styled(format!("+{add} "), st(th.ok)),
+            Span::styled(format!("−{del}"), st(th.err)),
+            Span::styled("  click: diffs", st(th.faint)),
+        ])];
+        let room = (a.height as usize).saturating_sub(1);
+        let shown = if v.changed.len() > room { room.saturating_sub(1) } else { room };
+        for c in v.changed.iter().take(shown) {
+            let counts = format!(" +{} −{}", c.added, c.removed);
+            let path = fit_path(&super::plain(&c.path), (a.width as usize).saturating_sub(counts.width()));
+            rows.push(Line::from(vec![Span::styled(path, st(th.dim)), Span::styled(format!(" +{}", c.added), st(th.ok)), Span::styled(format!(" −{}", c.removed), st(th.err))]));
+        }
+        if v.changed.len() > shown {
+            rows.push(Line::from(Span::styled(format!("+{} more", v.changed.len() - shown), st(th.faint))));
+        }
+        rows
+    } else if files.is_empty() {
         vec![Line::from(Span::styled("none yet", st(th.faint)))]
     } else {
         files.iter().take(a.height as usize).map(|p| Line::from(Span::styled(fit_path(&super::plain(p), a.width as usize), st(th.dim)))).collect()
@@ -161,7 +189,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
-    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, links: vec![] }
+    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, links: vec![], files: Some(p_files) }
 }
 
 fn kv(k: &str, v: &str, th: &Theme) -> Span<'static> {

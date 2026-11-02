@@ -235,7 +235,7 @@ impl Session {
             results: 0,
             profile: String::new(),
             mode: "auto".into(),
-            commands: vec!["bad".into(), "boss".into(), "good".into(), "keys".into(), "loop".into(), "model".into(), "new".into(), "resume".into(), "rewind".into(), "usage".into(), "vim".into()],
+            commands: vec!["bad".into(), "boss".into(), "diff".into(), "good".into(), "keys".into(), "loop".into(), "model".into(), "new".into(), "resume".into(), "rewind".into(), "usage".into(), "vim".into()],
             todos: Vec::new(),
             last_prompt: String::new(),
             streamed: false,
@@ -334,7 +334,7 @@ impl Session {
                 self.model = s(&e["model"]);
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
-                cmds.extend(["good", "bad", "boss", "keys", "loop", "model", "new", "resume", "rewind", "usage", "vim"].map(String::from));
+                cmds.extend(["good", "bad", "boss", "diff", "keys", "loop", "model", "new", "resume", "rewind", "usage", "vim"].map(String::from));
                 cmds.sort();
                 cmds.dedup();
                 self.commands = cmds;
@@ -864,7 +864,7 @@ mod tests {
             "cache_read_input_tokens": 13295, "output_tokens": 4}}}), 1.0);
         s.apply(&json!({"type": "result", "subtype": "error_during_execution", "total_cost_usd": 0, "terminal_reason": "aborted_streaming"}), 2.0);
         assert!(s.estimated && (s.split_cost().1 - (2.0 * 4.0 + 8067.0 * 6.0 + 13295.0 * 0.4 + 4.0 * 20.0) / 1e6).abs() < 1e-9, "{:?}", s.split_cost());
-        assert_eq!(crate::ui::cost_str(&s), "≈$0.05 on plan");
+        assert_eq!(crate::ui::cost_str(&s), "≈$0.05 on Claude plan");
         // the last plan reading of an earlier session, a window past its reset counting from 0
         let dir = std::env::temp_dir().join(format!("tazuna-limits-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();

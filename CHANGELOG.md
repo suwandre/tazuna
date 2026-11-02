@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.34 (2026-11-02): files as a total with `/diff`; side panels aligned; the Claude plan named
+
+- The files panel listed every file a tool named (temp files too), as many as fit. It now shows what this conversation
+  changed in git: "3 files +130 −7", then each file that fits with its counts, the rest counted. A click on it, or
+  `/diff`, opens the list beside the selected file's diff (↑↓ file, pgup/pgdn scroll, esc); a new file shows as added.
+  Outside git it falls back to the files the tools named.
+- The tools panel's name column is as wide as its longest name ("ScheduleWakeup" ran into its count), cut only when the
+  panel is too narrow; the context panel's labels share one column.
+- "on plan" reads "on Claude plan", and the windows "Claude 5h 33% · 7d 35%": named for a second subscription later.
+  In the cockpit "Claude" and "SubRouter" are in colours of their own. Display only.
+
 ## 0.1.33 (2026-11-02): copy with cmd-c / ctrl-c, not on release
 
 A drag over the transcript copied on release and said so in the transcript, also "copied 0 chars" after a drag over

@@ -719,7 +719,7 @@ impl Fx {
     }
 
     /// Draws one frame; returns where the transcript is and the block on each of its rows.
-    fn frame(&mut self, f: &mut Frame, s: &Session, v: &View, dt: Duration) -> (ratatui::layout::Rect, Vec<Option<usize>>, Vec<(ratatui::layout::Rect, String)>) {
+    fn frame(&mut self, f: &mut Frame, s: &Session, v: &View, dt: Duration) -> ui::Areas {
         let areas = ui::draw(f, s, v);
         let d = v.design;
         if self.boot {
@@ -744,12 +744,12 @@ impl Fx {
         }
         let area = f.area();
         self.mgr.process_effects(dt.into(), f.buffer_mut(), area);
-        (areas.transcript, areas.rows, areas.links)
+        areas
     }
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -910,6 +910,36 @@ fn question(req: &serde_json::Value) -> String {
 }
 
 /// The latest session this repo ran (or the one whose id starts with `id`): claude's session id and tazuna's recording.
+/// The files changed since `start` (the work tree when the conversation began), with git's line counts against HEAD;
+/// a new, untracked file counts its lines as added.
+fn changed_since(start: Option<&std::collections::BTreeMap<String, String>>, cwd: &std::path::Path) -> Vec<ui::Changed> {
+    let (Some(start), Some(now)) = (start, runlog::git_snapshot(cwd)) else { return vec![] };
+    let paths: Vec<String> = runlog::changed(start, &now).into_iter().cloned().collect();
+    if paths.is_empty() {
+        return vec![];
+    }
+    let numstat = std::process::Command::new("git").args(["diff", "--numstat", "HEAD", "--"]).args(&paths).current_dir(cwd).output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    paths.into_iter().map(|p| {
+        let counts = numstat.lines().find_map(|l| {
+            let mut f = l.splitn(3, '\t');
+            let (a, d, path) = (f.next()?, f.next()?, f.next()?);
+            (path == p).then(|| (a.parse().unwrap_or(0), d.parse().unwrap_or(0)))
+        });
+        let (added, removed) = counts.unwrap_or_else(|| (std::fs::read_to_string(cwd.join(&p)).map_or(0, |t| t.lines().count() as u64), 0));
+        ui::Changed { path: p, added, removed }
+    }).collect()
+}
+
+/// A file's diff against HEAD, line by line; a new, untracked file as all added.
+fn file_diff(path: &str) -> Vec<String> {
+    let out = std::process::Command::new("git").args(["diff", "HEAD", "--", path]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    if !out.trim().is_empty() {
+        return out.lines().map(String::from).collect();
+    }
+    std::fs::read_to_string(path).map(|t| std::iter::once(format!("+++ {path} (new file)")).chain(t.lines().map(|l| format!("+{l}"))).collect()).unwrap_or_default()
+}
+
 /// A conversation this large gets the /new hint after a task (then again at twice the size).
 const CTX_HINT: u64 = 60_000;
 
@@ -1082,6 +1112,11 @@ fn run_live(
     let mut rows: Vec<Option<usize>> = vec![];
     // links on screen: a click opens one in the browser
     let mut links: Vec<(ratatui::layout::Rect, String)> = vec![];
+    // the files panel (cockpit): a click opens /diff
+    let mut files_area: Option<ratatui::layout::Rect> = None;
+    // the work tree when this conversation began: what it changed since is the files panel and /diff
+    let mut git_start = runlog::git_snapshot(&std::env::current_dir()?);
+    let mut changed_at = Instant::now();
     let mut sel: Option<select::Selection> = None;
     let (mut copy_now, mut copied) = (false, None::<String>);
     // ctrl-b: the background-task view (which row is selected, when its output was last asked for)
@@ -1166,6 +1201,11 @@ fn run_live(
             if e["type"] == "result" && e["tazuna_paid"] == true {
                 fetch_balance(&status_tx); // a run on SubRouter spent some of it
             }
+            // what the conversation changed: after each run, and while one runs at most every 5 s (a few git calls each)
+            if e["type"] == "result" || (e["type"] == "user" && changed_at.elapsed() > Duration::from_secs(5)) {
+                v.changed = changed_since(git_start.as_ref(), &std::env::current_dir().unwrap_or_default());
+                changed_at = Instant::now();
+            }
             // a plan in TODO.md: say once that /loop can build it
             if e["type"] == "result" && looping.is_none() && loop_after_plan.is_none() {
                 let n = looprun::open_items(&std::fs::read_to_string("TODO.md").unwrap_or_default()).len();
@@ -1219,7 +1259,8 @@ fn run_live(
         }
         v.clock_ms = live.elapsed_ms();
         term.draw(|f| {
-            (transcript, rows, links) = fx.frame(f, &s, &v, dt);
+            let areas = fx.frame(f, &s, &v, dt);
+            (transcript, rows, links, files_area) = (areas.transcript, areas.rows, areas.links, areas.files);
             if let Some(sel) = &sel {
                 sel.highlight(f.buffer_mut());
                 if copy_now {
@@ -1273,7 +1314,9 @@ fn run_live(
                         _ => {
                             sel = None;
                             let pos = ratatui::layout::Position::new(m.column, m.row);
-                            if let Some((_, url)) = links.iter().find(|(r, _)| r.contains(pos)) {
+                            if files_area.is_some_and(|r| r.contains(pos)) && !v.changed.is_empty() {
+                                v.diff = Some(ui::DiffPanel { selected: 0, diff: file_diff(&v.changed[0].path), scroll: 0 });
+                            } else if let Some((_, url)) = links.iter().find(|(r, _)| r.contains(pos)) {
                                 let msg = match platform::open_url(url) {
                                     Ok(()) => format!("opened {url}"),
                                     Err(e) => format!("could not open {url}: {e}"),
@@ -1356,6 +1399,23 @@ fn run_live(
             continue;
         }
         // the /rewind picker owns the keyboard while open
+        // the /diff view owns the keyboard while open
+        if let (Some(p), false) = (v.diff.as_mut(), stop_key) {
+            let last = v.changed.len().saturating_sub(1);
+            let page = 20;
+            match key.code {
+                KeyCode::Up | KeyCode::Down => {
+                    p.selected = if key.code == KeyCode::Up { p.selected.saturating_sub(1) } else { (p.selected + 1).min(last) };
+                    p.diff = v.changed.get(p.selected).map(|c| file_diff(&c.path)).unwrap_or_default();
+                    p.scroll = 0;
+                }
+                KeyCode::PageDown | KeyCode::Char(' ') => p.scroll = (p.scroll + page).min(p.diff.len().saturating_sub(1)),
+                KeyCode::PageUp => p.scroll = p.scroll.saturating_sub(page),
+                KeyCode::Esc | KeyCode::Char('q') => v.diff = None,
+                _ => {}
+            }
+            continue;
+        }
         // the /resume picker owns the keyboard while open
         if let (Some((list, i)), false) = (resume_pick.as_mut(), stop_key) {
             match key.code {
@@ -1365,6 +1425,8 @@ fn run_live(
                     let (list, i) = resume_pick.take().expect("open");
                     if let Some(e) = list.get(i) {
                         new_conversation(live, &mut s, &mut v, Some(e));
+                                git_start = runlog::git_snapshot(&std::env::current_dir().unwrap_or_default());
+                                v.changed.clear();
                         ctx_hint = 0;
                     }
                 }
@@ -1623,8 +1685,18 @@ fn run_live(
                     }
                     continue;
                 }
+                if text == "/diff" {
+                    v.changed = changed_since(git_start.as_ref(), &std::env::current_dir().unwrap_or_default());
+                    match v.changed.first() {
+                        Some(c) => v.diff = Some(ui::DiffPanel { selected: 0, diff: file_diff(&c.path), scroll: 0 }),
+                        None => s.apply(&json!({"type": "harness_info", "text": "no file changed in this conversation yet"}), live.elapsed_ms()),
+                    }
+                    continue;
+                }
                 if text == "/new" {
                     new_conversation(live, &mut s, &mut v, None);
+                    git_start = runlog::git_snapshot(&std::env::current_dir()?);
+                    v.changed.clear();
                     ctx_hint = 0;
                     continue;
                 }
@@ -1635,6 +1707,8 @@ fn run_live(
                         id => match list.iter().find(|e| e.id.starts_with(id)) {
                             Some(e) => {
                                 new_conversation(live, &mut s, &mut v, Some(e));
+                                git_start = runlog::git_snapshot(&std::env::current_dir().unwrap_or_default());
+                                v.changed.clear();
                                 ctx_hint = 0;
                             }
                             None => s.apply(&json!({"type": "harness_info", "text": format!("no session {id} in this repo: /resume lists them")}), live.elapsed_ms()),
@@ -1838,6 +1912,26 @@ mod tests {
         assert_eq!(super::default_boss(&p(&["--boss", "sonnet"]), true, opus).as_deref(), Some("sonnet"));
         let own = p(&["--run", "t.txt", "--data", "any", "--provider", "https://x/v1", "--model", "deepseek-v4.1-flash"]);
         assert_eq!(super::default_boss(&own, false, opus), None, "own loop");
+    }
+
+    #[test]
+    fn changed_files_count_their_lines_since_the_conversation_began() {
+        let repo = std::env::temp_dir().join(format!("tazuna-changed-{}", std::process::id()));
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |a: &[&str]| assert!(std::process::Command::new("git").args(a).current_dir(&repo).output().unwrap().status.success());
+        std::fs::write(repo.join("a.txt"), "1\n2\n3\n").unwrap();
+        std::fs::write(repo.join("old.txt"), "dirty before\n").unwrap();
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "base"]);
+        std::fs::write(repo.join("old.txt"), "changed before the conversation\n").unwrap();
+        let start = crate::runlog::git_snapshot(&repo);
+        std::fs::write(repo.join("a.txt"), "1\ntwo\n3\n4\n").unwrap();
+        std::fs::write(repo.join("new.txt"), "x\ny\n").unwrap();
+        let c = super::changed_since(start.as_ref(), &repo);
+        let got: Vec<(&str, u64, u64)> = c.iter().map(|c| (c.path.as_str(), c.added, c.removed)).collect();
+        assert_eq!(got, [("a.txt", 2, 1), ("new.txt", 2, 0)], "only what changed since the start, old.txt left out");
+        std::fs::remove_dir_all(&repo).ok();
     }
 
     #[test]

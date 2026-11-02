@@ -91,6 +91,9 @@ pub struct View {
     pub since_ms: f64,
     /// A short note in the composer for a moment ("copied 42 chars"), and when it came.
     pub toast: Option<(String, std::time::Instant)>,
+    /// The files this conversation changed (git), and the `/diff` view of them when open.
+    pub changed: Vec<Changed>,
+    pub diff: Option<DiffPanel>,
     /// Lines scrolled up from the bottom; 0 follows the live tail.
     pub scroll: usize,
     pub clock_ms: f64,
@@ -186,6 +189,23 @@ pub struct Areas {
     pub rows: Vec<Option<usize>>,
     /// Links on screen and where they open to: a click opens one in the browser.
     pub links: Vec<(Rect, String)>,
+    /// The files panel (cockpit): a click there opens the changed files and their diffs.
+    pub files: Option<Rect>,
+}
+
+/// One file this conversation changed, with its lines added and removed (git).
+#[derive(Clone)]
+pub struct Changed {
+    pub path: String,
+    pub added: u64,
+    pub removed: u64,
+}
+
+/// `/diff` (or a click on the files panel): the changed files, the selected one's diff, how far it is scrolled.
+pub struct DiffPanel {
+    pub selected: usize,
+    pub diff: Vec<String>,
+    pub scroll: usize,
 }
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
@@ -207,6 +227,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
     }
     if let Some(p) = &v.sessions {
         draw_sessions(f, p, th);
+    }
+    if let Some(p) = &v.diff {
+        draw_diff(f, &v.changed, p, th);
     }
     if let Some(p) = &v.models {
         draw_models(f, p, th);
@@ -252,6 +275,42 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
 }
 
 /// /rewind: the messages sent so far; the chosen one and everything after it can be undone.
+/// The files this conversation changed beside the selected one's diff (added lines green, removed red, hunks in the
+/// accent), scrollable.
+fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme) {
+    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+    let full = f.area();
+    let (w, h) = ((full.width * 9 / 10).max(30).min(full.width), (full.height * 85 / 100).max(10).min(full.height));
+    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
+    f.render_widget(Clear, area);
+    let (add, del) = files.iter().fold((0, 0), |(a, d), c| (a + c.added, d + c.removed));
+    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
+        .title(Span::styled(format!(" {} changed · +{add} −{del} · ↑↓ file · pgup/pgdn scroll · esc ", files_n(files.len())), st(th.accent).add_modifier(Modifier::BOLD)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let lw = files.iter().map(|c| c.path.width() + 12).max().unwrap_or(10).min(inner.width as usize / 3) as u16;
+    use ratatui::layout::{Constraint, Layout};
+    let [left, _, right] = Layout::horizontal([Constraint::Length(lw), Constraint::Length(1), Constraint::Min(10)]).areas(inner);
+    let list: Vec<Line> = files.iter().enumerate().map(|(i, c)| {
+        let counts = format!(" +{} −{}", c.added, c.removed);
+        let room = (lw as usize).saturating_sub(counts.width() + 2);
+        let name = if c.path.width() > room { format!("…{}", c.path.chars().rev().take(room.saturating_sub(1)).collect::<Vec<_>>().into_iter().rev().collect::<String>()) } else { c.path.clone() };
+        let style = if i == p.selected { st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(th.text) };
+        Line::from(vec![Span::styled(format!("{} {name:<room$}", if i == p.selected { "›" } else { " " }), style), Span::styled(format!(" +{}", c.added), st(th.ok)), Span::styled(format!(" −{}", c.removed), st(th.err))])
+    }).collect();
+    f.render_widget(Paragraph::new(list), left);
+    let rows: Vec<Line> = p.diff.iter().skip(p.scroll).take(right.height as usize).map(|l| {
+        let c = if l.starts_with("+++") || l.starts_with("---") { th.faint } else if l.starts_with('+') { th.ok } else if l.starts_with('-') { th.err } else if l.starts_with("@@") { th.accent } else { th.dim };
+        Line::from(Span::styled(plain(l).chars().take(right.width as usize).collect::<String>(), st(c)))
+    }).collect();
+    f.render_widget(Paragraph::new(if rows.is_empty() { vec![Line::from(Span::styled("no diff (unchanged now, or not in git)", st(th.faint)))] } else { rows }), right);
+}
+
+/// "1 file", "3 files".
+pub fn files_n(n: usize) -> String {
+    if n == 1 { "1 file".into() } else { format!("{n} files") }
+}
+
 fn draw_sessions(f: &mut Frame, p: &SessionsPanel, th: &Theme) {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
@@ -528,15 +587,15 @@ fn last_tool_name(s: &Session) -> String {
     s.blocks.iter().rev().find_map(|b| if let Block::Tool(t) = b { Some(short_name(&t.name).to_string()) } else { None }).unwrap_or_default()
 }
 
-/// Money and plan apart: "$0.50 + $7.46 on plan"; "$7.46 on plan" when only claude ran, "$0.50" when only the own loop did.
+/// Money and plan apart: "$0.50 + $7.46 on Claude plan"; "$7.46 on Claude plan" when only claude ran, "$0.50" when only the own loop did.
 pub fn cost_str(s: &Session) -> String {
     let (paid, plan) = s.split_cost();
     let about = if s.estimated { "≈" } else { "" };
     match s.exact_cost {
         None => format!("≈{}", usd(s.cost())),
-        Some(_) if paid > 0.0 && plan > 0.0 => format!("{about}{} + {} on plan", usd(paid), usd(plan)),
+        Some(_) if paid > 0.0 && plan > 0.0 => format!("{about}{} + {} on Claude plan", usd(paid), usd(plan)),
         Some(_) if paid > 0.0 => format!("{about}{}", usd(paid)),
-        Some(c) => format!("{about}{} on plan", usd(c)),
+        Some(c) => format!("{about}{} on Claude plan", usd(c)),
     }
 }
 
@@ -581,7 +640,8 @@ pub fn plan_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
             3600..86_400 => format!(" · {}h ago", a / 3600),
             _ => format!(" · {}d ago", a / 86_400),
         });
-        parts.push(format!("5h {h5:.0}% · 7d {d7:.0}%{age}"));
+        // named: a second subscription (Codex, say) would get a line of its own
+        parts.push(format!("Claude 5h {h5:.0}% · 7d {d7:.0}%{age}"));
     }
     (!parts.is_empty()).then(|| (parts.join(" · "), color))
 }
@@ -1441,7 +1501,7 @@ pub fn wrap(mut line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Ve
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-pub const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · ctrl-x stash · /model · /boss · /new · /resume · /rewind · /loop · /usage · /vim · ↑↓ history · esc stop · drag + ⌘C/ctrl+c copy · ctrl-t design · ctrl-o expand";
+pub const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · ctrl-x stash · /model · /boss · /diff · /new · /resume · /rewind · /loop · /usage · /vim · ↑↓ history · esc stop · drag + ⌘C/ctrl+c copy · ctrl-t design · ctrl-o expand";
 
 /// As many whole key hints as fit in `room` columns, most used first; "/keys all" ends them when some are left out.
 fn fitted_keys(keys: &str, room: usize) -> String {
@@ -1672,7 +1732,7 @@ mod tests {
         s.limits = Some((12.0, 14.0));
         s.balance = Some(8.816);
         for d in [Design::Cockpit, Design::Aurora, Design::Zen, Design::Timeline] {
-            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None };
+            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None };
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
             term.draw(|f| { draw(f, &s, &v); }).unwrap();
             let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
@@ -1692,7 +1752,7 @@ mod tests {
         s.blocks.push(Block::Tool(Tool { id: "b".into(), name: "Bash".into(), input: serde_json::json!({"command": format!("gh run view 1 --jq '{}'", "x".repeat(400))}),
             result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(4300.0), sub: None }));
         s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None };
         let text = |v: &View| { let (l, _, owners) = transcript(&s, v, Design::Cockpit.theme(), &cockpit::OPTS, 100); (l.iter().map(|l| l.spans.iter().map(|x| x.content.to_string()).collect::<String>()).collect::<Vec<_>>(), owners) };
         let (closed, owners) = text(&v);
         // closed: the subagent as who and what for (its 25-row prompt hidden), the long command cut, both marked ▸
@@ -1734,7 +1794,7 @@ mod tests {
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Text { text: "Sources: [GitHub changelog](https://github.blog/c)".into(), live: false });
         s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
         let mut areas = None;
         term.draw(|f| areas = Some(draw(f, &s, &v))).unwrap();
@@ -1748,7 +1808,7 @@ mod tests {
     #[test]
     fn the_session_picker_lists_and_marks_the_selected_one() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None };
         v.sessions = Some(SessionsPanel { rows: vec!["8m ago · 2 messages · review PR 1370  (4cb8a388)".into(), "2h ago · 5 messages · fix the login  (aa11bb22)".into()], selected: 1 });
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         term.draw(|f| { draw(f, &s, &v); }).unwrap();
@@ -1759,7 +1819,7 @@ mod tests {
     #[test]
     fn background_tasks_show_live_under_the_transcript() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 400.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 400.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None };
         let row = |agent: &str, kind: &str, secs, tokens, tools, doing: &str| TaskRow { kind: kind.into(), description: "Tick workflows loss window check".into(), status: "running".into(), secs, output: String::new(), agent: agent.into(), tokens, tools, doing: doing.into() };
         assert!(transcript(&s, &v, Design::Cockpit.theme(), &cockpit::OPTS, 100).0.is_empty(), "nothing while none run");
         v.running = vec![row("explorer", "local_agent", 72, 21_129, 3, "Running Show Ledger tick workflow"), row("", "local_bash", 12, 0, 0, "")];
@@ -1774,10 +1834,27 @@ mod tests {
     }
 
     #[test]
+    fn files_panel_totals_and_the_diff_view() {
+        let s = Session::new("", "medium");
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None };
+        v.changed = (0..12).map(|i| Changed { path: format!("shared/src/testing/file{i}.ts"), added: 10 + i, removed: i }).collect();
+        let text = |v: &View| {
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 40)).unwrap();
+            term.draw(|f| { draw(f, &s, v); }).unwrap();
+            term.backend().buffer().content().iter().map(|c| c.symbol()).collect::<String>()
+        };
+        let t = text(&v);
+        assert!(t.contains("12 files +186 −66") && t.contains("click: diffs") && t.contains("more"), "a total, the files that fit, the rest counted");
+        v.diff = Some(DiffPanel { selected: 1, diff: vec!["@@ -1,3 +1,4 @@".into(), "-old line".into(), "+new line".into()], scroll: 0 });
+        let t = text(&v);
+        assert!(t.contains("12 files changed · +186 −66") && t.contains("+new line") && t.contains("› ") , "the list and the selected file's diff");
+    }
+
+    #[test]
     fn key_hints_fit_whole_and_point_to_the_rest() {
         assert_eq!(fitted_keys("a · bb · cc", 100), "a · bb · cc");
         assert_eq!(fitted_keys("a · bb · cc", 16), "a · /keys all", "never a hint cut in half");
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None };
         let line: String = composer_line(&v, Design::Cockpit.theme(), "›", "Message tazuna…", 90).spans.iter().map(|s| s.content.to_string()).collect();
         assert!(line.width() <= 90 && line.ends_with("/keys all"), "{line}");
         let mut v = v;
@@ -1788,7 +1865,7 @@ mod tests {
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();
