@@ -106,12 +106,28 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         t1,
     );
     f.render_widget(Paragraph::new(Span::styled(format!("output per call ({})", s.turn_usage.len()), st(th.faint))), caption);
-    // the latest call: time to its first token (claude) and how fast it then wrote
-    if let Some(c) = s.calls.last() {
-        let first = c.ttft_ms.map_or(String::new(), |t| format!("first token {:.1}s · ", t / 1000.0));
-        let rate = if c.gen_ms > 0.0 { format!("{:.0} tok/s", c.out as f64 / c.gen_ms * 1000.0) } else { String::new() };
-        f.render_widget(Paragraph::new(Line::from(vec![Span::styled("last ", st(th.faint)), Span::styled(format!("{first}{rate}"), st(th.text))])), pace);
-    }
+    // the call in flight, live: the wait for its first token, then how fast it writes (≈: its output is estimated until
+    // it ends); between calls the last one's exact figures
+    let secs = |ms: f64| format!("{:.1}s", ms / 1000.0);
+    let pace_line = match (s.in_flight(), s.calls.last()) {
+        (Some((start, None, _)), _) => vec![Span::styled("waiting for first token · ", st(th.faint)), Span::styled(secs(v.clock_ms - start), st(th.text))],
+        (Some((start, Some(first), est)), _) => {
+            let rate = if v.clock_ms - first > 500.0 { format!("≈{:.0}", est / (v.clock_ms - first) * 1000.0) } else { "…".into() };
+            vec![Span::styled(rate, st(th.text)), Span::styled(" tok/s · ", st(th.faint)), Span::styled(secs(first - start), st(th.text)), Span::styled(" to first token", st(th.faint))]
+        }
+        (None, Some(c)) => {
+            let mut l = vec![];
+            if c.gen_ms > 0.0 {
+                l.extend([Span::styled(format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0), st(th.text)), Span::styled(" tok/s", st(th.faint))]);
+            }
+            if let Some(t) = c.ttft_ms {
+                l.extend([Span::styled(if l.is_empty() { "" } else { " · " }, st(th.faint)), Span::styled(secs(t), st(th.text)), Span::styled(" to first token", st(th.faint))]);
+            }
+            l
+        }
+        (None, None) => vec![],
+    };
+    f.render_widget(Paragraph::new(Line::from(pace_line)), pace);
     let data: Vec<u64> = s.turn_usage.iter().map(|u| u.output).collect();
     let tail = &data[data.len().saturating_sub(spark.width as usize)..];
     f.render_widget(Sparkline::default().data(tail.iter().copied()).style(st(th.accent2)), spark);

@@ -5,7 +5,8 @@ use serde_json::{Value, json};
 pub enum Block {
     Prompt(String),
     Text { text: String, live: bool },
-    Thinking { tokens: u64, live: bool },
+    /// `exact`: the count claude reported when the call ended; before that (and in the own loop) an estimate.
+    Thinking { tokens: u64, live: bool, exact: bool },
     Tool(Tool),
     Done(Summary),
     /// Harness messages: stopped runs, process exits.
@@ -64,8 +65,8 @@ pub struct Summary {
     pub stopped: bool,
 }
 
-/// One model call's timing: how long until its first token (known on claude, which says when it sends the request),
-/// how long it then generated, and its output tokens.
+/// One model call's timing: how long from its input being ready (the prompt sent, the last tool's result in) to its first
+/// streamed token, how long it then generated, and its output tokens.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CallTime {
     pub ttft_ms: Option<f64>,
@@ -167,10 +168,17 @@ pub struct Session {
     /// in progress began (ms into the session).
     busy_ms: f64,
     run_since: Option<f64>,
-    /// Every model call's timing, in order; the one in flight: when it was sent, and when its first token came.
+    /// Every model call's timing, in order; the one in flight: when it started, when its first token came, its output so
+    /// far (estimated: thinking as claude estimates it, text and tool input at ~4 characters a token) and its thinking
+    /// blocks, which get the exact count when it ends.
     pub calls: Vec<CallTime>,
     call_start: Option<f64>,
     first_token: Option<f64>,
+    call_est: f64,
+    call_thinking: Vec<usize>,
+    /// When the next call's input was ready: the prompt sent or a tool's result in. Claude's "requesting" note comes when
+    /// the answer is already streaming (15 ms before the first token after a 2 s pause, 2026-11-03), too late to time it.
+    ready_at: Option<f64>,
     usage_at_result: Usage,
     /// An interrupt was requested; the next result ends a stopped run.
     stopping: bool,
@@ -253,6 +261,9 @@ impl Session {
             calls: vec![],
             call_start: None,
             first_token: None,
+            call_est: 0.0,
+            call_thinking: vec![],
+            ready_at: None,
             usage_at_result: Usage::default(),
             stopping: false,
             new_blocks: 1,
@@ -287,6 +298,11 @@ impl Session {
         let p = ((now_ms - at) / 1000.0).clamp(0.0, 1.0);
         let eased = 1.0 - (1.0 - p) * (1.0 - p);
         from + ((tokens - from) as f64 * eased) as u64
+    }
+
+    /// The call in flight: when it started, when its first token came, its output so far (estimated). None between calls.
+    pub fn in_flight(&self) -> Option<(f64, Option<f64>, f64)> {
+        self.call_start.map(|start| (start, self.first_token, self.call_est))
     }
 
     /// Time the agent has spent working by `now_ms` (into the session): finished runs plus the one in progress. Next to
@@ -369,10 +385,6 @@ impl Session {
                 if let Some(m) = e["permissionMode"].as_str() {
                     self.mode = mode_name(m).to_string();
                 }
-                // claude says when it sends a request: the clock for the call's first token starts here
-                if e["status"] == "requesting" {
-                    (self.call_start, self.first_token) = (Some(at_ms), None);
-                }
                 self.activity = Activity::Waiting;
             }
             (Some("system"), Some("compact_boundary")) => {
@@ -395,6 +407,7 @@ impl Session {
             }
             (Some("harness_user"), _) => {
                 self.run_since.get_or_insert(at_ms);
+                self.ready_at = Some(at_ms);
                 self.last_prompt = s(&e["text"]);
                 self.push(Block::Prompt(s(&e["text"])));
                 self.activity = Activity::Waiting;
@@ -477,7 +490,19 @@ impl Session {
             }
             (Some("harness_info"), _) => self.push_aside(Block::Notice { text: s(&e["text"]), error: false }),
             // the own loop's reasoning before a message: a thinking row like claude's, its size estimated (~4 characters a token)
-            (Some("reasoning"), _) => self.push(Block::Thinking { tokens: (s(&e["text"]).chars().count() / 4) as u64, live: false }),
+            (Some("reasoning"), _) => self.push(Block::Thinking { tokens: (s(&e["text"]).chars().count() / 4) as u64, live: false, exact: false }),
+            // claude's thinking estimate, about once a second (50-150 tokens, then the rest when it ends); the exact count
+            // comes with the call's end. Its stream's thinking_delta carries the same steps rounded to 50.
+            (Some("system"), Some("thinking_tokens")) => {
+                let n = e["estimated_tokens_delta"].as_u64().unwrap_or(0);
+                self.call_est += n as f64;
+                if let Some(&i) = self.call_thinking.last()
+                    && let Some(Block::Thinking { tokens, .. }) = self.blocks.get_mut(i)
+                {
+                    self.think_from = (*tokens, at_ms);
+                    *tokens += n;
+                }
+            }
             (Some("harness_switch"), _) => {
                 // /model: the old process is gone
                 self.close_process();
@@ -543,6 +568,7 @@ impl Session {
                         _ => String::new(),
                     };
                     let error = c["is_error"].as_bool().unwrap_or(false);
+                    self.ready_at = Some(at_ms);
                     if let Some(t) = self.tool_mut(&s(&c["tool_use_id"])) {
                         t.result = Some(text);
                         t.error = error;
@@ -554,6 +580,7 @@ impl Session {
             }
             (Some("result"), _) => {
                 self.end_live();
+                (self.call_start, self.first_token) = (None, None); // a stopped call never ends with message_delta
                 // a slash command answered without a model turn (/cost, /context …): its text is the only output
                 let text = s(&e["result"]);
                 if e["num_turns"] == 0 && self.last_prompt.starts_with('/') {
@@ -619,13 +646,10 @@ impl Session {
             Some("message_start") => {
                 self.streamed = false;
                 self.turns += 1;
-                // claude's stream opens with the first tokens; the own loop sends this when its request goes out
-                match self.call_start {
-                    Some(_) => {
-                        self.first_token.get_or_insert(self.now_ms);
-                    }
-                    None => self.call_start = Some(self.now_ms),
-                }
+                // the own loop sends this when its request goes out, right after the tool results
+                self.call_start = Some(self.ready_at.take().unwrap_or(self.now_ms));
+                (self.first_token, self.call_est) = (None, 0.0);
+                self.call_thinking.clear();
                 self.turn_usage.push(Usage::default());
             }
             Some("content_block_start") => {
@@ -637,7 +661,8 @@ impl Session {
                         self.activity = Activity::Writing;
                     }
                     Some("thinking") => {
-                        self.push(Block::Thinking { tokens: 0, live: true });
+                        self.push(Block::Thinking { tokens: 0, live: true, exact: false });
+                        self.call_thinking.push(self.blocks.len() - 1);
                         self.activity = Activity::Thinking;
                     }
                     Some("tool_use") => {
@@ -658,16 +683,10 @@ impl Session {
             }
             Some("content_block_delta") => {
                 let d = &ev["delta"];
-                match (d["type"].as_str(), self.live_block()) {
-                    (Some("text_delta"), Some(Block::Text { text, .. })) => text.push_str(d["text"].as_str().unwrap_or_default()),
-                    // each delta carries the tokens thought since the last one (50, 100, 150 ...): they add up, as in
-                    // Claude Code's own counter
-                    (Some("thinking_delta"), Some(Block::Thinking { tokens, .. })) => {
-                        let before = *tokens;
-                        *tokens += d["estimated_tokens"].as_u64().unwrap_or(0);
-                        self.think_from = (before, self.now_ms);
-                    }
-                    _ => {}
+                self.first_token.get_or_insert(self.now_ms);
+                self.call_est += d["text"].as_str().or(d["partial_json"].as_str()).map_or(0, str::len) as f64 / 4.0;
+                if let (Some("text_delta"), Some(Block::Text { text, .. })) = (d["type"].as_str(), self.live_block()) {
+                    text.push_str(d["text"].as_str().unwrap_or_default());
                 }
             }
             Some("content_block_stop") => self.end_live(),
@@ -685,6 +704,18 @@ impl Session {
                 self.usage.cache_read += t.cache_read;
                 self.usage.output += t.output;
                 self.context = t.total_in();
+                // the exact thinking count, shared among the call's thinking blocks by their estimates
+                let thinking = std::mem::take(&mut self.call_thinking);
+                if let Some(exact) = u["output_tokens_details"]["thinking_tokens"].as_u64() {
+                    let est = |b: Option<&Block>| if let Some(Block::Thinking { tokens, .. }) = b { *tokens } else { 0 };
+                    let sum: u64 = thinking.iter().map(|&i| est(self.blocks.get(i))).sum();
+                    let n = thinking.len() as u64;
+                    for &i in &thinking {
+                        if let Some(Block::Thinking { tokens, exact: x, .. }) = self.blocks.get_mut(i) {
+                            (*tokens, *x) = (if sum > 0 { exact * *tokens / sum } else { exact / n }, true);
+                        }
+                    }
+                }
                 if let Some(start) = self.call_start.take() {
                     let first = self.first_token.take();
                     self.calls.push(CallTime { ttft_ms: first.map(|f| f - start), gen_ms: self.now_ms - first.unwrap_or(start), out: t.output });
@@ -807,37 +838,51 @@ mod tests {
     fn thinking_counts_up_and_a_notice_mid_stream_does_not_take_the_stream() {
         let mut s = Session::new("", "medium");
         let ev = |e: Value| json!({"type": "stream_event", "event": e});
+        let think = |n: u64| json!({"type": "system", "subtype": "thinking_tokens", "estimated_tokens_delta": n});
         s.apply(&ev(json!({"type": "message_start"})), 1.0);
         s.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "thinking"}})), 2.0);
-        for est in [50, 100, 150, 100] {
-            s.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "estimated_tokens": est}})), 3.0);
+        for n in [50, 100, 150, 100] {
+            s.apply(&think(n), 3.0);
         }
         s.apply(&json!({"type": "harness_info", "text": "copied 12 chars"}), 4.0);
-        s.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "estimated_tokens": 200}})), 5.0);
+        s.apply(&think(150), 5.0);
         s.apply(&ev(json!({"type": "content_block_stop"})), 6.0);
+        s.apply(&think(75), 6.5); // claude's last estimate can come after the block's stop
         s.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 7.0);
         s.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hel"}})), 8.0);
         s.apply(&json!({"type": "harness_info", "text": "copied 3 chars"}), 9.0);
         s.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "lo"}})), 10.0);
-        let thinking = s.blocks.iter().find_map(|b| if let Block::Thinking { tokens, live } = b { Some((*tokens, *live)) } else { None });
-        assert_eq!(thinking, Some((600, false)), "50+100+150+100+200, closed by its stop");
+        let thinking = |s: &Session| s.blocks.iter().find_map(|b| if let Block::Thinking { tokens, live, exact } = b { Some((*tokens, *live, *exact)) } else { None });
+        assert_eq!(thinking(&s), Some((625, false, false)), "50+100+150+100+150+75, closed by its stop");
+        // the call's end brings the exact count
+        s.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 700, "output_tokens_details": {"thinking_tokens": 478}}})), 11.0);
+        assert_eq!(thinking(&s), Some((478, false, true)));
         // while live, the count runs from the last total to the new one over a second (eased), not in one jump
         let mut t = Session::new("", "medium");
+        t.apply(&ev(json!({"type": "message_start"})), 0.0);
         t.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "thinking"}})), 0.0);
-        t.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "estimated_tokens": 100}})), 1000.0);
-        t.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "estimated_tokens": 200}})), 2000.0);
+        t.apply(&think(100), 1000.0);
+        t.apply(&think(200), 2000.0);
         assert_eq!([2000.0, 2250.0, 2500.0, 3000.0, 4000.0].map(|ms| t.thinking_shown(300, ms)), [100, 187, 250, 300, 300]);
-        // a call's timing: claude says when it sends the request; its stream opens with the first tokens
+        // a call's timing: from its input being ready (the prompt, a tool's result) to its first streamed token; claude's
+        // "requesting" note comes too late to count
         let mut c = Session::new("", "medium");
+        c.apply(&json!({"type": "harness_user", "text": "go"}), 600.0);
         c.apply(&json!({"type": "system", "subtype": "status", "status": "requesting"}), 1000.0);
-        c.apply(&ev(json!({"type": "message_start"})), 2400.0);
-        c.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 10, "output_tokens": 360}})), 7400.0);
-        // the own loop: no request note, so its message_start is the request, and the first token is unknown
+        c.apply(&ev(json!({"type": "message_start"})), 1010.0);
+        assert_eq!(c.in_flight(), Some((600.0, None, 0.0)), "waiting for the first token");
+        c.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 2000.0);
+        c.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "12345678"}})), 2000.0);
+        assert_eq!(c.in_flight(), Some((600.0, Some(2000.0), 2.0)), "8 characters: ~2 tokens so far");
+        c.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 10, "output_tokens": 360}})), 7000.0);
+        assert_eq!(c.in_flight(), None);
+        // the own loop, unstreamed: its message_start goes out with the request, and no token streams
+        c.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}]}}), 7900.0);
         c.apply(&ev(json!({"type": "message_start"})), 8000.0);
-        c.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 10, "output_tokens": 100}})), 10000.0);
-        assert_eq!(c.calls, [CallTime { ttft_ms: Some(1400.0), gen_ms: 5000.0, out: 360 }, CallTime { ttft_ms: None, gen_ms: 2000.0, out: 100 }]);
+        c.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 10, "output_tokens": 100}})), 10100.0);
+        assert_eq!(c.calls, [CallTime { ttft_ms: Some(1400.0), gen_ms: 5000.0, out: 360 }, CallTime { ttft_ms: None, gen_ms: 2200.0, out: 100 }]);
         let (first, rate) = speed(&c.calls);
-        assert_eq!((first, rate.map(|r| r.round())), (Some(1400.0), Some(66.0)), "460 tokens over 7 s");
+        assert_eq!((first, rate.map(|r| r.round())), (Some(1400.0), Some(64.0)), "460 tokens over 7.2 s");
         let text = s.blocks.iter().find_map(|b| if let Block::Text { text, .. } = b { Some(text.clone()) } else { None });
         assert_eq!(text.as_deref(), Some("Hello"), "the text after the notice is not lost");
     }

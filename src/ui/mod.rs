@@ -968,14 +968,14 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             }
             out
         }
-        Block::Thinking { tokens, live } => {
+        Block::Thinking { tokens, live, exact } => {
             let glyph = if *live { spinner(v.clock_ms) } else { "✻" };
             let mut spans = vec![Span::styled(format!("{glyph} "), st(th.warn)), Span::styled("thinking", st(th.dim).add_modifier(Modifier::ITALIC))];
             // claude reports thinking in steps of 50-200 tokens about once a second: while live, the count runs up to
             // each new total over the second after it, as Claude Code's does
             let shown = if *live { s.thinking_shown(*tokens, v.clock_ms) } else { *tokens };
             if shown > 0 {
-                spans.push(Span::styled(format!(" · ~{shown} tok"), st(th.faint)));
+                spans.push(Span::styled(format!(" · {}{shown} tok", if *exact { "" } else { "~" }), st(th.faint)));
             }
             vec![(Line::from(spans), vec![])]
         }
@@ -993,7 +993,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             let mut facts = vec![format!("↑ {}", human(u.total_in())), format!("{} call{}", s.turns, if s.turns == 1 { "" } else { "s" }),
                 format!("cache {:.0}% ({})", u.cache_hit() * 100.0, human(u.cache_read)), format!("↓ {}", human(u.output)), files_n(files)];
             if let Some(f) = ttft {
-                facts.push(format!("first token {:.1}s", f / 1000.0));
+                facts.push(format!("{:.1}s to first token", f / 1000.0));
             }
             if let Some(r) = tps {
                 facts.push(format!("{r:.0} tok/s"));
@@ -1186,6 +1186,7 @@ fn lines_n(n: usize) -> String {
 fn group_lines(blocks: &[Block], s: &Session, v: &View, th: &Theme) -> Vec<Prefixed> {
     let tools: Vec<&Tool> = blocks.iter().filter_map(|b| if let Block::Tool(t) = b { Some(t) } else { None }).collect();
     let thought: u64 = blocks.iter().map(|b| if let Block::Thinking { tokens, .. } = b { *tokens } else { 0 }).sum();
+    let approx = if blocks.iter().any(|b| matches!(b, Block::Thinking { exact: false, .. })) { "~" } else { "" };
     let thinking_now = matches!(blocks.last(), Some(Block::Thinking { live: true, .. }));
     let running = tools.iter().find(|t| t.result.is_none());
     let mut counts: Vec<(&str, usize)> = Vec::new();
@@ -1212,7 +1213,7 @@ fn group_lines(blocks: &[Block], s: &Session, v: &View, th: &Theme) -> Vec<Prefi
         Span::styled(if tools.is_empty() { String::new() } else { format!("   {mix}   {}", lines_n(lines)) }, st(th.faint)),
     ];
     if thought > 0 {
-        spans.push(Span::styled(format!("   thought ~{thought} tok"), st(th.faint)));
+        spans.push(Span::styled(format!("   thought {approx}{thought} tok"), st(th.faint)));
     }
     if errors > 0 {
         spans.push(Span::styled(format!("   {errors} failed"), st(th.err)));

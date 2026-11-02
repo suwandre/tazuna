@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.38 (2026-11-03): live speed line; exact thinking counts
+
+- The tokens panel's speed line is live: while a call waits, "waiting for first token · 1.4s" counts up; while it writes,
+  "≈87 tok/s · 1.9s to first token" (estimated output: claude's thinking estimate, text and tool input at ~4 characters a
+  token); between calls the last call's exact figures. "last first token" is gone.
+- Time to first token is timed from the call's input being ready (the prompt sent, the last tool's result in) to its first
+  streamed token. Claude's "requesting" note, used before, comes when the answer already streams (15 ms before the first
+  token after a 2 s pause), so most calls showed 0.0s.
+- Thinking counts: live from claude's `thinking_tokens` estimate (finer than the stream's steps of 50), then the exact
+  count claude reports at the call's end (`output_tokens_details.thinking_tokens`), shown without "~". The estimate is
+  often off (525 estimated for 478, 195 for 44).
+
 ## 0.1.37 (2026-11-02): `--boss-pick` (opt-in, under measurement); each model's effort levels known
 
 - `--boss-pick`: in boss mode the lead picks each worker call's effort (Claude Code's per-call `effort`): low for a lookup
