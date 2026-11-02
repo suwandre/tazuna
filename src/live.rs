@@ -46,6 +46,23 @@ const CHECK_RULES: &str = "\n- Before changing code, read the code you change, i
 /// workflows, Monitor, DesignSync, ReportFindings, ListAgents. TaskStop and ToolSearch stay: background tasks and deferred
 /// tools need them.
 const REPO_CORE_TOOLS: &str = "Task,TaskStop,ToolSearch,AskUserQuestion,Bash,Read,Edit,Write,NotebookEdit,EnterPlanMode,ExitPlanMode,Skill,WebFetch,WebSearch";
+/// `--boss-pick`: the stronger worker the lead may hand a hard change to.
+const BOSS_STRONG: &str = "sonnet";
+
+/// `--boss-pick`: the lead picks each worker call's effort, and for a hard change the stronger worker, instead of every
+/// call running at one level. The levels come from what each worker's model takes (`models::claude_levels`).
+fn boss_pick_rule(worker: &str, strong: &str) -> String {
+    let levels = |m: &str| {
+        let (all, default) = crate::models::claude_levels(m);
+        format!("{m}: {} (default {default})", all.join(", "))
+    };
+    format!("Choose each worker call's effort with the Task tool's effort parameter; the levels each model takes: {}; {}. \
+Use low for a lookup, a listing, a mechanical edit (a rename, a one-line change) or running a named check; medium for \
+ordinary reading, edits and checks; high for logic that is easy to get wrong (parsing, concurrency, boundaries, a change \
+across several files). Never xhigh or max for a worker. A change that is hard even at high (a subtle algorithm, a \
+cross-module design, a fix that already failed once) goes to implementer-strong ({strong}) at medium or high instead.", levels(worker), levels(strong))
+}
+
 /// Boss mode's workers' effort when `--boss-effort` does not say (2026-11-02, six tasks x two runs, Opus medium leading:
 /// Haiku at medium judge 6.79, $0.45 a run; high 6.58, $0.67; xhigh 6.55, $1.02; no boss 6.42, $0.70).
 const BOSS_EFFORT: &str = "medium";
@@ -95,8 +112,16 @@ fn boss_denies(v: &Value) -> Option<&'static str> {
 
 /// The `--agents` JSON for the subagents that are on (`implementer` only in `--boss`). `effort`: theirs, else they run
 /// at the session's (Claude Code's rule for a subagent without one: a session at xhigh ran its Haiku workers at xhigh).
-fn subagents(explorer: Option<&str>, tester: Option<&str>, implementer: Option<&str>, effort: Option<&str>) -> String {
+fn subagents(explorer: Option<&str>, tester: Option<&str>, implementer: Option<&str>, effort: Option<&str>, strong: Option<&str>) -> String {
     let mut agents = serde_json::Map::new();
+    if let Some(model) = strong {
+        agents.insert("implementer-strong".into(), json!({
+            "description": "Makes a hard code change the lead engineer specifies (a subtle algorithm, a cross-module design, a fix that already failed once) and reports what it did.",
+            "prompt": "You implement a hard change for a lead engineer. Read the code you change and its callers first. Follow the instructions; if one is wrong in a concrete detail, adapt minimally and say so. Run the checks it names. Report briefly: files changed, what you did, anything you could not do or are unsure about.",
+            "tools": ["Read", "Grep", "Glob", "Bash", "Edit", "Write"],
+            "model": model,
+        }));
+    }
     if let Some(model) = implementer {
         agents.insert("implementer".into(), json!({
             "description": "Makes code changes exactly as the lead engineer specifies and reports what it did.",
@@ -302,6 +327,8 @@ pub struct Live {
     pub boss: Option<String>,
     /// `--boss-effort LEVEL`: the boss's workers at LEVEL; unset, at BOSS_EFFORT (medium).
     pub boss_effort: Option<String>,
+    /// `--boss-pick`: the lead picks each worker call's effort and, for a hard change, the stronger worker.
+    pub boss_pick: bool,
     /// `--advisor MODEL`: Claude Code's advisor tool; the main model can ask MODEL for advice when it is stuck.
     pub advisor: Option<String>,
     pub verify: verify::Mode,
@@ -427,6 +454,7 @@ impl Live {
             tester: None,
             boss: None,
             boss_effort: None,
+            boss_pick: false,
             advisor: None,
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
@@ -1157,7 +1185,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "batch_calls": self.batch_calls, "boss_effort": self.boss_effort, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "batch_calls": self.batch_calls, "boss_effort": self.boss_effort, "boss_pick": self.boss_pick, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -1268,7 +1296,8 @@ impl Live {
                     cmd.arg("--mcp-config").arg(server.to_string());
                 }
                 let explore_rule = self.explorer_provider.as_ref().map(|_| EXPLORE_TOOL_RULE).or(self.explorer.as_ref().map(|_| EXPLORER_RULE));
-                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE)]
+                let pick = (boss && self.boss_pick).then(|| boss_pick_rule(self.boss.as_deref().unwrap_or("haiku"), BOSS_STRONG));
+                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE)]
                     .into_iter()
                     .flatten()
                     .collect();
@@ -1278,9 +1307,10 @@ impl Live {
                 if let Some(m) = self.boss.as_deref() {
                     // the workers at medium unless told otherwise: at the session's xhigh they cost 46% more than no boss
                     // at all and scored no better; medium was the cheapest and best (2026-11-02)
-                    cmd.args(["--agents", &subagents(Some(m), Some(m), Some(m), Some(self.boss_effort.as_deref().unwrap_or(BOSS_EFFORT)))]);
+                    let strong = self.boss_pick.then_some(BOSS_STRONG);
+                    cmd.args(["--agents", &subagents(Some(m), Some(m), Some(m), Some(self.boss_effort.as_deref().unwrap_or(BOSS_EFFORT)), strong)]);
                 } else if self.explorer.is_some() || self.tester.is_some() {
-                    cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref(), None, None)]);
+                    cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref(), None, None, None)]);
                 }
             }
             Profile::RepoLean => {
@@ -1543,12 +1573,15 @@ mod tests {
 
     #[test]
     fn subagents_only_the_ones_on() {
-        let both: Value = serde_json::from_str(&subagents(Some("haiku"), Some("sonnet"), None, None)).unwrap();
+        let both: Value = serde_json::from_str(&subagents(Some("haiku"), Some("sonnet"), None, None, None)).unwrap();
         assert_eq!((both["explorer"]["model"].as_str(), both["tester"]["model"].as_str()), (Some("haiku"), Some("sonnet")));
-        let one: Value = serde_json::from_str(&subagents(None, Some("haiku"), None, None)).unwrap();
+        let one: Value = serde_json::from_str(&subagents(None, Some("haiku"), None, None, None)).unwrap();
         assert!(both["explorer"].get("effort").is_none(), "no effort: the session's");
-        let boss: Value = serde_json::from_str(&subagents(Some("haiku"), Some("haiku"), Some("haiku"), Some("high"))).unwrap();
-        assert!(["explorer", "implementer", "tester"].iter().all(|a| boss[*a]["effort"] == "high"));
+        let boss: Value = serde_json::from_str(&subagents(Some("haiku"), Some("haiku"), Some("haiku"), Some("high"), Some("sonnet"))).unwrap();
+        assert!(["explorer", "implementer", "tester", "implementer-strong"].iter().all(|a| boss[*a]["effort"] == "high"));
+        assert_eq!(boss["implementer-strong"]["model"], "sonnet");
+        let rule = boss_pick_rule("haiku", BOSS_STRONG);
+        assert!(rule.contains("haiku: low, medium, high, xhigh, max (default medium)") && rule.contains("sonnet: low, medium, high, xhigh, max (default high)"), "{rule}");
         assert!(one.get("explorer").is_none() && one["tester"]["tools"][0] == "Bash");
     }
 

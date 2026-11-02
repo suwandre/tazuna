@@ -9,6 +9,16 @@ use serde_json::Value;
 use std::path::Path;
 
 pub const LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
+/// The effort levels a Claude model takes and its default (Anthropic's effort docs, 2026-11-02: Opus 5.5, Sonnet 5.5,
+/// Haiku 5.5 and Fable 5.1 take all five; Opus 5.5 and Haiku 5.5 default to medium, the others to high). Claude Code
+/// names them by family ("haiku", "sonnet") as well. The own loop's models list theirs per route in routes.json: the
+/// levels that differ (DeepSeek V4.1 Flash: high and max; Kimi: none).
+pub fn claude_levels(model: &str) -> (&'static [&'static str], &'static str) {
+    let m = model.trim_start_matches("claude-");
+    let default = if m.starts_with("opus") || m.starts_with("haiku") { "medium" } else { "high" };
+    (&LEVELS, default)
+}
 const CLAUDE: [(&str, &str); 4] =
     [("claude-opus-5-5", "Opus 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"), ("claude-haiku-5-5", "Haiku 5.5"), ("claude-fable-5-1", "Fable 5.1")];
 /// A route checked longer ago than this is marked stale: provider prices move by the day (Sol's cheapest provider changed

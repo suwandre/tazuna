@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.37 (2026-11-02): `--boss-pick` (opt-in, under measurement); each model's effort levels known
+
+- `--boss-pick`: in boss mode the lead picks each worker call's effort (Claude Code's per-call `effort`): low for a lookup
+  or a mechanical edit, medium for ordinary work, high for logic that is easy to get wrong, never xhigh or max; a change
+  hard even at high goes to a fourth worker, `implementer-strong` on Sonnet. The levels in its rule come from a table of
+  what each model takes (`models::claude_levels`: Opus 5.5, Sonnet 5.5, Haiku 5.5 and Fable 5.1 take all five; Opus and
+  Haiku default to medium, Sonnet and Fable to high); the own loop's models keep theirs per route in routes.json.
+
 ## 0.1.36 (2026-11-02): boss mode's workers at medium effort by default
 
 The measurement below: boss mode's Haiku workers ran at the session's effort, so a session at xhigh (the user's) ran them
