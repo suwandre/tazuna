@@ -749,7 +749,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -1228,12 +1228,20 @@ fn run_live(
             }
         })?;
         if let Some(text) = copied.take() {
+            // copied only on cmd-c / ctrl-c, and said in the composer for a moment, not in the transcript (a "copied 0
+            // chars" line after every stray drag, 2026-11-02); a selection of blank cells copies nothing
             copy_now = false;
-            let msg = match to_clipboard(&text) {
-                Ok(()) => format!("copied {} chars", text.chars().count()),
-                Err(e) => format!("copy failed: {e:#}"),
-            };
-            s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
+            sel = None;
+            if !text.trim().is_empty() {
+                let msg = match to_clipboard(&text) {
+                    Ok(()) => format!("copied {} chars", text.chars().count()),
+                    Err(e) => format!("copy failed: {e:#}"),
+                };
+                v.toast = Some((msg, Instant::now()));
+            }
+        }
+        if v.toast.as_ref().is_some_and(|(_, at)| at.elapsed() > Duration::from_millis(2500)) {
+            v.toast = None;
         }
 
         if let Some(t) = quit_at {
@@ -1259,7 +1267,8 @@ fn run_live(
                         }
                     }
                     MouseEventKind::Up(MouseButton::Left) => match &sel {
-                        Some(x) if !x.is_empty() => copy_now = true,
+                        // the selection stays highlighted until cmd-c / ctrl-c copies it or another key drops it
+                        Some(x) if !x.is_empty() => v.toast = Some(("⌘C or ctrl+c copies the selection".into(), Instant::now())),
                         // a click without a drag: the block under it opens or closes
                         _ => {
                             sel = None;
@@ -1287,6 +1296,12 @@ fn run_live(
         };
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        // cmd-c (where the terminal passes it on) or ctrl-c with text selected copies it; ctrl-c without a selection
+        // still stops or quits
+        if key.code == KeyCode::Char('c') && (ctrl || key.modifiers.contains(KeyModifiers::SUPER)) && sel.as_ref().is_some_and(|x| !x.is_empty()) {
+            copy_now = true;
+            continue;
+        }
         sel = None;
         // an open permission question owns the keyboard: only y(es), a(lways), n(o)/esc answer it, every other key is
         // ignored, and keys in the first moment after it appears count for nothing (typing must not approve by accident)

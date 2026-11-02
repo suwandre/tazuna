@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.33 (2026-11-02): copy with cmd-c / ctrl-c, not on release
+
+A drag over the transcript copied on release and said so in the transcript, also "copied 0 chars" after a drag over
+blank space. Now a drag only selects (highlighted, with a moment's note that ⌘C or ctrl+c copies it); cmd-c (where the
+terminal passes it on) or ctrl-c copies, and a selection of blank cells copies nothing. ctrl-c without a selection still
+stops or quits. "copied 42 chars" shows in the composer for a moment instead of a transcript line. Display only.
+
 ## `--batch-calls` against the default, 2026-11-02 (bench only)
 
 The six tasks/ tasks x two runs, Opus 5.5 medium, repo profile without boss mode; `--batch-calls` (tazuna 0.1.30, 16:00)
