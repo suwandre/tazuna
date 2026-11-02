@@ -41,6 +41,11 @@ const PLAN_RULE: &str = "\n- Your reasoning is not kept between steps. Once you 
 const CHECK_RULES: &str = "\n- Before changing code, read the code you change, its callers, and the definition of every name you rely on (database columns, fields, functions, APIs). Never assume one exists.\n- Before finishing, run the repo's type check and the relevant tests.";
 
 /// `--self-review`: appended to the system prompt, against ending early and against unchecked assumptions.
+/// `--repo-tools core`: Claude Code's tools a coding task uses. Left out: scheduling (Cron*, ScheduleWakeup, RemoteTrigger),
+/// messaging and sharing (SendMessage, SendToProject*, PushNotification, ShareOnboardingGuide, PublishPlugin), worktrees,
+/// workflows, Monitor, DesignSync, ReportFindings, ListAgents. TaskStop and ToolSearch stay: background tasks and deferred
+/// tools need them.
+const REPO_CORE_TOOLS: &str = "Task,TaskStop,ToolSearch,AskUserQuestion,Bash,Read,Edit,Write,NotebookEdit,EnterPlanMode,ExitPlanMode,Skill,WebFetch,WebSearch";
 const FINISH_RULES: &str = "Finish only when the task is fully done: every requirement and acceptance criterion in the request is met and checked. Do not stop to ask for confirmation or leave steps for the user. Before relying on a name you have not read (a database column, function, field, API), read where it is defined.";
 
 /// `--explorer`: reading code is most of a run's cost (each turn re-reads everything read so far at the main model's
@@ -284,6 +289,8 @@ pub struct Live {
     pub diagnostics: bool,
     /// Finish rules in the prompt plus one self-review turn per run (`--self-review`).
     pub self_review: bool,
+    /// The repo profile with Claude Code's coding tools only (`--repo-tools core`).
+    pub repo_tools_core: bool,
     /// Permission mode as claude names it: bypassPermissions (tazuna's "auto"), default ("ask"), acceptEdits ("edits"),
     /// plan. Every mode but auto routes claude's permission questions to tazuna (`--permission-prompt-tool stdio`).
     pub permission_mode: String,
@@ -398,6 +405,7 @@ impl Live {
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
             diagnostics: false,
             self_review: false,
+            repo_tools_core: false,
             review_model: None,
             review_key: None,
             provider: None,
@@ -1093,7 +1101,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -1192,6 +1200,9 @@ impl Live {
                 // Claude Code's own prompt and tools; it loads the repo's CLAUDE.md (nested files, @imports), settings,
                 // hooks and skills itself. Per-machine prompt sections move to the first message for cross-session caching.
                 cmd.arg("--exclude-dynamic-system-prompt-sections");
+                if self.repo_tools_core {
+                    cmd.args(["--tools", REPO_CORE_TOOLS]);
+                }
                 let boss = self.boss.is_some();
                 if let Some((url, key_env, model)) = self.explorer_provider.as_ref().filter(|_| !boss) {
                     let exe = std::env::current_exe().context("locating the tazuna binary")?;

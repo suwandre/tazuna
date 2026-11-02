@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.24 (2026-11-02): `--repo-tools core` (opt-in, under measurement)
+
+The repo profile loads all of Claude Code's tools (32 live, 29 under `-p`), most of them scheduling, messaging, worktrees
+and workflows a coding task does not use. `--repo-tools core` keeps 14 (Task, TaskStop, ToolSearch, AskUserQuestion,
+Bash, Read, Edit, Write, NotebookEdit, plan mode, Skill, web). First call of a one-line task in a repo with a CLAUDE.md,
+Haiku: 14.8k input tokens against 20.4k (-27%). Run logs record `repo_tools`. The default stays all until Tier 1 shows the
+quality holds.
+
 ## 0.1.23 (2026-11-02): SubRouter's balance shown whole in the cockpit
 
 The cockpit's cost panel put the plan's windows and the balance on one line, which its 38-column sidebar cut to

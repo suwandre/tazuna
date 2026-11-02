@@ -35,6 +35,7 @@
 //!                                             # a task it fails goes to Opus 5.5 medium on claude (the cascade)
 //!          [--no-escalate]   # with --provider: no hand-over, the own loop's result stands
 //!          [--pick]   # open the model picker (/model) before the first message
+//!          [--repo-tools core|all]   # repo profile: Claude Code's coding tools only (core) or all of them (default)
 //!          [--price IN,CACHED,OUT]   # own loop: USD per million tokens, for providers whose model list has no prices
 //!          [--max-minutes N]   # own loop: stop (or with --escalate, hand over) after N minutes per task; default: no
 //!                              # time limit, only the $1 cap per task (TAZUNA_MAX_USD; cheap models are slow but
@@ -118,6 +119,9 @@ struct Args {
     bash_cap: usize,
     diagnostics: bool,
     self_review: bool,
+    /// `--repo-tools core`: the repo profile with Claude Code's coding tools only (Bash, Read, Edit, Write, Task, plan mode,
+    /// web, Skill, AskUserQuestion): 29 tools to 11, 20.1k to 14.6k tokens a call (2026-11-02). Under measurement.
+    repo_tools_core: bool,
     review_model: Option<String>,
     review_key_env: Option<String>,
     review_only: bool,
@@ -224,6 +228,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         bash_cap: mcp::DEFAULT_BASH_CAP,
         diagnostics: true,
         self_review: false,
+        repo_tools_core: false,
         review_model: None,
         review_key_env: None,
         review_only: false,
@@ -271,6 +276,11 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--diagnostics" => a.diagnostics = true,
             "--no-diagnostics" => a.diagnostics = false,
             "--self-review" => a.self_review = true,
+            "--repo-tools" => match val()?.as_str() {
+                "core" => a.repo_tools_core = true,
+                "all" => a.repo_tools_core = false,
+                v => bail!("--repo-tools takes core or all, not {v}"),
+            },
             "--review-model" => a.review_model = Some(val()?),
             "--review-key-env" => a.review_key_env = Some(val()?),
             "--review-only" => a.review_only = true,
@@ -473,6 +483,7 @@ fn main() -> Result<()> {
             live.bash_cap = a.bash_cap;
             live.diagnostics = a.diagnostics;
             live.self_review = a.self_review;
+            live.repo_tools_core = a.repo_tools_core;
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
             live.review_key = a.review_key.clone();
             live.provider = a.provider.clone();
@@ -612,6 +623,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.bash_cap = a.bash_cap;
     live.diagnostics = a.diagnostics;
     live.self_review = a.self_review;
+    live.repo_tools_core = a.repo_tools_core;
     live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
     live.review_key = a.review_key.clone();
     live.provider = a.provider.clone();
