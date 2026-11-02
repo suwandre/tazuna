@@ -59,7 +59,7 @@ impl Selection {
         let rows: Vec<String> = (self.area.y..self.area.bottom())
             .filter_map(|y| {
                 let (from, to) = self.columns(y)?;
-                let row: String = (from..=to).filter_map(|x| buf.cell((x, y)).map(|c| c.symbol().to_string())).collect();
+                let row: String = (from..=to).filter_map(|x| buf.cell((x, y)).map(|c| crate::ui::plain(c.symbol()))).collect();
                 Some(row.trim_end().to_string())
             })
             .collect();

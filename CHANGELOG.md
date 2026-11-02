@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.28 (2026-11-02): tables with borders; links as titles you can open
+
+- Markdown tables in replies were their raw pipes, wrapped across the screen. They are now drawn with borders, columns
+  fitted to the width: a short column stays whole, a long one keeps its longest word whole and wraps inside its cell
+  (rows then get a rule between them); too narrow for any of that, rows read as "a · b · c".
+- `[title](url)` showed as raw markdown, the address wrapped over several rows. A link now shows its title, underlined,
+  and is a real terminal hyperlink (OSC 8: cmd-click where the terminal supports it); a click opens it in the browser.
+  Bare http(s) addresses too. Only plain http(s) addresses (printable, no spaces or control characters) become links;
+  copied text keeps the title without the escape sequence. Display only.
+
 ## 0.1.27 (2026-11-02): thinking counts up; copying no longer freezes the stream; long calls close to a line
 
 - Thinking: claude sends the tokens thought since its last update (50, 100, 150 ...), and the counter showed each one

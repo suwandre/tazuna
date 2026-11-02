@@ -150,6 +150,25 @@ pub fn private_file(path: &Path, create_new: bool) -> std::io::Result<File> {
     o.open(path)
 }
 
+/// Opens an http(s) address in the default browser (a link clicked in the transcript). The caller checked it with
+/// `ui::safe_url`; it goes to the opener as one argument, never through a shell.
+pub fn open_url(url: &str) -> std::io::Result<()> {
+    if !crate::ui::safe_url(url) {
+        return Err(std::io::Error::other("not an http(s) address"));
+    }
+    #[cfg(target_os = "macos")]
+    let mut c = Command::new("open");
+    #[cfg(windows)]
+    let mut c = {
+        let mut c = Command::new("rundll32");
+        c.arg("url.dll,FileProtocolHandler");
+        c
+    };
+    #[cfg(not(any(target_os = "macos", windows)))]
+    let mut c = Command::new("xdg-open");
+    c.arg(url).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().map(|_| ())
+}
+
 /// A desktop notification: macOS through osascript; elsewhere none (the session shows the same line).
 pub fn notify(title: &str, text: &str) {
     #[cfg(target_os = "macos")]

@@ -699,7 +699,7 @@ impl Fx {
     }
 
     /// Draws one frame; returns where the transcript is and the block on each of its rows.
-    fn frame(&mut self, f: &mut Frame, s: &Session, v: &View, dt: Duration) -> (ratatui::layout::Rect, Vec<Option<usize>>) {
+    fn frame(&mut self, f: &mut Frame, s: &Session, v: &View, dt: Duration) -> (ratatui::layout::Rect, Vec<Option<usize>>, Vec<(ratatui::layout::Rect, String)>) {
         let areas = ui::draw(f, s, v);
         let d = v.design;
         if self.boot {
@@ -724,7 +724,7 @@ impl Fx {
         }
         let area = f.area();
         self.mgr.process_effects(dt.into(), f.buffer_mut(), area);
-        (areas.transcript, areas.rows)
+        (areas.transcript, areas.rows, areas.links)
     }
 }
 
@@ -769,7 +769,7 @@ fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args)
         }
         (v.clock_ms, v.speed, v.paused) = (replay.clock, replay.speed, replay.paused);
         term.draw(|f| {
-            fx.frame(f, &s, &v, dt);
+            let _ = fx.frame(f, &s, &v, dt);
         })?;
 
         if let Some(t) = quit_at {
@@ -987,6 +987,8 @@ fn run_live(
     let mut transcript = ratatui::layout::Rect::default();
     // the block on each transcript row, from the last frame: a click there opens or closes it, hovering shades it
     let mut rows: Vec<Option<usize>> = vec![];
+    // links on screen: a click opens one in the browser
+    let mut links: Vec<(ratatui::layout::Rect, String)> = vec![];
     let mut sel: Option<select::Selection> = None;
     let (mut copy_now, mut copied) = (false, None::<String>);
     // ctrl-b: the background-task view (which row is selected, when its output was last asked for)
@@ -1110,7 +1112,7 @@ fn run_live(
         }
         v.clock_ms = live.elapsed_ms();
         term.draw(|f| {
-            (transcript, rows) = fx.frame(f, &s, &v, dt);
+            (transcript, rows, links) = fx.frame(f, &s, &v, dt);
             if let Some(sel) = &sel {
                 sel.highlight(f.buffer_mut());
                 if copy_now {
@@ -1154,7 +1156,14 @@ fn run_live(
                         // a click without a drag: the block under it opens or closes
                         _ => {
                             sel = None;
-                            if let Some(b) = block_at(transcript, &rows, m.column, m.row)
+                            let pos = ratatui::layout::Position::new(m.column, m.row);
+                            if let Some((_, url)) = links.iter().find(|(r, _)| r.contains(pos)) {
+                                let msg = match platform::open_url(url) {
+                                    Ok(()) => format!("opened {url}"),
+                                    Err(e) => format!("could not open {url}: {e}"),
+                                };
+                                s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
+                            } else if let Some(b) = block_at(transcript, &rows, m.column, m.row)
                                 && !v.open.remove(&b)
                             {
                                 v.open.insert(b);

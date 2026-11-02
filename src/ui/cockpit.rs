@@ -157,7 +157,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
-    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows }
+    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, links: vec![] }
 }
 
 fn kv(k: &str, v: &str, th: &Theme) -> Span<'static> {

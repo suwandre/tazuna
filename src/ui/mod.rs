@@ -166,6 +166,8 @@ pub struct Areas {
     pub transcript: Rect,
     /// The block shown on each row of the transcript (None: a gap), for clicks and hovering.
     pub rows: Vec<Option<usize>>,
+    /// Links on screen and where they open to: a click opens one in the browser.
+    pub links: Vec<(Rect, String)>,
 }
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
@@ -177,6 +179,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
         Design::Zen => zen::draw(f, s, v, th),
         Design::Timeline => timeline::draw(f, s, v, th),
     };
+    let mut areas = areas;
+    areas.links = link_cells(f.buffer_mut(), areas.transcript, &links_in(s));
     if let Some(p) = &v.tasks {
         draw_tasks(f, p, th);
     }
@@ -696,8 +700,8 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
             owners.push(None);
         }
         let before = lines.len();
-        let body = if grouped { group_lines(&s.blocks[i..group_end], s, v, th) } else { block_lines(b, s, v, th, o, open) };
         let gutter_w = if o.timeline { GUTTER } else { 0 };
+        let body = if grouped { group_lines(&s.blocks[i..group_end], s, v, th) } else { block_lines(b, s, v, th, o, open, width.saturating_sub(gutter_w)) };
         for (k, (mut l, mut cont)) in body.into_iter().enumerate() {
             if o.timeline {
                 let lead = if k == 0 {
@@ -780,9 +784,9 @@ pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): 
     (last, rows)
 }
 
-fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool) -> Vec<Prefixed> {
+fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool, width: usize) -> Vec<Prefixed> {
     match b {
-        Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o),
+        Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o, width),
         Block::Verify(x) => verify_lines(x, v, th),
         Block::Notice { text, error } => vec![(
             Line::from(vec![
@@ -792,7 +796,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             vec![Span::raw("  ")],
         )],
         Block::Text { text, live } => {
-            let mut out = markdown(text, th);
+            let mut out = markdown(text, th, width.saturating_sub(if o.marker.is_empty() { 0 } else { 2 }));
             if out.is_empty() {
                 out.push((Line::default(), vec![]));
             }
@@ -884,8 +888,8 @@ fn first_prompt(s: &Session, b: &Block) -> bool {
     s.blocks.iter().find(|x| matches!(x, Block::Prompt(_))).is_some_and(|x| std::ptr::eq(x, b))
 }
 
-fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts) -> Vec<Prefixed> {
-    let md = markdown(p, th);
+fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, width: usize) -> Vec<Prefixed> {
+    let md = markdown(p, th, width.saturating_sub(4));
     let more = md.len().saturating_sub(PROMPT_LINES);
     let mut out: Vec<Prefixed> = Vec::new();
     match o.prompt {
@@ -1041,10 +1045,25 @@ fn group_lines(blocks: &[Block], s: &Session, v: &View, th: &Theme) -> Vec<Prefi
 }
 
 /// Just enough markdown for agent replies: headings, bullets, code fences, `code`, **bold**.
-fn markdown(text: &str, th: &Theme) -> Vec<Prefixed> {
+fn markdown(text: &str, th: &Theme, width: usize) -> Vec<Prefixed> {
     let mut out = Vec::new();
     let mut in_code = false;
-    for raw in text.lines() {
+    let lines: Vec<&str> = text.lines().collect();
+    let mut i = 0;
+    while i < lines.len() {
+        let raw = lines[i];
+        i += 1;
+        // a table: `| a | b |` rows, the second a `|---|---|` rule
+        if !in_code && raw.trim_start().starts_with('|') && lines.get(i).is_some_and(|n| is_rule(n)) {
+            let mut rows = vec![cells(raw)];
+            i += 1;
+            while i < lines.len() && lines[i].trim_start().starts_with('|') {
+                rows.push(cells(lines[i]));
+                i += 1;
+            }
+            out.extend(table(&rows, th, width));
+            continue;
+        }
         if raw.trim_start().starts_with("```") {
             in_code = !in_code;
             continue;
@@ -1083,12 +1102,184 @@ fn inline(s: &str, th: &Theme) -> Vec<Span<'static>> {
         }
         for (j, seg) in part.split("**").enumerate() {
             let style = if j % 2 == 1 { st(th.text).add_modifier(Modifier::BOLD) } else { st(th.text) };
-            if !seg.is_empty() {
-                spans.push(Span::styled(seg.to_string(), style));
+            for (text, url) in links(seg) {
+                // a link shows its title only, underlined; the address is attached where it is drawn (`link_cells`)
+                spans.push(Span::styled(text, if url.is_some() { style.fg(th.accent).add_modifier(Modifier::UNDERLINED) } else { style }));
             }
         }
     }
+    spans.retain(|s| !s.content.is_empty());
     spans
+}
+
+/// Text split into plain runs and links: `[title](https://...)` as its title, a bare http(s) address as itself.
+fn links(s: &str) -> Vec<(String, Option<String>)> {
+    let mut out: Vec<(String, Option<String>)> = vec![];
+    let mut text = String::new();
+    let mut rest = s;
+    let flush = |text: &mut String, out: &mut Vec<(String, Option<String>)>| {
+        // bare addresses inside plain text
+        let mut t = text.as_str();
+        while let Some(at) = t.find("https://").or_else(|| t.find("http://")) {
+            let end = t[at..].find(|c: char| c.is_whitespace()).map_or(t.len(), |e| at + e);
+            let url = t[at..end].trim_end_matches(['.', ',', ';', ':', ')', '!', '?']);
+            if !safe_url(url) {
+                break;
+            }
+            out.push((t[..at].to_string(), None));
+            out.push((url.to_string(), Some(url.to_string())));
+            t = &t[at + url.len()..];
+        }
+        out.push((t.to_string(), None));
+        text.clear();
+    };
+    while let Some(open) = rest.find('[') {
+        let link = rest[open..].find("](").map(|c| open + c).and_then(|close| {
+            let end = close + 2 + rest[close + 2..].find(')')?;
+            let (title, url) = (&rest[open + 1..close], &rest[close + 2..end]);
+            (!title.is_empty() && !title.contains('[') && safe_url(url)).then(|| (title.to_string(), url.to_string(), end))
+        });
+        match link {
+            Some((title, url, end)) => {
+                text.push_str(&rest[..open]);
+                flush(&mut text, &mut out);
+                out.push((title, Some(url)));
+                rest = &rest[end + 1..];
+            }
+            None => {
+                text.push_str(&rest[..open + 1]);
+                rest = &rest[open + 1..];
+            }
+        }
+    }
+    text.push_str(rest);
+    flush(&mut text, &mut out);
+    out
+}
+
+/// An address safe to hand to a terminal or a browser: http(s), printable ASCII, no spaces or control characters (it
+/// goes into an escape sequence, so nothing in it may end one).
+pub fn safe_url(u: &str) -> bool {
+    (u.starts_with("https://") || u.starts_with("http://")) && u.len() > 8 && u.len() < 2048 && u.bytes().all(|b| b.is_ascii_graphic())
+}
+
+/// Every link in the agent's replies: (what is shown, where it goes).
+fn links_in(s: &Session) -> Vec<(String, String)> {
+    s.blocks.iter().filter_map(|b| if let Block::Text { text, .. } = b { Some(text) } else { None })
+        .flat_map(|t| links(t).into_iter().filter_map(|(text, url)| url.map(|u| (text, u))))
+        .collect()
+}
+
+/// Makes the drawn links real terminal hyperlinks (OSC 8: cmd-click opens them where the terminal supports it) and
+/// returns where each one is, for a click to open it. A link is a run of underlined cells; its address is that of the
+/// first link whose title contains the run (a title wrapped over two rows is two runs, both found).
+fn link_cells(buf: &mut ratatui::buffer::Buffer, area: Rect, links: &[(String, String)]) -> Vec<(Rect, String)> {
+    use ratatui::buffer::CellDiffOption;
+    let mut found = vec![];
+    if links.is_empty() {
+        return found;
+    }
+    for y in area.top()..area.bottom() {
+        let mut x = area.left();
+        while x < area.right() {
+            if !buf[(x, y)].modifier.contains(Modifier::UNDERLINED) {
+                x += 1;
+                continue;
+            }
+            let start = x;
+            while x < area.right() && buf[(x, y)].modifier.contains(Modifier::UNDERLINED) {
+                x += 1;
+            }
+            let run: String = (start..x).map(|c| buf[(c, y)].symbol().to_string()).collect();
+            let Some((_, url)) = links.iter().find(|(t, _)| !run.trim().is_empty() && t.contains(run.trim())) else { continue };
+            let width = |s: &str| std::num::NonZeroU16::new(s.width().max(1) as u16).expect("at least 1");
+            let first = buf[(start, y)].symbol().to_string();
+            buf[(start, y)].set_symbol(&format!("\x1b]8;;{url}\x1b\\{first}")).set_diff_option(CellDiffOption::ForcedWidth(width(&first)));
+            let last = buf[(x - 1, y)].symbol().to_string();
+            buf[(x - 1, y)].set_symbol(&format!("{last}\x1b]8;;\x1b\\")).set_diff_option(CellDiffOption::ForcedWidth(width(&plain(&last))));
+            found.push((Rect::new(start, y, x - start, 1), url.clone()));
+        }
+    }
+    found
+}
+
+/// A table row's cells: `| a | b |` -> ["a", "b"].
+fn cells(row: &str) -> Vec<String> {
+    let r = row.trim();
+    let r = r.strip_prefix('|').unwrap_or(r);
+    let r = r.strip_suffix('|').unwrap_or(r);
+    r.split('|').map(|c| c.trim().to_string()).collect()
+}
+
+/// The `|---|:---:|` line under a table's header.
+fn is_rule(line: &str) -> bool {
+    let c = cells(line);
+    line.trim_start().starts_with('|') && !c.is_empty() && c.iter().all(|x| x.contains('-') && x.chars().all(|ch| matches!(ch, '-' | ':' | ' ')))
+}
+
+/// A markdown table drawn with borders, its columns fitted to `width`: a column wider than its share wraps inside its
+/// cell (rows then get a rule between them). Too narrow for that, the rows read as "a · b · c". The pipes of the raw
+/// markdown wrapped across the screen (2026-11-02).
+fn table(rows: &[Vec<String>], th: &Theme, width: usize) -> Vec<Prefixed> {
+    let n = rows.iter().map(Vec::len).max().unwrap_or(0);
+    let room = width.saturating_sub(3 * n + 1);
+    if n == 0 || room < 3 * n {
+        return rows.iter().map(|r| (Line::from(inline(&r.join(" · "), th)), vec![])).collect();
+    }
+    let cell = |r: usize, c: usize| -> Vec<Span<'static>> {
+        let spans = inline(rows[r].get(c).map_or("", String::as_str), th);
+        if r == 0 { spans.into_iter().map(|s| { let st = s.style.add_modifier(Modifier::BOLD); s.style(st) }).collect() } else { spans }
+    };
+    let natural: Vec<usize> = (0..n).map(|c| (0..rows.len()).map(|r| cell(r, c).iter().map(|s| s.content.width()).sum::<usize>()).max().unwrap_or(0).max(1)).collect();
+    let mut w = natural.clone();
+    if natural.iter().sum::<usize>() > room {
+        // a short column (12 or less) stays whole, a long one keeps its longest word whole (a path cut mid-word reads
+        // badly); 8 columns each when even that does not fit. The rest is shared in proportion to what each still wants.
+        let word = |c: usize| (0..rows.len()).flat_map(|r| cell(r, c)).flat_map(|s| s.content.split(' ').map(|x| x.width()).collect::<Vec<_>>()).max().unwrap_or(1);
+        let mut base: Vec<usize> = (0..n).map(|c| if natural[c] <= 12 { natural[c] } else { natural[c].min(word(c)) }).collect();
+        if base.iter().sum::<usize>() > room {
+            base = natural.iter().map(|&x| x.min(8)).collect();
+        }
+        let spare = room.saturating_sub(base.iter().sum());
+        let want: usize = natural.iter().zip(&base).map(|(a, b)| a - b).sum();
+        w = natural.iter().zip(&base).map(|(&a, &b)| b + (a - b) * spare / want.max(1)).collect();
+    }
+    let border = st(th.border);
+    let rule = |l: &str, m: &str, r: &str| (Line::from(Span::styled(format!("{l}{}{r}", w.iter().map(|x| "─".repeat(x + 2)).collect::<Vec<_>>().join(m)), border)), vec![]);
+    let mut body: Vec<Vec<Line<'static>>> = vec![];
+    for r in 0..rows.len() {
+        let cols: Vec<Vec<Line<'static>>> = (0..n).map(|c| {
+            let mut ls = wrap(Line::from(cell(r, c)), w[c], &[]);
+            for l in &mut ls {
+                if let Some(last) = l.spans.last_mut() {
+                    last.content = last.content.trim_end().to_string().into();
+                }
+            }
+            ls
+        }).collect();
+        let h = cols.iter().map(Vec::len).max().unwrap_or(1);
+        body.push((0..h).map(|k| {
+            let mut sp = vec![Span::styled("│ ", border)];
+            for (c, col) in cols.iter().enumerate() {
+                let l = col.get(k).cloned().unwrap_or_default();
+                let lw: usize = l.spans.iter().map(|s| s.content.width()).sum();
+                sp.extend(l.spans);
+                sp.push(Span::raw(" ".repeat(w[c].saturating_sub(lw))));
+                sp.push(Span::styled(if c + 1 < n { " │ " } else { " │" }, border));
+            }
+            Line::from(sp)
+        }).collect());
+    }
+    let tall = body.iter().skip(1).any(|r| r.len() > 1);
+    let mut out = vec![rule("┌", "┬", "┐")];
+    for (r, lines) in body.into_iter().enumerate() {
+        if r == 1 || (r > 1 && tall) {
+            out.push(rule("├", "┼", "┤"));
+        }
+        out.extend(lines.into_iter().map(|l| (l, vec![])));
+    }
+    out.push(rule("└", "┴", "┘"));
+    out
 }
 
 /// Word-wraps a styled line to `width`, starting continuation rows with `cont`.
@@ -1400,6 +1591,43 @@ mod tests {
         v.hover = Some(1);
         let (l, _, _) = transcript(&s, &v, Design::Cockpit.theme(), &cockpit::OPTS, 100);
         assert_eq!(l.last().unwrap().style.bg, Some(Design::Cockpit.theme().surface), "the block under the mouse is shaded");
+    }
+
+    #[test]
+    fn tables_get_borders_and_fit_the_width() {
+        let th = Design::Cockpit.theme();
+        let md = "Free space:\n\n| Path | Size | What |\n|---|---:|---|\n| `~/bench-gocache` | 243 GB | Go build cache for the benchmark; safe to delete after runs |\n| ~/.omlx/models | 61 GB | Local MLX models |\n\nDone.";
+        let text = |w: usize| markdown(md, th, w).iter().map(|(l, _)| l.spans.iter().map(|s| s.content.to_string()).collect::<String>()).collect::<Vec<_>>();
+        let wide = text(100);
+        assert!(wide.iter().any(|l| l.starts_with("┌")) && wide.iter().any(|l| l.starts_with("└")), "{wide:#?}");
+        assert!(wide.iter().any(|l| l.contains("│ ~/bench-gocache │ 243 GB │")), "{wide:#?}");
+        assert!(!wide.concat().contains("|---"), "the rule is not shown as text");
+        // narrow: cells wrap inside their columns, every row of the table the same width, none past the width
+        let narrow = text(44);
+        let rows: Vec<&String> = narrow.iter().filter(|l| l.starts_with(['┌', '│', '├', '└'])).collect();
+        assert!(rows.len() > 6 && rows.iter().all(|l| l.width() == rows[0].width() && l.width() <= 44), "{narrow:#?}");
+        assert_eq!(text(10).iter().filter(|l| l.contains('│')).count(), 0, "too narrow: rows as plain lines");
+    }
+
+    #[test]
+    fn links_show_their_title_and_open_where_they_point() {
+        let l = links("Sources: [1 vCPU runner GA](https://github.blog/changelog/2026-01-22-x/), [preview](https://github.blog/p). See https://example.com/a.");
+        assert_eq!(l.iter().filter(|(_, u)| u.is_some()).map(|(t, u)| (t.as_str(), u.as_deref().unwrap())).collect::<Vec<_>>(),
+                   [("1 vCPU runner GA", "https://github.blog/changelog/2026-01-22-x/"), ("preview", "https://github.blog/p"), ("https://example.com/a", "https://example.com/a")]);
+        assert_eq!(l.iter().map(|(t, _)| t.as_str()).collect::<String>(), "Sources: 1 vCPU runner GA, preview. See https://example.com/a.");
+        assert!(links("[x](javascript:alert(1)) [y](https://a.b/\u{1b}]8;;)").iter().all(|(_, u)| u.is_none()), "only plain http(s) addresses");
+        let mut s = Session::new("", "medium");
+        s.blocks.push(Block::Text { text: "Sources: [GitHub changelog](https://github.blog/c)".into(), live: false });
+        s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None };
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
+        let mut areas = None;
+        term.draw(|f| areas = Some(draw(f, &s, &v))).unwrap();
+        let areas = areas.unwrap();
+        assert_eq!(areas.links.iter().map(|(r, u)| (r.width, u.as_str())).collect::<Vec<_>>(), [(16, "https://github.blog/c")]);
+        let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("\x1b]8;;https://github.blog/c\x1b\\G") && !text.contains("](https"), "a terminal hyperlink, no raw markdown");
+        assert_eq!(plain(&text).matches("GitHub changelog").count(), 1, "copied text keeps the title, not the escape");
     }
 
     #[test]
