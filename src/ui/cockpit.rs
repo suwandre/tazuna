@@ -61,7 +61,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Paragraph::new(vec![
             Line::from(vec![Span::styled(format!("{glyph} "), st(color)), Span::styled(label, st(color).add_modifier(Modifier::BOLD))]),
             // elapsed: the whole session, the user's own time too; working: message to last token, summed
-            Line::from(vec![kv("elapsed", &clock_str(v.clock_ms), th), Span::raw("  "), kv("working", &clock_str(s.busy(v.clock_ms)), th)]),
+            Line::from(vec![kv("elapsed", &clock_str(v.clock_ms - v.since_ms), th), Span::raw("  "), kv("working", &clock_str(s.busy(v.clock_ms)), th)]),
             Line::from(vec![kv("turn", &s.turns.to_string(), th), Span::raw("  "),
                 if v.live { Span::styled(format!("live · {} · {}", if s.profile.is_empty() { "lean" } else { &s.profile }, s.mode), st(th.text)) } else { kv("replay", &play, th) }]),
         ]),

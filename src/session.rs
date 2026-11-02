@@ -237,6 +237,16 @@ impl Session {
         }
     }
 
+    /// The screen for a new conversation (`/new`, `/resume`): the old one's messages, tools, files, tokens and costs left
+    /// behind; the session's settings and the machine's readings kept (model, folder, profile, mode, commands, plan
+    /// windows, SubRouter balance).
+    pub fn fresh(&self) -> Session {
+        let mut s = Session::new("", &self.effort);
+        (s.model, s.cwd, s.profile, s.mode, s.commands) = (self.model.clone(), self.cwd.clone(), self.profile.clone(), self.mode.clone(), self.commands.clone());
+        (s.limits, s.limits_at, s.balance, s.context_window) = (self.limits, self.limits_at, self.balance, self.context_window);
+        s
+    }
+
     /// Time the agent has spent working by `now_ms` (into the session): finished runs plus the one in progress. Next to
     /// the session's elapsed time, which includes the user's own.
     pub fn busy(&self, now_ms: f64) -> f64 {

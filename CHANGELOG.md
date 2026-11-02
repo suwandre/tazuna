@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.29 (2026-11-02): `/new` starts a clean screen; `/resume` opens a session picker
+
+- `/new` left the old conversation on screen and its tokens, cost, tools, files and clock in the side panels. It now
+  starts a clean screen; the session's settings and the machine's readings (model, folder, mode, plan windows, SubRouter
+  balance) stay. The elapsed clock starts again.
+- `/resume` printed a numbered list to type from. It now opens a picker of this repo's claude sessions, the latest used
+  first ("8m ago · 2 messages · review PR 1370"); ↑↓ and enter open one: the screen starts over with that conversation
+  replayed from its recordings (only its own part where one recording holds several), and the next message continues
+  it on claude. `/resume ID` still opens one directly. Display and session handling only.
+
 ## 0.1.28 (2026-11-02): tables with borders; links as titles you can open
 
 - Markdown tables in replies were their raw pipes, wrapped across the screen. They are now drawn with borders, columns

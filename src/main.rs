@@ -729,7 +729,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -890,24 +890,94 @@ fn question(req: &serde_json::Value) -> String {
 }
 
 /// The latest session this repo ran (or the one whose id starts with `id`): claude's session id and tazuna's recording.
-/// This repo's claude sessions, newest first: (session id, its first message, when it began, messages sent). The own
-/// loop's are left out: its engine resumes no conversation.
-fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<(String, String, u64, usize)> {
+/// One of this repo's earlier claude sessions (`/resume`): its id, first message, when it was last used, messages sent,
+/// and the recordings that hold it (one per tazuna run it went through).
+struct Earlier {
+    id: String,
+    first: String,
+    last_at: u64,
+    messages: usize,
+    recordings: Vec<std::path::PathBuf>,
+}
+
+impl Earlier {
+    /// "8m ago · 2 messages · fix the login (4cb8a388)"
+    fn row(&self) -> String {
+        let ago = session::unix_now().saturating_sub(self.last_at) / 60;
+        let when = if ago < 60 { format!("{ago}m") } else if ago < 1440 { format!("{}h", ago / 60) } else { format!("{}d", ago / 1440) };
+        format!("{when} ago · {} message{} · {}  ({})", self.messages, if self.messages == 1 { "" } else { "s" },
+            session::shown(self.first.lines().next().unwrap_or_default(), 100), &self.id[..8.min(self.id.len())])
+    }
+}
+
+/// This repo's claude sessions, the latest used first. The own loop's are left out: its engine resumes no conversation.
+fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
     let cwd = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
-    let mut out: Vec<(String, String, u64, usize)> = vec![];
-    for r in std::fs::read_to_string(base.join("runs.jsonl")).unwrap_or_default().lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()) {
+    let mut out: Vec<Earlier> = vec![];
+    // the run log is in order: a session's last line says when it was last used
+    let mut last_line: Vec<usize> = vec![];
+    for (n, r) in std::fs::read_to_string(base.join("runs.jsonl")).unwrap_or_default().lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).enumerate() {
         let m = &r["meta"];
         let Some(sid) = m["session_id"].as_str().filter(|s| !s.starts_with("own-")) else { continue };
         if !m["cwd"].as_str().map(std::path::PathBuf::from).is_some_and(|c| c.canonicalize().unwrap_or(c) == cwd) {
             continue;
         }
-        match out.iter_mut().find(|s| s.0 == sid) {
-            Some(s) => s.3 += 1,
-            None => out.push((sid.to_string(), r["prompt"].as_str().unwrap_or_default().to_string(), r["ts"].as_u64().unwrap_or(0), 1)),
+        let (ts, rec) = (r["ts"].as_u64().unwrap_or(0), m["recording"].as_str().map(std::path::PathBuf::from));
+        let i = out.iter().position(|s| s.id == sid).unwrap_or_else(|| {
+            out.push(Earlier { id: sid.to_string(), first: r["prompt"].as_str().unwrap_or_default().to_string(), last_at: ts, messages: 0, recordings: vec![] });
+            last_line.push(0);
+            out.len() - 1
+        });
+        last_line[i] = n;
+        let e = &mut out[i];
+        e.messages += 1;
+        e.last_at = e.last_at.max(ts);
+        if let Some(p) = rec.filter(|p| !e.recordings.contains(p)) {
+            e.recordings.push(p);
         }
     }
-    out.reverse();
-    out
+    let mut both: Vec<(usize, Earlier)> = last_line.into_iter().zip(out).collect();
+    both.sort_by_key(|(n, _)| std::cmp::Reverse(*n));
+    both.into_iter().map(|(_, e)| e).collect()
+}
+
+/// The part of a recording that is conversation `id`: a recording holds several when `/new` or `/resume` started another
+/// in the same run. Parts are split at their notices; a part is `id`'s when claude's init in it names that session.
+fn conversation<'a>(events: &'a [(f64, serde_json::Value)], id: &str) -> Vec<&'a (f64, serde_json::Value)> {
+    let mut parts: Vec<Vec<&(f64, serde_json::Value)>> = vec![vec![]];
+    for e in events {
+        let text = e.1["text"].as_str().unwrap_or_default();
+        if e.1["type"] == "harness_notice" && (text.starts_with("── new conversation") || text.starts_with("── resumed session")) {
+            parts.push(vec![]);
+            continue;
+        }
+        parts.last_mut().expect("one at least").push(e);
+    }
+    parts.into_iter().filter(|p| p.iter().any(|e| e.1["type"] == "system" && e.1["session_id"] == id)).flatten().collect()
+}
+
+/// `/new` (None) or `/resume`: the next message starts a fresh conversation or continues `earlier` on claude. The screen
+/// starts over: an earlier session's recordings are replayed into it, so what was said before shows again.
+fn new_conversation(live: &mut live::Live, s: &mut Session, v: &mut View, earlier: Option<&Earlier>) {
+    match live.restart(earlier.map(|e| e.id.clone())) {
+        Ok((t, notice)) => {
+            *s = s.fresh();
+            if let Some(e) = earlier {
+                for p in &e.recordings {
+                    if let Ok(mut r) = Replay::load(p, false) {
+                        for (t, ev) in conversation(r.take(usize::MAX), &e.id) {
+                            s.apply(ev, *t);
+                        }
+                    }
+                }
+                s.model = live.model.clone();
+            }
+            s.apply(&notice, t);
+            v.open.clear();
+            (v.hover, v.scroll, v.since_ms) = (None, 0, live.elapsed_ms());
+        }
+        Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
+    }
 }
 
 fn previous_session(base: &std::path::Path, cwd: &std::path::Path, id: Option<&str>) -> Option<(String, Option<std::path::PathBuf>)> {
@@ -995,6 +1065,8 @@ fn run_live(
     let (mut tasks_open, mut task_sel, mut outputs_read) = (false, 0usize, Instant::now());
     // /rewind: the picker's selected message, while it is open
     let mut rewind_sel: Option<usize> = None;
+    // /resume: this repo's sessions and the selected one, while the picker is open
+    let mut resume_pick: Option<(Vec<Earlier>, usize)> = None;
     // /loop: the running loop (its stop flag, its progress), or the flags of one waiting for PRD.md and TODO.md; and
     // TODO.md's open items when the /loop hint last showed
     let mut looping: Option<(std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::mpsc::Receiver<String>)> = None;
@@ -1046,6 +1118,7 @@ fn run_live(
             }).collect(),
         });
         v.vim = if !vim { "" } else if normal { "NORMAL" } else { "INSERT" };
+        v.sessions = resume_pick.as_ref().map(|(l, i)| ui::SessionsPanel { rows: l.iter().map(Earlier::row).collect(), selected: *i });
         v.rewind = rewind_sel.map(|i| ui::RewindPanel { items: live.checkpoints.iter().map(|c| c.text.clone()).collect(), selected: i });
         v.models = pick.as_ref().map(|Picker { cs, sel, eff, prov, filter }| ui::ModelsPanel {
             rows: shown(cs, filter).into_iter().map(|i| {
@@ -1234,6 +1307,22 @@ fn run_live(
             continue;
         }
         // the /rewind picker owns the keyboard while open
+        // the /resume picker owns the keyboard while open
+        if let (Some((list, i)), false) = (resume_pick.as_mut(), stop_key) {
+            match key.code {
+                KeyCode::Up => *i = i.saturating_sub(1),
+                KeyCode::Down => *i = (*i + 1).min(list.len().saturating_sub(1)),
+                KeyCode::Enter => {
+                    let (list, i) = resume_pick.take().expect("open");
+                    if let Some(e) = list.get(i) {
+                        new_conversation(live, &mut s, &mut v, Some(e));
+                    }
+                }
+                KeyCode::Esc => resume_pick = None,
+                _ => {}
+            }
+            continue;
+        }
         if let (Some(i), false) = (rewind_sel, stop_key) {
             let last = live.checkpoints.len().saturating_sub(1);
             let choice = match key.code {
@@ -1468,31 +1557,19 @@ fn run_live(
                         continue;
                     }
                 }
-                // /new: a fresh conversation; /resume: this repo's recent ones, /resume N (or an id) continues one
-                if text == "/new" || text == "/resume" || text.starts_with("/resume ") {
-                    let pick = text.strip_prefix("/resume").map(str::trim);
+                // /new: a fresh conversation; /resume: a picker of this repo's sessions (/resume ID opens one directly)
+                if text == "/new" {
+                    new_conversation(live, &mut s, &mut v, None);
+                    continue;
+                }
+                if text == "/resume" || text.starts_with("/resume ") {
                     let list = sessions_of(&labels::dir()?, &std::env::current_dir()?);
-                    let msg = match pick {
-                        None => live.restart(None),
-                        Some("") => {
-                            let rows: Vec<String> = list.iter().take(8).enumerate().map(|(i, (sid, prompt, ts, n))| {
-                                let ago = session::unix_now().saturating_sub(*ts) / 60;
-                                let when = if ago < 60 { format!("{ago}m") } else if ago < 1440 { format!("{}h", ago / 60) } else { format!("{}d", ago / 1440) };
-                                format!("{}  {when} ago · {n} message{} · {}  ({})", i + 1, if *n == 1 { "" } else { "s" },
-                                    session::shown(prompt.lines().next().unwrap_or_default(), 60), &sid[..8.min(sid.len())])
-                            }).collect();
-                            let text = if rows.is_empty() { "no earlier claude session in this repo".into() } else { format!("recent sessions (/resume N continues one):\n{}", rows.join("\n")) };
-                            Ok((live.elapsed_ms(), json!({"type": "harness_info", "text": text})))
-                        }
-                        Some(p) => match p.parse::<usize>().ok().and_then(|n| list.get(n.wrapping_sub(1))).map(|s| s.0.clone())
-                            .or_else(|| list.iter().find(|s| s.0.starts_with(p)).map(|s| s.0.clone())) {
-                            Some(sid) => live.restart(Some(sid)),
-                            None => Err(anyhow::anyhow!("no session {p} in this repo: /resume lists them")),
+                    match text["/resume".len()..].trim() {
+                        "" => resume_pick = Some((list, 0)),
+                        id => match list.iter().find(|e| e.id.starts_with(id)) {
+                            Some(e) => new_conversation(live, &mut s, &mut v, Some(e)),
+                            None => s.apply(&json!({"type": "harness_info", "text": format!("no session {id} in this repo: /resume lists them")}), live.elapsed_ms()),
                         },
-                    };
-                    match msg {
-                        Ok((t, e)) => s.apply(&e, t),
-                        Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
                     }
                     continue;
                 }
@@ -1749,7 +1826,14 @@ mod tests {
         assert_eq!(previous_session(&base, &repo, Some("aaa")).unwrap().0, "aaa-1", "by id prefix");
         assert!(previous_session(&base, &base.join("none"), None).is_none());
         let list = sessions_of(&base, &repo);
-        assert_eq!(list.iter().map(|s| s.0.as_str()).collect::<Vec<_>>().first(), Some(&"ccc-3"), "newest first, this repo only");
+        assert_eq!(list.first().map(|e| e.id.as_str()), Some("ccc-3"), "the latest used first, this repo only");
+        // a recording with two conversations (a /new between them): only the one asked for is replayed
+        let ev = |v: serde_json::Value| (0.0, v);
+        let rec = vec![ev(json!({"type": "harness_user", "text": "one"})), ev(json!({"type": "system", "subtype": "init", "session_id": "s1"})),
+            ev(json!({"type": "harness_notice", "text": "── new conversation ──"})),
+            ev(json!({"type": "harness_user", "text": "two"})), ev(json!({"type": "system", "subtype": "init", "session_id": "s2"}))];
+        let texts = |id: &str| super::conversation(&rec, id).iter().filter_map(|e| e.1["text"].as_str().map(String::from)).collect::<Vec<_>>();
+        assert_eq!((texts("s1"), texts("s2")), (vec!["one".to_string()], vec!["two".to_string()]));
         std::fs::remove_dir_all(&base).ok();
     }
 }

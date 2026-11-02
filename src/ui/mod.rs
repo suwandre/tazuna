@@ -87,6 +87,8 @@ pub struct View {
     /// Blocks opened by a click (their full input and output), and the block under the mouse (shaded: a click opens it).
     pub open: std::collections::HashSet<usize>,
     pub hover: Option<usize>,
+    /// When the conversation on screen began (ms into tazuna's run): `/new` and `/resume` start the elapsed clock again.
+    pub since_ms: f64,
     /// Lines scrolled up from the bottom; 0 follows the live tail.
     pub scroll: usize,
     pub clock_ms: f64,
@@ -109,10 +111,17 @@ pub struct View {
     pub tasks: Option<TasksPanel>,
     /// The /rewind picker, when open.
     pub rewind: Option<RewindPanel>,
+    pub sessions: Option<SessionsPanel>,
     /// The /model picker, when open.
     pub models: Option<ModelsPanel>,
     /// Vim mode's state for the composer ("NORMAL", "INSERT"); empty when vim mode is off.
     pub vim: &'static str,
+}
+
+/// `/resume`: this repo's earlier sessions, newest first ("8m ago · 2 messages · fix the login"), and the one selected.
+pub struct SessionsPanel {
+    pub rows: Vec<String>,
+    pub selected: usize,
 }
 
 pub struct RewindPanel {
@@ -187,6 +196,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
     if let Some(p) = &v.rewind {
         draw_rewind(f, p, th);
     }
+    if let Some(p) = &v.sessions {
+        draw_sessions(f, p, th);
+    }
     if let Some(p) = &v.models {
         draw_models(f, p, th);
     }
@@ -231,6 +243,29 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
 }
 
 /// /rewind: the messages sent so far; the chosen one and everything after it can be undone.
+fn draw_sessions(f: &mut Frame, p: &SessionsPanel, th: &Theme) {
+    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+    let full = f.area();
+    let (w, h) = ((full.width * 9 / 10).max(20).min(full.width), ((p.rows.len().max(1) as u16 + 4).min(full.height * 8 / 10)).max(6).min(full.height));
+    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
+    f.render_widget(Clear, area);
+    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
+        .title(Span::styled(" resume a session · ↑↓ select · enter open · esc ", st(th.accent).add_modifier(Modifier::BOLD)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let room = inner.height.saturating_sub(2) as usize;
+    let first = p.selected.saturating_sub(room.saturating_sub(1));
+    let mut lines: Vec<Line<'static>> = vec![Line::from(Span::styled("This repo's sessions on claude, newest first; the conversation opens where it ended.", st(th.faint))), Line::from("")];
+    if p.rows.is_empty() {
+        lines.push(Line::from(Span::styled("no earlier claude session in this repo", st(th.faint))));
+    }
+    for (i, row) in p.rows.iter().enumerate().skip(first).take(room) {
+        let (mark, style) = if i == p.selected { ("›", st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED)) } else { (" ", st(th.text)) };
+        lines.push(Line::from(Span::styled(format!("{mark} {}", plain(row).replace('\n', " ⏎ ")).chars().take(inner.width as usize).collect::<String>(), style)));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
 fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme) {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
@@ -553,7 +588,7 @@ pub fn clock_str(ms: f64) -> String {
 
 /// The session's elapsed time and, beside it, the agent's working time (message to last token): "26:51 · 06:08 working".
 pub fn times_str(s: &Session, v: &View) -> String {
-    format!("{} · {} working", clock_str(v.clock_ms), clock_str(s.busy(v.clock_ms)))
+    format!("{} · {} working", clock_str(v.clock_ms - v.since_ms), clock_str(s.busy(v.clock_ms)))
 }
 
 pub fn human(n: u64) -> String {
@@ -1558,7 +1593,7 @@ mod tests {
         s.limits = Some((12.0, 14.0));
         s.balance = Some(8.816);
         for d in [Design::Cockpit, Design::Aurora, Design::Zen, Design::Timeline] {
-            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None };
+            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
             term.draw(|f| { draw(f, &s, &v); }).unwrap();
             let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
@@ -1578,7 +1613,7 @@ mod tests {
         s.blocks.push(Block::Tool(Tool { id: "b".into(), name: "Bash".into(), input: serde_json::json!({"command": format!("gh run view 1 --jq '{}'", "x".repeat(400))}),
             result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(4300.0), sub: None }));
         s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
         let text = |v: &View| { let (l, _, owners) = transcript(&s, v, Design::Cockpit.theme(), &cockpit::OPTS, 100); (l.iter().map(|l| l.spans.iter().map(|x| x.content.to_string()).collect::<String>()).collect::<Vec<_>>(), owners) };
         let (closed, owners) = text(&v);
         // closed: the subagent as who and what for (its 25-row prompt hidden), the long command cut, both marked ▸
@@ -1619,7 +1654,7 @@ mod tests {
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Text { text: "Sources: [GitHub changelog](https://github.blog/c)".into(), live: false });
         s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
         let mut areas = None;
         term.draw(|f| areas = Some(draw(f, &s, &v))).unwrap();
@@ -1631,17 +1666,28 @@ mod tests {
     }
 
     #[test]
+    fn the_session_picker_lists_and_marks_the_selected_one() {
+        let s = Session::new("", "medium");
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
+        v.sessions = Some(SessionsPanel { rows: vec!["8m ago · 2 messages · review PR 1370  (4cb8a388)".into(), "2h ago · 5 messages · fix the login  (aa11bb22)".into()], selected: 1 });
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+        term.draw(|f| { draw(f, &s, &v); }).unwrap();
+        let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("resume a session") && text.contains("  8m ago · 2 messages · review PR 1370") && text.contains("› 2h ago · 5 messages · fix the login"), "{text}");
+    }
+
+    #[test]
     fn key_hints_fit_whole_and_point_to_the_rest() {
         assert_eq!(fitted_keys("a · bb · cc", 100), "a · bb · cc");
         assert_eq!(fitted_keys("a · bb · cc", 16), "a · /keys all", "never a hint cut in half");
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
         let line: String = composer_line(&v, Design::Cockpit.theme(), "›", "Message tazuna…", 90).spans.iter().map(|s| s.content.to_string()).collect();
         assert!(line.width() <= 90 && line.ends_with("/keys all"), "{line}");
     }
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();
