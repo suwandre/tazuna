@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## `--batch-calls` against the default, 2026-11-02 (bench only)
+
+The six tasks/ tasks x two runs, Opus 5.5 medium, repo profile without boss mode; `--batch-calls` (tazuna 0.1.30, 16:00)
+against the same day's default runs (0.1.24, 13:19), one judge pool per task, Opus xhigh, two passes (12 calls):
+
+| Setup | Judge | Hidden | Cost / run | Tokens sent / run | Cache written | Calls | Minutes |
+|---|---|---|---|---|---|---|---|
+| default | 6.79 | 42/48 | $0.70 | 0.93M | 49k | 21.9 | 13.6 |
+| `--batch-calls` | 6.62 | 42/48 | $0.76 | 1.05M | 54k | 22.4 | 15.0 |
+
+The rule did not cut calls (fewer on caddy and terraform, more on the hugo tasks and k6): Claude Code already makes
+independent calls together where it can. Judge and cost inside noise; it stays opt-in.
+
 ## 0.1.32 (2026-11-02): `/boss` mid-session; `--boss-effort` for its workers
 
 - `/boss` turns boss mode on (Haiku workers; `/boss MODEL` for others) or off for the rest of a live session: claude
