@@ -16,6 +16,38 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.36 (2026-11-02): boss mode's workers at medium effort by default
+
+The measurement below: boss mode's Haiku workers ran at the session's effort, so a session at xhigh (the user's) ran them
+at xhigh, the dearest and slowest setting for no better score. They now run at medium unless `--boss-effort` says
+otherwise. Headless runs on Opus medium (boss on by default) are unchanged; live sessions with `/boss` or `--boss` at a
+higher effort get the cheaper workers.
+
+## Boss mode's Haiku effort, and the lean profile on Opus, 2026-11-02 (bench only)
+
+tasks/ (six Go tasks) x two runs per arm, Opus 5.5 medium, the repo profile, against the same day's no-boss runs (rt.sh,
+13:19); boss arms 17:00-19:40 (tazuna 0.1.32), lean 19:41-21:23 (0.1.32, `--profile lean --no-boss`). Opus xhigh judge, one
+pool per task and test, two passes (12 calls each test). One xhigh run (k6) used web search and is left out (leakscan).
+
+| Setup | Judge | Correctness | Hidden | Cost / run | Tokens sent (Opus) | Opus calls | Minutes |
+|---|---|---|---|---|---|---|---|
+| no boss (live default) | 6.42 | 4.08 | 42/48 | $0.70 | 0.93M | 21.9 | 13.6 |
+| **boss, Haiku medium** | **6.79** | 4.21 | **45/48** | **$0.45** | 0.29M | 8.8 | 15.2 |
+| boss, Haiku high | 6.58 | 3.96 | 43/48 | $0.67 | 0.37M | 10.5 | 17.4 |
+| boss, Haiku xhigh (n=11) | 6.55 | 4.27 | 38/43 | $1.02 | 0.29M | 8.5 | 23.7 |
+
+Judge inside noise across the four; cost not: Haiku at medium 36% below no boss and 56% below xhigh, at 1.6 minutes more
+than no boss. Worker effort default: medium (above). Boss mode itself stays opt-in for live sessions: cheaper at the same
+quality on these tasks, but slower, and on company tickets (one run each, 2026-10-08) it scored 0.30 lower.
+
+| Setup (same pool) | Judge | Hidden | Cost / run | Tokens sent | Calls | Minutes |
+|---|---|---|---|---|---|---|
+| repo profile (default) | 6.75 | 42/48 | $0.70 | 0.93M | 21.9 | 13.6 |
+| lean profile | 6.71 | 43/48 | $0.81 | 1.18M | 31.2 | 10.4 |
+
+Lean: the same score, 24% faster, 16% dearer: its call overhead is ~17k tokens smaller, but Opus makes 42% more calls
+with its four plain tools. A trade, not a saving: it stays opt-in.
+
 ## 0.1.35 (2026-11-02): time to first token and tokens a second; a compact run summary; cache read and write by name
 
 - Each model call is timed: claude says when it sends a request ("requesting"), and its stream opens with the first

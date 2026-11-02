@@ -266,6 +266,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Hash-anchored edits | not built | old text in edits is 0.6% of output tokens, ~0.2% of cost |
 | Bash output capped at 8,000 chars | +30% cost | the agent re-runs commands to see what was cut |
 | `--repo-tools core` (14 of 32 Claude Code tools, 2026-11-02) | judge -0.50 (6.38 vs 6.88), tokens -13%, cost +9% | under noise both ways, lower on 4 of 6 tasks; fewer tokens did not make it cheaper: opt-in |
+| Boss mode's workers at the session's effort (xhigh in the user's sessions, 2026-11-02) | Haiku xhigh $1.02 a run vs medium $0.45, judge 6.55 vs 6.79 | the dearest and slowest for no gain: workers default to medium (0.1.36) |
+| Lean profile on Opus 5.5 medium (2026-11-02) | judge 6.71 vs 6.75, cost +16%, 24% faster | 42% more calls with four plain tools eat the smaller prompt: opt-in |
 | `--batch-calls` (one prompt rule: independent tool calls in one turn, 2026-11-02) | judge -0.17 (6.62 vs 6.79), calls 22.4 vs 21.9, tokens +13%, cost +9% | Claude Code already batches where it can; the rule did not cut calls: opt-in |
 | `--rtk` (rtk's Claude hook, 2026-11-02) | judge +0.12 (7.00), tokens +15%, cost +6% | command output -53%, but the agent made more calls: no saving in tazuna: opt-in |
 | Repo map in the first message | +3% cost, same judge | the agent still reads the files it changes in full |
@@ -288,6 +290,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-02: boss mode's Haiku workers default to medium effort (they ran at the session's; at xhigh $1.02 a run
+  against $0.45, no better judge). Boss with medium workers: same judge as no boss, 36% cheaper, 12% slower: a trade,
+  so it stays opt-in for live sessions (`/boss`), on by default headless as before. Lean on Opus: same judge, dearer.
 - 2026-11-02: `--batch-calls` (a prompt rule to batch independent tool calls) measured against the same day's default:
   no fewer calls (22.4 vs 21.9), 13% more tokens, judge level. Claude Code already batches what it can; with this and
   the tool and output levers ruled out, what is left is per-session (a fresh conversation for unrelated work, the /new

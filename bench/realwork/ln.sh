@@ -6,7 +6,7 @@
 # session's, so a live session at xhigh ran them at xhigh), Opus 5.5 medium leading, the repo profile, the six tasks/
 # tasks x two runs per arm (v1257-v1292, bh.jobs, arms interleaved), eight at a time, tazuna 0.1.32 frozen in
 # ~/bench-homes/tz-v132. Today's no-boss all-tools runs (rt.sh) are the baseline for boss against no boss. No new run once
-# the 5-hour window is at 70% (BENCH_GATE_EXIT: skipped, not held; start bh.sh again later for what was skipped); week 95%;
+# the 5-hour window is at 88% (70% until 19:15; the user then allowed up to 99% and the guard still kills at 99; BENCH_GATE_EXIT: skipped, not held; start bh.sh again later for what was skipped); week 95%;
 # none below 15 GB free disk. No judge: by hand, calls counted first. Below 5% battery unplugged it stops the runs and
 # sleeps the Mac. Started with nohup.
 cd "$(dirname "$0")"; source ~/.bench-token
@@ -14,7 +14,7 @@ log() { echo "$(date +%H:%M) $*" >> ln.log; }
 until grep -q BH-DONE bh.log 2>/dev/null; do sleep 60; done
 caffeinate -ims -w $$ &
 log "start; claude $(claude --version 2>/dev/null | head -1); $(df -g ~ | awk 'NR==2{print $4}') GB free"
-export BENCH_GATE=state BENCH_GATE_EXIT=1 GUARD_PAUSE_AT=70 GUARD_WEEK_AT=95 BENCH_TIMEOUT=10800 HARNESS_BIN=$HOME/bench-homes/tz-v132/tazuna
+export BENCH_GATE=state BENCH_GATE_EXIT=1 GUARD_PAUSE_AT=88 GUARD_WEEK_AT=95 BENCH_TIMEOUT=10800 HARNESS_BIN=$HOME/bench-homes/tz-v132/tazuna
 ps -axo command= | grep -q "[g]uard.py" || (cd .. && GUARD_PAUSE_AT=85 GUARD_KILL_AT=99 nohup ./guard.py >> guard.log 2>&1 &)
 M=claude-opus-5-5
 running() { ps -axo command= | grep -E "run\.py --runs 1 --workers 1 --tasks \S+ --harness tazuna-leanopus-v1(29[3-9]|30[0-4])@" | grep -vc grep; }

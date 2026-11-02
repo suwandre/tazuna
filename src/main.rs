@@ -38,7 +38,7 @@
 //!          [--repo-tools core|all]   # repo profile: Claude Code's coding tools only (core) or all of them (default)
 //!          [--rtk]   # claude's Bash commands through rtk (shortened output; rtk must be installed)
 //!          [--batch-calls]   # repo profile: claude told to make independent tool calls in one turn
-//!          [--boss-effort LEVEL]   # boss mode's workers at LEVEL (default: the session's effort); /boss switches it live
+//!          [--boss-effort LEVEL]   # boss mode's workers at LEVEL (default medium); /boss switches boss mode live
 //!          [--price IN,CACHED,OUT]   # own loop: USD per million tokens, for providers whose model list has no prices
 //!          [--max-minutes N]   # own loop: stop (or with --escalate, hand over) after N minutes per task; default: no
 //!                              # time limit, only the $1 cap per task (TAZUNA_MAX_USD; cheap models are slow but
@@ -129,7 +129,7 @@ struct Args {
     rtk: bool,
     /// `--batch-calls`: claude told to make independent tool calls in one turn. Under measurement.
     batch_calls: bool,
-    /// `--boss-effort LEVEL`: the boss's workers at LEVEL (unset: the session's effort).
+    /// `--boss-effort LEVEL`: the boss's workers at LEVEL (unset: medium, measured best).
     boss_effort: Option<String>,
     review_model: Option<String>,
     review_key_env: Option<String>,

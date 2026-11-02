@@ -46,6 +46,10 @@ const CHECK_RULES: &str = "\n- Before changing code, read the code you change, i
 /// workflows, Monitor, DesignSync, ReportFindings, ListAgents. TaskStop and ToolSearch stay: background tasks and deferred
 /// tools need them.
 const REPO_CORE_TOOLS: &str = "Task,TaskStop,ToolSearch,AskUserQuestion,Bash,Read,Edit,Write,NotebookEdit,EnterPlanMode,ExitPlanMode,Skill,WebFetch,WebSearch";
+/// Boss mode's workers' effort when `--boss-effort` does not say (2026-11-02, six tasks x two runs, Opus medium leading:
+/// Haiku at medium judge 6.79, $0.45 a run; high 6.58, $0.67; xhigh 6.55, $1.02; no boss 6.42, $0.70).
+const BOSS_EFFORT: &str = "medium";
+
 /// `--batch-calls`: fewer turns, each of which re-reads the whole conversation (a run's cost is about a third reading back
 /// the cache, 2026-11-02). Measured on DeepSeek in the own loop only (TAZUNA_BATCH: rclone 39 against 77 turns, caddy-unix
 /// 71 against 60).
@@ -296,7 +300,7 @@ pub struct Live {
     pub tester: Option<String>,
     /// `--boss MODEL`: the main model only directs; explorer, implementer and tester subagents on MODEL do the work.
     pub boss: Option<String>,
-    /// `--boss-effort LEVEL`: the boss's workers at LEVEL; unset, they run at the session's effort.
+    /// `--boss-effort LEVEL`: the boss's workers at LEVEL; unset, at BOSS_EFFORT (medium).
     pub boss_effort: Option<String>,
     /// `--advisor MODEL`: Claude Code's advisor tool; the main model can ask MODEL for advice when it is stuck.
     pub advisor: Option<String>,
@@ -1272,7 +1276,9 @@ impl Live {
                     cmd.args(["--append-system-prompt", &append.join("\n")]);
                 }
                 if let Some(m) = self.boss.as_deref() {
-                    cmd.args(["--agents", &subagents(Some(m), Some(m), Some(m), self.boss_effort.as_deref())]);
+                    // the workers at medium unless told otherwise: at the session's xhigh they cost 46% more than no boss
+                    // at all and scored no better; medium was the cheapest and best (2026-11-02)
+                    cmd.args(["--agents", &subagents(Some(m), Some(m), Some(m), Some(self.boss_effort.as_deref().unwrap_or(BOSS_EFFORT)))]);
                 } else if self.explorer.is_some() || self.tester.is_some() {
                     cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref(), None, None)]);
                 }
