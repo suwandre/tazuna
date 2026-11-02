@@ -265,6 +265,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Stuck detection | not built | 0 of 184 tazuna runs repeated a call with the same failure |
 | Hash-anchored edits | not built | old text in edits is 0.6% of output tokens, ~0.2% of cost |
 | Bash output capped at 8,000 chars | +30% cost | the agent re-runs commands to see what was cut |
+| `--repo-tools core` (14 of 32 Claude Code tools, 2026-11-02) | judge -0.50 (6.38 vs 6.88), tokens -13%, cost +9% | under noise both ways, lower on 4 of 6 tasks; fewer tokens did not make it cheaper: opt-in |
+| `--rtk` (rtk's Claude hook, 2026-11-02) | judge +0.12 (7.00), tokens +15%, cost +6% | command output -53%, but the agent made more calls: no saving in tazuna: opt-in |
 | Repo map in the first message | +3% cost, same judge | the agent still reads the files it changes in full |
 | Sonnet explorer subagent (`--explorer sonnet`) | +12% cost, −35% turns, same judge | the reading moves, it does not shrink |
 | Haiku tester subagent (`--tester haiku`) | −14% cost, judge −0.40 | Fable judge agrees (lower, −0.21 of 5 vs Opus −0.32); the gap is one no-change run on T-946, even without it; saving at the noise line: opt-in |
@@ -285,6 +287,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-02: two token levers measured on tasks/ (six tasks x two runs each, Opus 5.5 medium, repo profile without the
+  boss, one Opus xhigh judge pool per task, two passes): `--repo-tools core` sent 13% fewer tokens but scored 0.50 lower
+  and was not cheaper; `--rtk` cut command output by half yet sent 15% more tokens (more calls). Both inside noise on
+  judge and cost: neither becomes the default, both stay opt-in.
 - 2026-11-01: eight models x high/xhigh/max on two unused tasks, then Luna xhigh against DeepSeek on four more: DeepSeek
   xhigh stays the own loop's default (Luna's telegraf lead was one lucky run; DeepSeek xhigh 6.25 vs Luna 4.88 over four
   tasks). Sol max and Sonnet max reached the top judge on the hard task at higher time; Terra was strong but the dearest;

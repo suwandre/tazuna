@@ -16,6 +16,26 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## `--repo-tools core` and `--rtk` against all tools, 2026-11-02 (bench only)
+
+tasks/ (six Go tasks) x two runs per setup, claude-opus-5-5 medium on the subscription, the repo profile without boss mode
+(as live sessions run), tazuna 0.1.24 (all, core; 13:19) and 0.1.25 (rtk; 11:45, same code otherwise), one judge pool
+per task over all 36 runs, Opus 5.5 xhigh, two passes (12 calls, about 1% of the 5-hour window per four).
+
+| Setup | Judge | Correctness | Hidden tests | Cost / run | Tokens sent / run | Calls | Minutes |
+|---|---|---|---|---|---|---|---|
+| all tools (default) | 6.88 | 4.12 | 42/48 | $0.70 | 0.93M | 21.9 | 13.6 |
+| `--repo-tools core` | 6.38 | 3.88 | 42/48 | $0.76 | 0.81M | 20.6 | 16.2 |
+| `--rtk` | 7.00 | 4.25 | 43/48 | $0.74 | 1.07M | 22.8 | 13.5 |
+
+Judge per task (all / core / rtk): caddy 8.75 / 7.75 / 8.00, hugo-section 8.00 / 6.50 / 7.50, hugo-template 5.50 / 5.25 /
+5.50, k6 7.00 / 6.75 / 6.75, prometheus 7.00 / 7.50 / 8.50, terraform 5.00 / 4.50 / 5.75. Every difference is inside the
+noise thresholds (judge ±0.75, cost ±15%). Core tools sent 13% fewer tokens, as the one-call check predicted (-27% a
+call), but was not cheaper and scored lower on four of six tasks. rtk cut what the model saw of command output by 53%
+(its own log, with Claude Code's 30,000-character cap applied: `go test` -96%, grep -36%), yet the runs sent 15% more
+tokens over more calls, the pattern of the 8,000-character Bash cap (2026-10-08). Both stay opt-in; the default keeps all
+tools and no rtk. No run saw the reference fix (leakscan).
+
 ## 0.1.29 (2026-11-02): `/new` starts a clean screen; `/resume` opens a session picker
 
 - `/new` left the old conversation on screen and its tokens, cost, tools, files and clock in the side panels. It now
