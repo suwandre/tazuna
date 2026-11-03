@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.48 (2026-11-03): `tazuna lessons` and `--lessons` (opt-in, under measurement)
+
+- `tazuna lessons [--prs N] [--before YYYY-MM-DD]`: reads the review comments of the repository's last N merged pull
+  requests on GitHub (through `gh`; bots, nits and approvals left out), and one `claude -p` call (Sonnet medium) groups
+  what reviewers raised in at least two pull requests into a checklist of up to 20 points (what goes wrong, how to check,
+  which PRs), written to `.tazuna/review-lessons.md`. `--before` keeps a benchmark task from learning from its own review.
+  Nothing in it is about one repository: the company repo (551 comments, 150 PRs, 70 s) gave points on side effects
+  after a commit, Ledger echoes, migrations' `down()`, retry budgets; caddy (145 comments) on bodyless responses,
+  deadlines, TLS policies in the Caddyfile adapter. A repo without review history gets nothing.
+- `--lessons`: the list goes into the agent's instructions. Measured after the weekly reset: with and without, scored by
+  the reviewers' findings on both company batches and the judge, with lessons only from PRs merged before each task.
+
 ## Company tickets, batch 2, 2026-11-03 (bench only)
 
 Five PRs by other authors (t-973 #1198 Ledger corrections, b-188 #1190 duplicate documents, t-1106 #1375 stuck

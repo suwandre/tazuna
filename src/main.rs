@@ -38,6 +38,7 @@
 //!          [--repo-tools core|all]   # repo profile: Claude Code's coding tools only (core) or all of them (default)
 //!          [--rtk]   # claude's Bash commands through rtk (shortened output; rtk must be installed)
 //!          [--batch-calls]   # repo profile: claude told to make independent tool calls in one turn
+//!          [--lessons]   # the repo's .tazuna/review-lessons.md (`tazuna lessons`) into the instructions
 //!          [--no-test-scope]   # claude may run whole test suites while working (default: only the tests covering its
 //!                              # change; verify runs the changed packages' tests at the end)
 //!          [--boss-effort LEVEL]   # boss mode's workers at LEVEL (default medium); /boss switches boss mode live
@@ -69,6 +70,7 @@ mod diag;
 mod editor;
 mod engine;
 mod labels;
+mod lessons;
 mod live;
 mod looprun;
 mod mcp;
@@ -135,6 +137,8 @@ struct Args {
     batch_calls: bool,
     /// Claude told to run only the tests covering its change while working (default; `--no-test-scope` turns it off).
     test_scope: bool,
+    /// `--lessons`: the repo's review lessons into the instructions. Under measurement.
+    lessons: bool,
     /// `--boss-effort LEVEL`: the boss's workers at LEVEL (unset: medium, measured best).
     boss_effort: Option<String>,
     /// `--boss-pick`: the lead picks each worker call's effort and, for a hard change, a Sonnet worker. Under measurement.
@@ -251,6 +255,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         rtk: false,
         batch_calls: false,
         test_scope: true,
+        lessons: false,
         boss_effort: None,
         boss_pick: false,
         boss_escalate: false,
@@ -305,6 +310,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--batch-calls" => a.batch_calls = true,
             "--test-scope" => a.test_scope = true,
             "--no-test-scope" => a.test_scope = false,
+            "--lessons" => a.lessons = true,
             "--repo-tools" => match val()?.as_str() {
                 "core" => a.repo_tools_core = true,
                 "all" => a.repo_tools_core = false,
@@ -430,6 +436,10 @@ fn main() -> Result<()> {
         println!("{}", repomap::build(&std::env::current_dir()?, &task).unwrap_or_else(|| "(no match)".into()));
         return Ok(());
     }
+    if std::env::args().nth(1).as_deref() == Some("lessons") {
+        // `tazuna lessons`: what this repo's reviewers keep raising, from its merged PRs, into .tazuna/review-lessons.md
+        return lessons::cli(&std::env::args().skip(2).collect::<Vec<_>>());
+    }
     if std::env::args().nth(1).as_deref() == Some("diag") {
         return diag::hook(std::path::Path::new(&std::env::args().nth(2).unwrap_or_default()));
     }
@@ -525,6 +535,7 @@ fn main() -> Result<()> {
             live.rtk = a.rtk;
             live.batch_calls = a.batch_calls;
             live.test_scope = a.test_scope;
+            live.lessons = a.lessons;
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
             live.review_key = a.review_key.clone();
             live.provider = a.provider.clone();
@@ -671,6 +682,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.rtk = a.rtk;
     live.batch_calls = a.batch_calls;
     live.test_scope = a.test_scope;
+    live.lessons = a.lessons;
     live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
     live.review_key = a.review_key.clone();
     live.provider = a.provider.clone();
