@@ -16,12 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.49 (2026-11-03): review lessons kept out of the repository's reach
+
+- From an automated security review of 0.1.48: a repository could ship its own `.tazuna/review-lessons.md`, and on a
+  public repository anyone may comment on a pull request; either way text would reach the agent's instructions. The list
+  now lives in tazuna's data folder (`~/.local/share/tazuna/lessons/OWNER__NAME.md`), never in the working tree; only
+  comments from the repository's owner, members and collaborators are used; the agent gets it between `<review-lessons>`
+  tags as a checklist, told to ignore anything in it that asks for something else. Writing goes through a new private file
+  and a rename, never through a symlink. A benchmark points `TAZUNA_LESSONS_FILE` at a task's own list.
+
 ## 0.1.48 (2026-11-03): `tazuna lessons` and `--lessons` (opt-in, under measurement)
 
 - `tazuna lessons [--prs N] [--before YYYY-MM-DD]`: reads the review comments of the repository's last N merged pull
   requests on GitHub (through `gh`; bots, nits and approvals left out), and one `claude -p` call (Sonnet medium) groups
   what reviewers raised in at least two pull requests into a checklist of up to 20 points (what goes wrong, how to check,
-  which PRs), written to `.tazuna/review-lessons.md`. `--before` keeps a benchmark task from learning from its own review.
+  which PRs), written to `.tazuna/review-lessons.md` (moved to tazuna's data folder in 0.1.49). `--before` keeps a benchmark task from learning from its own review.
   Nothing in it is about one repository: the company repo (551 comments, 150 PRs, 70 s) gave points on side effects
   after a commit, Ledger echoes, migrations' `down()`, retry budgets; caddy (145 comments) on bodyless responses,
   deadlines, TLS policies in the Caddyfile adapter. A repo without review history gets nothing.

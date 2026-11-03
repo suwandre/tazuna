@@ -38,7 +38,7 @@
 //!          [--repo-tools core|all]   # repo profile: Claude Code's coding tools only (core) or all of them (default)
 //!          [--rtk]   # claude's Bash commands through rtk (shortened output; rtk must be installed)
 //!          [--batch-calls]   # repo profile: claude told to make independent tool calls in one turn
-//!          [--lessons]   # the repo's .tazuna/review-lessons.md (`tazuna lessons`) into the instructions
+//!          [--lessons]   # the repo's review lessons (`tazuna lessons`, kept in ~/.local/share/tazuna/lessons) into the instructions
 //!          [--no-test-scope]   # claude may run whole test suites while working (default: only the tests covering its
 //!                              # change; verify runs the changed packages' tests at the end)
 //!          [--boss-effort LEVEL]   # boss mode's workers at LEVEL (default medium); /boss switches boss mode live
@@ -437,7 +437,7 @@ fn main() -> Result<()> {
         return Ok(());
     }
     if std::env::args().nth(1).as_deref() == Some("lessons") {
-        // `tazuna lessons`: what this repo's reviewers keep raising, from its merged PRs, into .tazuna/review-lessons.md
+        // `tazuna lessons`: what this repo's reviewers keep raising, from its merged PRs, into tazuna's data folder
         return lessons::cli(&std::env::args().skip(2).collect::<Vec<_>>());
     }
     if std::env::args().nth(1).as_deref() == Some("diag") {

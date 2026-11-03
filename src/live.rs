@@ -367,7 +367,8 @@ pub struct Live {
     pub batch_calls: bool,
     /// Claude told to run only the tests covering its change while it works (verify runs the rest); `--no-test-scope`: off.
     pub test_scope: bool,
-    /// `--lessons`: the repo's `.tazuna/review-lessons.md` (`tazuna lessons`) goes into the instructions. Under measurement.
+    /// `--lessons`: the repo's review lessons (`tazuna lessons`, from tazuna's data folder) go into the instructions, marked
+    /// as notes. Under measurement.
     pub lessons: bool,
     /// `--rtk`: claude's Bash commands go through rtk (`rtk hook claude`), which shortens their output. Under measurement.
     pub rtk: bool,
