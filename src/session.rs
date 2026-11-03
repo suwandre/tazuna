@@ -176,8 +176,9 @@ pub struct Session {
     first_token: Option<f64>,
     call_est: f64,
     call_thinking: Vec<usize>,
-    /// When the last call ended (ms into the session) and the cache life claude wrote it with (5 minutes or 1 hour, from
-    /// its usage): each call that reads the cache renews it, so it lasts until then. None on the own loop's providers.
+    /// When the last call started (ms into the session) and the cache life claude wrote it with (5 minutes or 1 hour, from
+    /// its usage): each call that reads the cache renews it, counted from the request's start (Anthropic's docs: a reply
+    /// that streams for 4 minutes leaves a 5-minute cache 1 minute). None on the own loop's providers.
     pub last_call_ms: Option<f64>,
     pub cache_ttl_ms: Option<f64>,
     /// When the next call's input was ready: the prompt sent or a tool's result in. Claude's "requesting" note comes when
@@ -311,13 +312,11 @@ impl Session {
         self.turn_usage.last().filter(|u| u.total_in() > 0).map(|u| u.cache_read as f64 / u.total_in() as f64)
     }
 
-    /// Milliseconds the cache stays warm after `now_ms` (the full life while a call is running), None when unknown.
+    /// Milliseconds the cache stays warm after `now_ms`, from the latest call's start (the one in flight renewed it), None
+    /// when unknown.
     pub fn cache_left(&self, now_ms: f64) -> Option<f64> {
         let ttl = self.cache_ttl_ms?;
-        if self.call_start.is_some() {
-            return Some(ttl);
-        }
-        Some((self.last_call_ms? + ttl - now_ms).max(0.0))
+        Some((self.call_start.or(self.last_call_ms)? + ttl - now_ms).max(0.0))
     }
 
     /// The call in flight: when it started, when its first token came, its output so far (estimated). None between calls.
@@ -733,7 +732,7 @@ impl Session {
                 } else if cc["ephemeral_5m_input_tokens"].as_u64().unwrap_or(0) > 0 {
                     self.cache_ttl_ms = Some(300_000.0);
                 }
-                self.last_call_ms = Some(self.now_ms);
+                self.last_call_ms = self.call_start.or(Some(self.now_ms));
                 // the exact thinking count, shared among the call's thinking blocks by their estimates
                 let thinking = std::mem::take(&mut self.call_thinking);
                 if let Some(exact) = u["output_tokens_details"]["thinking_tokens"].as_u64() {
@@ -933,10 +932,10 @@ mod tests {
         k.apply(&ev(json!({"type": "message_start"})), 0.0);
         k.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 2, "cache_read_input_tokens": 90762, "cache_creation_input_tokens": 1486,
             "iterations": [{"cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 1486}}]}})), 1000.0);
-        assert_eq!((k.cache_ttl_ms, k.cache_left(61_000.0), k.cache_left(4_000_000.0)), (Some(3_600_000.0), Some(3_540_000.0), Some(0.0)));
+        assert_eq!((k.cache_ttl_ms, k.cache_left(61_000.0), k.cache_left(4_000_000.0)), (Some(3_600_000.0), Some(3_539_000.0), Some(0.0)), "from the call's start");
         assert_eq!(k.last_call_hit().map(|h| (h * 1000.0).round()), Some(984.0));
         k.apply(&ev(json!({"type": "message_start"})), 5_000_000.0);
-        assert_eq!(k.cache_left(5_000_500.0), Some(3_600_000.0), "a call in flight renews it");
+        assert_eq!(k.cache_left(5_000_500.0), Some(3_599_500.0), "a call in flight renews it");
         let text = s.blocks.iter().find_map(|b| if let Block::Text { text, .. } = b { Some(text.clone()) } else { None });
         assert_eq!(text.as_deref(), Some("Hello"), "the text after the notice is not lost");
     }

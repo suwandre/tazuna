@@ -16,6 +16,11 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.44 (2026-11-03): cache life from the request's start
+
+- The cache's life runs from the start of the request that read or wrote it (Anthropic's docs), not from the reply's
+  end: the countdown now counts from the latest call's start, also while it runs. Only 5 minutes and 1 hour exist.
+
 ## Test scope in boss mode, 2026-11-03 (bench only)
 
 tasks/ (six Go tasks) x two runs, boss with Haiku workers at medium, Opus 5.5 medium leading; 0.1.42 (the workers' rule,
@@ -63,8 +68,9 @@ SubRouter, Opus medium reviewer, v661-v679, 7 runs). Worker cost split by their 
 - Worker reports are small: the lead re-reads them for 2-5% of its cache reads. Shorter reports are not a lever.
 - The boss's lead loses its cache while it waits: workers run past the 5-minute cache life (gaps of 6-85 minutes), so
   0.5 (tasks/) to 1 (hard) of its calls a run rewrites the whole context: 30% / 48% of its cache writes, and writes are
-  45-51% of the lead's cost (reads 18-23%, output 31-32%). The 1-hour cache costs 2x per write instead of 1.25x: about
-  even on tasks/, a small saving on the hard tasks. Faster workers (test scope for them) shrink the waits instead.
+  51-56% of the lead's cost (output 35-36%, reads 10-13%: Opus 5.5 reads cost 0.05x the input price, writes 1.25x for 5
+  minutes and 2x for an hour). The 1-hour cache pays only when over 37.5% of the writes are such rewrites: a little dearer
+  on tasks/, a little cheaper on the hard tasks. Faster workers (test scope for them) shrink the waits instead.
 - Boss mode ran before test scope; the default with it is now 2.7x faster than boss at 29% more cost on tasks/.
 
 ## 0.1.41 (2026-11-03): no more "6684 tok/s"
