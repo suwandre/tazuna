@@ -176,6 +176,10 @@ pub struct Session {
     first_token: Option<f64>,
     call_est: f64,
     call_thinking: Vec<usize>,
+    /// When the last call ended (ms into the session) and the cache life claude wrote it with (5 minutes or 1 hour, from
+    /// its usage): each call that reads the cache renews it, so it lasts until then. None on the own loop's providers.
+    pub last_call_ms: Option<f64>,
+    pub cache_ttl_ms: Option<f64>,
     /// When the next call's input was ready: the prompt sent or a tool's result in. Claude's "requesting" note comes when
     /// the answer is already streaming (15 ms before the first token after a 2 s pause, 2026-11-03), too late to time it.
     ready_at: Option<f64>,
@@ -263,6 +267,8 @@ impl Session {
             first_token: None,
             call_est: 0.0,
             call_thinking: vec![],
+            last_call_ms: None,
+            cache_ttl_ms: None,
             ready_at: None,
             usage_at_result: Usage::default(),
             stopping: false,
@@ -298,6 +304,20 @@ impl Session {
         let p = ((now_ms - at) / 1000.0).clamp(0.0, 1.0);
         let eased = 1.0 - (1.0 - p) * (1.0 - p);
         from + ((tokens - from) as f64 * eased) as u64
+    }
+
+    /// The latest call's share of its input read from the cache (Claude Code's cache meters show this one).
+    pub fn last_call_hit(&self) -> Option<f64> {
+        self.turn_usage.last().filter(|u| u.total_in() > 0).map(|u| u.cache_read as f64 / u.total_in() as f64)
+    }
+
+    /// Milliseconds the cache stays warm after `now_ms` (the full life while a call is running), None when unknown.
+    pub fn cache_left(&self, now_ms: f64) -> Option<f64> {
+        let ttl = self.cache_ttl_ms?;
+        if self.call_start.is_some() {
+            return Some(ttl);
+        }
+        Some((self.last_call_ms? + ttl - now_ms).max(0.0))
     }
 
     /// The call in flight: when it started, when its first token came, its output so far (estimated). None between calls.
@@ -508,6 +528,7 @@ impl Session {
                 self.close_process();
                 (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
                 self.context_window = None; // the next model reports its own (the own loop's: none)
+                self.cache_ttl_ms = None;
                 self.push(Block::Notice { text: s(&e["text"]), error: false });
             }
             (Some("rate_limit_event"), _) => {
@@ -704,6 +725,15 @@ impl Session {
                 self.usage.cache_read += t.cache_read;
                 self.usage.output += t.output;
                 self.context = t.total_in();
+                // the cache's life: claude splits what it wrote by 5-minute and 1-hour entries (a call that wrote
+                // nothing keeps the last one known)
+                let cc = if u["cache_creation"].is_object() { &u["cache_creation"] } else { &u["iterations"][0]["cache_creation"] };
+                if cc["ephemeral_1h_input_tokens"].as_u64().unwrap_or(0) > 0 {
+                    self.cache_ttl_ms = Some(3_600_000.0);
+                } else if cc["ephemeral_5m_input_tokens"].as_u64().unwrap_or(0) > 0 {
+                    self.cache_ttl_ms = Some(300_000.0);
+                }
+                self.last_call_ms = Some(self.now_ms);
                 // the exact thinking count, shared among the call's thinking blocks by their estimates
                 let thinking = std::mem::take(&mut self.call_thinking);
                 if let Some(exact) = u["output_tokens_details"]["thinking_tokens"].as_u64() {
@@ -898,6 +928,15 @@ mod tests {
         b.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x"}})), 3900.0);
         b.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 380}})), 3957.0);
         assert_eq!(b.calls, [CallTime { ttft_ms: None, gen_ms: 3957.0, out: 380 }]);
+        // the cache's life from what the call wrote, renewed by each call; the last call's cached share
+        let mut k = Session::new("", "medium");
+        k.apply(&ev(json!({"type": "message_start"})), 0.0);
+        k.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 2, "cache_read_input_tokens": 90762, "cache_creation_input_tokens": 1486,
+            "iterations": [{"cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 1486}}]}})), 1000.0);
+        assert_eq!((k.cache_ttl_ms, k.cache_left(61_000.0), k.cache_left(4_000_000.0)), (Some(3_600_000.0), Some(3_540_000.0), Some(0.0)));
+        assert_eq!(k.last_call_hit().map(|h| (h * 1000.0).round()), Some(984.0));
+        k.apply(&ev(json!({"type": "message_start"})), 5_000_000.0);
+        assert_eq!(k.cache_left(5_000_500.0), Some(3_600_000.0), "a call in flight renews it");
         let text = s.blocks.iter().find_map(|b| if let Block::Text { text, .. } = b { Some(text.clone()) } else { None });
         assert_eq!(text.as_deref(), Some("Hello"), "the text after the notice is not lost");
     }

@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.43 (2026-11-03): the last call's cache share; how long the cache stays warm
+
+- Context panel: "cache read 2.28M 92% · last 98%": the session's share read from the cache and the latest call's (what
+  Claude Code's cache meters show; one call after a short exchange reads ~99%, a session less, since each call writes
+  what is new once). Same formula: read / (read + written + uncached).
+- "cache life 54:09 of 1h": time until the cache expires (each call renews it; its life, 5 minutes or 1 hour, comes from
+  what claude reports writing); "expired" in warning colour after that, when the next call writes the whole context
+  again. Claude path only.
+
 ## 0.1.42 (2026-11-03): test scope for the workers too (under measurement)
 
 - With test scope on (the default), the workers that run tests (implementer, implementer-strong, tester) are told to run

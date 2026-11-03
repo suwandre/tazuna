@@ -44,7 +44,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let tools = tool_tally(s);
     let [p_session, p_context, p_tokens, p_cost, p_tools, p_files] = Layout::vertical([
         Constraint::Length(5),
-        Constraint::Length(5),
+        Constraint::Length(6),
         Constraint::Length(8),
         Constraint::Length(5),
         Constraint::Length(tools.len().max(1) as u16 + 3),
@@ -72,7 +72,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let b = panel("context", th);
     let a = b.inner(p_context).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_context);
-    let [g1, g2, g3] = Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).areas(a);
+    let [g1, g2, g3, g4] = Layout::vertical([Constraint::Length(1); 4]).areas(a);
     // the window as the model reports it: none until claude's first result, none on the own loop
     let (ctx, window) = s.context_window.map_or((0.0, String::new()), |w| (s.context as f64 / w as f64, format!(" / {}", human(w))));
     gauge(f, g1, ctx, &format!("{:<12}{}{window}", "ctx", human(s.context)), th.accent, th);
@@ -86,8 +86,17 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     // its own line: written once at a premium, it is most of what a turn adds
     // read back from claude's cache (a tenth of the price; its share of all sent) and written into it (new content,
     // once, at a premium)
-    gauge(f, g2, s.usage.cache_hit(), &format!("{:<12}{} {:.0}%", "cache read", human(s.usage.cache_read), s.usage.cache_hit() * 100.0), if misses == 0 { th.ok } else { th.warn }, th);
+    // the session's share, and the last call's (what Claude Code's cache meters show: one call after a short exchange
+    // reads ~99%, the whole session less, since every call writes what is new once)
+    let last = s.last_call_hit().map_or(String::new(), |h| format!(" · last {:.0}%", h * 100.0));
+    gauge(f, g2, s.usage.cache_hit(), &format!("{:<12}{} {:.0}%{last}", "cache read", human(s.usage.cache_read), s.usage.cache_hit() * 100.0), if misses == 0 { th.ok } else { th.warn }, th);
     f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!("{:<12}", "cache write"), st(th.text)), Span::styled(human(s.usage.cache_write), st(th.text)), Span::styled(miss, st(th.warn))])), g3);
+    // how long the cache stays warm: after that the next call writes the whole context again
+    if let (Some(left), Some(ttl)) = (s.cache_left(v.clock_ms), s.cache_ttl_ms) {
+        let life = if ttl >= 3_600_000.0 { "1h" } else { "5m" };
+        let (text, color) = if left > 0.0 { (format!("{} of {life}", clock_str(left)), th.ok) } else { (format!("expired ({life})"), th.warn) };
+        f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!("{:<12}", "cache life"), st(th.text)), Span::styled(text, st(color))])), g4);
+    }
 
     // tokens per turn
     let b = panel("tokens", th);
