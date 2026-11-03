@@ -16,6 +16,33 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Test scope on the hard tasks; Sonnet 5.5 and Opus 5.5 low as the lead, 2026-11-03 (bench only)
+
+tasks-hard (four tasks x two runs per arm, arms interleaved, 12:57-15:11, 0.1.46), the default config (repo profile, no
+boss, Opus 5.5 medium), with and without test scope. Opus xhigh judge, one pool per task, two passes (8 calls).
+
+| Setup | Judge | Hidden | Cost / run | Minutes | Calls |
+|---|---|---|---|---|---|
+| test scope (default) | 6.25 | 12/14 | $1.20 | 22.9 | 23.1 |
+| `--no-test-scope` | 6.31 | 12/14 | $1.49 | 45.8 | 24.6 |
+
+Same score and hidden tests, 19% cheaper, twice as fast: test scope holds where package tests take longest (same hour,
+so the time gain is clean). It stays the default.
+
+tasks/ (six tasks x two runs per arm, 15:11-15:38, 0.1.47: the explorer at medium whatever the lead's effort), the lead
+swapped, against this morning's default (Opus medium with test scope, v1333-v1344); one pool per task with all three,
+two passes (12 calls). One Sonnet run (hugo-section-slug) searched the web and is left out (leakscan).
+
+| Lead | Judge | Hidden | Cost / run | Minutes | Calls |
+|---|---|---|---|---|---|
+| Opus 5.5 medium (default) | 7.54 | 43/48 | $0.58 | 5.7 | 20.0 |
+| Sonnet 5.5 medium (n=11) | 5.18 | 35/48 | $0.26 | 4.9 | 15.9 |
+| Opus 5.5 low | 5.79 | 35/48 | $0.38 | 4.4 | 15.4 |
+
+Both cheaper leads lose well beyond noise (-2.36 and -1.75, 8 fewer hidden tests each): they stop sooner (16 calls
+against 20) and miss parts of the task. Opus medium stays the lead. (The default's 7.54 here against 6.92 in its first
+pool: scores move with the pool; only comparisons inside a pool count.)
+
 ## 0.1.47 (2026-11-03): the default's explorer at medium effort
 
 - Without boss mode, the Haiku explorer (and the opt-in tester) had no effort of their own and ran at the session's: at

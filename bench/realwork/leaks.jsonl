@@ -125,6 +125,7 @@
 {"task": "hugo-section-slug", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["modcache", "web"]}
 {"task": "hugo-section-slug", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "hugo-section-slug", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}
+{"task": "hugo-section-slug", "harness": "tazuna-tsson-v1391@claude-sonnet-5-5:medium", "channels": ["web"]}
 {"task": "hugo-template-return", "harness": "tazuna-cascade-v33@deepseek-v4.1-flash:max", "channels": ["web-blocked"]}
 {"task": "hugo-template-return", "harness": "tazuna-cascade-v34@deepseek-v4.1-flash:max", "channels": ["web"]}
 {"task": "hugo-template-return", "harness": "tazuna-own-v28@deepseek-v4.1-flash:medium", "channels": ["web"]}

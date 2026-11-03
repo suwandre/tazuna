@@ -282,6 +282,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | `--rtk` (rtk's Claude hook, 2026-11-02) | judge +0.12 (7.00), tokens +15%, cost +6% | command output -53%, but the agent made more calls: no saving in tazuna: opt-in |
 | `--boss-pick` (the boss's lead picks each worker call's effort, Sonnet for hard changes, 2026-11-03) | tasks/ judge 6.62 vs 7.00 at +53% cost; tasks-hard 7.12 vs 6.19 at 2.1x cost, +34% time | the lead sent the main change to Sonnet in 17 of 21 runs, also on easy tasks; the hard-task gain is mostly one task: opt-in |
 | Splitting a long run into a fresh conversation with a summary (2026-11-03, simulated on 75 recorded Opus runs, 15 with 40+ calls, up to 99) | best split point saves 0% on a typical run, 3% median on the 40+ call runs, none over 15% | Opus 5.5 reads its cache at 0.05x, so a long context costs little next to a hand-off (new prefix written, files read again). Model: agents ≈ calls × √(new tokens per call ÷ 2 × hand-off cost), ~1 at 20 calls, ~2 at 50. Only quality or time could justify splitting; untested |
+| Sonnet 5.5 medium as the default's lead (2026-11-03) | judge 5.18 vs 7.54, hidden 35/48 vs 43/48, cost -55% | stops sooner and misses parts of the task |
+| Opus 5.5 low effort as the lead (2026-11-03) | judge 5.79 vs 7.54, hidden 35/48 vs 43/48, cost -34% | same: fewer calls, less finished; medium is the floor for the lead |
 | Repo map in the first message | +3% cost, same judge | the agent still reads the files it changes in full |
 | Sonnet explorer subagent (`--explorer sonnet`) | +12% cost, −35% turns, same judge | the reading moves, it does not shrink |
 | Haiku tester subagent (`--tester haiku`) | −14% cost, judge −0.40 | Fable judge agrees (lower, −0.21 of 5 vs Opus −0.32); the gap is one no-change run on T-946, even without it; saving at the noise line: opt-in |
@@ -302,6 +304,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-03: test scope confirmed on the hard tasks (same judge and hidden tests, -19% cost, 2x faster, arms
+  interleaved). Cheaper leads ruled out: Sonnet 5.5 medium and Opus 5.5 low both lose 1.8-2.4 judge points and 8 hidden
+  tests on tasks/. The Claude engine's levers are now measured except the boss-only items and company tickets; Opus
+  medium with a Haiku explorer at medium and test scope is the default.
 - 2026-11-03: worker count settled for the Claude engine: default = Opus + Haiku explorer (live), boss = Opus + three
   Haiku workers (headless); boss pays by moving reading, editing and test output to a cheaper model (its lead reads 248k
   tokens a run against 786k), not by splitting, and trades time for cost. Boss-only items left, none measured: escalation
