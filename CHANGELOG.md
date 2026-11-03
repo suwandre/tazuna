@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## `--test-scope` against the default, 2026-11-03 (bench only)
+
+tasks/ (six Go tasks) x two runs, Opus 5.5 medium, the repo profile without boss mode; `--test-scope` (0.1.39, v1333-v1344,
+09:58-10:15) against the 2026-11-02 all-tools runs (0.1.24, v1209-v1231 odd, 13:19). Opus xhigh judge, one pool per task,
+two passes (12 calls). No run saw the fix.
+
+| Setup | Judge | Hidden | Cost / run | Tokens sent | Calls | Minutes | Test-command minutes (whole package / scoped) |
+|---|---|---|---|---|---|---|---|
+| default | 6.58 | 42/48 | $0.70 | 0.94M | 21.9 | 13.6 | 4.3 / 2.7 (3.4 / 3.3 runs) |
+| `--test-scope` | 6.92 | 43/48 | $0.58 | 0.83M | 20.0 | 5.7 | 0.2 / 1.5 (0.8 / 4.0 runs) |
+
+Judge inside noise (+0.33), cost -17%, tokens -12%, time -58%. 5.3 of the 7.9 minutes saved are test commands measured
+inside the runs; the rest is likely the hour (the baseline ran in the afternoon, when the API is slower) and machine load,
+so the time gain is between ~40% and 58%. Dominating on these tasks; only Go tasks and a baseline from another day.
+
 ## 0.1.39 (2026-11-03): `--test-scope` (opt-in, under measurement)
 
 - `--test-scope`: claude is told to run only the tests that cover its change while it works, not whole packages or the
