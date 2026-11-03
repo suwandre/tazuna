@@ -216,6 +216,16 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   (27 MB instead of ~270 MB). The impersonation rule is unchanged: the update allows the official channels, not reusing
   Claude Code's OAuth token. Waiting on the user (plan, claimed credits, key in `~/.anthropic-key`).
 
+- **DeepSeek Harness (`dsh`) as a rival for the own loop** (own-loop phase, after the Claude engine). DeepSeek's official
+  harness, 0.2.1-rc.5 (MIT, developer preview, signed by Hangzhou DeepSeek), installed by the user. Plugins on Cordis:
+  subagents (spawn and fork, up to 8 live), plan mode, goals with a goal-round driver (keeps working until the goal is
+  met: a likely source of the reported higher quality at more time and cost), web search through DeepSeek. The CLI runs
+  the desktop app's own core, so its numbers stand for the app. Benchmarkable: `dsh headless --json "task"` (events as
+  NDJSON). Default model `deepseek-flash` on `deepseek-official`; other providers through `llm-pi-ai` (a config patch in
+  `~/.dsh/profiles/headless/cordis.patch.yml`). Claims found: no benchmark numbers, anecdotes only. Plan: tasks/ six x
+  two with DeepSeek V4.1 Flash 1017 on SubRouter (the own loop's model) against the own loop, judged together; then, if
+  it wins, find which plugin does it and borrow the idea. Never with company code (it calls DeepSeek's API). Cost:
+  likely above the $0.50 weekly SubRouter cap; estimate first.
 - Hand-off to a fresh session with a structured summary instead of compaction (Amp, pi): not needed yet (decision log
   2026-10-29).
 - Checkpoints and rewind (OMP).
