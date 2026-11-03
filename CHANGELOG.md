@@ -37,6 +37,13 @@ noise (-0.38). On tasks-hard +0.93, just over the noise line at n=8, at 2.1x the
 mostly one task (prometheus-replay-mmap 6.5 vs 3.0; caddy-tls 5.5 vs 6.0, hugo-eq 8.5 vs 8.5, prometheus-wbl 8.0 vs 7.25).
 A trade, not a dominating change: `--boss-pick` stays opt-in.
 
+Where the cost and time went (per run, from each run's per-model usage and subagent timings): the Opus lead cost the same
+($0.47 vs $0.52 hard, $0.38 vs $0.37 tasks/): picking is free. The gap is the Sonnet worker: $1.40 a hard run against the
+$0.37 of Haiku it replaced; it read a third of Haiku's tokens (1.4M vs 4.3M cached) at 3.6x the money. Time: the hard-task
+implementer ran 52 minutes on Sonnet against 36 on Haiku, because Sonnet ran whole-package test suites (1.6 a run, 0 for
+Haiku; prometheus tsdb takes 10-30 minutes with eight runs in parallel), once 113 minutes in one run with 30-90-minute
+timeouts and polling loops. That thoroughness likely also bought the hard-task gain.
+
 ## 0.1.38 (2026-11-03): live speed line; exact thinking counts
 
 - The tokens panel's speed line is live: while a call waits, "waiting for first token · 1.4s" counts up; while it writes,
