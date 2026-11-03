@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.39 (2026-11-03): `--test-scope` (opt-in, under measurement)
+
+- `--test-scope`: claude is told to run only the tests that cover its change while it works, not whole packages or the
+  repository; tazuna's verify already runs the changed packages' tests when it finishes and sends back failures. On
+  2026-11-02's no-boss runs (tasks/), package-wide test runs took 5.0 of 13.6 minutes a run; in boss-pick, Sonnet's
+  whole-suite runs were most of its extra time. Left out when verify is off.
+
 ## Boss-pick against fixed medium workers, 2026-11-03 (bench only)
 
 `--boss-pick` (0.1.37, frozen tz-v137) against boss mode with Haiku workers at medium (`--boss-effort medium`), Opus 5.5
