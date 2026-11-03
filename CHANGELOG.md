@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Test scope in boss mode, 2026-11-03 (bench only)
+
+tasks/ (six Go tasks) x two runs, boss with Haiku workers at medium, Opus 5.5 medium leading; 0.1.42 (the workers' rule,
+v1345-v1356, 11:01-11:26) against the 2026-11-02 boss runs without test scope (0.1.32, v1257-v1290 bhmed, 17:00). Opus xhigh
+judge, one pool per task, two passes (12 calls). No run saw the fix.
+
+| Setup | Judge | Hidden | Cost / run | Minutes | Implementer minutes | Whole-package test minutes | Lead cache misses |
+|---|---|---|---|---|---|---|---|
+| boss, no test scope | 6.92 | 45/48 | $0.45 | 15.2 | 10.1 | 5.2 | 0.50 |
+| boss, test scope | 6.62 | 44/48 | $0.45 | 10.8 | 5.4 | 0.6 | 0.42 |
+
+Judge inside noise (-0.30), same cost, 29% faster: the workers' whole-package test runs fell from 5.2 to 0.6 minutes, the
+implementer's time halved. The lead still loses its cache about as often (waits stay over five minutes on some runs), so
+cost is unchanged. Kept as the default (0.1.42). Boss is still 1.9x slower than the default and 22% cheaper on tasks/.
+
 ## 0.1.43 (2026-11-03): the last call's cache share; how long the cache stays warm
 
 - Context panel: "cache read 2.28M 92% · last 98%": the session's share read from the cache and the latest call's (what
@@ -25,7 +40,7 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
   what claude reports writing); "expired" in warning colour after that, when the next call writes the whole context
   again. Claude path only.
 
-## 0.1.42 (2026-11-03): test scope for the workers too (under measurement)
+## 0.1.42 (2026-11-03): test scope for the workers too
 
 - With test scope on (the default), the workers that run tests (implementer, implementer-strong, tester) are told to run
   only the tests covering the change; the explorer runs none. The lead already had the rule; in boss mode it runs no

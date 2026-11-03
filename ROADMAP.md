@@ -291,6 +291,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-03: test scope reaches the boss's workers (0.1.42): same judge (6.62 vs 6.92, noise), same cost, 29% faster
+  (their whole-package test minutes 5.2 to 0.6). Per-role analysis (CHANGELOG): the expensive model is the cost and the
+  cheap one the time in every config; worker reports are 2-5% of the lead's reads; the boss's lead loses its cache on
+  waits over five minutes. Next candidates: Haiku first and Sonnet on the redo; a cheaper or conditional own-loop reviewer.
 - 2026-11-03: test scope becomes the default (0.1.40): Claude runs only the tests covering its change, verify runs the
   changed packages' tests at the end. tasks/ six x two: judge 6.92 vs 6.58, cost -17%, time -58% (test commands 7.0 to
   1.7 minutes a run; the baseline ran a day earlier in the afternoon, so 40-58%). Go tasks only; the workers in boss mode
