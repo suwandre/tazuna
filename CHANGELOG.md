@@ -16,6 +16,25 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Company tickets, batch 2, 2026-11-03 (bench only)
+
+Five PRs by other authors (t-973 #1198 Ledger corrections, b-188 #1190 duplicate documents, t-1106 #1375 stuck
+scheduled runs, t-986 #1167 signing for an unknown bank, t-1039 #1309 a visitor's plan on arrival), today's default
+(0.1.47) x two runs (21:18-22:17), judged against the merged PR, two passes (10 calls; ~2% of the window).
+
+| Ticket | Judge (two runs) | Minutes | Cost | Files (PR) |
+|---|---|---|---|---|
+| t-1039 | 7, 6 | 16.7 | $1.34 | 10 (37) |
+| t-986 | 6, 6 | 7.2 | $0.49 | 2 (15) |
+| t-1106 | 6, 5 | 18.7 | $1.78 | 7-10 (8) |
+| b-188 | 5, 6 | 13.9 | $1.76 | 12-14 (31) |
+| t-973 | 5, 5 | 22.4 | $3.19 | 10-12 (26) |
+| **mean** | **5.70** | **15.8** | **$1.71** | |
+
+No new type errors or unit-test failures in any run. Weakest dimension: edge cases (2-3 of 5), where the reviewers' round-1
+findings sit too. No human comparison yet (the PRs' first reviewed commits could serve, as the user's round 1 did in
+batch 1).
+
 ## Company tickets, batch 1, 2026-11-03 (bench only)
 
 Five of the user's company PRs (acme/app, TypeScript: t-838, -841, -842, -845, -851) with a peer's
