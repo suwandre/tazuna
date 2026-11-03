@@ -72,7 +72,8 @@ const BOSS_EFFORT: &str = "medium";
 /// 71 against 60).
 const BATCH_RULE: &str = "Make independent tool calls together in one turn: read all the files you need at once, and run commands that do not depend on each other at once, instead of one call per turn. Only wait for a result when the next call depends on it.";
 /// `--test-scope`: package and repo-wide test runs took 37% of a no-boss run's time on tasks/ (5.0 of 13.6 minutes,
-/// 2026-11-02), and tazuna runs the changed packages' tests itself when claude finishes (verify). Under measurement.
+/// 2026-11-02), and tazuna runs the changed packages' tests itself when claude finishes (verify). Default since 0.1.40:
+/// same judge, -17% cost, 40-58% faster (2026-11-03).
 const TEST_SCOPE_RULE: &str = "While working, run only the tests that cover your change (in Go: `go test -run 'TestA|TestB' ./pkg/`), not whole packages or the whole repository: when you finish, tazuna runs the changed packages' tests and sends you any failure.";
 const FINISH_RULES: &str = "Finish only when the task is fully done: every requirement and acceptance criterion in the request is met and checked. Do not stop to ask for confirmation or leave steps for the user. Before relying on a name you have not read (a database column, function, field, API), read where it is defined.";
 
@@ -345,7 +346,7 @@ pub struct Live {
     pub repo_tools_core: bool,
     /// `--batch-calls`: claude is told to make independent tool calls in the same turn. Under measurement.
     pub batch_calls: bool,
-    /// `--test-scope`: claude told to run only the tests covering its change while it works (verify runs the rest).
+    /// Claude told to run only the tests covering its change while it works (verify runs the rest); `--no-test-scope`: off.
     pub test_scope: bool,
     /// `--rtk`: claude's Bash commands go through rtk (`rtk hook claude`), which shortens their output. Under measurement.
     pub rtk: bool,
@@ -468,7 +469,7 @@ impl Live {
             repo_tools_core: false,
             rtk: false,
             batch_calls: false,
-            test_scope: false,
+            test_scope: true,
             review_model: None,
             review_key: None,
             provider: None,

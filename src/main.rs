@@ -38,7 +38,8 @@
 //!          [--repo-tools core|all]   # repo profile: Claude Code's coding tools only (core) or all of them (default)
 //!          [--rtk]   # claude's Bash commands through rtk (shortened output; rtk must be installed)
 //!          [--batch-calls]   # repo profile: claude told to make independent tool calls in one turn
-//!          [--test-scope]   # claude runs only the tests covering its change while working; verify runs the rest
+//!          [--no-test-scope]   # claude may run whole test suites while working (default: only the tests covering its
+//!                              # change; verify runs the changed packages' tests at the end)
 //!          [--boss-effort LEVEL]   # boss mode's workers at LEVEL (default medium); /boss switches boss mode live
 //!          [--boss-pick]   # boss mode's lead picks each worker call's effort, and a Sonnet worker for hard changes
 //!          [--price IN,CACHED,OUT]   # own loop: USD per million tokens, for providers whose model list has no prices
@@ -131,7 +132,7 @@ struct Args {
     rtk: bool,
     /// `--batch-calls`: claude told to make independent tool calls in one turn. Under measurement.
     batch_calls: bool,
-    /// `--test-scope`: claude told to run only the tests covering its change while working. Under measurement.
+    /// Claude told to run only the tests covering its change while working (default; `--no-test-scope` turns it off).
     test_scope: bool,
     /// `--boss-effort LEVEL`: the boss's workers at LEVEL (unset: medium, measured best).
     boss_effort: Option<String>,
@@ -246,7 +247,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         repo_tools_core: false,
         rtk: false,
         batch_calls: false,
-        test_scope: false,
+        test_scope: true,
         boss_effort: None,
         boss_pick: false,
         review_model: None,
@@ -299,6 +300,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--rtk" => a.rtk = true,
             "--batch-calls" => a.batch_calls = true,
             "--test-scope" => a.test_scope = true,
+            "--no-test-scope" => a.test_scope = false,
             "--repo-tools" => match val()?.as_str() {
                 "core" => a.repo_tools_core = true,
                 "all" => a.repo_tools_core = false,

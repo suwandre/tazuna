@@ -291,6 +291,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-03: test scope becomes the default (0.1.40): Claude runs only the tests covering its change, verify runs the
+  changed packages' tests at the end. tasks/ six x two: judge 6.92 vs 6.58, cost -17%, time -58% (test commands 7.0 to
+  1.7 minutes a run; the baseline ran a day earlier in the afternoon, so 40-58%). Go tasks only; the workers in boss mode
+  do not get the rule yet.
 - 2026-11-03: `--boss-pick` measured (tasks/ six x two, tasks-hard four x two): the lead varies effort as asked (testers
   low, explorers medium) but hands the main change to the Sonnet worker in 17 of 21 runs. Same score at +53% cost on
   ordinary tasks, +0.93 at 2.1x cost on hard ones (mostly one task): a trade, opt-in. If revisited: Sonnet only after a

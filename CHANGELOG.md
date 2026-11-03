@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.40 (2026-11-03): test scope on by default
+
+- Claude runs only the tests that cover its change while it works; tazuna's verify runs the changed packages' tests when
+  it finishes (measured below: same judge, -17% cost, 40-58% faster). `--no-test-scope` turns it off; left out when
+  verify is off. Bench arms built on the default (`tazuna-rtall` and the like) include it from 0.1.40 on.
+
 ## `--test-scope` against the default, 2026-11-03 (bench only)
 
 tasks/ (six Go tasks) x two runs, Opus 5.5 medium, the repo profile without boss mode; `--test-scope` (0.1.39, v1333-v1344,
