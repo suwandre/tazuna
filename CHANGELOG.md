@@ -16,6 +16,27 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Where cost and time sit, per role, 2026-11-03 (analysis of stored runs, no new runs)
+
+Opus 5.5 medium lead; default = repo profile with test scope (v1333-v1344, tasks/); boss = Haiku medium workers (0.1.32,
+before test scope: tasks/ v1257-v1290, tasks-hard v1317-v1331); own loop = `reviewed` preset (DeepSeek 1017 max on
+SubRouter, Opus medium reviewer, v661-v679, 7 runs). Worker cost split by their reported tokens; time from each run's events.
+
+| Config | Cost / run | Cost by role | Minutes / run | Time by role |
+|---|---|---|---|---|
+| default, tasks/ | $0.58 | Opus lead 98%, explorer 2% | 5.6 | lead's tools 2.4, lead's calls ~2, explorer 1.0, verify 0.5 |
+| boss, tasks/ | $0.45 | lead 82%, implementer 9%, explorer 7% | 14.9 | implementer 10.1, tester 1.7, explorer 1.5, lead 1.0, verify 0.8 |
+| boss, tasks-hard | $0.92 | lead 57%, implementer 26%, explorer 16% | 46.1 | implementer 35.9, verify 6.8, tester 2.9, explorer 1.6 |
+| own loop, reviewed | $0.23-0.52 | Opus reviewer ~95%, DeepSeek ~5% | 19-50 | DeepSeek 19-45, review 1-1.5, fix round 3-16 |
+
+- The expensive model is the cost and the cheap one the time, in every config.
+- Worker reports are small: the lead re-reads them for 2-5% of its cache reads. Shorter reports are not a lever.
+- The boss's lead loses its cache while it waits: workers run past the 5-minute cache life (gaps of 6-85 minutes), so
+  0.5 (tasks/) to 1 (hard) of its calls a run rewrites the whole context: 30% / 48% of its cache writes, and writes are
+  45-51% of the lead's cost (reads 18-23%, output 31-32%). The 1-hour cache costs 2x per write instead of 1.25x: about
+  even on tasks/, a small saving on the hard tasks. Faster workers (test scope for them) shrink the waits instead.
+- Boss mode ran before test scope; the default with it is now 2.7x faster than boss at 29% more cost on tasks/.
+
 ## 0.1.41 (2026-11-03): no more "6684 tok/s"
 
 - Claude sometimes hands a finished reply over in one burst (66 stream deltas in 57 ms after the text was written); its
