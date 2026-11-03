@@ -42,6 +42,7 @@
 //!                              # change; verify runs the changed packages' tests at the end)
 //!          [--boss-effort LEVEL]   # boss mode's workers at LEVEL (default medium); /boss switches boss mode live
 //!          [--boss-pick]   # boss mode's lead picks each worker call's effort, and a Sonnet worker for hard changes
+//!          [--boss-escalate]   # boss mode: a Sonnet worker only redoes what the Haiku implementer got wrong
 //!          [--price IN,CACHED,OUT]   # own loop: USD per million tokens, for providers whose model list has no prices
 //!          [--max-minutes N]   # own loop: stop (or with --escalate, hand over) after N minutes per task; default: no
 //!                              # time limit, only the $1 cap per task (TAZUNA_MAX_USD; cheap models are slow but
@@ -138,6 +139,8 @@ struct Args {
     boss_effort: Option<String>,
     /// `--boss-pick`: the lead picks each worker call's effort and, for a hard change, a Sonnet worker. Under measurement.
     boss_pick: bool,
+    /// `--boss-escalate`: a Sonnet worker only redoes what the implementer got wrong. Under measurement.
+    boss_escalate: bool,
     review_model: Option<String>,
     review_key_env: Option<String>,
     review_only: bool,
@@ -250,6 +253,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         test_scope: true,
         boss_effort: None,
         boss_pick: false,
+        boss_escalate: false,
         review_model: None,
         review_key_env: None,
         review_only: false,
@@ -320,6 +324,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--tester" => a.tester = Some(val()?),
             "--boss" => a.boss = Some(val()?),
             "--boss-pick" => a.boss_pick = true,
+            "--boss-escalate" => a.boss_escalate = true,
             "--boss-effort" => {
                 let e = val()?;
                 if !models::LEVELS.contains(&e.as_str()) {
@@ -531,6 +536,7 @@ fn main() -> Result<()> {
             live.boss = boss;
             live.boss_effort = a.boss_effort.clone();
             live.boss_pick = a.boss_pick;
+            live.boss_escalate = a.boss_escalate;
             live.advisor = a.advisor.clone();
             if let Some((m, e)) = a.escalate.clone() {
                 live.set_escalate(m, e);
@@ -677,6 +683,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.boss = boss;
     live.boss_effort = a.boss_effort.clone();
     live.boss_pick = a.boss_pick;
+    live.boss_escalate = a.boss_escalate;
     if let Some((m, e)) = a.escalate.clone() {
         live.set_escalate(m, e);
     }

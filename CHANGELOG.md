@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.45 (2026-11-03): `--boss-escalate` (opt-in, under measurement)
+
+- Boss mode with a fourth worker, `implementer-strong` on Sonnet, that only redoes what the Haiku implementer got wrong
+  (its checks still fail, the tester reports failures it caused, or verify sends back failing tests); never a first
+  attempt. Workers at the boss's effort (medium). Redo runs on Haiku alone scored 5.83 against 7.04 for first-time
+  successes; with Sonnet available, 6.75.
+
 ## 0.1.44 (2026-11-03): cache life from the request's start
 
 - The cache's life runs from the start of the request that read or wrote it (Anthropic's docs), not from the reply's

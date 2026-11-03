@@ -63,6 +63,13 @@ across several files). Never xhigh or max for a worker. A change that is hard ev
 cross-module design, a fix that already failed once) goes to implementer-strong ({strong}) at medium or high instead.", levels(worker), levels(strong))
 }
 
+/// `--boss-escalate`: the stronger worker only redoes what the implementer got wrong. Boss runs whose implementer needed a
+/// second attempt scored 5.83 against 7.04 on Haiku alone, 6.75 with Sonnet available (2026-11-03); the lead choosing
+/// up front (`--boss-pick`) sent 17 of 21 first attempts to Sonnet, at twice the cost.
+fn boss_escalate_rule(strong: &str) -> String {
+    format!("A fourth subagent, implementer-strong, runs on a stronger model ({strong}) and costs several times as much. Never give it a first attempt: every change goes to the implementer first. Use implementer-strong only to redo a change the implementer got wrong (its checks still fail after its attempt, the tester reports failures it caused, or tazuna sends back failing tests), and give it your original instructions, what the implementer did, and the failure output.")
+}
+
 /// Boss mode's workers' effort when `--boss-effort` does not say (2026-11-02, six tasks x two runs, Opus medium leading:
 /// Haiku at medium judge 6.79, $0.45 a run; high 6.58, $0.67; xhigh 6.55, $1.02; no boss 6.42, $0.70).
 const BOSS_EFFORT: &str = "medium";
@@ -125,7 +132,7 @@ fn subagents(explorer: Option<&str>, tester: Option<&str>, implementer: Option<&
     let mut agents = serde_json::Map::new();
     if let Some(model) = strong {
         agents.insert("implementer-strong".into(), json!({
-            "description": "Makes a hard code change the lead engineer specifies (a subtle algorithm, a cross-module design, a fix that already failed once) and reports what it did.",
+            "description": "A stronger, dearer implementer: makes a code change the lead engineer specifies (a hard one, or one the implementer got wrong) and reports what it did.",
             "prompt": "You implement a hard change for a lead engineer. Read the code you change and its callers first. Follow the instructions; if one is wrong in a concrete detail, adapt minimally and say so. Run the checks it names. Report briefly: files changed, what you did, anything you could not do or are unsure about.",
             "tools": ["Read", "Grep", "Glob", "Bash", "Edit", "Write"],
             "model": model,
@@ -343,6 +350,8 @@ pub struct Live {
     pub boss_effort: Option<String>,
     /// `--boss-pick`: the lead picks each worker call's effort and, for a hard change, the stronger worker.
     pub boss_pick: bool,
+    /// `--boss-escalate`: a stronger worker (Sonnet) that only redoes what the implementer got wrong. Under measurement.
+    pub boss_escalate: bool,
     /// `--advisor MODEL`: Claude Code's advisor tool; the main model can ask MODEL for advice when it is stuck.
     pub advisor: Option<String>,
     pub verify: verify::Mode,
@@ -471,6 +480,7 @@ impl Live {
             boss: None,
             boss_effort: None,
             boss_pick: false,
+            boss_escalate: false,
             advisor: None,
             verify: verify::Mode::Auto,
             bash_cap: crate::mcp::DEFAULT_BASH_CAP,
@@ -1202,7 +1212,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "batch_calls": self.batch_calls, "test_scope": self.test_scope, "boss_effort": self.boss_effort, "boss_pick": self.boss_pick, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "batch_calls": self.batch_calls, "test_scope": self.test_scope, "boss_effort": self.boss_effort, "boss_pick": self.boss_pick, "boss_escalate": self.boss_escalate, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -1314,7 +1324,11 @@ impl Live {
                 }
                 let explore_rule = self.explorer_provider.as_ref().map(|_| EXPLORE_TOOL_RULE).or(self.explorer.as_ref().map(|_| EXPLORER_RULE));
                 let scoped = self.test_scope && !matches!(self.verify, verify::Mode::Off);
-                let pick = (boss && self.boss_pick).then(|| boss_pick_rule(self.boss.as_deref().unwrap_or("haiku"), BOSS_STRONG));
+                let pick = if boss && self.boss_pick {
+                    Some(boss_pick_rule(self.boss.as_deref().unwrap_or("haiku"), BOSS_STRONG))
+                } else {
+                    (boss && self.boss_escalate).then(|| boss_escalate_rule(BOSS_STRONG))
+                };
                 let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE)]
                     .into_iter()
                     .flatten()
@@ -1325,7 +1339,7 @@ impl Live {
                 if let Some(m) = self.boss.as_deref() {
                     // the workers at medium unless told otherwise: at the session's xhigh they cost 46% more than no boss
                     // at all and scored no better; medium was the cheapest and best (2026-11-02)
-                    let strong = self.boss_pick.then_some(BOSS_STRONG);
+                    let strong = (self.boss_pick || self.boss_escalate).then_some(BOSS_STRONG);
                     cmd.args(["--agents", &subagents(Some(m), Some(m), Some(m), Some(self.boss_effort.as_deref().unwrap_or(BOSS_EFFORT)), strong, scoped)]);
                 } else if self.explorer.is_some() || self.tester.is_some() {
                     cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref(), None, None, None, scoped)]);
