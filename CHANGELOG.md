@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## `--boss-escalate` on tasks/, 2026-11-03 (bench only, not judged)
+
+Six tasks x two runs (0.1.45, v1357-v1368, 11:46-12:14) against this morning's boss runs with test scope (v1345-v1356).
+The lead never called the Sonnet worker: second implementer attempts (4 runs) went to Haiku again, and failing tests sent
+back by verify (the same tasks fail them in the baseline too) went to the tester, which found them unrelated. Cost $0.47
+vs $0.45, 11.4 vs 10.8 minutes, hidden 42/48 vs 44/48: the same setup in effect, so not judged (12 calls saved). A rule
+the lead may follow is not enough; next: the boss hook sends a second attempt at the same change to Sonnet.
+
 ## 0.1.45 (2026-11-03): `--boss-escalate` (opt-in, under measurement)
 
 - Boss mode with a fourth worker, `implementer-strong` on Sonnet, that only redoes what the Haiku implementer got wrong
