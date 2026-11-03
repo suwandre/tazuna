@@ -42,6 +42,12 @@ that apply, tazuna's versions repeat 50 (76%) and avoid 16; Critical 2 of 4, Maj
 tazuna's first version carries most of what reviewers found in the humans' first versions: the review step, not the
 first draft, is where these defects are caught.
 
+Preview of a review step (batch 1's 19 round-1 findings, `fcheck.py`, 5 calls): October's boss runs with the in-loop
+five-lens review (0.0.51, one run a ticket) repeat 59% of the applicable findings, the same boss runs without it 53%,
+today's default 68% (two runs a ticket). No sign that the review removed defects; but 3 of those 5 reviews ran before
+boss mode's workers had finished (a bug fixed afterwards), so the preview cannot settle it. A clean test waits for the
+weekly reset (Nov 7).
+
 ## Company tickets, batch 1, 2026-11-03 (bench only)
 
 Five of the user's company PRs (acme/app, TypeScript: t-838, -841, -842, -845, -851) with a peer's
