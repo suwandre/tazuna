@@ -291,6 +291,13 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-03: offline check of a per-task decider (stored, judged runs; config chosen on one half of the runs, scored on
+  the other): within the Claude engine no headroom. tasks/ (12 configs): picking per task 7.21 against the best fixed
+  config 7.27 (default 6.92); tasks-hard (3 configs): 7.22 against 7.12. Per-task winners flip between halves: the
+  configs differ by noise per task. The one choice with a payoff is the engine (own-loop DeepSeek at ~$0.02 a run, in
+  October's shared pools ~1 judge point above Opus, ~3x slower; company code stays on Claude), and that is a rule that
+  exists (`--data`, cascade with escalation on failing tests). The decision model stays parked until a task set shows
+  config differences above noise.
 - 2026-11-03: `--boss-escalate` (Sonnet only redoes what Haiku got wrong) deferred: asked by rule, the lead never escalated
   (12 runs); it needs the boss hook to route second attempts, and with ~30% of runs needing a redo, 8 runs per arm cannot
   show the expected ~+0.3. It improves boss mode only. Output of the default (tasks/, 11.7k tokens a run, ~41% of its
