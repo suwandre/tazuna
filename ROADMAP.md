@@ -304,6 +304,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-03: company tickets, batch 2 (five PRs by other authors): judge 5.70 against the merged PRs; against the
+  authors' own first versions 5.19 vs 6.62 (partly design anchoring); tazuna's versions repeat 76% of the reviewers'
+  applicable findings (Critical 2 of 4, Major 19 of 28). Next Claude-engine candidate with a measurable target: a review
+  step (the five-lens prompt caught the most findings in the October recall test), scored by findings caught on both
+  batches, not by the judge alone; cost bar: below the no-review run's +65%.
 - 2026-11-03: company tickets, batch 1 (five of the user's PRs, two runs): today's default scores 6.00 against the
   user's own Claude Code first round 6.20 and October's boss runs 5.80 (all noise), no new type errors or failing tests,
   15.8 minutes and $2.77 a ticket (October's boss: 36 minutes, $1.78). Batch 2 (five PRs by other authors, #1198, #1190,

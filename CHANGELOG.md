@@ -32,8 +32,15 @@ scheduled runs, t-986 #1167 signing for an unknown bank, t-1039 #1309 a visitor'
 | **mean** | **5.70** | **15.8** | **$1.71** | |
 
 No new type errors or unit-test failures in any run. Weakest dimension: edge cases (2-3 of 5), where the reviewers' round-1
-findings sit too. No human comparison yet (the PRs' first reviewed commits could serve, as the user's round 1 did in
-batch 1).
+findings sit too. Against the human authors (same evening, 8 + 4 judge calls): each PR's first reviewed commit (the author's own version
+before review, as a diff, its tests not run; t-1039 left out: its branch sat on three stacked PRs) judged in the
+pool with tazuna's two runs: authors 6.62 (n=4) against tazuna 5.19 (n=8), ahead on all four tickets (t-973 7.5 vs
+4.25, t-1106 7.0 vs 5.5, t-986 6.5 vs 6.0, b-188 5.5 vs 5.0). The authors' versions share the merged PR's design,
+which the judge compares against, so the gap is partly that. Reviewer findings (`fcheck.py`, Opus xhigh decides per
+finding and patch: present, avoided, or not applicable; round 1 and later rounds, 48 findings x 2 runs): of the 66
+that apply, tazuna's versions repeat 50 (76%) and avoid 16; Critical 2 of 4, Major 19 of 28, Minor 29 of 34 present.
+tazuna's first version carries most of what reviewers found in the humans' first versions: the review step, not the
+first draft, is where these defects are caught.
 
 ## Company tickets, batch 1, 2026-11-03 (bench only)
 
