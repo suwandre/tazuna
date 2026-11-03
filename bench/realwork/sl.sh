@@ -1,7 +1,7 @@
 #!/bin/bash
 # 2026-11-03: two leads for the default config (repo profile, no boss, test scope), queued behind hts.sh: Sonnet 5.5 at
 # medium (tsson) and Opus 5.5 at low (tslow), the six tasks/ tasks x two runs each, arms interleaved (v1385-v1408,
-# sl.jobs), eight at a time, tazuna 0.1.46 frozen in ~/bench-homes/tz-v146. Baseline: this morning's default with test
+# sl.jobs), eight at a time, tazuna 0.1.47 frozen in ~/bench-homes/tz-v147. Baseline: this morning's default with test
 # scope (Opus medium, v1333-v1344, 09:58); the judge pools all three by hand, calls counted first. Waits for HTS-DONE.
 # Cap: no new run once the 5-hour window is at 70% (skipped, not held); week 95%; none below 15 GB free disk. Below 5%
 # battery unplugged it stops the runs and sleeps the Mac. Started with nohup.
@@ -11,7 +11,7 @@ log "waiting for HTS-DONE"
 until grep -q "HTS-DONE" hts.log 2>/dev/null; do sleep 60; done
 caffeinate -ims -w $$ &
 log "start; claude $(claude --version 2>/dev/null | head -1); $(df -g ~ | awk 'NR==2{print $4}') GB free"
-export BENCH_GATE=state BENCH_GATE_EXIT=1 GUARD_PAUSE_AT=70 GUARD_WEEK_AT=95 BENCH_TIMEOUT=10800 HARNESS_BIN=$HOME/bench-homes/tz-v146/tazuna
+export BENCH_GATE=state BENCH_GATE_EXIT=1 GUARD_PAUSE_AT=70 GUARD_WEEK_AT=95 BENCH_TIMEOUT=10800 HARNESS_BIN=$HOME/bench-homes/tz-v147/tazuna
 ps -axo command= | grep -q "[g]uard.py" || (cd .. && GUARD_PAUSE_AT=85 GUARD_KILL_AT=99 nohup ./guard.py >> guard.log 2>&1 &)
 running() { ps -axo command= | grep -E "run\.py --runs 1 --workers 1 --tasks \S+ --harness tazuna-ts(son|low)-v1(38[5-9]|39[0-9]|40[0-8])@" | grep -vc grep; }
 tree() { local c; for c in $(ps -axo pid=,ppid= | awk -v p="$1" '$2==p{print $1}'); do tree "$c"; done; echo "$1"; }
