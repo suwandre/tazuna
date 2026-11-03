@@ -291,6 +291,12 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-03: `--boss-escalate` (Sonnet only redoes what Haiku got wrong) deferred: asked by rule, the lead never escalated
+  (12 runs); it needs the boss hook to route second attempts, and with ~30% of runs needing a redo, 8 runs per arm cannot
+  show the expected ~+0.3. It improves boss mode only. Output of the default (tasks/, 11.7k tokens a run, ~41% of its
+  cost): thinking 3.7k, file edits 2.1k+ (Python heredoc scripts: the explorer rule keeps the lead from Read, so Edit
+  cannot be used), text 0.9k (final message 0.5k), the rest tokenization. No cheap lever: effort is already medium (low
+  ruled out), the edit scripts are compact.
 - 2026-11-03: test scope reaches the boss's workers (0.1.42): same judge (6.62 vs 6.92, noise), same cost, 29% faster
   (their whole-package test minutes 5.2 to 0.6). Per-role analysis (CHANGELOG): the expensive model is the cost and the
   cheap one the time in every config; worker reports are 2-5% of the lead's reads; the boss's lead loses its cache on
