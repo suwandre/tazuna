@@ -8,6 +8,7 @@
 Each harness runs with HOME=~/bench-homes/<harness> (own login, no user extensions/skills/plugins/memory),
 Go caches shared so builds stay warm. Claude Code variants also get an empty CLAUDE_CONFIG_DIR.
 """
+from datetime import datetime
 import argparse, json, os, re, shutil, statistics, subprocess, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -1166,6 +1167,10 @@ def wait_gate():
                 s = json.loads((GUARD_DIR / "guard.state.json").read_text())
                 # each limit with headroom for the runs already in flight (a run moves the 5h window ~3%, the week ~0.3%)
                 fh, wk = s.get("five_hour", s["util"]), s.get("seven_day", s["util"])
+                # a reading taken before its window reset belongs to the old window: no call has reported the new one
+                # yet (2026-11-03: 64% shown four minutes after the 5-hour reset; 2026-10-31: a queue skipped everything)
+                if fh >= wk and datetime.fromisoformat(s.get("reset", "9999-01-01T00:00:00+00:00")).timestamp() < time.time():
+                    fh = 0
                 if fh < pause_at and wk < float(os.environ.get("GUARD_WEEK_AT", 95)) and time.time() - s["at"] < 600:
                     return
                 fresh = time.time() - s["at"] < 600  # a stale reading (guard just started) means wait, not skip
