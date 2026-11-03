@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.46 (2026-11-03): test scope only where tazuna can test the repo
+
+- The test-scope rule tells claude that tazuna runs the changed packages' tests at the end. It is now added only when
+  verify finds a way to test the repo (a Go module, a Cargo crate, Python tests, a package.json test script at the root
+  or in a package; or a `--verify` command). Before, a repo without one (a JS app without a test script, Java, C#) was
+  told tests would run, and none did.
+
 ## `--boss-escalate` on tasks/, 2026-11-03 (bench only, not judged)
 
 Six tasks x two runs (0.1.45, v1357-v1368, 11:46-12:14) against this morning's boss runs with test scope (v1345-v1356).

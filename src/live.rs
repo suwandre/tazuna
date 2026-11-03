@@ -1323,7 +1323,8 @@ impl Live {
                     cmd.arg("--mcp-config").arg(server.to_string());
                 }
                 let explore_rule = self.explorer_provider.as_ref().map(|_| EXPLORE_TOOL_RULE).or(self.explorer.as_ref().map(|_| EXPLORER_RULE));
-                let scoped = self.test_scope && !matches!(self.verify, verify::Mode::Off);
+                // only where verify can test the repo: the rule tells claude that tazuna runs the tests at the end
+                let scoped = self.test_scope && verify::covers(&self.verify, &self.cwd);
                 let pick = if boss && self.boss_pick {
                     Some(boss_pick_rule(self.boss.as_deref().unwrap_or("haiku"), BOSS_STRONG))
                 } else {

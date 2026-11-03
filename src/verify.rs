@@ -164,6 +164,28 @@ pub fn check(cwd: &Path, tests: Option<String>, types: Option<(String, String)>)
     Outcome { cmd, ok: false, no_tests: false, timed_out: false, code: base.code.filter(|&c| c != 0).or(Some(1)), secs: base.secs.max(secs), output: trim(&output) }
 }
 
+/// Whether verify can test this repo at all: a command given, or one it would find (a Go module, a Cargo crate, Python
+/// tests, a package.json test script at the root or in a package up to three folders down). Test scope tells claude that
+/// tazuna runs the tests at the end; without a test command that would not happen.
+pub fn covers(mode: &Mode, cwd: &Path) -> bool {
+    match mode {
+        Mode::Off => false,
+        Mode::Command(_) => true,
+        Mode::Auto => ["go.mod", "go.work", "Cargo.toml"].iter().any(|f| cwd.join(f).exists()) || has_python_tests(cwd) || js_tests(cwd, 3),
+    }
+}
+
+fn js_tests(dir: &Path, depth: u32) -> bool {
+    if npm_script(dir, "test").is_some_and(|s| !s.contains("no test specified")) {
+        return true;
+    }
+    depth > 0
+        && std::fs::read_dir(dir).into_iter().flatten().flatten().any(|e| {
+            let name = e.file_name().to_string_lossy().into_owned();
+            e.file_type().is_ok_and(|t| t.is_dir()) && !name.starts_with('.') && name != "node_modules" && js_tests(&e.path(), depth - 1)
+        })
+}
+
 fn has_python_tests(cwd: &Path) -> bool {
     let named_test = |n: &str| n.ends_with(".py") && (n.starts_with("test_") || n.ends_with("_test.py"));
     ["pytest.ini", "conftest.py", "tests"].iter().any(|f| cwd.join(f).exists())
@@ -260,6 +282,26 @@ pub fn feedback(o: &Outcome, round: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn covers_only_repos_it_can_test() {
+        let dir = std::env::temp_dir().join(format!("tazuna-covers-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("packages/web/node_modules/x")).unwrap();
+        assert!(!covers(&Mode::Auto, &dir), "nothing to test");
+        assert!(covers(&Mode::Command("make check".into()), &dir) && !covers(&Mode::Off, &dir));
+        std::fs::write(dir.join("packages/web/node_modules/x/package.json"), r#"{"scripts":{"test":"jest"}}"#).unwrap();
+        assert!(!covers(&Mode::Auto, &dir), "node_modules does not count");
+        std::fs::write(dir.join("package.json"), r#"{"scripts":{"test":"echo \"Error: no test specified\" && exit 1"}}"#).unwrap();
+        assert!(!covers(&Mode::Auto, &dir), "npm's placeholder is no test");
+        std::fs::write(dir.join("packages/web/package.json"), r#"{"scripts":{"test":"vitest run"}}"#).unwrap();
+        assert!(covers(&Mode::Auto, &dir), "a package's own tests");
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("go.mod"), "module x").unwrap();
+        assert!(covers(&Mode::Auto, &dir));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn detects_go_packages_of_changed_files() {
