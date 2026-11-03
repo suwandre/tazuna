@@ -304,6 +304,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-03: company tickets, batch 1 (five of the user's PRs, two runs): today's default scores 6.00 against the
+  user's own Claude Code first round 6.20 and October's boss runs 5.80 (all noise), no new type errors or failing tests,
+  15.8 minutes and $2.77 a ticket (October's boss: 36 minutes, $1.78). Batch 2 (five PRs by other authors, #1198, #1190,
+  #1375, #1167, #1309, later-round findings as a second ground truth) prepared in bench/company/tasks2.
 - 2026-11-03: test scope confirmed on the hard tasks (same judge and hidden tests, -19% cost, 2x faster, arms
   interleaved). Cheaper leads ruled out: Sonnet 5.5 medium and Opus 5.5 low both lose 1.8-2.4 judge points and 8 hidden
   tests on tasks/. The Claude engine's levers are now measured except the boss-only items and company tickets; Opus

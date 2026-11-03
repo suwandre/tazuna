@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Company tickets, batch 1, 2026-11-03 (bench only)
+
+Five of the user's company PRs (acme/app, TypeScript: t-838, -841, -842, -845, -851) with a peer's
+round-1 findings, today's default (0.1.47: repo profile, no boss, Opus 5.5 medium, Haiku explorer at medium, test
+scope) x two runs (17:24-18:07), judged in one pool per ticket with October's tazuna (0.0.50, `--run`, so boss mode) and
+the user's own first round (Claude Code, Opus high, interactive, with the user's guidance). Opus xhigh judge against the
+merged PR, two passes, diffs up to 120k characters (10 calls; the window did not visibly move).
+
+| Setup | Judge | Cost / ticket | Minutes | Calls | Cache read | Output |
+|---|---|---|---|---|---|---|
+| tazuna today (no boss) | 6.00 (n=10) | $2.77 | 15.8 | 52 | 5.47M | 45.6k |
+| tazuna October (boss) | 5.80 (n=5) | $1.78 | 36.2 | 13 (lead) | 0.66M | 15.5k |
+| the user's own round 1 | 6.20 (n=5) | n/a | n/a | n/a | n/a | n/a |
+
+All three within noise. No run added type errors or unit-test failures (t-842 two fewer type errors). Per ticket the
+order changes (the user leads on 838, 841, 842; tazuna on 845, 851). Today's default is 2.3x faster than October's boss
+mode at 56% more cost: the same trade as on the Go tasks. Tazuna writes more tests (tests dimension 4.25 vs 2.9).
+
 ## Test scope on the hard tasks; Sonnet 5.5 and Opus 5.5 low as the lead, 2026-11-03 (bench only)
 
 tasks-hard (four tasks x two runs per arm, arms interleaved, 12:57-15:11, 0.1.46), the default config (repo profile, no
