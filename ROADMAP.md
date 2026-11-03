@@ -304,6 +304,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-03: built for the Nov 7 test (after the weekly reset): `tazuna lessons` (a repo's recurring review findings,
+  any GitHub repo, stored in tazuna's data folder), `--lessons`, `--history`, the reviewer reading the lessons. Plan: the
+  ten company tickets x one run x four arms (default, lessons, history, five-lens review), on history copies of the
+  templates, scored by reviewer findings (`fcheck.py`) and the judge; all three together only if two or more help.
+  Then the own loop.
 - 2026-11-03: company tickets, batch 2 (five PRs by other authors): judge 5.70 against the merged PRs; against the
   authors' own first versions 5.19 vs 6.62 (partly design anchoring); tazuna's versions repeat 76% of the reviewers'
   applicable findings (Critical 2 of 4, Major 19 of 28). Next Claude-engine candidate with a measurable target: a review

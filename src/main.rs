@@ -38,6 +38,7 @@
 //!          [--repo-tools core|all]   # repo profile: Claude Code's coding tools only (core) or all of them (default)
 //!          [--rtk]   # claude's Bash commands through rtk (shortened output; rtk must be installed)
 //!          [--batch-calls]   # repo profile: claude told to make independent tool calls in one turn
+//!          [--history]   # claude reads the git history of files before changing them (where there is history)
 //!          [--lessons]   # the repo's review lessons (`tazuna lessons`, kept in ~/.local/share/tazuna/lessons) into the instructions
 //!          [--no-test-scope]   # claude may run whole test suites while working (default: only the tests covering its
 //!                              # change; verify runs the changed packages' tests at the end)
@@ -139,6 +140,8 @@ struct Args {
     test_scope: bool,
     /// `--lessons`: the repo's review lessons into the instructions. Under measurement.
     lessons: bool,
+    /// `--history`: claude told to read the git history of the files it changes. Under measurement.
+    history: bool,
     /// `--boss-effort LEVEL`: the boss's workers at LEVEL (unset: medium, measured best).
     boss_effort: Option<String>,
     /// `--boss-pick`: the lead picks each worker call's effort and, for a hard change, a Sonnet worker. Under measurement.
@@ -256,6 +259,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         batch_calls: false,
         test_scope: true,
         lessons: false,
+        history: false,
         boss_effort: None,
         boss_pick: false,
         boss_escalate: false,
@@ -311,6 +315,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--test-scope" => a.test_scope = true,
             "--no-test-scope" => a.test_scope = false,
             "--lessons" => a.lessons = true,
+            "--history" => a.history = true,
             "--repo-tools" => match val()?.as_str() {
                 "core" => a.repo_tools_core = true,
                 "all" => a.repo_tools_core = false,
@@ -536,6 +541,7 @@ fn main() -> Result<()> {
             live.batch_calls = a.batch_calls;
             live.test_scope = a.test_scope;
             live.lessons = a.lessons;
+            live.history = a.history;
             live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
             live.review_key = a.review_key.clone();
             live.provider = a.provider.clone();
@@ -683,6 +689,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     live.batch_calls = a.batch_calls;
     live.test_scope = a.test_scope;
     live.lessons = a.lessons;
+    live.history = a.history;
     live.review_model = a.review_model.clone().map(|m| (m, a.review_effort.clone()));
     live.review_key = a.review_key.clone();
     live.provider = a.provider.clone();

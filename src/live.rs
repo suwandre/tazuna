@@ -78,6 +78,11 @@ const BOSS_EFFORT: &str = "medium";
 /// the cache, 2026-11-02). Measured on DeepSeek in the own loop only (TAZUNA_BATCH: rclone 39 against 77 turns, caddy-unix
 /// 71 against 60).
 const BATCH_RULE: &str = "Make independent tool calls together in one turn: read all the files you need at once, and run commands that do not depend on each other at once, instead of one call per turn. Only wait for a result when the next call depends on it.";
+/// `--history`: one of the gaps to the human authors on company tickets (2026-11-03) was what they knew from earlier work
+/// (why a sync has an echo guard, what a field's format is); the repository's history holds some of it. Only where there is
+/// history to read. Under measurement.
+const HISTORY_RULE: &str = "Before you change a file, read why it is the way it is: `git log -n 10 --format='%h %ad %s%n%b' -- <file>` (commit messages often carry the pull request's description) and `git blame -L <start>,<end> <file>` for the lines you change. Earlier decisions and their reasons are there; keep them unless the task says otherwise.";
+
 /// `--test-scope`: package and repo-wide test runs took 37% of a no-boss run's time on tasks/ (5.0 of 13.6 minutes,
 /// 2026-11-02), and tazuna runs the changed packages' tests itself when claude finishes (verify). Default since 0.1.40:
 /// same judge, -17% cost, 40-58% faster (2026-11-03).
@@ -124,6 +129,12 @@ fn boss_denies(v: &Value) -> Option<&'static str> {
 /// The workers' half of test scope: the boss's implementer spent most of its 10 minutes a run in package-wide tests
 /// while the lead waited (and lost its cache), 2026-11-03.
 const WORKER_TEST_SCOPE: &str = " Run only the tests that cover the change (in Go: `go test -run 'TestA|TestB' ./pkg/`), not whole packages or the whole repository: tazuna runs the changed packages' tests at the end.";
+
+/// More than one commit to read: a fresh repository or a benchmark's one-commit copy has no history worth a rule.
+fn has_history(cwd: &Path) -> bool {
+    Command::new("git").args(["rev-list", "--count", "--max-count=2", "HEAD"]).current_dir(cwd).output()
+        .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().is_ok_and(|n| n > 1))
+}
 
 /// The `--agents` JSON for the subagents that are on (`implementer` only in `--boss`). `effort`: theirs, else they run
 /// at the session's (Claude Code's rule for a subagent without one: a session at xhigh ran its Haiku workers at xhigh).
@@ -370,6 +381,8 @@ pub struct Live {
     /// `--lessons`: the repo's review lessons (`tazuna lessons`, from tazuna's data folder) go into the instructions, marked
     /// as notes. Under measurement.
     pub lessons: bool,
+    /// `--history`: claude is told to read the git history of the files it changes. Under measurement.
+    pub history: bool,
     /// `--rtk`: claude's Bash commands go through rtk (`rtk hook claude`), which shortens their output. Under measurement.
     pub rtk: bool,
     /// Permission mode as claude names it: bypassPermissions (tazuna's "auto"), default ("ask"), acceptEdits ("edits"),
@@ -494,6 +507,7 @@ impl Live {
             batch_calls: false,
             test_scope: true,
             lessons: false,
+            history: false,
             review_model: None,
             review_key: None,
             provider: None,
@@ -1081,7 +1095,12 @@ impl Live {
             // the reviewer gets the task and the diff in a fresh context; verification waits for its verdict
             self.task_reviewed = true;
             self.verifying = true;
-            let (tx, g, cwd, task) = (self.tx.clone(), self.generation, self.cwd.clone(), self.task.clone());
+            let (tx, g, cwd) = (self.tx.clone(), self.generation, self.cwd.clone());
+            // with --lessons the reviewer checks against the repo's list too
+            let task = match self.lessons.then(|| crate::lessons::load(&self.cwd)).flatten() {
+                Some(l) => format!("{}\n\n{l}", self.task),
+                None => self.task.clone(),
+            };
             let (m, e, k) = (model.clone(), effort.clone(), self.review_key.clone());
             std::thread::spawn(move || {
                 let _ = tx.send((g, Msg::Reviewed(review::run(&cwd, &task, &m, &e, k.as_deref()))));
@@ -1216,7 +1235,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "batch_calls": self.batch_calls, "test_scope": self.test_scope, "lessons": self.lessons, "boss_effort": self.boss_effort, "boss_pick": self.boss_pick, "boss_escalate": self.boss_escalate, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "batch_calls": self.batch_calls, "test_scope": self.test_scope, "lessons": self.lessons, "history": self.history, "boss_effort": self.boss_effort, "boss_pick": self.boss_pick, "boss_escalate": self.boss_escalate, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -1335,7 +1354,7 @@ impl Live {
                     (boss && self.boss_escalate).then(|| boss_escalate_rule(BOSS_STRONG))
                 };
                 let lessons = self.lessons.then(|| crate::lessons::load(&self.cwd)).flatten();
-                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), lessons.as_deref()]
+                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
                     .into_iter()
                     .flatten()
                     .collect();
@@ -1609,6 +1628,21 @@ mod tests {
         assert!(boss_denies(&json!({"tool_name": "Bash"})).is_some());
         assert!(boss_denies(&json!({"tool_name": "Agent"})).is_none());
         assert!(boss_denies(&json!({"tool_name": "Read", "agent_id": "a1", "agent_type": "explorer"})).is_none());
+    }
+
+    #[test]
+    fn history_rule_only_where_there_is_history() {
+        let dir = std::env::temp_dir().join(format!("tazuna-hist-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let git = |a: &[&str]| assert!(Command::new("git").args(a).current_dir(&dir).output().unwrap().status.success());
+        git(&["init", "-q"]);
+        assert!(!has_history(&dir), "no commit");
+        let commit = || git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "c"]);
+        commit();
+        assert!(!has_history(&dir), "one commit, as a benchmark's copy");
+        commit();
+        assert!(has_history(&dir));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

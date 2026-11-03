@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.50 (2026-11-03): `--history`; the reviewer gets the lessons too (both opt-in, under measurement)
+
+- `--history`: claude is told to read why a file is the way it is before changing it (`git log` of the file, whose commit
+  messages often carry the pull request's description, and `git blame` of the lines it changes). Only where the repository
+  has more than one commit. Aimed at the gap to the human authors on company tickets: what they knew from earlier work.
+- With `--lessons` and `--review-model`, the reviewer checks against the repository's lessons as well.
+- Bench: history copies of the ten company-ticket templates (`bench/company/mkhist.sh`: the real history up to each base,
+  fetched by hash, nothing merged later), per-task lessons from PRs merged before each base day (`mklessons.sh`), arms
+  `tazuna-lsn`, `-hist`, `-rev` (Opus medium five-lens reviewer), `-lhr` (all three). The test runs after the weekly reset.
+
 ## 0.1.49 (2026-11-03): review lessons kept out of the repository's reach
 
 - From an automated security review of 0.1.48: a repository could ship its own `.tazuna/review-lessons.md`, and on a
