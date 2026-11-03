@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.47 (2026-11-03): the default's explorer at medium effort
+
+- Without boss mode, the Haiku explorer (and the opt-in tester) had no effort of their own and ran at the session's: at
+  xhigh in a session set to xhigh. They now run at medium, as the boss's workers do since 0.1.36 (Haiku xhigh cost 2.3x
+  medium there, no better judge). Benchmarks run Opus at medium, so their numbers do not move; live sessions above
+  medium get a cheaper, faster explorer.
+
 ## 0.1.46 (2026-11-03): test scope only where tazuna can test the repo
 
 - The test-scope rule tells claude that tazuna runs the changed packages' tests at the end. It is now added only when

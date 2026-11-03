@@ -1343,7 +1343,9 @@ impl Live {
                     let strong = (self.boss_pick || self.boss_escalate).then_some(BOSS_STRONG);
                     cmd.args(["--agents", &subagents(Some(m), Some(m), Some(m), Some(self.boss_effort.as_deref().unwrap_or(BOSS_EFFORT)), strong, scoped)]);
                 } else if self.explorer.is_some() || self.tester.is_some() {
-                    cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref(), None, None, None, scoped)]);
+                    // the explorer and tester at medium too: without an effort of their own they ran at the session's (xhigh
+                    // in the user's sessions), where the boss's Haiku workers cost 2.3x medium for no better score
+                    cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref(), None, Some(BOSS_EFFORT), None, scoped)]);
                 }
             }
             Profile::RepoLean => {

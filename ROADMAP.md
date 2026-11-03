@@ -292,6 +292,12 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-03: worker count settled for the Claude engine: default = Opus + Haiku explorer (live), boss = Opus + three
+  Haiku workers (headless); boss pays by moving reading, editing and test output to a cheaper model (its lead reads 248k
+  tokens a run against 786k), not by splitting, and trades time for cost. Boss-only items left, none measured: escalation
+  through the boss hook; keeping the lead's cache warm with wake-ups; two workers instead of three (the implementer runs
+  the checks itself; the tester hand-off costs ~2 minutes a run). Efforts: lead medium (low queued), Haiku workers medium
+  (measured), the default's explorer now medium too (0.1.47).
 - 2026-11-03: offline check of a per-task decider (stored, judged runs; config chosen on one half of the runs, scored on
   the other): within the Claude engine no headroom. tasks/ (12 configs): picking per task 7.21 against the best fixed
   config 7.27 (default 6.92); tasks-hard (3 configs): 7.22 against 7.12. Per-task winners flip between halves: the
