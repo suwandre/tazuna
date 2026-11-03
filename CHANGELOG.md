@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.42 (2026-11-03): test scope for the workers too (under measurement)
+
+- With test scope on (the default), the workers that run tests (implementer, implementer-strong, tester) are told to run
+  only the tests covering the change; the explorer runs none. The lead already had the rule; in boss mode it runs no
+  commands, and its implementer spent most of its 10 minutes a run in package-wide tests while the lead waited.
+
 ## Where cost and time sit, per role, 2026-11-03 (analysis of stored runs, no new runs)
 
 Opus 5.5 medium lead; default = repo profile with test scope (v1333-v1344, tasks/); boss = Haiku medium workers (0.1.32,

@@ -114,9 +114,14 @@ fn boss_denies(v: &Value) -> Option<&'static str> {
         .then_some("You are the lead: delegate this. Ask the explorer to read or search, the implementer to edit, the tester to run checks.")
 }
 
+/// The workers' half of test scope: the boss's implementer spent most of its 10 minutes a run in package-wide tests
+/// while the lead waited (and lost its cache), 2026-11-03.
+const WORKER_TEST_SCOPE: &str = " Run only the tests that cover the change (in Go: `go test -run 'TestA|TestB' ./pkg/`), not whole packages or the whole repository: tazuna runs the changed packages' tests at the end.";
+
 /// The `--agents` JSON for the subagents that are on (`implementer` only in `--boss`). `effort`: theirs, else they run
 /// at the session's (Claude Code's rule for a subagent without one: a session at xhigh ran its Haiku workers at xhigh).
-fn subagents(explorer: Option<&str>, tester: Option<&str>, implementer: Option<&str>, effort: Option<&str>, strong: Option<&str>) -> String {
+/// `scope`: the workers that run tests are told to run only those covering the change (test scope).
+fn subagents(explorer: Option<&str>, tester: Option<&str>, implementer: Option<&str>, effort: Option<&str>, strong: Option<&str>, scope: bool) -> String {
     let mut agents = serde_json::Map::new();
     if let Some(model) = strong {
         agents.insert("implementer-strong".into(), json!({
@@ -153,6 +158,11 @@ fn subagents(explorer: Option<&str>, tester: Option<&str>, implementer: Option<&
     if let Some(e) = effort {
         for a in agents.values_mut() {
             a["effort"] = json!(e);
+        }
+    }
+    if scope {
+        for (_, a) in agents.iter_mut().filter(|(name, _)| name.as_str() != "explorer") {
+            a["prompt"] = json!(format!("{}{WORKER_TEST_SCOPE}", a["prompt"].as_str().unwrap_or_default()));
         }
     }
     serde_json::Value::Object(agents).to_string()
@@ -1303,8 +1313,9 @@ impl Live {
                     cmd.arg("--mcp-config").arg(server.to_string());
                 }
                 let explore_rule = self.explorer_provider.as_ref().map(|_| EXPLORE_TOOL_RULE).or(self.explorer.as_ref().map(|_| EXPLORER_RULE));
+                let scoped = self.test_scope && !matches!(self.verify, verify::Mode::Off);
                 let pick = (boss && self.boss_pick).then(|| boss_pick_rule(self.boss.as_deref().unwrap_or("haiku"), BOSS_STRONG));
-                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), (self.test_scope && !matches!(self.verify, verify::Mode::Off)).then_some(TEST_SCOPE_RULE)]
+                let append: Vec<&str> = [self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE)]
                     .into_iter()
                     .flatten()
                     .collect();
@@ -1315,9 +1326,9 @@ impl Live {
                     // the workers at medium unless told otherwise: at the session's xhigh they cost 46% more than no boss
                     // at all and scored no better; medium was the cheapest and best (2026-11-02)
                     let strong = self.boss_pick.then_some(BOSS_STRONG);
-                    cmd.args(["--agents", &subagents(Some(m), Some(m), Some(m), Some(self.boss_effort.as_deref().unwrap_or(BOSS_EFFORT)), strong)]);
+                    cmd.args(["--agents", &subagents(Some(m), Some(m), Some(m), Some(self.boss_effort.as_deref().unwrap_or(BOSS_EFFORT)), strong, scoped)]);
                 } else if self.explorer.is_some() || self.tester.is_some() {
-                    cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref(), None, None, None)]);
+                    cmd.args(["--agents", &subagents(self.explorer.as_deref(), self.tester.as_deref(), None, None, None, scoped)]);
                 }
             }
             Profile::RepoLean => {
@@ -1580,13 +1591,16 @@ mod tests {
 
     #[test]
     fn subagents_only_the_ones_on() {
-        let both: Value = serde_json::from_str(&subagents(Some("haiku"), Some("sonnet"), None, None, None)).unwrap();
+        let both: Value = serde_json::from_str(&subagents(Some("haiku"), Some("sonnet"), None, None, None, false)).unwrap();
         assert_eq!((both["explorer"]["model"].as_str(), both["tester"]["model"].as_str()), (Some("haiku"), Some("sonnet")));
-        let one: Value = serde_json::from_str(&subagents(None, Some("haiku"), None, None, None)).unwrap();
+        let one: Value = serde_json::from_str(&subagents(None, Some("haiku"), None, None, None, false)).unwrap();
         assert!(both["explorer"].get("effort").is_none(), "no effort: the session's");
-        let boss: Value = serde_json::from_str(&subagents(Some("haiku"), Some("haiku"), Some("haiku"), Some("high"), Some("sonnet"))).unwrap();
+        let boss: Value = serde_json::from_str(&subagents(Some("haiku"), Some("haiku"), Some("haiku"), Some("high"), Some("sonnet"), true)).unwrap();
         assert!(["explorer", "implementer", "tester", "implementer-strong"].iter().all(|a| boss[*a]["effort"] == "high"));
         assert_eq!(boss["implementer-strong"]["model"], "sonnet");
+        let scoped = |a: &str| boss[a]["prompt"].as_str().unwrap().ends_with(WORKER_TEST_SCOPE);
+        assert!(scoped("implementer") && scoped("implementer-strong") && scoped("tester") && !scoped("explorer"), "test scope for the workers that run tests");
+        assert!(!both["tester"]["prompt"].as_str().unwrap().contains("tazuna runs"));
         let rule = boss_pick_rule("haiku", BOSS_STRONG);
         assert!(rule.contains("haiku: low, medium, high, xhigh, max (default medium)") && rule.contains("sonnet: low, medium, high, xhigh, max (default high)"), "{rule}");
         assert!(one.get("explorer").is_none() && one["tester"]["tools"][0] == "Bash");
