@@ -718,7 +718,14 @@ impl Session {
                 }
                 if let Some(start) = self.call_start.take() {
                     let first = self.first_token.take();
-                    self.calls.push(CallTime { ttft_ms: first.map(|f| f - start), gen_ms: self.now_ms - first.unwrap_or(start), out: t.output });
+                    let mut c = CallTime { ttft_ms: first.map(|f| f - start), gen_ms: self.now_ms - first.unwrap_or(start), out: t.output };
+                    // claude sometimes hands a reply over in one burst after it was written (66 deltas in 57 ms: "6684
+                    // tok/s", 2026-11-03). No Claude model writes 1,000 tokens a second: the first token's time is then
+                    // unknown, and the speed counts from the call's start (a lower bound).
+                    if self.model.starts_with("claude-") && c.gen_ms > 0.0 && c.out as f64 / c.gen_ms > 1.0 {
+                        c = CallTime { ttft_ms: None, gen_ms: self.now_ms - start, out: t.output };
+                    }
+                    self.calls.push(c);
                 }
                 if let Some(last) = self.turn_usage.last_mut() {
                     *last = t;
@@ -883,6 +890,14 @@ mod tests {
         assert_eq!(c.calls, [CallTime { ttft_ms: Some(1400.0), gen_ms: 5000.0, out: 360 }, CallTime { ttft_ms: None, gen_ms: 2200.0, out: 100 }]);
         let (first, rate) = speed(&c.calls);
         assert_eq!((first, rate.map(|r| r.round())), (Some(1400.0), Some(64.0)), "460 tokens over 7.2 s");
+        // a reply claude hands over in one burst: no first token, the speed from the call's start
+        let mut b = Session::new("", "medium");
+        b.model = "claude-opus-5-5".into();
+        b.apply(&json!({"type": "harness_user", "text": "go"}), 0.0);
+        b.apply(&ev(json!({"type": "message_start"})), 3900.0);
+        b.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x"}})), 3900.0);
+        b.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 380}})), 3957.0);
+        assert_eq!(b.calls, [CallTime { ttft_ms: None, gen_ms: 3957.0, out: 380 }]);
         let text = s.blocks.iter().find_map(|b| if let Block::Text { text, .. } = b { Some(text.clone()) } else { None });
         assert_eq!(text.as_deref(), Some("Hello"), "the text after the notice is not lost");
     }

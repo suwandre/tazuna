@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.41 (2026-11-03): no more "6684 tok/s"
+
+- Claude sometimes hands a finished reply over in one burst (66 stream deltas in 57 ms after the text was written); its
+  speed read 6684 tok/s. A Claude call faster than 1,000 tokens a second now counts as handed over at once: its first
+  token's time is unknown and its speed runs from the call's start (a lower bound).
+
 ## 0.1.40 (2026-11-03): test scope on by default
 
 - Claude runs only the tests that cover its change while it works; tazuna's verify runs the changed packages' tests when
