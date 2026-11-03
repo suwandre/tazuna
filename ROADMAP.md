@@ -270,6 +270,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Lean profile on Opus 5.5 medium (2026-11-02) | judge 6.71 vs 6.75, cost +16%, 24% faster | 42% more calls with four plain tools eat the smaller prompt: opt-in |
 | `--batch-calls` (one prompt rule: independent tool calls in one turn, 2026-11-02) | judge -0.17 (6.62 vs 6.79), calls 22.4 vs 21.9, tokens +13%, cost +9% | Claude Code already batches where it can; the rule did not cut calls: opt-in |
 | `--rtk` (rtk's Claude hook, 2026-11-02) | judge +0.12 (7.00), tokens +15%, cost +6% | command output -53%, but the agent made more calls: no saving in tazuna: opt-in |
+| `--boss-pick` (the boss's lead picks each worker call's effort, Sonnet for hard changes, 2026-11-03) | tasks/ judge 6.62 vs 7.00 at +53% cost; tasks-hard 7.12 vs 6.19 at 2.1x cost, +34% time | the lead sent the main change to Sonnet in 17 of 21 runs, also on easy tasks; the hard-task gain is mostly one task: opt-in |
 | Repo map in the first message | +3% cost, same judge | the agent still reads the files it changes in full |
 | Sonnet explorer subagent (`--explorer sonnet`) | +12% cost, −35% turns, same judge | the reading moves, it does not shrink |
 | Haiku tester subagent (`--tester haiku`) | −14% cost, judge −0.40 | Fable judge agrees (lower, −0.21 of 5 vs Opus −0.32); the gap is one no-change run on T-946, even without it; saving at the noise line: opt-in |
@@ -290,6 +291,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-03: `--boss-pick` measured (tasks/ six x two, tasks-hard four x two): the lead varies effort as asked (testers
+  low, explorers medium) but hands the main change to the Sonnet worker in 17 of 21 runs. Same score at +53% cost on
+  ordinary tasks, +0.93 at 2.1x cost on hard ones (mostly one task): a trade, opt-in. If revisited: Sonnet only after a
+  Haiku attempt failed its check, so ordinary tasks keep Haiku's price.
 - 2026-11-02: boss mode's Haiku workers default to medium effort (they ran at the session's; at xhigh $1.02 a run
   against $0.45, no better judge). Boss with medium workers: same judge as no boss, 36% cheaper, 12% slower: a trade,
   so it stays opt-in for live sessions (`/boss`), on by default headless as before. Lean on Opus: same judge, dearer.

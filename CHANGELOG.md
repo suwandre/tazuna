@@ -16,6 +16,27 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Boss-pick against fixed medium workers, 2026-11-03 (bench only)
+
+`--boss-pick` (0.1.37, frozen tz-v137) against boss mode with Haiku workers at medium (`--boss-effort medium`), Opus 5.5
+medium leading, the repo profile. tasks/: six tasks x two runs, against the 2026-11-02 medium runs (0.1.32, v1257-v1290);
+tasks-hard: four tasks x two runs per arm, both arms run together (v1317-v1332, 22:30-01:33). Opus xhigh judge, one pool
+per task, two passes (12 + 8 calls; the 5-hour window moved ~5% for the judge). No run saw the fix (leakscan).
+
+| Set | Setup | Judge | Hidden | Cost / run | Minutes | Opus calls |
+|---|---|---|---|---|---|---|
+| tasks/ | medium workers | 7.00 | 45/48 | $0.45 | 15.2 | 8.8 |
+| tasks/ | boss-pick | 6.62 | 43/48 | $0.69 | 16.0 | 8.6 |
+| tasks-hard | medium workers | 6.19 | 11/14 | $0.92 | 46.2 | 8.8 |
+| tasks-hard | boss-pick | 7.12 | 12/14 | $1.89 | 61.7 | 9.9 |
+
+What the lead chose (21 boss-pick runs): testers at low (18 of 20 calls), explorers at medium (20 of 25), never xhigh or
+max; the main change went to `implementer-strong` (Sonnet) in 17 runs, to the Haiku implementer in 4. So the test
+measures Sonnet doing the implementing more than the effort picks. On tasks/ that costs 53% more for a score inside
+noise (-0.38). On tasks-hard +0.93, just over the noise line at n=8, at 2.1x the cost and 34% more time; the gain is
+mostly one task (prometheus-replay-mmap 6.5 vs 3.0; caddy-tls 5.5 vs 6.0, hugo-eq 8.5 vs 8.5, prometheus-wbl 8.0 vs 7.25).
+A trade, not a dominating change: `--boss-pick` stays opt-in.
+
 ## 0.1.38 (2026-11-03): live speed line; exact thinking counts
 
 - The tokens panel's speed line is live: while a call waits, "waiting for first token · 1.4s" counts up; while it writes,
