@@ -1298,7 +1298,10 @@ impl Live {
             // the own loop: lean prompt and tools, the repo's instructions in the prompt
             // the own loop has no Grep/Glob tools: its runs searched with grep in bash anyway, and cut file reads at the
             // bash cap (2026-10-24)
-            let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", "Search with grep -rn in bash; read whole files with read.");
+            // with --search-tools the prompt must say the same as the tools (it said "grep in bash" through the whole
+            // 2026-11-04 test of those tools)
+            let search = if std::env::var_os("TAZUNA_SEARCH_TOOLS").is_some() { "Search with the grep and glob tools, not in bash; read files with read." } else { "Search with grep -rn in bash; read whole files with read." };
+            let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", search);
             prompt.push_str(API_RULE);
             prompt.push_str(PLAN_RULE);
             if self.project_instructions {

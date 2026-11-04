@@ -33,6 +33,10 @@ The tools save 13% of the time and 5% of the calls, inside run-to-run noise, wit
 few-calls rule makes runs longer (+22% calls). Neither explains the Harness's two-times speed: both stay opt-in. SubRouter
 spend today: $0.99 (company tickets $0.46, this $0.53).
 
+One flaw in this test: the system prompt still said "Search with grep -rn in bash" while `--search-tools` was on, so
+the tools arm got two contradicting instructions. Fixed after the test (the prompt now names the grep and glob tools when
+they are on); the tools are not measured again yet.
+
 ## Kiro against tazuna on the same models, 2026-11-04 (bench only)
 
 Kiro CLI 2.37.1 (AWS; stock settings, web search and fetch not trusted, `kiro-cli chat --no-interactive --output-format
