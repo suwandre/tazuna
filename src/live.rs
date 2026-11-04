@@ -327,6 +327,8 @@ pub struct Live {
     session_id: Option<String>,
     /// From claude's init event: its built-in prompt changes between versions, which moves token counts.
     claude_version: Option<String>,
+    /// When this window started: a tazuna binary newer than this is a rebuild the window does not run yet.
+    opened: std::time::SystemTime,
     generation: u64,
     /// When an interrupt was requested and its run has not ended yet.
     interrupting: Option<Instant>,
@@ -475,6 +477,7 @@ impl Live {
             rx,
             session_id: None,
             claude_version: None,
+            opened: std::time::SystemTime::now(),
             generation: 0,
             interrupting: None,
             interrupts_sent: 0,
@@ -902,6 +905,12 @@ impl Live {
                     if e["type"] == "system" && e["subtype"] == "init" {
                         self.session_id = e["session_id"].as_str().map(String::from);
                         self.claude_version = e["claude_code_version"].as_str().map(String::from);
+                        if self.mode != "headless" {
+                            let state = crate::labels::dir().map(|d| d.join("claude-version")).unwrap_or_default();
+                            for text in crate::versions::notices(self.claude_version.as_deref(), e["model"].as_str(), &state, self.opened) {
+                                out.push(self.record(json!({"type": "harness_info", "text": text})));
+                            }
+                        }
                     }
                     if e["type"] == "control_request" && e["request"]["subtype"] == "can_use_tool" {
                         if self.allowed.contains(&always_key(&e)) {

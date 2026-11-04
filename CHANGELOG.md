@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.52 (2026-11-04): notices when something changed underneath
+
+- When claude starts in a live session, tazuna says, once: Claude Code updated since the last session ("Claude Code
+  updated: 2.1.314 → 2.1.318"; it updates itself and tazuna runs whichever `claude` is installed), a Claude Code older
+  than tazuna needs (2.1.292: `claude update`), a model the picker does not list yet, and a tazuna binary rebuilt since
+  the window opened ("restart it to use the new build": an open window keeps the old build).
+- 0.1.51 (own loop, under measurement): `--search-tools` (grep and glob tools; bash told not to search or read) and
+  `--batch-own` (independent tool calls in one response), from DeepSeek's own harness.
+
 ## DeepSeek on the company tickets; DeepSeek Harness on one Go task, 2026-11-04 (bench only)
 
 tazuna's own loop with DeepSeek V4.1 Flash 1017 (xhigh, SubRouter route tazuna-route-deepseek-v4-1-flash-1017, no

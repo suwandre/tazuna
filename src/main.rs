@@ -90,6 +90,7 @@ mod session;
 mod trust;
 mod ui;
 mod verify;
+mod versions;
 
 use anyhow::{Context, Result, bail};
 use ratatui::{

@@ -19,6 +19,11 @@ pub fn claude_levels(model: &str) -> (&'static [&'static str], &'static str) {
     let default = if m.starts_with("opus") || m.starts_with("haiku") { "medium" } else { "high" };
     (&LEVELS, default)
 }
+/// Whether the picker lists this Claude model (a newer one runs too, but without its effort levels).
+pub fn known_claude(model: &str) -> bool {
+    CLAUDE.iter().any(|(id, _)| model.starts_with(id))
+}
+
 const CLAUDE: [(&str, &str); 4] =
     [("claude-opus-5-5", "Opus 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"), ("claude-haiku-5-5", "Haiku 5.5"), ("claude-fable-5-1", "Fable 5.1")];
 /// A route checked longer ago than this is marked stale: provider prices move by the day (Sol's cheapest provider changed
