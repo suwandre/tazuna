@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## The DeepSeek Harness's speed was its provider, 2026-11-04 (bench only)
+
+tazuna's own loop on DeepSeek's official API (the Harness's provider): deepseek-flash (V4.1 Flash 1017) at xhigh,
+caddy-quoted-braces, two runs without and two with the model's reasoning sent back (`TAZUNA_SEND_REASONING`), 21:41
+CET (off-peak price). tazuna 0.1.54 with the search-prompt fix. Spent ¥0.57 of the user's granted credit.
+
+| Arm | Minutes | Calls | Uncached | Cached | Output | Cost | Hidden |
+|---|---|---|---|---|---|---|---|
+| DeepSeek Harness (3 runs, earlier) | 3.2-4.4 | 43-59 | 59-75k | 2.4-3.2M | 28-32k | $0.035-0.039 | 5/5 each |
+| own loop, SubRouter route (0.1.51) | 5.5-8.8 | 56-73 | 168-484k | 1.8-2.9M | 25-41k | $0.005-0.006 | 5/5 each |
+| own loop, official API | 3.0, 4.1 | 41, 29 | 72k, 79k | 1.1M, 0.8M | 14k, 17k | $0.023, $0.025 | 5/5 each |
+| own loop, official API, reasoning back | 2.5, 3.4 | 22, 41 | 38k, 41k | 0.6M, 1.4M | 15k, 16k | $0.017, $0.020 | 5/5 each |
+
+On the same provider the own loop is as fast as the Harness or faster, with fewer calls and half the tokens: the gap was
+SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in exchange costs a quarter. Reasoning sent
+back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
+(The Harness's costs were taken partly at peak price; off-peak they are about half.)
+
 ## The DeepSeek Harness's levers in the own loop, 2026-11-04 (bench only)
 
 DeepSeek V4.1 Flash 1017 (xhigh) through SubRouter's route, tasks/ (six Go tasks), 0.1.51, three arms run together from

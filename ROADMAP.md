@@ -305,6 +305,12 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-04 (evening): the DeepSeek Harness's two-times speed was the provider, not the harness. tazuna's own loop on
+  DeepSeek's official API (same model, effort xhigh, caddy-quoted-braces, four runs): 2.5-4.1 minutes and 22-41 calls
+  against the Harness's 3.2-4.4 and 43-59, half its tokens, 5/5 hidden tests every run; on SubRouter's route the same
+  loop took 5.5-8.8 minutes and 56-73 calls with 2-6x the uncached input. SubRouter's route stays 4x cheaper per run, so
+  it is a trade (time for price), not a harness fix. Sending reasoning back (TAZUNA_SEND_REASONING) halved the uncached
+  input on two runs; too few runs to change the default (¥3.58 of the credits left).
 - 2026-11-04: own loop on the company tickets (DeepSeek alone): 5.25 against Opus's 6.08, same share of review findings,
   2% of the cost, 4x the time, one run with regressions (the hand-over to Opus would have caught it). For the user's work
   on the subscription, Opus stays the default; DeepSeek with the hand-over is the cheap path for unattended or
