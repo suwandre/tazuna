@@ -32,7 +32,7 @@ CET (off-peak price). tazuna 0.1.54 with the search-prompt fix. Spent ¥0.57 of 
 On the same provider the own loop is as fast as the Harness or faster, with fewer calls and half the tokens: the gap was
 SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in exchange costs a quarter. Reasoning sent
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
-(The Harness's costs were taken partly at peak price; off-peak they are about half.)
+All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
 ## The DeepSeek Harness's levers in the own loop, 2026-11-04 (bench only)
 

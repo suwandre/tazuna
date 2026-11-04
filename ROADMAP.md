@@ -307,7 +307,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
 - 2026-11-04 (evening): the DeepSeek Harness's two-times speed was the provider, not the harness. tazuna's own loop on
   DeepSeek's official API (same model, effort xhigh, caddy-quoted-braces, four runs): 2.5-4.1 minutes and 22-41 calls
-  against the Harness's 3.2-4.4 and 43-59, half its tokens, 5/5 hidden tests every run; on SubRouter's route the same
+  against the Harness's 3.2-4.4 and 43-59, half its tokens and 35-55% of its cost less, 5/5 hidden tests every run; on SubRouter's route the same
   loop took 5.5-8.8 minutes and 56-73 calls with 2-6x the uncached input. SubRouter's route stays 4x cheaper per run, so
   it is a trade (time for price), not a harness fix. Sending reasoning back (TAZUNA_SEND_REASONING) halved the uncached
   input on two runs; too few runs to change the default (¥3.58 of the credits left).
