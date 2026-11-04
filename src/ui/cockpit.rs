@@ -213,9 +213,12 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         }
         rows
     } else if files.is_empty() {
-        vec![Line::from(Span::styled("none yet", st(th.faint)))]
+        vec![Line::from(Span::styled("no changes in the repo yet", st(th.faint)))]
     } else {
-        files.iter().take(a.height as usize).map(|p| Line::from(Span::styled(fit_path(&super::plain(p), a.width as usize), st(th.dim)))).collect()
+        // nothing changed in the repo (git), but an edit tool wrote files: elsewhere, e.g. scratch files in /tmp
+        let mut rows = vec![Line::from(Span::styled(format!("no changes in the repo · {} written outside it", files_n(files.len())), st(th.faint)))];
+        rows.extend(files.iter().take((a.height as usize).saturating_sub(1)).map(|p| Line::from(Span::styled(fit_path(&super::plain(p), a.width as usize), st(th.dim)))));
+        rows
     };
     f.render_widget(Paragraph::new(rows), a);
 
@@ -223,7 +226,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
-    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, links: vec![], files: Some(p_files) }
+    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, links: vec![], files: Some(p_files), diff_files: vec![] }
 }
 
 fn kv(k: &str, v: &str, th: &Theme) -> Span<'static> {

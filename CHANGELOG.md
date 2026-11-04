@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.53 (2026-11-04): files open in the editor; no more guessed paths
+
+- The diff view (click the files panel, or `/diff`): Enter, `o` or a click on a file opens it in the editor at its first
+  change. The editor: TAZUNA_EDITOR (a template, e.g. `code -g {path}:{line}`), else the first of Cursor, VS Code, Zed,
+  Windsurf, Sublime Text or a JetBrains IDE on PATH, else the system's default app.
+- The files panel without repo changes said nothing useful: it listed every path in the agent's commands (grep patterns,
+  `/tmp` scripts, `{f}.json`). It now says "no changes in the repo yet", or, when an edit tool wrote files elsewhere,
+  how many and which. A run's summary counts the repo's changed files (git), else the files an edit tool wrote.
+
 ## 0.1.52 (2026-11-04): notices when something changed underneath
 
 - When claude starts in a live session, tazuna says, once: Claude Code updated since the last session ("Claude Code

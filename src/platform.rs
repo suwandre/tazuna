@@ -169,6 +169,34 @@ pub fn open_url(url: &str) -> std::io::Result<()> {
     c.arg(url).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn().map(|_| ())
 }
 
+/// Opens `path` at `line` in the user's editor, detached; returns which editor. TAZUNA_EDITOR is a command template
+/// ("code -g {path}:{line}", "idea --line {line} {path}"); otherwise the first of Cursor, VS Code, Zed, Windsurf, Sublime
+/// Text or a JetBrains IDE found on PATH, else the system's default app for the file. Each word of the template is one
+/// argument (no shell): a path with spaces or quotes stays one argument.
+pub fn open_in_editor(path: &Path, line: u32) -> std::io::Result<String> {
+    let (p, l) = (path.to_string_lossy().into_owned(), line.max(1).to_string());
+    let fill = |w: &str| w.replace("{path}", &p).replace("{line}", &l);
+    let (cmd, args): (String, Vec<String>) = if let Ok(t) = std::env::var("TAZUNA_EDITOR") {
+        let mut words = t.split_whitespace().map(fill);
+        (words.next().unwrap_or_default(), words.collect())
+    } else {
+        const KNOWN: [(&str, &str); 9] = [("cursor", "-g {path}:{line}"), ("code", "-g {path}:{line}"), ("zed", "{path}:{line}"), ("windsurf", "-g {path}:{line}"),
+            ("subl", "{path}:{line}"), ("idea", "--line {line} {path}"), ("webstorm", "--line {line} {path}"), ("goland", "--line {line} {path}"), ("pycharm", "--line {line} {path}")];
+        let on_path = |name: &str| std::env::var_os("PATH").is_some_and(|ps| std::env::split_paths(&ps).any(|d| d.join(name).is_file() || d.join(format!("{name}.cmd")).is_file()));
+        match KNOWN.iter().find(|(n, _)| on_path(n)) {
+            Some((n, a)) => (n.to_string(), a.split_whitespace().map(fill).collect()),
+            #[cfg(target_os = "macos")]
+            None => ("open".into(), vec![p.clone()]),
+            #[cfg(windows)]
+            None => ("explorer".into(), vec![p.clone()]),
+            #[cfg(not(any(target_os = "macos", windows)))]
+            None => ("xdg-open".into(), vec![p.clone()]),
+        }
+    };
+    Command::new(&cmd).args(&args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn()?;
+    Ok(cmd)
+}
+
 /// A desktop notification: macOS through osascript; elsewhere none (the session shows the same line).
 pub fn notify(title: &str, text: &str) {
     #[cfg(target_os = "macos")]

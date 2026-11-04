@@ -982,6 +982,15 @@ fn changed_since(start: Option<&std::collections::BTreeMap<String, String>>, cwd
 }
 
 /// A file's diff against HEAD, line by line; a new, untracked file as all added.
+/// Opens a changed file (relative to the working directory) at `line` in the user's editor; the toast says how it went.
+fn open_file(path: &str, line: u32) -> String {
+    let full = std::env::current_dir().map(|d| d.join(path)).unwrap_or_else(|_| path.into());
+    match platform::open_in_editor(&full, line) {
+        Ok(editor) => format!("opened {path}:{line} in {editor}"),
+        Err(e) => format!("could not open {path}: {e} (set TAZUNA_EDITOR, e.g. \"code -g {{path}}:{{line}}\")"),
+    }
+}
+
 fn file_diff(path: &str) -> Vec<String> {
     let out = std::process::Command::new("git").args(["diff", "HEAD", "--", path]).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
     if !out.trim().is_empty() {
@@ -1164,6 +1173,7 @@ fn run_live(
     let mut links: Vec<(ratatui::layout::Rect, String)> = vec![];
     // the files panel (cockpit): a click opens /diff
     let mut files_area: Option<ratatui::layout::Rect> = None;
+    let mut diff_files: Vec<(ratatui::layout::Rect, usize)> = vec![];
     // the work tree when this conversation began: what it changed since is the files panel and /diff
     let mut git_start = runlog::git_snapshot(&std::env::current_dir()?);
     let mut changed_at = Instant::now();
@@ -1310,7 +1320,7 @@ fn run_live(
         v.clock_ms = live.elapsed_ms();
         term.draw(|f| {
             let areas = fx.frame(f, &s, &v, dt);
-            (transcript, rows, links, files_area) = (areas.transcript, areas.rows, areas.links, areas.files);
+            (transcript, rows, links, files_area, diff_files) = (areas.transcript, areas.rows, areas.links, areas.files, areas.diff_files);
             if let Some(sel) = &sel {
                 sel.highlight(f.buffer_mut());
                 if copy_now {
@@ -1364,7 +1374,12 @@ fn run_live(
                         _ => {
                             sel = None;
                             let pos = ratatui::layout::Position::new(m.column, m.row);
-                            if files_area.is_some_and(|r| r.contains(pos)) && !v.changed.is_empty() {
+                            if let Some(&(_, i)) = diff_files.iter().find(|(r, _)| v.diff.is_some() && r.contains(pos)) {
+                                // a file in the diff view: select it and open it where its first change is
+                                let d = file_diff(&v.changed[i].path);
+                                v.toast = Some((open_file(&v.changed[i].path, ui::first_change(&d)), Instant::now()));
+                                v.diff = Some(ui::DiffPanel { selected: i, diff: d, scroll: 0 });
+                            } else if files_area.is_some_and(|r| r.contains(pos)) && !v.changed.is_empty() {
                                 v.diff = Some(ui::DiffPanel { selected: 0, diff: file_diff(&v.changed[0].path), scroll: 0 });
                             } else if let Some((_, url)) = links.iter().find(|(r, _)| r.contains(pos)) {
                                 let msg = match platform::open_url(url) {
@@ -1458,6 +1473,11 @@ fn run_live(
                     p.selected = if key.code == KeyCode::Up { p.selected.saturating_sub(1) } else { (p.selected + 1).min(last) };
                     p.diff = v.changed.get(p.selected).map(|c| file_diff(&c.path)).unwrap_or_default();
                     p.scroll = 0;
+                }
+                KeyCode::Enter | KeyCode::Char('o') => {
+                    if let Some(c) = v.changed.get(p.selected) {
+                        v.toast = Some((open_file(&c.path, ui::first_change(&p.diff)), Instant::now()));
+                    }
                 }
                 KeyCode::PageDown | KeyCode::Char(' ') => p.scroll = (p.scroll + page).min(p.diff.len().saturating_sub(1)),
                 KeyCode::PageUp => p.scroll = p.scroll.saturating_sub(page),

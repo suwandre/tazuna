@@ -191,6 +191,8 @@ pub struct Areas {
     pub links: Vec<(Rect, String)>,
     /// The files panel (cockpit): a click there opens the changed files and their diffs.
     pub files: Option<Rect>,
+    /// The diff view's file rows and which file each is: a click opens that file in the editor.
+    pub diff_files: Vec<(Rect, usize)>,
 }
 
 /// One file this conversation changed, with its lines added and removed (git).
@@ -229,7 +231,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
         draw_sessions(f, p, th);
     }
     if let Some(p) = &v.diff {
-        draw_diff(f, &v.changed, p, th);
+        areas.diff_files = draw_diff(f, &v.changed, p, th);
     }
     if let Some(p) = &v.models {
         draw_models(f, p, th);
@@ -277,7 +279,7 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
 /// /rewind: the messages sent so far; the chosen one and everything after it can be undone.
 /// The files this conversation changed beside the selected one's diff (added lines green, removed red, hunks in the
 /// accent), scrollable.
-fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme) {
+fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme) -> Vec<(Rect, usize)> {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
     let (w, h) = ((full.width * 9 / 10).max(30).min(full.width), (full.height * 85 / 100).max(10).min(full.height));
@@ -285,7 +287,7 @@ fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme) {
     f.render_widget(Clear, area);
     let (add, del) = files.iter().fold((0, 0), |(a, d), c| (a + c.added, d + c.removed));
     let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(format!(" {} changed · +{add} −{del} · ↑↓ file · pgup/pgdn scroll · esc ", files_n(files.len())), st(th.accent).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(format!(" {} changed · +{add} −{del} · ↑↓ file · enter or click: open in editor · pgup/pgdn scroll · esc ", files_n(files.len())), st(th.accent).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let lw = files.iter().map(|c| c.path.width() + 12).max().unwrap_or(10).min(inner.width as usize / 3) as u16;
@@ -304,6 +306,25 @@ fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme) {
         Line::from(Span::styled(plain(l).chars().take(right.width as usize).collect::<String>(), st(c)))
     }).collect();
     f.render_widget(Paragraph::new(if rows.is_empty() { vec![Line::from(Span::styled("no diff (unchanged now, or not in git)", st(th.faint)))] } else { rows }), right);
+    (0..files.len().min(left.height as usize)).map(|i| (Rect::new(left.x, left.y + i as u16, left.width, 1), i)).collect()
+}
+
+/// The new-file line where a diff's first change is (its first added line; a deletion: where it was), for opening the
+/// file there. 1 when the diff has no hunk (a new file).
+pub fn first_change(diff: &[String]) -> u32 {
+    let mut line = 0;
+    for l in diff {
+        if let Some(h) = l.strip_prefix("@@ ") {
+            // "@@ -a,b +c,d @@": the new file's hunk starts at c
+            line = h.split_whitespace().find_map(|p| p.strip_prefix('+')).and_then(|p| p.split(',').next()?.parse().ok()).unwrap_or(1);
+        } else if line > 0 {
+            if l.starts_with('+') || l.starts_with('-') {
+                return line.max(1);
+            }
+            line += 1;
+        }
+    }
+    1
 }
 
 /// "1 file", "3 files".
@@ -695,23 +716,16 @@ pub fn model_short(m: &str) -> String {
 }
 
 /// Files the agent touched, most recent first: tool paths plus file-looking words in shell commands.
+/// Files the agent wrote with an edit tool (Write, Edit, MultiEdit, NotebookEdit; the own loop's write and edit), newest
+/// first. Commands are not parsed for paths: that counted grep patterns and scratch files as files.
 pub fn files_touched(s: &Session) -> Vec<String> {
-    const EXT: [&str; 12] = [".go", ".rs", ".py", ".ts", ".tsx", ".js", ".md", ".json", ".toml", ".yaml", ".yml", ".sh"];
+    const EDITS: [&str; 6] = ["Write", "Edit", "MultiEdit", "NotebookEdit", "write", "edit"];
     let mut out: Vec<String> = Vec::new();
     for b in s.blocks.iter().rev() {
         let Block::Tool(t) = b else { continue };
-        let mut found: Vec<String> = Vec::new();
-        if !tool_arg(t, "path").is_empty() {
-            found.push(rel(s, tool_arg(t, "path")));
-        }
-        if let Some(cmd) = t.input["command"].as_str() {
-            for w in cmd.split(|c: char| c.is_whitespace() || "'\";|&<>()".contains(c)) {
-                if EXT.iter().any(|e| w.ends_with(e)) && !w.contains('*') && !w.starts_with('-') {
-                    found.push(rel(s, w));
-                }
-            }
-        }
-        for f in found {
+        let p = tool_arg(t, "path");
+        if EDITS.contains(&t.name.as_str()) && !p.is_empty() {
+            let f = rel(s, p);
             if !out.contains(&f) {
                 out.push(f);
             }
@@ -987,7 +1001,9 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
                 (false, false) => ("✗", "Failed", th.err),
             };
             let u = &d.usage;
-            let files = files_touched(s).len();
+            // the repo's changes when there are any (git); else the files an edit tool wrote: a path guessed from a command
+            // line counted grep patterns and /tmp scripts as files (2026-11-04)
+            let files = if v.changed.is_empty() { files_touched(s).len() } else { v.changed.len() };
             // the session in one row: sent ↑, calls, the cache's share and size, output ↓, files, and how fast
             let (ttft, tps) = crate::session::speed(&s.calls);
             let mut facts = vec![format!("↑ {}", human(u.total_in())), format!("{} call{}", s.turns, if s.turns == 1 { "" } else { "s" }),
@@ -1857,6 +1873,10 @@ mod tests {
         let t = text(&v);
         assert!(t.contains("12 files +186 −66") && t.contains("click: diffs") && t.contains("more"), "a total, the files that fit, the rest counted");
         v.diff = Some(DiffPanel { selected: 1, diff: vec!["@@ -1,3 +1,4 @@".into(), "-old line".into(), "+new line".into()], scroll: 0 });
+        let d = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(first_change(&d(&["diff --git a/x b/x", "@@ -10,6 +10,7 @@ fn x()", " a", " b", "+c", " d"])), 12, "the first added line");
+        assert_eq!(first_change(&d(&["@@ -3,3 +3,2 @@", " a", "-b", " c"])), 4, "a deletion: where it was");
+        assert_eq!(first_change(&d(&["+++ new.txt (new file)", "+a"])), 1, "a new file: its top");
         let t = text(&v);
         assert!(t.contains("12 files changed · +186 −66") && t.contains("+new line") && t.contains("› ") , "the list and the selected file's diff");
     }
