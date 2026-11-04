@@ -16,6 +16,32 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## DeepSeek on the company tickets; DeepSeek Harness on one Go task, 2026-11-04 (bench only)
+
+tazuna's own loop with DeepSeek V4.1 Flash 1017 (xhigh, SubRouter route tazuna-route-deepseek-v4-1-flash-1017, no
+reviewer, no hand-over, 0.1.50) on the ten company tickets, one run each (00:04-12:12; route check, runs: $0.46 of the
+user's $1.25 stop). Judged in each batch's pool (Opus xhigh, two passes, 20 calls) and checked against the reviewers'
+findings (10 calls); the week moved 74% to 76%.
+
+| Setup | Batch 1 judge | Batch 2 judge | Findings repeated | Minutes | Cost / ticket |
+|---|---|---|---|---|---|
+| Opus default (Nov 3) | 6.45 (n=10) | 5.70 (n=10) | 73% | 15.8 | $2.24 |
+| DeepSeek own loop | 5.40 (n=5) | 5.10 (n=5) | 71% (34 of 48) | 61.4 | $0.048 |
+| the user's / the author's first version | 5.90 | 6.62 | - | - | - |
+
+DeepSeek alone is about 0.8 points below Opus at 2% of the cost and four times the time; it repeats as many review
+findings. Its two failures are the hardest tickets (t-973 Ledger corrections 3, t-1106 stuck runs 3 with three
+new type errors and eight failing tests: the one run with regressions); it beats Opus on b-188 (7 vs 5.5). The
+hand-over to Opus on failing tests (the default with a provider, off here) would have caught t-1106.
+
+DeepSeek Harness (`dsh` 0.2.1-rc.5, `dsh headless --json`, official API, deepseek-flash = V4.1-Flash-1017, off-peak)
+against tazuna's own loop on SubRouter's DeepSeek and the Opus default, caddy-quoted-braces, two runs each, one pool
+(2 calls): Harness 8.0 / 8.5 in 3.3 minutes, 44 steps, ~$0.033 (¥0.24) a run; own loop 8.0 / 9.0 in 6.3 minutes, 66
+calls, ~$0.006; Opus 7.5 / 7.5. All 5/5 hidden tests. The Harness sends a quarter of the own loop's uncached tokens (59-75k
+vs 193-308k): at the same price list it would be the cheaper of the two. Its web tools fetched this task's fix PR on the
+first try (run discarded); the bench profile now disables them (`~/bench-homes/dsh/.dsh/profiles/headless/cordis.patch.yml`).
+One small task: a lead to study (how it saves calls and uncached tokens), not a result.
+
 ## 0.1.50 (2026-11-03): `--history`; the reviewer gets the lessons too (both opt-in, under measurement)
 
 - `--history`: claude is told to read why a file is the way it is before changing it (`git log` of the file, whose commit

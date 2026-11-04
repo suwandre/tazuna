@@ -304,6 +304,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-04: own loop on the company tickets (DeepSeek alone): 5.25 against Opus's 6.08, same share of review findings,
+  2% of the cost, 4x the time, one run with regressions (the hand-over to Opus would have caught it). For the user's work
+  on the subscription, Opus stays the default; DeepSeek with the hand-over is the cheap path for unattended or
+  plan-limited work. DeepSeek Harness on one Go task: as good as the own loop, twice as fast, a quarter of the uncached
+  input: study its call and cache pattern before more runs (¥4.16 of the user's credits left).
 - 2026-11-03: built for the Nov 7 test (after the weekly reset): `tazuna lessons` (a repo's recurring review findings,
   any GitHub repo, stored in tazuna's data folder), `--lessons`, `--history`, the reviewer reading the lessons. Plan: the
   ten company tickets x one run x four arms (default, lessons, history, five-lens review), on history copies of the
