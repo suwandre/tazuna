@@ -305,6 +305,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-05: SubRouter provider screen for DeepSeek 1017 (17 probed, 13 ran caddy once, $0.15): all ~2x DeepSeek's
+  own per-call time; the spread comes from calls (providers that drop reasoning take 2-3x the calls) and caching. o2oai
+  and znu look best. The route key still names bob-team, which left SubRouter: refresh it (`routes.py refresh`) before
+  the next SubRouter runs. Review test built (bench/company/review.py, ten company PRs, Sol grades against the peer
+  reviewers' findings; smoke: 2 caught, 2 partly of 6): runs after the Nov 7 reset.
 - 2026-11-04 (night): judged on five tasks, DeepSeek's official API and SubRouter's route give the own loop the same
   quality (7.25 vs 7.00 on four tasks, 6.60 each on five); the official API is 2.5x faster with half the calls and costs
   twice as much. Provider choice is the user's trade (time vs price), not a tazuna default. Reasoning sent back: less

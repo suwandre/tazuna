@@ -1,0 +1,17 @@
+{"slug": "manxueai", "ok": 0, "errors": ["<HTTPError 503: 'Service Unavailable'>", "<HTTPError 503: 'Service Unavailable'>"], "ttft": null, "tps": null, "secs": null, "total": 1.6, "cached": 0, "out": 0, "reasoning": 0, "tools": 0}
+{"slug": "kiyara", "ok": 0, "errors": ["<HTTPError 500: 'Internal Server Error'>", "<HTTPError 500: 'Internal Server Error'>"], "ttft": null, "tps": null, "secs": null, "total": 3.7, "cached": 0, "out": 0, "reasoning": 0, "tools": 0}
+{"slug": "tokenus-net", "ok": 4, "errors": [], "ttft": 3.32, "tps": 1063.6, "secs": 4.05, "total": 15.9, "cached": 20, "out": 1581, "reasoning": 1082, "tools": 5}
+{"slug": "tokenx", "ok": 4, "errors": [], "ttft": 2.51, "tps": 180.65, "secs": 4.2, "total": 16.5, "cached": 66, "out": 1019, "reasoning": 566, "tools": 3}
+{"slug": "quqiai", "ok": 0, "errors": ["<HTTPError 404: 'Not Found'>", "<HTTPError 404: 'Not Found'>"], "ttft": null, "tps": null, "secs": null, "total": 6.8, "cached": 0, "out": 0, "reasoning": 0, "tools": 0}
+{"slug": "kriora", "ok": 4, "errors": [], "ttft": 2.5, "tps": 177.7, "secs": 4.15, "total": 18.9, "cached": 75, "out": 1499, "reasoning": 0, "tools": 6}
+{"slug": "a6aa", "ok": 4, "errors": [], "ttft": 2.62, "tps": 159.15, "secs": 5.25, "total": 20.1, "cached": 65, "out": 1365, "reasoning": 0, "tools": 6}
+{"slug": "stableai", "ok": 4, "errors": [], "ttft": 3.58, "tps": 172.1, "secs": 4.85, "total": 20.2, "cached": 66, "out": 873, "reasoning": 317, "tools": 3}
+{"slug": "znu", "ok": 4, "errors": [], "ttft": 2.76, "tps": 159.7, "secs": 4.8, "total": 20.4, "cached": 99, "out": 1122, "reasoning": 536, "tools": 3}
+{"slug": "o2oai", "ok": 4, "errors": [], "ttft": 2.56, "tps": 198.8, "secs": 5.25, "total": 21.0, "cached": 66, "out": 2060, "reasoning": 1380, "tools": 3}
+{"slug": "x-loop", "ok": 4, "errors": [], "ttft": 3.04, "tps": 196.15, "secs": 4.9, "total": 21.1, "cached": 66, "out": 1683, "reasoning": 1110, "tools": 3}
+{"slug": "bangai", "ok": 4, "errors": [], "ttft": 2.63, "tps": 158.45, "secs": 5.25, "total": 21.4, "cached": 97, "out": 1610, "reasoning": 629, "tools": 4}
+{"slug": "ydjs-ai", "ok": 4, "errors": [], "ttft": 4.83, "tps": 230.5, "secs": 5.4, "total": 21.7, "cached": 2, "out": 974, "reasoning": 165, "tools": 4}
+{"slug": "getapi", "ok": 4, "errors": [], "ttft": 2.77, "tps": 136.25, "secs": 5.75, "total": 23.1, "cached": 99, "out": 1572, "reasoning": 1077, "tools": 3}
+{"slug": "lingai", "ok": 4, "errors": [], "ttft": 3.57, "tps": 144.55, "secs": 6.1, "total": 24.2, "cached": 99, "out": 1244, "reasoning": 739, "tools": 3}
+{"slug": "model-share", "ok": 4, "errors": [], "ttft": 4.21, "tps": 141.35, "secs": 6.65, "total": 26.0, "cached": 99, "out": 1246, "reasoning": 650, "tools": 3}
+{"slug": "relai", "ok": 4, "errors": [], "ttft": 4.23, "tps": 133.9, "secs": 9.2, "total": 36.5, "cached": 99, "out": 2506, "reasoning": 1792, "tools": 2}

@@ -34,6 +34,47 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## SubRouter's DeepSeek providers, smoke test, 2026-11-04 (bench only)
+
+DeepSeek V4.1 Flash 1017 at xhigh through 17 of SubRouter's 28 providers (the cheapest by listed price, without
+Cybersol), one pinned key each (`tazuna-route-smoke-<slug>`). First `bench/provsmoke.py`: four growing streamed calls
+per provider (~15k tokens of context, a bash tool), all at once: time to first token, output tokens a second, cached
+share of the warm calls, reasoning tokens. quqiai (404), manxueai (503) and kiyara (500) answered nothing. Then one
+caddy-quoted-braces run per remaining provider (`realwork/provsmoke.sh`, tazuna 0.1.54 frozen, seven at a time). One run
+each: a screen, not a ranking. Spent $0.15 in all.
+
+```
+provider      ttft  tok/s cache  reas |   min calls s/call uncached   out tests  billed
+o2oai         2.56  198.8   66%  1380 |   5.0    29   10.4      58k   24k 5/5   $0.0032
+stableai      3.58  172.1   66%   317 |   5.2    31   10.1     732k   24k 5/5   $0.0114
+znu           2.76  159.7   99%   536 |   6.7    38   10.6      55k   27k 5/5   $0.0025
+x-loop        3.04 196.15   66%  1110 |   7.4    34   13.0      62k   36k 5/5   $0.0049
+bangai        2.63 158.45   97%   629 |   7.4    61    7.3     337k   23k 5/5   $0.0102
+getapi        2.77 136.25   99%  1077 |   8.0    44   10.9     104k   32k 5/5   $0.0072
+tokenx        2.51 180.65   66%   566 |   9.3    40   14.0      68k   33k 5/5   $0.0072
+lingai        3.57 144.55   99%   739 |   9.8    52   11.3     221k   33k 5/5   $0.0100
+a6aa          2.62 159.15   65%     0 |  11.6    74    9.4     739k   30k 5/5   $0.0108
+tokenus-net   3.32 1063.6   20%  1082 |  11.7    53   13.3    1834k   69k 5/5   $0.0434
+ydjs-ai       4.83  230.5    2%   165 |  22.9    82   16.8    1180k   27k 5/5   $0.0240
+kriora         2.5  177.7   75%     0 |  23.5   111   12.7     881k   47k 5/5   $0.0126
+model-share   4.21 141.35   99%   650 |  33.3    70   28.5      58k   33k 5/5   $0.0055
+relai         4.23  133.9   99%  1792 | failed mid-run, billed $0.0010
+billed total 0.154
+```
+
+(probe: ttft and tok/s are medians of four calls, cache the warm calls' cached share, reas the reasoning tokens of all
+four; run: minutes, model calls, uncached input, output, hidden tests, billed by SubRouter for probe and run.)
+DeepSeek's own API on the same task: 2.5-4.1 minutes, 22-41 calls, 38-79k uncached, about 5 s a call, $0.017-0.025.
+
+- Every provider is about twice as slow per call as DeepSeek's own API (7-14 s, model-share 28 s), with similar first
+  tokens (2.5-4.8 s) and generation speed in the probe (130-230 tok/s; tokenus-net's 1,064 is a buffered burst).
+- Calls make the difference between providers. Kriora and a6aa returned no reasoning at all at xhigh and took the most
+  calls (111, 74), the pattern bob-team showed on 2026-11-04 (twice the official API's calls).
+- Poor caching makes a provider slow and dear: ydjs-ai (2% cached) and tokenus-net (20%) cost 10-17x znu.
+- Best of this screen: o2oai (5.0 min, 29 calls, $0.003), znu (6.7 min, 38 calls, 99% cached, $0.0025), stableai
+  (5.2 min, but 732k uncached), x-loop (7.4 min, $0.005). relai dropped out mid-run (503 "no available channel"), as
+  bob-team did earlier the same day: the route's only provider is gone from the list.
+
 ## 0.1.55 (2026-11-04): the own loop sends DeepSeek its earlier reasoning on DeepSeek's own API
 
 On `https://api.deepseek.com` the model's earlier reasoning now goes back with the history by default (elsewhere still
