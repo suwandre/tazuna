@@ -171,8 +171,9 @@ pub fn open_url(url: &str) -> std::io::Result<()> {
 
 /// Opens `path` at `line` in the user's editor, detached; returns which editor. TAZUNA_EDITOR is a command template
 /// ("code -g {path}:{line}", "idea --line {line} {path}"); otherwise the first of Cursor, VS Code, Zed, Windsurf, Sublime
-/// Text or a JetBrains IDE found on PATH, else the system's default app for the file. Each word of the template is one
-/// argument (no shell): a path with spaces or quotes stays one argument.
+/// Text or a JetBrains IDE found on PATH, else a plain text editor (macOS TextEdit through `open -t`, Windows Notepad).
+/// Never the system's default app: the file is the agent's, and a `.command` or `.app` would run instead of opening.
+/// Each word of the template is one argument (no shell): a path with spaces or quotes stays one argument.
 pub fn open_in_editor(path: &Path, line: u32) -> std::io::Result<String> {
     let (p, l) = (path.to_string_lossy().into_owned(), line.max(1).to_string());
     let fill = |w: &str| w.replace("{path}", &p).replace("{line}", &l);
@@ -186,11 +187,11 @@ pub fn open_in_editor(path: &Path, line: u32) -> std::io::Result<String> {
         match KNOWN.iter().find(|(n, _)| on_path(n)) {
             Some((n, a)) => (n.to_string(), a.split_whitespace().map(fill).collect()),
             #[cfg(target_os = "macos")]
-            None => ("open".into(), vec![p.clone()]),
+            None => ("open".into(), vec!["-t".into(), p.clone()]),
             #[cfg(windows)]
-            None => ("explorer".into(), vec![p.clone()]),
+            None => ("notepad".into(), vec![p.clone()]),
             #[cfg(not(any(target_os = "macos", windows)))]
-            None => ("xdg-open".into(), vec![p.clone()]),
+            None => return Err(std::io::Error::other("no editor found: set TAZUNA_EDITOR")),
         }
     };
     Command::new(&cmd).args(&args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).spawn()?;
