@@ -588,6 +588,8 @@ fn main() -> Result<()> {
                 let _ = execute!(std::io::stdout(), PopKeyboardEnhancementFlags);
             }
             let _ = execute!(std::io::stdout(), DisableBracketedPaste, DisableMouseCapture);
+            // the pointer back to normal, in case the window closed over a link
+            let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\x1b]22;default\x1b\\");
             ratatui::restore();
             println!("session saved: {}", live.rec_path.display());
             r
@@ -799,7 +801,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -1174,6 +1176,7 @@ fn run_live(
     // the files panel (cockpit): a click opens /diff
     let mut files_area: Option<ratatui::layout::Rect> = None;
     let mut diff_files: Vec<(ratatui::layout::Rect, usize)> = vec![];
+    let mut over_link = false;
     // the work tree when this conversation began: what it changed since is the files panel and /diff
     let mut git_start = runlog::git_snapshot(&std::env::current_dir()?);
     let mut changed_at = Instant::now();
@@ -1394,7 +1397,18 @@ fn run_live(
                             }
                         }
                     },
-                    MouseEventKind::Moved => v.hover = block_at(transcript, &rows, m.column, m.row),
+                    MouseEventKind::Moved => {
+                        v.hover = block_at(transcript, &rows, m.column, m.row);
+                        v.mouse = Some((m.column, m.row));
+                        // the pointer cursor over a link (OSC 22: kitty, Ghostty, foot, WezTerm, xterm; others ignore it)
+                        let over = links.iter().any(|(r, _)| r.contains(ratatui::layout::Position::new(m.column, m.row)));
+                        if over != over_link {
+                            over_link = over;
+                            use std::io::Write;
+                            let _ = write!(std::io::stdout(), "\x1b]22;{}\x1b\\", if over { "pointer" } else { "default" });
+                            let _ = std::io::stdout().flush();
+                        }
+                    }
                     k => scroll_mouse(&mut v, k),
                 }
                 continue;

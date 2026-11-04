@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.54 (2026-11-04): links react to the mouse
+
+- A link under the mouse is drawn reversed, and the pointer turns into a hand over it (OSC 22, in terminals that take
+  it: kitty, Ghostty, foot, WezTerm, xterm; others ignore it). Before, a clickable link looked like plain text until
+  clicked. The pointer goes back to normal on exit.
+
 ## 0.1.53 (2026-11-04): files open in the editor; no more guessed paths
 
 - The diff view (click the files panel, or `/diff`): Enter, `o` or a click on a file opens it in the editor at its first
