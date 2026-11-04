@@ -307,8 +307,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
 - 2026-11-04 (night): judged on five tasks, DeepSeek's official API and SubRouter's route give the own loop the same
   quality (7.25 vs 7.00 on four tasks, 6.60 each on five); the official API is 2.5x faster with half the calls and costs
-  twice as much. Provider choice is the user's trade (time vs price), not a tazuna default. Reasoning sent back: no
-  measurable gain beyond less uncached input; stays opt-in. DeepSeek credit used up (¥0.33 left).
+  twice as much. Provider choice is the user's trade (time vs price), not a tazuna default. Reasoning sent back: less
+  uncached input on every task and nothing worse, so default on DeepSeek's own API (0.1.55), opt-in elsewhere. DeepSeek credit used up (¥0.33 left).
 - 2026-11-04 (evening): the DeepSeek Harness's two-times speed was the provider, not the harness. tazuna's own loop on
   DeepSeek's official API (same model, effort xhigh, caddy-quoted-braces, four runs): 2.5-4.1 minutes and 22-41 calls
   against the Harness's 3.2-4.4 and 43-59, half its tokens and 35-55% of its cost less, 5/5 hidden tests every run; on SubRouter's route the same

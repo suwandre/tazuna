@@ -248,7 +248,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         queued: VecDeque::new(),
         mode,
         asked: 0,
-        send_reasoning: reasoning_back(),
+        send_reasoning: reasoning_back(&url),
         cache_key: std::env::var_os("TAZUNA_NO_CACHE_KEY").is_none(),
         routes,
         route_calls: vec![],
@@ -426,9 +426,10 @@ fn test_note(cmd: &str, out: &str, tree: impl FnOnce() -> Option<(u64, bool)>, g
 /// demands it (the fallback in the loop). 0.0.85 sent it by default for DeepSeek's re-planning, but no SubRouter provider
 /// passes it to the model and none bills it (2026-10-27/28); 0.0.97's note of a long step's end is what fixed the
 /// re-planning. MiniMax-M3.1-Flash on foxrouter keeps and bills it: 3.6M characters of reasoning took one run's prompt to
-/// 910K tokens and past the context limit (0.1.0, 2026-10-29).
-fn reasoning_back() -> bool {
-    std::env::var_os("TAZUNA_SEND_REASONING").is_some()
+/// 910K tokens and past the context limit (0.1.0, 2026-10-29). On by default for DeepSeek's official API, where it was
+/// measured: 45% less uncached input on every task, same judge and time (2026-11-04).
+fn reasoning_back(url: &str) -> bool {
+    std::env::var_os("TAZUNA_SEND_REASONING").is_some() || url.starts_with("https://api.deepseek.com")
 }
 
 /// The end of a long reasoning step, kept in the history as visible text (0.0.97). Providers drop a model's earlier
@@ -470,7 +471,7 @@ impl Loop {
                     drop_thinking(&mut self.msgs);
                     self.msgs.retain(|m| m["type"] != "reasoning");
                     self.cache_key = std::env::var_os("TAZUNA_NO_CACHE_KEY").is_none();
-                    self.send_reasoning = reasoning_back();
+                    self.send_reasoning = reasoning_back(&url);
                     self.route_calls.clear();
                     (self.out)(&json!({"type": "system", "subtype": "route_switch", "message": format!("now {url}: {why}")}));
                     return true;
@@ -1512,7 +1513,8 @@ mod tests {
         let switch = events.iter().find(|e| e["subtype"] == "route_switch").expect("a route_switch event");
         assert!(switch["message"].as_str().unwrap().contains("b.example") && switch["message"].as_str().unwrap().contains("403"));
         assert_eq!(events.last().unwrap()["subtype"], "success", "the next route finished the turn");
-        assert!(l.send_reasoning == reasoning_back() && l.routes.is_empty(), "per-route flags start over; the list is used up");
+        assert!(l.send_reasoning == reasoning_back("https://b.example/v1") && l.routes.is_empty(), "per-route flags start over; the list is used up");
+        assert!(reasoning_back("https://api.deepseek.com/v1"), "on by default for DeepSeek's own API");
         std::fs::remove_dir_all(&dir).ok();
     }
 

@@ -34,6 +34,20 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.55 (2026-11-04): the own loop sends DeepSeek its earlier reasoning on DeepSeek's own API
+
+On `https://api.deepseek.com` the model's earlier reasoning now goes back with the history by default (elsewhere still
+only with `TAZUNA_SEND_REASONING`: some providers keep and bill it, one run went past its context limit, 0.1.0). Measured
+in the next section, four tasks with both arms:
+
+| | Judge | Minutes | Calls | Uncached | Cost |
+|---|---|---|---|---|---|
+| reasoning dropped (0.1.54) | 7.25 | 6.4 | 42 | 102k | $0.033 |
+| reasoning sent back (0.1.55) | 7.12 | 6.5 | 48 | 56k | $0.029 |
+
+Less uncached input on all four tasks, lower cost on three; judge and time within noise. Better on one metric and worse
+on none, so it is the default where it was measured.
+
 ## DeepSeek's official API against SubRouter's route, judged, 2026-11-04 (bench only)
 
 Follow-up on the section below: the other five tasks of tasks/ on the official API, one run per arm, 22:14 CET
@@ -54,7 +68,8 @@ every arm's diffs side by side (6 calls, 2% of the 5h window); SubRouter's runs 
 hugo-template-return, where both arms broke the package suite.) Same quality (differences far inside ±0.75), the
 official API 2.5x faster with half the calls at twice the cost. Per call both take about 9-11 s: the time goes into
 SubRouter's extra calls, with the same model name and the same prompt, so the route behaves like a different serving of
-the model. Reasoning sent back: same score and time, 45% less uncached input, 12% less cost: within noise, stays opt-in.
+the model. Reasoning sent back: same score and time, 45% less uncached input (every task), 12% less cost: default on DeepSeek's
+own API from 0.1.55.
 On the caddy task the DeepSeek Harness scored 8.5, the own loop 8.0 and 8.5 (reasoning back).
 
 ## The DeepSeek Harness's levers in the own loop, 2026-11-04 (bench only)
