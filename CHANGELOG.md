@@ -16,6 +16,23 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## The DeepSeek Harness's levers in the own loop, 2026-11-04 (bench only)
+
+DeepSeek V4.1 Flash 1017 (xhigh) through SubRouter's route, tasks/ (six Go tasks), 0.1.51, three arms run together from
+13:42: baseline, `--search-tools` (grep and glob tools, bash told not to search or read), and both plus `--batch-own`. The
+route's only provider (bob-team) dropped out at 16:02 ("no available channel"): six second runs failed and four were
+stopped; 26 valid runs, every task in every arm at least once. Averages of per-task means; no judge (hidden tests only).
+
+| Arm | Minutes | Calls | Uncached | Cached | Output | Cost | Hidden |
+|---|---|---|---|---|---|---|---|
+| baseline | 22.8 | 108 | 838k | 8.0M | 85k | $0.021 | 33/39 |
+| search tools | 19.9 | 103 | 848k | 7.1M | 77k | $0.020 | 30/39 |
+| search tools + few calls | 27.8 | 132 | 925k | 11.5M | 109k | $0.027 | 27/31 |
+
+The tools save 13% of the time and 5% of the calls, inside run-to-run noise, with three fewer hidden tests; the
+few-calls rule makes runs longer (+22% calls). Neither explains the Harness's two-times speed: both stay opt-in. SubRouter
+spend today: $0.99 (company tickets $0.46, this $0.53).
+
 ## Kiro against tazuna on the same models, 2026-11-04 (bench only)
 
 Kiro CLI 2.37.1 (AWS; stock settings, web search and fetch not trusted, `kiro-cli chat --no-interactive --output-format
