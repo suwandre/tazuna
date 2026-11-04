@@ -38,6 +38,8 @@
 //!          [--repo-tools core|all]   # repo profile: Claude Code's coding tools only (core) or all of them (default)
 //!          [--rtk]   # claude's Bash commands through rtk (shortened output; rtk must be installed)
 //!          [--batch-calls]   # repo profile: claude told to make independent tool calls in one turn
+//!          [--search-tools]   # own loop: grep and glob tools (not through bash)
+//!          [--batch-own]   # own loop: independent tool calls in one response
 //!          [--history]   # claude reads the git history of files before changing them (where there is history)
 //!          [--lessons]   # the repo's review lessons (`tazuna lessons`, kept in ~/.local/share/tazuna/lessons) into the instructions
 //!          [--no-test-scope]   # claude may run whole test suites while working (default: only the tests covering its
@@ -365,6 +367,11 @@ fn parse(argv: Vec<String>) -> Result<Args> {
                 unsafe { std::env::set_var("TAZUNA_PRICE", v) };
             }
             "--no-escalate" => a.no_escalate = true,
+            // own loop: grep and glob tools of its own (the engine, a child process, reads it); under measurement
+            // SAFETY: flags are parsed before any thread starts
+            "--search-tools" => unsafe { std::env::set_var("TAZUNA_SEARCH_TOOLS", "1") },
+            // own loop: the few-turns rule (independent calls in one response)
+            "--batch-own" => unsafe { std::env::set_var("TAZUNA_BATCH", "1") },
             "--no-boss" => a.no_boss = true,
             "--pick" => a.pick = true,
             "--escalate" => {

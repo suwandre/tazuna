@@ -211,7 +211,25 @@ pub fn serve(args: &[String]) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let session = format!("own-{}-{:x}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos());
     let tools = crate::mcp::tools();
-    let names: Vec<&Value> = tools.as_array().into_iter().flatten().map(|t| &t["name"]).collect();
+    // TAZUNA_SEARCH_TOOLS (`--search-tools`): grep and glob as tools of their own, as DeepSeek's own harness has: there
+    // DeepSeek searched and read through them and ran bash 6 times a task; in the own loop it grepped, cat-ed and sed-ed
+    // through bash 30-40 times (more calls, more uncached tool output), 2026-11-04. Under measurement.
+    let search = std::env::var_os("TAZUNA_SEARCH_TOOLS").is_some();
+    let mut fns: Vec<Value> = tools.as_array().into_iter().flatten().map(|t| {
+        let mut d = t["description"].as_str().unwrap_or_default().to_string();
+        if search && t["name"] == "bash" {
+            d.push_str(" Search with grep, find files with glob and read with read: not through bash (no grep, find, ls, cat, head, tail or sed -n here).");
+        }
+        json!({"type": "function", "function": {"name": t["name"], "description": d, "parameters": t["inputSchema"]}})
+    }).collect();
+    if search {
+        for mut t in explore_tools() {
+            let f = &mut t["function"];
+            f["name"] = json!(if f["name"] == "search" { "grep" } else { "glob" });
+            fns.push(t);
+        }
+    }
+    let names: Vec<Value> = fns.iter().map(|t| t["function"]["name"].clone()).collect();
     emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": []}));
     let mut loop_ = Loop {
         call,
@@ -220,7 +238,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         model,
         effort,
         price,
-        tools: tools.as_array().into_iter().flatten().map(|t| json!({"type": "function", "function": {"name": t["name"], "description": t["description"], "parameters": t["inputSchema"]}})).collect(),
+        tools: fns,
         // Responses and Messages keep the system prompt outside the history
         msgs: if api == Api::Chat { vec![json!({"role": "system", "content": system})] } else { vec![] },
         server: crate::mcp::Server::new(cwd).with_read_dedupe(),
@@ -767,6 +785,9 @@ impl Loop {
                     Some(input) => match self.permit(&name, &input, rx) {
                         Permit::Allow(input) if self.mode == "explore" && (name == "search" || name == "list") => {
                             explore_tool(&name, &input, &std::env::current_dir().unwrap_or_default())
+                        }
+                        Permit::Allow(input) if name == "grep" || name == "glob" => {
+                            explore_tool(if name == "grep" { "search" } else { "list" }, &input, &std::env::current_dir().unwrap_or_default())
                         }
                         Permit::Allow(input) => match self.server.call(&json!({"name": name, "arguments": input})) {
                             Ok(r) => (r["content"][0]["text"].as_str().unwrap_or_default().to_string(), r["isError"] == true),
