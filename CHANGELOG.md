@@ -16,6 +16,22 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Kiro against tazuna on the same models, 2026-11-04 (bench only)
+
+Kiro CLI 2.37.1 (AWS; stock settings, web search and fetch not trusted, `kiro-cli chat --no-interactive --output-format
+stream-json`) on the user's Kiro Pro credits, tasks/ (six Go tasks) x two runs, 14:57-15:47, against tazuna's Opus default
+of Nov 3 (test scope, v1333-v1344); one judge pool per task, two passes (12 calls).
+
+| Harness + model | Judge | Hidden | All passing | Minutes | Cost / run |
+|---|---|---|---|---|---|
+| tazuna + Opus 5.5 medium | 6.83 | 43/48 | 9/12 | 5.7 | $0.58 at API prices (plan usage) |
+| Kiro + Opus 5.5 medium | 7.04 | 44/48 | 9/12 | 6.6 | 18.8 credits (~$0.38 on Pro) |
+| Kiro + Haiku 5.5 medium (n=10) | 4.70 | 27/39 | 3/10 | 4.7 | 1.1 credits (~$0.02) |
+
+Same model, same quality: Kiro +0.21, inside noise; per task each wins some (Kiro k6 8/8 vs 6/7, tazuna hugo-template
+6/8 vs 5/5). 237 credits used in all (one Haiku run lost to a Kiro login refresh, one without a result). Haiku stays
+too weak as the main model, as on tazuna (its 1.1 credits a run are the draw).
+
 ## 0.1.54 (2026-11-04): links react to the mouse
 
 - A link under the mouse is drawn reversed, and the pointer turns into a hand over it (OSC 22, in terminals that take
