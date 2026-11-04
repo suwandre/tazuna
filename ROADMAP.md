@@ -305,6 +305,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-04 (night): judged on five tasks, DeepSeek's official API and SubRouter's route give the own loop the same
+  quality (7.25 vs 7.00 on four tasks, 6.60 each on five); the official API is 2.5x faster with half the calls and costs
+  twice as much. Provider choice is the user's trade (time vs price), not a tazuna default. Reasoning sent back: no
+  measurable gain beyond less uncached input; stays opt-in. DeepSeek credit used up (¥0.33 left).
 - 2026-11-04 (evening): the DeepSeek Harness's two-times speed was the provider, not the harness. tazuna's own loop on
   DeepSeek's official API (same model, effort xhigh, caddy-quoted-braces, four runs): 2.5-4.1 minutes and 22-41 calls
   against the Harness's 3.2-4.4 and 43-59, half its tokens and 35-55% of its cost less, 5/5 hidden tests every run; on SubRouter's route the same

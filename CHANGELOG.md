@@ -34,6 +34,29 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## DeepSeek's official API against SubRouter's route, judged, 2026-11-04 (bench only)
+
+Follow-up on the section below: the other five tasks of tasks/ on the official API, one run per arm, 22:14 CET
+(off-peak). The balance guard stopped the round at ¥3.25 spent (¥0.33 of the granted credit left): k6-run-once in both
+arms and hugo-template-return with reasoning back were killed in flight. Judge: Opus 5.5 xhigh, one call per task with
+every arm's diffs side by side (6 calls, 2% of the 5h window); SubRouter's runs are the baseline arm of 2026-11-04
+(0.1.51, own-loop code identical to 0.1.54). Averages of per-task means.
+
+| Arm | Tasks | Judge | Minutes | Calls | Uncached | Cost |
+|---|---|---|---|---|---|---|
+| SubRouter route | 4 | 7.00 | 16.7 | 92 | 597k | $0.015 |
+| official API | 4 | 7.25 | 6.4 | 42 | 102k | $0.033 |
+| official API, reasoning back | 4 | 7.12 | 6.5 | 48 | 56k | $0.029 |
+| SubRouter route | 5 | 6.60 | 20.1 | 105 | 844k | $0.020 |
+| official API | 5 | 6.60 | 8.4 | 51 | 120k | $0.042 |
+
+(4 tasks: caddy-quoted-braces, hugo-section-slug, prometheus-duration-parens, terraform-import-foreach; 5 adds
+hugo-template-return, where both arms broke the package suite.) Same quality (differences far inside ±0.75), the
+official API 2.5x faster with half the calls at twice the cost. Per call both take about 9-11 s: the time goes into
+SubRouter's extra calls, with the same model name and the same prompt, so the route behaves like a different serving of
+the model. Reasoning sent back: same score and time, 45% less uncached input, 12% less cost: within noise, stays opt-in.
+On the caddy task the DeepSeek Harness scored 8.5, the own loop 8.0 and 8.5 (reasoning back).
+
 ## The DeepSeek Harness's levers in the own loop, 2026-11-04 (bench only)
 
 DeepSeek V4.1 Flash 1017 (xhigh) through SubRouter's route, tasks/ (six Go tasks), 0.1.51, three arms run together from
