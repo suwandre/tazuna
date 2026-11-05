@@ -71,7 +71,7 @@ def provider(slug, res):
     ok = [r for r in rows if not r.get("error")]
     med = lambda k: round(st.median([r[k] for r in ok if r.get(k) is not None]), 2) if any(r.get(k) is not None for r in ok) else None
     warm = ok[1:]
-    res[slug] = dict(slug=slug, ok=len(ok), errors=[r["error"] for r in rows if r.get("error")][:2], ttft=med("ttft"), tps=med("tps"),
+    res[slug] = dict(at=time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime()), slug=slug, ok=len(ok), errors=[r["error"] for r in rows if r.get("error")][:2], ttft=med("ttft"), tps=med("tps"),
                      secs=med("secs"), total=round(sum(r["secs"] for r in rows), 1),
                      cached=round(100 * sum(r["cached"] for r in warm) / max(1, sum(r["prompt"] or 0 for r in warm))),
                      out=sum(r["out"] for r in ok), reasoning=sum(r["reasoning"] or 0 for r in ok), tools=sum(r["tools"] for r in ok))
