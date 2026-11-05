@@ -9,6 +9,9 @@ is about +-17 points, 100 about +-9, so it catches a weaker model or cut reasoni
 
   canary.py fetch                                  build the set (once; public data from Hugging Face)
   canary.py run MODEL --key-env VAR [--effort E]   SubRouter's Chat route with the key in VAR (default effort max)
+  canary.py codex MODEL [--effort E]               the same through the official Codex CLI on the user's ChatGPT plan
+                                                   (route "codex-plan"): the model as OpenAI serves it, for comparing
+                                                   SubRouter's providers with (2026-11-05)
   canary.py show [MODEL]                           accuracy per model, route, set and date
 """
 import json, math, os, random, re, sys, threading, time, urllib.parse, urllib.request
@@ -97,14 +100,39 @@ def wilson(k, n, z=1.96):
     return c - h, c + h
 
 
-def run(model, key_env, effort):
+def ask_codex(model, effort, text):
+    """One question through `codex exec` (official CLI, the user's ChatGPT plan; its login in the bench's clean
+    CODEX_HOME, no user config), read-only in an empty folder: the last agent message, and the turn's usage."""
+    import subprocess, tempfile
+    home = Path.home() / "bench-homes" / "codex"
+    with tempfile.TemporaryDirectory(prefix="canary-codex-") as d:
+        r = subprocess.run(["codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "-s", "read-only", "-m", model,
+                            "-c", f'model_reasoning_effort="{effort}"', text], cwd=d, capture_output=True, text=True, timeout=1800,
+                           stdin=subprocess.DEVNULL, env={"PATH": os.environ["PATH"], "HOME": str(home), "CODEX_HOME": str(home / ".codex")})
+    answer, usage = "", {}
+    for line in r.stdout.splitlines():
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        it = e.get("item") or {}
+        if it.get("type") == "agent_message":
+            answer = it.get("text") or answer
+        if e.get("type") == "turn.completed":
+            usage = {"completion_tokens": (e.get("usage") or {}).get("output_tokens")}
+    if not answer:
+        raise RuntimeError(f"codex exit {r.returncode}: {(r.stderr or r.stdout)[-200:]}")
+    return answer, usage
+
+
+def run(model, key_env, effort, codex=False):
     items = [json.loads(l) for l in SET.open()]
-    key, day = os.environ[key_env], time.strftime("%Y-%m-%d")
+    key, day = (None if codex else os.environ[key_env]), time.strftime("%Y-%m-%d")
 
     def one(item):
         t = time.time()
         try:
-            text, usage = ask(model, key, effort, prompt(item))
+            text, usage = ask_codex(model, effort, prompt(item)) if codex else ask(model, key, effort, prompt(item))
         except Exception as e:
             text, usage = f"[error: {e}]", {}
         ok, got = grade(item, text)
@@ -116,7 +144,7 @@ def run(model, key_env, effort):
         return row
 
     OUT.parent.mkdir(exist_ok=True)
-    with ThreadPoolExecutor(8) as ex:
+    with ThreadPoolExecutor(4 if codex else 8) as ex:  # the plan: a few at a time
         done = list(ex.map(one, items))
     summary(done)
 
@@ -139,6 +167,8 @@ if __name__ == "__main__":
         fetch()
     elif a[:1] == ["run"] and len(a) >= 2 and "--key-env" in a:
         run(a[1], a[a.index("--key-env") + 1], a[a.index("--effort") + 1] if "--effort" in a else "max")
+    elif a[:1] == ["codex"] and len(a) >= 2:
+        run(a[1], "codex-plan", a[a.index("--effort") + 1] if "--effort" in a else "xhigh", codex=True)
     elif a[:1] == ["show"]:
         rows_ = [json.loads(l) for l in OUT.open()] if OUT.exists() else []
         summary([r for r in rows_ if len(a) < 2 or a[1] in r["model"]])
