@@ -1,0 +1,6 @@
+{"at": "2026-11-05T12:04Z", "slug": "shared-openai-pro-50", "ok": 0, "errors": ["<HTTPError 503: 'Service Unavailable'>", "<HTTPError 503: 'Service Unavailable'>"], "ttft": null, "tps": null, "secs": null, "total": 1.3, "cached": 0, "out": 0, "reasoning": 0, "tools": 0}
+{"at": "2026-11-05T12:04Z", "slug": "foxrouter", "ok": 0, "errors": ["<HTTPError 503: 'Service Unavailable'>", "<HTTPError 503: 'Service Unavailable'>"], "ttft": null, "tps": null, "secs": null, "total": 1.8, "cached": 0, "out": 0, "reasoning": 0, "tools": 0}
+{"at": "2026-11-05T12:04Z", "slug": "kriora", "ok": 4, "errors": [], "ttft": 4.25, "tps": 87.3, "secs": 5.6, "total": 29.0, "cached": 33, "out": 424, "reasoning": 214, "tools": 3}
+{"at": "2026-11-05T12:04Z", "slug": "xcgx", "ok": 0, "errors": ["<HTTPError 400: 'Bad Request'>", "<HTTPError 400: 'Bad Request'>"], "ttft": null, "tps": null, "secs": null, "total": 19.9, "cached": 0, "out": 0, "reasoning": 0, "tools": 0}
+{"at": "2026-11-05T12:04Z", "slug": "shared-openai-pro-52", "ok": 4, "errors": [], "ttft": 13.63, "tps": 61.2, "secs": 15.7, "total": 60.7, "cached": 99, "out": 585, "reasoning": 368, "tools": 3}
+{"at": "2026-11-05T12:04Z", "slug": "shared-openai-plus-51", "ok": 4, "errors": [], "ttft": 14.39, "tps": 75.8, "secs": 16.55, "total": 66.0, "cached": 66, "out": 646, "reasoning": 441, "tools": 3}

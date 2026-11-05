@@ -34,6 +34,28 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## GPT-6 Luna on SubRouter's providers, smoke test, 2026-11-05 (bench only)
+
+Six providers probed at xhigh (`luna-probe-1105.jsonl`): OpenAI Pro 50 and foxrouter answered 503; xcgx serves Luna
+only without tools (it turns a Responses call with tools and a reasoning effort into a Chat call and refuses it: 400);
+kriora, Pro 52 and Plus 51 work. Each of those three: the canary (30 AIME + 100 MMLU-Pro, xhigh) and one caddy run in
+the own loop (`realwork/luna.sh`, `luna2.sh`, tazuna 0.1.55), judged by Sol in one pool with the 17 DeepSeek caddy runs
+of 2026-11-04 (`judge.luna.sol.jsonl`). $0.019 in all.
+
+| Luna via | first token | AIME | MMLU-Pro | caddy min | calls | out | Sol |
+|---|---|---|---|---|---|---|---|
+| kriora | 4.3 s | 29/30 | 89 | 3.8 | 18 | 3k | 8.0 |
+| OpenAI Pro 52 | 13.6 s | 27/30 | 87 | 15.2 | 35 | 13k | 9.0 |
+| OpenAI Plus 51 | 14.4 s | 27/30 | 87 | 15.5 | 36 | 12k | 8.0 |
+
+In the same pool DeepSeek scored 9.0 on its official API and on o2oai, stableai, znu, getapi and model-share, 6-8 on
+the rest (the pool rescored some DeepSeek runs a point or three from the provider pool the night before: one pass of
+Sol moves that much). On this task and these checks Luna equals DeepSeek: the same canary marks (DeepSeek's good providers
+26-30 and 86-90), the same caddy marks, and on kriora the fewest calls of any run (18). The shared pools are 4x slower
+(14 s to the first token). Not a switch: caddy is easy, Sol is Luna's own family (a GPT judge), and on four harder
+tasks with Opus judging Luna lost to DeepSeek 4.88 to 6.25 (2026-10-31). Luna on kriora is worth the six tasks with an
+Opus judge.
+
 ## 0.1.57 (2026-11-05): the cockpit's side panels say more and open up
 
 - **files**: lists every file the conversation wrote. Before, a file committed during the conversation (or written
