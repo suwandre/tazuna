@@ -34,6 +34,17 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.66 (2026-11-06): the running cost at the model's own prices; DeepSeek's real effort levels
+
+- While a turn ran, the cost on screen was its tokens at Claude's list prices ($4/M input, $20/M output); only the
+  turn's end put the provider's figure in. A Luna turn read ~$3 while it ran and $0.007 when it ended. The own loop now
+  tells the session its model's prices when it starts, and the running cost uses them.
+- The model picker offers a checked route only the effort levels that differ (it offered all five and named the
+  distinct ones in a note). DeepSeek V4.1 Flash 1017, measured on znu and a6aa with three hard AIME problems three times
+  each (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` first once each): off (sent as `none`: ~2.6k tokens,
+  1/3 right), high (low, medium, high and xhigh alike: medians 6-13k, overlapping), max (~19k). Its levels are now off,
+  high and max.
+
 ## 0.1.65 (2026-11-06): the diff view is a file list; long rows and notices unfold
 
 - `/diff` and a click on the files panel open a list of the changed files: path, `+added −removed`, a bar of their

@@ -129,6 +129,8 @@ pub struct Session {
     pub meta: Vec<Meta>,
     /// Usage per model turn (index = turn - 1).
     pub turn_usage: Vec<Usage>,
+    /// The own loop's model prices per million (uncached input, cached input, output), from its init event.
+    pub price_m: Option<(f64, f64, f64)>,
     /// Tokens in the latest request: how full the context is.
     pub context: u64,
     /// The model's context window, as claude's result reports it; None until then and after a switch (the own loop's
@@ -239,6 +241,7 @@ impl Session {
             blocks: if prompt.trim().is_empty() { vec![] } else { vec![Block::Prompt(prompt.trim().to_string())] },
             meta: if prompt.trim().is_empty() { vec![] } else { vec![Meta { at_ms: 0.0, turn: 0 }] },
             turn_usage: Vec::new(),
+            price_m: None,
             context: 0,
             // ponytail: Opus 5.5's window as the default until the result event reports the real one
             context_window: None,
@@ -351,7 +354,17 @@ impl Session {
             cache_read: u.cache_read - b.cache_read,
             output: u.output - b.output,
         };
-        self.exact_cost.unwrap_or(0.0) + since.estimate()
+        self.exact_cost.unwrap_or(0.0) + self.estimate(&since)
+    }
+
+    /// Usage at this session's model's prices when the own loop reported them (per million: uncached input, cached
+    /// input, output), else at Claude's list prices. A live own-loop turn was priced like Claude: ~$3 shown while a
+    /// Luna turn ran, $0.007 when it ended (2026-11-06).
+    pub fn estimate(&self, u: &Usage) -> f64 {
+        match self.price_m {
+            Some((i, c, o)) => ((u.input + u.cache_write) as f64 * i + u.cache_read as f64 * c + u.output as f64 * o) / 1e6,
+            None => u.estimate(),
+        }
     }
 
     fn push(&mut self, b: Block) {
@@ -392,6 +405,7 @@ impl Session {
         match (e["type"].as_str(), e["subtype"].as_str()) {
             (Some("system"), Some("init")) => {
                 self.model = s(&e["model"]);
+                self.price_m = e["price_per_m"].as_array().filter(|p| p.len() == 3).map(|p| (p[0].as_f64().unwrap_or(0.0), p[1].as_f64().unwrap_or(0.0), p[2].as_f64().unwrap_or(0.0)));
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
                 cmds.extend(["good", "bad", "boss", "diff", "keys", "loop", "model", "new", "resume", "rewind", "usage", "vim"].map(String::from));
@@ -629,7 +643,7 @@ impl Session {
                     // a stopped turn reports nothing for itself (claude: total_cost_usd 0 after 21k tokens, 2026-11-02):
                     // its tokens are priced at list rates instead, and the cost is marked as an estimate
                     if c <= prev && since.total_in() + since.output > 0 {
-                        c = prev + since.estimate();
+                        c = prev + self.estimate(&since);
                         self.estimated = true;
                     }
                     self.exact_cost = Some(self.cost_base + c);
@@ -1061,6 +1075,17 @@ mod tests {
         let msg = r#"[provider error: HTTP 403: {"error":{"message":"请求内容未通过安全检查。","type":"content_policy_violation","code":"content_policy_violation"}}]"#;
         assert!(super::failure_reason(msg).starts_with("the provider's content filter refused"));
         assert_eq!(super::failure_reason("[provider error: HTTP 500: boom]"), "[provider error: HTTP 500: boom]");
+    }
+
+    #[test]
+    fn a_running_own_loop_turn_costs_its_models_prices() {
+        let mut s = Session::new("", "high");
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "deepseek-v4.1-flash-1017", "price_per_m": [0.15, 0.003, 0.6]}), 0.0);
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_delta", "usage": {"input_tokens": 10000, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 90000, "output_tokens": 2000}}}), 10.0);
+        assert!((s.cost() - 0.00297).abs() < 1e-6, "{} not at Claude's prices", s.cost());
+        let mut c = Session::new("", "medium");
+        c.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5"}), 0.0);
+        assert!(c.price_m.is_none(), "claude sessions keep the list prices until claude reports the cost");
     }
 
     #[test]

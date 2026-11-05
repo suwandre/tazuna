@@ -144,13 +144,10 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
         let host = url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or_default();
         let days = now.saturating_sub(r["vetted_at"].as_u64().unwrap_or(0)) / 86_400;
         let providers: Vec<&str> = r["providers"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-        // every level can be picked (a level the model lacks acts like one it has); the ones that differ are named
+        // the picker offers only the levels that differ (a user saw "medium" and "xhigh" for DeepSeek, which acts at
+        // either as at high, 2026-11-06); a route that lists none ignores the effort
         let distinct: Vec<&str> = r["efforts"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-        let levels = match distinct.len() {
-            0 => " · effort is ignored".to_string(),
-            n if n < LEVELS.len() => format!(" · only {} and {} differ", distinct[..n - 1].join(", "), distinct[n - 1]),
-            _ => String::new(),
-        };
+        let levels = if distinct.is_empty() { " · effort is ignored".to_string() } else { String::new() };
         let state_of = |var: &str| if std::env::var_os(var).is_none() {
             State::NoKey
         } else if !trusted(host) {
@@ -171,7 +168,8 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             label,
             route: Some((url.to_string(), var.to_string(), route_price(input, output))),
             place: format!("SubRouter · {}", providers.join(", ")),
-            efforts: LEVELS.iter().map(|e| e.to_string()).collect(),
+            // only the levels that differ (DeepSeek: off, high, max); a route that names none offers them all
+            efforts: if distinct.is_empty() { LEVELS.iter().map(|e| e.to_string()).collect() } else { distinct.iter().map(|e| e.to_string()).collect() },
             price: format!("{} / {}", per_m(input), per_m(output)),
             note: format!("cached {}% · checked {}{levels}", r["cached"].as_u64().unwrap_or(0), match days {
                 0 => "today".to_string(),
@@ -305,8 +303,8 @@ mod tests {
         assert!(c[0].route.is_none() && c[0].state == State::Ready);
         assert_eq!(c[4].state, State::NoKey, "no key in the environment");
         assert_eq!((c[5].state, c[5].stale), (State::Ready, true), "key set (PATH stands in), host trusted, checked 9 days ago");
-        assert_eq!((c[4].efforts.len(), c[4].note.ends_with("· only high and max differ")), (5, true), "every level, the distinct ones named");
-        assert!(c[5].note.ends_with("· only low, high, xhigh and max differ"), "{}", c[5].note);
+        assert_eq!(c[4].efforts, ["high", "max"], "only the levels that differ");
+        assert_eq!(c[5].efforts, ["low", "high", "xhigh", "max"], "Sol: its four levels that differ");
         assert_eq!(c[5].route.as_ref().unwrap().2, "0.0387,0.00387,0.1935");
         assert_eq!(catalog(&f, |_| false, now)[5].state, State::Untrusted);
         assert_eq!(c[4].efforts[start_effort(&c[4], "claude-opus-5-5", "medium")], "high");

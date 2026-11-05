@@ -233,7 +233,10 @@ pub fn serve(args: &[String]) -> Result<()> {
     let f = crate::mcp::fetch_tool();
     fns.push(json!({"type": "function", "function": {"name": f["name"], "description": f["description"], "parameters": f["inputSchema"]}}));
     let names: Vec<Value> = fns.iter().map(|t| t["function"]["name"].clone()).collect();
-    emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": []}));
+    // the model's prices, so the screen's running cost is this model's and not Claude's list prices (a Luna turn read
+    // ~$3 while it ran and $0.007 at its end, 2026-11-06)
+    emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": [],
+                 "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6]}));
     let mut loop_ = Loop {
         call,
         api,
@@ -339,6 +342,12 @@ fn input_item(mut item: Value) -> Value {
         o.remove("status");
     }
     item
+}
+
+/// The effort as the API names it: the picker's "off" is the APIs' "none" (thinking off: DeepSeek V4.1 Flash on znu
+/// thought ~2.6k tokens on hard AIME problems with it, ~6-13k at low to xhigh alike, ~19k at max, 2026-11-06).
+fn api_effort(e: &str) -> &str {
+    if e == "off" { "none" } else { e }
 }
 
 /// A conversation's pool is gone (SubRouter's shared ChatGPT pools, see the loop).
@@ -567,7 +576,7 @@ impl Loop {
                         b["prompt_cache_key"] = json!(self.session);
                     }
                     if let Some(e) = &self.effort {
-                        b["reasoning"] = json!({"effort": e});
+                        b["reasoning"] = json!({"effort": api_effort(e)});
                     }
                     b
                 }
@@ -588,7 +597,7 @@ impl Loop {
                 Api::Chat => {
                     let mut b = json!({"model": self.model, "messages": self.chat_messages(), "tools": self.tools});
                     if let Some(e) = &self.effort {
-                        b["reasoning_effort"] = json!(e);
+                        b["reasoning_effort"] = json!(api_effort(e));
                     }
                     b
                 }

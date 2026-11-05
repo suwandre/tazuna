@@ -1135,7 +1135,7 @@ fn turn_divider(s: &Session, th: &Theme, turn: u64) -> Line<'static> {
     let mut spans = vec![Span::raw("      "), Span::styled("├─ ", st(th.border)), Span::styled(format!("turn {turn}"), st(th.dim).add_modifier(Modifier::BOLD))];
     if let Some(u) = s.turn_usage.get(turn as usize - 1).filter(|u| u.total_in() > 0) {
         spans.push(Span::styled(
-            format!("  ↑ {}  ↓ {}  ≈{}", human(u.total_in()), human(u.output), usd(u.estimate())),
+            format!("  ↑ {}  ↓ {}  ≈{}", human(u.total_in()), human(u.output), usd(s.estimate(u))),
             st(th.faint),
         ));
     }

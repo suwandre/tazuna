@@ -33,7 +33,7 @@ AA_EFFORT = {"deepseek-v4.1-flash-1017": "max"}  # AA lists DeepSeek 1017 at max
 CANDIDATES = 4  # the cheapest four by input price (agent calls are mostly input)
 OUT = Path.home() / ".local/share/tazuna/routes.json"
 # effort levels the model really has (bench/effortprobe.py, 2026-11-01); others take low ... max
-EFFORTS = {"deepseek-v4.1-flash-1017": ["high", "max"], "kimi-k3.1-pro": []}
+EFFORTS = {"deepseek-v4.1-flash-1017": ["off", "high", "max"], "kimi-k3.1-pro": []}  # DeepSeek: off ("none"), high (low to xhigh alike), max (2026-11-06)
 
 
 def probe(model, slug, i):
