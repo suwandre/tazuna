@@ -422,7 +422,16 @@ impl Session {
                     "cache_key_dropped" => "the provider refused the cache key: sent again without it",
                     _ => return,
                 };
-                self.push(Block::Notice { text: format!("{what} · {}", shown(&s(&e["message"]), 100)), error: false });
+                // whole (the transcript cuts it until clicked), a known provider refusal said in plain words: a route switch
+                // read "HTTP 403: 请求内容未通过安全检查…" and could not be opened (2026-11-06)
+                let msg = s(&e["message"]);
+                let plain = failure_reason(&msg);
+                let text = if plain != msg.trim().chars().take(200).collect::<String>() {
+                    format!("{} · {plain} ({})", msg.split(": HTTP").next().unwrap_or_default(), msg.trim())
+                } else {
+                    msg
+                };
+                self.push(Block::Notice { text: format!("{what} · {}", shown(&text, 4000)), error: false });
             }
             (Some("harness_user"), _) => {
                 self.run_since.get_or_insert(at_ms);

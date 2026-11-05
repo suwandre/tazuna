@@ -1030,6 +1030,12 @@ fn tool_calls(s: &Session, name: &str) -> ui::ListPanel {
     }).collect();
     // a fetched page's row links to it (the label is its title)
     let links = calls.iter().map(|t| matches!(ui::short_name(&t.name), "fetch" | "WebFetch").then(|| t.input["url"].as_str().map(String::from)).flatten()).collect();
+    // a row's whole text, unfolded on a click: the full command, the URL, else the input
+    let details = calls.iter().map(|t| Some(match ui::short_name(&t.name) {
+        "bash" => ui::tool_arg(t, "command").replace('\n', " ⏎ "),
+        "fetch" | "WebFetch" => t.input["url"].as_str().unwrap_or_default().to_string(),
+        _ => ui::plain(&ui::tool_summary(t, s)),
+    })).collect();
     ui::ListPanel {
         title: format!("{name} ×{} · {:.1}s in all · {:.1}s a call · longest {longest:.1}s", calls.len(), total, total / secs.len().max(1) as f64),
         head: format!("{:>3}  {:>7}     what", "#", "took"),
@@ -1038,6 +1044,8 @@ fn tool_calls(s: &Session, name: &str) -> ui::ListPanel {
         links,
         link_from: 17, // after "  #  took  ✓  "
         hscroll: 0,
+        details,
+        open: Default::default(),
     }
 }
 
@@ -1060,6 +1068,8 @@ fn model_calls(s: &Session) -> ui::ListPanel {
         links: vec![],
         link_from: 0,
         hscroll: 0,
+        details: vec![],
+        open: Default::default(),
     }
 }
 
@@ -1252,6 +1262,7 @@ fn run_live(
     let (mut tool_rows, mut tokens_area, mut bars): (Vec<(ratatui::layout::Rect, String)>, Option<ratatui::layout::Rect>, Option<(ratatui::layout::Rect, usize)>) = (vec![], None, None);
     // a list modal's place and its link rows: a click inside stays, on a link opens it, outside closes the list
     let (mut list_area, mut list_links): (Option<ratatui::layout::Rect>, Vec<(ratatui::layout::Rect, String)>) = (None, vec![]);
+    let mut list_rows: Vec<(ratatui::layout::Rect, usize)> = vec![];
     // the transcript line on its first row (a selection holds lines), and when a drag past an edge last scrolled
     let (mut top_line, mut edge_scrolled) = (0usize, Instant::now());
     let mut over_link = false;
@@ -1403,7 +1414,7 @@ fn run_live(
             let areas = fx.frame(f, &s, &v, dt);
             (transcript, rows, links, files_area, diff_files) = (areas.transcript, areas.rows, areas.links, areas.files, areas.diff_files);
             (tool_rows, tokens_area, bars, top_line) = (areas.tool_rows, areas.tokens, areas.bars, areas.top_line);
-            (list_area, list_links) = (areas.list, areas.list_links);
+            (list_area, list_links, list_rows) = (areas.list, areas.list_links, areas.list_rows);
             if let Some(sel) = sel.as_mut() {
                 // a drag held past an edge: the head moves with the scroll
                 sel.follow(top_line);
@@ -1470,6 +1481,13 @@ fn run_live(
                                 // a click inside the list stays (on a link: opens it); outside it closes the list
                                 if let Some((_, url)) = list_links.iter().find(|(r, _)| r.contains(pos)) {
                                     v.toast = Some((match platform::open_url(url) { Ok(()) => format!("opened {url}"), Err(e) => format!("could not open {url}: {e}") }, Instant::now()));
+                                } else if let Some(&(_, i)) = list_rows.iter().find(|(r, _)| r.contains(pos)) {
+                                    // a row unfolds its whole text under it, or folds it back
+                                    if let Some(l) = v.list.as_mut().filter(|l| l.details.get(i).is_some_and(|d| d.is_some())) {
+                                        if !l.open.remove(&i) {
+                                            l.open.insert(i);
+                                        }
+                                    }
                                 } else if !list_area.is_some_and(|r| r.contains(pos)) {
                                     v.list = None;
                                 }
@@ -1505,7 +1523,8 @@ fn run_live(
                         // the pointer cursor over a link (OSC 22: kitty, Ghostty, foot, WezTerm, xterm; others ignore it)
                         // a link, a tool row, the tokens panel or the files panel: each opens something on a click
                         let at = ratatui::layout::Position::new(m.column, m.row);
-                        let over = links.iter().any(|(r, _)| r.contains(at)) || list_links.iter().any(|(r, _)| v.list.is_some() && r.contains(at)) || (v.list.is_none() && v.diff.is_none()
+                        let over = links.iter().any(|(r, _)| r.contains(at)) || list_links.iter().any(|(r, _)| v.list.is_some() && r.contains(at))
+                            || diff_files.iter().any(|(r, _)| v.diff.is_some() && r.contains(at)) || (v.list.is_none() && v.diff.is_none()
                             && (tool_rows.iter().any(|(r, _)| r.contains(at)) || (tokens_area.is_some_and(|r| r.contains(at)) && !s.turn_usage.is_empty())
                                 || (files_area.is_some_and(|r| r.contains(at)) && !v.changed.is_empty())));
                         if over != over_link {
@@ -1517,7 +1536,11 @@ fn run_live(
                     }
                     k if v.list.is_some() => {
                         if let Some(l) = v.list.as_mut() {
+                            // shift+wheel scrolls sideways (terminals like VS Code's send no sideways wheel at all)
+                            let shift = m.modifiers.contains(KeyModifiers::SHIFT);
                             match k {
+                                MouseEventKind::ScrollUp if shift => l.hscroll = l.hscroll.saturating_sub(6),
+                                MouseEventKind::ScrollDown if shift => l.hscroll += 6,
                                 MouseEventKind::ScrollUp => l.scroll = l.scroll.saturating_sub(3),
                                 MouseEventKind::ScrollDown => l.scroll = (l.scroll + 3).min(l.rows.len().saturating_sub(1)),
                                 MouseEventKind::ScrollLeft => l.hscroll = l.hscroll.saturating_sub(6),
@@ -1626,8 +1649,10 @@ fn run_live(
                         v.toast = Some((open_file(&c.path, ui::first_change(&p.diff)), Instant::now()));
                     }
                 }
-                KeyCode::PageDown | KeyCode::Char(' ') => p.scroll = (p.scroll + page).min(p.diff.len().saturating_sub(1)),
-                KeyCode::PageUp => p.scroll = p.scroll.saturating_sub(page),
+                KeyCode::PageDown | KeyCode::Char(' ') | KeyCode::PageUp => {
+                    p.selected = if key.code == KeyCode::PageUp { p.selected.saturating_sub(page) } else { (p.selected + page).min(last) };
+                    p.diff = v.changed.get(p.selected).map(diff_of).unwrap_or_default();
+                }
                 KeyCode::Esc | KeyCode::Char('q') => v.diff = None,
                 _ => {}
             }

@@ -34,6 +34,17 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.65 (2026-11-06): the diff view is a file list; long rows and notices unfold
+
+- `/diff` and a click on the files panel open a list of the changed files: path, `+added −removed`, a bar of their
+  size, "gone" for one no longer on disk; the row under the mouse lights up, a click or enter opens the file in the
+  editor at its first change. The diff text beside it ran off the modal and could not be scrolled sideways.
+- A tool's call list cuts a long row to the modal's width with "…"; a click unfolds its whole text under it (the full
+  command, the URL), dimmed. Sideways scrolling also on shift+wheel (VS Code's terminal sends no sideways wheel).
+- A notice longer than 160 characters (a provider's error) shows its start and opens in full on a click; a known
+  provider refusal is said in plain words first ("the provider's content filter refused this message ...") instead of
+  the raw Chinese error, which was cut at 100 characters with no way to read the rest.
+
 ## 0.1.64 (2026-11-05): fetched pages by title; lists scroll sideways and close like modals
 
 - A fetch call shows its page's title (fetch now puts it in its result's first line), or the URL's host and path for

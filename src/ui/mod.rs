@@ -208,9 +208,11 @@ pub struct Areas {
     pub bars: Option<(Rect, usize)>,
     /// The transcript line on the transcript's first row.
     pub top_line: usize,
-    /// A list modal: where it is (a click outside closes it) and its link rows (a click opens one).
+    /// A list modal: where it is (a click outside closes it), its link labels (a click opens one) and its rows (a
+    /// click unfolds one).
     pub list: Option<Rect>,
     pub list_links: Vec<(Rect, String)>,
+    pub list_rows: Vec<(Rect, usize)>,
 }
 
 /// One file this conversation changed, with its lines added and removed (git).
@@ -234,8 +236,11 @@ pub struct ListPanel {
     /// A row's link (a fetched page): its text from `link_from` on is drawn as a link, a click opens it.
     pub links: Vec<Option<String>>,
     pub link_from: usize,
-    /// Columns scrolled to the right (←/→): long rows ran off the modal with no way to read them.
+    /// Columns scrolled to the right (←/→, shift+wheel): long rows ran off the modal with no way to read them.
     pub hscroll: usize,
+    /// A row's whole text (a long command), unfolded under it when the row is clicked; rows show cut to the modal.
+    pub details: Vec<Option<String>>,
+    pub open: std::collections::BTreeSet<usize>,
 }
 
 /// `/diff` (or a click on the files panel): the changed files, the selected one's diff, how far it is scrolled.
@@ -293,19 +298,19 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
         draw_sessions(f, p, th);
     }
     if let Some(p) = &v.diff {
-        areas.diff_files = draw_diff(f, &v.changed, p, th);
+        areas.diff_files = draw_diff(f, &v.changed, p, th, v.mouse);
     }
     if let Some(p) = &v.models {
         draw_models(f, p, th);
     }
     if let Some(p) = &v.list {
-        (areas.list, areas.list_links) = draw_list(f, p, th);
+        (areas.list, areas.list_links, areas.list_rows) = draw_list(f, p, th);
     }
     areas
 }
 
 /// A ListPanel in the middle of the screen: its title, the column heads, the rows that fit (failed ones in red).
-fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme) -> (Option<Rect>, Vec<(Rect, String)>) {
+fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme) -> (Option<Rect>, Vec<(Rect, String)>, Vec<(Rect, usize)>) {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
     let want = p.rows.iter().map(|r| r.0.width()).chain([p.head.width(), p.title.width()]).max().unwrap_or(20) as u16 + 4;
@@ -313,29 +318,50 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme) -> (Option<Rect>, Vec<(Re
     let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
     f.render_widget(Clear, area);
     let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(format!(" {} · ↑↓ scroll · ←→ sideways · esc or click outside closes ", p.title), st(th.accent).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(format!(" {} · click a row: all of it · ↑↓ scroll · ←→ or shift+wheel sideways · esc or click outside closes ", p.title), st(th.accent).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let cut = |t: &str| t.chars().skip(p.hscroll).collect::<String>();
+    let width = inner.width as usize;
+    // sideways scrolled: the text from there on; else cut to the modal with "…" (a click unfolds it)
+    let cut = |t: &str| -> String {
+        let t: String = t.chars().skip(p.hscroll).collect();
+        if p.hscroll == 0 && t.width() > width { format!("{}…", t.chars().take(width.saturating_sub(1)).collect::<String>()) } else { t }
+    };
     let mut lines = vec![Line::from(Span::styled(cut(&p.head), st(th.faint).add_modifier(Modifier::BOLD)))];
-    let mut links = vec![];
-    for (k, (i, (r, bad))) in p.rows.iter().enumerate().skip(p.scroll).take(inner.height.saturating_sub(1) as usize).enumerate() {
+    let (mut links, mut rows) = (vec![], vec![]);
+    let room = inner.height.saturating_sub(1) as usize;
+    for (i, (r, bad)) in p.rows.iter().enumerate().skip(p.scroll) {
+        if lines.len() > room {
+            break;
+        }
+        let y = inner.y + lines.len() as u16;
         let color = st(if *bad { th.err } else { th.text });
         let shown = cut(r);
+        rows.push((Rect::new(inner.x, y, inner.width, 1), i));
         match p.links.get(i).cloned().flatten() {
             Some(url) => {
                 // the label after the fixed columns is the link: underlined, opened on a click
                 let at = p.link_from.saturating_sub(p.hscroll).min(shown.chars().count());
                 let (a, b): (String, String) = (shown.chars().take(at).collect(), shown.chars().skip(at).collect());
-                let y = inner.y + 1 + k as u16;
                 links.push((Rect::new(inner.x + at as u16, y, (b.width() as u16).min(inner.width.saturating_sub(at as u16)), 1), url));
                 lines.push(Line::from(vec![Span::styled(a, color), Span::styled(b, st(th.accent).add_modifier(Modifier::UNDERLINED))]));
             }
             None => lines.push(Line::from(Span::styled(shown, color))),
         }
+        // an unfolded row: its whole text under it, wrapped, indented to the label's column, dimmed
+        if let Some(d) = p.open.contains(&i).then(|| p.details.get(i).cloned().flatten()).flatten() {
+            let indent = p.link_from.min(width / 3);
+            let w = width.saturating_sub(indent).max(10);
+            for chunk in d.chars().collect::<Vec<_>>().chunks(w) {
+                if lines.len() > room {
+                    break;
+                }
+                lines.push(Line::from(Span::styled(format!("{}{}", " ".repeat(indent), chunk.iter().collect::<String>()), st(th.dim))));
+            }
+        }
     }
     f.render_widget(Paragraph::new(lines), inner);
-    (Some(area), links)
+    (Some(area), links, rows)
 }
 
 /// The files the agent's edit tools wrote that `skip` (git's list) leaves out, each with a diff built from the calls
@@ -422,40 +448,57 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
 /// /rewind: the messages sent so far; the chosen one and everything after it can be undone.
 /// The files this conversation changed beside the selected one's diff (added lines green, removed red, hunks in the
 /// accent), scrollable.
-fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme) -> Vec<(Rect, usize)> {
+fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme, mouse: Option<(u16, u16)>) -> Vec<(Rect, usize)> {
+    // the changed files as a list, each opened in the editor at its first change: a diff squeezed into a modal ran off
+    // its right edge and could not be scrolled sideways (a user, 2026-11-06); the editor shows diffs better
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
-    let (w, h) = ((full.width * 9 / 10).max(30).min(full.width), (full.height * 85 / 100).max(10).min(full.height));
+    let (add, del) = files.iter().fold((0, 0), |(a, d), c| (a + c.added, d + c.removed));
+    let most = files.iter().map(|c| c.added + c.removed).max().unwrap_or(1).max(1);
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let rows: Vec<(String, String, String, bool)> = files.iter().map(|c| {
+        // a file no longer on disk (a removed worktree): listed, but it cannot be opened
+        let gone = c.diff.is_some() && !cwd.join(&c.path).exists();
+        (plain(&c.path), format!("+{}", c.added), format!("−{}", c.removed), gone)
+    }).collect();
+    let pw = rows.iter().map(|r| r.0.width()).max().unwrap_or(10);
+    let title = format!(" {} changed · +{add} −{del} · ↑↓ · enter or click: open in your editor · esc ", files_n(files.len()));
+    let w = ((pw + 40).max(title.width() + 2) as u16).min(full.width.saturating_sub(4)).max(30);
+    let h = (files.len() as u16 + 2).clamp(4, full.height * 85 / 100);
     let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
     f.render_widget(Clear, area);
-    let (add, del) = files.iter().fold((0, 0), |(a, d), c| (a + c.added, d + c.removed));
     let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(format!(" {} changed · +{add} −{del} · ↑↓ file · enter or click: open in editor · pgup/pgdn scroll · esc ", files_n(files.len())), st(th.accent).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(title, st(th.accent).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let lw = files.iter().map(|c| c.path.width() + 12).max().unwrap_or(10).min(inner.width as usize / 3) as u16;
-    use ratatui::layout::{Constraint, Layout};
-    let [left, _, right] = Layout::horizontal([Constraint::Length(lw), Constraint::Length(1), Constraint::Min(10)]).areas(inner);
-    let list: Vec<Line> = files.iter().enumerate().map(|(i, c)| {
-        let counts = format!(" +{} −{}", c.added, c.removed);
-        let room = (lw as usize).saturating_sub(counts.width() + 2);
-        let name = if c.path.width() > room { format!("…{}", c.path.chars().rev().take(room.saturating_sub(1)).collect::<Vec<_>>().into_iter().rev().collect::<String>()) } else { c.path.clone() };
-        let style = if i == p.selected { st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(th.text) };
-        // a file no longer on disk (a removed worktree): its diff is still the agent's, but it cannot be opened
-        let gone = c.diff.is_some() && !std::env::current_dir().unwrap_or_default().join(&c.path).exists();
-        let mut l = vec![Span::styled(format!("{} {name:<room$}", if i == p.selected { "›" } else { " " }), style), Span::styled(format!(" +{}", c.added), st(th.ok)), Span::styled(format!(" −{}", c.removed), st(th.err))];
-        if gone {
+    // the selected file stays in view
+    let first = (p.selected + 1).saturating_sub(inner.height as usize);
+    let room = (inner.width as usize).saturating_sub(34);
+    let mut hits = vec![];
+    let lines: Vec<Line> = rows.iter().enumerate().skip(first).take(inner.height as usize).map(|(i, (path, a, d, gone))| {
+        let y = inner.y + (i - first) as u16;
+        let r = Rect::new(inner.x, y, inner.width, 1);
+        hits.push((r, i));
+        let hover = mouse.is_some_and(|(x, my)| r.contains(ratatui::layout::Position::new(x, my)));
+        let name = if path.width() > room { format!("…{}", path.chars().rev().take(room.saturating_sub(1)).collect::<Vec<_>>().into_iter().rev().collect::<String>()) } else { path.clone() };
+        let c = &files[i];
+        let (ba, bd) = ((c.added as f64 / most as f64 * 12.0).ceil() as usize, (c.removed as f64 / most as f64 * 12.0).ceil() as usize);
+        let base = if i == p.selected { Style::new().bg(th.surface) } else if hover { Style::new().bg(th.surface) } else { Style::new() };
+        let mut l = vec![
+            Span::styled(if i == p.selected { "› " } else { "  " }, st(th.accent)),
+            Span::styled(format!("{name:<room$}"), if hover { st(th.accent).add_modifier(Modifier::UNDERLINED) } else { st(th.text) }),
+            Span::styled(format!(" {a:>6}"), st(th.ok)),
+            Span::styled(format!(" {d:>6} "), st(th.err)),
+            Span::styled("▮".repeat(ba.min(12)), st(th.ok)),
+            Span::styled("▮".repeat(bd.min(12 - ba.min(12))), st(th.err)),
+        ];
+        if *gone {
             l.push(Span::styled(" gone", st(th.faint)));
         }
-        Line::from(l)
+        Line::from(l).style(base)
     }).collect();
-    f.render_widget(Paragraph::new(list), left);
-    let rows: Vec<Line> = p.diff.iter().skip(p.scroll).take(right.height as usize).map(|l| {
-        let c = if l.starts_with("+++") || l.starts_with("---") { th.faint } else if l.starts_with('+') { th.ok } else if l.starts_with('-') { th.err } else if l.starts_with("@@") { th.accent } else { th.dim };
-        Line::from(Span::styled(plain(l).chars().take(right.width as usize).collect::<String>(), st(c)))
-    }).collect();
-    f.render_widget(Paragraph::new(if rows.is_empty() { vec![Line::from(Span::styled("no diff (unchanged now, or not in git)", st(th.faint)))] } else { rows }), right);
-    (0..files.len().min(left.height as usize)).map(|i| (Rect::new(left.x, left.y + i as u16, left.width, 1), i)).collect()
+    f.render_widget(Paragraph::new(lines), inner);
+    hits
 }
 
 /// The new-file line where a diff's first change is (its first added line; a deletion: where it was), for opening the
@@ -916,6 +959,9 @@ pub fn fetch_label(t: &Tool) -> String {
     })
 }
 
+/// A closed notice shows this many characters; opened, all of it.
+const NOTICE_CHARS: usize = 160;
+
 /// A closed call's summary is cut to this many characters (about two rows); opened, it shows whole.
 const SUMMARY_CHARS: usize = 160;
 
@@ -1131,10 +1177,13 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
     match b {
         Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o, open, width),
         Block::Verify(x) => verify_lines(x, v, th),
+        // a long notice (a provider's error) shows its start until clicked, then all of it
         Block::Notice { text, error } => vec![(
             Line::from(vec![
                 Span::styled(if *error { "! " } else { "· " }, st(if *error { th.err } else { th.warn })),
-                Span::styled(text.clone(), st(if *error { th.err } else { th.dim }).add_modifier(Modifier::ITALIC)),
+                Span::styled(if open || text.chars().count() <= NOTICE_CHARS { text.clone() } else {
+                    format!("{}… (+{} chars · click to show)", text.chars().take(NOTICE_CHARS).collect::<String>(), text.chars().count() - NOTICE_CHARS)
+                }, st(if *error { th.err } else { th.dim }).add_modifier(Modifier::ITALIC)),
             ]),
             vec![Span::raw("  ")],
         )],
@@ -2062,7 +2111,7 @@ mod tests {
         assert_eq!(first_change(&d(&["@@ -3,3 +3,2 @@", " a", "-b", " c"])), 4, "a deletion: where it was");
         assert_eq!(first_change(&d(&["+++ new.txt (new file)", "+a"])), 1, "a new file: its top");
         let t = text(&v);
-        assert!(t.contains("12 files changed · +186 −66") && t.contains("+new line") && t.contains("› ") , "the list and the selected file's diff");
+        assert!(t.contains("12 files changed · +186 −66") && !t.contains("+new line") && t.contains("› ") , "the file list with the selected file marked, no diff text (2026-11-06)");
     }
 
     #[test]
@@ -2145,17 +2194,35 @@ mod tests {
         assert_eq!(fetch_label(&tool("[fetched https://x.com/a · \"Crypto prices today\", HTTP 200: web content]\nbody", "https://x.com/a")), "Crypto prices today");
         assert_eq!(fetch_label(&tool("[fetched https://api.coingecko.com/api/v3/global, HTTP 200: web content]\n{}", "https://api.coingecko.com/api/v3/global?x=1")), "api.coingecko.com/api/v3/global");
         let mut p = ListPanel { title: "fetch".into(), head: "  #   took     what".into(), rows: vec![(format!("{:>3}  {:>7}  {}  {}", 1, "0.5s", "✓", "Crypto prices today"), false)], scroll: 0,
-            links: vec![Some("https://x.com/a".into())], link_from: 17, hscroll: 0 };
+            links: vec![Some("https://x.com/a".into())], link_from: 17, hscroll: 0, details: vec![None], open: Default::default() };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
-        let mut out = (None, vec![]);
+        let mut out = (None, vec![], vec![]);
         term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme()); }).unwrap();
-        let (area, links) = out.clone();
+        let (area, links, _) = out.clone();
         assert!(area.is_some() && links.len() == 1 && links[0].1 == "https://x.com/a");
         let r = links[0].0;
         assert_eq!(term.backend().buffer()[(r.x, r.y)].symbol(), "C", "the link starts at the title");
         p.hscroll = 10;
         term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme()); }).unwrap();
         assert_eq!(out.1[0].0.x, r.x - 10, "scrolled sideways, the link moves with its text");
+    }
+
+    #[test]
+    fn the_diff_view_lists_files_and_long_notices_open() {
+        let files = vec![Changed { path: "tazuna/examples/studio.rs".into(), added: 868, removed: 0, diff: None }, Changed { path: "src/a.rs".into(), added: 3, removed: 2, diff: None }];
+        let p = DiffPanel { selected: 0, diff: vec!["+//! a line of code".into()], scroll: 0 };
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
+        let mut hits = vec![];
+        term.draw(|f| { hits = draw_diff(f, &files, &p, Design::Cockpit.theme(), None); }).unwrap();
+        let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+        assert!(text.contains("tazuna/examples/studio.rs") && text.contains("+868") && !text.contains("a line of code"), "files and counts, no diff text");
+        assert_eq!(hits.len(), 2);
+        // a notice longer than NOTICE_CHARS: cut and clickable, opened all of it
+        let mut s = Session::new("", "medium");
+        s.blocks.push(Block::Notice { text: "x".repeat(300), error: false });
+        s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 0 });
+        let lines = |open: bool| block_lines(&s.blocks[0], &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
+        assert!(lines(false).contains("click to show") && !lines(true).contains("click to show"));
     }
 
     #[test]
@@ -2170,7 +2237,7 @@ mod tests {
             (b[(3, 0)].fg, b[(60, 20)].symbol().to_string())
         };
         assert_ne!(cell(&v).0, th.border, "the header in its own colours without a modal");
-        v.list = Some(ListPanel { title: "model calls".into(), head: "#".into(), rows: vec![("1".into(), false)], scroll: 0, links: vec![], link_from: 0, hscroll: 0 });
+        v.list = Some(ListPanel { title: "model calls".into(), head: "#".into(), rows: vec![("1".into(), false)], scroll: 0, links: vec![], link_from: 0, hscroll: 0, details: vec![], open: Default::default() });
         let (fg, _) = cell(&v);
         assert_eq!(fg, th.border, "behind a modal everything takes the border colour");
     }
