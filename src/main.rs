@@ -531,9 +531,10 @@ fn main() -> Result<()> {
             headless(a.run.as_ref().context("--run")?, &a)
         }
         (None, _) => {
-            if !live::in_git_repo() && !a.allow_non_git {
-                bail!("not inside a git repo: the agent edits files without asking, so run it where `git diff` can review and undo changes (or pass --allow-non-git)");
-            }
+            // outside git there is no `git diff` to review or undo the agent's edits: a live session starts in ask mode
+            // (edits ask first, as Claude Code does) instead of refusing to start, which it did until 0.1.60 (a user
+            // could not open tazuna in a plain folder, 2026-11-05); --allow-non-git keeps the chosen mode
+            let no_git = !live::in_git_repo() && !a.allow_non_git;
             // label this repo's older runs from git while we are here (cheap, read-only git)
             let _ = labels::label_git(&base, Some(&std::env::current_dir()?));
             let mut live = live::Live::new("", "")?;
@@ -567,6 +568,9 @@ fn main() -> Result<()> {
                 live.set_escalate(m, e);
             }
             live.permission_mode = a.mode.clone();
+            if no_git && live.permission_mode == "bypassPermissions" {
+                live.permission_mode = "default".into();
+            }
             let earlier = match &a.resume {
                 Some(id) => {
                     let (sid, rec) = previous_session(&base, &std::env::current_dir()?, id.as_deref())
@@ -1210,6 +1214,9 @@ fn run_live(
     s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     s.apply(&route.1, route.0);
     s.mode = session::mode_name(&live.permission_mode).to_string();
+    if !live::in_git_repo() && !a.allow_non_git {
+        s.apply(&json!({"type": "harness_notice", "text": "not a git repo: edits ask first, since git cannot show or undo them here (shift-tab changes the mode)", "error": false}), 0.0);
+    }
     // the plan's windows as last read (claude reports them only now and then); SubRouter's balance, on a thread
     if let Some((h5, d7, at)) = labels::dir().ok().and_then(|d| session::last_limits(&d.join("sessions"))) {
         (s.limits, s.limits_at) = (Some((h5, d7)), Some(at));

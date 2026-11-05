@@ -26,6 +26,12 @@ def var(slug):
     # next probe, so the DeepSeek gauge's keys asked for Sol and got 403 (2026-11-05)
     return "SUBROUTER_SMOKE_" + re.sub(r"[^A-Z0-9]+", "_", (M + "_" + slug).upper()).strip("_") + "_KEY"
 
+def short_name(name):
+    """SubRouter caps key names ("Token name is too long" at 53 characters): a long one keeps its start and a hash."""
+    import hashlib
+    return name if len(name) <= 40 else name[:33] + "-" + hashlib.md5(name.encode()).hexdigest()[:6]
+
+
 
 def call_responses(key, msgs):
     """The Responses route (PROVSMOKE_API=responses), the one tazuna uses for GPT models: a provider can serve it and
@@ -156,7 +162,7 @@ def provider(slug, res):
 
 res = {}
 for g in SLUGS:  # one at a time: each rewrites ~/.subrouter-key
-    kid = s.key(f"tazuna-route-sm-{re.sub(r'[^a-z0-9]', '', M)[:10]}-{g}", M, [g], var(g))  # SubRouter caps key names
+    kid = s.key(short_name(f"tazuna-route-sm-{re.sub(r'[^a-z0-9]', '', M)[:10]}-{g}"), M, [g], var(g))  # SubRouter caps key names
     k = s.api(f"/api/token/{kid}")
     if bool(k.get("include_shared_subscriptions")) != g.startswith("shared-"):  # a shared pool serves only keys that allow them
         s.api("/api/token/", "PUT", {**k, "include_shared_subscriptions": g.startswith("shared-")})

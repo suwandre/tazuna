@@ -34,6 +34,13 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.61 (2026-11-05): tazuna opens outside a git repo, in ask mode
+
+A live session outside git refused to start ("not inside a git repo ... pass --allow-non-git"), a rule from the first
+version: tazuna's default mode edits without asking, and git was the review and the undo. It now starts in ask mode
+there (every edit asks first, as Claude Code does) and says why; shift-tab changes the mode, `--allow-non-git` keeps the
+chosen one. Headless `--run` still needs git or the flag: nobody is there to answer.
+
 ## Sol and Luna against their public and first-party numbers, 2026-11-05 (bench only)
 
 **Sol on HLE** (`canary_hle.py`, 100 of the 400 questions, xhigh, Luna judging): xcgx 45/100 (95%: 36-55%), fxpayback
