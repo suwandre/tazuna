@@ -229,6 +229,9 @@ pub fn serve(args: &[String]) -> Result<()> {
             fns.push(t);
         }
     }
+    // the web as a tool of its own (the model in bash knew curl but in another turn said it had no web access)
+    let f = crate::mcp::fetch_tool();
+    fns.push(json!({"type": "function", "function": {"name": f["name"], "description": f["description"], "parameters": f["inputSchema"]}}));
     let names: Vec<Value> = fns.iter().map(|t| t["function"]["name"].clone()).collect();
     emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": []}));
     let mut loop_ = Loop {
@@ -1069,9 +1072,11 @@ impl Loop {
                 _ => Permit::Deny("The explorer can only search, list and read.".into()),
             };
         }
+        // fetch reaches the network like bash: a page's injected text could make it send data out (security review,
+        // 2026-11-05), so it asks wherever bash asks
         let ask = match self.mode.as_str() {
-            "default" => matches!(tool, "bash" | "write" | "edit"),
-            "acceptEdits" => tool == "bash",
+            "default" => matches!(tool, "bash" | "write" | "edit" | "fetch"),
+            "acceptEdits" => matches!(tool, "bash" | "fetch"),
             _ => false,
         };
         if !ask {

@@ -34,6 +34,20 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.63 (2026-11-05): the own loop can fetch the web
+
+A `fetch` tool for the own loop (Claude has its own WebFetch): an http(s) URL in, its text out: a page's readable text
+(the `<main>` or `<article>` part when marked, scripts, styles and tags out), JSON and plain text as they are, up to
+20,000 characters, marked as web content to use as data, not instructions. Luna had fetched crypto prices with curl in
+bash earlier in a session, then in a later turn looked for a web tool, found none and said it had no web access. The
+proxy from the environment applies (the bench's blocking proxy still stops runs from fetching a task's fix). From a
+security review of the first cut: it asks wherever bash asks (ask and edits modes: a page's injected text could make
+it send data out), refuses hosts that resolve to this machine or a private network (loopback, private ranges,
+link-local incl. cloud metadata, CGNAT, unique-local) and checks every redirect target the same way, and reads HTML
+with ASCII-only lowercasing (lowercasing some non-ASCII letters changes their length and made slicing panic). DNS
+rebinding between the check and the request is not caught. Cost: its definition, ~70 tokens a call, read from cache
+after the first.
+
 ## 0.1.62 (2026-11-05): the own loop names its model, falls back within its route, and says why a turn failed
 
 - The own loop's prompt starts with the model's name ("You are deepseek-v4.1-flash-1017, run by tazuna through
