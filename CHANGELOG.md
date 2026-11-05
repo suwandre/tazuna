@@ -34,6 +34,30 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## GPT-6.1 Sol as a stand-in for the Opus judge, 2026-11-05 (bench only)
+
+Four pools Opus 5.5 xhigh had judged (DeepSeek providers, Kiro, Sonnet lead / Opus low, boss test scope: tasks/, 114
+runs) judged again by GPT-6.1 Sol xhigh through SubRouter, same calls and shuffles (`realwork/solcal.sh`, compared with
+`realwork/solcmp.py`). Then the caddy runs of the 13 SubRouter providers and DeepSeek's API, Sol only. $0.095 in all,
+no Claude usage. One Sol call hung for 20 minutes without an answer (the first pool's k6 task, one candidate): restarted
+without it.
+
+| Pool | Runs | Opus mean | Sol mean | Pearson r | Decided pairs in the same order | Arm order |
+|---|---|---|---|---|---|---|
+| DeepSeek providers | 21 | 7.05 | 7.52 | 0.89 | 31 of 31 | same |
+| Kiro vs tazuna | 34 | 6.28 | 7.15 | 0.76 | 44 of 56 | same (Kiro Opus 7.04/7.83, tazuna 6.83/7.33, Kiro Haiku 4.88/6.08) |
+| Sonnet lead, Opus low | 35 | 6.20 | 6.63 | 0.87 | 57 of 58 | same (7.54/7.92, 5.79/6.42, 5.08/5.42) |
+| boss test scope | 24 | 6.77 | 7.42 | 0.53 | 23 of 24 | Opus 6.92 vs 6.62 (noise), Sol 7.42 each |
+| all | 114 | | +0.61 | 0.80 | 155 of 169 (92%) | |
+
+Every decision these pools carried comes out the same under Sol: Sol can judge relative comparisons instead of Opus,
+at about $0.02 a six-task pool and none of the weekly limit. Its scores run ~0.6 higher (more at the low end), so one
+comparison keeps one judge.
+
+The provider caddy runs (Sol): 9.0 for DeepSeek's API (three of four runs), o2oai, stableai, bangai, getapi, tokenx,
+lingai, a6aa, kriora and model-share; 8.0 for znu, x-loop, tokenus-net, ydjs-ai and one API run. No provider writes worse
+code on this task (every run passed the hidden tests); providers differ in time, calls and caching, not quality here.
+
 ## SubRouter's DeepSeek providers, smoke test, 2026-11-04 (bench only)
 
 DeepSeek V4.1 Flash 1017 at xhigh through 17 of SubRouter's 28 providers (the cheapest by listed price, without

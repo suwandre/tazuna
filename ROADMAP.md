@@ -305,6 +305,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-05: GPT-6.1 Sol judges like Opus for comparisons (114 runs rejudged: 92% of decided pairs in the same order,
+  every arm decision the same, scores ~0.6 higher, $0.095): bench rounds may use Sol as the judge while the weekly limit
+  is tight, one judge per comparison. Best DeepSeek provider of the screen: o2oai (5.0 min, 29 calls, $0.003 billed,
+  Sol 9), then znu (6.7 min, $0.0025, Sol 8, now in the route); o2oai is left out of the route until its Nov 1 failure
+  ages out (Nov 8).
 - 2026-11-05: SubRouter provider screen for DeepSeek 1017 (17 probed, 13 ran caddy once, $0.15): all ~2x DeepSeek's
   own per-call time; the spread comes from calls (providers that drop reasoning take 2-3x the calls) and caching. o2oai
   and znu look best. The route key still names bob-team, which left SubRouter: refresh it (`routes.py refresh`) before
