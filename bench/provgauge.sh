@@ -1,5 +1,5 @@
 #!/bin/bash
-# DeepSeek V4.1 Flash 1017 providers on SubRouter over the day (user, 2026-11-05: caching fell from ~90% at night to
+# DeepSeek V4.1 Flash 1017 providers on SubRouter over the day (and Sol's and Luna's route candidates, probe only) (user, 2026-11-05: caching fell from ~90% at night to
 # 0-33% in the morning; no provider should stay picked that serves poor quality). launchd (com.tazuna.provgauge) runs
 # this every 4 hours while the Mac is awake: provsmoke.py on every listed provider up to $0.03/M input (speed, first
 # token, cache, reasoning, errors) into provgauge.jsonl; every 12 hours also canary.py (30 AIME + 100 MMLU-Pro, high: the level "xhigh" ran as; the first round, 11:16 Nov 5, sent xhigh)
@@ -28,6 +28,11 @@ N=$(echo "$SLUGS" | wc -w | tr -d ' ')
 python3 -I provsmoke.py "$M" $SLUGS >> provgauge.jsonl 2>> provgauge.err
 source ~/.subrouter-key  # provsmoke.py adds keys for providers new to the list
 log "probe: $N providers"
+# Sol and Luna (user, 2026-11-05): their route candidates, probe only, on the Responses route tazuna uses for GPT, xhigh
+PROVSMOKE_API=responses PROVSMOKE_EFFORT=xhigh python3 -I provsmoke.py gpt-6.1-sol xcgx shared-openai-pro-50 shared-openai-pro-52 kriora >> provgauge-sol.jsonl 2>> provgauge.err
+PROVSMOKE_API=responses PROVSMOKE_EFFORT=xhigh python3 -I provsmoke.py gpt-6-luna kriora shared-openai-pro-52 shared-openai-plus-51 >> provgauge-luna.jsonl 2>> provgauge.err
+source ~/.subrouter-key
+log "probe: Sol 4, Luna 3 providers"
 
 last=$(cat provgauge.canary 2>/dev/null || echo 0)
 if [ $(( $(date +%s) - last )) -ge 43000 ]; then
