@@ -43,6 +43,15 @@ Sol as we measure it and fxpayback is not: most likely a weaker model sold as So
 a twelfth of the OpenAI pools) also suggests. The easier canary (AIME 26/30) did not show it. Sol providers need the
 HLE check before use.
 
+Not chance: on the same 100 questions xcgx was right where fxpayback was wrong 19 times, the other way round 3 times
+(exact McNemar p = 0.0009; on the 88 both answered, 15 against 3, p = 0.0075). And not Sol's tokenizer
+(`fingerprint.py`): the same text costs fxpayback 56.8 tokens a copy against 42.0 on the OpenAI Pro 50 pool (+35%,
+growing with the text, so a different tokenizer, not added text), and 6218 Responses input tokens against 4441 on xcgx,
+Pro 50 and Pro 52 alike. A model's tokenizer is fixed, so fxpayback serves another model under Sol's name. (xcgx's Chat
+route bills ~4.4k hidden tokens a call: a wrapper's prompt.) A slip of mine: the probe keys were named by provider
+only, so each new model's probe re-pointed the DeepSeek gauge's keys (kriora and a6aa answered Sol requests 403); keys
+are named by model and provider now.
+
 **Luna as OpenAI serves it** (`canary.py codex`: the canary through the official Codex CLI on the user's ChatGPT plan,
 its own bench login): AIME 28/30, MMLU-Pro 88, against 27-29/30 and 87-89 on SubRouter's kriora, Pro 52 and Plus 51:
 SubRouter's Luna is the real one. Codex itself on caddy (`codex@gpt-6-luna:xhigh`): 5/5, 4.0 min, 44 actions, Sol mark 8

@@ -33,7 +33,7 @@ last=$(cat provgauge.canary 2>/dev/null || echo 0)
 if [ $(( $(date +%s) - last )) -ge 43000 ]; then
   date +%s > provgauge.canary
   OK=$(tail -n "$N" provgauge.jsonl | python3 -I -c "import json,sys;print(' '.join(d['slug'] for d in map(json.loads,sys.stdin) if d.get('ok')==4))")
-  for g in $OK; do echo "SUBROUTER_SMOKE_$(echo "$g" | tr 'a-z-' 'A-Z_')_KEY"; done |
+  for g in $OK; do python3 -I -c "import re,sys;print('SUBROUTER_SMOKE_'+re.sub(r'[^A-Z0-9]+','_',(sys.argv[1]+'_'+sys.argv[2]).upper()).strip('_')+'_KEY')" "$M" "$g"; done |
     xargs -P 4 -I{} python3 -I canary.py run "$M" --key-env {} --effort high >> provgauge.canary.out 2>&1
   log "canary: $OK"
 fi

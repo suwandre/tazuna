@@ -22,7 +22,9 @@ ASKS = ["Where does the loop decide whether earlier reasoning goes back to the p
 
 
 def var(slug):
-    return "SUBROUTER_SMOKE_" + re.sub(r"[^A-Z0-9]+", "_", slug.upper()).strip("_") + "_KEY"
+    # one key per model and provider: keys named by provider alone were re-pointed from DeepSeek to Luna to Sol by the
+    # next probe, so the DeepSeek gauge's keys asked for Sol and got 403 (2026-11-05)
+    return "SUBROUTER_SMOKE_" + re.sub(r"[^A-Z0-9]+", "_", (M + "_" + slug).upper()).strip("_") + "_KEY"
 
 
 def call_responses(key, msgs):
@@ -118,7 +120,7 @@ def provider(slug, res):
 
 res = {}
 for g in SLUGS:  # one at a time: each rewrites ~/.subrouter-key
-    kid = s.key(f"tazuna-route-smoke-{g}", M, [g], var(g))
+    kid = s.key(f"tazuna-route-smoke-{re.sub(r'[^a-z0-9]+', '-', M)}-{g}", M, [g], var(g))
     k = s.api(f"/api/token/{kid}")
     if bool(k.get("include_shared_subscriptions")) != g.startswith("shared-"):  # a shared pool serves only keys that allow them
         s.api("/api/token/", "PUT", {**k, "include_shared_subscriptions": g.startswith("shared-")})
