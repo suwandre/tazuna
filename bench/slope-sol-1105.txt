@@ -1,0 +1,11 @@
+shared-openai-pro-50   2 lines    90  10 lines   434  tokens a line 43.0  hidden ≈ 4
+shared-openai-pro-52   2 lines    90  10 lines   434  tokens a line 43.0  hidden ≈ 4
+shared-openai-plus-51  2 lines    90  10 lines   434  tokens a line 43.0  hidden ≈ 4
+xcgx                   2 lines    90  10 lines  4650  tokens a line 570.0  hidden ≈ -1050
+fxpayback              2 lines   122  10 lines   586  tokens a line 58.0  hidden ≈ 6
+kriora                 2 lines  4470  10 lines  4814  tokens a line 43.0  hidden ≈ 4384
+a6aa                   2 lines  4470  10 lines  4814  tokens a line 43.0  hidden ≈ 4384
+tokenx                 2 lines  4470  10 lines  4814  tokens a line 43.0  hidden ≈ 4384
+cheaprouter            2 lines    90  10 lines  6261  tokens a line 771.4  hidden ≈ -1453
+lingai                 2 lines  4470  10 lines  4814  tokens a line 43.0  hidden ≈ 4384
+humanai                2 lines  4470  10 lines  4814  tokens a line 43.0  hidden ≈ 4384

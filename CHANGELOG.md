@@ -48,7 +48,13 @@ Not chance: on the same 100 questions xcgx was right where fxpayback was wrong 1
 (`fingerprint.py`): the same text costs fxpayback 56.8 tokens a copy against 42.0 on the OpenAI Pro 50 pool (+35%,
 growing with the text, so a different tokenizer, not added text), and 6218 Responses input tokens against 4441 on xcgx,
 Pro 50 and Pro 52 alike. A model's tokenizer is fixed, so fxpayback serves another model under Sol's name. (xcgx's Chat
-route bills ~4.4k hidden tokens a call: a wrapper's prompt.) A slip of mine: the probe keys were named by provider
+route bills ~4.4k hidden tokens a call: a wrapper's prompt.)
+
+The tokenizer by its slope (`slope-sol-1105.txt`: 2 and 10 distinct lines, tokens a line, so hidden prompts cancel): 43.0
+a line on the OpenAI Pro 50, Pro 52 and Plus 51 pools (no hidden prompt), on kriora, a6aa, tokenx, lingai and humanai
+(each with a ~4,400-token hidden prompt a call, billed as input), and on xcgx and cheaprouter for small calls (their
+calls land on backends with and without that prompt); 58.0 on fxpayback alone. Every provider but fxpayback serves
+Sol's tokenizer. A slip of mine: the probe keys were named by provider
 only, so each new model's probe re-pointed the DeepSeek gauge's keys (kriora and a6aa answered Sol requests 403); keys
 are named by model and provider now.
 

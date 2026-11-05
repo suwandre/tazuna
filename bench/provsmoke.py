@@ -120,7 +120,7 @@ def provider(slug, res):
 
 res = {}
 for g in SLUGS:  # one at a time: each rewrites ~/.subrouter-key
-    kid = s.key(f"tazuna-route-smoke-{re.sub(r'[^a-z0-9]+', '-', M)}-{g}", M, [g], var(g))
+    kid = s.key(f"tazuna-route-sm-{re.sub(r'[^a-z0-9]', '', M)[:10]}-{g}", M, [g], var(g))  # SubRouter caps key names
     k = s.api(f"/api/token/{kid}")
     if bool(k.get("include_shared_subscriptions")) != g.startswith("shared-"):  # a shared pool serves only keys that allow them
         s.api("/api/token/", "PUT", {**k, "include_shared_subscriptions": g.startswith("shared-")})
