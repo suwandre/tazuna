@@ -1714,7 +1714,12 @@ fn run_live(
                 if ed.text.trim().is_empty() {
                     continue;
                 }
-                let text = ed.take().trim().to_string();
+                let mut text = ed.take().trim().to_string();
+                // a command typed short ("/res") runs the first suggestion shown under the input, as in Claude Code
+                // (until 0.1.55 it stopped with "did you mean /resume?"; a user found that the wrong way round)
+                if let Some(first) = text.strip_prefix('/').filter(|w| !w.is_empty() && !w.contains(char::is_whitespace)).and_then(|w| short_command(w, &s.commands)) {
+                    text = format!("/{first}");
+                }
                 if text == "/vim" {
                     vim = !vim;
                     (normal, vim_op) = (false, None);
@@ -1742,16 +1747,6 @@ fn run_live(
                         let _ = tx.send(json!({"type": "tazuna_usage_done"}));
                     });
                     continue;
-                }
-                // a command typed short ("/mo") would go to claude as a message, at a model turn's cost
-                if let Some(word) = text.strip_prefix('/').filter(|w| !w.is_empty() && !w.contains(char::is_whitespace)) {
-                    let like: Vec<&String> = s.commands.iter().filter(|c| c.starts_with(word)).collect();
-                    if !like.is_empty() && !like.iter().any(|c| *c == word) {
-                        let names: Vec<String> = like.iter().take(4).map(|c| format!("/{c}")).collect();
-                        s.apply(&json!({"type": "harness_info", "text": format!("no command /{word}: did you mean {}? (nothing was sent; tab completes)", names.join(", "))}), live.elapsed_ms());
-                        ed.insert(&text);
-                        continue;
-                    }
                 }
                 // /new: a fresh conversation; /resume: a picker of this repo's sessions (/resume ID opens one directly)
                 // /boss: boss mode on (haiku workers, or /boss MODEL) or off for the rest of the session
@@ -1982,8 +1977,26 @@ fn start_loop(flags: Vec<String>) -> (std::sync::Arc<std::sync::atomic::AtomicBo
     (stop, rx)
 }
 
+/// The command a short `/word` stands for: the first one starting with it (the one the hint row shows first), unless
+/// `word` is a command itself.
+fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
+    if commands.iter().any(|c| c == word) {
+        return None;
+    }
+    commands.iter().find(|c| c.starts_with(word))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_short_command_runs_the_first_suggestion() {
+        let cmds: Vec<String> = ["compact", "rename", "resume", "review", "usage", "usage-report"].map(String::from).to_vec();
+        assert_eq!(super::short_command("res", &cmds).map(String::as_str), Some("resume"));
+        assert_eq!(super::short_command("r", &cmds).map(String::as_str), Some("rename"), "the first one the hint row shows");
+        assert_eq!(super::short_command("usage", &cmds), None, "a command itself is never swapped for a longer one");
+        assert_eq!(super::short_command("zz", &cmds), None);
+    }
+
     #[test]
     fn boss_by_default_only_for_headless_opus_on_claude() {
         let p = |a: &[&str]| super::parse(a.iter().map(|s| s.to_string()).collect()).unwrap();

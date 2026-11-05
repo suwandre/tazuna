@@ -34,6 +34,13 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.56 (2026-11-05): a short command runs; long prompts open
+
+- `/res` and enter runs `/resume`, the first suggestion under the input, as in Claude Code. Before, tazuna stopped with
+  "no command /res: did you mean /resume?" and sent nothing. A full command name is never swapped for a longer one.
+- A prompt longer than eight lines ("… 17 more lines") opens in full on a click, like tool calls, and with ctrl+o for
+  every block; the line now says "click to show".
+
 ## Search tools after the prompt fix, o2oai on six tasks: stopped, 2026-11-05 (bench only)
 
 `realwork/ts2.sh` (route stableai + znu with and without `--search-tools`, o2oai pinned; six tasks x two runs, tazuna

@@ -971,7 +971,7 @@ pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): 
 
 fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool, width: usize) -> Vec<Prefixed> {
     match b {
-        Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o, width),
+        Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o, open, width),
         Block::Verify(x) => verify_lines(x, v, th),
         Block::Notice { text, error } => vec![(
             Line::from(vec![
@@ -1088,32 +1088,34 @@ fn first_prompt(s: &Session, b: &Block) -> bool {
     s.blocks.iter().find(|x| matches!(x, Block::Prompt(_))).is_some_and(|x| std::ptr::eq(x, b))
 }
 
-fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, width: usize) -> Vec<Prefixed> {
+/// A long prompt shows its first PROMPT_LINES lines until it is opened (a click on it, or ctrl+o for every block).
+fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, open: bool, width: usize) -> Vec<Prefixed> {
     let md = markdown(p, th, width.saturating_sub(4));
-    let more = md.len().saturating_sub(PROMPT_LINES);
+    let keep = if open { md.len() } else { PROMPT_LINES };
+    let more = md.len().saturating_sub(keep);
     let mut out: Vec<Prefixed> = Vec::new();
     match o.prompt {
         PromptStyle::Bar => {
             let bar = || Span::styled("▎ ", st(th.accent));
             let label = if first { "task" } else { "you" };
             out.push((Line::from(vec![bar(), Span::styled(label, st(th.accent).add_modifier(Modifier::BOLD))]), vec![bar()]));
-            for (mut l, mut cont) in md.into_iter().take(PROMPT_LINES) {
+            for (mut l, mut cont) in md.into_iter().take(keep) {
                 l.spans.insert(0, bar());
                 cont.insert(0, bar());
                 out.push((l, cont));
             }
             if more > 0 {
-                out.push((Line::from(vec![bar(), Span::styled(format!("… {more} more lines"), st(th.faint))]), vec![]));
+                out.push((Line::from(vec![bar(), Span::styled(format!("… {more} more lines · click to show"), st(th.faint))]), vec![]));
             }
         }
         PromptStyle::Quote => {
             // quiet: the task in italics, dimmed, no chrome
-            for (l, cont) in md.into_iter().take(PROMPT_LINES) {
+            for (l, cont) in md.into_iter().take(keep) {
                 let spans = l.spans.into_iter().map(|sp| Span::styled(sp.content, st(th.dim).add_modifier(Modifier::ITALIC))).collect::<Vec<_>>();
                 out.push((Line::from(spans), cont));
             }
             if more > 0 {
-                out.push((Line::from(Span::styled(format!("… {more} more lines"), st(th.faint))), vec![]));
+                out.push((Line::from(Span::styled(format!("… {more} more lines · click to show"), st(th.faint))), vec![]));
             }
         }
     }
@@ -1950,6 +1952,18 @@ mod tests {
         let text: String = wrap(row, 80, &[]).iter().flat_map(|l| l.spans.iter().map(|s| s.content.to_string())).collect();
         assert!(!text.chars().any(|c| c.is_control()), "{text:?}");
         assert!(text.contains("restoring a.txt") && text.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn a_long_prompt_opens_in_full() {
+        let th = Design::Cockpit.theme();
+        let o = Opts { marker: "", prompt: PromptStyle::Bar, group_tools: true, timeline: false, durations: false };
+        let p = (1..=20).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n\n");
+        let text = |open| prompt_lines(&p, true, &th, &o, open, 80).iter().map(|(l, _)| l.to_string()).collect::<Vec<_>>().join("\n");
+        let closed = text(false);
+        assert!(closed.contains("more lines · click to show") && !closed.contains("line 20"), "{closed}");
+        let opened = text(true);
+        assert!(opened.contains("line 20") && !opened.contains("more lines"), "{opened}");
     }
 
     #[test]
