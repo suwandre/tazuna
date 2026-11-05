@@ -54,7 +54,12 @@ The tokenizer by its slope (`slope-sol-1105.txt`: 2 and 10 distinct lines, token
 a line on the OpenAI Pro 50, Pro 52 and Plus 51 pools (no hidden prompt), on kriora, a6aa, tokenx, lingai and humanai
 (each with a ~4,400-token hidden prompt a call, billed as input), and on xcgx and cheaprouter for small calls (their
 calls land on backends with and without that prompt); 58.0 on fxpayback alone. Every provider but fxpayback serves
-Sol's tokenizer. A slip of mine: the probe keys were named by provider
+Sol's tokenizer.
+
+Since then: `routes.py refresh` measures every passing provider's tokens a line and leaves out one more than 10% off
+most providers' (it dropped fxpayback in a test, kept the others, and names a hidden prompt over 1,000 tokens). Sol's
+route is now xcgx with the OpenAI Pro 50 and Pro 52 pools (it was kriora and the pools): xcgx is Sol by tokenizer, HLE
+and canary and had the top caddy mark with the fewest calls. A slip of mine: the probe keys were named by provider
 only, so each new model's probe re-pointed the DeepSeek gauge's keys (kriora and a6aa answered Sol requests 403); keys
 are named by model and provider now.
 

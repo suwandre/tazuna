@@ -53,6 +53,62 @@ def probe(model, slug, i):
                 passed=ok > 0 and errors <= 2 and cached >= 70 and where)
 
 
+LINES = [f"Line {i}: Die Quellcode-Überprüfung #{i * 7919} prüft {i * 104729} Zeilen, émojis 🙂🚀, 中文字符 {i}, snake_case_{i}, CamelCase{i}.\n"
+         for i in range(10)]
+
+
+def slope(model, slug):
+    """Input tokens a line of distinct text through one provider (test key tazuna-vet-1): a model's tokenizer counts it
+    the same on every honest provider, whatever prompt a provider adds in front. 2 and 10 lines, each sent twice, the
+    smaller count of each size (some providers mix backends with and without a hidden prompt). Also the hidden prompt it
+    implies. fxpayback's "Sol" counted 58 a line where Sol counts 43, and scored 29/100 on HLE against 45 (2026-11-05)."""
+    import os, urllib.request
+    k = s.api(f"/api/token/{s.key('tazuna-vet-1', model, [slug], 'SUBROUTER_VET1_KEY')}")
+    if bool(k.get("include_shared_subscriptions")) != slug.startswith("shared-"):
+        s.api("/api/token/", "PUT", {**k, "include_shared_subscriptions": slug.startswith("shared-")})
+
+    def count(text):
+        body = {"model": model, "messages": [{"role": "user", "content": text}], "max_tokens": 16, "reasoning_effort": "low"}
+        q = urllib.request.Request("https://subrouter.ai/v1/chat/completions", data=json.dumps(body).encode(), headers={
+            "Authorization": f"Bearer {os.environ['SUBROUTER_VET1_KEY']}", "Content-Type": "application/json", "User-Agent": "curl/8"})
+        with urllib.request.urlopen(q, timeout=180) as r:
+            return json.load(r)["usage"]["prompt_tokens"]
+
+    try:
+        two, ten = min(count("".join(LINES[:2])) for _ in range(2)), min(count("".join(LINES)) for _ in range(2))
+    except Exception as e:  # noqa: BLE001
+        print(f"  {slug:22} tokenizer not measured: {e!r:.80}")
+        return None, None
+    per = (ten - two) / 8
+    return round(per, 1), round(two - 2 * per)
+
+
+def tokenizer_check(model, good, routes):
+    """Leaves out a provider whose tokens a line differ by over 10% from most providers' (another model under the name),
+    when its count is consistent (its implied hidden prompt not negative: a mixed-backend provider can measure oddly)."""
+    if len(good) < 2:
+        return good
+    seen = routes.setdefault("checked", {}).setdefault(model, {})
+    m = {g: slope(model, g) for g in good}
+    for g, (per, hidden) in m.items():
+        if per is not None:
+            seen.setdefault(g, {}).update(tokens_a_line=per, hidden_prompt=hidden)
+    clean = [per for per, hidden in m.values() if per is not None and hidden is not None and hidden >= -10]
+    if not clean:
+        return good
+    mode = max(set(round(x) for x in clean), key=lambda v: sum(abs(x - v) <= 0.1 * v for x in clean))
+    keep = []
+    for g in good:
+        per, hidden = m[g]
+        if per is not None and hidden is not None and hidden >= -10 and abs(per - mode) > 0.1 * mode:
+            print(f"  {g:22} left out: {per} tokens a line against {mode} on most providers (another tokenizer, another model)", flush=True)
+            continue
+        if hidden and hidden > 1000:
+            print(f"  {g:22} adds a ~{hidden}-token hidden prompt to every call (billed as input)", flush=True)
+        keep.append(g)
+    return keep
+
+
 def quality(model, slug, routes):
     """The long-context gate for one provider, through the test key tazuna-vet-1; remembered in routes.json."""
     seen = routes.setdefault("verified", {}).setdefault(model, {})
@@ -156,6 +212,7 @@ def refresh(models, budget):
                       f"  ${price[c['slug']][0]}/${price[c['slug']][1]} per M", flush=True)
             checks += batch
         good = [c["slug"] for c in checks if c["passed"]]
+        good = tokenizer_check(model, good, routes)
         # billed, not listed: cybersol listed DeepSeek at $0 and billed ~4x LingAI a call (2026-11-01). A provider whose
         # check cost over 1.5x the cheapest passing one's is left out (SubRouter would pick it by its listing)
         cost = {c["slug"]: c["per_call"] for c in checks if c["passed"] and c["per_call"]}
