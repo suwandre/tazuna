@@ -34,6 +34,20 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## Sol and Luna against their public and first-party numbers, 2026-11-05 (bench only)
+
+**Sol on HLE** (`canary_hle.py`, 100 of the 400 questions, xhigh, Luna judging): xcgx 45/100 (95%: 36-55%), fxpayback
+29/100 (21-39%, 11 unanswered or ungraded) while writing ~3.6x the output tokens a question (median 5.7k against 1.6k).
+Artificial Analysis lists Sol xhigh at 52.6%; our setup measured Sol at 41.5% on 200 questions on 2026-11-01, so xcgx is
+Sol as we measure it and fxpayback is not: most likely a weaker model sold as Sol, which its price ($0.005/M input,
+a twelfth of the OpenAI pools) also suggests. The easier canary (AIME 26/30) did not show it. Sol providers need the
+HLE check before use.
+
+**Luna as OpenAI serves it** (`canary.py codex`: the canary through the official Codex CLI on the user's ChatGPT plan,
+its own bench login): AIME 28/30, MMLU-Pro 88, against 27-29/30 and 87-89 on SubRouter's kriora, Pro 52 and Plus 51:
+SubRouter's Luna is the real one. Codex itself on caddy (`codex@gpt-6-luna:xhigh`): 5/5, 4.0 min, 44 actions, Sol mark 8
+against 7-9 for Luna through tazuna (`judge.luna4.sol.jsonl`).
+
 ## 0.1.60 (2026-11-05): a file that is gone does not open as an empty one
 
 A changed file whose folder no longer exists (an agent's temporary git worktree, removed after its commit) opened in the
