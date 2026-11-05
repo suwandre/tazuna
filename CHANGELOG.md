@@ -34,6 +34,22 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.62 (2026-11-05): the own loop names its model, falls back within its route, and says why a turn failed
+
+- The own loop's prompt starts with the model's name ("You are deepseek-v4.1-flash-1017, run by tazuna through
+  subrouter.ai...", `TAZUNA_NO_IDENTITY` leaves it out). Under the application repo's CLAUDE.md ("This file provides
+  guidance to Claude Code") DeepSeek answered "I'm Claude, made by Anthropic"; with the line it names itself. The six-task
+  A/B for side effects is under way (paused 21:44 while the route changed).
+- A live own-loop session on a checked route gets the route's other providers as fallbacks (`TAZUNA_ROUTES`, each with
+  its pinned key): SubRouter keeps a route's calls on one provider and does not forward a refusal. a6aa's content filter
+  refused "when were you developed" twice (HTTP 403 `content_policy_violation`, also with no tazuna prompt at all) while
+  znu in the same route answered; the session just failed.
+- A failed turn shows why in the transcript (the result carried the reason, only "Failed" showed); known refusals in
+  plain words.
+
+DeepSeek's route is znu with a6aa as fallback now (stableai out: SubRouter sent it all 742 calls of a test round and it
+cached 30%, 0-33% in the gauge rounds, against 99% for both).
+
 ## Grok 4.7 and Astra providers by tokenizer, 2026-11-05 (bench only)
 
 The tokenizer slope (tokens a line of distinct text; `slope-grok-1105.txt`, `slope-astra-1105.txt`), after a user's

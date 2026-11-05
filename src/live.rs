@@ -1309,12 +1309,22 @@ impl Live {
                 prompt.push_str(&text);
                 self.instructions_used = (bytes, sources);
             }
+            if std::env::var_os("TAZUNA_NO_IDENTITY").is_none() {
+                prompt = identity(&self.model, &url) + &prompt;
+            }
             let mut cmd = Command::new(std::env::current_exe().context("locating the tazuna binary")?);
             cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--permission-mode", &self.permission_mode])
                 .env("TAZUNA_SYSTEM_PROMPT", &prompt)
                 .env("LEAN_BASH_CAP", self.bash_cap.to_string());
             if let Some(p) = &self.price {
                 cmd.env("TAZUNA_PRICE", p);
+            }
+            // the route's other checked providers as fallbacks, unless a bench run sets its own
+            if std::env::var_os("TAZUNA_ROUTES").is_none() {
+                let fb = crate::labels::dir().map(|d| crate::models::fallbacks(&d.join("routes.json"), &key_env)).unwrap_or_default();
+                if !fb.is_empty() {
+                    cmd.env("TAZUNA_ROUTES", fb);
+                }
             }
             if self.mode == "headless" {
                 cmd.env("TAZUNA_HEADLESS", "1"); // a task, not a conversation: stopping without a change gets a nudge
@@ -1590,6 +1600,14 @@ pub fn in_git_repo() -> bool {
     Command::new("git").args(["rev-parse", "--is-inside-work-tree"]).output().is_ok_and(|o| o.status.success())
 }
 
+/// The own loop's first line: the model by name. A repo's CLAUDE.md ("This file provides guidance to Claude Code") made
+/// DeepSeek answer "I'm Claude, made by Anthropic" (2026-11-05): with no name given, a model takes the one the prompt
+/// suggests. TAZUNA_NO_IDENTITY leaves it out (the A/B).
+fn identity(model: &str, url: &str) -> String {
+    let host = url.split("//").nth(1).unwrap_or(url).split('/').next().unwrap_or_default();
+    format!("You are {model}, run by tazuna through {host}. Instructions below that address Claude or Claude Code apply to you as this repo's coding agent.\n\n")
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -1714,6 +1732,12 @@ mod tests {
         assert!(text.contains("agent rules") && !text.contains("claude rules"), "Claude Code loads CLAUDE.md itself");
         assert_eq!(files, vec!["AGENTS.md"]);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_own_loop_names_its_model() {
+        let line = super::identity("deepseek-v4.1-flash-1017", "https://subrouter.ai/v1");
+        assert!(line.starts_with("You are deepseek-v4.1-flash-1017, run by tazuna through subrouter.ai."), "{line}");
     }
 
     #[test]

@@ -641,6 +641,13 @@ impl Session {
                 self.run_since = None;
                 let turns = e["num_turns"].as_u64().unwrap_or(0);
                 let stopped = std::mem::take(&mut self.stopping);
+                // why it failed, in the transcript: the result carried it but only "Failed" showed (a provider's content
+                // filter refused a question, 2026-11-05)
+                if !ok && !stopped {
+                    if let Some(why) = e["result"].as_str().filter(|r| !r.trim().is_empty()) {
+                        self.push(Block::Notice { text: failure_reason(why), error: true });
+                    }
+                }
                 self.push(Block::Done(Summary { ok, secs, turns, cost: self.cost(), usage: self.usage, stopped }));
                 self.activity = Activity::Done;
                 self.results += 1;
@@ -823,6 +830,18 @@ pub fn mode_name(m: &str) -> &str {
         "acceptEdits" => "edits",
         "plan" => "plan",
         other => other,
+    }
+}
+
+/// A failed turn's reason in a line: known provider refusals in plain words, anything else cut to its start.
+pub fn failure_reason(result: &str) -> String {
+    let code = ["content_policy_violation", "insufficient_quota", "model_not_found", "rate_limit"].into_iter().find(|c| result.contains(c));
+    match code {
+        Some("content_policy_violation") => "the provider's content filter refused this message (its policy, not tazuna's); another provider or other words may go through".into(),
+        Some("insufficient_quota") => "the provider account has no balance left".into(),
+        Some("model_not_found") => "no provider serves this model on the route right now (it may have dropped out)".into(),
+        Some(_) => "rate limited by the provider: try again in a moment".into(),
+        None => result.trim().chars().take(200).collect(),
     }
 }
 
@@ -1026,6 +1045,13 @@ mod tests {
         let (h5, d7, at) = last_limits(&dir).unwrap();
         assert_eq!((h5, (d7 * 10.0).round(), at), (0.0, 140.0, now - 600 + 5), "the newest reading; its 5-hour window has reset");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_failed_turn_says_why() {
+        let msg = r#"[provider error: HTTP 403: {"error":{"message":"请求内容未通过安全检查。","type":"content_policy_violation","code":"content_policy_violation"}}]"#;
+        assert!(super::failure_reason(msg).starts_with("the provider's content filter refused"));
+        assert_eq!(super::failure_reason("[provider error: HTTP 500: boom]"), "[provider error: HTTP 500: boom]");
     }
 
     #[test]

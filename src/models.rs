@@ -215,6 +215,26 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
 /// SubRouter's balance in USD, read with an API key (SUBROUTER_API_KEY, else any route key; none set: nothing is
 /// sent), never the account login. Its billing endpoints count in CNY at 6.8 to the dollar: (granted - used) / 6.8
 /// matched the account page to the cent (2026-11-02).
+/// The other checked providers of the route `key_env` belongs to, cheapest first, as `TAZUNA_ROUTES` ("url key-env; ...",
+/// only keys that are set): a live own-loop session goes on there when its provider refuses or fails. SubRouter keeps a
+/// route's calls on one provider and does not forward a refusal: a6aa's content filter refused "when were you developed"
+/// twice and the session just failed, while znu in the same route answered (2026-11-05).
+pub fn fallbacks(routes: &Path, key_env: &str) -> String {
+    let file: Value = std::fs::read_to_string(routes).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    for r in file["routes"].as_object().into_iter().flatten().map(|(_, r)| r) {
+        let pins: Vec<(f64, &str)> = r["pinned"].as_object().into_iter().flatten()
+            .filter_map(|(_, p)| Some((p["price"][0].as_f64().unwrap_or(0.0), p["key_env"].as_str()?))).collect();
+        if r["key_env"].as_str() != Some(key_env) && !pins.iter().any(|(_, k)| *k == key_env) {
+            continue;
+        }
+        let url = r["url"].as_str().unwrap_or_default();
+        let mut others: Vec<(f64, &str)> = pins.into_iter().filter(|(_, k)| *k != key_env && std::env::var_os(k).is_some()).collect();
+        others.sort_by(|a, b| a.0.total_cmp(&b.0));
+        return others.iter().map(|(_, k)| format!("{url} {k}")).collect::<Vec<_>>().join("; ");
+    }
+    String::new()
+}
+
 pub fn subrouter_balance() -> Option<f64> {
     let key = std::env::var("SUBROUTER_API_KEY").ok()
         .or_else(|| std::env::vars().find(|(k, _)| k.starts_with("SUBROUTER_ROUTE_") && k.ends_with("_KEY")).map(|(_, v)| v))?;
@@ -238,6 +258,18 @@ pub fn start_effort(c: &Choice, current_model: &str, current_effort: &str) -> us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_route_falls_back_to_its_other_providers() {
+        let f = std::env::temp_dir().join(format!("tazuna-fallbacks-{}.json", std::process::id()));
+        std::fs::write(&f, r#"{"routes": {"m": {"url": "https://subrouter.ai/v1", "key_env": "ROUTE_KEY",
+            "pinned": {"a6aa": {"key_env": "PATH", "price": [0.012, 0.048]}, "znu": {"key_env": "HOME", "price": [0.0118, 0.047]},
+                       "gone": {"key_env": "TAZUNA_TEST_NO_SUCH_KEY", "price": [0.001, 0.01]}}}}}"#).unwrap();
+        assert_eq!(fallbacks(&f, "ROUTE_KEY"), "https://subrouter.ai/v1 HOME; https://subrouter.ai/v1 PATH", "cheapest first, unset keys left out");
+        assert_eq!(fallbacks(&f, "PATH"), "https://subrouter.ai/v1 HOME", "a pinned provider falls back to the others");
+        assert_eq!(fallbacks(&f, "OTHER"), "");
+        std::fs::remove_file(&f).ok();
+    }
 
     #[test]
     fn lists_claude_then_checked_routes_with_their_state() {
