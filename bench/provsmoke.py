@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Smoke test of SubRouter providers for one model (provsmoke.py MODEL SLUG...), 2026-11-04: per provider a key of its
 own (tazuna-route-smoke-<slug>), one agent-like conversation of four growing streamed calls (~15k tokens of tazuna's
-source as context, a bash tool, effort xhigh), all providers at once. Per call: time to first token (reasoning counts),
+source as context, a bash tool, effort high: DeepSeek V4 has only high and max, and providers map other values their own way), all providers at once. Per call: time to first token (reasoning counts),
 output tokens a second after it, total seconds, cached share, output and reasoning tokens, tool calls. One JSON line per
 provider on stdout. Not a quality test: the real-task check is one caddy run per provider (provsmoke.sh)."""
 import json, os, re, statistics as st, sys, threading, time, urllib.request
@@ -26,7 +26,7 @@ def var(slug):
 
 
 def call(key, msgs):
-    body = {"model": M, "messages": msgs, "tools": [TOOL], "reasoning_effort": "xhigh", "max_tokens": 6000,
+    body = {"model": M, "messages": msgs, "tools": [TOOL], "reasoning_effort": "high", "max_tokens": 6000,
             "stream": True, "stream_options": {"include_usage": True}}
     q = urllib.request.Request("https://subrouter.ai/v1/chat/completions", data=json.dumps(body).encode(),
                                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "curl/8"})
