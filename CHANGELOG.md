@@ -34,6 +34,12 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.58 (2026-11-05): the own loop sends Responses items back without `status`
+
+A Sol run on fxpayback (SubRouter's cheapest Sol provider) stopped at its 40th history item: 400 "Unknown parameter:
+'input[40].status'". The model's output items now go back without the `status` field the API reports on them; OpenAI's
+own API takes them either way. No metric change on the routes measured before.
+
 ## GPT-6 Luna on SubRouter's providers, smoke test, 2026-11-05 (bench only)
 
 Six providers probed at xhigh (`luna-probe-1105.jsonl`): OpenAI Pro 50 and foxrouter answered 503; xcgx serves Luna

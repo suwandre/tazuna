@@ -328,6 +328,16 @@ fn drop_thinking(msgs: &mut [Value]) -> bool {
     dropped
 }
 
+/// A Responses output item as the next request's input: without `status`, which the API reports but some gateways
+/// refuse to take back (fxpayback's Sol: 400 "Unknown parameter: 'input[40].status'", a run's 40th item, 2026-11-05).
+/// OpenAI's own API takes the items either way.
+fn input_item(mut item: Value) -> Value {
+    if let Some(o) = item.as_object_mut() {
+        o.remove("status");
+    }
+    item
+}
+
 /// A conversation's pool is gone (SubRouter's shared ChatGPT pools, see the loop).
 fn pinned_away(e: &str) -> bool {
     e.contains("responses_source_unavailable")
@@ -702,7 +712,7 @@ impl Loop {
                         .filter_map(|c| c["text"].as_str().map(String::from)).collect::<Vec<_>>().join("\n");
                     let calls = items.iter().filter(|i| i["type"] == "function_call")
                         .map(|i| json!({"id": i["call_id"], "function": {"name": i["name"], "arguments": i["arguments"]}})).collect();
-                    self.msgs.extend(items); // reasoning, messages and calls go back as they came
+                    self.msgs.extend(items.into_iter().map(input_item)); // reasoning, messages and calls go back as they came
                     (text, calls)
                 }
                 Api::Messages => {
@@ -2326,6 +2336,12 @@ data: {\"type\":\"message_stop\"}\n";
         assert_eq!((last["type"].as_str(), last["result"].as_str()), (Some("result"), Some("[interrupted]")));
         assert!(!dir.join("b.txt").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn output_items_go_back_without_status() {
+        let i = super::input_item(json!({"type": "function_call", "call_id": "c1", "name": "bash", "arguments": "{}", "status": "completed"}));
+        assert!(i.get("status").is_none() && i["call_id"] == "c1" && i["name"] == "bash");
     }
 
     #[test]
