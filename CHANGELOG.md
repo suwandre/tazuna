@@ -34,6 +34,14 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.64 (2026-11-05): fetched pages by title; lists scroll sideways and close like modals
+
+- A fetch call shows its page's title (fetch now puts it in its result's first line), or the URL's host and path for
+  an API, instead of its raw `{"url": ...}`; in a tool's call list the label is a link that opens the page.
+- A call list scrolls sideways (←/→, h/l, home, or the wheel's sideways motion): long rows ran off the modal.
+- A list closes with esc or a click outside it; a click inside stays (it closed on any click, so clicking a row
+  dismissed what one was reading).
+
 ## 0.1.63 (2026-11-05): the own loop can fetch the web
 
 A `fetch` tool for the own loop (Claude has its own WebFetch): an http(s) URL in, its text out: a page's readable text

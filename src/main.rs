@@ -1025,14 +1025,19 @@ fn tool_calls(s: &Session, name: &str) -> ui::ListPanel {
     let longest = secs.iter().copied().fold(0.0, f64::max);
     let rows = calls.iter().enumerate().map(|(i, t)| {
         let took = t.secs().map_or("running".to_string(), |x| format!("{x:.1}s"));
-        let what: String = ui::plain(&ui::tool_summary(t, s)).chars().take(90).collect();
+        let what: String = ui::plain(&ui::tool_summary(t, s)).chars().take(200).collect();
         (format!("{:>3}  {:>7}  {}  {what}", i + 1, took, if t.error { "✗" } else if t.done_ms.is_some() { "✓" } else { "…" }), t.error)
     }).collect();
+    // a fetched page's row links to it (the label is its title)
+    let links = calls.iter().map(|t| matches!(ui::short_name(&t.name), "fetch" | "WebFetch").then(|| t.input["url"].as_str().map(String::from)).flatten()).collect();
     ui::ListPanel {
         title: format!("{name} ×{} · {:.1}s in all · {:.1}s a call · longest {longest:.1}s", calls.len(), total, total / secs.len().max(1) as f64),
         head: format!("{:>3}  {:>7}     what", "#", "took"),
         rows,
         scroll: 0,
+        links,
+        link_from: 17, // after "  #  took  ✓  "
+        hscroll: 0,
     }
 }
 
@@ -1052,6 +1057,9 @@ fn model_calls(s: &Session) -> ui::ListPanel {
         head: format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}", "#", "new in", "cached", "out", "first", "tok/s"),
         rows,
         scroll: 0,
+        links: vec![],
+        link_from: 0,
+        hscroll: 0,
     }
 }
 
@@ -1242,6 +1250,8 @@ fn run_live(
     let mut files_area: Option<ratatui::layout::Rect> = None;
     let mut diff_files: Vec<(ratatui::layout::Rect, usize)> = vec![];
     let (mut tool_rows, mut tokens_area, mut bars): (Vec<(ratatui::layout::Rect, String)>, Option<ratatui::layout::Rect>, Option<(ratatui::layout::Rect, usize)>) = (vec![], None, None);
+    // a list modal's place and its link rows: a click inside stays, on a link opens it, outside closes the list
+    let (mut list_area, mut list_links): (Option<ratatui::layout::Rect>, Vec<(ratatui::layout::Rect, String)>) = (None, vec![]);
     // the transcript line on its first row (a selection holds lines), and when a drag past an edge last scrolled
     let (mut top_line, mut edge_scrolled) = (0usize, Instant::now());
     let mut over_link = false;
@@ -1393,6 +1403,7 @@ fn run_live(
             let areas = fx.frame(f, &s, &v, dt);
             (transcript, rows, links, files_area, diff_files) = (areas.transcript, areas.rows, areas.links, areas.files, areas.diff_files);
             (tool_rows, tokens_area, bars, top_line) = (areas.tool_rows, areas.tokens, areas.bars, areas.top_line);
+            (list_area, list_links) = (areas.list, areas.list_links);
             if let Some(sel) = sel.as_mut() {
                 // a drag held past an edge: the head moves with the scroll
                 sel.follow(top_line);
@@ -1456,7 +1467,12 @@ fn run_live(
                             sel = None;
                             let pos = ratatui::layout::Position::new(m.column, m.row);
                             if v.list.is_some() {
-                                v.list = None;
+                                // a click inside the list stays (on a link: opens it); outside it closes the list
+                                if let Some((_, url)) = list_links.iter().find(|(r, _)| r.contains(pos)) {
+                                    v.toast = Some((match platform::open_url(url) { Ok(()) => format!("opened {url}"), Err(e) => format!("could not open {url}: {e}") }, Instant::now()));
+                                } else if !list_area.is_some_and(|r| r.contains(pos)) {
+                                    v.list = None;
+                                }
                             } else if let Some((_, name)) = tool_rows.iter().find(|(r, _)| v.diff.is_none() && r.contains(pos)) {
                                 v.list = Some(tool_calls(&s, name));
                             } else if tokens_area.is_some_and(|r| v.diff.is_none() && r.contains(pos)) && !s.turn_usage.is_empty() {
@@ -1489,7 +1505,7 @@ fn run_live(
                         // the pointer cursor over a link (OSC 22: kitty, Ghostty, foot, WezTerm, xterm; others ignore it)
                         // a link, a tool row, the tokens panel or the files panel: each opens something on a click
                         let at = ratatui::layout::Position::new(m.column, m.row);
-                        let over = links.iter().any(|(r, _)| r.contains(at)) || (v.list.is_none() && v.diff.is_none()
+                        let over = links.iter().any(|(r, _)| r.contains(at)) || list_links.iter().any(|(r, _)| v.list.is_some() && r.contains(at)) || (v.list.is_none() && v.diff.is_none()
                             && (tool_rows.iter().any(|(r, _)| r.contains(at)) || (tokens_area.is_some_and(|r| r.contains(at)) && !s.turn_usage.is_empty())
                                 || (files_area.is_some_and(|r| r.contains(at)) && !v.changed.is_empty())));
                         if over != over_link {
@@ -1501,11 +1517,13 @@ fn run_live(
                     }
                     k if v.list.is_some() => {
                         if let Some(l) = v.list.as_mut() {
-                            l.scroll = match k {
-                                MouseEventKind::ScrollUp => l.scroll.saturating_sub(3),
-                                MouseEventKind::ScrollDown => (l.scroll + 3).min(l.rows.len().saturating_sub(1)),
-                                _ => l.scroll,
-                            };
+                            match k {
+                                MouseEventKind::ScrollUp => l.scroll = l.scroll.saturating_sub(3),
+                                MouseEventKind::ScrollDown => l.scroll = (l.scroll + 3).min(l.rows.len().saturating_sub(1)),
+                                MouseEventKind::ScrollLeft => l.hscroll = l.hscroll.saturating_sub(6),
+                                MouseEventKind::ScrollRight => l.hscroll += 6,
+                                _ => {}
+                            }
                         }
                     }
                     k => scroll_mouse(&mut v, k),
@@ -1585,7 +1603,10 @@ fn run_live(
                 KeyCode::Down | KeyCode::Char('j') => l.scroll = (l.scroll + 1).min(last),
                 KeyCode::PageUp => l.scroll = l.scroll.saturating_sub(20),
                 KeyCode::PageDown | KeyCode::Char(' ') => l.scroll = (l.scroll + 20).min(last),
-                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => v.list = None,
+                KeyCode::Right | KeyCode::Char('l') => l.hscroll = (l.hscroll + 10).min(l.rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0).saturating_sub(10)),
+                KeyCode::Left | KeyCode::Char('h') => l.hscroll = l.hscroll.saturating_sub(10),
+                KeyCode::Home => l.hscroll = 0,
+                KeyCode::Esc | KeyCode::Char('q') => v.list = None,
                 _ => {}
             }
             continue;

@@ -208,6 +208,9 @@ pub struct Areas {
     pub bars: Option<(Rect, usize)>,
     /// The transcript line on the transcript's first row.
     pub top_line: usize,
+    /// A list modal: where it is (a click outside closes it) and its link rows (a click opens one).
+    pub list: Option<Rect>,
+    pub list_links: Vec<(Rect, String)>,
 }
 
 /// One file this conversation changed, with its lines added and removed (git).
@@ -228,6 +231,11 @@ pub struct ListPanel {
     pub head: String,
     pub rows: Vec<(String, bool)>,
     pub scroll: usize,
+    /// A row's link (a fetched page): its text from `link_from` on is drawn as a link, a click opens it.
+    pub links: Vec<Option<String>>,
+    pub link_from: usize,
+    /// Columns scrolled to the right (←/→): long rows ran off the modal with no way to read them.
+    pub hscroll: usize,
 }
 
 /// `/diff` (or a click on the files panel): the changed files, the selected one's diff, how far it is scrolled.
@@ -291,13 +299,13 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
         draw_models(f, p, th);
     }
     if let Some(p) = &v.list {
-        draw_list(f, p, th);
+        (areas.list, areas.list_links) = draw_list(f, p, th);
     }
     areas
 }
 
 /// A ListPanel in the middle of the screen: its title, the column heads, the rows that fit (failed ones in red).
-fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme) {
+fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme) -> (Option<Rect>, Vec<(Rect, String)>) {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
     let want = p.rows.iter().map(|r| r.0.width()).chain([p.head.width(), p.title.width()]).max().unwrap_or(20) as u16 + 4;
@@ -305,12 +313,29 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme) {
     let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
     f.render_widget(Clear, area);
     let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(format!(" {} · ↑↓ or wheel scroll · esc ", p.title), st(th.accent).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(format!(" {} · ↑↓ scroll · ←→ sideways · esc or click outside closes ", p.title), st(th.accent).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let mut lines = vec![Line::from(Span::styled(p.head.clone(), st(th.faint).add_modifier(Modifier::BOLD)))];
-    lines.extend(p.rows.iter().skip(p.scroll).take(inner.height.saturating_sub(1) as usize).map(|(r, bad)| Line::from(Span::styled(r.clone(), st(if *bad { th.err } else { th.text })))));
+    let cut = |t: &str| t.chars().skip(p.hscroll).collect::<String>();
+    let mut lines = vec![Line::from(Span::styled(cut(&p.head), st(th.faint).add_modifier(Modifier::BOLD)))];
+    let mut links = vec![];
+    for (k, (i, (r, bad))) in p.rows.iter().enumerate().skip(p.scroll).take(inner.height.saturating_sub(1) as usize).enumerate() {
+        let color = st(if *bad { th.err } else { th.text });
+        let shown = cut(r);
+        match p.links.get(i).cloned().flatten() {
+            Some(url) => {
+                // the label after the fixed columns is the link: underlined, opened on a click
+                let at = p.link_from.saturating_sub(p.hscroll).min(shown.chars().count());
+                let (a, b): (String, String) = (shown.chars().take(at).collect(), shown.chars().skip(at).collect());
+                let y = inner.y + 1 + k as u16;
+                links.push((Rect::new(inner.x + at as u16, y, (b.width() as u16).min(inner.width.saturating_sub(at as u16)), 1), url));
+                lines.push(Line::from(vec![Span::styled(a, color), Span::styled(b, st(th.accent).add_modifier(Modifier::UNDERLINED))]));
+            }
+            None => lines.push(Line::from(Span::styled(shown, color))),
+        }
+    }
     f.render_widget(Paragraph::new(lines), inner);
+    (Some(area), links)
 }
 
 /// The files the agent's edit tools wrote that `skip` (git's list) leaves out, each with a diff built from the calls
@@ -873,10 +898,22 @@ pub fn tool_summary(t: &Tool, s: &Session) -> String {
         // a subagent: who and what for; its prompt shows when the call is opened
         "Agent" | "Task" => format!("{}: {}", i["subagent_type"].as_str().unwrap_or("agent"), i["description"].as_str().unwrap_or_default()),
         "WebSearch" | "ToolSearch" => i["query"].as_str().unwrap_or_default().to_string(),
-        "WebFetch" => i["url"].as_str().unwrap_or_default().to_string(),
+        "fetch" | "WebFetch" => fetch_label(t),
         "Skill" => i["skill"].as_str().or(i["name"].as_str()).unwrap_or_default().to_string(),
         _ => i.to_string(),
     }
+}
+
+/// A fetch call as its page's title (from the result's first line) or the URL's host and path, not the URL in full
+/// (a user found the raw `{"url":...}` rows hard to read, 2026-11-05).
+pub fn fetch_label(t: &Tool) -> String {
+    let url = t.input["url"].as_str().unwrap_or_default();
+    let title = t.result.as_deref().and_then(|r| r.lines().next()).and_then(|l| l.split_once(" · \"")).and_then(|(_, r)| r.split_once("\", HTTP")).map(|(t, _)| t.to_string());
+    title.unwrap_or_else(|| {
+        let bare = url.split_once("://").map_or(url, |(_, r)| r);
+        let bare = bare.split(['?', '#']).next().unwrap_or(bare).trim_end_matches('/');
+        bare.chars().take(80).collect()
+    })
 }
 
 /// A closed call's summary is cut to this many characters (about two rows); opened, it shows whole.
@@ -2103,6 +2140,25 @@ mod tests {
     }
 
     #[test]
+    fn fetch_rows_show_a_title_link_and_scroll_sideways() {
+        let tool = |result: &str, url: &str| Tool { id: "f".into(), name: "fetch".into(), input: serde_json::json!({"url": url}), result: Some(result.into()), error: false, started_ms: 0.0, done_ms: Some(1.0), sub: None };
+        assert_eq!(fetch_label(&tool("[fetched https://x.com/a · \"Crypto prices today\", HTTP 200: web content]\nbody", "https://x.com/a")), "Crypto prices today");
+        assert_eq!(fetch_label(&tool("[fetched https://api.coingecko.com/api/v3/global, HTTP 200: web content]\n{}", "https://api.coingecko.com/api/v3/global?x=1")), "api.coingecko.com/api/v3/global");
+        let mut p = ListPanel { title: "fetch".into(), head: "  #   took     what".into(), rows: vec![(format!("{:>3}  {:>7}  {}  {}", 1, "0.5s", "✓", "Crypto prices today"), false)], scroll: 0,
+            links: vec![Some("https://x.com/a".into())], link_from: 17, hscroll: 0 };
+        let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
+        let mut out = (None, vec![]);
+        term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme()); }).unwrap();
+        let (area, links) = out.clone();
+        assert!(area.is_some() && links.len() == 1 && links[0].1 == "https://x.com/a");
+        let r = links[0].0;
+        assert_eq!(term.backend().buffer()[(r.x, r.y)].symbol(), "C", "the link starts at the title");
+        p.hscroll = 10;
+        term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme()); }).unwrap();
+        assert_eq!(out.1[0].0.x, r.x - 10, "scrolled sideways, the link moves with its text");
+    }
+
+    #[test]
     fn a_modal_fades_what_is_behind_it() {
         let s = Session::new("", "medium");
         let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None };
@@ -2114,7 +2170,7 @@ mod tests {
             (b[(3, 0)].fg, b[(60, 20)].symbol().to_string())
         };
         assert_ne!(cell(&v).0, th.border, "the header in its own colours without a modal");
-        v.list = Some(ListPanel { title: "model calls".into(), head: "#".into(), rows: vec![("1".into(), false)], scroll: 0 });
+        v.list = Some(ListPanel { title: "model calls".into(), head: "#".into(), rows: vec![("1".into(), false)], scroll: 0, links: vec![], link_from: 0, hscroll: 0 });
         let (fg, _) = cell(&v);
         assert_eq!(fg, th.border, "behind a modal everything takes the border colour");
     }
