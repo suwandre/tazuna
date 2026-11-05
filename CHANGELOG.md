@@ -34,6 +34,18 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.57 (2026-11-05): the cockpit's side panels say more and open up
+
+- **files**: lists every file the conversation wrote. Before, a file committed during the conversation (or written
+  outside the repo) only showed as "no changes in the repo · 5 files written outside it", cut off, with nothing to open.
+  Those files now get the agent's own diff (an edit's old text removed, its new text added; a write's content added), so
+  a click on the panel opens all of them, git's and these, in the diff view; enter or a click opens one in the editor.
+- **tools**: each tool's total and average time a call (`Agent ×14 ✓ 30.7m ⌀2.2m`). A click on a row lists that tool's
+  calls: number, how long each took, how it ended, what it did; the title has the total, the average and the longest.
+- **tokens**: the bar chart of output per model call has a y axis (its tallest bar's value, and 0) and says which calls
+  it shows (`#12–40`). The mouse over a bar names that call (output, time to first token, tokens a second) and colours
+  it; a click lists every model call with its new and cached input, cache writes, output, first token and speed.
+
 ## 0.1.56 (2026-11-05): a short command runs; long prompts open
 
 - `/res` and enter runs `/resume`, the first suggestion under the input, as in Claude Code. Before, tazuna stopped with

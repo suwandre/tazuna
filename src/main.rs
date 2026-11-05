@@ -801,7 +801,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -979,7 +979,7 @@ fn changed_since(start: Option<&std::collections::BTreeMap<String, String>>, cwd
             (path == p).then(|| (a.parse().unwrap_or(0), d.parse().unwrap_or(0)))
         });
         let (added, removed) = counts.unwrap_or_else(|| (std::fs::read_to_string(cwd.join(&p)).map_or(0, |t| t.lines().count() as u64), 0));
-        ui::Changed { path: p, added, removed }
+        ui::Changed { path: p, added, removed, diff: None }
     }).collect()
 }
 
@@ -990,6 +990,57 @@ fn open_file(path: &str, line: u32) -> String {
     match platform::open_in_editor(&full, line) {
         Ok(editor) => format!("opened {path}:{line} in {editor}"),
         Err(e) => format!("could not open {path}: {e} (set TAZUNA_EDITOR, e.g. \"code -g {{path}}:{{line}}\")"),
+    }
+}
+
+/// What this conversation changed: git's working tree against the snapshot at its start, then the files its edit
+/// tools wrote that git shows no change in now (committed meanwhile, or outside the repo), with the tools' own diff.
+fn conversation_changes(start: Option<&std::collections::BTreeMap<String, String>>, s: &Session) -> Vec<ui::Changed> {
+    let mut out = changed_since(start, &std::env::current_dir().unwrap_or_default());
+    let git: Vec<String> = out.iter().map(|c| c.path.clone()).collect();
+    out.extend(ui::written_by_tools(s, &git));
+    out
+}
+
+/// A changed file's diff: the tools' own for a file git shows nothing for, else git's.
+fn diff_of(c: &ui::Changed) -> Vec<String> {
+    c.diff.clone().unwrap_or_else(|| file_diff(&c.path))
+}
+
+/// The list of one tool's calls (a click on its row in the tools panel): when, how long, how it ended, what it did.
+fn tool_calls(s: &Session, name: &str) -> ui::ListPanel {
+    let calls: Vec<&session::Tool> = s.blocks.iter().filter_map(|b| if let session::Block::Tool(t) = b { Some(t) } else { None })
+        .filter(|t| ui::plain(ui::short_name(&t.name)) == name).collect();
+    let secs: Vec<f64> = calls.iter().filter_map(|t| t.secs()).collect();
+    let total: f64 = secs.iter().sum();
+    let longest = secs.iter().copied().fold(0.0, f64::max);
+    let rows = calls.iter().enumerate().map(|(i, t)| {
+        let took = t.secs().map_or("running".to_string(), |x| format!("{x:.1}s"));
+        let what: String = ui::plain(&ui::tool_summary(t, s)).chars().take(90).collect();
+        (format!("{:>3}  {:>7}  {}  {what}", i + 1, took, if t.error { "✗" } else if t.done_ms.is_some() { "✓" } else { "…" }), t.error)
+    }).collect();
+    ui::ListPanel {
+        title: format!("{name} ×{} · {:.1}s in all · {:.1}s a call · longest {longest:.1}s", calls.len(), total, total / secs.len().max(1) as f64),
+        head: format!("{:>3}  {:>7}     what", "#", "took"),
+        rows,
+        scroll: 0,
+    }
+}
+
+/// Every model call (a click on the tokens panel): what it sent and read from cache, what it wrote, its first token
+/// and its speed.
+fn model_calls(s: &Session) -> ui::ListPanel {
+    let rows = s.turn_usage.iter().enumerate().map(|(i, u)| {
+        let c = s.calls.get(i);
+        let first = c.and_then(|c| c.ttft_ms).map_or("-".to_string(), |ms| format!("{:.1}s", ms / 1000.0));
+        let rate = c.filter(|c| c.gen_ms > 0.0).map_or("-".to_string(), |c| format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0));
+        (format!("{:>4}  {:>8}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}", i + 1, ui::human(u.input + u.cache_write), ui::human(u.cache_read), ui::human(u.cache_write), ui::human(u.output), first, rate), false)
+    }).collect();
+    ui::ListPanel {
+        title: format!("model calls · {}", s.turn_usage.len()),
+        head: format!("{:>4}  {:>8}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}", "#", "new in", "cached", "cache wr", "out", "first", "tok/s"),
+        rows,
+        scroll: 0,
     }
 }
 
@@ -1176,6 +1227,7 @@ fn run_live(
     // the files panel (cockpit): a click opens /diff
     let mut files_area: Option<ratatui::layout::Rect> = None;
     let mut diff_files: Vec<(ratatui::layout::Rect, usize)> = vec![];
+    let (mut tool_rows, mut tokens_area, mut bars): (Vec<(ratatui::layout::Rect, String)>, Option<ratatui::layout::Rect>, Option<(ratatui::layout::Rect, usize)>) = (vec![], None, None);
     let mut over_link = false;
     // the work tree when this conversation began: what it changed since is the files panel and /diff
     let mut git_start = runlog::git_snapshot(&std::env::current_dir()?);
@@ -1266,7 +1318,7 @@ fn run_live(
             }
             // what the conversation changed: after each run, and while one runs at most every 5 s (a few git calls each)
             if e["type"] == "result" || (e["type"] == "user" && changed_at.elapsed() > Duration::from_secs(5)) {
-                v.changed = changed_since(git_start.as_ref(), &std::env::current_dir().unwrap_or_default());
+                v.changed = conversation_changes(git_start.as_ref(), &s);
                 changed_at = Instant::now();
             }
             // a plan in TODO.md: say once that /loop can build it
@@ -1324,6 +1376,7 @@ fn run_live(
         term.draw(|f| {
             let areas = fx.frame(f, &s, &v, dt);
             (transcript, rows, links, files_area, diff_files) = (areas.transcript, areas.rows, areas.links, areas.files, areas.diff_files);
+            (tool_rows, tokens_area, bars) = (areas.tool_rows, areas.tokens, areas.bars);
             if let Some(sel) = &sel {
                 sel.highlight(f.buffer_mut());
                 if copy_now {
@@ -1377,13 +1430,19 @@ fn run_live(
                         _ => {
                             sel = None;
                             let pos = ratatui::layout::Position::new(m.column, m.row);
-                            if let Some(&(_, i)) = diff_files.iter().find(|(r, _)| v.diff.is_some() && r.contains(pos)) {
+                            if v.list.is_some() {
+                                v.list = None;
+                            } else if let Some((_, name)) = tool_rows.iter().find(|(r, _)| v.diff.is_none() && r.contains(pos)) {
+                                v.list = Some(tool_calls(&s, name));
+                            } else if tokens_area.is_some_and(|r| v.diff.is_none() && r.contains(pos)) && !s.turn_usage.is_empty() {
+                                v.list = Some(model_calls(&s));
+                            } else if let Some(&(_, i)) = diff_files.iter().find(|(r, _)| v.diff.is_some() && r.contains(pos)) {
                                 // a file in the diff view: select it and open it where its first change is
-                                let d = file_diff(&v.changed[i].path);
+                                let d = diff_of(&v.changed[i]);
                                 v.toast = Some((open_file(&v.changed[i].path, ui::first_change(&d)), Instant::now()));
                                 v.diff = Some(ui::DiffPanel { selected: i, diff: d, scroll: 0 });
                             } else if files_area.is_some_and(|r| r.contains(pos)) && !v.changed.is_empty() {
-                                v.diff = Some(ui::DiffPanel { selected: 0, diff: file_diff(&v.changed[0].path), scroll: 0 });
+                                v.diff = Some(ui::DiffPanel { selected: 0, diff: diff_of(&v.changed[0]), scroll: 0 });
                             } else if let Some((_, url)) = links.iter().find(|(r, _)| r.contains(pos)) {
                                 let msg = match platform::open_url(url) {
                                     Ok(()) => format!("opened {url}"),
@@ -1399,6 +1458,8 @@ fn run_live(
                     },
                     MouseEventKind::Moved => {
                         v.hover = block_at(transcript, &rows, m.column, m.row);
+                        // a bar of the output-per-call chart: the caption names that call
+                        v.hover_call = bars.filter(|(r, _)| r.contains(ratatui::layout::Position::new(m.column, m.row))).map(|(r, first)| first + (m.column - r.x) as usize);
                         v.mouse = Some((m.column, m.row));
                         // the pointer cursor over a link (OSC 22: kitty, Ghostty, foot, WezTerm, xterm; others ignore it)
                         let over = links.iter().any(|(r, _)| r.contains(ratatui::layout::Position::new(m.column, m.row)));
@@ -1407,6 +1468,15 @@ fn run_live(
                             use std::io::Write;
                             let _ = write!(std::io::stdout(), "\x1b]22;{}\x1b\\", if over { "pointer" } else { "default" });
                             let _ = std::io::stdout().flush();
+                        }
+                    }
+                    k if v.list.is_some() => {
+                        if let Some(l) = v.list.as_mut() {
+                            l.scroll = match k {
+                                MouseEventKind::ScrollUp => l.scroll.saturating_sub(3),
+                                MouseEventKind::ScrollDown => (l.scroll + 3).min(l.rows.len().saturating_sub(1)),
+                                _ => l.scroll,
+                            };
                         }
                     }
                     k => scroll_mouse(&mut v, k),
@@ -1478,6 +1548,19 @@ fn run_live(
             continue;
         }
         // the /rewind picker owns the keyboard while open
+        // a list (a tool's calls, the model calls) owns the keyboard while open
+        if let (Some(l), false) = (v.list.as_mut(), stop_key) {
+            let last = l.rows.len().saturating_sub(1);
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => l.scroll = l.scroll.saturating_sub(1),
+                KeyCode::Down | KeyCode::Char('j') => l.scroll = (l.scroll + 1).min(last),
+                KeyCode::PageUp => l.scroll = l.scroll.saturating_sub(20),
+                KeyCode::PageDown | KeyCode::Char(' ') => l.scroll = (l.scroll + 20).min(last),
+                KeyCode::Esc | KeyCode::Char('q') | KeyCode::Enter => v.list = None,
+                _ => {}
+            }
+            continue;
+        }
         // the /diff view owns the keyboard while open
         if let (Some(p), false) = (v.diff.as_mut(), stop_key) {
             let last = v.changed.len().saturating_sub(1);
@@ -1485,7 +1568,7 @@ fn run_live(
             match key.code {
                 KeyCode::Up | KeyCode::Down => {
                     p.selected = if key.code == KeyCode::Up { p.selected.saturating_sub(1) } else { (p.selected + 1).min(last) };
-                    p.diff = v.changed.get(p.selected).map(|c| file_diff(&c.path)).unwrap_or_default();
+                    p.diff = v.changed.get(p.selected).map(diff_of).unwrap_or_default();
                     p.scroll = 0;
                 }
                 KeyCode::Enter | KeyCode::Char('o') => {
@@ -1765,9 +1848,9 @@ fn run_live(
                     continue;
                 }
                 if text == "/diff" {
-                    v.changed = changed_since(git_start.as_ref(), &std::env::current_dir().unwrap_or_default());
+                    v.changed = conversation_changes(git_start.as_ref(), &s);
                     match v.changed.first() {
-                        Some(c) => v.diff = Some(ui::DiffPanel { selected: 0, diff: file_diff(&c.path), scroll: 0 }),
+                        Some(c) => v.diff = Some(ui::DiffPanel { selected: 0, diff: diff_of(c), scroll: 0 }),
                         None => s.apply(&json!({"type": "harness_info", "text": "no file changed in this conversation yet"}), live.elapsed_ms()),
                     }
                     continue;

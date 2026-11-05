@@ -96,6 +96,10 @@ pub struct View {
     /// The files this conversation changed (git), and the `/diff` view of them when open.
     pub changed: Vec<Changed>,
     pub diff: Option<DiffPanel>,
+    /// A tool's calls or the model calls (cockpit), over the screen.
+    pub list: Option<ListPanel>,
+    /// The model call under the mouse in the tokens chart.
+    pub hover_call: Option<usize>,
     /// Lines scrolled up from the bottom; 0 follows the live tail.
     pub scroll: usize,
     pub clock_ms: f64,
@@ -180,6 +184,7 @@ pub struct TaskRow {
 }
 
 /// Screen regions the effects target.
+#[derive(Default)]
 pub struct Areas {
     /// Flashes when a tool finishes.
     pub pulse: Rect,
@@ -195,6 +200,12 @@ pub struct Areas {
     pub files: Option<Rect>,
     /// The diff view's file rows and which file each is: a click opens that file in the editor.
     pub diff_files: Vec<(Rect, usize)>,
+    /// The tools panel's rows and the tool on each (cockpit): a click lists that tool's calls.
+    pub tool_rows: Vec<(Rect, String)>,
+    /// The tokens panel (cockpit): a click lists every model call.
+    pub tokens: Option<Rect>,
+    /// The bar chart of output per call and the call its first bar is: the mouse over a bar names that call.
+    pub bars: Option<(Rect, usize)>,
 }
 
 /// One file this conversation changed, with its lines added and removed (git).
@@ -203,6 +214,18 @@ pub struct Changed {
     pub path: String,
     pub added: u64,
     pub removed: u64,
+    /// The diff as the agent's edit tools wrote it, for a file git shows no change in now (committed during the
+    /// conversation, or outside the repo); None: git has the diff.
+    pub diff: Option<Vec<String>>,
+}
+
+/// A list over the screen (cockpit): a tool's calls, or every model call. ↑↓ and the wheel scroll it, esc closes.
+pub struct ListPanel {
+    pub title: String,
+    /// The column heads, drawn above the rows.
+    pub head: String,
+    pub rows: Vec<(String, bool)>,
+    pub scroll: usize,
 }
 
 /// `/diff` (or a click on the files panel): the changed files, the selected one's diff, how far it is scrolled.
@@ -252,7 +275,71 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
     if let Some(p) = &v.models {
         draw_models(f, p, th);
     }
+    if let Some(p) = &v.list {
+        draw_list(f, p, th);
+    }
     areas
+}
+
+/// A ListPanel in the middle of the screen: its title, the column heads, the rows that fit (failed ones in red).
+fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme) {
+    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
+    let full = f.area();
+    let want = p.rows.iter().map(|r| r.0.width()).chain([p.head.width(), p.title.width()]).max().unwrap_or(20) as u16 + 4;
+    let (w, h) = (want.clamp(40, full.width), (p.rows.len() as u16 + 4).clamp(6, full.height * 85 / 100));
+    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
+    f.render_widget(Clear, area);
+    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
+        .title(Span::styled(format!(" {} · ↑↓ or wheel scroll · esc ", p.title), st(th.accent).add_modifier(Modifier::BOLD)));
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    let mut lines = vec![Line::from(Span::styled(p.head.clone(), st(th.faint).add_modifier(Modifier::BOLD)))];
+    lines.extend(p.rows.iter().skip(p.scroll).take(inner.height.saturating_sub(1) as usize).map(|(r, bad)| Line::from(Span::styled(r.clone(), st(if *bad { th.err } else { th.text })))));
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The files the agent's edit tools wrote that `skip` (git's list) leaves out, each with a diff built from the calls
+/// themselves: an edit's old text as removed lines and its new text as added ones, a write's content as added. For a
+/// file committed during the conversation, or one outside the repo: git shows no change there (a user's panel read
+/// "no changes in the repo · 5 files written outside it" with nothing to open, 2026-11-05).
+pub fn written_by_tools(s: &Session, skip: &[String]) -> Vec<Changed> {
+    let mut out: Vec<Changed> = Vec::new();
+    for b in &s.blocks {
+        let Block::Tool(t) = b else { continue };
+        let path = tool_arg(t, "path");
+        if path.is_empty() || t.error {
+            continue;
+        }
+        let pairs: Vec<(String, String)> = match t.name.as_str() {
+            "Edit" | "edit" => vec![(tool_arg(t, "old").to_string(), tool_arg(t, "new").to_string())],
+            "MultiEdit" => t.input["edits"].as_array().into_iter().flatten()
+                .map(|e| (e["old_string"].as_str().unwrap_or_default().to_string(), e["new_string"].as_str().unwrap_or_default().to_string())).collect(),
+            "Write" | "write" => vec![(String::new(), t.input["content"].as_str().unwrap_or_default().to_string())],
+            "NotebookEdit" => vec![(String::new(), t.input["new_source"].as_str().unwrap_or_default().to_string())],
+            _ => continue,
+        };
+        let f = rel(s, path);
+        if skip.contains(&f) {
+            continue;
+        }
+        let i = match out.iter().position(|c| c.path == f) {
+            Some(i) => i,
+            None => {
+                out.push(Changed { path: f.clone(), added: 0, removed: 0, diff: Some(vec![format!("+++ {f} (as the agent wrote it: git shows no change here now)")]) });
+                out.len() - 1
+            }
+        };
+        let c = &mut out[i];
+        let d = c.diff.get_or_insert_with(Vec::new);
+        d.push(format!("@@ {} @@", if t.name.eq_ignore_ascii_case("write") { "written" } else { "edit" }));
+        for (old, new) in pairs {
+            d.extend(old.lines().map(|l| format!("-{l}")));
+            d.extend(new.lines().map(|l| format!("+{l}")));
+            c.removed += old.lines().count() as u64;
+            c.added += new.lines().count() as u64;
+        }
+    }
+    out
 }
 
 /// The ctrl-b view: background tasks with status and age, and the latest output of the selected one.
@@ -1777,7 +1864,7 @@ mod tests {
         s.limits = Some((12.0, 14.0));
         s.balance = Some(8.816);
         for d in [Design::Cockpit, Design::Aurora, Design::Zen, Design::Timeline] {
-            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None };
+            let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None };
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
             term.draw(|f| { draw(f, &s, &v); }).unwrap();
             let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
@@ -1797,7 +1884,7 @@ mod tests {
         s.blocks.push(Block::Tool(Tool { id: "b".into(), name: "Bash".into(), input: serde_json::json!({"command": format!("gh run view 1 --jq '{}'", "x".repeat(400))}),
             result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(4300.0), sub: None }));
         s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None };
         let text = |v: &View| { let (l, _, owners) = transcript(&s, v, Design::Cockpit.theme(), &cockpit::OPTS, 100); (l.iter().map(|l| l.spans.iter().map(|x| x.content.to_string()).collect::<String>()).collect::<Vec<_>>(), owners) };
         let (closed, owners) = text(&v);
         // closed: the subagent as who and what for (its 25-row prompt hidden), the long command cut, both marked ▸
@@ -1839,7 +1926,7 @@ mod tests {
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Text { text: "Sources: [GitHub changelog](https://github.blog/c)".into(), live: false });
         s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
         let mut areas = None;
         term.draw(|f| areas = Some(draw(f, &s, &v))).unwrap();
@@ -1861,7 +1948,7 @@ mod tests {
     #[test]
     fn the_session_picker_lists_and_marks_the_selected_one() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None };
         v.sessions = Some(SessionsPanel { rows: vec!["8m ago · 2 messages · review PR 1370  (4cb8a388)".into(), "2h ago · 5 messages · fix the login  (aa11bb22)".into()], selected: 1 });
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         term.draw(|f| { draw(f, &s, &v); }).unwrap();
@@ -1872,7 +1959,7 @@ mod tests {
     #[test]
     fn background_tasks_show_live_under_the_transcript() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 400.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 400.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None };
         let row = |agent: &str, kind: &str, secs, tokens, tools, doing: &str| TaskRow { kind: kind.into(), description: "Tick workflows loss window check".into(), status: "running".into(), secs, output: String::new(), agent: agent.into(), tokens, tools, doing: doing.into() };
         assert!(transcript(&s, &v, Design::Cockpit.theme(), &cockpit::OPTS, 100).0.is_empty(), "nothing while none run");
         v.running = vec![row("explorer", "local_agent", 72, 21_129, 3, "Running Show Ledger tick workflow"), row("", "local_bash", 12, 0, 0, "")];
@@ -1889,8 +1976,8 @@ mod tests {
     #[test]
     fn files_panel_totals_and_the_diff_view() {
         let s = Session::new("", "medium");
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None };
-        v.changed = (0..12).map(|i| Changed { path: format!("shared/src/testing/file{i}.ts"), added: 10 + i, removed: i }).collect();
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None };
+        v.changed = (0..12).map(|i| Changed { path: format!("shared/src/testing/file{i}.ts"), added: 10 + i, removed: i, diff: None }).collect();
         let text = |v: &View| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(140, 40)).unwrap();
             term.draw(|f| { draw(f, &s, v); }).unwrap();
@@ -1911,7 +1998,7 @@ mod tests {
     fn key_hints_fit_whole_and_point_to_the_rest() {
         assert_eq!(fitted_keys("a · bb · cc", 100), "a · bb · cc");
         assert_eq!(fitted_keys("a · bb · cc", 16), "a · /keys all", "never a hint cut in half");
-        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None };
+        let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None };
         let line: String = composer_line(&v, Design::Cockpit.theme(), "›", "Message tazuna…", 90).spans.iter().map(|s| s.content.to_string()).collect();
         assert!(line.width() <= 90 && line.ends_with("/keys all"), "{line}");
         let mut v = v;
@@ -1922,7 +2009,7 @@ mod tests {
 
     #[test]
     fn composer_grows_with_lines_and_keeps_the_latest() {
-        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None };
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None };
         let th = Design::Cockpit.theme();
         assert_eq!(composer_height(&v, 40), 3, "empty: one row");
         v.input = "first\nsecond".into();
@@ -1952,6 +2039,51 @@ mod tests {
         let text: String = wrap(row, 80, &[]).iter().flat_map(|l| l.spans.iter().map(|s| s.content.to_string())).collect();
         assert!(!text.chars().any(|c| c.is_control()), "{text:?}");
         assert!(text.contains("restoring a.txt") && text.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn cockpit_tools_show_the_average_and_tokens_an_axis() {
+        let mut s = Session::new("", "medium");
+        for i in 0..14 {
+            s.blocks.push(Block::Tool(Tool { id: format!("a{i}"), name: "Agent".into(), input: serde_json::json!({"description": "look"}), result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(131_600.0), sub: None }));
+            s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
+        }
+        s.turn_usage = (0..40).map(|i| crate::session::Usage { input: 10, cache_write: 100, cache_read: 50_000, output: 200 + 300 * (i % 7) }).collect();
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None };
+        let render = |v: &View| {
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 44)).unwrap();
+            let mut areas = Areas::default();
+            term.draw(|f| { areas = draw(f, &s, v); }).unwrap();
+            let buf = term.backend().buffer().clone();
+            let rows: Vec<String> = (0..buf.area.height).map(|y| (82..120).map(|x| buf[(x, y)].symbol().to_string()).collect()).collect();
+            (rows.join("\n"), areas)
+        };
+        let (side, areas) = render(&v);
+        assert!(side.contains("×14") && side.contains("30.7m") && side.contains("⌀2.2m"), "{side}");
+        assert!(side.contains("2.0k") && side.contains("out per call · #"), "an axis label and the caption: {side}");
+        assert_eq!(areas.tool_rows.len(), 1);
+        let (rect, first) = areas.bars.unwrap();
+        v.hover_call = Some(first + 2);
+        let (side, _) = render(&v);
+        assert!(side.contains(&format!("#{}", first + 3)) && rect.width > 10, "{side}");
+    }
+
+    #[test]
+    fn files_git_misses_get_the_tools_own_diff() {
+        let mut s = Session::new("", "medium");
+        s.cwd = "/repo".into();
+        let tool = |id: &str, name: &str, input: serde_json::Value, error: bool| Block::Tool(Tool { id: id.into(), name: name.into(), input, result: Some("ok".into()), error, started_ms: 0.0, done_ms: Some(10.0), sub: None });
+        s.blocks.push(tool("a", "Edit", serde_json::json!({"file_path": "/repo/src/a.ts", "old_string": "let x = 1;", "new_string": "let x = 2;\nlet y = 3;"}), false));
+        s.blocks.push(tool("b", "Write", serde_json::json!({"file_path": "/tmp/notes.md", "content": "one\ntwo"}), false));
+        s.blocks.push(tool("c", "Edit", serde_json::json!({"file_path": "/repo/src/b.ts", "old_string": "x", "new_string": "y"}), true));
+        s.blocks.push(tool("d", "Edit", serde_json::json!({"file_path": "/repo/src/git.ts", "old_string": "x", "new_string": "y"}), false));
+        let got = written_by_tools(&s, &["src/git.ts".to_string()]);
+        let paths: Vec<&str> = got.iter().map(|c| c.path.as_str()).collect();
+        assert_eq!(paths, ["src/a.ts", "/tmp/notes.md"], "git's files and failed edits left out; repo paths relative");
+        assert_eq!((got[0].added, got[0].removed), (2, 1));
+        let d = got[0].diff.as_ref().unwrap();
+        assert!(d.contains(&"-let x = 1;".to_string()) && d.contains(&"+let y = 3;".to_string()), "{d:?}");
+        assert_eq!((got[1].added, got[1].removed), (2, 0));
     }
 
     #[test]

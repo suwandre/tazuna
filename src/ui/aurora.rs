@@ -56,5 +56,5 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     let mut pulse = status;
     pulse.width = pulse.width.min(28);
-    Areas { pulse, last_block, transcript: area, rows: trows, links: vec![], files: None, diff_files: vec![] }
+    Areas { pulse, last_block, transcript: area, rows: trows, links: vec![], files: None, ..Default::default() }
 }

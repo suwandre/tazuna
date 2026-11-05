@@ -4,7 +4,7 @@ use super::*;
 use crate::session::Block;
 use ratatui::{
     layout::{Constraint, Layout, Margin},
-    widgets::{Block as Panel, BorderType, LineGauge, Sparkline},
+    widgets::{Block as Panel, BorderType, LineGauge, Sparkline, SparklineBar},
 };
 
 pub(super) const OPTS: Opts = Opts { marker: "▸", prompt: PromptStyle::Bar, group_tools: false, timeline: false, durations: true };
@@ -40,7 +40,6 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     f.render_widget(frame, main);
     let (last_block, trows) = render_transcript(f, inner, transcript(s, v, th, &OPTS, inner.width as usize), v.scroll);
 
-    let files = files_touched(s);
     let tools = tool_tally(s);
     let [p_session, p_context, p_tokens, p_cost, p_tools, p_files] = Layout::vertical([
         Constraint::Length(5),
@@ -102,7 +101,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let b = panel("tokens", th);
     let a = b.inner(p_tokens).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_tokens);
-    let [t1, spark, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)]).areas(a);
+    let [t1, chart, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)]).areas(a);
+    // a y axis beside the bars: the tallest bar's value on top, 0 at the bottom (a user could not read the bare bars)
+    let [axis, spark] = Layout::horizontal([Constraint::Length(5), Constraint::Min(1)]).areas(chart);
     f.render_widget(
         Paragraph::new(Line::from(vec![
             // sent: every call's whole input added up (each call sends the conversation again), not the context's size
@@ -114,7 +115,32 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         ])),
         t1,
     );
-    f.render_widget(Paragraph::new(Span::styled(format!("output per call ({})", s.turn_usage.len()), st(th.faint))), caption);
+    let data: Vec<u64> = s.turn_usage.iter().map(|u| u.output).collect();
+    let first = data.len().saturating_sub(spark.width as usize);
+    let top = data[first..].iter().copied().max().unwrap_or(0);
+    // one bar per model call, the newest on the right; the mouse over a bar names that call, a click lists them all
+    let label = match v.hover_call.filter(|i| *i < data.len()) {
+        Some(i) => {
+            let c = s.calls.get(i);
+            let mut t = format!("#{} {} out", i + 1, human(data[i]));
+            if let Some(ms) = c.and_then(|c| c.ttft_ms) {
+                t.push_str(&format!(" · {:.1}s first", ms / 1000.0));
+            }
+            if let Some(c) = c.filter(|c| c.gen_ms > 0.0) {
+                t.push_str(&format!(" · {:.0}/s", c.out as f64 / c.gen_ms * 1000.0));
+            }
+            Span::styled(t, st(th.text))
+        }
+        None if data.is_empty() => Span::styled("output per model call", st(th.faint)),
+        None => Span::styled(format!("out per call · #{}–{} · click", first + 1, data.len()), st(th.faint)),
+    };
+    f.render_widget(Paragraph::new(label), caption);
+    let mut ylab = vec![Line::from(Span::styled(format!("{:>4}", human(top)), st(th.faint)))];
+    ylab.extend((1..axis.height.saturating_sub(1)).map(|_| Line::default()));
+    if axis.height > 1 {
+        ylab.push(Line::from(Span::styled(format!("{:>4}", "0"), st(th.faint))));
+    }
+    f.render_widget(Paragraph::new(ylab), axis);
     // the call in flight, live: the wait for its first token, then how fast it writes (≈: its output is estimated until
     // it ends); between calls the last one's exact figures
     let secs = |ms: f64| format!("{:.1}s", ms / 1000.0);
@@ -137,9 +163,11 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         (None, None) => vec![],
     };
     f.render_widget(Paragraph::new(Line::from(pace_line)), pace);
-    let data: Vec<u64> = s.turn_usage.iter().map(|u| u.output).collect();
-    let tail = &data[data.len().saturating_sub(spark.width as usize)..];
-    f.render_widget(Sparkline::default().data(tail.iter().copied()).style(st(th.accent2)), spark);
+    let bars = data[first..].iter().enumerate().map(|(k, &n)| {
+        let b = SparklineBar::from(n);
+        if v.hover_call == Some(first + k) { b.style(Some(st(th.warn))) } else { b }
+    });
+    f.render_widget(Sparkline::default().data(bars).max(top.max(1)).style(st(th.accent2)), spark);
 
     // cost
     let b = panel("cost", th);
@@ -165,12 +193,12 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     );
 
     // tools
-    let b = panel("tools", th);
+    let b = panel("tools · click: calls", th);
     let a = b.inner(p_tools).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_tools);
     // the name column as wide as the longest name ("ScheduleWakeup" ran into its count), cut only when the panel is
     // too narrow for the counts beside it
-    let nw = tools.iter().map(|t| t.0.width()).max().unwrap_or(0).min((a.width as usize).saturating_sub(18)).max(4);
+    let nw = tools.iter().map(|t| t.0.width()).max().unwrap_or(0).min((a.width as usize).saturating_sub(23)).max(4);
     let mut rows: Vec<Line> = tools
         .iter()
         .map(|(n, c, err, secs)| {
@@ -178,11 +206,14 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             Line::from(vec![
                 Span::styled(format!("{name:<nw$} "), st(th.accent2).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("×{c:<3}"), st(th.text)),
-                Span::styled(if *err > 0 { format!(" {err} failed") } else { " ✓".into() }, st(if *err > 0 { th.err } else { th.ok })),
-                Span::styled(format!("  {secs:.1}s"), st(th.faint)),
+                Span::styled(if *err > 0 { format!(" ✗{err:<2}") } else { " ✓  ".into() }, st(if *err > 0 { th.err } else { th.ok })),
+                // the total and the average a call (a user asked for both: 14 Agent calls at 1842 s said little alone)
+                Span::styled(format!("{:>6}", dur(*secs)), st(th.faint)),
+                Span::styled(format!(" ⌀{}", dur(secs / *c.max(&1) as f64)), st(th.dim)),
             ])
         })
         .collect();
+    let tool_rows = tools.iter().take(a.height as usize).enumerate().map(|(i, t)| (Rect::new(a.x, a.y + i as u16, a.width, 1), t.0.clone())).collect();
     if rows.is_empty() {
         rows.push(Line::from(Span::styled("none yet", st(th.faint))));
     }
@@ -212,13 +243,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             rows.push(Line::from(Span::styled(format!("+{} more", v.changed.len() - shown), st(th.faint))));
         }
         rows
-    } else if files.is_empty() {
-        vec![Line::from(Span::styled("no changes in the repo yet", st(th.faint)))]
     } else {
-        // nothing changed in the repo (git), but an edit tool wrote files: elsewhere, e.g. scratch files in /tmp
-        let mut rows = vec![Line::from(Span::styled(format!("no changes in the repo · {} written outside it", files_n(files.len())), st(th.faint)))];
-        rows.extend(files.iter().take((a.height as usize).saturating_sub(1)).map(|p| Line::from(Span::styled(fit_path(&super::plain(p), a.width as usize), st(th.dim)))));
-        rows
+        vec![Line::from(Span::styled("no file changed yet", st(th.faint)))]
     };
     f.render_widget(Paragraph::new(rows), a);
 
@@ -226,7 +252,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
-    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, links: vec![], files: Some(p_files), diff_files: vec![] }
+    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, files: Some(p_files), tool_rows, tokens: Some(p_tokens), bars: Some((spark, first)), ..Default::default() }
 }
 
 fn kv(k: &str, v: &str, th: &Theme) -> Span<'static> {
@@ -262,6 +288,11 @@ fn tool_tally(s: &Session) -> Vec<(String, usize, usize, f64)> {
         out[i].3 += t.secs().unwrap_or(0.0);
     }
     out
+}
+
+/// A duration in its own unit: "7.1s", "30.7m", "1.2h".
+fn dur(secs: f64) -> String {
+    if secs < 60.0 { format!("{secs:.1}s") } else if secs < 3600.0 { format!("{:.1}m", secs / 60.0) } else { format!("{:.1}h", secs / 3600.0) }
 }
 
 /// Shortens a path from the left so the file name stays visible.
