@@ -34,6 +34,14 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## Search tools after the prompt fix, o2oai on six tasks: stopped, 2026-11-05 (bench only)
+
+`realwork/ts2.sh` (route stableai + znu with and without `--search-tools`, o2oai pinned; six tasks x two runs, tazuna
+0.1.55) started 10:25 CET and was stopped by hand at 10:46: the providers cached 8-14% of the input (stableai 2.2M of
+15.4M prompt tokens, o2oai 0.9M of 10.5M) against 90% in the route check at 00:30 and ~95% on o2oai's caddy run at 23:05
+the night before, so runs cost 5-8x the estimate (a list-price run of hugo-template-return: $0.070). $0.35 spent for five
+finished runs; no result. Next try in the evening, behind a cache check (provsmoke.py on the arm's providers first).
+
 ## GPT-6.1 Sol as a stand-in for the Opus judge, 2026-11-05 (bench only)
 
 Four pools Opus 5.5 xhigh had judged (DeepSeek providers, Kiro, Sonnet lead / Opus low, boss test scope: tasks/, 114
