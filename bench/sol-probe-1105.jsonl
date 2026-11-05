@@ -1,0 +1,11 @@
+{"at": "2026-11-05T12:45Z", "slug": "fxpayback", "ok": 4, "errors": [], "ttft": 2.2, "tps": 52.7, "secs": 5.35, "total": 23.3, "cached": 0, "out": 732, "reasoning": 324, "tools": 3}
+{"at": "2026-11-05T12:45Z", "slug": "kriora", "ok": 4, "errors": [], "ttft": 5.66, "tps": 105.35, "secs": 6.45, "total": 26.2, "cached": 0, "out": 372, "reasoning": 149, "tools": 3}
+{"at": "2026-11-05T12:45Z", "slug": "cheaprouter", "ok": 4, "errors": [], "ttft": 7.17, "tps": 192.15, "secs": 7.85, "total": 31.6, "cached": 33, "out": 644, "reasoning": 452, "tools": 3}
+{"at": "2026-11-05T12:46Z", "slug": "shared-openai-pro-50", "ok": 4, "errors": [], "ttft": 7.53, "tps": 238.2, "secs": 8.95, "total": 40.9, "cached": 99, "out": 891, "reasoning": 584, "tools": 3}
+{"at": "2026-11-05T12:46Z", "slug": "a6aa", "ok": 4, "errors": [], "ttft": 12.06, "tps": 226.35, "secs": 13.25, "total": 53.6, "cached": 66, "out": 551, "reasoning": 327, "tools": 3}
+{"at": "2026-11-05T12:46Z", "slug": "shared-openai-pro-52", "ok": 4, "errors": [], "ttft": 13.67, "tps": 147.55, "secs": 14.4, "total": 57.7, "cached": 99, "out": 449, "reasoning": 221, "tools": 3}
+{"at": "2026-11-05T12:46Z", "slug": "tokenx", "ok": 4, "errors": [], "ttft": 12.88, "tps": 342.2, "secs": 14.65, "total": 58.1, "cached": 47, "out": 494, "reasoning": 271, "tools": 3}
+{"at": "2026-11-05T12:46Z", "slug": "lingai", "ok": 4, "errors": [], "ttft": 14.52, "tps": 154.5, "secs": 15.3, "total": 65.1, "cached": 99, "out": 609, "reasoning": 399, "tools": 3}
+{"at": "2026-11-05T12:46Z", "slug": "shared-openai-plus-51", "ok": 4, "errors": [], "ttft": 13.43, "tps": 277.8, "secs": 14.0, "total": 73.4, "cached": 66, "out": 524, "reasoning": 319, "tools": 3}
+{"at": "2026-11-05T12:46Z", "slug": "humanai", "ok": 4, "errors": [], "ttft": 15.46, "tps": 181.65, "secs": 16.8, "total": 83.8, "cached": 49, "out": 432, "reasoning": 216, "tools": 3}
+{"at": "2026-11-05T12:46Z", "slug": "xcgx", "ok": 4, "errors": [], "ttft": 9.48, "tps": 84.3, "secs": 18.3, "total": 88.2, "cached": 67, "out": 680, "reasoning": 439, "tools": 3}

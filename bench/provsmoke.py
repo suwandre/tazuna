@@ -25,7 +25,45 @@ def var(slug):
     return "SUBROUTER_SMOKE_" + re.sub(r"[^A-Z0-9]+", "_", slug.upper()).strip("_") + "_KEY"
 
 
+def call_responses(key, msgs):
+    """The Responses route (PROVSMOKE_API=responses), the one tazuna uses for GPT models: a provider can serve it and
+    refuse the same model's Chat route with tools (xcgx with Luna, 2026-11-05)."""
+    tool = {"type": "function", "name": "bash", "description": TOOL["function"]["description"], "parameters": TOOL["function"]["parameters"]}
+    body = {"model": M, "instructions": msgs[0]["content"], "input": msgs[1:], "tools": [tool], "store": False, "stream": True,
+            "reasoning": {"effort": os.environ.get("PROVSMOKE_EFFORT", "high")}, "max_output_tokens": 6000}
+    q = urllib.request.Request("https://subrouter.ai/v1/responses", data=json.dumps(body).encode(),
+                               headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "curl/8", "Accept": "text/event-stream"})
+    t0, first, usage, text, tools = time.time(), None, {}, "", 0
+    try:
+        with urllib.request.urlopen(q, timeout=300) as r:
+            for raw in r:
+                line = raw.decode(errors="replace").strip()
+                if not line.startswith("data: {"):
+                    continue
+                e = json.loads(line[6:])
+                kind = e.get("type", "")
+                if first is None and kind.endswith(".delta"):
+                    first = time.time()
+                if kind == "response.output_text.delta":
+                    text += e.get("delta", "")
+                if kind == "response.output_item.added" and (e.get("item") or {}).get("type") == "function_call":
+                    tools += 1
+                if kind in ("response.completed", "response.incomplete"):
+                    usage = (e.get("response") or {}).get("usage") or {}
+                if kind == "response.failed":
+                    return dict(error=str((e.get("response") or {}).get("error"))[:120], secs=round(time.time() - t0, 1))
+    except Exception as e:  # noqa: BLE001
+        return dict(error=repr(e)[:120], secs=round(time.time() - t0, 1))
+    end = time.time()
+    out = usage.get("output_tokens") or 0
+    return dict(ttft=round(first - t0, 2) if first else None, tps=round(out / (end - first), 1) if first and end > first else None,
+                secs=round(end - t0, 1), prompt=usage.get("input_tokens"), cached=(usage.get("input_tokens_details") or {}).get("cached_tokens") or 0,
+                out=out, reasoning=(usage.get("output_tokens_details") or {}).get("reasoning_tokens"), tools=tools, text=text[:200])
+
+
 def call(key, msgs):
+    if os.environ.get("PROVSMOKE_API") == "responses":
+        return call_responses(key, msgs)
     body = {"model": M, "messages": msgs, "tools": [TOOL], "reasoning_effort": os.environ.get("PROVSMOKE_EFFORT", "high"), "max_tokens": 6000,
             "stream": True, "stream_options": {"include_usage": True}}
     q = urllib.request.Request("https://subrouter.ai/v1/chat/completions", data=json.dumps(body).encode(),

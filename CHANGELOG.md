@@ -34,6 +34,31 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## GPT-6.1 Sol on SubRouter's providers, smoke test, 2026-11-05 (bench only)
+
+Eleven providers probed on the Responses route at xhigh (`sol-probe-1105.jsonl`; `provsmoke.py` learned
+`PROVSMOKE_API=responses`): all answered, first token 2.2 s (fxpayback, the cheapest at $0.005/M input) to 15.5 s. One
+caddy run each on eight (`realwork/sol2.sh`, tazuna 0.1.55; fxpayback again on 0.1.58 after its `status` refusal), judged
+by Sol with the Luna and DeepSeek caddy runs in one pool (`judge.three.sol.jsonl`; Sol judging Sol: read the Sol marks
+with that in mind), the canary on three. $0.177 in all.
+
+| Sol via | first token | caddy min | calls | cost | Sol mark | AIME | MMLU-Pro |
+|---|---|---|---|---|---|---|---|
+| kriora | 5.7 s | 3.3 | 29 | $0.021 | 7 | | |
+| OpenAI Pro 50 | 7.5 s | 5.0 | 28 | $0.013 | 10 | 46 of 55 answered | (75 of 130 calls 503) |
+| a6aa | 12.1 s | 5.2 | 32 | $0.008 | 8 | | |
+| xcgx | 9.5 s | 6.5 | 25 | $0.014 | 10 | 28/30 | 88 |
+| fxpayback (0.1.58) | 2.2 s | 6.8 | 40 | $0.004 | 10 | 26/30 | 87 |
+| tokenx | 12.9 s | 11.8 | 37 | $0.042 | 9 | | |
+| OpenAI Pro 52 | 13.7 s | 16.8 | 37 | $0.014 | 9 | | |
+| cheaprouter | 7.2 s | 24.9 | 42 | $0.039 | 9 | | |
+
+In the same pool DeepSeek averaged 8.9 (17 runs) and Luna 9.0 (3): on caddy the three models are level. Per run, Sol on
+fxpayback costs about what DeepSeek on znu or o2oai does ($0.0025-0.004); Sol's shared pools are fast only when up (Pro
+50 refused most canary calls). The harder-task comparisons with an Opus judge still favour DeepSeek (Sol 6.50 vs 7.00,
+2026-11-01; Luna 4.88 vs 6.25, 2026-10-31). Candidates for a six-task round with an Opus judge after the weekly reset:
+Sol on fxpayback and xcgx, Luna on kriora, against DeepSeek on znu / o2oai.
+
 ## 0.1.59 (2026-11-05): selecting text works like in a terminal; modals and clickable panels look it
 
 - A drag past the transcript's top or bottom edge scrolls it (a line every 40 ms) and the selection grows with it.
