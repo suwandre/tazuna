@@ -416,7 +416,13 @@ fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme) -> Vec
         let room = (lw as usize).saturating_sub(counts.width() + 2);
         let name = if c.path.width() > room { format!("…{}", c.path.chars().rev().take(room.saturating_sub(1)).collect::<Vec<_>>().into_iter().rev().collect::<String>()) } else { c.path.clone() };
         let style = if i == p.selected { st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(th.text) };
-        Line::from(vec![Span::styled(format!("{} {name:<room$}", if i == p.selected { "›" } else { " " }), style), Span::styled(format!(" +{}", c.added), st(th.ok)), Span::styled(format!(" −{}", c.removed), st(th.err))])
+        // a file no longer on disk (a removed worktree): its diff is still the agent's, but it cannot be opened
+        let gone = c.diff.is_some() && !std::env::current_dir().unwrap_or_default().join(&c.path).exists();
+        let mut l = vec![Span::styled(format!("{} {name:<room$}", if i == p.selected { "›" } else { " " }), style), Span::styled(format!(" +{}", c.added), st(th.ok)), Span::styled(format!(" −{}", c.removed), st(th.err))];
+        if gone {
+            l.push(Span::styled(" gone", st(th.faint)));
+        }
+        Line::from(l)
     }).collect();
     f.render_widget(Paragraph::new(list), left);
     let rows: Vec<Line> = p.diff.iter().skip(p.scroll).take(right.height as usize).map(|l| {

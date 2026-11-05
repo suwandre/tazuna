@@ -34,6 +34,12 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.60 (2026-11-05): a file that is gone does not open as an empty one
+
+A changed file whose folder no longer exists (an agent's temporary git worktree, removed after its commit) opened in the
+editor as a new, empty file at the old path, which read as "the agent wrote nothing". It now stays closed with a note
+that it is gone, and the diff view marks it "gone"; its diff (what the agent wrote) still shows.
+
 ## GPT-6.1 Sol on SubRouter's providers, smoke test, 2026-11-05 (bench only)
 
 Eleven providers probed on the Responses route at xhigh (`sol-probe-1105.jsonl`; `provsmoke.py` learned

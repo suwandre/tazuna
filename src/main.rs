@@ -987,6 +987,11 @@ fn changed_since(start: Option<&std::collections::BTreeMap<String, String>>, cwd
 /// Opens a changed file (relative to the working directory) at `line` in the user's editor; the toast says how it went.
 fn open_file(path: &str, line: u32) -> String {
     let full = std::env::current_dir().map(|d| d.join(path)).unwrap_or_else(|_| path.into());
+    // a file that is gone (an agent's temporary worktree, removed after its commit): an editor would open an empty new
+    // file at that path, which looks like the agent wrote nothing (2026-11-05)
+    if !full.exists() {
+        return format!("{path} no longer exists (its folder or worktree was removed): the diff here is what the agent wrote");
+    }
     match platform::open_in_editor(&full, line) {
         Ok(editor) => format!("opened {path}:{line} in {editor}"),
         Err(e) => format!("could not open {path}: {e} (set TAZUNA_EDITOR, e.g. \"code -g {{path}}:{{line}}\")"),
