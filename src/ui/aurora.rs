@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block as Panel, BorderType},
 };
 
-const OPTS: Opts = Opts { marker: "◆", prompt: PromptStyle::Bar, group_tools: false, timeline: false, durations: false };
+pub(super) const OPTS: Opts = Opts { marker: "◆", prompt: PromptStyle::Bar, group_tools: false, timeline: false, durations: false };
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let ch = composer_height(v, f.area().width.saturating_sub(2));
@@ -25,7 +25,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     split_row(f, header, left, Line::from(vec![Span::styled("aurora · ", st(th.faint)), Span::styled(format!("{dir} "), st(th.dim))]), None);
 
     let area = body.inner(Margin { horizontal: 2, vertical: 0 });
-    let (last_block, trows) = render_transcript(f, area, transcript(s, v, th, &OPTS, area.width as usize), v.scroll);
+    let (last_block, trows, top_line) = render_transcript(f, area, transcript(s, v, th, &OPTS, area.width as usize), v.scroll);
 
     let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.border));
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(4));
@@ -56,5 +56,5 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     let mut pulse = status;
     pulse.width = pulse.width.min(28);
-    Areas { pulse, last_block, transcript: area, rows: trows, links: vec![], files: None, ..Default::default() }
+    Areas { pulse, last_block, transcript: area, rows: trows, links: vec![], files: None, top_line, ..Default::default() }
 }

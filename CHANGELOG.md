@@ -34,6 +34,18 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.59 (2026-11-05): selecting text works like in a terminal; modals and clickable panels look it
+
+- A drag past the transcript's top or bottom edge scrolls it (a line every 40 ms) and the selection grows with it.
+- The selection stays on its text when the transcript scrolls (wheel, a drag at the edge, new output): it holds
+  transcript lines, not screen rows. Before, a scroll moved the highlight onto whatever text was in those rows.
+- cmd-c / ctrl-c copies everything selected, on screen or not; before, only what was visible.
+- Behind any modal (a tool's calls, the model calls, diffs, tasks, rewind, sessions, models) the screen fades to the
+  border colour, so the modal reads on its own (a terminal cannot blur).
+- The clickable side panels show it: under the mouse the tokens and files panels take the accent border, a tool row
+  gets a background, and the pointer turns into a hand. The hover readout of a call is set like the line under it
+  (numbers bright, words faint), and the model-call list drops its cache-write column (the same numbers as "new in").
+
 ## 0.1.58 (2026-11-05): the own loop sends Responses items back without `status`
 
 A Sol run on fxpayback (SubRouter's cheapest Sol provider) stopped at its 40th history item: 400 "Unknown parameter:

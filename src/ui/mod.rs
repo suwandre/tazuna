@@ -206,6 +206,8 @@ pub struct Areas {
     pub tokens: Option<Rect>,
     /// The bar chart of output per call and the call its first bar is: the mouse over a bar names that call.
     pub bars: Option<(Rect, usize)>,
+    /// The transcript line on the transcript's first row.
+    pub top_line: usize,
 }
 
 /// One file this conversation changed, with its lines added and removed (git).
@@ -256,6 +258,19 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
                     if let Some(c) = buf.cell_mut((cx, cy)) {
                         c.modifier.insert(Modifier::REVERSED);
                     }
+                }
+            }
+        }
+    }
+    // a modal over the screen: what is behind it fades to the border colour, so the modal reads on its own (a user
+    // found the list mixed into the transcript and panels, 2026-11-05; a terminal cannot blur)
+    if v.tasks.is_some() || v.rewind.is_some() || v.sessions.is_some() || v.diff.is_some() || v.models.is_some() || v.list.is_some() {
+        let area = f.area();
+        let buf = f.buffer_mut();
+        for y in area.y..area.bottom() {
+            for x in area.x..area.right() {
+                if let Some(c) = buf.cell_mut((x, y)) {
+                    c.set_style(Style::new().fg(th.border).bg(th.bg).remove_modifier(Modifier::all()));
                 }
             }
         }
@@ -1041,7 +1056,8 @@ fn turn_divider(s: &Session, th: &Theme, turn: u64) -> Line<'static> {
 /// Draws the transcript tail (or the scrolled position); returns the newest block's rows when following.
 /// Draws the transcript's lines that fit, `scroll` rows up from the end. Returns the newest block's rows (when at the
 /// bottom) and the block on each screen row.
-pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): (Vec<Line<'static>>, usize, Vec<Option<usize>>), scroll: usize) -> (Option<Rect>, Vec<Option<usize>>) {
+/// Also returns the transcript line on the area's first row (a mouse selection holds lines, not rows).
+pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): (Vec<Line<'static>>, usize, Vec<Option<usize>>), scroll: usize) -> (Option<Rect>, Vec<Option<usize>>, usize) {
     let h = area.height as usize;
     let max_scroll = lines.len().saturating_sub(h);
     let start = max_scroll.saturating_sub(scroll.min(max_scroll));
@@ -1053,7 +1069,19 @@ pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): 
         let rows = last_rows.min(shown) as u16;
         Rect { y: area.y + shown as u16 - rows, height: rows, ..area }
     });
-    (last, rows)
+    (last, rows, start)
+}
+
+/// The whole transcript as the current design draws it at `width`, for copying a selection that runs off screen.
+pub fn transcript_lines(s: &Session, v: &View, width: u16) -> Vec<Line<'static>> {
+    let th = v.design.theme();
+    let o = match v.design {
+        Design::Cockpit => &cockpit::OPTS,
+        Design::Aurora => &aurora::OPTS,
+        Design::Zen => &zen::OPTS,
+        Design::Timeline => &timeline::OPTS,
+    };
+    transcript(s, v, th, o, width as usize).0
 }
 
 fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool, width: usize) -> Vec<Prefixed> {
@@ -2066,6 +2094,23 @@ mod tests {
         v.hover_call = Some(first + 2);
         let (side, _) = render(&v);
         assert!(side.contains(&format!("#{}", first + 3)) && rect.width > 10, "{side}");
+    }
+
+    #[test]
+    fn a_modal_fades_what_is_behind_it() {
+        let s = Session::new("", "medium");
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None };
+        let th = Design::Cockpit.theme();
+        let cell = |v: &View| {
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 40)).unwrap();
+            term.draw(|f| { draw(f, &s, v); }).unwrap();
+            let b = term.backend().buffer();
+            (b[(3, 0)].fg, b[(60, 20)].symbol().to_string())
+        };
+        assert_ne!(cell(&v).0, th.border, "the header in its own colours without a modal");
+        v.list = Some(ListPanel { title: "model calls".into(), head: "#".into(), rows: vec![("1".into(), false)], scroll: 0 });
+        let (fg, _) = cell(&v);
+        assert_eq!(fg, th.border, "behind a modal everything takes the border colour");
     }
 
     #[test]

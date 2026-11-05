@@ -1034,11 +1034,13 @@ fn model_calls(s: &Session) -> ui::ListPanel {
         let c = s.calls.get(i);
         let first = c.and_then(|c| c.ttft_ms).map_or("-".to_string(), |ms| format!("{:.1}s", ms / 1000.0));
         let rate = c.filter(|c| c.gen_ms > 0.0).map_or("-".to_string(), |c| format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0));
-        (format!("{:>4}  {:>8}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}", i + 1, ui::human(u.input + u.cache_write), ui::human(u.cache_read), ui::human(u.cache_write), ui::human(u.output), first, rate), false)
+        (format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}", i + 1, ui::human(u.input + u.cache_write), ui::human(u.cache_read), ui::human(u.output), first, rate), false)
     }).collect();
     ui::ListPanel {
         title: format!("model calls · {}", s.turn_usage.len()),
-        head: format!("{:>4}  {:>8}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}", "#", "new in", "cached", "cache wr", "out", "first", "tok/s"),
+        // "new in": what the call added (written into the cache, or sent uncached); one column, it was twice (new in
+        // and cache writes showed the same numbers on Claude)
+        head: format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}", "#", "new in", "cached", "out", "first", "tok/s"),
         rows,
         scroll: 0,
     }
@@ -1228,6 +1230,8 @@ fn run_live(
     let mut files_area: Option<ratatui::layout::Rect> = None;
     let mut diff_files: Vec<(ratatui::layout::Rect, usize)> = vec![];
     let (mut tool_rows, mut tokens_area, mut bars): (Vec<(ratatui::layout::Rect, String)>, Option<ratatui::layout::Rect>, Option<(ratatui::layout::Rect, usize)>) = (vec![], None, None);
+    // the transcript line on its first row (a selection holds lines), and when a drag past an edge last scrolled
+    let (mut top_line, mut edge_scrolled) = (0usize, Instant::now());
     let mut over_link = false;
     // the work tree when this conversation began: what it changed since is the files panel and /diff
     let mut git_start = runlog::git_snapshot(&std::env::current_dir()?);
@@ -1376,11 +1380,13 @@ fn run_live(
         term.draw(|f| {
             let areas = fx.frame(f, &s, &v, dt);
             (transcript, rows, links, files_area, diff_files) = (areas.transcript, areas.rows, areas.links, areas.files, areas.diff_files);
-            (tool_rows, tokens_area, bars) = (areas.tool_rows, areas.tokens, areas.bars);
-            if let Some(sel) = &sel {
-                sel.highlight(f.buffer_mut());
+            (tool_rows, tokens_area, bars, top_line) = (areas.tool_rows, areas.tokens, areas.bars, areas.top_line);
+            if let Some(sel) = sel.as_mut() {
+                // a drag held past an edge: the head moves with the scroll
+                sel.follow(top_line);
+                sel.highlight(f.buffer_mut(), top_line);
                 if copy_now {
-                    copied = Some(sel.text(f.buffer_mut()));
+                    copied = Some(sel.text(&ui::transcript_lines(&s, &v, transcript.width)));
                 }
             }
         })?;
@@ -1407,6 +1413,13 @@ fn run_live(
             }
             continue;
         }
+        // a drag held above or below the transcript scrolls it, a line every 40 ms, as in a terminal or an editor
+        if let Some(edge) = sel.as_ref().map(|x| x.edge).filter(|e| *e != 0) {
+            if edge_scrolled.elapsed() >= Duration::from_millis(40) && !(edge < 0 && top_line == 0) {
+                v.scroll = if edge < 0 { v.scroll + 1 } else { v.scroll.saturating_sub(1) };
+                edge_scrolled = Instant::now();
+            }
+        }
         if !event::poll(Duration::from_millis(16))? {
             continue;
         }
@@ -1417,13 +1430,13 @@ fn run_live(
             }
             Event::Mouse(m) => {
                 match m.kind {
-                    MouseEventKind::Down(MouseButton::Left) => sel = select::Selection::start(m.column, m.row, transcript),
+                    MouseEventKind::Down(MouseButton::Left) => sel = select::Selection::start(m.column, m.row, transcript, top_line),
                     MouseEventKind::Drag(MouseButton::Left) => {
                         if let Some(sel) = sel.as_mut() {
-                            sel.drag(m.column, m.row);
+                            sel.drag(m.column, m.row, top_line);
                         }
                     }
-                    MouseEventKind::Up(MouseButton::Left) => match &sel {
+                    MouseEventKind::Up(MouseButton::Left) => match sel.as_mut().map(|x| { x.edge = 0; &*x }) {
                         // the selection stays highlighted until cmd-c / ctrl-c copies it or another key drops it
                         Some(x) if !x.is_empty() => v.toast = Some(("⌘C or ctrl+c copies the selection".into(), Instant::now())),
                         // a click without a drag: the block under it opens or closes
@@ -1462,7 +1475,11 @@ fn run_live(
                         v.hover_call = bars.filter(|(r, _)| r.contains(ratatui::layout::Position::new(m.column, m.row))).map(|(r, first)| first + (m.column - r.x) as usize);
                         v.mouse = Some((m.column, m.row));
                         // the pointer cursor over a link (OSC 22: kitty, Ghostty, foot, WezTerm, xterm; others ignore it)
-                        let over = links.iter().any(|(r, _)| r.contains(ratatui::layout::Position::new(m.column, m.row)));
+                        // a link, a tool row, the tokens panel or the files panel: each opens something on a click
+                        let at = ratatui::layout::Position::new(m.column, m.row);
+                        let over = links.iter().any(|(r, _)| r.contains(at)) || (v.list.is_none() && v.diff.is_none()
+                            && (tool_rows.iter().any(|(r, _)| r.contains(at)) || (tokens_area.is_some_and(|r| r.contains(at)) && !s.turn_usage.is_empty())
+                                || (files_area.is_some_and(|r| r.contains(at)) && !v.changed.is_empty())));
                         if over != over_link {
                             over_link = over;
                             use std::io::Write;

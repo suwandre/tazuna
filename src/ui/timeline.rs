@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block as Panel, BorderType},
 };
 
-const OPTS: Opts = Opts { marker: "", prompt: PromptStyle::Bar, group_tools: false, timeline: true, durations: true };
+pub(super) const OPTS: Opts = Opts { marker: "", prompt: PromptStyle::Bar, group_tools: false, timeline: true, durations: true };
 
 fn seg(text: String, fg: Color, bg: Color) -> Span<'static> {
     Span::styled(format!(" {text} "), Style::new().fg(fg).bg(bg).add_modifier(Modifier::BOLD))
@@ -27,7 +27,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     split_row(f, header, left, right, None);
 
     let area = body.inner(Margin { horizontal: 1, vertical: 0 });
-    let (last_block, trows) = render_transcript(f, area, transcript(s, v, th, &OPTS, area.width as usize), v.scroll);
+    let (last_block, trows, top_line) = render_transcript(f, area, transcript(s, v, th, &OPTS, area.width as usize), v.scroll);
 
     let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.accent2).add_modifier(Modifier::DIM));
     let hint = composer_rows(v, th, "❯", "Message tazuna…", composer.width.saturating_sub(2));
@@ -56,5 +56,5 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     let mut pulse = status;
     pulse.width = act_w;
-    Areas { pulse, last_block, transcript: area, rows: trows, links: vec![], files: None, ..Default::default() }
+    Areas { pulse, last_block, transcript: area, rows: trows, links: vec![], files: None, top_line, ..Default::default() }
 }

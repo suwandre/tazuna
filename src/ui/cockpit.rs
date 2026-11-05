@@ -11,10 +11,22 @@ pub(super) const OPTS: Opts = Opts { marker: "▸", prompt: PromptStyle::Bar, gr
 const SIDEBAR: u16 = 38;
 
 fn panel<'a>(title: &'a str, th: &Theme) -> Panel<'a> {
+    hot_panel(title, th, false)
+}
+
+/// A panel that opens something on a click: under the mouse its border and title take the accent colour, so it reads
+/// as clickable (a user saw no change over "tools" or "tokens", 2026-11-05).
+fn hot_panel<'a>(title: &'a str, th: &Theme, hot: bool) -> Panel<'a> {
+    let (border, title_color) = if hot { (th.accent, th.accent) } else { (th.border, th.dim) };
     Panel::bordered()
         .border_type(BorderType::Rounded)
-        .border_style(st(th.border))
-        .title(Line::from(vec![Span::raw(" "), Span::styled(title, st(th.dim).add_modifier(Modifier::BOLD)), Span::raw(" ")]))
+        .border_style(st(border))
+        .title(Line::from(vec![Span::raw(" "), Span::styled(title, st(title_color).add_modifier(Modifier::BOLD)), Span::raw(" ")]))
+}
+
+/// The mouse is over `r`.
+fn under_mouse(v: &View, r: Rect) -> bool {
+    v.mouse.is_some_and(|(x, y)| r.contains(ratatui::layout::Position::new(x, y)))
 }
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
@@ -38,7 +50,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let frame = panel("transcript", th);
     let inner = frame.inner(main).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(frame, main);
-    let (last_block, trows) = render_transcript(f, inner, transcript(s, v, th, &OPTS, inner.width as usize), v.scroll);
+    let (last_block, trows, top_line) = render_transcript(f, inner, transcript(s, v, th, &OPTS, inner.width as usize), v.scroll);
 
     let tools = tool_tally(s);
     let [p_session, p_context, p_tokens, p_cost, p_tools, p_files] = Layout::vertical([
@@ -98,7 +110,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     }
 
     // tokens per turn
-    let b = panel("tokens", th);
+    let b = hot_panel("tokens", th, under_mouse(v, p_tokens) && !s.turn_usage.is_empty());
     let a = b.inner(p_tokens).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_tokens);
     let [t1, chart, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)]).areas(a);
@@ -122,17 +134,17 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let label = match v.hover_call.filter(|i| *i < data.len()) {
         Some(i) => {
             let c = s.calls.get(i);
-            let mut t = format!("#{} {} out", i + 1, human(data[i]));
+            let mut l = vec![Span::styled(format!("#{} ", i + 1), st(th.faint)), Span::styled(human(data[i]), st(th.text)), Span::styled(" out", st(th.faint))];
             if let Some(ms) = c.and_then(|c| c.ttft_ms) {
-                t.push_str(&format!(" · {:.1}s first", ms / 1000.0));
+                l.extend([Span::styled(" · ", st(th.faint)), Span::styled(format!("{:.1}s", ms / 1000.0), st(th.text)), Span::styled(" first", st(th.faint))]);
             }
             if let Some(c) = c.filter(|c| c.gen_ms > 0.0) {
-                t.push_str(&format!(" · {:.0}/s", c.out as f64 / c.gen_ms * 1000.0));
+                l.extend([Span::styled(" · ", st(th.faint)), Span::styled(format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0), st(th.text)), Span::styled(" tok/s", st(th.faint))]);
             }
-            Span::styled(t, st(th.text))
+            Line::from(l)
         }
-        None if data.is_empty() => Span::styled("output per model call", st(th.faint)),
-        None => Span::styled(format!("out per call · #{}–{} · click", first + 1, data.len()), st(th.faint)),
+        None if data.is_empty() => Line::from(Span::styled("output per model call", st(th.faint))),
+        None => Line::from(Span::styled(format!("out per call · #{}–{} · click", first + 1, data.len()), st(th.faint))),
     };
     f.render_widget(Paragraph::new(label), caption);
     let mut ylab = vec![Line::from(Span::styled(format!("{:>4}", human(top)), st(th.faint)))];
@@ -193,15 +205,18 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     );
 
     // tools
-    let b = panel("tools · click: calls", th);
-    let a = b.inner(p_tools).inner(Margin { horizontal: 1, vertical: 0 });
+    let a = Panel::bordered().inner(p_tools).inner(Margin { horizontal: 1, vertical: 0 });
+    let row_at = |i: usize| Rect::new(a.x, a.y + i as u16, a.width, 1);
+    let hot_row = (0..tools.len().min(a.height as usize)).find(|i| under_mouse(v, row_at(*i)));
+    let b = hot_panel("tools · click: calls", th, hot_row.is_some());
     f.render_widget(b, p_tools);
     // the name column as wide as the longest name ("ScheduleWakeup" ran into its count), cut only when the panel is
     // too narrow for the counts beside it
     let nw = tools.iter().map(|t| t.0.width()).max().unwrap_or(0).min((a.width as usize).saturating_sub(23)).max(4);
     let mut rows: Vec<Line> = tools
         .iter()
-        .map(|(n, c, err, secs)| {
+        .enumerate()
+        .map(|(i, (n, c, err, secs))| {
             let name: String = if n.width() > nw { format!("{}…", n.chars().take(nw - 1).collect::<String>()) } else { n.clone() };
             Line::from(vec![
                 Span::styled(format!("{name:<nw$} "), st(th.accent2).add_modifier(Modifier::BOLD)),
@@ -211,9 +226,10 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
                 Span::styled(format!("{:>6}", dur(*secs)), st(th.faint)),
                 Span::styled(format!(" ⌀{}", dur(secs / *c.max(&1) as f64)), st(th.dim)),
             ])
+            .style(if hot_row == Some(i) { Style::new().bg(th.surface) } else { Style::new() })
         })
         .collect();
-    let tool_rows = tools.iter().take(a.height as usize).enumerate().map(|(i, t)| (Rect::new(a.x, a.y + i as u16, a.width, 1), t.0.clone())).collect();
+    let tool_rows = tools.iter().take(a.height as usize).enumerate().map(|(i, t)| (row_at(i), t.0.clone())).collect();
     if rows.is_empty() {
         rows.push(Line::from(Span::styled("none yet", st(th.faint))));
     }
@@ -221,7 +237,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     // files: what this conversation changed (git) as a total and the files that fit, each with its counts; a click
     // here (or /diff) opens all of them with their diffs. Outside git: the files its tools named.
-    let b = panel("files", th);
+    let b = hot_panel("files", th, under_mouse(v, p_files) && !v.changed.is_empty());
     let a = b.inner(p_files).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_files);
     let rows: Vec<Line> = if !v.changed.is_empty() {
@@ -252,7 +268,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
-    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, files: Some(p_files), tool_rows, tokens: Some(p_tokens), bars: Some((spark, first)), ..Default::default() }
+    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, files: Some(p_files), tool_rows, tokens: Some(p_tokens), bars: Some((spark, first)), top_line, ..Default::default() }
 }
 
 fn kv(k: &str, v: &str, th: &Theme) -> Span<'static> {
