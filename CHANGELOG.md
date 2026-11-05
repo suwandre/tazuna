@@ -38,8 +38,11 @@ All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 3
 
 - The own loop's prompt starts with the model's name ("You are deepseek-v4.1-flash-1017, run by tazuna through
   subrouter.ai...", `TAZUNA_NO_IDENTITY` leaves it out). Under the application repo's CLAUDE.md ("This file provides
-  guidance to Claude Code") DeepSeek answered "I'm Claude, made by Anthropic"; with the line it names itself. The six-task
-  A/B for side effects is under way (paused 21:44 while the route changed).
+  guidance to Claude Code") DeepSeek answered "I'm Claude, made by Anthropic"; with the line it names itself. Without
+  it, three tries each with that CLAUDE.md as the system prompt: znu "I'm Claude" 3/3, lingai (`@fast`) "I'm ChatGPT"
+  3/3. Both serve DeepSeek's tokenizer, but lingai's calls carry ~30 more hidden tokens than znu's: about the length of
+  a relay's default "You are ChatGPT, a large language model trained by OpenAI." The six-task A/B for side effects was
+  stopped at the user's call after 4 of 12 runs (caddy and hugo-section-slug: same hidden tests, similar calls).
 - A live own-loop session on a checked route gets the route's other providers as fallbacks (`TAZUNA_ROUTES`, each with
   its pinned key): SubRouter keeps a route's calls on one provider and does not forward a refusal. a6aa's content filter
   refused "when were you developed" twice (HTTP 403 `content_policy_violation`, also with no tazuna prompt at all) while
