@@ -96,6 +96,40 @@ def call(key, msgs):
                 reasoning=det.get("reasoning_tokens"), tools=tools, text=text[:200])
 
 
+LINES = [f"Line {i}: Die Quellcode-Überprüfung #{i * 7919} prüft {i * 104729} Zeilen, émojis 🙂🚀, 中文字符 {i}, snake_case_{i}, CamelCase{i}.\n"
+         for i in range(10)]
+
+
+def deep(key):
+    """PROVSMOKE_DEEP=1 (the gauge, 2026-11-05): checks that catch a provider swapping in a cheaper model or cutting the
+    thinking at some hours. Tokens a line of distinct text (2 and 10 lines, the smaller of two counts each: a model's
+    tokenizer, whatever prompt a provider adds; fxpayback's "Sol" counted 58 where Sol counts 43) and one fixed hard
+    AIME 2025 problem at the probe's effort: its reasoning length and whether it is right."""
+    import canary
+
+    def tokens_in(text):
+        body = {"model": M, "messages": [{"role": "user", "content": text}], "max_tokens": 16, "reasoning_effort": "low"}
+        q = urllib.request.Request("https://subrouter.ai/v1/chat/completions", data=json.dumps(body).encode(),
+                                   headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "curl/8"})
+        with urllib.request.urlopen(q, timeout=180) as r:
+            return json.load(r)["usage"]["prompt_tokens"]
+
+    out = {}
+    try:
+        two, ten = min(tokens_in("".join(LINES[:2])) for _ in range(2)), min(tokens_in("".join(LINES)) for _ in range(2))
+        out.update(tokens_a_line=round((ten - two) / 8, 1), hidden_prompt=round(two - (ten - two) / 4))
+    except Exception as e:  # noqa: BLE001
+        out["tokenizer_error"] = repr(e)[:80]
+    item = [json.loads(l) for l in canary.SET.open() if '"aime25"' in l][27]  # late and hard, as in effortprobe.py
+    try:
+        text, usage = canary.ask(M, key, os.environ.get("PROVSMOKE_EFFORT", "high"), item["question"] + "\n\nSolve it. End with one line: Answer: <the integer>")
+        out.update(depth_out=usage.get("completion_tokens"), depth_reasoning=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+                   depth_right=canary.grade(item, text)[0])
+    except Exception as e:  # noqa: BLE001
+        out["depth_error"] = str(e)[:80]
+    return out
+
+
 def provider(slug, res):
     key = os.environ[var(slug)]
     msgs = [{"role": "system", "content": "You are a coding agent in the tazuna repo. src/engine.rs:\n" + CONTEXT}]
@@ -115,6 +149,8 @@ def provider(slug, res):
                      secs=med("secs"), total=round(sum(r["secs"] for r in rows), 1),
                      cached=round(100 * sum(r["cached"] for r in warm) / max(1, sum(r["prompt"] or 0 for r in warm))),
                      out=sum(r["out"] for r in ok), reasoning=sum(r["reasoning"] or 0 for r in ok), tools=sum(r["tools"] for r in ok))
+    if os.environ.get("PROVSMOKE_DEEP"):
+        res[slug].update(deep(key))
     print(json.dumps(res[slug]), flush=True)
 
 
