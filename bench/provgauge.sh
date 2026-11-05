@@ -7,7 +7,7 @@
 #     (tokens a line: the same model or not; one hard AIME problem: thinking depth and right or wrong), effort high
 #     (DeepSeek's real level) -> provgauge.jsonl
 #   - Sol's and Luna's route candidates, probe only, Responses route, xhigh -> provgauge-sol.jsonl, provgauge-luna.jsonl
-#   - in the 10:00-11:59 and 22:00-23:59 windows, once a day each: canary.py (30 AIME + 100 MMLU-Pro, high) on the
+#   - in the 10:00-11:59, 16:00-17:59 and 22:00-23:59 windows (China busy, late evening, asleep), once a day each: canary.py (30 AIME + 100 MMLU-Pro, high) on the
 #     DeepSeek shortlist -> .model-check/canary.jsonl
 # Ends after 2026-11-08 12:00 or past $3.00 spent since 2026-11-05 20:00 (the account counter: other SubRouter use
 # counts too). The first version (11:16-19:25) probed every 4 hours with the canary every 12 hours on all providers.
@@ -39,7 +39,7 @@ PROVSMOKE_API=responses PROVSMOKE_EFFORT=xhigh python3 -I provsmoke.py gpt-6-lun
 source ~/.subrouter-key
 log "probe: Sol 4, Luna 3 providers"
 
-case $(date +%H) in 10|11) W=busy ;; 22|23) W=asleep ;; *) W= ;; esac
+case $(date +%H) in 10|11) W=busy ;; 16|17) W=evening ;; 22|23) W=asleep ;; *) W= ;; esac  # 17:00, 23:00, 05:00 in China
 if [ -n "$W" ] && ! grep -q "^$(date +%F) $W$" provgauge.windows 2>/dev/null; then
   echo "$(date +%F) $W" >> provgauge.windows
   for g in $SHORT; do keyvar "$M" "$g"; done | xargs -P 3 -I{} python3 -I canary.py run "$M" --key-env {} --effort high >> provgauge.canary.out 2>&1
