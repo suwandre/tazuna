@@ -1,0 +1,9 @@
+shared-grok-supergrok-heavy-58 2 lines  1330  10 lines  1690  tokens a line 45.0  hidden ≈ 1240
+shared-grok-x-premium-plus-5 2 lines  1330  10 lines  1690  tokens a line 45.0  hidden ≈ 1240
+miletechx              2 lines  1443  10 lines  1819  tokens a line 47.0  hidden ≈ 1349
+laoliu                 HTTP Error 524: <none>
+kriora                 2 lines   297  10 lines   673  tokens a line 47.0  hidden ≈ 203
+stableai               HTTP Error 524: <none>
+quqiai                 HTTP Error 504: Gateway Timeout
+a6aa                   2 lines   297  10 lines  1819  tokens a line 190.2  hidden ≈ -84
+relai                  2 lines   297  10 lines   673  tokens a line 47.0  hidden ≈ 203

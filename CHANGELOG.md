@@ -34,6 +34,17 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## Grok 4.7 and Astra providers by tokenizer, 2026-11-05 (bench only)
+
+The tokenizer slope (tokens a line of distinct text; `slope-grok-1105.txt`, `slope-astra-1105.txt`), after a user's
+Grok 4.7 on a6aa described itself as "running on the current Grok codebase in this environment" (self-descriptions
+prove nothing). Grok 4.7: xAI's own subscription pools 45.0 a line (with a ~1,240-token hidden prompt), miletechx,
+kriora and relai 47.0 (hidden ~1,350, ~200, ~200), a6aa mixed (one call at 297 like kriora, one at 1,819 like
+miletechx: two backends, both Grok-like); laoliu, stableai, quqiai timed out. Nothing points at another model; the
+4% between xAI's pools and the API providers is under the 10% line. GPT-6 Astra: humanai and relai 43.0 (the GPT
+tokenizer, with the 4.4k hidden prompt seen on Sol), model-share mixed, fxpayback 58.0 again: the same other model it
+sells as Sol. Five Astra providers did not answer (403, 503, 524).
+
 ## 0.1.61 (2026-11-05): tazuna opens outside a git repo, in ask mode
 
 A live session outside git refused to start ("not inside a git repo ... pass --allow-non-git"), a rule from the first
