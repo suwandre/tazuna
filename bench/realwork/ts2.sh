@@ -10,6 +10,11 @@ export HARNESS_BIN=$HOME/bench-homes/tz-v155/tazuna BENCH_TIMEOUT=5400 TAZUNA_MA
 caffeinate -ims -w $$ &
 U=$(curl -s -A curl/8 --max-time 15 https://subrouter.ai/v1/dashboard/billing/usage -H "Authorization: Bearer $SUBROUTER_MODELS_KEY" | python3 -I -c "import json,sys;print(json.load(sys.stdin)['total_usage'])")
 echo "$(date +%H:%M) start counter $U" >> ts2.log
+# cache check first (2026-11-05 morning: 8-14% cached, 5-8x the cost): every arm's provider must cache 70%+ of warm calls
+python3 -I ../provsmoke.py deepseek-v4.1-flash-1017 stableai znu o2oai > ts2.cache.jsonl 2>&1
+low=$(python3 -c "import json;print(' '.join(f\"{d['slug']}:{d['cached']}%\" for d in map(json.loads,open('ts2.cache.jsonl')) if d['cached']<70 or d['ok']<4))")
+if [ -n "$low" ]; then echo "$(date +%H:%M) ABORT: caching too low: $low" >> ts2.log; exit 1; fi
+echo "$(date +%H:%M) cache check passed: $(python3 -c "import json;print(' '.join(f\"{d['slug']}:{d['cached']}%\" for d in map(json.loads,open('ts2.cache.jsonl'))))")" >> ts2.log
 M=deepseek-v4.1-flash-1017
 SUBROUTER_X_KEYENV=SUBROUTER_ROUTE_DEEPSEEK_V4_1_FLASH_1017_KEY TAZUNA_PRICE=0.0125,0.00125,0.05 ./run.py --runs 2 --workers 5 \
   --harness "tazuna-ownsubx-v1551@$M:xhigh,tazuna-ownsubxs-v1551@$M:xhigh" >> ts2.out 2>&1 &
