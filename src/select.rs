@@ -1,5 +1,5 @@
 //! Mouse selection inside the transcript. The app keeps the mouse (wheel scrolling), so the terminal cannot select;
-//! dragging over the transcript selects its text only (never the side panel), cmd-c / ctrl-c copies it.
+//! dragging over the transcript selects its text only (never the side panel), and releasing copies it.
 //!
 //! A selection holds transcript lines, not screen rows: it stays on its text while the transcript scrolls, a drag past
 //! the transcript's top or bottom edge scrolls it (as in any terminal or editor), and a copy takes every selected line,

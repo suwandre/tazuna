@@ -1753,7 +1753,7 @@ pub fn wrap(mut line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Ve
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-pub const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · ctrl-x stash · /model · /boss · /diff · /new · /resume · /rewind · /loop · /usage · /vim · ↑↓ history · esc stop · drag + ⌘C/ctrl+c copy · ctrl-t design · ctrl-o expand";
+pub const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · ctrl-x stash · /model · /boss · /diff · /new · /resume · /rewind · /loop · /usage · /vim · ↑↓ history · esc stop · drag copies · ctrl-t design · ctrl-o expand";
 
 /// As many whole key hints as fit in `room` columns, most used first; "/keys all" ends them when some are left out.
 fn fitted_keys(keys: &str, room: usize) -> String {

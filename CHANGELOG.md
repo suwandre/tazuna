@@ -34,6 +34,13 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.70 (2026-11-06): a drag copies on release
+
+- Selected text was copied only on ⌘C or ctrl+c (0.1.33). ⌘C never reached tazuna: the terminal keeps it for its own
+  copy, which has nothing selected while tazuna holds the mouse. ctrl+c worked but reads as quit on a Mac. Releasing a
+  drag now copies what it covers ("copied N chars" in the composer for a moment, nothing for blank cells, nothing in the
+  transcript), and the highlight stays until the next key or click; ctrl+c on it copies again instead of quitting.
+
 ## 0.1.69 (2026-11-06): `--connectors`; the cost after `/resume` adds up
 
 - `--connectors` (repo profile) lets the user's claude.ai connectors and MCP servers in (Jira, Slack, Claude Docs), without

@@ -1437,10 +1437,9 @@ fn run_live(
             }
         })?;
         if let Some(text) = copied.take() {
-            // copied only on cmd-c / ctrl-c, and said in the composer for a moment, not in the transcript (a "copied 0
-            // chars" line after every stray drag, 2026-11-02); a selection of blank cells copies nothing
+            // said in the composer for a moment, not in the transcript (a "copied 0 chars" line after every stray drag,
+            // 2026-11-02); a selection of blank cells copies nothing; the highlight stays until the next key or click
             copy_now = false;
-            sel = None;
             if !text.trim().is_empty() {
                 let msg = match to_clipboard(&text) {
                     Ok(()) => format!("copied {} chars", text.chars().count()),
@@ -1483,8 +1482,9 @@ fn run_live(
                         }
                     }
                     MouseEventKind::Up(MouseButton::Left) => match sel.as_mut().map(|x| { x.edge = 0; &*x }) {
-                        // the selection stays highlighted until cmd-c / ctrl-c copies it or another key drops it
-                        Some(x) if !x.is_empty() => v.toast = Some(("⌘C or ctrl+c copies the selection".into(), Instant::now())),
+                        // release copies (2026-11-06): ⌘C never reached tazuna (the terminal keeps it for its own copy,
+                        // which has nothing selected while tazuna holds the mouse), and ctrl+c is quit to a Mac user
+                        Some(x) if !x.is_empty() => copy_now = true,
                         // a click without a drag: the block under it opens or closes
                         _ => {
                             sel = None;
@@ -1570,8 +1570,8 @@ fn run_live(
         };
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
-        // cmd-c (where the terminal passes it on) or ctrl-c with text selected copies it; ctrl-c without a selection
-        // still stops or quits
+        // with text still selected, ctrl-c (or cmd-c where a terminal passes it on) copies it again rather than quitting;
+        // ctrl-c without a selection still stops or quits
         if key.code == KeyCode::Char('c') && (ctrl || key.modifiers.contains(KeyModifiers::SUPER)) && sel.as_ref().is_some_and(|x| !x.is_empty()) {
             copy_now = true;
             continue;
