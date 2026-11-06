@@ -27,7 +27,8 @@ Early. What works today:
   ask before commands only, or plan read-only first and approve the plan.
 - **Profiles**: repos with agent config (`CLAUDE.md`, `AGENTS.md`, `.claude/`) run the **repo profile**: Claude Code's own
   prompt and tools with the repo's settings, hooks and skills (your personal `~/.claude` setup stays out unless
-  `--user-settings`; that includes claude.ai connectors). Repos whose config runs code ask once "Trust this repo?";
+  `--user-settings`; `--connectors` brings only your claude.ai connectors and MCP servers, such as Jira, at ~4k tokens a
+  call). Repos whose config runs code ask once "Trust this repo?";
   headless runs need `--trust`. `--profile repo-lean` keeps the repo's config with the lean prompt (~10k instead of ~22k
   tokens per turn). Other repos, tiny repos and `--profile lean` use the lean profile below.
 - **Lean profile "cc-mid"**: ~10-line system prompt, `Grep`/`Glob` plus four lean tools (bash/read/write/edit) served by tazuna

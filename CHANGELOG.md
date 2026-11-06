@@ -34,6 +34,20 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.69 (2026-11-06): `--connectors`; the cost after `/resume` adds up
+
+- `--connectors` (repo profile) lets the user's claude.ai connectors and MCP servers in (Jira, Slack, Claude Docs), without
+  the rest of `~/.claude` that `--user-settings` brings (plugins, hooks, memory). tazuna kept them out with
+  `--strict-mcp-config` since 0.0.11, when they cost ~42k tokens a turn; Claude Code now sends only their tool names until
+  one is used. Measured (Haiku, claude 2.1.319, a task of two calls): 22.2k tokens a call without, 26.8k with, the
+  connectors arriving from the second call on (Atlassian 41 tools, Slack 27, Claude Docs 5, 8 more waiting for a login).
+  Off by default: ~4.6k more tokens a call, cached after the first. `--settings` with `disabledMcpServers` did not narrow
+  the set to one connector.
+- `/resume` replays a conversation's earlier recordings without the notices between them, so each recording's claude
+  process, whose reported cost starts again at $0, read as a stopped turn: its tokens were priced at list rates ($51.50
+  shown where claude reported $46.22), and a slash command, which uses no tokens, then showed that process's own figure
+  ($55.63, then $17.98 after `/mcp`). Each replayed part now closes its process's cost.
+
 ## 0.1.68 (2026-11-06): `/jira`'s marks carry a random tag
 
 - A comment could write `[end of ABC-1]` and a "My request:" line after it, which read as the user's own words past

@@ -434,6 +434,8 @@ pub struct Live {
     pub profile: Profile,
     /// Also load the user's personal ~/.claude settings (repo profile).
     pub user_settings: bool,
+    /// `--connectors`: the user's MCP servers and claude.ai connectors without the rest of ~/.claude (repo profile).
+    pub connectors: bool,
     /// (bytes included, source files) for the run log.
     instructions_used: (usize, Vec<String>),
     verifying: bool,
@@ -533,6 +535,7 @@ impl Live {
             project_instructions: true,
             profile: Profile::Lean,
             user_settings: false,
+            connectors: false,
             instructions_used: (0, Vec::new()),
             verifying: false,
             held: VecDeque::new(),
@@ -1342,7 +1345,9 @@ impl Live {
             // claude asks tazuna (stdio) instead of a terminal it does not have; "auto" never asks
             .args(["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions", "--permission-mode", &self.permission_mode])
             .args(["--setting-sources", self.setting_sources()]);
-        if self.profile != Profile::Lean && !self.user_settings {
+        // `--connectors` lets them in (2026-11-06): Claude Code now defers MCP tools (names only until one is used), and
+        // the user's set (Jira, Slack, Claude Docs, 8 waiting for a login) measured 22.3k tokens a call against 18.3k
+        if self.profile != Profile::Lean && !self.user_settings && !self.connectors {
             // MCP servers from the repo's .mcp.json only: without this, the user's claude.ai connectors (they come with the
             // account, not a settings file) load too, ~40k tokens of tool schemas per turn in a personal setup
             cmd.arg("--strict-mcp-config");

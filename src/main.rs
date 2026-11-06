@@ -54,6 +54,8 @@
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
 //!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
 //!          [--trust] [--user-settings]   # trust the repo's hooks/skills without asking; also load your ~/.claude settings
+//!          [--connectors]   # repo profile: your claude.ai connectors and MCP servers (Jira, Slack ...), without the rest
+//!                             of ~/.claude; their tools load on demand, ~4k tokens a call for the names
 //!          [--no-project-instructions]   # lean profile: don't add the repo's CLAUDE.md / AGENTS.md to the prompt
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
@@ -181,6 +183,7 @@ struct Args {
     profile: Option<route::Profile>,
     trust: bool,
     user_settings: bool,
+    connectors: bool,
     verdict: Option<String>,
     note: String,
     run_id: Option<String>,
@@ -290,6 +293,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         profile: None,
         trust: false,
         user_settings: false,
+        connectors: false,
         verdict: None,
         note: String::new(),
         run_id: None,
@@ -408,6 +412,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             }
             "--trust" => a.trust = true,
             "--user-settings" => a.user_settings = true,
+            "--connectors" => a.connectors = true,
             "--verdict" => a.verdict = Some(val()?),
             "--note" => a.note = val()?,
             "--run-id" | "--id" => a.run_id = Some(val()?),
@@ -539,6 +544,7 @@ fn main() -> Result<()> {
             let _ = labels::label_git(&base, Some(&std::env::current_dir()?));
             let mut live = live::Live::new("", "")?;
             live.user_settings = a.user_settings;
+    live.connectors = a.connectors;
             let (lane, boss) = lane(&a, true)?;
             let route = live.set_lane(lane);
             live.verify = a.verify.clone();
@@ -691,6 +697,7 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     }
     let mut live = live::Live::new("", "")?;
     live.user_settings = a.user_settings;
+    live.connectors = a.connectors;
     let (lane, boss) = lane(&a, false)?;
     live.set_lane(lane);
     live.mode = "headless";
@@ -1135,9 +1142,10 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
     both.into_iter().map(|(_, e)| e).collect()
 }
 
-/// The part of a recording that is conversation `id`: a recording holds several when `/new` or `/resume` started another
-/// in the same run. Parts are split at their notices; a part is `id`'s when claude's init in it names that session.
-fn conversation<'a>(events: &'a [(f64, serde_json::Value)], id: &str) -> Vec<&'a (f64, serde_json::Value)> {
+/// The parts of a recording that are conversation `id`: a recording holds several when `/new` or `/resume` started another
+/// in the same run. Parts are split at their notices; a part is `id`'s when claude's init in it names that session. Each
+/// part ran on a claude process of its own, whose reported cost started at $0.
+fn conversation<'a>(events: &'a [(f64, serde_json::Value)], id: &str) -> Vec<Vec<&'a (f64, serde_json::Value)>> {
     let mut parts: Vec<Vec<&(f64, serde_json::Value)>> = vec![vec![]];
     for e in events {
         let text = e.1["text"].as_str().unwrap_or_default();
@@ -1147,7 +1155,7 @@ fn conversation<'a>(events: &'a [(f64, serde_json::Value)], id: &str) -> Vec<&'a
         }
         parts.last_mut().expect("one at least").push(e);
     }
-    parts.into_iter().filter(|p| p.iter().any(|e| e.1["type"] == "system" && e.1["session_id"] == id)).flatten().collect()
+    parts.into_iter().filter(|p| p.iter().any(|e| e.1["type"] == "system" && e.1["session_id"] == id)).collect()
 }
 
 /// `/new` (None) or `/resume`: the next message starts a fresh conversation or continues `earlier` on claude. The screen
@@ -1159,8 +1167,12 @@ fn new_conversation(live: &mut live::Live, s: &mut Session, v: &mut View, earlie
             if let Some(e) = earlier {
                 for p in &e.recordings {
                     if let Ok(mut r) = Replay::load(p, false) {
-                        for (t, ev) in conversation(r.take(usize::MAX), &e.id) {
-                            s.apply(ev, *t);
+                        for part in conversation(r.take(usize::MAX), &e.id) {
+                            for (t, ev) in &part {
+                                s.apply(ev, *t);
+                            }
+                            // its costs are final: without this, the next part's restart at $0 read as a stopped turn
+                            s.apply(&json!({"type": "harness_process_end"}), part.last().map_or(0.0, |e| e.0));
                         }
                     }
                 }
@@ -2264,7 +2276,7 @@ mod tests {
         let rec = vec![ev(json!({"type": "harness_user", "text": "one"})), ev(json!({"type": "system", "subtype": "init", "session_id": "s1"})),
             ev(json!({"type": "harness_notice", "text": "── new conversation ──"})),
             ev(json!({"type": "harness_user", "text": "two"})), ev(json!({"type": "system", "subtype": "init", "session_id": "s2"}))];
-        let texts = |id: &str| super::conversation(&rec, id).iter().filter_map(|e| e.1["text"].as_str().map(String::from)).collect::<Vec<_>>();
+        let texts = |id: &str| super::conversation(&rec, id).into_iter().flatten().filter_map(|e| e.1["text"].as_str().map(String::from)).collect::<Vec<_>>();
         assert_eq!((texts("s1"), texts("s2")), (vec!["one".to_string()], vec!["two".to_string()]));
         std::fs::remove_dir_all(&base).ok();
     }

@@ -545,6 +545,8 @@ impl Session {
                     *tokens += n;
                 }
             }
+            // a replayed recording's process ended there (`/resume` replays several, without their notices)
+            (Some("harness_process_end"), _) => self.close_process(),
             (Some("harness_switch"), _) => {
                 // /model: the old process is gone
                 self.close_process();
@@ -1097,5 +1099,14 @@ mod tests {
         s.apply(&json!({"type": "harness_notice", "text": "stopped"}), 3.0);
         s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.005}), 4.0); // resumed process restarts at $0
         assert!((s.cost() - 0.035).abs() < 1e-9, "{}", s.cost());
+        // `/resume` replays: each recording's process starts again at $0; a slash command (no tokens) kept claude's
+        // figure for its process alone: $55.63 on screen, then $17.98 after /mcp (2026-11-06)
+        let mut r = Session::new("", "low");
+        r.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 32.5}), 1.0);
+        r.apply(&json!({"type": "harness_process_end"}), 2.0);
+        r.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 18.0}), 3.0);
+        r.apply(&json!({"type": "result", "subtype": "success", "num_turns": 0, "total_cost_usd": 18.0}), 4.0);
+        assert!((r.cost() - 50.5).abs() < 1e-9, "{}", r.cost());
+        assert!(!r.blocks.iter().any(|b| matches!(b, Block::Notice { .. })), "the end of a process shows nothing");
     }
 }
