@@ -34,6 +34,18 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.67 (2026-11-06): `/jira` puts a ticket in the message
+
+- `/jira ABC-123 [what to do]` (or a ticket's /browse/ link) fetches the ticket through Jira's REST API and sends its
+  text as the message: summary, type, status, assignee, labels, parent, subtasks, links, description and comments, up
+  to 20,000 characters, then the request. tazuna fetches it itself, so it works for every model (the own loop has no
+  MCP client) and costs no tokens until used; Atlassian's MCP server would put ~40 tool names in every Claude turn
+  and needs an admin to allow API tokens. The token sits in `~/.atlassian-token` (`url=`, `email=`, `token=`), not in
+  the environment the agent's commands see; `./jira-login.sh` writes it and checks the login. Reads only.
+  Anyone who can comment wrote part of the ticket, and the default mode runs commands without asking: the text goes
+  between marks that call it data about the task, not instructions, and the request follows as "My request: ..."
+  (security review). Checked on the company site: T-1181 in 0.4 s, a missing key named as such.
+
 ## 0.1.66 (2026-11-06): the running cost at the model's own prices; DeepSeek's real effort levels
 
 - While a turn ran, the cost on screen was its tokens at Claude's list prices ($4/M input, $20/M output); only the

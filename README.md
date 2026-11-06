@@ -20,7 +20,9 @@ Early. What works today:
   Slash commands go to claude (built-ins like `/compact`, `/cost`, `/clear`, `/model`, and the repo's own commands and
   skills); `tab` completes them and `@` file paths. Claude's to-do list shows as a checklist. Images named in a message
   (`@shot.png`, a dragged-in path, or `ctrl-v` for the clipboard) go along as images; `!cmd` runs a command and hands
-  its output to claude.
+  its output to claude. `/jira ABC-123 [what to do]` sends a Jira ticket's text (summary, description, links,
+  comments) with the request, for any model and without Atlassian's tools in every turn; `./jira-login.sh` sets it
+  up once (an Atlassian API token, kept in `~/.atlassian-token`).
   Permission modes (`--mode auto|ask|edits|plan`, `shift-tab` cycles): never ask (default), ask before edits and commands,
   ask before commands only, or plan read-only first and approve the plan.
 - **Profiles**: repos with agent config (`CLAUDE.md`, `AGENTS.md`, `.claude/`) run the **repo profile**: Claude Code's own

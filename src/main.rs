@@ -2012,9 +2012,23 @@ fn run_live(
                     s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
                     continue;
                 }
+                // `/jira KEY [request]`: the ticket's text goes as the message, the request after it
+                let jira = text == "/jira" || text.starts_with("/jira ");
+                if jira {
+                    let rest = text["/jira".len()..].trim();
+                    let (key, ask) = rest.split_once(char::is_whitespace).unwrap_or((rest, ""));
+                    match mcp::jira_issue(key) {
+                        Ok(ticket) if ask.trim().is_empty() => text = ticket,
+                        Ok(ticket) => text = format!("{ticket}\nMy request: {}", ask.trim()),
+                        Err(e) => {
+                            s.apply(&json!({"type": "harness_notice", "text": format!("/jira: {e}"), "error": true}), live.elapsed_ms());
+                            continue;
+                        }
+                    }
+                }
                 // `!cmd`: run it here, show the output, and hand both to claude (like Claude Code's shell mode)
-                // only what the user typed may attach image files; command output never does
-                let typed = !text.starts_with('!');
+                // only what the user typed may attach image files; command output and tickets never do
+                let typed = !text.starts_with('!') && !jira;
                 let text = match text.strip_prefix('!') {
                     Some(cmd) => {
                         // ponytail: blocks the UI while it runs; fine for git status/ls, a thread when long commands matter
