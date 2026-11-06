@@ -1,0 +1,100 @@
+{
+ "aa": {
+  "deepseek-v4-1-flash-1017": 32.5,
+  "gpt-6-1-sol": 54.5,
+  "gpt-6-1-terra": 51,
+  "gpt-6-luna": 27.8
+ },
+ "routes": {
+  "deepseek-v4.1-flash-1017": {
+   "cached": 99,
+   "efforts": [
+    "off",
+    "high",
+    "max"
+   ],
+   "price": [
+    0.01199,
+    0.04794
+   ],
+   "providers": [
+    "a6aa",
+    "x-loop",
+    "bangai",
+    "lingai"
+   ],
+   "url": "https://subrouter.ai/v1",
+   "vetted_at": 1793961079,
+   "via": "subrouter",
+   "why": "2026-11-06 gauge (5 rounds, night and China-busy morning): genuine tokenizer whenever measured, answered nearly every call. a6aa and x-loop cheap; bangai (AIME 28-30, never failed) and lingai steady. znu served another model by day; stableai and model-share left SubRouter's list; kriora down by day."
+  },
+  "gpt-6-luna": {
+   "cached": 92,
+   "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "price": [
+    0.003,
+    0.015
+   ],
+   "providers": [
+    "shared-openai-pro-50",
+    "shared-openai-pro-52",
+    "shared-openai-plus-51"
+   ],
+   "url": "https://subrouter.ai/v1",
+   "vetted_at": 1793543979,
+   "via": "subrouter"
+  },
+  "gpt-6.1-sol": {
+   "cached": 92,
+   "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "price": [
+    0.0381,
+    0.1904
+   ],
+   "providers": [
+    "xcgx",
+    "shared-openai-pro-50",
+    "shared-openai-pro-52"
+   ],
+   "url": "https://subrouter.ai/v1",
+   "vetted_at": 1793891569,
+   "via": "subrouter",
+   "why": "xcgx: Sol by tokenizer, HLE 45/100 and canary 28/30, fastest caddy at the top mark; OpenAI Pro 50/52 as fallback (clean, often down). Kriora left out: lowest caddy mark, 0% cache, 4.4k hidden prompt (2026-11-05)"
+  },
+  "gpt-6.1-terra": {
+   "cached": 87,
+   "efforts": [
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "price": [
+    0.05,
+    0.25
+   ],
+   "providers": [
+    "chor",
+    "lingai",
+    "a6aa",
+    "leapnode"
+   ],
+   "url": "https://subrouter.ai/v1",
+   "vetted_at": 1793546878,
+   "via": "subrouter"
+  }
+ }
+}

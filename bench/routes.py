@@ -13,6 +13,9 @@ SubRouter labels some price lists CNY, but its billing counts those numbers as U
   routes.py pin [ROUTE ...]       a key per checked provider of each route, for pinning one in the picker (no model calls)
   routes.py catalog               the picker's list of every SubRouter model, bench scores, AA index (no model calls)
   routes.py show                  routes.json as a table
+  routes.py tiers [--write]       DeepSeek's providers from the gauge (provgauge.jsonl, canary): up to 4 of the cheapest that
+                                  passed every check and up to 2 proven ones at up to 3x the floor; --write sets the route
+  routes.py ship                  src/routes.json, built into tazuna: the checked routes without keys, for users with one key
 """
 import json, re, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
@@ -276,6 +279,93 @@ def catalog():
     print(f"catalog: {len(cur['catalog'])} SubRouter models, bench for {len(cur['bench'])}, AA index for {len(cur['aa'])}")
 
 
+def tiers(model="deepseek-v4.1-flash-1017", write=False):
+    """The user's rule (2026-11-06): a few cheap providers and one or two proven ones that cost more. SubRouter sends a
+    key's calls to the cheapest of its providers (weighed by cache) and moves on when one fails or caches badly, so the
+    proven ones carry the calls only then. It cannot see a provider that answers with another model, so every provider
+    here passed the gauge's checks in every recent round: same tokenizer as the rest (tokens a line), the hard problem
+    right in most rounds, nearly every call answered, and the canary's AIME at 26/30 or more where measured."""
+    import statistics as st
+    rows = [json.loads(l) for l in (HERE / "provgauge.jsonl").open() if l.strip().startswith("{")]
+    rows = [r for r in rows if r.get("at", "") >= time.strftime("%Y-%m-%dT%H", time.gmtime(time.time() - 2 * 86400))]
+    ref = st.median([r["tokens_a_line"] for r in rows if r.get("tokens_a_line")])
+    aime = {}
+    for l in (HERE / ".model-check" / "canary.jsonl").open():
+        c = json.loads(l)
+        g = c["route"].split("_1017_")[-1].removesuffix("_KEY").lower().replace("_", "-") if "_1017_" in c["route"] else None
+        if g and c["set"] == "aime25" and c["model"] == model:
+            aime.setdefault((g, c["date"]), []).append((bool(c.get("ok")), bool(c.get("error"))))
+    latest = {}
+    for (g, d), res in sorted(aime.items()):
+        # a run its provider mostly refused says nothing about quality (kriora: 503 on all 130 questions, 2026-11-06)
+        if len(res) == 30 and sum(e for _, e in res) <= 5:
+            latest[g] = sum(ok for ok, _ in res)
+    price = {p["provider_slug"]: p["min_input_price"] for m in s.api("/api/user/self/subrouter/models") if m["model_name"] == model
+             for p in m["providers"]}
+    per = {}
+    for r in rows:
+        per.setdefault(r["slug"], []).append(r)
+    passed = []
+    for g, rs in per.items():
+        toks = [r["tokens_a_line"] for r in rs if r.get("tokens_a_line")]
+        right = [r["depth_right"] for r in rs if r.get("depth_right") is not None]
+        ok = sum(r["ok"] for r in rs) / (4 * len(rs))
+        why = []
+        if len(rs) < 3:
+            why.append(f"{len(rs)} rounds")
+        if ok < 0.9:
+            why.append(f"answered {ok:.0%}")
+        if not toks or any(abs(x - ref) > 2 for x in toks):
+            why.append(f"tokens a line {sorted(set(toks)) or 'never measured'}")
+        if len(right) < 2 or sum(right) < len(right) * 2 / 3:
+            why.append(f"hard problem {sum(right)}/{len(right)}")
+        if latest.get(g, 30) < 26:
+            why.append(f"AIME {latest[g]}/30")
+        if g not in price:
+            why.append("not listed now")
+        cache = st.median([r["cached"] for r in rs])
+        # what a call costs: agent calls are mostly input, and cached input costs a tenth (lingai at 99% cached is ~4x cheaper
+        # a call than stableai at 33% for a lower list price)
+        eff = price.get(g, 0) * (1 - 0.9 * cache / 100)
+        tps = st.median([r["tps"] for r in rs if r.get("tps")] or [0])
+        line = dict(slug=g, price=price.get(g), eff=eff, ok=ok, cache=cache, aime=latest.get(g), rounds=len(rs), tps=tps)
+        print(f"  {g:12} {'pass' if not why else 'out: ' + '; '.join(why)}"
+              f"  (${price.get(g, 0):.4f}/M, ${eff:.4f} with its cache, {len(rs)} rounds, answered {ok:.0%}, cache {cache:.0f}%, AIME {latest.get(g, '-')})")
+        if not why:
+            passed.append(line)
+    passed.sort(key=lambda x: x["eff"])
+    floor = passed[0]["eff"] if passed else 0
+    cheap = [x for x in passed if x["eff"] <= 2 * floor][:4]
+    least = min((x["price"] for x in passed), default=0)
+    # the fallback: a clean record and quick answers over cache (bangai: AIME 30/30, never a fake reading, 65% cached)
+    proven = sorted((x for x in passed if x not in cheap and x["ok"] >= 0.95 and x["cache"] >= 60 and x["tps"] >= 100 and x["price"] <= 3 * least),
+                    key=lambda x: (-(x["aime"] or 0), -x["cache"], x["eff"]))[:2]
+    pick = [x["slug"] for x in cheap + proven]
+    print(f"{model}: cheap {[x['slug'] for x in cheap]} + proven {[x['slug'] for x in proven]}")
+    if write and pick:
+        routes = json.loads(OUT.read_text())
+        r = routes["routes"][model]
+        s.key(f"tazuna-route-{model}", model, pick, r["key_env"])
+        r["providers"], r["price"] = pick, [round(min(price[g] for g in pick), 5), r["price"][1]]
+        r["why"] = (f"{time.strftime('%Y-%m-%d')} routes.py tiers: cheap {', '.join(x['slug'] for x in cheap)}; proven "
+                    f"{', '.join(x['slug'] for x in proven) or 'none'} (every check passed over the gauge's last two days)")
+        r["vetted_at"] = int(time.time())
+        OUT.write_text(json.dumps(routes, indent=1, sort_keys=True) + "\n")
+        print("route key and routes.json updated")
+
+
+def ship():
+    """The checked routes as tazuna's built-in list (src/routes.json): what a user with one SubRouter key needs to pick a
+    model and to set its providers on that key (`tazuna subrouter`). No key names: their key is SUBROUTER_API_KEY."""
+    cur = json.loads(OUT.read_text())
+    keep = ("url", "model", "providers", "price", "cached", "efforts", "vetted_at", "why", "via")
+    routes = {n: {k: v for k, v in r.items() if k in keep} for n, r in cur["routes"].items() if "@" not in n}
+    slug = lambda m: m.lower().replace(".", "-")
+    out = {"routes": routes, "aa": {k: v for k, v in cur.get("aa", {}).items() if k in {slug(r.get("model", n)) for n, r in routes.items()}}}
+    (HERE.parent / "src" / "routes.json").write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
+    print(f"src/routes.json: {', '.join(routes)}")
+
+
 def show():
     routes = json.loads(OUT.read_text())["routes"] if OUT.exists() else {}
     for model, r in sorted(routes.items()):
@@ -304,5 +394,9 @@ if __name__ == "__main__":
         catalog()
     elif a[:1] == ["show"]:
         show()
+    elif a[:1] == ["tiers"]:
+        tiers(write="--write" in a)
+    elif a[:1] == ["ship"]:
+        ship()
     else:
         sys.exit(__doc__)

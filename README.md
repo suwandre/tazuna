@@ -131,6 +131,12 @@ tazuna ~/.local/share/tazuna/sessions/<file>.jsonl           # replay a session 
 
 Requires the `claude` CLI (logged in). Nothing else: the lean tools are built into the tazuna binary.
 
+Cheap non-Claude models (DeepSeek, GPT through SubRouter) run on tazuna's own loop with one SubRouter key in
+`SUBROUTER_API_KEY`; `/model` picks them. SubRouter's providers for a model differ a lot (some serve another model, some
+barely cache), so tazuna ships the providers our gauge checked: `tazuna subrouter` prints them per model and where to set
+them on your key, `tazuna subrouter --apply` sets them itself (with your account's access token in
+`~/.subrouter-account`; nothing else on the key changes).
+
 On Windows (cmd or PowerShell) tazuna needs Git for Windows: like Claude Code there, it runs commands in Git Bash
 (`TAZUNA_BASH` or `CLAUDE_CODE_GIT_BASH_PATH` point elsewhere). Install Claude Code with its native installer (`claude.exe`;
 the npm package's `claude.cmd` is not found). Build with `cargo install --path .`, or take `tazuna.exe` from the windows

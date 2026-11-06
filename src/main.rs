@@ -59,6 +59,8 @@
 //!          [--no-project-instructions]   # lean profile: don't add the repo's CLAUDE.md / AGENTS.md to the prompt
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
+//!   tazuna subrouter [--apply]   # each checked model's SubRouter providers, set on your one key (--apply: with the
+//!                                # account's access token in ~/.subrouter-account)
 //!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
 //!   tazuna --loop [FLAGS]   # build TODO.md's open items one by one (fresh headless run each, with FLAGS, e.g.
 //!                           # --preset reviewed), commit each; in a session: /loop [PRESET|FLAGS], /loop stop
@@ -457,6 +459,10 @@ fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("lessons") {
         // `tazuna lessons`: what this repo's reviewers keep raising, from its merged PRs, into tazuna's data folder
         return lessons::cli(&std::env::args().skip(2).collect::<Vec<_>>());
+    }
+    if std::env::args().nth(1).as_deref() == Some("subrouter") {
+        // `tazuna subrouter [--apply]`: the checked providers per model, for the user's one SubRouter key
+        return models::subrouter_cli(&std::env::args().skip(2).collect::<Vec<_>>());
     }
     if std::env::args().nth(1).as_deref() == Some("diag") {
         return diag::hook(std::path::Path::new(&std::env::args().nth(2).unwrap_or_default()));

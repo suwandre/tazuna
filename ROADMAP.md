@@ -308,7 +308,8 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 - 2026-11-06: other users bring one SubRouter key, not one per model and provider. One key can hold a provider list per
   model (`subrouter_model_providers`): a test key allowing DeepSeek 1017 only on lingai and Sol only on bangai sent 6/6
   calls of each to its own provider (Sol is cheaper on lingai, so a union of the lists would have drifted;
-  bench/onekey.py, under $0.01). Plan: the vetted lists ship with tazuna and go on the user's one key, by hand from
+  bench/onekey.py, under $0.01). On a key open to every model the lists hold too, as long as the flat
+  `subrouter_providers` field stays empty (filled, it limits every other model to those providers: 503s). Plan: the vetted lists ship with tazuna and go on the user's one key, by hand from
   printed steps or, opt-in, by tazuna with the account's access token; per-provider pinned keys stay for the bench.
 - 2026-11-05: GPT-6.1 Sol judges like Opus for comparisons (114 runs rejudged: 92% of decided pairs in the same order,
   every arm decision the same, scores ~0.6 higher, $0.095): bench rounds may use Sol as the judge while the weekly limit

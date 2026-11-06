@@ -115,10 +115,21 @@ fn per_m(x: f64) -> String {
     if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
 }
 
+/// The checked routes built into tazuna (bench/routes.py ship), without key names: what a user who brings one SubRouter
+/// key gets when there is no routes.json from our bench (2026-11-06). Their key carries each model's providers
+/// (`tazuna subrouter`).
+const SHIPPED: &str = include_str!("routes.json");
+
+/// The bench's routes.json, else the built-in routes.
+fn routes_file(routes: &Path) -> Value {
+    std::fs::read_to_string(routes).ok().and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_else(|| serde_json::from_str(SHIPPED).unwrap_or_default())
+}
+
 /// Claude's models, then the checked routes, then the unchecked SubRouter models that have a public score; `trusted` says
 /// whether a provider host may see the code.
 pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<Choice> {
-    let file: Value = std::fs::read_to_string(routes).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default();
+    let file = routes_file(routes);
     let mut out: Vec<Choice> = CLAUDE.iter().map(|(m, l)| Choice {
         model: m.to_string(),
         label: l.to_string(),
@@ -136,7 +147,10 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
     let mut rs: Vec<(&String, &Value)> = file["routes"].as_object().map(|o| o.iter().collect()).unwrap_or_default();
     rs.sort_by_key(|(m, _)| m.to_string());
     for (name, r) in rs {
-        let (Some(url), Some(var)) = (r["url"].as_str(), r["key_env"].as_str()) else { continue };
+        let Some(url) = r["url"].as_str() else { continue };
+        // a built-in route names no key: the user's one SubRouter key, which carries the providers if they set them
+        let shipped = r["key_env"].is_null();
+        let Some(var) = r["key_env"].as_str().or(url.contains("subrouter.ai").then_some("SUBROUTER_API_KEY")) else { continue };
         // a second route for one model ("deepseek-v4.1-flash-1017@fast": another provider set) names its model
         let model = r["model"].as_str().map(String::from).unwrap_or_else(|| name.clone());
         let label = name.split_once('@').map_or(name.clone(), |(m, v)| format!("{m} · {v}"));
@@ -171,12 +185,12 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             // only the levels that differ (DeepSeek: off, high, max); a route that names none offers them all
             efforts: if distinct.is_empty() { LEVELS.iter().map(|e| e.to_string()).collect() } else { distinct.iter().map(|e| e.to_string()).collect() },
             price: format!("{} / {}", per_m(input), per_m(output)),
-            note: format!("cached {}% · checked {}{levels}", r["cached"].as_u64().unwrap_or(0), match days {
+            note: format!("cached {}% · checked {}{levels}{}", r["cached"].as_u64().unwrap_or(0), match days {
                 0 => "today".to_string(),
                 1 => "yesterday".to_string(),
                 d => format!("{d} days ago"),
-            }),
-            stale: days > STALE_DAYS,
+            }, if shipped { " · these providers on your key: tazuna subrouter" } else { "" }),
+            stale: days > STALE_DAYS && !shipped,
             state,
             bench: scores(&file, r["model"].as_str().unwrap_or(name)).0,
             aa: scores(&file, r["model"].as_str().unwrap_or(name)).1,
@@ -246,6 +260,84 @@ pub fn subrouter_balance() -> Option<f64> {
     Some((granted - used / 100.0) / 6.8)
 }
 
+/// `tazuna subrouter [--apply]`: each checked model's providers, for the user's one SubRouter key. A key holds a
+/// provider list per model (`subrouter_model_providers`) and SubRouter keeps each model's calls on its list, while models
+/// without one go anywhere (bench/onekey.py, 2026-11-06). Without --apply it prints the lists and where to set them;
+/// --apply sets them itself with the account's access token (~/.subrouter-account: SUBROUTER_ACCESS_TOKEN=,
+/// SUBROUTER_USER_ID=), on the key in SUBROUTER_API_KEY, and touches nothing else on it: its flat provider list, filled,
+/// limits every model (503s for the rest), so it is left as it is.
+pub fn subrouter_cli(args: &[String]) -> anyhow::Result<()> {
+    use anyhow::{bail, Context};
+    let file = routes_file(&crate::labels::dir()?.join("routes.json"));
+    let mut lists = serde_json::Map::new();
+    for (name, r) in file["routes"].as_object().into_iter().flatten() {
+        if name.contains('@') || !r["url"].as_str().unwrap_or_default().contains("subrouter.ai") {
+            continue;
+        }
+        let ps = r["providers"].as_array().cloned().unwrap_or_default();
+        let shown: Vec<&str> = ps.iter().filter_map(Value::as_str).collect();
+        println!("{:28} {}", r["model"].as_str().unwrap_or(name), shown.join(", "));
+        lists.insert(r["model"].as_str().unwrap_or(name).to_string(), Value::Array(ps));
+    }
+    if !args.iter().any(|a| a == "--apply") {
+        println!("\nSet these on your SubRouter key (https://subrouter.ai/console/keys, edit the key, smart routing: per model, \
+                  only these providers; leave its other settings). Or let tazuna do it: `tazuna subrouter --apply`, with \
+                  your account's access token in ~/.subrouter-account (SUBROUTER_ACCESS_TOKEN=..., SUBROUTER_USER_ID=...).");
+        return Ok(());
+    }
+    let path = crate::platform::home().context("HOME")?.join(".subrouter-account");
+    let acct = std::fs::read_to_string(&path).with_context(|| format!("{}: needs SUBROUTER_ACCESS_TOKEN= and SUBROUTER_USER_ID=", path.display()))?;
+    let get = |k: &str| acct.lines().find_map(|l| l.trim().strip_prefix(k)?.strip_prefix('=').map(|v| v.trim().to_string())).filter(|v| !v.is_empty());
+    let (Some(token), Some(user)) = (get("SUBROUTER_ACCESS_TOKEN"), get("SUBROUTER_USER_ID")) else {
+        bail!("{}: needs SUBROUTER_ACCESS_TOKEN= and SUBROUTER_USER_ID=", path.display());
+    };
+    let mine = std::env::var("SUBROUTER_API_KEY").context("SUBROUTER_API_KEY: the key to set the providers on")?;
+    let mine = mine.trim().trim_start_matches("sk-");
+    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(30))).http_status_as_error(false).build().into();
+    let api = |method: &str, path: &str, body: Option<&Value>| -> anyhow::Result<Value> {
+        let url = format!("https://subrouter.ai{path}");
+        let auth = |r: ureq::RequestBuilder<ureq::typestate::WithoutBody>| r.header("Authorization", format!("Bearer {token}")).header("New-Api-User", &user);
+        let mut resp = match (method, body) {
+            ("PUT", Some(b)) => http.put(&url).header("Authorization", format!("Bearer {token}")).header("New-Api-User", &user)
+                .header("Content-Type", "application/json").send(&b.to_string())?,
+            _ => auth(http.get(&url)).call()?,
+        };
+        let d: Value = serde_json::from_str(&resp.body_mut().read_to_string()?).with_context(|| format!("{path}: not JSON"))?;
+        if d["success"] != true {
+            bail!("{path}: {}", d["message"].as_str().unwrap_or("refused"));
+        }
+        Ok(d["data"].clone())
+    };
+    // ponytail: the first 100 keys of the account; page on when someone has more
+    let page = api("GET", "/api/token/?p=1&page_size=100", None)?;
+    let ids: Vec<u64> = page["items"].as_array().or(page.as_array()).into_iter().flatten().filter_map(|k| k["id"].as_u64()).collect();
+    let mut key = None;
+    for id in ids {
+        let k = api("GET", &format!("/api/token/{id}"), None)?;
+        if k["key"].as_str() == Some(mine) {
+            key = Some(k);
+            break;
+        }
+    }
+    let mut key = key.context("SUBROUTER_API_KEY is not a key of this account")?;
+    let mut map: serde_json::Map<String, Value> = key["subrouter_model_providers"].as_str().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
+    map.extend(lists);
+    key["subrouter_model_providers"] = Value::String(Value::Object(map.clone()).to_string());
+    // the shared OpenAI pools serve a key only when it allows them
+    let shared = map.values().flat_map(|v| v.as_array().cloned().unwrap_or_default()).any(|p| p.as_str().is_some_and(|p| p.starts_with("shared-")));
+    if shared && key["include_shared_subscriptions"] != true {
+        key["include_shared_subscriptions"] = Value::Bool(true);
+        println!("(allowing shared subscription pools on the key: some lists name them)");
+    }
+    api("PUT", "/api/token/", Some(&key))?;
+    println!("\nset on your key \"{}\": {} models; other models and settings unchanged", key["name"].as_str().unwrap_or("?"), map.len());
+    if key["subrouter_providers"].as_str().is_some_and(|s| !s.trim().is_empty()) {
+        println!("note: the key also has a flat provider list ({}), which limits every model to those; left as it is",
+                 key["subrouter_providers"].as_str().unwrap_or_default());
+    }
+    Ok(())
+}
+
 /// The effort a row starts at: the session's own when it is that model, else medium on Claude and the model's high (its
 /// default where it has few levels) on a route.
 pub fn start_effort(c: &Choice, current_model: &str, current_effort: &str) -> usize {
@@ -267,6 +359,15 @@ mod tests {
         assert_eq!(fallbacks(&f, "PATH"), "https://subrouter.ai/v1 HOME", "a pinned provider falls back to the others");
         assert_eq!(fallbacks(&f, "OTHER"), "");
         std::fs::remove_file(&f).ok();
+    }
+
+    #[test]
+    fn without_routes_json_the_built_in_routes_use_the_one_key() {
+        let cs = catalog(Path::new("/nonexistent/routes.json"), |_| true, 0);
+        let ds = cs.iter().find(|c| c.model == "deepseek-v4.1-flash-1017").expect("DeepSeek is built in");
+        assert_eq!(ds.route.as_ref().unwrap().1, "SUBROUTER_API_KEY");
+        assert!(ds.note.contains("tazuna subrouter") && !ds.stale, "{}", ds.note);
+        assert_eq!(ds.efforts, ["off", "high", "max"]);
     }
 
     #[test]

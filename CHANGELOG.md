@@ -34,6 +34,24 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.71 (2026-11-06): one SubRouter key for every model
+
+- Other users bring one SubRouter key, not a key per model and provider. A key holds a provider list per model
+  (`subrouter_model_providers`), and SubRouter keeps each model's calls on its list: a test key with DeepSeek 1017 only
+  on lingai and Sol only on bangai sent 6/6 calls of each there, also on a key open to every model, where a third model
+  without a list still answered (bench/onekey.py, under $0.01). The key's flat provider field, filled, limits every model
+  to those providers (a third model got 503 on every call), so tazuna never fills it.
+- The checked routes are built into tazuna (src/routes.json, from `bench/routes.py ship`): without our bench's
+  routes.json, `/model` offers them on `SUBROUTER_API_KEY`, noting where to set their providers.
+- `tazuna subrouter` prints each model's checked providers and where to set them on the key; `--apply` sets them itself
+  with the account's access token (~/.subrouter-account), on the key in SUBROUTER_API_KEY: lists for other models stay,
+  the flat field and model limits stay, and shared pools are allowed when a list names one. Checked on a throwaway key.
+- Bench: `routes.py tiers` picks DeepSeek's providers from the gauge: up to 4 of the cheapest a call (list price weighed
+  by cache share: lingai at 99% cached costs a quarter of stableai at 33% for a higher list price) among those that passed
+  every check, plus up to 2 proven ones (every call answered, 60%+ cached, 100+ tokens a second) at up to 3x the lowest
+  list price, for when the cheap ones fail. Today: kriora, ydjs-ai, lingai, then bangai, x-loop; not applied until the
+  canary has measured kriora and ydjs-ai.
+
 ## 0.1.70 (2026-11-06): a drag copies on release
 
 - Selected text was copied only on ⌘C or ctrl+c (0.1.33). ⌘C never reached tazuna: the terminal keeps it for its own
