@@ -305,6 +305,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
   6.88, hidden 20/26 each) at −24% cost and 1.3x the time (1.15x against Claude Code run at the same hour: the API is
   slower in the afternoon; the Haiku explorer is the largest part tazuna adds); with the boss −44% and 1.8x. Defaults stay (boss headless, none
   interactive). Real-use quality comes from stored sessions, git outcomes and a later judge: the user does not label runs.
+- 2026-11-06: other users bring one SubRouter key, not one per model and provider. One key can hold a provider list per
+  model (`subrouter_model_providers`): a test key allowing DeepSeek 1017 only on lingai and Sol only on bangai sent 6/6
+  calls of each to its own provider (Sol is cheaper on lingai, so a union of the lists would have drifted;
+  bench/onekey.py, under $0.01). Plan: the vetted lists ship with tazuna and go on the user's one key, by hand from
+  printed steps or, opt-in, by tazuna with the account's access token; per-provider pinned keys stay for the bench.
 - 2026-11-05: GPT-6.1 Sol judges like Opus for comparisons (114 runs rejudged: 92% of decided pairs in the same order,
   every arm decision the same, scores ~0.6 higher, $0.095): bench rounds may use Sol as the judge while the weekly limit
   is tight, one judge per comparison. Best DeepSeek provider of the screen: o2oai (5.0 min, 29 calls, $0.003 billed,

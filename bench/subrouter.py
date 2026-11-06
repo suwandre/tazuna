@@ -45,7 +45,7 @@ def api(path, method="GET", body=None):
         d = json.load(r)
     if not d.get("success"):  # some business errors come back as HTTP 200
         sys.exit(f"{path}: {d.get('message')}")
-    return d["data"]
+    return d.get("data")  # a DELETE succeeds without any
 
 
 def calls(minutes, model=None):
