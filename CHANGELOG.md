@@ -34,6 +34,12 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.68 (2026-11-06): `/jira`'s marks carry a random tag
+
+- A comment could write `[end of ABC-1]` and a "My request:" line after it, which read as the user's own words past
+  the ticket's end. Both marks now carry a tag drawn at random for each fetch (8 hex digits), and the opening mark says
+  the data runs up to the end mark with the same tag (security review).
+
 ## 0.1.67 (2026-11-06): `/jira` puts a ticket in the message
 
 - `/jira ABC-123 [what to do]` (or a ticket's /browse/ link) fetches the ticket through Jira's REST API and sends its
