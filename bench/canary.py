@@ -83,7 +83,10 @@ def ask(model, key, effort, text, max_tokens=32000):
                     if line.startswith(b"data: {"):
                         d = json.loads(line[6:])
                         for ch in d.get("choices") or []:
-                            text.append((ch.get("delta") or {}).get("content") or "")
+                            c = (ch.get("delta") or {}).get("content") or ""
+                            # Mistral streams blocks ([{"type": "thinking", ...}, {"type": "text", ...}]): the text ones only
+                            # (a string-only join failed every answer and retried each 3 times, 2026-11-07)
+                            text.append(c if isinstance(c, str) else "".join(b.get("text", "") for b in c if isinstance(b, dict) and b.get("type") == "text"))
                         usage = d.get("usage") or usage
             return "".join(text), usage
         except Exception as e:

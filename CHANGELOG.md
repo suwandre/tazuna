@@ -34,6 +34,35 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.74 (2026-11-07): DeepSeek on the user's Mistral Vibe plan
+
+- A key made under Code > Vibe CLI on chat.mistral.ai bills the plan's Vibe Code usage, not the API credit, also when the
+  client is not Vibe: tazuna's own loop on Mistral's API with such a key (one caddy run: 5/5, 3.7 min, 61 calls, 2.28M
+  tokens, ~$0.12) moved the user's Vibe Code meter and left API usage unchanged. Billing follows the key (as in
+  mistral-vibe issue #1055), and Mistral's docs say plans include "monthly usage that is shared across Studio, the API, and
+  Vibe Code". tazuna sends its own client name, nothing of Vibe's.
+- The model picker names a checked route on another host by that host (it said "SubRouter" for every route). Our setup
+  has `deepseek-v4.1-flash-1017@mistral` on `MISTRAL_VIBE_API_KEY` (routes.json, api.mistral.ai on the trusted list);
+  Mistral takes reasoning_effort none, low, high, xhigh and max (not medium), and each is its own level there (3 hard AIME
+  problems x2: low 7.9k, high 12.4k, xhigh 14.0k, max 19.3k reasoning tokens, all 6/6; on SubRouter low to xhigh are one),
+  so the route offers all five.
+- Bench, the six Go tasks on the Vibe key (cap $1.00 a run), Sol judging five arms per task in one pool:
+
+| Arm | Judge (6 tasks) | Judge (4 tasks all finished) | Hidden | Minutes (median) | Tokens a run | Usage, 6 runs |
+|---|---|---|---|---|---|---|
+| Vibe CLI, high | 6.67 | 6.75 | 22/24 | 27 | 7.6M | ~$3.3 of Vibe usage |
+| Vibe CLI, max | 7.50 | 7.75 | 20/24 | 22 | 7.8M | ~$3.3 of Vibe usage |
+| tazuna, SubRouter route | 7.00 | 8.25 | 18/24 | 23 | 5.0M | $0.09 |
+| tazuna, Mistral API credit (4 runs) | - | 8.50 | 11/11 | 7 | 3.0M | API credit |
+| tazuna, Mistral Vibe key | 6.67 | 7.25 | 20/24 | 9 | 4.4M | ~$1.2 of Vibe usage |
+
+  On Mistral (either key) tazuna runs 2-3x faster than Vibe CLI or its own SubRouter route and uses about a third of the
+  plan usage Vibe CLI does for the same tasks. Vibe key against API key on the four shared tasks, 7.25 against 8.50, comes
+  almost all from terraform (1/3 against 3/3 hidden) at one run a task; the same runs judged in different pools moved up to
+  1.2 (tazuna on SubRouter: 5.83, 6.33, 7.00), so differences under ~1 point are noise here.
+- Bench tools: canary.py reads Mistral's streamed content blocks (a string-only join failed every answer and retried each
+  three times: the first Mistral effort probe was lost).
+
 ## 0.1.73 (2026-11-07): the own loop reads Mistral's replies; tazuna on Mistral's DeepSeek beats Vibe on it
 
 - Mistral's API returns a Chat Completions `content` as blocks (`[{"type": "thinking", ...}, {"type": "text", ...}]`);

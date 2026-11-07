@@ -181,7 +181,8 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             model,
             label,
             route: Some((url.to_string(), var.to_string(), route_price(input, output))),
-            place: format!("SubRouter · {}", providers.join(", ")),
+            // another host (Mistral's API on a Vibe-plan key, 2026-11-07) is named by its host, not as SubRouter
+            place: if host == "subrouter.ai" { format!("SubRouter · {}", providers.join(", ")) } else { host.to_string() },
             // only the levels that differ (DeepSeek: off, high, max); a route that names none offers them all
             efforts: if distinct.is_empty() { LEVELS.iter().map(|e| e.to_string()).collect() } else { distinct.iter().map(|e| e.to_string()).collect() },
             price: format!("{} / {}", per_m(input), per_m(output)),
