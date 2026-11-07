@@ -132,6 +132,12 @@ def ask_codex(model, effort, text):
 def run(model, key_env, effort, codex=False):
     items = [json.loads(l) for l in SET.open()]
     key, day = (None if codex else os.environ[key_env]), time.strftime("%Y-%m-%d")
+    if os.environ.get("CANARY_RESUME"):
+        # go on after a pause (the user's PC switched off overnight, 2026-11-08): skip what this model, route and effort
+        # already answered without an error, on any day
+        done = {r["id"] for r in map(json.loads, OUT.open()) if r.get("model") == model and r.get("route") == key_env
+                and r.get("effort") == effort and not r.get("error")} if OUT.exists() else set()
+        items = [i for i in items if i["id"] not in done]
 
     def one(item):
         t = time.time()
