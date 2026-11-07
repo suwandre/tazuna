@@ -295,12 +295,16 @@ def tiers(model="deepseek-v4.1-flash-1017", write=False):
         c = json.loads(l)
         g = c["route"].split("_1017_")[-1].removesuffix("_KEY").lower().replace("_", "-") if "_1017_" in c["route"] else None
         if g and c["set"] == "aime25" and c["model"] == model:
-            aime.setdefault((g, c["date"]), []).append((bool(c.get("ok")), bool(c.get("error"))))
-    latest = {}
+            aime.setdefault((g, c["date"]), []).append((bool(c.get("ok")), bool(c.get("error")), c.get("out_tokens") or 0))
+    latest, length = {}, {}
     for (g, d), res in sorted(aime.items()):
         # a run its provider mostly refused says nothing about quality (kriora: 503 on all 130 questions, 2026-11-06)
-        if len(res) == 30 and sum(e for _, e in res) <= 5:
-            latest[g] = sum(ok for ok, _ in res)
+        if len(res) == 30 and sum(e for _, e, _ in res) <= 5:
+            latest[g] = sum(ok for ok, _, _ in res)
+            length[g] = st.median([n for ok, _, n in res if ok and n] or [0])
+    # the real model at high writes 3-4k tokens a solved AIME problem; the providers that scored 20-25 that evening wrote
+    # 7-11k and took 5-10x as long (another model or other settings, 2026-11-07): twice the usual length is out
+    usual = st.median([n for n in length.values() if n]) if any(length.values()) else 0
     price = {p["provider_slug"]: p["min_input_price"] for m in s.api("/api/user/self/subrouter/models") if m["model_name"] == model
              for p in m["providers"]}
     per = {}
@@ -325,6 +329,8 @@ def tiers(model="deepseek-v4.1-flash-1017", write=False):
             why.append(f"hard problem {sum(right)}/{len(right)}")
         if latest.get(g, 30) < 26:
             why.append(f"AIME {latest[g]}/30")
+        if usual and length.get(g, 0) > 2 * usual:
+            why.append(f"{length[g]:.0f} tokens a solved AIME problem (usual {usual:.0f})")
         if g not in price:
             why.append("not listed now")
         cache = st.median([r["cached"] for r in rs])
