@@ -1432,8 +1432,33 @@ fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price
     let mut r = http.get(format!("{url}/models")).header("Authorization", format!("Bearer {key}")).call()?;
     let list: Value = serde_json::from_str(&r.body_mut().with_config().limit(50 << 20).read_to_string()?)?;
     let m = list["data"].as_array().into_iter().flatten().find(|m| m["id"] == model).with_context(|| format!("{model} is not in {url}/models"))?;
-    let (p, openai) = parse_price(m)?;
+    let (p, openai) = match parse_price(m) {
+        Ok(found) => found,
+        // a server of the user's own lists no prices (Strata on their PC over Tailscale, 2026-11-08): it costs nothing a
+        // token, so price 0 rather than refusing to start; a paid provider without a price still fails, its cap needs one
+        Err(_) if self_hosted(url) => ((0.0, 0.0, 0.0), false),
+        Err(e) => return Err(e),
+    };
     Ok((p, api(openai)))
+}
+
+/// A server on this machine or the user's own network: loopback, private ranges, Tailscale's addresses (100.64.0.0/10)
+/// and names (*.ts.net), mDNS names (*.local).
+fn self_hosted(url: &str) -> bool {
+    use std::net::IpAddr;
+    let authority = url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or_default();
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or_default().to_string(),
+        None => authority.split(':').next().unwrap_or_default().to_ascii_lowercase(),
+    };
+    if host == "localhost" || host.ends_with(".local") || host.ends_with(".ts.net") {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(v)) => v.is_loopback() || v.is_private() || (v.octets()[0] == 100 && (64..128).contains(&v.octets()[1])),
+        Ok(IpAddr::V6(v)) => v.is_loopback() || (v.segments()[0] & 0xfe00) == 0xfc00,
+        Err(_) => false,
+    }
 }
 
 fn price_override(v: &str) -> Result<Price> {
@@ -1462,6 +1487,17 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn own_servers_need_no_price() {
+        for url in ["http://100.122.61.101:8093/v1", "http://desktop-u51lu9t.tail0332a3.ts.net:8093/v1", "http://localhost:8080/v1",
+                    "http://127.0.0.1:1234/v1", "http://192.168.1.5/v1", "http://studio.local:8000/v1", "http://[::1]:8080/v1"] {
+            assert!(super::self_hosted(url), "{url}");
+        }
+        for url in ["https://api.mistral.ai/v1", "https://subrouter.ai/v1", "http://100.200.1.1/v1", "https://8.8.8.8/v1"] {
+            assert!(!super::self_hosted(url), "{url}");
+        }
+    }
 
     #[test]
     fn mistral_content_blocks_are_text_and_thinking() {
