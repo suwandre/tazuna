@@ -34,6 +34,27 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.73 (2026-11-07): the own loop reads Mistral's replies; tazuna on Mistral's DeepSeek beats Vibe on it
+
+- Mistral's API returns a Chat Completions `content` as blocks (`[{"type": "thinking", ...}, {"type": "text", ...}]`);
+  the own loop read only a string, so every reply was empty. Text and thinking now come from either form, streamed or
+  not. Mistral's DeepSeek 1017 thinks only when asked (no `reasoning_effort`: 0 reasoning tokens).
+- Bench, same evening as 0.1.72's round: tazuna 0.1.73's own loop on Mistral's API (DeepSeek V4.1 Flash 1017 at high,
+  the hosting Vibe used), Sol judging all four arms together per task. Two Mistral runs (hugo-template-return, k6) stopped
+  at the $0.60 cap a run, so the four tasks every arm finished:
+
+| Arm (caddy, hugo-section, prometheus, terraform) | Judge | Hidden | Minutes (median) |
+|---|---|---|---|
+| tazuna own loop, Mistral API | 8.00 | 11/11 | 7 |
+| Vibe CLI, max | 7.50 | 10/11 | 21 |
+| tazuna own loop, SubRouter route | 7.25 | 9/11 | 18 |
+| Vibe CLI, high | 7.00 | 10/11 | 27 |
+
+  Vibe's lead over tazuna on SubRouter (0.1.72) was the hosting: on the same hosting tazuna's loop scores higher, passes
+  every hidden test and runs 2-8x faster with about half the calls. One run a task, four tasks, the two largest missing.
+  Mistral's API costs ~$0.055 per M tokens at this mix (caddy: $0.06 billed, 1.42M tokens), 6-18x SubRouter's route, so
+  $0.06-0.35 a task.
+
 ## 0.1.72 (2026-11-07): built-in DeepSeek route bangai, lingai, kriora; Vibe CLI against tazuna (bench)
 
 - The DeepSeek 1017 route (built in, and our route key) is bangai, lingai, kriora. Dropped: x-loop (AIME 20/30 that

@@ -362,7 +362,7 @@ fn empty_reply(reply: &Value, api: Api) -> bool {
         Api::Messages => !reply["content"].as_array().is_some_and(|bs| bs.iter().any(|b| b["type"] == "tool_use" || b["text"].as_str().is_some_and(|t| !t.trim().is_empty()))),
         Api::Chat => {
             let m = &reply["choices"][0]["message"];
-            m["content"].as_str().is_none_or(|t| t.trim().is_empty()) && m["tool_calls"].as_array().is_none_or(|c| c.is_empty())
+            chat_content(&m["content"]).0.trim().is_empty() && m["tool_calls"].as_array().is_none_or(|c| c.is_empty())
         }
     }
 }
@@ -743,7 +743,7 @@ impl Loop {
                 }
                 Api::Chat => {
                     let m = &reply["choices"][0]["message"];
-                    let text = m["content"].as_str().unwrap_or_default().to_string();
+                    let (text, thinking) = chat_content(&m["content"]);
                     let mut calls: Vec<Value> = m["tool_calls"].as_array().cloned().unwrap_or_default();
                     // LingAI sent 16 calls with an empty id in one DeepSeek run; the history was accepted until call 161,
                     // then refused: "Assistant tool_calls require distinct non-empty ids" (2026-10-24)
@@ -758,7 +758,7 @@ impl Loop {
                     if !calls.is_empty() {
                         keep["tool_calls"] = json!(calls);
                     }
-                    if let Some(r) = m["reasoning_content"].as_str().or(m["reasoning"].as_str()).filter(|r| !r.is_empty()) {
+                    if let Some(r) = m["reasoning_content"].as_str().or(m["reasoning"].as_str()).or(Some(thinking.as_str())).filter(|r| !r.is_empty()) {
                         keep["reasoning_content"] = json!(r);
                         thought = r.to_string();
                         if let Some(note) = kept_reasoning(r) {
@@ -875,7 +875,7 @@ pub fn ask(url: &str, key: &str, model: &str, effort: &str, system: &str, prompt
         Api::Responses => r["output"].as_array().into_iter().flatten().filter(|i| i["type"] == "message")
             .map(|i| blocks(&i["content"], "output_text")).collect::<Vec<_>>().join("\n"),
         Api::Messages => blocks(&r["content"], "text"),
-        Api::Chat => r["choices"][0]["message"]["content"].as_str().unwrap_or_default().to_string(),
+        Api::Chat => chat_content(&r["choices"][0]["message"]["content"]).0,
     };
     let u = &r["usage"];
     let n = |a: &Value, b: &Value| a.as_u64().or(b.as_u64()).unwrap_or(0);
@@ -1119,6 +1119,25 @@ fn text_of(content: &Value) -> String {
         Value::String(s) => s.clone(),
         _ => content.as_array().into_iter().flatten().filter_map(|b| b["text"].as_str()).collect::<Vec<_>>().join("\n"),
     }
+}
+
+/// A Chat Completions `content` as (text, thinking): a string, or Mistral's blocks (its API, 2026-11-07: DeepSeek 1017
+/// answered `[{"type": "thinking", "thinking": [{"type": "text", "text": ...}]}, {"type": "text", "text": ...}]`, and a
+/// string-only reading took every reply for empty).
+fn chat_content(content: &Value) -> (String, String) {
+    let Some(blocks) = content.as_array() else { return (content.as_str().unwrap_or_default().to_string(), String::new()) };
+    let (mut text, mut thinking) = (String::new(), String::new());
+    for b in blocks {
+        match b["type"].as_str() {
+            Some("text") => text.push_str(b["text"].as_str().unwrap_or_default()),
+            Some("thinking") => match &b["thinking"] {
+                Value::String(s) => thinking.push_str(s),
+                parts => parts.as_array().into_iter().flatten().for_each(|p| thinking.push_str(p["text"].as_str().unwrap_or_default())),
+            },
+            _ => {}
+        }
+    }
+    (text, thinking)
 }
 
 fn emit(e: &Value) {
@@ -1367,7 +1386,9 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
             usage = e["usage"].clone();
         }
         let d = &e["choices"][0]["delta"];
-        content.push_str(d["content"].as_str().unwrap_or_default());
+        let (text, thinking) = chat_content(&d["content"]);
+        content.push_str(&text);
+        reasoning.push_str(&thinking);
         // DeepSeek's field; OpenRouter-style gateways (SubRouter's foxrouter) stream it as `reasoning` instead, and
         // without it the reasoning never went back (0.0.94: twice the output a call on foxrouter, 2026-10-27)
         reasoning.push_str(d["reasoning_content"].as_str().filter(|r| !r.is_empty()).or(d["reasoning"].as_str()).unwrap_or_default());
@@ -1441,6 +1462,16 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn mistral_content_blocks_are_text_and_thinking() {
+        let c = json!([{"type": "thinking", "thinking": [{"type": "text", "text": "17*23"}]}, {"type": "text", "text": "391"}]);
+        assert_eq!(super::chat_content(&c), ("391".into(), "17*23".into()));
+        assert_eq!(super::chat_content(&json!("plain")), ("plain".into(), String::new()));
+        assert_eq!(super::chat_content(&Value::Null), (String::new(), String::new()));
+        let reply = json!({"choices": [{"message": {"content": c}}]});
+        assert!(!super::empty_reply(&reply, Api::Chat), "an answer in blocks is not empty");
+    }
 
     #[test]
     fn a_pass_with_tests_says_finish_once_and_a_rerun_without_change_says_so() {
