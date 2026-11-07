@@ -95,7 +95,9 @@ def call(key, msgs):
                     delta = c.get("delta") or {}
                     if first is None and (delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning") or delta.get("tool_calls")):
                         first = time.time()
-                    text += delta.get("content") or ""
+                    c = delta.get("content") or ""
+                    # Mistral streams blocks ([{"type": "thinking", ...}, {"type": "text", ...}]): the text ones only (2026-11-08)
+                    text += c if isinstance(c, str) else "".join(x.get("text", "") for x in c if isinstance(x, dict) and x.get("type") == "text")
                     tools += sum(1 for t in delta.get("tool_calls") or [] if (t.get("function") or {}).get("name"))
     except Exception as e:  # noqa: BLE001
         return dict(error=repr(e)[:120], secs=round(time.time() - t0, 1))

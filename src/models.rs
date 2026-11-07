@@ -71,8 +71,10 @@ pub struct Pin {
 }
 
 /// The cached-input price is not in the provider list: a tenth of input, the usual discount.
-fn route_price(input: f64, output: f64) -> String {
-    format!("{input},{},{output}", (input / 10.0 * 1e6).round() / 1e6)
+/// TAZUNA_PRICE for a route: input, cached, output per million. Cached input is a tenth of input unless the route names
+/// its own: Mistral bills DeepSeek 1017's at $0.007 against $0.30 (2.3%), GLM 5.3 Flash's at a fifth (2026-11-08).
+fn route_price(input: f64, output: f64, cached: Option<f64>) -> String {
+    format!("{input},{},{output}", cached.unwrap_or((input / 10.0 * 1e6).round() / 1e6))
 }
 
 /// The choice with its route pinned to its `i`-th checked provider (1..): that provider's key, price and state. 0: the
@@ -87,7 +89,7 @@ pub fn pinned(c: &Choice, i: usize) -> Choice {
     };
     if let Some(r) = c.route.as_mut() {
         r.1 = p.key_env.clone();
-        r.2 = route_price(p.price.0, p.price.1);
+        r.2 = route_price(p.price.0, p.price.1, None);
     }
     c.label = format!("{} · {}", c.label, p.provider);
     c.place = format!("SubRouter · {} only (pinned; tab: next)", p.provider);
@@ -180,7 +182,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
         out.push(Choice {
             model,
             label,
-            route: Some((url.to_string(), var.to_string(), route_price(input, output))),
+            route: Some((url.to_string(), var.to_string(), route_price(input, output, r["price"][2].as_f64()))),
             // another host (Mistral's API on a Vibe-plan key, 2026-11-07) is named by its host, not as SubRouter
             place: if host == "subrouter.ai" { format!("SubRouter · {}", providers.join(", ")) } else { host.to_string() },
             // only the levels that differ (DeepSeek: off, high, max); a route that names none offers them all
@@ -210,7 +212,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
         out.push(Choice {
             model: model.clone(),
             label: model.clone(),
-            route: Some(("https://subrouter.ai/v1".into(), key.into(), route_price(input, output))),
+            route: Some(("https://subrouter.ai/v1".into(), key.into(), route_price(input, output, None))),
             place: format!("SubRouter · {} providers", c["providers"].as_u64().unwrap_or(0)),
             efforts: LEVELS.iter().map(|e| e.to_string()).collect(),
             price: format!("{} / {}", per_m(input), per_m(output)),
@@ -360,6 +362,12 @@ mod tests {
         assert_eq!(fallbacks(&f, "PATH"), "https://subrouter.ai/v1 HOME", "a pinned provider falls back to the others");
         assert_eq!(fallbacks(&f, "OTHER"), "");
         std::fs::remove_file(&f).ok();
+    }
+
+    #[test]
+    fn a_route_can_name_its_cached_price() {
+        assert_eq!(route_price(0.3, 1.2, Some(0.007)), "0.3,0.007,1.2", "Mistral's DeepSeek: cached at 2.3%");
+        assert_eq!(route_price(0.02, 0.08, None), "0.02,0.002,0.08", "otherwise a tenth of input");
     }
 
     #[test]

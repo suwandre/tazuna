@@ -34,6 +34,31 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.75 (2026-11-08): a route can name its cached-input price; Mistral's real prices
+
+- A route's price in routes.json may carry a third number, cached input per million; without it cached input stays a
+  tenth of input. Mistral's own list (docs.mistral.ai/inference/pricing) has DeepSeek V4.1 Flash 1017 at $0.30 input,
+  $0.007 cached (2.3%), $1.20 output: these reproduce the billed caddy run ($0.062 against $0.06), where a tenth would
+  have overstated each cached token threefold. Our Mistral routes carry the list's prices (GLM 5.3 $1.40/$0.14/$4.40,
+  GLM 5.3 Flash $0.15/$0.03/$0.50, Small 4 $0.15/$0.015/$0.60, Large 4 $0.70/$0.07/$2.10, Codestral $0.30/$0.03/$0.90;
+  Medium 3.5 is not listed). GLM 5.2 left them: Mistral retired it on 2026-10-31.
+- Same model on both Mistral keys: the canary on the Vibe-plan key and on the API key, DeepSeek 1017 at high: AIME 29/30
+  and 28/30, MMLU-Pro 88 and 88; 49.0 tokens a line and the same 28-token hidden prompt on both.
+- Bench: a second run of each Go task for tazuna on the Vibe-plan key, Sol judging five arms per task again (pool 5):
+
+| Arm | Judge | Hidden | Minutes (median) | Calls (median) |
+|---|---|---|---|---|
+| Vibe CLI, max | 7.67 | 20/24 | 22 | 98 |
+| Vibe CLI, high | 7.33 | 22/24 | 27 | 92 |
+| tazuna, Mistral Vibe key (12 runs) | 6.67 | 38/48 | 11 | 82 |
+| tazuna, SubRouter route | 6.33 | 18/24 | 23 | 74 |
+| tazuna, Mistral API key (4 tasks, two cut at the cap) | 8.25 | 11/11 | 7 | 52 |
+
+  With every task and two runs, Vibe CLI on the same hosting scores 0.7-1.0 above tazuna's loop, borderline at these run
+  counts and coming from the hard tasks (k6 5/5 and 3/5, hugo-template 6/8 and 5/8 against Vibe's 7/8); tazuna stays
+  2-3x faster on a third of the plan usage. 0.1.73's "Vibe's lead was the hosting" rested on the four easier tasks only.
+- Bench tools: provsmoke.py reads Mistral's streamed content blocks (its four-call probe failed every call there).
+
 ## 0.1.74 (2026-11-07): DeepSeek on the user's Mistral Vibe plan
 
 - A key made under Code > Vibe CLI on chat.mistral.ai bills the plan's Vibe Code usage, not the API credit, also when the
