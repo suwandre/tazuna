@@ -15,6 +15,7 @@ SubRouter labels some price lists CNY, but its billing counts those numbers as U
   routes.py show                  routes.json as a table
   routes.py tiers [--write]       DeepSeek's providers from the gauge (provgauge.jsonl, canary): up to 4 of the cheapest that
                                   passed every check and up to 2 proven ones at up to 3x the floor; --write sets the route
+  routes.py set MODEL SLUG,...    a route's providers by hand (the route key, routes.json, a pinned key each): `tiers` proposes
   routes.py ship                  src/routes.json, built into tazuna: the checked routes without keys, for users with one key
 """
 import json, re, subprocess, sys, time
@@ -315,8 +316,11 @@ def tiers(model="deepseek-v4.1-flash-1017", write=False):
             why.append(f"{len(rs)} rounds")
         if ok < 0.9:
             why.append(f"answered {ok:.0%}")
-        if not toks or any(abs(x - ref) > 2 for x in toks):
-            why.append(f"tokens a line {sorted(set(toks)) or 'never measured'}")
+        # another model reads far off (36.5, 56); 46.6 and 51.4 came from bangai and lingai between 49s, and every
+        # provider had an off round within two days (2026-11-07), so 80% of the readings must match, not all
+        real = [x for x in toks if abs(x - ref) <= 3]
+        if not toks or len(real) < 0.8 * len(toks):
+            why.append(f"tokens a line {len(real)}/{len(toks)} like the rest ({sorted(set(toks)) or 'never measured'})")
         if len(right) < 2 or sum(right) < len(right) * 2 / 3:
             why.append(f"hard problem {sum(right)}/{len(right)}")
         if latest.get(g, 30) < 26:
@@ -345,13 +349,31 @@ def tiers(model="deepseek-v4.1-flash-1017", write=False):
     if write and pick:
         routes = json.loads(OUT.read_text())
         r = routes["routes"][model]
-        s.key(f"tazuna-route-{model}", model, pick, r["key_env"])
+        s.key("tazuna-route-" + re.sub(r"[^a-z0-9]+", "-", model).strip("-"), model, pick, r["key_env"])
         r["providers"], r["price"] = pick, [round(min(price[g] for g in pick), 5), r["price"][1]]
         r["why"] = (f"{time.strftime('%Y-%m-%d')} routes.py tiers: cheap {', '.join(x['slug'] for x in cheap)}; proven "
                     f"{', '.join(x['slug'] for x in proven) or 'none'} (every check passed over the gauge's last two days)")
         r["vetted_at"] = int(time.time())
         OUT.write_text(json.dumps(routes, indent=1, sort_keys=True) + "\n")
         print("route key and routes.json updated")
+
+
+def set_route(model, slugs, why):
+    """A route's providers by hand: the route key limited to them, routes.json, and a pinned key per provider."""
+    routes = json.loads(OUT.read_text())
+    r = routes["routes"][model]
+    listed = {p["provider_slug"]: p for m in s.api("/api/user/self/subrouter/models") if m["model_name"] == model for p in m["providers"]}
+    missing = [g for g in slugs if g not in listed]
+    if missing:
+        sys.exit(f"{model}: not listed now: {', '.join(missing)}")
+    s.key("tazuna-route-" + re.sub(r"[^a-z0-9]+", "-", model).strip("-"), model, slugs, r["key_env"])
+    cheapest = min(slugs, key=lambda g: listed[g]["min_input_price"])
+    r["providers"], r["price"] = slugs, [round(listed[cheapest]["min_input_price"], 5), round(listed[cheapest]["min_output_price"], 5)]
+    r["why"], r["vetted_at"] = f"{time.strftime('%Y-%m-%d')}: {why}", int(time.time())
+    r["pinned"] = {g: p for g, p in r.get("pinned", {}).items() if g in slugs}
+    pin(model, r, {g: (round(p["min_input_price"], 5), round(p["min_output_price"], 5)) for g, p in listed.items()})
+    save(routes, model)
+    print(f"{model}: {', '.join(slugs)} (pinned: {', '.join(r.get('pinned', {}))})")
 
 
 def ship():
@@ -398,5 +420,7 @@ if __name__ == "__main__":
         tiers(write="--write" in a)
     elif a[:1] == ["ship"]:
         ship()
+    elif a[:1] == ["set"] and len(a) >= 3:
+        set_route(a[1], a[2].split(","), " ".join(a[3:]) or "set by hand")
     else:
         sys.exit(__doc__)

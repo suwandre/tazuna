@@ -20,7 +20,9 @@ M=deepseek-v4.1-flash-1017
 # questions; ydjs-ai: never). Dropped: redqueen (hard problem wrong 3 of 4, gone from the list), model-share (503 all
 # morning), znu (another model by day: 18/30 AIME, 36.5 tokens a line). Before: "bangai a6aa o2oai x-loop lingai redqueen
 # stableai", and "znu model-share bangai a6aa o2oai kriora" until 12:09.
-SHORT="bangai a6aa o2oai x-loop lingai kriora ydjs-ai stableai"
+# From 2026-11-07 18:40: + 000 (new, cheapest a call at 99% cached, never canaried); - x-loop (20/30, read as another
+# model), - stableai (refused all 130 questions).
+SHORT="bangai a6aa o2oai lingai kriora ydjs-ai 000"
 log() { echo "$(date '+%m-%d %H:%M') $*" >> provgauge.log; }
 used() { curl -s -A curl/8 --max-time 15 https://subrouter.ai/v1/dashboard/billing/usage -H "Authorization: Bearer $SUBROUTER_MODELS_KEY" | python3 -I -c "import json,sys;print(json.load(sys.stdin)['total_usage'])"; }
 keyvar() { python3 -I -c "import re,sys;print('SUBROUTER_SMOKE_'+re.sub(r'[^A-Z0-9]+','_',(sys.argv[1]+'_'+sys.argv[2]).upper()).strip('_')+'_KEY')" "$1" "$2"; }

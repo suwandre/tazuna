@@ -766,6 +766,43 @@ def run_codex(h, w, prompt):
     return dict(inp=max(0, inp - cached), cache_r=cached, cache_w=0, out=out, turns=turns, reported_cost=0, final=final)
 
 
+def run_vibe(h, w, prompt):
+    """Mistral's Vibe CLI (2026-11-07), stock, headless, on the user's own plan login (Vibe reads it from the macOS
+    keychain, which follows HOME, so the real HOME stays). Each run gets a fresh VIBE_HOME holding only the bench config
+    (~/bench-homes/vibe/config.toml: DeepSeek V4.1 Flash 1017 as deepseek-high and deepseek-max, connectors off, only
+    Vibe's four bundled skills: it also loads every skill in ~/.agents/skills, the user's caveman set), so no run reads
+    another's sessions. vibe@deepseek-v4.1-flash-1017:high runs the alias deepseek-high."""
+    _, effort = model_effort(h)
+    home = Path(tempfile.mkdtemp(prefix="rw-vibe-"))
+    try:
+        shutil.copy(BENCH_HOMES / "vibe" / "config.toml", home / "config.toml")
+        out = home / "export"
+        env = {"PATH": os.environ["PATH"], "HOME": os.environ["HOME"], "TERM": "xterm", "VIBE_HOME": str(home),
+               **cur_go_env(), **proxy_env(), "BENCH_JAIL_ALSO": str(home)}
+        r = sh(["vibe", "-p", prompt, "--model", f"deepseek-{effort}", "--output", "json", "--output-dir", str(out),
+                "--auto-approve", "--trust", "--time-limit", str(TIMEOUT - 120)], w, timeout=TIMEOUT, env=env)
+        try:
+            e = json.loads((out / "export.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            raise RuntimeError(f"vibe rc={r.returncode}: {(r.stdout + r.stderr)[-800:]}")
+        if e.get("outcome") != "finished":
+            raise RuntimeError(f"vibe {e.get('outcome')}: {e.get('stop_reason')} {str(e.get('error'))[:600]}")
+        final = ""
+        try:
+            for m in json.loads(r.stdout):
+                if isinstance(m, dict) and m.get("role") == "assistant":
+                    c = m.get("content")
+                    final = c if isinstance(c, str) else " ".join(x.get("text", "") for x in c or [] if isinstance(x, dict))
+        except json.JSONDecodeError:
+            pass
+        u = e.get("usage") or {}
+        cached = u.get("cached_input_tokens", 0)
+        return dict(inp=max(0, u.get("input_tokens", 0) - cached), cache_r=cached, cache_w=0, out=u.get("output_tokens", 0),
+                    turns=e.get("steps", 0), reported_cost=e.get("cost_usd") or 0, final=final)
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
 def run_codex_sub(h, w, prompt):
     """Codex CLI with SubRouter as its model provider (Responses API, the shared models key): the same harness as the
     Codex reference run, another provider, to tell the model from the harness."""
@@ -1208,7 +1245,7 @@ def run_plan_exec(h, w, prompt):
                 phase_cost={k: round(v, 4) for k, v in costs.items()})
 
 
-HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-noboss": run_harness, "tazuna-rtall": run_harness, "tazuna-rtcore": run_harness, "tazuna-rtk": run_harness, "tazuna-rtbatch": run_harness, "tazuna-tscope": run_harness, "tazuna-hts": run_harness, "tazuna-lsn": run_harness, "tazuna-hist": run_harness, "tazuna-rev": run_harness, "tazuna-lhr": run_harness, "tazuna-tsson": run_harness, "tazuna-tslow": run_harness, "tazuna-hnts": run_harness, "tazuna-bhmed": run_harness, "tazuna-bhts": run_harness, "tazuna-besc": run_harness, "tazuna-bhhigh": run_harness, "tazuna-bhxhigh": run_harness, "tazuna-leanopus": run_harness, "tazuna-bpick": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-owndsk": run_harness, "tazuna-owndskr": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubxs": run_harness, "tazuna-ownsubxni": run_harness, "tazuna-ownsubxsb": run_harness, "tazuna-ownsubxp2": run_harness, "tazuna-ownsubxa2": run_harness, "tazuna-ownsubxr": run_harness, "tazuna-ownsubxrev": run_harness, "tazuna-ownsubxopus": run_harness, "tazuna-reviewed": run_harness, "tazuna-ownsubxp3": run_harness, "tazuna-ownsubxtn": run_harness, "tazuna-ownsubxth": run_harness, "tazuna-ownsubxjg": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "dsh": run_dsh, "kiro": run_kiro, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "pi-sub": run_pi_sub, "kimi-sub": run_kimi_sub, "omp-sub": run_omp_sub, "opencode-sub": run_opencode_sub, "cmd-sub": run_cmd_sub, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
+HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-noboss": run_harness, "tazuna-rtall": run_harness, "tazuna-rtcore": run_harness, "tazuna-rtk": run_harness, "tazuna-rtbatch": run_harness, "tazuna-tscope": run_harness, "tazuna-hts": run_harness, "tazuna-lsn": run_harness, "tazuna-hist": run_harness, "tazuna-rev": run_harness, "tazuna-lhr": run_harness, "tazuna-tsson": run_harness, "tazuna-tslow": run_harness, "tazuna-hnts": run_harness, "tazuna-bhmed": run_harness, "tazuna-bhts": run_harness, "tazuna-besc": run_harness, "tazuna-bhhigh": run_harness, "tazuna-bhxhigh": run_harness, "tazuna-leanopus": run_harness, "tazuna-bpick": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-owndsk": run_harness, "tazuna-owndskr": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubxs": run_harness, "tazuna-ownsubxni": run_harness, "tazuna-ownsubxsb": run_harness, "tazuna-ownsubxp2": run_harness, "tazuna-ownsubxa2": run_harness, "tazuna-ownsubxr": run_harness, "tazuna-ownsubxrev": run_harness, "tazuna-ownsubxopus": run_harness, "tazuna-reviewed": run_harness, "tazuna-ownsubxp3": run_harness, "tazuna-ownsubxtn": run_harness, "tazuna-ownsubxth": run_harness, "tazuna-ownsubxjg": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "vibe": run_vibe, "dsh": run_dsh, "kiro": run_kiro, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "pi-sub": run_pi_sub, "kimi-sub": run_kimi_sub, "omp-sub": run_omp_sub, "opencode-sub": run_opencode_sub, "cmd-sub": run_cmd_sub, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
              "cc": run_cc, "cc-lean": run_cc, "cc-mid": run_cc, "cc-ecc": run_cc, "cc-superpowers": run_cc, "cc-caveman": run_cc,
              "cc-graphify": run_cc, "cc-gstack": run_cc, "cc-allplugins": run_cc}
 
