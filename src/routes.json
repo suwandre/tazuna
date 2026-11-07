@@ -14,19 +14,18 @@
     "max"
    ],
    "price": [
-    0.01199,
-    0.04794
+    0.01616,
+    0.06463
    ],
    "providers": [
-    "a6aa",
-    "x-loop",
     "bangai",
-    "lingai"
+    "lingai",
+    "kriora"
    ],
    "url": "https://subrouter.ai/v1",
-   "vetted_at": 1793961079,
+   "vetted_at": 1794079024,
    "via": "subrouter",
-   "why": "2026-11-06 gauge (5 rounds, night and China-busy morning): genuine tokenizer whenever measured, answered nearly every call. a6aa and x-loop cheap; bangai (AIME 28-30, never failed) and lingai steady. znu served another model by day; stableai and model-share left SubRouter's list; kriora down by day."
+   "why": "2026-11-07: a6aa dropped: its content filter refused two of six bench tasks outright (hugo, 2026-11-07) after refusing a question on 11-05; SubRouter does not pass a refusal on. bangai and lingai 29/30, kriora 30/30 (AIME, evening 11-07)"
   },
   "gpt-6-luna": {
    "cached": 92,

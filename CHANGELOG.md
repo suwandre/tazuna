@@ -34,6 +34,31 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.72 (2026-11-07): built-in DeepSeek route bangai, lingai, kriora; Vibe CLI against tazuna (bench)
+
+- The DeepSeek 1017 route (built in, and our route key) is bangai, lingai, kriora. Dropped: x-loop (AIME 20/30 that
+  evening, read as another model at 16:57) and a6aa (its content filter refused two of six bench tasks at their first
+  call, after refusing a question on 11-05; SubRouter does not pass a refusal on). The gauge found every provider
+  serving another model at least once in two days (tokens a line 36.5 or 56 against 49; the same 56 and hidden prompt on
+  ydjs-ai and x-loop at once); those rounds also ran long: 7-11k output tokens a solved AIME problem against 3-4k.
+- Bench: Mistral's Vibe CLI 3.1 (stock, headless, the user's EDU plan, only its own four skills: it also loads
+  ~/.agents/skills) with DeepSeek V4.1 Flash 1017 hosted by Mistral, against tazuna 0.1.71's own loop on the SubRouter
+  route, the six Go tasks, one run each, Sol judging each task's pool (three tasks rejudged in a pool of their own after
+  tazuna's reruns: a6aa refused two, k6 timed out at 60 minutes on a6aa's route).
+
+| Arm | Judge | Hidden | Minutes (median) | Calls (median) | Uncached + cached a run | Cost a run |
+|---|---|---|---|---|---|---|
+| Vibe, high | 7.00 | 22/24 | 27 | 92 | 1.37M + 6.2M | ~$0.55 of plan usage (~$6 for 11 runs) |
+| Vibe, max | 7.17 | 20/24 | 22 | 98 | 1.29M + 6.5M | similar |
+| tazuna own loop, SubRouter, high | 6.33 | 18/24 | 23 | 74 | 0.27M + 4.7M | $0.015 |
+
+  Vibe +0.67 judge (inside the 0.75 noise threshold, at half its run count) and 4 more hidden tests; max no better than
+  high. Harness and provider differ at once: tazuna on a provider that serves the real model every round (OpenScale,
+  1.7 s to first token, 195 tok/s, AIME 29/30; or Mistral's API) would tell which.
+- Two flat-price providers checked the same evening, both the real model: Experiential Labs (free tier: AIME 30/30,
+  MMLU 88, 2.5 s, 116 tok/s, 99% cached) and OpenScale (pay-as-you-go test credit: 29/30, 87, 1.7 s, 195 tok/s, 95%).
+  At SubRouter's $0.003-0.0095 per M tokens, a $20-29 plan breaks even only past 2-10 billion tokens a month.
+
 ## 0.1.71 (2026-11-06): one SubRouter key for every model
 
 - Other users bring one SubRouter key, not a key per model and provider. A key holds a provider list per model

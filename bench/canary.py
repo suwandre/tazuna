@@ -70,7 +70,8 @@ def ask(model, key, effort, text, max_tokens=32000):
             "stream_options": {"include_usage": True}}
     if effort:
         body["reasoning_effort"] = effort
-    q = urllib.request.Request("https://subrouter.ai/v1/chat/completions", data=json.dumps(body).encode(),
+    # CANARY_URL: another OpenAI-compatible provider (flat plans, 2026-11-07); SubRouter by default
+    q = urllib.request.Request(os.environ.get("CANARY_URL", "https://subrouter.ai/v1") + "/chat/completions", data=json.dumps(body).encode(),
                                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "curl/8",
                                         "Accept": "text/event-stream"})
     err = None
@@ -144,7 +145,8 @@ def run(model, key_env, effort, codex=False):
         return row
 
     OUT.parent.mkdir(exist_ok=True)
-    with ThreadPoolExecutor(4 if codex else 8) as ex:  # the plan: a few at a time
+    # the plan: a few at a time; CANARY_WORKERS for a provider with a low request rate (Experiential Labs free: 10 a minute)
+    with ThreadPoolExecutor(int(os.environ.get("CANARY_WORKERS", 4 if codex else 8))) as ex:
         done = list(ex.map(one, items))
     summary(done)
 

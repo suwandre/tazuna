@@ -10,6 +10,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import subrouter as s  # noqa: E402
 
 M, SLUGS = sys.argv[1], sys.argv[2:]
+# another OpenAI-compatible provider (2026-11-07: flat plans): PROVSMOKE_URL its base, PROVSMOKE_KEY_ENV its key; the one
+# "slug" then only labels the rows, and no SubRouter keys are made
+BASE = os.environ.get("PROVSMOKE_URL", "https://subrouter.ai/v1")
+OWN_KEY = os.environ.get("PROVSMOKE_KEY_ENV")
+if OWN_KEY:
+    os.environ.setdefault("CANARY_URL", BASE)
 SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src")
 CONTEXT = open(os.path.join(SRC, "engine.rs")).read()[:60000]
 TOOL = {"type": "function", "function": {"name": "bash", "description": "Run a shell command in the repo.",
@@ -39,7 +45,7 @@ def call_responses(key, msgs):
     tool = {"type": "function", "name": "bash", "description": TOOL["function"]["description"], "parameters": TOOL["function"]["parameters"]}
     body = {"model": M, "instructions": msgs[0]["content"], "input": msgs[1:], "tools": [tool], "store": False, "stream": True,
             "reasoning": {"effort": os.environ.get("PROVSMOKE_EFFORT", "high")}, "max_output_tokens": 6000}
-    q = urllib.request.Request("https://subrouter.ai/v1/responses", data=json.dumps(body).encode(),
+    q = urllib.request.Request(BASE + "/responses", data=json.dumps(body).encode(),
                                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "curl/8", "Accept": "text/event-stream"})
     t0, first, usage, text, tools = time.time(), None, {}, "", 0
     try:
@@ -74,7 +80,7 @@ def call(key, msgs):
         return call_responses(key, msgs)
     body = {"model": M, "messages": msgs, "tools": [TOOL], "reasoning_effort": os.environ.get("PROVSMOKE_EFFORT", "high"), "max_tokens": 6000,
             "stream": True, "stream_options": {"include_usage": True}}
-    q = urllib.request.Request("https://subrouter.ai/v1/chat/completions", data=json.dumps(body).encode(),
+    q = urllib.request.Request(BASE + "/chat/completions", data=json.dumps(body).encode(),
                                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "curl/8"})
     t0, first, usage, text, tools = time.time(), None, {}, "", 0
     try:
@@ -115,7 +121,7 @@ def deep(key):
 
     def tokens_in(text):
         body = {"model": M, "messages": [{"role": "user", "content": text}], "max_tokens": 16, "reasoning_effort": "low"}
-        q = urllib.request.Request("https://subrouter.ai/v1/chat/completions", data=json.dumps(body).encode(),
+        q = urllib.request.Request(BASE + "/chat/completions", data=json.dumps(body).encode(),
                                    headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "curl/8"})
         with urllib.request.urlopen(q, timeout=180) as r:
             return json.load(r)["usage"]["prompt_tokens"]
@@ -137,7 +143,7 @@ def deep(key):
 
 
 def provider(slug, res):
-    key = os.environ[var(slug)]
+    key = os.environ[OWN_KEY or var(slug)]
     msgs = [{"role": "system", "content": "You are a coding agent in the tazuna repo. src/engine.rs:\n" + CONTEXT}]
     rows = []
     for ask in ASKS:
@@ -161,7 +167,7 @@ def provider(slug, res):
 
 
 res = {}
-for g in SLUGS:  # one at a time: each rewrites ~/.subrouter-key
+for g in [] if OWN_KEY else SLUGS:  # one at a time: each rewrites ~/.subrouter-key
     kid = s.key(short_name(f"tazuna-route-sm-{re.sub(r'[^a-z0-9]', '', M)[:10]}-{g}"), M, [g], var(g))  # SubRouter caps key names
     k = s.api(f"/api/token/{kid}")
     if bool(k.get("include_shared_subscriptions")) != g.startswith("shared-"):  # a shared pool serves only keys that allow them
