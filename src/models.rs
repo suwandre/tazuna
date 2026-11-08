@@ -418,14 +418,18 @@ pub fn start_effort(c: &Choice, current_model: &str, current_effort: &str) -> us
 mod tests {
     use super::*;
 
+    /// A second variable that is always set, standing in for a key beside PATH: HOME on Unix, USERPROFILE on Windows, which
+    /// has no HOME on GitHub's runners (the tests that used HOME failed there, 2026-11-08).
+    const SET: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+
     #[test]
     fn a_route_falls_back_to_its_other_providers() {
         let f = std::env::temp_dir().join(format!("tazuna-fallbacks-{}.json", std::process::id()));
         std::fs::write(&f, r#"{"routes": {"m": {"url": "https://subrouter.ai/v1", "key_env": "ROUTE_KEY",
             "pinned": {"a6aa": {"key_env": "PATH", "price": [0.012, 0.048]}, "znu": {"key_env": "HOME", "price": [0.0118, 0.047]},
-                       "gone": {"key_env": "TAZUNA_TEST_NO_SUCH_KEY", "price": [0.001, 0.01]}}}}}"#).unwrap();
-        assert_eq!(fallbacks(&f, "ROUTE_KEY"), "https://subrouter.ai/v1 HOME; https://subrouter.ai/v1 PATH", "cheapest first, unset keys left out");
-        assert_eq!(fallbacks(&f, "PATH"), "https://subrouter.ai/v1 HOME", "a pinned provider falls back to the others");
+                       "gone": {"key_env": "TAZUNA_TEST_NO_SUCH_KEY", "price": [0.001, 0.01]}}}}}"#.replace("HOME", SET)).unwrap();
+        assert_eq!(fallbacks(&f, "ROUTE_KEY"), format!("https://subrouter.ai/v1 {SET}; https://subrouter.ai/v1 PATH"), "cheapest first, unset keys left out");
+        assert_eq!(fallbacks(&f, "PATH"), format!("https://subrouter.ai/v1 {SET}"), "a pinned provider falls back to the others");
         assert_eq!(fallbacks(&f, "OTHER"), "");
         std::fs::remove_file(&f).ok();
     }
@@ -503,7 +507,7 @@ mod tests {
             "gpt-6.1-sol": {"url": "https://subrouter.ai/v1", "key_env": "PATH", "providers": ["kriora", "shared-openai-pro-50"],
                 "price": [0.0387, 0.1935], "cached": 91, "efforts": ["low", "high", "xhigh", "max"], "vetted_at": 1000000,
                 "pinned": {"shared-openai-pro-50": {"key_env": "TAZUNA_TEST_NO_SUCH_KEY", "price": [0.05, 0.25]},
-                           "kriora": {"key_env": "HOME", "price": [0.0387, 0.1935]}}}}}"#).unwrap();
+                           "kriora": {"key_env": "HOME", "price": [0.0387, 0.1935]}}}}}"#.replace("HOME", SET)).unwrap();
         let now = 1000000 + 9 * 86_400;
         let mut d: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
         d["catalog"] = serde_json::json!({"glm-5.3": {"price": [0.1, 0.4], "providers": 3}, "seadance-video": {"price": [1, 1], "providers": 1},
@@ -534,7 +538,7 @@ mod tests {
         assert_eq!(c[5].pins.iter().map(|p| p.provider.as_str()).collect::<Vec<_>>(), ["kriora", "shared-openai-pro-50"]);
         assert!(pinned(&c[5], 0).place.ends_with("tab: pin one") && pinned(&c[5], 0).route == c[5].route);
         let k = pinned(&c[5], 1);
-        assert_eq!((k.label.as_str(), k.route.as_ref().unwrap().1.as_str(), k.state), ("gpt-6.1-sol · kriora", "HOME", State::Ready));
+        assert_eq!((k.label.as_str(), k.route.as_ref().unwrap().1.as_str(), k.state), ("gpt-6.1-sol · kriora", SET, State::Ready));
         let s = pinned(&c[5], 2);
         assert_eq!((s.price.as_str(), s.route.as_ref().unwrap().2.as_str(), s.state), ("0.05 / 0.25", "0.05,0.005,0.25", State::NoKey));
         assert_eq!(pinned(&c[4], 1).label, c[4].label, "no pins: the route as it is");
