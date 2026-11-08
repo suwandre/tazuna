@@ -193,6 +193,20 @@ def proxy_url():
                     threading.Thread(target=_proxy_conn, args=(c,), daemon=True).start()
             threading.Thread(target=serve, daemon=True).start()
             _PROXY.append(f"http://127.0.0.1:{srv.getsockname()[1]}")
+            if sys.platform == "linux":
+                # the Linux jail has a network of its own: the proxy reaches it as this socket (netbridge.py)
+                sock = BENCH_HOMES / f".proxy-{os.getpid()}.sock"
+                sock.unlink(missing_ok=True)
+                us = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                us.bind(str(sock))
+                us.listen(64)
+                _PROXY_SOCK.append(str(sock))
+
+                def serve_unix():
+                    while True:
+                        c, _ = us.accept()
+                        threading.Thread(target=_proxy_conn, args=(c,), daemon=True).start()
+                threading.Thread(target=serve_unix, daemon=True).start()
     return _PROXY[0]
 
 
@@ -208,7 +222,15 @@ def proxy_env():
 # applied the fix commit from ~/bench-repos after the proxy blocked GitHub (2026-10-24). Agents run under sandbox-exec
 # with reads of these denied; outbound connections go only to localhost (the proxy, local test servers); their HOME and the work tree are as before.
 _H = Path.home()
-JAIL_DENY = sorted({json.loads(g.read_text())["repo"] for g in HERE.glob("tasks*/*/git.json")}) + [
+
+
+def repo_path(p):
+    """A task's repo: git.json names it on the Mac (/Users/.../bench-repos/caddy); elsewhere (the Linux bench VM) the
+    same name under this home's bench-repos."""
+    return p if os.path.exists(p) else str(_H / "bench-repos" / Path(p).name)
+
+
+JAIL_DENY = sorted({repo_path(json.loads(g.read_text())["repo"]) for g in HERE.glob("tasks*/*/git.json")}) + [
     HERE.parent, _H / "go/pkg/mod", _H / ".claude/projects", _H / ".codex/sessions", _H / ".local/share/opencode"]
 # any copy of this directory too: a git worktree of the repo in ~/bench-homes held the tasks' reference patches, and a
 # run read one (v353, 2026-10-25)
@@ -222,6 +244,69 @@ JAIL = "(version 1)(allow default)(deny file-read* " + " ".join(
 # and copied tests from a killed run's tree left in TMPDIR; pi v518 mined an earlier pi transcript in its own HOME
 # (2026-10-28). A run reads only its own work tree among rw-*; the harnesses' logs can be written and listed, not read.
 LOGS = r"/bench-homes/[^/]+/(transcripts|\.local/share/(tazuna/sessions|opencode)|\.codex/sessions|\.claude/projects)/"
+
+
+LOG_DIRS = ["transcripts", ".local/share/tazuna/sessions", ".local/share/opencode", ".codex/sessions", ".claude/projects"]
+_PROXY_SOCK = []
+
+
+def bwrap_jail(cwd, env, cmd):
+    """The Linux jail (bubblewrap, 2026-11-08, for the bench VM): what sandbox-exec does on the Mac. The whole system
+    read-only; its own network namespace with only loopback, the proxy bridged in (netbridge.py); a fresh /tmp, so other
+    runs' rw- trees are gone; the work tree, its HOME, CLAUDE_CONFIG_DIR, BENCH_JAIL_ALSO and the Go caches writable.
+    Masked: JAIL_DENY, any other copy of bench/realwork in the bench homes, every harness's transcripts but this run's
+    own (written to a per-run directory, copied back afterwards), and the machine's credentials (API key files, the bench
+    token, ~/.ssh, gh's login), which on the Mac the jail left readable. Returns (argv prefix, copy-back pairs)."""
+    import uuid
+    args = ["bwrap", "--die-with-parent", "--unshare-net", "--unshare-pid", "--ro-bind", "/", "/", "--dev", "/dev",
+            "--proc", "/proc", "--tmpfs", "/tmp"]
+    for p in JAIL_DENY:
+        if os.path.isdir(p):
+            args += ["--tmpfs", os.path.realpath(p)]
+    for root, dirs, _ in os.walk(BENCH_HOMES):
+        if root.count(os.sep) - str(BENCH_HOMES).count(os.sep) > 4:
+            dirs[:] = []
+        elif os.path.basename(root) == "realwork" and os.path.basename(os.path.dirname(root)) == "bench":
+            args += ["--tmpfs", root]
+            dirs[:] = []
+    for f in [*_H.glob(".*-key"), _H / ".bench-token", _H / ".subrouter-account", _H / ".subrouter-key"]:
+        if f.is_file():
+            args += ["--ro-bind", "/dev/null", str(f)]
+    for d in (_H / ".ssh", _H / ".config/gh"):
+        if d.is_dir():
+            args += ["--tmpfs", str(d)]
+    own = [h for h in {env.get("HOME"), env.get("CLAUDE_CONFIG_DIR"), env.get("BENCH_JAIL_ALSO")} if h]
+    for h in BENCH_HOMES.glob("*"):  # every harness's logs are hidden
+        for rel in LOG_DIRS:
+            if (h / rel).is_dir() and not any(str(h / rel).startswith(o) for o in own):
+                args += ["--tmpfs", str(h / rel)]
+    for p in [cwd, *own, env.get("GOMODCACHE"), env.get("GOCACHE")]:
+        if p and os.path.isdir(p):
+            args += ["--bind", os.path.realpath(p), os.path.realpath(p)]
+    # files the command names under the fresh /tmp, read-only (run_harness's prompt file sits in a temp folder of its own)
+    tmp = os.path.realpath(tempfile.gettempdir()) + "/"
+    rw = {os.path.realpath(p) for p in [cwd, env.get("GOCACHE")] if p}
+    for x in {*[a for a in cmd if isinstance(a, str)], *env.values()}:
+        if x.startswith(tmp) and os.path.exists(x) and not any(os.path.realpath(x).startswith(r) for r in rw):
+            args += ["--ro-bind", os.path.realpath(x), os.path.realpath(x)]
+    back = []  # this run's own logs: a fresh directory over each, copied into the real one afterwards
+    run = BENCH_HOMES / ".runlogs" / uuid.uuid4().hex
+    for o in own:
+        for rel in LOG_DIRS + ["projects"]:  # CLAUDE_CONFIG_DIR keeps its transcripts in projects/
+            real = Path(o) / rel
+            if rel == "projects" and o != env.get("CLAUDE_CONFIG_DIR"):
+                continue
+            real.mkdir(parents=True, exist_ok=True)
+            fresh = run / str(len(back))
+            fresh.mkdir(parents=True)
+            args += ["--bind", str(fresh), str(real)]
+            back.append((fresh, real))
+    port = env["HTTPS_PROXY"].rsplit(":", 1)[1]
+    sock = _PROXY_SOCK[0]
+    # the bridge's code goes in as -c: bench/ (where netbridge.py lives) is masked inside the jail
+    src = (HERE / "netbridge.py").read_text()
+    args += ["--ro-bind", sock, sock, "--chdir", str(cwd), "--", sys.executable, "-I", "-c", src, port, sock, "--"]
+    return args, back
 
 
 def jail_for(w, also=None):
@@ -260,7 +345,12 @@ def sh(cmd, cwd, timeout=900, env=None, shell=False, stamp=None):
     # PWD follows cwd: the inherited one pointed at bench/realwork, which OpenCode took for its project, finding the tasks'
     # reference fixes and hidden tests there (2026-10-24)
     env = {**(env or {**os.environ, **cur_go_env()}), "PWD": str(cwd)}
-    if env.get("BENCH_JAIL"):
+    back = []
+    if env.get("BENCH_JAIL") and sys.platform == "linux":
+        prefix, back = bwrap_jail(cwd, env, [cmd] if shell else cmd)
+        cmd = [*prefix, *(["/bin/sh", "-c", cmd] if shell else cmd)]
+        shell = False
+    elif env.get("BENCH_JAIL"):
         cmd = ["sandbox-exec", "-p", jail_for(cwd, env.get("BENCH_JAIL_ALSO")), *(["/bin/sh", "-c", cmd] if shell else cmd)]
         shell = False
     if stamp:  # a timestamped copy of the JSON lines on stdout (stamp.py, outside the jail)
@@ -277,6 +367,11 @@ def sh(cmd, cwd, timeout=900, env=None, shell=False, stamp=None):
                 pass
         p.communicate()
         raise
+    finally:
+        for fresh, real in back:  # the run's own transcripts into the harness's log directory, as on the Mac
+            shutil.copytree(fresh, real, dirs_exist_ok=True)
+        if back:
+            shutil.rmtree(back[0][0].parent, ignore_errors=True)
     return subprocess.CompletedProcess(cmd, p.returncode, out, err)
 
 
@@ -284,7 +379,7 @@ def sh(cmd, cwd, timeout=900, env=None, shell=False, stamp=None):
 
 def setup_workdir(task, w):
     g = json.loads((task / "git.json").read_text())
-    subprocess.run(f"git -C '{g['repo']}' archive {g['base']} | tar -x -C '{w}'", shell=True, check=True)
+    subprocess.run(f"git -C '{repo_path(g['repo'])}' archive {g['base']} | tar -x -C '{w}'", shell=True, check=True)
     sh(["git", "init", "-q"], w); sh(["git", "config", "gc.auto", "0"], w)  # no background gc racing copies of the tree
     sh(["git", "add", "-A"], w); sh(["git", *GIT_ID, "commit", "-qm", "base"], w)
     # the setup fetches the base's modules into the task's own cache (the agent then runs with GOPROXY=off)
@@ -1314,7 +1409,7 @@ def _run_job(task, h, i):
     wait_gate()
     _TL.gomod = BENCH_HOMES / "gomod" / task.name
     g = json.loads((task / "git.json").read_text())
-    _TL.gowork = subprocess.run(["git", "-C", g["repo"], "cat-file", "-e", f"{g['base']}:go.work"], capture_output=True).returncode == 0
+    _TL.gowork = subprocess.run(["git", "-C", repo_path(g["repo"]), "cat-file", "-e", f"{g['base']}:go.work"], capture_output=True).returncode == 0
     for attempt in range(8):
         with tempfile.TemporaryDirectory(prefix=f"rw-{task.name}-{h}-", ignore_cleanup_errors=True) as d:
             w = Path(d).resolve()

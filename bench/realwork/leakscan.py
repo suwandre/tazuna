@@ -118,7 +118,8 @@ def has_fix(moddir, patch):
 def task_rules(tdir):
     g = json.loads((tdir / "git.json").read_text())
     owner, repo = re.match(r"https://github.com/([^/]+)/([^/]+)/", g["pr"]).groups()  # type: ignore[union-attr]
-    mod = subprocess.run(["git", "-C", g["repo"], "show", f"{g['base']}:go.mod"], capture_output=True,
+    repo = g["repo"] if os.path.exists(g["repo"]) else str(Path.home() / "bench-repos" / Path(g["repo"]).name)  # the Linux VM
+    mod = subprocess.run(["git", "-C", repo, "show", f"{g['base']}:go.mod"], capture_output=True,
                          text=True).stdout.split("\n", 1)[0].removeprefix("module ").strip()
     rules = {
         "local": re.compile(r"bench-repos/" + re.escape(Path(g["repo"]).name) + r"\b|bench/realwork/tasks[\w-]*/"
