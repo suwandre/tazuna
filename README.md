@@ -14,7 +14,7 @@ Early. What works today:
 - **Live mode**: run `tazuna` in a git repo, type a task. One `claude` process per conversation (warm prompt cache),
   clean interrupts (`esc` or `ctrl-c`), follow-ups, readline-style editing (`←→`, `ctrl-a/e/u/k/w`) and history (`↑↓`,
   kept across sessions), `ctrl-o` to expand tool output, multi-line input (`\` then enter, or `ctrl-j`; shift/alt-enter where the terminal
-  reports it), mouse scrolling, drag over the transcript to select and copy its text (never the side panel), copy the last
+  reports it), mouse scrolling, drag over the transcript to select and copy its text (on Windows select, then `ctrl-c`; never the side panel), copy the last
   reply (`ctrl-y`), `ctrl-s` hands the mouse to the terminal.
   `tazuna -c` continues this repo's latest session (`--resume <id>` a given one), with the earlier transcript on screen.
   Slash commands go to claude (built-ins like `/compact`, `/cost`, `/clear`, `/model`, and the repo's own commands and
@@ -146,7 +146,9 @@ tazuna ~/.local/share/tazuna/sessions/<file>.jsonl           # replay a session 
 Requires the `claude` CLI (logged in). Nothing else: the lean tools are built into the tazuna binary.
 
 Cheap non-Claude models (DeepSeek, GPT through SubRouter) run on tazuna's own loop with one SubRouter key in
-`SUBROUTER_API_KEY`; `/model` picks them. SubRouter's providers for a model differ a lot (some serve another model, some
+`SUBROUTER_API_KEY`, and Mistral's with a Mistral key in `MISTRAL_API_KEY`; `/model` picks them. A provider sees your
+code, so its host goes in `~/.config/tazuna/trusted-providers` first (one per line: `subrouter.ai`, `api.mistral.ai`);
+`/model` shows every model and says what a greyed one still needs. SubRouter's providers for a model differ a lot (some serve another model, some
 barely cache), so tazuna ships the providers our gauge checked: `tazuna subrouter` prints them per model and where to set
 them on your key, `tazuna subrouter --apply` sets them itself (with your account's access token in
 `~/.subrouter-account`; nothing else on the key changes).

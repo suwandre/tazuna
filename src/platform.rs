@@ -1,6 +1,6 @@
 //! What differs between macOS/Linux and Windows, in one place: the home folder, the shell commands run in, stopping a
-//! command with everything it started, private files and folders, notifications, the clipboard image, quoting a path for
-//! a hook. Windows runs commands in Git Bash, as Claude Code itself does there, so the agent's commands, the test check
+//! command with everything it started, private files and folders, notifications, copying text and pasting an image,
+//! quoting a path for a hook. Windows runs commands in Git Bash, as Claude Code itself does there, so the agent's commands, the test check
 //! and `!` read the same on every platform.
 
 use std::ffi::OsStr;
@@ -235,6 +235,141 @@ pub fn clipboard_image(path: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Where `copy_text` put the text.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Copied {
+    Clipboard,
+    /// Handed to the terminal (OSC 52), which cannot say whether it took it.
+    Terminal,
+}
+
+impl Copied {
+    /// What a "copied N chars" message adds.
+    pub fn how(self) -> &'static str {
+        match self {
+            Copied::Clipboard => "",
+            Copied::Terminal => " (through the terminal)",
+        }
+    }
+}
+
+/// Puts `text` on the clipboard. Over SSH this machine's clipboard is the wrong one, so the terminal gets it (OSC 52:
+/// Windows Terminal, iTerm2, kitty, WezTerm, Ghostty; tmux with `set-clipboard on`). Otherwise the system's: pbcopy on
+/// macOS, the clipboard API on Windows, wl-copy, xclip or xsel on Linux; the terminal when none of them takes it. Copying
+/// ran pbcopy everywhere until 0.1.77: "pbcopy: program not found" on Windows.
+pub fn copy_text(text: &str) -> std::io::Result<Copied> {
+    let remote = std::env::var_os("SSH_TTY").is_some() || std::env::var_os("SSH_CONNECTION").is_some();
+    if !remote && system_copy(text).is_ok() {
+        return Ok(Copied::Clipboard);
+    }
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()))?;
+    out.flush()?;
+    Ok(Copied::Terminal)
+}
+
+fn system_copy(text: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    return pipe_to("pbcopy", &[], text);
+    #[cfg(windows)]
+    return windows_clipboard(text);
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() && pipe_to("wl-copy", &[], text).is_ok() {
+            return Ok(());
+        }
+        pipe_to("xclip", &["-selection", "clipboard"], text).or_else(|_| pipe_to("xsel", &["--clipboard", "--input"], text))
+    }
+}
+
+/// `text` on the standard input of `cmd`, which must exit 0.
+#[cfg(not(windows))]
+fn pipe_to(cmd: &str, args: &[&str], text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(cmd).args(args).stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::null()).spawn()?;
+    child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?.write_all(text.as_bytes())?;
+    let status = child.wait()?;
+    if status.success() { Ok(()) } else { Err(std::io::Error::other(format!("{cmd}: {status}"))) }
+}
+
+/// The text as CF_UNICODETEXT through the clipboard API. Not clip.exe: it guesses the input's encoding and guessed wrong
+/// both ways on Windows 11 (2026-11-08): UTF-8 "Bush hid the facts" came out as CJK, UTF-16 "ä" alone as mojibake, and a
+/// byte-order mark stays in as a character.
+#[cfg(windows)]
+fn windows_clipboard(text: &str) -> std::io::Result<()> {
+    use std::ffi::c_void;
+    #[link(name = "user32")]
+    unsafe extern "system" {
+        fn OpenClipboard(owner: *mut c_void) -> i32;
+        fn EmptyClipboard() -> i32;
+        fn SetClipboardData(format: u32, mem: *mut c_void) -> *mut c_void;
+        fn CloseClipboard() -> i32;
+    }
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GlobalAlloc(flags: u32, bytes: usize) -> *mut c_void;
+        fn GlobalLock(mem: *mut c_void) -> *mut c_void;
+        fn GlobalUnlock(mem: *mut c_void) -> i32;
+        fn GlobalFree(mem: *mut c_void) -> *mut c_void;
+    }
+    const CF_UNICODETEXT: u32 = 13;
+    const GMEM_MOVEABLE: u32 = 0x0002;
+    // Windows text has CRLF line ends; NUL-terminated UTF-16
+    let wide: Vec<u16> = text.replace("\r\n", "\n").replace('\n', "\r\n").encode_utf16().chain([0]).collect();
+    // another program can hold the clipboard for a moment
+    let mut tries = 0;
+    while unsafe { OpenClipboard(std::ptr::null_mut()) } == 0 {
+        tries += 1;
+        if tries == 10 {
+            return Err(std::io::Error::last_os_error());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let put = || -> std::io::Result<()> {
+        unsafe {
+            if EmptyClipboard() == 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            let mem = GlobalAlloc(GMEM_MOVEABLE, wide.len() * 2);
+            if mem.is_null() {
+                return Err(std::io::Error::last_os_error());
+            }
+            let p = GlobalLock(mem) as *mut u16;
+            if p.is_null() {
+                GlobalFree(mem);
+                return Err(std::io::Error::last_os_error());
+            }
+            std::ptr::copy_nonoverlapping(wide.as_ptr(), p, wide.len());
+            GlobalUnlock(mem);
+            // the clipboard owns the memory once this succeeds
+            if SetClipboardData(CF_UNICODETEXT, mem).is_null() {
+                let e = std::io::Error::last_os_error();
+                GlobalFree(mem);
+                return Err(e);
+            }
+            Ok(())
+        }
+    };
+    let r = put();
+    unsafe { CloseClipboard() };
+    r
+}
+
+/// Standard base64 with padding, as OSC 52 carries the text.
+fn base64(b: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut s = String::with_capacity(b.len().div_ceil(3) * 4);
+    for c in b.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            s.push(if i <= c.len() { A[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+        }
+    }
+    s
+}
+
 /// A path as one word in a command claude runs through its shell (the diagnostics and boss hooks): single-quoted for
 /// bash; on Windows with forward slashes, which Git Bash reads as the same path, where backslashes would be escapes.
 pub fn sh_quote(p: &Path) -> String {
@@ -256,6 +391,12 @@ mod tests {
         let out = shell(&format!("printf '%s' {q}"), &[]).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&out.stdout), "/tmp/it's here/tazuna");
         assert!(home().is_some());
+    }
+
+    #[test]
+    fn base64_pads_like_the_standard() {
+        assert_eq!([&b""[..], b"f", b"fo", b"foo", b"foob", b"fooba", b"foobar"].map(base64), ["", "Zg==", "Zm8=", "Zm9v", "Zm9vYg==", "Zm9vYmE=", "Zm9vYmFy"]);
+        assert_eq!(base64("Grüße 🙂".as_bytes()), "R3LDvMOfZSDwn5mC");
     }
 
     #[test]

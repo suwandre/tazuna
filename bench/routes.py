@@ -16,7 +16,7 @@ SubRouter labels some price lists CNY, but its billing counts those numbers as U
   routes.py tiers [--write]       DeepSeek's providers from the gauge (provgauge.jsonl, canary): up to 4 of the cheapest that
                                   passed every check and up to 2 proven ones at up to 3x the floor; --write sets the route
   routes.py set MODEL SLUG,...    a route's providers by hand (the route key, routes.json, a pinned key each): `tiers` proposes
-  routes.py ship                  src/routes.json, built into tazuna: the checked routes without keys, for users with one key
+  routes.py ship                  src/routes.json, built into tazuna: the checked routes (no bench keys) and SubRouter's list
 """
 import json, re, subprocess, sys, time
 from concurrent.futures import ThreadPoolExecutor
@@ -382,16 +382,35 @@ def set_route(model, slugs, why):
     print(f"{model}: {', '.join(slugs)} (pinned: {', '.join(r.get('pinned', {}))})")
 
 
+# Public providers whose checked routes ship beside SubRouter's, each with the key variable a user sets for it (Mistral's
+# own name for its key; the bench's machines name theirs in routes.json). A route on any other host stays home: the PC's
+# Strata is on a Tailscale address.
+PUBLIC = {"api.mistral.ai": "MISTRAL_API_KEY"}
+
+
 def ship():
-    """The checked routes as tazuna's built-in list (src/routes.json): what a user with one SubRouter key needs to pick a
-    model and to set its providers on that key (`tazuna subrouter`). No key names: their key is SUBROUTER_API_KEY."""
+    """tazuna's built-in list (src/routes.json), for a user without our bench: SubRouter's checked routes without key
+    names (their one key is SUBROUTER_API_KEY; `tazuna subrouter` sets each model's providers on it), the routes on a
+    PUBLIC provider with that provider's key variable, and every SubRouter model the picker lists (those with an AA
+    index) with its price. Until 0.1.77 only the SubRouter routes shipped: a new install listed four SubRouter models
+    and no Mistral, the bench's machines over a hundred (2026-11-08). Our bench's scores stay home."""
     cur = json.loads(OUT.read_text())
     keep = ("url", "model", "providers", "price", "cached", "efforts", "vetted_at", "why", "via")
-    routes = {n: {k: v for k, v in r.items() if k in keep} for n, r in cur["routes"].items() if "@" not in n}
+    host = lambda url: url.split("://")[-1].split("/")[0].split(":")[0]
     slug = lambda m: m.lower().replace(".", "-")
-    out = {"routes": routes, "aa": {k: v for k, v in cur.get("aa", {}).items() if k in {slug(r.get("model", n)) for n, r in routes.items()}}}
+    routes = {}
+    for n, r in cur["routes"].items():
+        h = host(r.get("url", ""))
+        if h == "subrouter.ai" and "@" not in n:
+            routes[n] = {k: v for k, v in r.items() if k in keep}
+        elif h in PUBLIC:
+            routes[n] = {**{k: v for k, v in r.items() if k in keep}, "key_env": PUBLIC[h]}
+    aa = cur.get("aa", {})
+    listed = {m: c for m, c in cur.get("catalog", {}).items() if slug(m) in aa}
+    wanted = {slug(r.get("model", n)) for n, r in routes.items()} | {slug(m) for m in listed}
+    out = {"routes": routes, "catalog": listed, "aa": {k: v for k, v in aa.items() if k in wanted}}
     (HERE.parent / "src" / "routes.json").write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
-    print(f"src/routes.json: {', '.join(routes)}")
+    print(f"src/routes.json: {len(routes)} routes ({', '.join(routes)}), {len(listed)} more SubRouter models")
 
 
 def show():

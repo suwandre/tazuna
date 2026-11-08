@@ -297,6 +297,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-08: a user without our bench sees what the bench's machines see. The built-in list ships SubRouter's picker
+  list and Mistral's checked routes (on `MISTRAL_API_KEY`), never a route on a private host or the bench's scores;
+  `/model` greys out what the user's SubRouter key may not use and drops SubRouter's copies of subscription models.
+  Reason: a new install on the Windows PC listed 4 SubRouter models and no Mistral (the Mac 34 rows), and a pick of
+  SubRouter's "claude-opus-5.5" ran Opus off the plan and failed with a 403 on a key without it.
 - 2026-10-31: the Claude path ties stock Claude Code 2.1.314 on Opus medium (6.88 against 6.94, hidden 20/26 each) at
   −44% cost but 1.8x the time (boss mode). Bug (fixed in 0.1.8): a headless run that passed its final check hung while a
   shell a finished subagent had left running was still counted as work claude would wake up for. Weekly canary script

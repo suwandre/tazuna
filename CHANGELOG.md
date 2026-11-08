@@ -16,6 +16,30 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.77 (2026-11-08): copying on Windows and Linux, the plan line on a new install, `/model` for users without the bench
+
+- Copying (a drag over the transcript, `ctrl-y`) ran `pbcopy` everywhere: "copy failed: pbcopy: program not found" on
+  Windows. Now the system's clipboard: pbcopy on macOS, the clipboard API on Windows (not clip.exe, which guesses the
+  encoding and on Windows 11 got "Bush hid the facts", a lone "ä" and a byte-order mark wrong), wl-copy, xclip or xsel on
+  Linux. Over SSH, or where none of them takes it, the terminal gets the text (OSC 52: "copied N chars (through the
+  terminal)"). On Windows a drag only selects and ctrl+c copies, as everywhere else there; releasing a drag still copies
+  on macOS and Linux (0.1.70).
+- The Claude plan line (5h, 7d) came only from earlier sessions' readings, so a machine without one showed none (the
+  Windows PC, a new install that had run only Mistral and SubRouter). A session that finds no reading takes one at the
+  start (one short Haiku call through claude, as `/usage` does; not with ANTHROPIC_API_KEY set). Readings from `/usage`
+  and the start now go into the recording, so the next session opens with them (they were shown, not kept).
+- The built-in model list (`bench/routes.py ship`) holds SubRouter's whole picker list (29 more models) and Mistral's
+  checked routes on Mistral's usual key variable, `MISTRAL_API_KEY`: a new install listed 4 SubRouter models and no
+  Mistral, the bench's machines 34 rows. Routes on a private host (the PC's Strata) stay home, and so do the bench's
+  scores. Built-in routes are never marked stale: `tazuna upgrade` renews them.
+- `/model` greys out the models SubRouter does not let `SUBROUTER_API_KEY` use (its /v1/models, read at the start): a key
+  limited to 18 models answered 403 for the rest. SubRouter's copies of the subscription's models ("claude-opus-5.5"
+  beside "claude-opus-5-5") are gone: a pick of one ran Opus through SubRouter instead of the plan. A greyed row says what
+  to do: the variable to set (it said `source ~/.subrouter-key`, a file only the bench's machines have), or the line to
+  add to the trusted list and where that file is.
+- Binary size +42 KB (+0.7%: 6,127,616 to 6,170,112 bytes, Windows release builds of main and this change on one
+  machine), 9 KB of it the longer built-in list. No change to prompts, tools or routing; tier0.sh not run (Windows).
+
 ## The DeepSeek Harness's speed was its provider, 2026-11-04 (bench only)
 
 tazuna's own loop on DeepSeek's official API (the Harness's provider): deepseek-flash (V4.1 Flash 1017) at xhigh,
