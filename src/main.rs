@@ -59,7 +59,7 @@
 //!          [--no-project-instructions]   # lean profile: don't add the repo's CLAUDE.md / AGENTS.md to the prompt
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
-//!   tazuna upgrade [--force]   # the newest release (GitHub) in place of this binary; `tazuna --version` says which this is
+//!   tazuna upgrade [--force]   # (or update) the newest release (GitHub) in place of this binary; `tazuna --version` says which
 //!   tazuna subrouter [--apply]   # each checked model's SubRouter providers, set on your one key (--apply: with the
 //!                                # account's access token in ~/.subrouter-account)
 //!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
@@ -443,8 +443,8 @@ fn main() -> Result<()> {
         println!("tazuna {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    if std::env::args().nth(1).as_deref() == Some("upgrade") {
-        // `tazuna upgrade [--force]`: the newest GitHub release in place of this binary
+    if matches!(std::env::args().nth(1).as_deref(), Some("upgrade" | "update")) {
+        // `tazuna upgrade [--force]` (or `update`, the word other CLIs use): the newest GitHub release in place of this binary
         return versions::upgrade_cli(&std::env::args().skip(2).collect::<Vec<_>>());
     }
     if std::env::args().nth(1).as_deref() == Some("mcp") {

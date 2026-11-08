@@ -297,6 +297,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-08: CI builds every platform, macOS too, and a release needs no Mac (`./release.sh` checks, tags and pushes).
+  Reason: the Mac built macOS because macOS runners counted 10x against a private repo's Actions minutes; the repo is
+  public now, where standard runners cost nothing. Installs the usual way too: one-line installers and `tazuna update`.
+  Next: a Homebrew tap (a tap repo and a token for CI to update it); npm, scoop and winget when users ask.
 - 2026-11-08: a user without our bench sees what the bench's machines see. The built-in list ships SubRouter's picker
   list and Mistral's checked routes (on `MISTRAL_API_KEY`), never a route on a private host or the bench's scores;
   `/model` greys out what the user's SubRouter key may not use and drops SubRouter's copies of subscription models.

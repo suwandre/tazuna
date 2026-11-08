@@ -23,14 +23,16 @@ const REPO: &str = "suwandre/tazuna";
 fn asset_name() -> Option<&'static str> {
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("macos", "aarch64") => Some("tazuna-aarch64-apple-darwin.tar.gz"),
+        ("macos", "x86_64") => Some("tazuna-x86_64-apple-darwin.tar.gz"),
         ("linux", "x86_64") => Some("tazuna-x86_64-unknown-linux-gnu.tar.gz"),
+        ("linux", "aarch64") => Some("tazuna-aarch64-unknown-linux-gnu.tar.gz"),
         ("windows", "x86_64") => Some("tazuna-x86_64-pc-windows-msvc.zip"),
         _ => None,
     }
 }
 
-/// A token for GitHub: GH_TOKEN or GITHUB_TOKEN, else the gh CLI's login. The repo is private, so its releases need one;
-/// a public repo would answer without.
+/// A token for GitHub, where there is one: GH_TOKEN or GITHUB_TOKEN, else the gh CLI's login. The repo is public (since
+/// 2026-11-08), so releases come without one; a token only lifts GitHub's limit of 60 unauthenticated calls an hour.
 fn github_token() -> Option<String> {
     let set = |k: &str| std::env::var(k).ok().filter(|t| !t.trim().is_empty());
     set("GH_TOKEN").or_else(|| set("GITHUB_TOKEN")).or_else(|| {
@@ -48,8 +50,7 @@ fn github_get(url: &str, accept: &str, token: Option<&str>) -> anyhow::Result<ur
     let r = q.call()?;
     match r.status().as_u16() {
         200 => Ok(r),
-        404 if token.is_none() => anyhow::bail!("no tazuna release visible: the repo is private, so log in with `gh auth login` (or set GH_TOKEN)"),
-        404 => anyhow::bail!("no tazuna release yet (or this GitHub login cannot see {REPO})"),
+        404 => anyhow::bail!("no tazuna release yet ({url})"),
         s => anyhow::bail!("GitHub answered HTTP {s} for {url}"),
     }
 }
@@ -114,7 +115,7 @@ pub fn upgrade_cli(args: &[String]) -> anyhow::Result<()> {
 }
 
 /// Once a day at most: "tazuna X is out" when the newest release is newer than this binary. The check is cached in
-/// update-check.json; nothing when offline, without a GitHub login for the private repo, or with TAZUNA_NO_UPDATE_CHECK.
+/// update-check.json; nothing when offline or with TAZUNA_NO_UPDATE_CHECK.
 pub fn update_notice(data: &Path, now: u64) -> Option<String> {
     if std::env::var_os("TAZUNA_NO_UPDATE_CHECK").is_some() {
         return None;
