@@ -1,6 +1,7 @@
-# A GitHub release per version tag (2026-11-08): `git tag v0.1.76 && git push origin v0.1.76` builds tazuna for macOS
-# (Apple silicon), Linux and Windows, puts the archives on the release, and the version's CHANGELOG section as its notes.
-# `tazuna upgrade` installs the newest; a live session says once a day when one is out (src/versions.rs).
+# A GitHub release per version tag (2026-11-08). ./release.sh tags the version in Cargo.toml, pushes the tag, builds the
+# macOS (Apple silicon) archive on the Mac it runs on and uploads it; this workflow creates the release (notes: the
+# version's CHANGELOG section) and adds Linux and Windows builds, tested on Windows first. macOS runners count 10x against
+# a private repo's Actions minutes and the Mac is at hand, so CI builds no macOS. `tazuna upgrade` installs the newest.
 name: release
 on:
   push:
@@ -19,13 +20,12 @@ jobs:
           v="${GITHUB_REF_NAME#v}"
           awk -v v="$v" 'index($0, "## " v " ") == 1 {on=1; next} on && /^## / {exit} on' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "tazuna $v" > notes.md
-          gh release create "$GITHUB_REF_NAME" --title "tazuna $v" --notes-file notes.md
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "tazuna $v" --notes-file notes.md
   build:
     needs: release
     strategy:
       matrix:
         include:
-          - { os: macos-latest, target: aarch64-apple-darwin }
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
@@ -33,8 +33,12 @@ jobs:
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
+      - uses: Swatinem/rust-cache@v2
       - run: cargo build --release
-      - name: package and upload (macOS, Linux)
+      # the only Windows test run since windows.yml went manual (it ran on every push: ~6 minutes, counted double)
+      - if: runner.os == 'Windows'
+        run: cargo test
+      - name: package and upload (Linux)
         if: runner.os != 'Windows'
         run: |
           tar -C target/release -czf "tazuna-${{ matrix.target }}.tar.gz" tazuna

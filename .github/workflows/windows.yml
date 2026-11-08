@@ -1,9 +1,9 @@
 # tazuna's build and tests on Windows (no Windows machine here; macOS cannot cross-compile ring without a Windows C
 # toolchain). The release binary is kept for a week as the run's artifact: `gh run download -n tazuna-windows`.
+# By hand only since 2026-11-08 (`gh workflow run windows.yml`): on every push it used ~770 of a private repo's Actions
+# minutes in eight days (64 runs, Windows counted double); each release now builds and tests on Windows (release.yml).
 name: windows
 on:
-  push:
-    paths: ["src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/windows.yml"]
   workflow_dispatch:
 jobs:
   build:
