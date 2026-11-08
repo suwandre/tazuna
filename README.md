@@ -121,11 +121,10 @@ under 0.75 and cost differences under 15% as noise (12 runs per arm), and compar
 
 ## Install and upgrade
 
-Each version tag becomes a GitHub release with builds for macOS (Apple silicon), Linux (x86_64) and Windows (x86_64).
-The repo is private, so the GitHub CLI (`gh auth login`) fetches it:
+Each version tag becomes a GitHub release with builds for macOS (Apple silicon), Linux (x86_64) and Windows (x86_64):
 
 ```sh
-mkdir -p ~/.local/bin && gh release download -R suwandre/tazuna -p 'tazuna-aarch64-apple-darwin.tar.gz' -O - | tar -xz -C ~/.local/bin
+mkdir -p ~/.local/bin && curl -fsSL https://github.com/suwandre/tazuna/releases/latest/download/tazuna-aarch64-apple-darwin.tar.gz | tar -xz -C ~/.local/bin
 tazuna --version
 tazuna upgrade      # later: the newest release in place of this binary (a live session says once a day when one is out)
 ```
