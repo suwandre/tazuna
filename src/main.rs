@@ -59,6 +59,7 @@
 //!          [--no-project-instructions]   # lean profile: don't add the repo's CLAUDE.md / AGENTS.md to the prompt
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
+//!   tazuna upgrade [--force]   # the newest release (GitHub) in place of this binary; `tazuna --version` says which this is
 //!   tazuna subrouter [--apply]   # each checked model's SubRouter providers, set on your one key (--apply: with the
 //!                                # account's access token in ~/.subrouter-account)
 //!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
@@ -438,6 +439,14 @@ fn parse(argv: Vec<String>) -> Result<Args> {
 }
 
 fn main() -> Result<()> {
+    if matches!(std::env::args().nth(1).as_deref(), Some("--version" | "-V")) {
+        println!("tazuna {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+    if std::env::args().nth(1).as_deref() == Some("upgrade") {
+        // `tazuna upgrade [--force]`: the newest GitHub release in place of this binary
+        return versions::upgrade_cli(&std::env::args().skip(2).collect::<Vec<_>>());
+    }
     if std::env::args().nth(1).as_deref() == Some("mcp") {
         return mcp::serve();
     }
@@ -1259,6 +1268,17 @@ fn run_live(
     }
     let (status_tx, status_rx) = std::sync::mpsc::channel::<serde_json::Value>();
     fetch_balance(&status_tx);
+    // a newer release, said once a day (versions::update_notice); off the UI thread: it may ask GitHub
+    versions::clean_old();
+    {
+        let tx = status_tx.clone();
+        std::thread::spawn(move || {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            if let Some(text) = labels::dir().ok().and_then(|d| versions::update_notice(&d, now)) {
+                let _ = tx.send(json!({"type": "tazuna_update", "text": text}));
+            }
+        });
+    }
     let mut v = view(a.design, true, 1.0);
     let mut fx = Fx::new();
     let mut quit_at: Option<Instant> = None;
@@ -1394,6 +1414,7 @@ fn run_live(
         while let Ok(e) = status_rx.try_recv() {
             match e["type"].as_str() {
                 Some("tazuna_balance") => s.balance = e["usd"].as_f64(),
+                Some("tazuna_update") => s.apply(&json!({"type": "harness_info", "text": e["text"]}), live.elapsed_ms()),
                 Some("tazuna_usage_done") => {
                     let text = ui::limits_str(&s, v.design.theme()).map_or("no reading: claude sent none, and no SubRouter key is set".into(), |(t, _)| t);
                     s.apply(&json!({"type": "harness_info", "text": format!("usage: {text}")}), live.elapsed_ms());

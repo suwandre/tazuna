@@ -119,6 +119,21 @@ the UI layer, not the total. Measured 2026-10-08 on an M5 Pro with `bench/footpr
 moved median cost by 24% (mean 9%), and two arms that behaved identically scored 0.67 apart. We treat judge differences
 under 0.75 and cost differences under 15% as noise (12 runs per arm), and compare against a same-day baseline.
 
+## Install and upgrade
+
+Each version tag becomes a GitHub release with builds for macOS (Apple silicon), Linux (x86_64) and Windows (x86_64).
+The repo is private, so the GitHub CLI (`gh auth login`) fetches it:
+
+```sh
+mkdir -p ~/.local/bin && gh release download -R suwandre/tazuna -p 'tazuna-aarch64-apple-darwin.tar.gz' -O - | tar -xz -C ~/.local/bin
+tazuna --version
+tazuna upgrade      # later: the newest release in place of this binary (a live session says once a day when one is out)
+```
+
+Linux: `tazuna-x86_64-unknown-linux-gnu.tar.gz`; Windows: `tazuna-x86_64-pc-windows-msvc.zip` (unzip `tazuna.exe` into a
+folder on PATH). `TAZUNA_NO_UPDATE_CHECK=1` turns the daily check off. A source build (`target/release`) updates with
+`git pull && cargo build --release` instead.
+
 ## Usage
 
 ```sh

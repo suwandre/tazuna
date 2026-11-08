@@ -34,6 +34,18 @@ SubRouter's route (slower calls, 2-6x the uncached input, more calls), which in 
 back halved the uncached input in two runs; four runs on one task are below the noise threshold, so it stays opt-in.
 All runs at off-peak price (the Harness's 10:55-11:10 UTC): the own loop costs 35-55% less per run than the Harness.
 
+## 0.1.76 (2026-11-08): releases, `tazuna upgrade`, `tazuna --version`
+
+- Each version tag (`v0.1.76`) becomes a GitHub release: CI builds tazuna for macOS (Apple silicon), Linux (x86_64) and
+  Windows (x86_64) and attaches the archives, with the version's CHANGELOG section as the notes
+  (.github/workflows/release.yml). Until now tazuna came only as source to build.
+- `tazuna upgrade` puts the newest release in place of the running binary: downloaded beside it, unpacked with tar, run
+  with `--version` to check it says the new version, then renamed over the old one (on Windows the running binary moves
+  aside first and goes on the next start). A source build under target/ is left alone unless `--force`. The repo is
+  private, so it reaches GitHub with GH_TOKEN, GITHUB_TOKEN or the gh CLI's login.
+- A live session says once a day when a newer release is out ("tazuna 0.1.77 is out (this is 0.1.76): `tazuna upgrade`
+  installs it"), from a check cached in update-check.json, off the UI thread; `TAZUNA_NO_UPDATE_CHECK` turns it off.
+
 ## 0.1.75 (2026-11-08): a route can name its cached-input price; Mistral's real prices
 
 - A route's price in routes.json may carry a third number, cached input per million; without it cached input stays a
