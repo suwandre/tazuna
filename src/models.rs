@@ -311,9 +311,17 @@ pub fn subrouter_cli(args: &[String]) -> anyhow::Result<()> {
         }
         Ok(d["data"].clone())
     };
-    // ponytail: the first 100 keys of the account; page on when someone has more
-    let page = api("GET", "/api/token/?p=1&page_size=100", None)?;
-    let ids: Vec<u64> = page["items"].as_array().or(page.as_array()).into_iter().flatten().filter_map(|k| k["id"].as_u64()).collect();
+    // every page of the account's keys: the user's own account had 141 (bench keys), and its main key was on page 2
+    let mut ids: Vec<u64> = Vec::new();
+    for p in 1.. {
+        let page = api("GET", &format!("/api/token/?p={p}&page_size=100"), None)?;
+        let got: Vec<u64> = page["items"].as_array().or(page.as_array()).into_iter().flatten().filter_map(|k| k["id"].as_u64()).collect();
+        let last = got.len() < 100;
+        ids.extend(got);
+        if last {
+            break;
+        }
+    }
     let mut key = None;
     for id in ids {
         let k = api("GET", &format!("/api/token/{id}"), None)?;
