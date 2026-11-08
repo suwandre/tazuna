@@ -22,7 +22,8 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
   Windows. Now the system's clipboard: pbcopy on macOS, the clipboard API on Windows (not clip.exe, which guesses the
   encoding and on Windows 11 got "Bush hid the facts", a lone "ä" and a byte-order mark wrong), wl-copy, xclip or xsel on
   Linux. Over SSH, or where none of them takes it, the terminal gets the text (OSC 52: "copied N chars (through the
-  terminal)").
+  terminal)"). On Windows a drag only selects and ctrl+c copies, as everywhere else there; releasing a drag still copies
+  on macOS and Linux (0.1.70).
 - The Claude plan line (5h, 7d) came only from earlier sessions' readings, so a machine without one showed none (the
   Windows PC, a new install that had run only Mistral and SubRouter). A session that finds no reading takes one at the
   start (one short Haiku call through claude, as `/usage` does; not with ANTHROPIC_API_KEY set). Readings from `/usage`

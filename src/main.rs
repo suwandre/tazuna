@@ -1300,7 +1300,7 @@ fn run_live(
     let mut ed = editor::Editor::with_history(labels::dir()?.join("history.jsonl"));
     // when the current permission question first got a key
     let mut asked_at: Option<Instant> = None;
-    // mouse selection in the transcript: drag selects, release copies
+    // mouse selection in the transcript: drag selects, release copies (on Windows ctrl+c does)
     let mut transcript = ratatui::layout::Rect::default();
     // the block on each transcript row, from the last frame: a click there opens or closes it, hovering shades it
     let mut rows: Vec<Option<usize>> = vec![];
@@ -1531,8 +1531,9 @@ fn run_live(
                     }
                     MouseEventKind::Up(MouseButton::Left) => match sel.as_mut().map(|x| { x.edge = 0; &*x }) {
                         // release copies (2026-11-06): ⌘C never reached tazuna (the terminal keeps it for its own copy,
-                        // which has nothing selected while tazuna holds the mouse), and ctrl+c is quit to a Mac user
-                        Some(x) if !x.is_empty() => copy_now = true,
+                        // which has nothing selected while tazuna holds the mouse), and ctrl+c is quit to a Mac user. On
+                        // Windows ctrl+c is the copy key, so a drag only selects and ctrl+c copies (the user, 2026-11-08)
+                        Some(x) if !x.is_empty() => copy_now = !cfg!(windows),
                         // a click without a drag: the block under it opens or closes
                         _ => {
                             sel = None;
