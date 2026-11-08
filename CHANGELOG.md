@@ -16,7 +16,7 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
-## 0.1.77 (2026-11-08): copying on Windows and Linux, the plan line on a new install, `/model` for users without the bench
+## 0.1.77 (2026-11-08): copying on Windows and Linux, the plan line on a new install, `/model` for users without the bench, releases from any machine
 
 - Copying (a drag over the transcript, `ctrl-y`) ran `pbcopy` everywhere: "copy failed: pbcopy: program not found" on
   Windows. Now the system's clipboard: pbcopy on macOS, the clipboard API on Windows (not clip.exe, which guesses the
@@ -37,6 +37,12 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
   beside "claude-opus-5-5") are gone: a pick of one ran Opus through SubRouter instead of the plan. A greyed row says what
   to do: the variable to set (it said `source ~/.subrouter-key`, a file only the bench's machines have), or the line to
   add to the trusted list and where that file is.
+- Releases need no Mac: CI builds every platform when a version tag is pushed (the repo is public, so macOS runners cost
+  nothing), and `./release.sh` only checks, tags and pushes, from any machine. New builds: macOS on Intel and Linux on
+  ARM; Linux builds on Ubuntu 22.04, so they also run where glibc is older than 2.39. A pull request that touches the
+  code runs the same builds and the Windows tests. One-line installers (`install.sh` for macOS and Linux, `install.ps1`
+  for Windows, which also puts tazuna on the user PATH), and `tazuna update` as another name for `tazuna upgrade`.
+  `tazuna upgrade` no longer says the repo is private when a release is missing.
 - Binary size +42 KB (+0.7%: 6,127,616 to 6,170,112 bytes, Windows release builds of main and this change on one
   machine), 9 KB of it the longer built-in list. No change to prompts, tools or routing; tier0.sh not run (Windows).
 

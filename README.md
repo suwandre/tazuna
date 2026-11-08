@@ -121,17 +121,25 @@ under 0.75 and cost differences under 15% as noise (12 runs per arm), and compar
 
 ## Install and upgrade
 
-Each version tag becomes a GitHub release with builds for macOS (Apple silicon), Linux (x86_64) and Windows (x86_64):
+macOS and Linux:
 
 ```sh
-mkdir -p ~/.local/bin && curl -fsSL https://github.com/suwandre/tazuna/releases/latest/download/tazuna-aarch64-apple-darwin.tar.gz | tar -xz -C ~/.local/bin
-tazuna --version
-tazuna upgrade      # later: the newest release in place of this binary (a live session says once a day when one is out)
+curl -fsSL https://raw.githubusercontent.com/suwandre/tazuna/main/install.sh | sh
 ```
 
-Linux: `tazuna-x86_64-unknown-linux-gnu.tar.gz`; Windows: `tazuna-x86_64-pc-windows-msvc.zip` (unzip `tazuna.exe` into a
-folder on PATH). `TAZUNA_NO_UPDATE_CHECK=1` turns the daily check off. A source build (`target/release`) updates with
-`git pull && cargo build --release` instead.
+Windows (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/suwandre/tazuna/main/install.ps1 | iex
+```
+
+Both put the newest release in `~/.local/bin` (on Windows also on your PATH; `TAZUNA_INSTALL_DIR` picks another folder).
+Later, `tazuna update` (or `tazuna upgrade`) puts the newest release in place of the binary; a live session says once a
+day when one is out, and `TAZUNA_NO_UPDATE_CHECK=1` turns that off.
+
+Each version tag becomes a GitHub release with builds for macOS (Apple silicon and Intel), Linux (x86_64 and ARM) and
+Windows (x86_64), also to download by hand: `tazuna-<target>.tar.gz`, `.zip` on Windows. A source build
+(`target/release`) updates with `git pull && cargo build --release` instead.
 
 ## Usage
 

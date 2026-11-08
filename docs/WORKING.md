@@ -64,7 +64,8 @@ work.
 
 ## Machines (Tailscale)
 
-- Mac: main workstation, releases (`./release.sh` builds macOS; CI builds Linux and Windows).
+- Mac: main workstation. Releases from any machine since 0.1.77: `./release.sh` checks, tags and pushes; CI builds
+  every platform.
 - PC (Windows, RTX 5090 Laptop): Strata serves local models, e.g. Qwen3.8-Flash-Next on port 8093.
 - Bench VM (Ubuntu, `tazuna-bench`): bench rounds in the bubblewrap jail, reachable only over Tailscale. Set up by
   `bench/vm/provision.sh` and `provision-bench.sh`, so it can move to another host.
