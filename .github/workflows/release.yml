@@ -1,15 +1,20 @@
-# A GitHub release per version tag (2026-11-08). ./release.sh tags the version in Cargo.toml, pushes the tag, builds the
-# macOS (Apple silicon) archive on the Mac it runs on and uploads it; this workflow creates the release (notes: the
-# version's CHANGELOG section) and adds Linux and Windows builds, tested on Windows first. macOS runners count 10x against
-# a private repo's Actions minutes and the Mac is at hand, so CI builds no macOS. `tazuna upgrade` installs the newest.
+# A GitHub release per version tag. ./release.sh (any machine) tags the version in Cargo.toml and pushes the tag; this
+# workflow creates the release (notes: the version's CHANGELOG section) and builds every platform: macOS (Apple silicon
+# and Intel), Linux (x86_64 and ARM) and Windows (x86_64, tested there first). `tazuna upgrade` installs the newest.
+# Until 0.1.77 the Mac built macOS itself: macOS runners counted 10x against a private repo's minutes. The repo is public
+# since 2026-11-08, where standard runners cost nothing, so CI builds it all and a release needs no Mac.
+# A pull request that touches the code runs the same builds and the Windows tests, without publishing anything.
 name: release
 on:
   push:
     tags: ["v*"]
+  pull_request:
+    paths: ["src/**", "Cargo.toml", "Cargo.lock", ".github/workflows/release.yml"]
 permissions:
   contents: write
 jobs:
   release:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -23,32 +28,56 @@ jobs:
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "tazuna $v" --notes-file notes.md
   build:
     needs: release
+    # on a pull request the release job is skipped, and the builds still run
+    if: ${{ !failure() && !cancelled() }}
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          # cross-built on the Apple-silicon runner: Xcode's toolchain links both
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          # Ubuntu 22.04 links against an older glibc (2.35), so the binary also runs on older distributions
+          - { os: ubuntu-22.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-22.04-arm, target: aarch64-unknown-linux-gnu }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+      - name: toolchain for ${{ matrix.target }}
+        shell: bash
+        run: |
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            export PATH="$HOME/.cargo/bin:$PATH"
+          fi
+          rustup target add ${{ matrix.target }}
       # pinned to a commit: a moved tag could otherwise run in a job that publishes release binaries
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-      - run: cargo build --release
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
       # the only Windows test run since windows.yml went manual (it ran on every push: ~6 minutes, counted double)
       - if: runner.os == 'Windows'
         run: cargo test
-      - name: package and upload (Linux)
+      - name: package (macOS, Linux)
         if: runner.os != 'Windows'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          tar -C target/release -czf "tazuna-${{ matrix.target }}.tar.gz" tazuna
-          gh release upload "$GITHUB_REF_NAME" "tazuna-${{ matrix.target }}.tar.gz"
-      - name: package and upload (Windows)
+        run: tar -C target/${{ matrix.target }}/release -czf "tazuna-${{ matrix.target }}.tar.gz" tazuna
+      - name: package (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        run: Compress-Archive -Path target/${{ matrix.target }}/release/tazuna.exe -DestinationPath "tazuna-${{ matrix.target }}.zip"
+      - name: upload to the release
+        if: github.event_name == 'push'
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          Compress-Archive -Path target/release/tazuna.exe -DestinationPath "tazuna-${{ matrix.target }}.zip"
-          gh release upload "$env:GITHUB_REF_NAME" "tazuna-${{ matrix.target }}.zip"
+        run: gh release upload "$GITHUB_REF_NAME" tazuna-${{ matrix.target }}.*
+      # a pull request's builds, kept a week: `gh run download <run> -n tazuna-<target>`
+      - if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tazuna-${{ matrix.target }}
+          path: tazuna-${{ matrix.target }}.*
+          retention-days: 7
