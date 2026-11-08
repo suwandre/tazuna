@@ -938,19 +938,9 @@ fn scroll_mouse(v: &mut View, kind: MouseEventKind) {
 }
 
 /// Copies the agent's latest reply to the clipboard (selecting text is awkward while the app captures the mouse).
-// ponytail: macOS pbcopy only; add wl-copy/xclip when tazuna runs on Linux
-fn copy_last_reply(s: &Session) -> Result<usize> {
+fn copy_last_reply(s: &Session) -> Result<(usize, platform::Copied)> {
     let text = s.blocks.iter().rev().find_map(|b| if let session::Block::Text { text, .. } = b { Some(text.clone()) } else { None }).context("no reply yet")?;
-    to_clipboard(&text)?;
-    Ok(text.chars().count())
-}
-
-fn to_clipboard(text: &str) -> Result<()> {
-    use std::io::Write;
-    let mut child = std::process::Command::new("pbcopy").stdin(std::process::Stdio::piped()).spawn().context("pbcopy")?;
-    child.stdin.take().context("pbcopy stdin")?.write_all(text.as_bytes())?;
-    child.wait()?;
-    Ok(())
+    Ok((text.chars().count(), platform::copy_text(&text)?))
 }
 
 fn busy(s: &Session) -> bool {
@@ -1263,11 +1253,33 @@ fn run_live(
         s.apply(&json!({"type": "harness_notice", "text": "not a git repo: edits ask first, since git cannot show or undo them here (shift-tab changes the mode)", "error": false}), 0.0);
     }
     // the plan's windows as last read (claude reports them only now and then); SubRouter's balance, on a thread
-    if let Some((h5, d7, at)) = labels::dir().ok().and_then(|d| session::last_limits(&d.join("sessions"))) {
+    let last_read = labels::dir().ok().and_then(|d| session::last_limits(&d.join("sessions")));
+    if let Some((h5, d7, at)) = last_read {
         (s.limits, s.limits_at) = (Some((h5, d7)), Some(at));
     }
     let (status_tx, status_rx) = std::sync::mpsc::channel::<serde_json::Value>();
     fetch_balance(&status_tx);
+    // no reading in any session yet (a new install, or a machine that only ran other providers) showed no plan line at
+    // all (the Windows PC, 2026-11-08): one short Haiku call reads it, as /usage does, and is recorded for the next start.
+    // Not with an API key in the environment, where the call would be billed.
+    if last_read.is_none() && std::env::var_os("ANTHROPIC_API_KEY").is_none() {
+        let tx = status_tx.clone();
+        std::thread::spawn(move || {
+            if let Some(e) = plan_reading() {
+                let _ = tx.send(e);
+            }
+        });
+    }
+    // the models SubRouter lets SUBROUTER_API_KEY use, for the picker to grey out the rest
+    let mut key_models = models::KeyModels::new();
+    std::thread::spawn({
+        let tx = status_tx.clone();
+        move || {
+            if let Some(ms) = models::key_models("SUBROUTER_API_KEY") {
+                let _ = tx.send(json!({"type": "tazuna_key_models", "var": "SUBROUTER_API_KEY", "models": ms}));
+            }
+        }
+    });
     // a newer release, said once a day (versions::update_notice); off the UI thread: it may ask GitHub
     versions::clean_old();
     {
@@ -1322,7 +1334,7 @@ fn run_live(
     // /model: the choices, the selected row (in the filtered list), each choice's effort and what has been typed to filter
     let mut pick: Option<Picker> = None;
     if a.pick {
-        pick = Some(open_picker(live)?);
+        pick = Some(open_picker(live, &key_models)?);
     }
     let mut hinted = 0usize;
     // the context size at which /new was last suggested (0: not yet in this conversation)
@@ -1378,8 +1390,8 @@ fn run_live(
                 let c = &models::pinned(&cs[i], prov[i]);
                 ui::ModelRow { label: c.label.clone(), place: c.place.clone(), effort: c.efforts.get(eff[i]).cloned().unwrap_or_else(|| "default".into()),
                     price: c.price.clone(), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
-                    state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3 },
-                    stale: c.stale, current: c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
+                    state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3, models::State::NotOnKey => 4 },
+                    why: models::why_not(c).unwrap_or_default(), stale: c.stale, current: c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
             }).collect(),
             selected: *sel,
             filter: filter.clone(),
@@ -1418,6 +1430,15 @@ fn run_live(
                 Some("tazuna_usage_done") => {
                     let text = ui::limits_str(&s, v.design.theme()).map_or("no reading: claude sent none, and no SubRouter key is set".into(), |(t, _)| t);
                     s.apply(&json!({"type": "harness_info", "text": format!("usage: {text}")}), live.elapsed_ms());
+                }
+                // a plan reading from /usage or the start goes into the recording, where the next session finds it
+                Some("rate_limit_event") => {
+                    let (t, e) = live.note(e);
+                    s.apply(&e, t);
+                }
+                Some("tazuna_key_models") => {
+                    let ms = e["models"].as_array().into_iter().flatten().filter_map(|m| m.as_str().map(String::from)).collect();
+                    key_models.insert(e["var"].as_str().unwrap_or_default().to_string(), ms);
                 }
                 _ => s.apply(&e, live.elapsed_ms()),
             }
@@ -1468,8 +1489,8 @@ fn run_live(
             // 2026-11-02); a selection of blank cells copies nothing; the highlight stays until the next key or click
             copy_now = false;
             if !text.trim().is_empty() {
-                let msg = match to_clipboard(&text) {
-                    Ok(()) => format!("copied {} chars", text.chars().count()),
+                let msg = match platform::copy_text(&text) {
+                    Ok(how) => format!("copied {} chars{}", text.chars().count(), how.how()),
                     Err(e) => format!("copy failed: {e:#}"),
                 };
                 v.toast = Some((msg, Instant::now()));
@@ -1638,9 +1659,8 @@ fn run_live(
             }
             if let Some((c, effort)) = chosen {
                 let msg = match c.state {
-                    models::State::NoKey => Err(anyhow::anyhow!("{}: its key ({}) is not set: `source ~/.subrouter-key` before starting tazuna",
-                        c.label, c.route.as_ref().map(|r| r.1.as_str()).unwrap_or_default())),
-                    models::State::Untrusted => Err(anyhow::anyhow!("{}: the provider is not on the trusted list (~/.config/tazuna/trusted-providers), so the code may not go there", c.label)),
+                    models::State::NoKey | models::State::Untrusted | models::State::NotOnKey =>
+                        Err(anyhow::anyhow!("{}: {}", c.label, models::why_not(&c).unwrap_or_default())),
                     // a model without levels (the API ignores them) keeps the session's
                     models::State::Ready => live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()),
                     models::State::Unchecked => live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()).map(|(t, e)| {
@@ -1889,7 +1909,7 @@ fn run_live(
             },
             KeyCode::Char('y') if ctrl => {
                 let text = match copy_last_reply(&s) {
-                    Ok(n) => format!("copied the last reply ({n} chars)"),
+                    Ok((n, how)) => format!("copied the last reply ({n} chars){}", how.how()),
                     Err(e) => format!("copy failed: {e:#}"),
                 };
                 s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
@@ -1928,7 +1948,7 @@ fn run_live(
                     continue;
                 }
                 if text == "/model" {
-                    pick = Some(open_picker(live)?);
+                    pick = Some(open_picker(live, &key_models)?);
                     continue;
                 }
                 if text == "/usage" {
@@ -2151,9 +2171,9 @@ struct Picker {
     filter: String,
 }
 
-fn open_picker(live: &live::Live) -> Result<Picker> {
+fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-    let cs = models::catalog(&labels::dir()?.join("routes.json"), trusted_host, now);
+    let cs = models::catalog(&labels::dir()?.join("routes.json"), trusted_host, keys, now);
     let eff: Vec<usize> = cs.iter().map(|c| models::start_effort(c, &live.model, &live.effort)).collect();
     // a session on a pinned provider's key opens with that provider pinned
     let key = live.provider.as_ref().map(|p| p.1.as_str());

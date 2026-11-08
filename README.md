@@ -146,7 +146,9 @@ tazuna ~/.local/share/tazuna/sessions/<file>.jsonl           # replay a session 
 Requires the `claude` CLI (logged in). Nothing else: the lean tools are built into the tazuna binary.
 
 Cheap non-Claude models (DeepSeek, GPT through SubRouter) run on tazuna's own loop with one SubRouter key in
-`SUBROUTER_API_KEY`; `/model` picks them. SubRouter's providers for a model differ a lot (some serve another model, some
+`SUBROUTER_API_KEY`, and Mistral's with a Mistral key in `MISTRAL_API_KEY`; `/model` picks them. A provider sees your
+code, so its host goes in `~/.config/tazuna/trusted-providers` first (one per line: `subrouter.ai`, `api.mistral.ai`);
+`/model` shows every model and says what a greyed one still needs. SubRouter's providers for a model differ a lot (some serve another model, some
 barely cache), so tazuna ships the providers our gauge checked: `tazuna subrouter` prints them per model and where to set
 them on your key, `tazuna subrouter --apply` sets them itself (with your account's access token in
 `~/.subrouter-account`; nothing else on the key changes).

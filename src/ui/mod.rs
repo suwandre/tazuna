@@ -159,8 +159,10 @@ pub struct ModelRow {
     /// "6.8 (308)": our judge and its runs; "32": Artificial Analysis' index (empty where unknown).
     pub bench: String,
     pub aa: String,
-    /// 0 ready, 1 no key, 2 provider not trusted (the code would go there), 3 unchecked route
+    /// 0 ready, 1 no key, 2 provider not trusted (the code would go there), 3 unchecked route, 4 not allowed on the key
     pub state: u8,
+    /// Why it cannot be picked and what to do (the key variable, the trusted list's path), where it cannot.
+    pub why: String,
     pub stale: bool,
     pub current: bool,
 }
@@ -594,12 +596,11 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
         let price = if r.price == "plan" { "on the plan".to_string() } else { format!("${} per M tokens (in / out)", r.price.replace(" / ", " / $")) };
         let scores = [(!r.bench.is_empty()).then(|| format!("bench {}", r.bench)), (!r.aa.is_empty()).then(|| format!("AA {}", r.aa))];
         let why = match r.state {
-            1 => "no key: its key variable is not set (`source ~/.subrouter-key` before starting tazuna)".to_string(),
-            2 => "not trusted: the code would go there (add the host to ~/.config/tazuna/trusted-providers)".to_string(),
+            1 | 2 | 4 if !r.why.is_empty() => r.why.clone(),
             _ if r.stale => format!("stale: {}", r.note),
             _ => r.note.clone(),
         };
-        let color = match r.state { 1 => th.faint, 2 => th.warn, _ if r.stale => th.warn, _ => th.dim };
+        let color = match r.state { 1 | 4 => th.faint, 2 => th.warn, _ if r.stale => th.warn, _ => th.dim };
         let head: Vec<String> = [Some(r.label.clone()), Some(price)].into_iter().chain(scores).flatten().collect();
         [(head.join(" · "), th.text), (r.place.clone(), th.dim), (why, color)].into_iter()
             .filter(|(text, _)| !text.is_empty())
@@ -645,7 +646,7 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     for (i, r) in p.rows.iter().enumerate().skip(first).take(room) {
         let mark = if i == p.selected { "›" } else if r.current { "•" } else { " " };
         let row = cols(mark, &r.label, &format!("‹{}›", r.effort), &r.price, &r.bench, &r.aa);
-        let color = match r.state { 1 => th.faint, 2 => th.warn, 3 => th.dim, _ if r.stale => th.warn, _ => th.text };
+        let color = match r.state { 1 | 4 => th.faint, 2 => th.warn, 3 => th.dim, _ if r.stale => th.warn, _ => th.text };
         let style = if i == p.selected { st(color).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(color) };
         lines.push(Line::from(Span::styled(row, style)));
     }
@@ -1946,7 +1947,11 @@ mod tests {
     fn model_picker_shows_rows_effort_and_why_not() {
         let row = |label: &str, state: u8, stale: bool| ModelRow { label: label.into(), place: "SubRouter · kriora, shared-openai-pro-50, shared-openai-pro-52".into(),
             effort: "high".into(), price: "0.0387 / 0.194".into(), note: "cached 81% · checked today".into(), bench: "6.8 (308)".into(), aa: "32".into(),
-            state, stale, current: false };
+            state, why: match state {
+                1 => "no key: set the environment variable SUBROUTER_API_KEY before starting tazuna".into(),
+                2 => "not trusted: the code would go to subrouter.ai; add the line subrouter.ai to ~/.config/tazuna/trusted-providers".into(),
+                _ => String::new(),
+            }, stale, current: false };
         let mut p = ModelsPanel { rows: vec![row("Opus 5.5", 0, false), row("deepseek-v4.1-flash-1017 · fast", 1, false), row("gpt-6.1-sol", 2, true), row("gpt-6-luna", 0, true)], selected: 0, filter: String::new() };
         let draw = |p: &ModelsPanel, w: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 24)).unwrap();
@@ -1972,7 +1977,9 @@ mod tests {
         let wide = draw(&p, 200);
         let border = wide.iter().find(|l| l.contains('┌')).unwrap();
         assert!(border.trim().chars().count() < 120, "{border}");
-        for (i, want) in [(0, "cached 81%"), (1, "no key"), (2, "not trusted"), (3, "stale")] {
+        // the detail line says what to do: the variable to set, the line to add (it named `source ~/.subrouter-key`, a
+        // file only the bench's machines have, until 0.1.77)
+        for (i, want) in [(0, "cached 81%"), (1, "SUBROUTER_API_KEY"), (2, "trusted-providers"), (3, "stale")] {
             p.selected = i;
             assert!(draw(&p, 78).concat().contains(want), "row {i}: {want}");
         }

@@ -1267,6 +1267,12 @@ impl Live {
         }
     }
 
+    /// Records an event from outside claude's stream (a plan reading by /usage or at the start), so the next session opens
+    /// with it: `session::last_limits` reads the recordings.
+    pub fn note(&mut self, e: Value) -> (f64, Value) {
+        self.record(e)
+    }
+
     fn record(&mut self, e: Value) -> (f64, Value) {
         let t = self.elapsed_ms();
         let _ = writeln!(self.rec, "{}", json!({"t": t as u64, "e": e}));

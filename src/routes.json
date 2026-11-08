@@ -1,11 +1,256 @@
 {
  "aa": {
+  "claude-fable-5-1": 49,
+  "claude-haiku-5-5": 36.2,
+  "claude-opus-5-5": 58.4,
+  "claude-sonnet-5-5": 54.2,
   "deepseek-v4-1-flash-1017": 32.5,
+  "deepseek-v4-pro": 23.1,
+  "gemini-3-5-flash-lite": 11.7,
+  "gemini-3-8-flash": 30.5,
+  "gemini-3-8-flash-low": 22.3,
+  "gemini-3-8-flash-medium": 30,
+  "gemini-4-argon": 50.4,
+  "glm-5-3": 31.7,
+  "glm-5-3-flash": 27.8,
   "gpt-6-1-sol": 54.5,
   "gpt-6-1-terra": 51,
-  "gpt-6-luna": 27.8
+  "gpt-6-astra": 56.9,
+  "gpt-6-luna": 27.8,
+  "grok-4-7": 34.3,
+  "kimi-k3-1-pro": 46,
+  "mimo-v2-6-flash": 26.7,
+  "mimo-v2-6-pro": 29.9,
+  "minimax-m3": 18.7,
+  "minimax-m3-1-flash": 28.9,
+  "mistral-large-4": 26,
+  "qwen3-8-27b": 20.1,
+  "qwen3-8-max": 33.6
+ },
+ "catalog": {
+  "MiniMax-M3": {
+   "price": [
+    0.17647,
+    0.70588
+   ],
+   "providers": 2
+  },
+  "claude-fable-5-1": {
+   "price": [
+    0.19824,
+    0.99118
+   ],
+   "providers": 22
+  },
+  "claude-fable-5.1": {
+   "price": [
+    0.42017,
+    2
+   ],
+   "providers": 5
+  },
+  "claude-haiku-5-5": {
+   "price": [
+    0.05,
+    0.25
+   ],
+   "providers": 12
+  },
+  "claude-opus-5-5": {
+   "price": [
+    0.03515,
+    0.17574
+   ],
+   "providers": 31
+  },
+  "claude-opus-5.5": {
+   "price": [
+    0.04,
+    0.2
+   ],
+   "providers": 1
+  },
+  "claude-sonnet-5-5": {
+   "price": [
+    0.00647,
+    0.03235
+   ],
+   "providers": 24
+  },
+  "claude-sonnet-5.5": {
+   "price": [
+    0.16912,
+    0.29412
+   ],
+   "providers": 1
+  },
+  "deepseek-v4-pro": {
+   "price": [
+    0.02353,
+    0.06753
+   ],
+   "providers": 32
+  },
+  "deepseek-v4.1-flash-1017": {
+   "price": [
+    0,
+    0
+   ],
+   "providers": 27
+  },
+  "gemini-3.5-flash-lite": {
+   "price": [
+    0.024,
+    0.2
+   ],
+   "providers": 5
+  },
+  "gemini-3.8-flash": {
+   "price": [
+    0.036,
+    0.18
+   ],
+   "providers": 26
+  },
+  "gemini-3.8-flash-low": {
+   "price": [
+    0.06,
+    0.3
+   ],
+   "providers": 2
+  },
+  "gemini-3.8-flash-medium": {
+   "price": [
+    0.06,
+    0.3
+   ],
+   "providers": 2
+  },
+  "gemini-4-argon": {
+   "price": [
+    0.25235,
+    0.84
+   ],
+   "providers": 21
+  },
+  "glm-5.3": {
+   "price": [
+    0.025,
+    0.07857
+   ],
+   "providers": 23
+  },
+  "glm-5.3-flash": {
+   "price": [
+    0,
+    0
+   ],
+   "providers": 23
+  },
+  "gpt-6-astra": {
+   "price": [
+    0,
+    0
+   ],
+   "providers": 62
+  },
+  "gpt-6-luna": {
+   "price": [
+    0.003,
+    0.015
+   ],
+   "providers": 22
+  },
+  "gpt-6.1-sol": {
+   "price": [
+    0.00544,
+    0.02721
+   ],
+   "providers": 46
+  },
+  "gpt-6.1-terra": {
+   "price": [
+    0.03882,
+    0.19412
+   ],
+   "providers": 18
+  },
+  "grok-4.7": {
+   "price": [
+    0.011,
+    0.033
+   ],
+   "providers": 24
+  },
+  "kimi-k3.1-pro": {
+   "price": [
+    0.11463,
+    0.57316
+   ],
+   "providers": 14
+  },
+  "mimo-v2.6-flash": {
+   "price": [
+    0.01324,
+    0.02647
+   ],
+   "providers": 6
+  },
+  "mimo-v2.6-pro": {
+   "price": [
+    0.17647,
+    0.35294
+   ],
+   "providers": 6
+  },
+  "minimax-m3": {
+   "price": [
+    0.02912,
+    0.11647
+   ],
+   "providers": 12
+  },
+  "minimax-m3.1-flash": {
+   "price": [
+    0.02353,
+    0.09412
+   ],
+   "providers": 8
+  },
+  "qwen3.8-27b": {
+   "price": [
+    0.12,
+    0.8
+   ],
+   "providers": 1
+  },
+  "qwen3.8-max": {
+   "price": [
+    0.04412,
+    0.13235
+   ],
+   "providers": 13
+  }
  },
  "routes": {
+  "codestral-2508@mistral": {
+   "cached": 0,
+   "efforts": [],
+   "key_env": "MISTRAL_API_KEY",
+   "model": "codestral-2508",
+   "price": [
+    0.3,
+    0.9,
+    0.03
+   ],
+   "providers": [
+    "mistral"
+   ],
+   "url": "https://api.mistral.ai/v1",
+   "vetted_at": 1794092682,
+   "via": "mistral",
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06)."
+  },
   "deepseek-v4.1-flash-1017": {
    "cached": 99,
    "efforts": [
@@ -26,6 +271,78 @@
    "vetted_at": 1794079024,
    "via": "subrouter",
    "why": "2026-11-07: a6aa dropped: its content filter refused two of six bench tasks outright (hugo, 2026-11-07) after refusing a question on 11-05; SubRouter does not pass a refusal on. bangai and lingai 29/30, kriora 30/30 (AIME, evening 11-07)"
+  },
+  "deepseek-v4.1-flash-1017@mistral": {
+   "cached": 95,
+   "efforts": [
+    "off",
+    "low",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "key_env": "MISTRAL_API_KEY",
+   "model": "deepseek-v4-1-flash-1017",
+   "price": [
+    0.3,
+    1.2,
+    0.007
+   ],
+   "providers": [
+    "mistral"
+   ],
+   "url": "https://api.mistral.ai/v1",
+   "vetted_at": 1794090127,
+   "via": "mistral",
+   "why": "2026-11-07: Mistral's own hosting of DeepSeek 1017 on a Code > Vibe CLI key, so it draws the Vibe plan's usage (the user's meters: Vibe Code up, API unchanged). tazuna's own loop there: judge 8.00, 11/11 hidden, median 7 min on four Go tasks against Vibe CLI 7.00-7.50. Price estimated from billing: ~$0.19/M input, cached ~10%, ~$0.77/M output. Efforts (effortprobe, 3 AIME x2, 23:51): low 7.9k, high 12.4k, xhigh 14.0k, max 19.3k reasoning tokens, all 6/6: every level differs on Mistral. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06)."
+  },
+  "glm-5.3-flash@mistral": {
+   "cached": 0,
+   "efforts": [
+    "off",
+    "low",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "key_env": "MISTRAL_API_KEY",
+   "model": "zai-glm-5-3-flash",
+   "price": [
+    0.15,
+    0.5,
+    0.03
+   ],
+   "providers": [
+    "mistral"
+   ],
+   "url": "https://api.mistral.ai/v1",
+   "vetted_at": 1794092682,
+   "via": "mistral",
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06)."
+  },
+  "glm-5.3@mistral": {
+   "cached": 0,
+   "efforts": [
+    "off",
+    "low",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "key_env": "MISTRAL_API_KEY",
+   "model": "zai-glm-5-3",
+   "price": [
+    1.4,
+    4.4,
+    0.14
+   ],
+   "providers": [
+    "mistral"
+   ],
+   "url": "https://api.mistral.ai/v1",
+   "vetted_at": 1794092682,
+   "via": "mistral",
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06)."
   },
   "gpt-6-luna": {
    "cached": 92,
@@ -94,6 +411,77 @@
    "url": "https://subrouter.ai/v1",
    "vetted_at": 1793546878,
    "via": "subrouter"
+  },
+  "mistral-large-4@mistral": {
+   "cached": 0,
+   "efforts": [
+    "off",
+    "low",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "key_env": "MISTRAL_API_KEY",
+   "model": "mistral-large-4",
+   "price": [
+    0.7,
+    2.1,
+    0.07
+   ],
+   "providers": [
+    "mistral"
+   ],
+   "url": "https://api.mistral.ai/v1",
+   "vetted_at": 1794092682,
+   "via": "mistral",
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06)."
+  },
+  "mistral-medium-3.5@mistral": {
+   "cached": 0,
+   "efforts": [
+    "off",
+    "low",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "key_env": "MISTRAL_API_KEY",
+   "model": "mistral-medium-3-5",
+   "price": [
+    0,
+    0
+   ],
+   "providers": [
+    "mistral"
+   ],
+   "url": "https://api.mistral.ai/v1",
+   "vetted_at": 1794092682,
+   "via": "mistral",
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price: not on Mistral's price list (shown 0)."
+  },
+  "mistral-small-2603@mistral": {
+   "cached": 0,
+   "efforts": [
+    "off",
+    "low",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "key_env": "MISTRAL_API_KEY",
+   "model": "mistral-small-2603",
+   "price": [
+    0.15,
+    0.6,
+    0.015
+   ],
+   "providers": [
+    "mistral"
+   ],
+   "url": "https://api.mistral.ai/v1",
+   "vetted_at": 1794092682,
+   "via": "mistral",
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06)."
   }
  }
 }

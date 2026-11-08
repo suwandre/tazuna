@@ -39,7 +39,12 @@ pub enum State {
     Untrusted,
     /// Usable, but no route was checked: SubRouter picks the provider (cache, price and quality unknown).
     Unchecked,
+    /// The key is set, but SubRouter does not let it use this model (HTTP 403).
+    NotOnKey,
 }
+
+/// The models a key may use, by its variable (SubRouter's /v1/models for that key); a key not in here is not checked.
+pub type KeyModels = std::collections::HashMap<String, std::collections::HashSet<String>>;
 
 #[derive(Clone, Debug)]
 pub struct Choice {
@@ -117,21 +122,60 @@ fn per_m(x: f64) -> String {
     if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
 }
 
-/// The checked routes built into tazuna (bench/routes.py ship), without key names: what a user who brings one SubRouter
-/// key gets when there is no routes.json from our bench (2026-11-06). Their key carries each model's providers
-/// (`tazuna subrouter`).
+/// The list built into tazuna (bench/routes.py ship): what a user gets when there is no routes.json from our bench. The
+/// checked SubRouter routes without key names (2026-11-06: the user's one SubRouter key, which carries each model's
+/// providers, `tazuna subrouter`), the routes on public providers with that provider's usual key variable (Mistral), and
+/// every SubRouter model the picker lists (0.1.77: until then a new install listed 4 SubRouter models and no Mistral, the
+/// bench's machines 34 rows).
 const SHIPPED: &str = include_str!("routes.json");
 
-/// The bench's routes.json, else the built-in routes.
-fn routes_file(routes: &Path) -> Value {
-    std::fs::read_to_string(routes).ok().and_then(|t| serde_json::from_str(&t).ok())
-        .unwrap_or_else(|| serde_json::from_str(SHIPPED).unwrap_or_default())
+/// The bench's routes.json, else the built-in list; true for the built-in one.
+fn routes_file(routes: &Path) -> (Value, bool) {
+    match std::fs::read_to_string(routes).ok().and_then(|t| serde_json::from_str(&t).ok()) {
+        Some(v) => (v, false),
+        None => (serde_json::from_str(SHIPPED).unwrap_or_default(), true),
+    }
+}
+
+/// The models SubRouter lets the key in `var` use: its /v1/models follows the key's model limits (a key limited to 18
+/// models listed only those and answered 403 for another, 2026-11-08). None when the key is unset or SubRouter does not
+/// answer.
+pub fn key_models(var: &str) -> Option<std::collections::HashSet<String>> {
+    let key = std::env::var(var).ok()?;
+    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
+    let mut r = http.get("https://subrouter.ai/v1/models").header("Authorization", format!("Bearer {}", key.trim())).call().ok()?;
+    let d: Value = serde_json::from_str(&r.body_mut().read_to_string().ok()?).ok()?;
+    let ms: std::collections::HashSet<String> = d["data"].as_array()?.iter().filter_map(|m| m["id"].as_str().map(String::from)).collect();
+    (!ms.is_empty()).then_some(ms)
+}
+
+/// Why a row cannot be picked as it is, in words that say what to do; None when it can.
+pub fn why_not(c: &Choice) -> Option<String> {
+    let (url, var, _) = c.route.as_ref()?;
+    let host = host_of(url);
+    match c.state {
+        State::NoKey => Some(format!("no key: set the environment variable {var} before starting tazuna{}", match host {
+            "subrouter.ai" => " (a SubRouter key: https://subrouter.ai/console/keys)",
+            "api.mistral.ai" => " (a Mistral API key, or one made under Code › Vibe CLI)",
+            _ => "",
+        })),
+        State::Untrusted => Some(format!("not trusted: the code would go to {host}; add the line {host} to {} to allow it",
+            crate::platform::home().unwrap_or_default().join(".config/tazuna/trusted-providers").display())),
+        State::NotOnKey => Some(format!("not on your key: SubRouter does not let {var} use {} (the key's models: \
+            https://subrouter.ai/console/keys)", c.model)),
+        State::Ready | State::Unchecked => None,
+    }
+}
+
+fn host_of(url: &str) -> &str {
+    url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or_default()
 }
 
 /// Claude's models, then the checked routes, then the unchecked SubRouter models that have a public score; `trusted` says
-/// whether a provider host may see the code.
-pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<Choice> {
-    let file = routes_file(routes);
+/// whether a provider host may see the code, `keys` which models a key may use.
+pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, now: u64) -> Vec<Choice> {
+    let (file, builtin) = routes_file(routes);
+    let on_key = |var: &str, model: &str| keys.get(var).is_none_or(|ms| ms.contains(model));
     let mut out: Vec<Choice> = CLAUDE.iter().map(|(m, l)| Choice {
         model: m.to_string(),
         label: l.to_string(),
@@ -150,14 +194,14 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
     rs.sort_by_key(|(m, _)| m.to_string());
     for (name, r) in rs {
         let Some(url) = r["url"].as_str() else { continue };
-        // a built-in route names no key: the user's one SubRouter key, which carries the providers if they set them
-        let shipped = r["key_env"].is_null();
-        let Some(var) = r["key_env"].as_str().or(url.contains("subrouter.ai").then_some("SUBROUTER_API_KEY")) else { continue };
+        let host = host_of(url);
+        // a built-in SubRouter route names no key: the user's one SubRouter key, which carries the providers if they set them
+        let shipped = builtin && host == "subrouter.ai";
+        let Some(var) = r["key_env"].as_str().or((host == "subrouter.ai").then_some("SUBROUTER_API_KEY")) else { continue };
         // a second route for one model ("deepseek-v4.1-flash-1017@fast": another provider set) names its model
         let model = r["model"].as_str().map(String::from).unwrap_or_else(|| name.clone());
         let label = name.split_once('@').map_or(name.clone(), |(m, v)| format!("{m} · {v}"));
         let (input, output) = (r["price"][0].as_f64().unwrap_or(0.0), r["price"][1].as_f64().unwrap_or(0.0));
-        let host = url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or_default();
         let days = now.saturating_sub(r["vetted_at"].as_u64().unwrap_or(0)) / 86_400;
         let providers: Vec<&str> = r["providers"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
         // the picker offers only the levels that differ (a user saw "medium" and "xhigh" for DeepSeek, which acts at
@@ -168,6 +212,8 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             State::NoKey
         } else if !trusted(host) {
             State::Untrusted
+        } else if !on_key(var, &model) {
+            State::NotOnKey
         } else {
             State::Ready
         };
@@ -193,19 +239,23 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
                 1 => "yesterday".to_string(),
                 d => format!("{d} days ago"),
             }, if shipped { " · these providers on your key: tazuna subrouter" } else { "" }),
-            stale: days > STALE_DAYS && !shipped,
+            // the built-in list is as old as the release, and `tazuna upgrade` renews it
+            stale: days > STALE_DAYS && !builtin,
             state,
             bench: scores(&file, r["model"].as_str().unwrap_or(name)).0,
             aa: scores(&file, r["model"].as_str().unwrap_or(name)).1,
             pins,
         });
     }
-    // every other SubRouter model with a public score (the list also holds image and video models), best first
-    let routed: Vec<String> = out.iter().map(|c| c.model.clone()).collect();
+    // every other SubRouter model with a public score (the list also holds image and video models), best first. One model
+    // once: SubRouter lists some under two spellings ("claude-opus-5.5" beside the subscription's "claude-opus-5-5",
+    // "DeepSeek-V4-Flash-0731" beside "deepseek-v4-flash-0731"), and a pick of the copy ran Opus through SubRouter instead
+    // of the plan (a 403 on a key without it, 2026-11-08); the lower-case spelling stays
+    let mut seen: std::collections::HashSet<String> = out.iter().map(|c| slug(&c.model)).collect();
     let mut rest: Vec<(f64, &String, &Value)> = file["catalog"].as_object().into_iter().flatten()
-        .filter(|(m, _)| !routed.contains(m))
         .filter_map(|(m, c)| file["aa"][slug(m)].as_f64().map(|a| (a, m, c))).collect();
-    rest.sort_by(|a, b| b.0.total_cmp(&a.0));
+    rest.sort_by(|a, b| b.0.total_cmp(&a.0).then((*a.1 != a.1.to_lowercase()).cmp(&(*b.1 != b.1.to_lowercase()))).then(a.1.cmp(b.1)));
+    rest.retain(|(_, m, _)| seen.insert(slug(m)));
     let key = "SUBROUTER_API_KEY";
     for (_, model, c) in rest {
         let (input, output) = (c["price"][0].as_f64().unwrap_or(0.0), c["price"][1].as_f64().unwrap_or(0.0));
@@ -218,7 +268,15 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, now: u64) -> Vec<C
             price: format!("{} / {}", per_m(input), per_m(output)),
             note: "unchecked: SubRouter picks the provider (the price is the cheapest one's)".into(),
             stale: false,
-            state: if std::env::var_os(key).is_none() { State::NoKey } else if !trusted("subrouter.ai") { State::Untrusted } else { State::Unchecked },
+            state: if std::env::var_os(key).is_none() {
+                State::NoKey
+            } else if !trusted("subrouter.ai") {
+                State::Untrusted
+            } else if !on_key(key, model) {
+                State::NotOnKey
+            } else {
+                State::Unchecked
+            },
             bench: scores(&file, model).0,
             aa: scores(&file, model).1,
             pins: vec![],
@@ -271,7 +329,7 @@ pub fn subrouter_balance() -> Option<f64> {
 /// limits every model (503s for the rest), so it is left as it is.
 pub fn subrouter_cli(args: &[String]) -> anyhow::Result<()> {
     use anyhow::{bail, Context};
-    let file = routes_file(&crate::labels::dir()?.join("routes.json"));
+    let (file, _) = routes_file(&crate::labels::dir()?.join("routes.json"));
     let mut lists = serde_json::Map::new();
     for (name, r) in file["routes"].as_object().into_iter().flatten() {
         if name.contains('@') || !r["url"].as_str().unwrap_or_default().contains("subrouter.ai") {
@@ -380,11 +438,56 @@ mod tests {
 
     #[test]
     fn without_routes_json_the_built_in_routes_use_the_one_key() {
-        let cs = catalog(Path::new("/nonexistent/routes.json"), |_| true, 0);
+        let cs = catalog(Path::new("/nonexistent/routes.json"), |_| true, &KeyModels::new(), u64::MAX / 2);
         let ds = cs.iter().find(|c| c.model == "deepseek-v4.1-flash-1017").expect("DeepSeek is built in");
         assert_eq!(ds.route.as_ref().unwrap().1, "SUBROUTER_API_KEY");
         assert!(ds.note.contains("tazuna subrouter") && !ds.stale, "{}", ds.note);
         assert_eq!(ds.efforts, ["off", "high", "max"]);
+        // a new install lists what the bench's machines list (0.1.77; four SubRouter models until then): Mistral's routes
+        // on Mistral's usual key variable, never stale, and SubRouter's other models; nothing on a private host
+        let mistral: Vec<&Choice> = cs.iter().filter(|c| c.place == "api.mistral.ai").collect();
+        assert!(!mistral.is_empty() && mistral.iter().all(|c| c.route.as_ref().unwrap().1 == "MISTRAL_API_KEY" && !c.stale && !c.note.contains("tazuna subrouter")));
+        assert!(cs.iter().filter(|c| c.place.starts_with("SubRouter")).count() > 10, "SubRouter's catalog ships");
+        assert!(cs.iter().all(|c| c.route.as_ref().is_none_or(|r| !host_of(&r.0).starts_with(|ch: char| ch.is_ascii_digit()) && host_of(&r.0) != "localhost")));
+        // SubRouter's other models once each, and none a copy of a subscription model (the list has "claude-opus-5.5")
+        let claude: Vec<String> = CLAUDE.iter().map(|(m, _)| slug(m)).collect();
+        let mut more: Vec<String> = cs.iter().filter(|c| c.note.starts_with("unchecked")).map(|c| slug(&c.model)).collect();
+        assert!(more.iter().all(|m| !claude.contains(m)), "{more:?}");
+        let n = more.len();
+        more.sort();
+        more.dedup();
+        assert_eq!(more.len(), n);
+    }
+
+    #[test]
+    fn one_row_per_model_and_what_the_key_may_use() {
+        let f = std::env::temp_dir().join(format!("tazuna-keymodels-{}.json", std::process::id()));
+        // PATH stands in for a key variable that is set
+        std::fs::write(&f, r#"{"routes": {"gpt-x": {"url": "https://subrouter.ai/v1", "key_env": "PATH", "price": [1, 2], "vetted_at": 0}},
+            "catalog": {"claude-opus-5.5": {"price": [5, 25], "providers": 3}, "DeepSeek-V4-Flash-0731": {"price": [0.1, 0.4], "providers": 2},
+                        "deepseek-v4-flash-0731": {"price": [0.1, 0.4], "providers": 4}, "glm-5.3": {"price": [0.2, 0.8], "providers": 5}},
+            "aa": {"claude-opus-5-5": 70, "deepseek-v4-flash-0731": 50, "glm-5-3": 45}}"#).unwrap();
+        let none = KeyModels::new();
+        let cs: Vec<Choice> = catalog(&f, |_| true, &none, 0).into_iter().filter(|c| c.route.is_some()).collect();
+        assert_eq!(cs.iter().map(|c| c.model.as_str()).collect::<Vec<_>>(), ["gpt-x", "deepseek-v4-flash-0731", "glm-5.3"],
+                   "the subscription's Opus not again through SubRouter (a pick ran it there, 2026-11-08); the lower-case spelling once");
+        assert_eq!(cs[0].state, State::Ready, "a key not looked up is not held against a model");
+        let keys = |ms: &[&str]| KeyModels::from([("PATH".to_string(), ms.iter().map(|m| m.to_string()).collect())]);
+        let route = |k: &KeyModels| catalog(&f, |_| true, k, 0).into_iter().find(|c| c.model == "gpt-x").unwrap();
+        let off = route(&keys(&["glm-5.3"]));
+        assert_eq!(off.state, State::NotOnKey);
+        assert!(why_not(&off).unwrap().contains("does not let PATH use gpt-x"), "{:?}", why_not(&off));
+        assert_eq!(route(&keys(&["gpt-x"])).state, State::Ready);
+        // the reasons name what to do
+        let mut c = cs[2].clone();
+        c.state = State::NoKey;
+        assert!(why_not(&c).unwrap().contains("set the environment variable SUBROUTER_API_KEY"));
+        c.state = State::Untrusted;
+        let why = why_not(&c).unwrap();
+        assert!(why.contains("add the line subrouter.ai to") && why.contains("trusted-providers"), "{why}");
+        c.state = State::Unchecked;
+        assert_eq!(why_not(&c), None);
+        std::fs::remove_file(&f).ok();
     }
 
     #[test]
@@ -408,7 +511,7 @@ mod tests {
         d["aa"] = serde_json::json!({"glm-5-3": 41.0, "gpt-6-1-sol": 54.5});
         d["bench"] = serde_json::json!({"gpt-6.1-sol": {"judge": 6.6, "runs": 51, "minutes": 19}});
         std::fs::write(&f, d.to_string()).unwrap();
-        let c = catalog(&f, |h| h == "subrouter.ai", now);
+        let c = catalog(&f, |h| h == "subrouter.ai", &KeyModels::new(), now);
         assert_eq!(c.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
                    ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.1", "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017 · fast", "gpt-6.1-sol", "glm-5.3"],
                    "routed models once; unchecked ones only with a public score (no video model)");
@@ -424,7 +527,7 @@ mod tests {
         assert_eq!(c[4].efforts, ["high", "max"], "only the levels that differ");
         assert_eq!(c[5].efforts, ["low", "high", "xhigh", "max"], "Sol: its four levels that differ");
         assert_eq!(c[5].route.as_ref().unwrap().2, "0.0387,0.00387,0.1935");
-        assert_eq!(catalog(&f, |_| false, now)[5].state, State::Untrusted);
+        assert_eq!(catalog(&f, |_| false, &KeyModels::new(), now)[5].state, State::Untrusted);
         assert_eq!(c[4].efforts[start_effort(&c[4], "claude-opus-5-5", "medium")], "high");
         assert_eq!(c[0].efforts[start_effort(&c[0], "claude-opus-5-5", "xhigh")], "xhigh");
         // pinning: the cheapest provider first, its own key and price; a pinned key that is not set says so
