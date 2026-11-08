@@ -29,23 +29,26 @@ jobs:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu }
           - { os: windows-latest, target: x86_64-pc-windows-msvc }
     runs-on: ${{ matrix.os }}
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v7
-      - uses: Swatinem/rust-cache@v2
+      # pinned to a commit: a moved tag could otherwise run in a job that publishes release binaries
+      - uses: Swatinem/rust-cache@ # v2.9.3
       - run: cargo build --release
       # the only Windows test run since windows.yml went manual (it ran on every push: ~6 minutes, counted double)
       - if: runner.os == 'Windows'
         run: cargo test
       - name: package and upload (Linux)
         if: runner.os != 'Windows'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           tar -C target/release -czf "tazuna-${{ matrix.target }}.tar.gz" tazuna
           gh release upload "$GITHUB_REF_NAME" "tazuna-${{ matrix.target }}.tar.gz"
       - name: package and upload (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           Compress-Archive -Path target/release/tazuna.exe -DestinationPath "tazuna-${{ matrix.target }}.zip"
           gh release upload "$env:GITHUB_REF_NAME" "tazuna-${{ matrix.target }}.zip"
