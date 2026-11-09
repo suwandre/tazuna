@@ -9,7 +9,7 @@ Each harness runs with HOME=~/bench-homes/<harness> (own login, no user extensio
 Go caches shared so builds stay warm. Claude Code variants also get an empty CLAUDE_CONFIG_DIR.
 """
 from datetime import datetime
-import argparse, json, os, re, shutil, statistics, subprocess, sys, tempfile, threading, time
+import argparse, json, os, re, shutil, socket, statistics, subprocess, sys, tempfile, threading, time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -123,6 +123,7 @@ def only_keys(env, *keep):
 
 
 _RELAYS = {}
+_RELAY_SOCKS = {}  # Linux: relay port -> the Unix socket that reaches it from inside the jail (netbridge.py)
 
 
 def relay(target, key, add=None, force=None, drop=()):
@@ -182,7 +183,42 @@ def relay(target, key, add=None, force=None, drop=()):
         srv.handle_error = lambda *a: None  # a client that hangs up between requests
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         _RELAYS[tag] = f"http://127.0.0.1:{srv.server_address[1]}"
+        if sys.platform == "linux":
+            # the Linux jail has a network of its own: the relay reaches it as a Unix socket, bridged to the same port
+            port = srv.server_address[1]
+            path = BENCH_HOMES / f".relay-{os.getpid()}-{port}.sock"
+            path.unlink(missing_ok=True)
+            us = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            us.bind(str(path))
+            us.listen(64)
+
+            def forward(us=us, port=port):
+                while True:
+                    c, _ = us.accept()
+                    try:
+                        t = socket.create_connection(("127.0.0.1", port))
+                    except OSError:
+                        c.close()
+                        continue
+                    for a, b in ((c, t), (t, c)):
+                        threading.Thread(target=_pipe, args=(a, b), daemon=True).start()
+            threading.Thread(target=forward, daemon=True).start()
+            _RELAY_SOCKS[port] = str(path)
         return _RELAYS[tag]
+
+
+def _pipe(a, b):
+    try:
+        while d := a.recv(65536):
+            b.sendall(d)
+    except OSError:
+        pass
+    finally:
+        for x in (a, b):
+            try:
+                x.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
 
 
 def proxy_url():
@@ -312,9 +348,14 @@ def bwrap_jail(cwd, env, cmd):
             back.append((fresh, real))
     port = env["HTTPS_PROXY"].rsplit(":", 1)[1]
     sock = _PROXY_SOCK[0]
+    # the proxy, then every relay of this bench process (pi's model file, Command Code's providers file and OpenCode's
+    # inline config name theirs where the environment does not show them)
+    bridges = [(port, sock), *[(str(p), s) for p, s in _RELAY_SOCKS.items()]]
+    for _, s_ in bridges:
+        args += ["--ro-bind", s_, s_]
     # the bridge's code goes in as -c: bench/ (where netbridge.py lives) is masked inside the jail
     src = (HERE / "netbridge.py").read_text()
-    args += ["--ro-bind", sock, sock, "--chdir", str(cwd), "--", sys.executable, "-I", "-c", src, port, sock, "--"]
+    args += ["--chdir", str(cwd), "--", sys.executable, "-I", "-c", src, *[x for pair in bridges for x in pair], "--"]
     return args, back
 
 
