@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.85 (2026-11-09): Mortera in `/model` before its key is set
+
+- Mortera's models come from its own list, which tazuna can only fetch with MORTERA_API_KEY set. Without the key,
+  Mortera was missing from `/model` altogether, not greyed out like the other providers (seen on a Windows PC where
+  the key was not in tazuna's environment). Now it shows one greyed row that says to set MORTERA_API_KEY; with the
+  key, the next start loads the whole list. No measurable metric changes.
+
 ## 0.1.84 (2026-11-09): `/model` by provider (OMP-style), Mortera's models, a SubRouter key tazuna manages
 
 - On a SubRouter key with no provider list for a model, SubRouter picks the provider: a bench round on such a key sent

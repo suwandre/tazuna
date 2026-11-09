@@ -294,6 +294,23 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
     // beside the routes file: the data folder in use, a test's own folder in tests
     if let Some(list) = routes.parent().and_then(|d| std::fs::read_to_string(d.join("mortera-models.json")).ok()) {
         out.extend(mortera_choices(&serde_json::from_str(&list).unwrap_or_default(), &file, &trusted));
+    } else if key("MORTERA_API_KEY").is_none() {
+        // no key, so no list yet: one greyed row, so Mortera is in /model with what it needs (it vanished on a PC whose
+        // shell had no MORTERA_API_KEY, 2026-11-09)
+        out.push(Choice {
+            model: "mortera".into(),
+            label: "Mortera's models".into(),
+            route: Some(("https://mortera.cloud/v1".into(), "MORTERA_API_KEY".into(), "0,0,0".into())),
+            place: "Mortera".into(),
+            efforts: vec![],
+            price: String::new(),
+            note: "tazuna loads Mortera's model list at start once MORTERA_API_KEY is set".into(),
+            stale: false,
+            state: State::NoKey,
+            bench: String::new(),
+            aa: String::new(),
+            pins: vec![],
+        });
     }
     // every other SubRouter model with a public score (the list also holds image and video models), best first. One model
     // once: SubRouter lists some under two spellings ("claude-opus-5.5" beside the subscription's "claude-opus-5-5",
@@ -674,7 +691,7 @@ mod tests {
                         "deepseek-v4-flash-0731": {"price": [0.1, 0.4], "providers": 4}, "glm-5.3": {"price": [0.2, 0.8], "providers": 5}},
             "aa": {"claude-opus-5-5": 70, "deepseek-v4-flash-0731": 50, "glm-5-3": 45}}"#).unwrap();
         let none = KeyModels::new();
-        let cs: Vec<Choice> = catalog(&f, |_| true, &none, 0).into_iter().filter(|c| c.route.is_some()).collect();
+        let cs: Vec<Choice> = catalog(&f, |_| true, &none, 0).into_iter().filter(|c| c.route.is_some() && c.place != "Mortera").collect();
         assert_eq!(cs.iter().map(|c| c.model.as_str()).collect::<Vec<_>>(), ["gpt-x", "deepseek-v4-flash-0731", "glm-5.3"],
                    "the subscription's Opus not again through SubRouter (a pick ran it there, 2026-11-08); the lower-case spelling once");
         assert_eq!(cs[0].state, State::Ready, "a key not looked up is not held against a model");
@@ -741,7 +758,7 @@ mod tests {
         d["aa"] = serde_json::json!({"glm-5-3": 41.0, "gpt-6-1-sol": 54.5});
         d["bench"] = serde_json::json!({"gpt-6.1-sol": {"judge": 6.6, "runs": 51, "minutes": 19}});
         std::fs::write(&f, d.to_string()).unwrap();
-        let c = catalog(&f, |h| h == "subrouter.ai", &KeyModels::new(), now);
+        let c: Vec<Choice> = catalog(&f, |h| h == "subrouter.ai", &KeyModels::new(), now).into_iter().filter(|c| c.place != "Mortera").collect();
         assert_eq!(c.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
                    ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.1", "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017 · fast", "gpt-6.1-sol", "glm-5.3"],
                    "routed models once; unchecked ones only with a public score (no video model)");
