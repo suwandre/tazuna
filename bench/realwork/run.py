@@ -291,9 +291,13 @@ def bwrap_jail(cwd, env, cmd):
     # files the command names under the fresh /tmp, read-only (run_harness's prompt file sits in a temp folder of its own)
     tmp = os.path.realpath(tempfile.gettempdir()) + "/"
     rw = {os.path.realpath(p) for p in [cwd, env.get("GOCACHE")] if p}
+    # a run's own scratch folders (`rw-...`: pi's and OMP's agent dir, OpenCode's data and log dirs) are written to, as the
+    # Mac's jail allows for the run's own rw- trees; anything else named there stays read-only (2026-11-09: pi, OMP and
+    # OpenCode failed at once on the VM, their state folders read-only)
     for x in {*[a for a in cmd if isinstance(a, str)], *env.values()}:
         if x.startswith(tmp) and os.path.exists(x) and not any(os.path.realpath(x).startswith(r) for r in rw):
-            args += ["--ro-bind", os.path.realpath(x), os.path.realpath(x)]
+            mode = "--bind" if os.path.isdir(x) and os.path.basename(os.path.realpath(x)).startswith("rw-") else "--ro-bind"
+            args += [mode, os.path.realpath(x), os.path.realpath(x)]
     back = []  # this run's own logs: a fresh directory over each, copied into the real one afterwards
     run = BENCH_HOMES / ".runlogs" / uuid.uuid4().hex
     for o in own:
