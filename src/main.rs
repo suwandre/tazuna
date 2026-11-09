@@ -1405,34 +1405,36 @@ fn run_live(
         v.vim = if !vim { "" } else if normal { "NORMAL" } else { "INSERT" };
         v.sessions = resume_pick.as_ref().map(|(l, i)| ui::SessionsPanel { rows: l.iter().map(Earlier::row).collect(), selected: *i });
         v.rewind = rewind_sel.map(|i| ui::RewindPanel { items: live.checkpoints.iter().map(|c| c.text.clone()).collect(), selected: i });
-        v.models = pick.as_ref().map(|Picker { cs, sel, eff, prov, filter, group }| ui::ModelsPanel {
-            rows: if group.is_none() && filter.is_empty() {
-                // the first level: a row per provider, with how many of its models can be picked now
-                models::providers(cs).into_iter().map(|(name, is)| {
-                    let ready = is.iter().filter(|&&i| matches!(cs[i].state, models::State::Ready | models::State::Unchecked)).count();
-                    let why = if ready == 0 { is.first().and_then(|&i| models::why_not(&cs[i])).unwrap_or_default() } else { String::new() };
-                    ui::ModelRow { label: name, place: String::new(), effort: String::new(), price: format!("{} model{}", is.len(), if is.len() == 1 { "" } else { "s" }),
-                        note: String::new(), bench: format!("{ready} ready"), aa: String::new(),
-                        state: if ready > 0 { 0 } else { is.first().map_or(1, |&i| match cs[i].state { models::State::Untrusted => 2, models::State::NotOnKey => 4, _ => 1 }) },
-                        why, stale: false,
-                        current: is.iter().any(|&i| cs[i].model == live.model && cs[i].route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1))) }
-                }).collect()
-            } else { shown(cs, filter, group.as_deref()).into_iter().map(|i| {
-                let c = &models::pinned(&cs[i], prov[i]);
-                // searching every provider: each row says whose it is (one model can be on SubRouter and on Mortera)
-                let label = match (group.is_none(), models::provider_of(c)) {
-                    (true, p) if p != "Claude" && p != "SubRouter" => format!("{} · {}", c.label, p.to_lowercase()),
-                    _ => c.label.clone(),
-                };
-                ui::ModelRow { label, place: c.place.clone(), effort: c.efforts.get(eff[i]).cloned().unwrap_or_else(|| "default".into()),
-                    price: c.price.clone(), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
-                    state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3, models::State::NotOnKey => 4 },
-                    why: models::why_not(c).unwrap_or_default(), stale: c.stale, current: c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
-            }).collect() },
-            selected: *sel,
-            filter: filter.clone(),
-            providers: group.is_none() && filter.is_empty(),
-            provider: group.clone(),
+        v.models = pick.as_ref().map(|pk| {
+            let Picker { cs, sel, eff, prov, filter, psel, in_models } = pk;
+            let group = pk.group();
+            let usable = |i: usize| matches!(cs[i].state, models::State::Ready | models::State::Unchecked);
+            // the left pane: All models, then each provider with how many models and whether any can be picked now
+            let mut groups = vec![("All models".to_string(), cs.len(), true, String::new())];
+            groups.extend(models::providers(cs).into_iter().map(|(name, is)| {
+                let ok = is.iter().any(|&i| usable(i));
+                let why = if ok { String::new() } else { is.first().and_then(|&i| models::why_not(&cs[i])).unwrap_or_default() };
+                (name, is.len(), ok, why)
+            }));
+            ui::ModelsPanel {
+                rows: shown(cs, filter, group.as_deref()).into_iter().map(|i| {
+                    let c = &models::pinned(&cs[i], prov[i]);
+                    // All models: each row says whose it is (one model can be on SubRouter and on Mortera)
+                    let label = match (group.is_none(), models::provider_of(c)) {
+                        (true, p) if p != "Claude" && p != "SubRouter" && !c.label.contains(" · ") => format!("{} · {}", c.label, p.to_lowercase()),
+                        _ => c.label.clone(),
+                    };
+                    ui::ModelRow { label, place: c.place.clone(), effort: c.efforts.get(eff[i]).cloned().unwrap_or_else(|| "default".into()),
+                        price: c.price.clone(), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
+                        state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3, models::State::NotOnKey => 4 },
+                        why: models::why_not(c).unwrap_or_default(), stale: c.stale, current: c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
+                }).collect(),
+                selected: *sel,
+                filter: filter.clone(),
+                groups,
+                group: *psel,
+                in_models: *in_models,
+            }
         });
         let dt = last.elapsed();
         last = Instant::now();
@@ -1724,22 +1726,22 @@ fn run_live(
         // ctrl-c and ctrl-d still stop or quit: stopping answers every open question with no
         let stop_key = ctrl && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'));
         // the /model picker owns the keyboard while open
-        if let (Some(Picker { cs, sel, eff, prov, filter, group }), false) = (pick.as_mut(), stop_key) {
-            // the first level (no provider open, nothing typed): providers; enter opens one, typing searches every model
-            if group.is_none() && filter.is_empty() {
-                let ps = models::providers(cs);
+        if let (Some(pk), false) = (pick.as_mut(), stop_key) {
+            // the left pane has the keys: ↑↓ providers (the right pane follows), enter or → into its models, typing searches
+            // them, esc closes
+            if !pk.in_models {
+                let n = models::providers(&pk.cs).len();
                 let mut close = false;
                 match key.code {
-                    KeyCode::Up => *sel = sel.saturating_sub(1),
-                    KeyCode::Down => *sel = (*sel + 1).min(ps.len().saturating_sub(1)),
-                    KeyCode::Enter | KeyCode::Right => if let Some((name, is)) = ps.get(*sel) {
-                        // the provider's models, on the current one if it is there
-                        *sel = is.iter().position(|&i| cs[i].model == live.model).unwrap_or(0);
-                        *group = Some(name.clone());
-                    },
+                    KeyCode::Up | KeyCode::Down => {
+                        pk.psel = if key.code == KeyCode::Up { pk.psel.saturating_sub(1) } else { (pk.psel + 1).min(n) };
+                        pk.sel = shown(&pk.cs, "", pk.group().as_deref()).iter().position(|&i| pk.cs[i].model == live.model).unwrap_or(0);
+                    }
+                    KeyCode::Enter | KeyCode::Right | KeyCode::Tab => pk.in_models = true,
+                    // typing from the providers searches every model (All models), as OMP's search box does
                     KeyCode::Char(c) if !ctrl => {
-                        filter.push(c);
-                        *sel = 0;
+                        (pk.in_models, pk.psel, pk.sel) = (true, 0, 0);
+                        pk.filter.push(c);
                     }
                     KeyCode::Esc => close = true,
                     _ => {}
@@ -1749,15 +1751,11 @@ fn run_live(
                 }
                 continue;
             }
+            let group = pk.group();
+            let Picker { cs, sel, eff, prov, filter, in_models, .. } = pk;
             let rows = shown(cs, filter, group.as_deref());
             let at = rows.get(*sel).copied();
             let mut chosen = None;
-            // back to the providers: esc or backspace with nothing typed in a provider, or the filter emptied
-            let back = |group: &mut Option<String>, sel: &mut usize, cs: &[models::Choice]| {
-                if let Some(g) = group.take() {
-                    *sel = models::providers(cs).iter().position(|(n, _)| *n == g).unwrap_or(0);
-                }
-            };
             match key.code {
                 KeyCode::Up => *sel = sel.saturating_sub(1),
                 KeyCode::Down => *sel = (*sel + 1).min(rows.len().saturating_sub(1)),
@@ -1766,7 +1764,7 @@ fn run_live(
                 // tab: the next checked provider pinned (after the last, any of them again); shift-tab: back
                 KeyCode::Tab => if let Some(i) = at { prov[i] = (prov[i] + 1) % (cs[i].pins.len() + 1) },
                 KeyCode::BackTab => if let Some(i) = at { prov[i] = (prov[i] + cs[i].pins.len()) % (cs[i].pins.len() + 1) },
-                KeyCode::Backspace if filter.is_empty() => back(group, sel, cs),
+                KeyCode::Backspace if filter.is_empty() => *in_models = false,
                 KeyCode::Backspace => {
                     filter.pop();
                     *sel = 0;
@@ -1780,7 +1778,7 @@ fn run_live(
                     filter.clear();
                     *sel = 0;
                 }
-                KeyCode::Esc => back(group, sel, cs),
+                KeyCode::Esc => *in_models = false,
                 _ => {}
             }
             if key.code == KeyCode::Enter {
@@ -2365,8 +2363,17 @@ struct Picker {
     eff: Vec<usize>,
     prov: Vec<usize>,
     filter: String,
-    /// The provider open (its models listed); None: the providers, or every model while a filter is typed.
-    group: Option<String>,
+    /// The left pane's row: 0 All models, then the providers in `models::providers` order.
+    psel: usize,
+    /// Keys move in the right pane (the models) rather than the left (the providers).
+    in_models: bool,
+}
+
+impl Picker {
+    /// The provider selected on the left (None: All models).
+    fn group(&self) -> Option<String> {
+        self.psel.checked_sub(1).and_then(|i| models::providers(&self.cs).get(i).map(|(n, _)| n.clone()))
+    }
 }
 
 fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
@@ -2376,10 +2383,12 @@ fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     // a session on a pinned provider's key opens with that provider pinned
     let key = live.provider.as_ref().map(|p| p.1.as_str());
     let prov: Vec<usize> = cs.iter().map(|c| c.pins.iter().position(|p| Some(p.key_env.as_str()) == key).map_or(0, |i| i + 1)).collect();
-    // it opens on the providers, the current one selected
+    // it opens on the providers, the current one selected and its models beside it, the current model marked
     let current = cs.iter().position(|c| c.model == live.model).map(|i| models::provider_of(&cs[i]));
-    let sel = models::providers(&cs).iter().position(|(n, _)| Some(n) == current.as_ref()).unwrap_or(0);
-    Ok(Picker { cs, sel, eff, prov, filter: String::new(), group: None })
+    let psel = models::providers(&cs).iter().position(|(n, _)| Some(n) == current.as_ref()).map_or(0, |i| i + 1);
+    let mut p = Picker { cs, sel: 0, eff, prov, filter: String::new(), psel, in_models: false };
+    p.sel = shown(&p.cs, "", p.group().as_deref()).iter().position(|&i| p.cs[i].model == live.model).unwrap_or(0);
+    Ok(p)
 }
 
 /// The picker rows that match what was typed (label or place, any case), as indices into the choices.

@@ -135,8 +135,8 @@ UI: 190 MB, 0.45 s to start (2026-10-08). A whole agent run: 21-22 MB on the own
 
 ## Models beyond Claude
 
-`/model` lists providers first, then each provider's models with prices and benchmark scores, and says what a
-greyed-out one still needs; typing searches every provider at once.
+`/model` shows the providers on the left and the selected one's models on the right, with prices and benchmark
+scores, and says what a greyed-out one still needs; typing searches every provider at once.
 
 - **SubRouter** (DeepSeek, GPT, Kimi, GLM, MiniMax ...): one key in `SUBROUTER_API_KEY`. Providers differ a lot (some
   serve another model, some barely cache); `tazuna subrouter --apply` sets the ones tazuna checked on your key.

@@ -157,6 +157,8 @@ pub fn provider_of(c: &Choice) -> String {
         Some("subrouter.ai") => "SubRouter".into(),
         Some("mortera.cloud") => "Mortera".into(),
         Some("api.mistral.ai") => "Mistral".into(),
+        // a machine of the user's (an address, not a name): the route's own name for it ("qwen3.8-flash-next@pc": pc)
+        Some(h) if h == "localhost" || h.parse::<std::net::IpAddr>().is_ok() => c.label.rsplit_once(" · ").map_or(h.to_string(), |(_, n)| n.to_string()),
         Some(h) => h.to_string(),
     }
 }

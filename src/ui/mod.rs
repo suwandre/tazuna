@@ -150,10 +150,11 @@ pub struct ModelsPanel {
     pub selected: usize,
     /// What has been typed to narrow the list.
     pub filter: String,
-    /// The first level: one row per provider (its models in `price`, how many are ready in `bench`); else the provider
-    /// open (or every provider, while searching).
-    pub providers: bool,
-    pub provider: Option<String>,
+    /// The left pane, OMP-style: "All models" then each provider (name, how many models, usable now, why not), the one
+    /// selected, and whether the keys move in the right pane (its models) or in the left (the providers).
+    pub groups: Vec<(String, usize, bool, String)>,
+    pub group: usize,
+    pub in_models: bool,
 }
 
 pub struct ModelRow {
@@ -586,11 +587,9 @@ fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme) {
 fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
-    let title = if p.providers {
-        " model · ↑↓ provider · enter opens it · type to search every model · esc "
-    } else {
-        " model · type to filter · ←→ effort · tab provider · enter · esc back "
-    };
+    // OMP's layout: the providers on the left, the selected one's models on the right; a narrow screen keeps the models
+    let two = full.width >= 70 && !p.groups.is_empty();
+    let gw = if two { p.groups.iter().map(|(n, c, ..)| n.chars().count() + c.to_string().len() + 6).max().unwrap_or(18).clamp(18, 30) } else { 0 };
     // column widths: as wide as their header or longest entry
     let width = |head: &str, f: &dyn Fn(&ModelRow) -> usize| p.rows.iter().map(f).chain([head.chars().count()]).max().unwrap_or(0);
     let ew = width("effort", &|r| r.effort.chars().count() + 2);
@@ -598,47 +597,86 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     let bw = width("bench (runs)", &|r| r.bench.chars().count());
     let aw = width("AA", &|r| r.aa.chars().count());
     let longest = width("model", &|r| r.label.chars().count());
-    // as wide as the table (and its title), at most 9/10 of the screen: no empty band beside the columns on a wide screen
+    let keys = if p.in_models || !two {
+        "↑↓ model · ←→ effort · tab provider pin · enter use · esc providers"
+    } else {
+        "↑↓ providers · enter or → its models · type to search · esc close"
+    };
+    // as wide as the panes need (and the key line), at most 9/10 of the screen
     let table = 2 + longest + 1 + ew + 1 + pw + 1 + bw + 1 + aw;
-    let w = (table.max(title.chars().count()) as u16 + 2).min(full.width * 9 / 10).max(20).min(full.width);
-    let iw = w.saturating_sub(2) as usize;
-    let cut = |s: String| s.chars().take(iw).collect::<String>();
-    // the selected row in full, wrapped: its height decides how many rows the list has
-    let detail: Vec<Line<'static>> = p.rows.get(p.selected).map(|r| {
-        if p.providers {
-            let lines = [(format!("{} · {} · {}", r.label, r.price, r.bench), th.text), (r.why.clone(), th.faint)];
-            return lines.into_iter().filter(|(t, _)| !t.is_empty())
-                .flat_map(|(t, c)| wrap_words(&t, iw).into_iter().map(move |l| Line::from(Span::styled(l, st(c))))).collect();
-        }
-        let price = if r.price == "plan" { "on the plan".to_string() } else { format!("${} per M tokens (in / out)", r.price.replace(" / ", " / $")) };
-        let scores = [(!r.bench.is_empty()).then(|| format!("bench {}", r.bench)), (!r.aa.is_empty()).then(|| format!("AA {}", r.aa))];
-        let why = match r.state {
-            1 | 2 | 4 if !r.why.is_empty() => r.why.clone(),
-            _ if r.stale => format!("stale: {}", r.note),
-            _ => r.note.clone(),
-        };
-        let color = match r.state { 1 | 4 => th.faint, 2 => th.warn, _ if r.stale => th.warn, _ => th.dim };
-        let head: Vec<String> = [Some(r.label.clone()), Some(price)].into_iter().chain(scores).flatten().collect();
-        [(head.join(" · "), th.text), (r.place.clone(), th.dim), (why, color)].into_iter()
-            .filter(|(text, _)| !text.is_empty())
-            .flat_map(|(text, c)| wrap_words(&text, iw).into_iter().map(move |l| Line::from(Span::styled(l, st(c)))))
-            .collect()
-    }).unwrap_or_default();
-    // as tall as its rows, the details and their gap need (filter and header lines, borders), at most 8/10 of the screen
-    let want = p.rows.len().max(1) + 2 + detail.len() + usize::from(!detail.is_empty()) + 2;
-    let h = (want as u16).min(full.height * 8 / 10).max(10).min(full.height);
+    // one width while it is open (filtering does not make it jump): what the panes want, but at least 100 and at most
+    // 9/10 of the screen
+    let w = ((gw + usize::from(two) + table).max(keys.chars().count()).max(100) as u16 + 2).min(full.width * 9 / 10).max(20).min(full.width);
+    let h = (full.height * 8 / 10).max(12).min(full.height);
     let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
     f.render_widget(Clear, area);
     let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(title, st(th.accent).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(" model ", st(th.accent).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
-    let dh = (detail.len() as u16).min(inner.height.saturating_sub(4)); // at least one row stays
-    let room = inner.height.saturating_sub(2 + dh + u16::from(dh > 0)) as usize; // filter, header; a gap before the details
+    let body = Rect::new(inner.x, inner.y, inner.width, inner.height.saturating_sub(1));
+    f.render_widget(Paragraph::new(Line::from(Span::styled(keys, st(th.faint)))), Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1));
+    // the left pane: All models, then the providers, ● usable now, ○ not (no key, not trusted)
+    if two {
+        let mut lines = vec![Line::from(Span::styled("providers", st(th.faint)))];
+        for (i, (name, n, ok, _)) in p.groups.iter().enumerate() {
+            let mark = if i == p.group { "›" } else { " " };
+            let dot = if i == 0 { "◆" } else if *ok { "●" } else { "○" };
+            let room = gw.saturating_sub(5 + n.to_string().len());
+            let label: String = name.chars().take(room).collect();
+            let text = format!("{mark}{dot} {label:<room$} {n}");
+            let color = if *ok || i == 0 { th.text } else { th.faint };
+            let style = match (i == p.group, p.in_models) {
+                (true, false) => st(color).add_modifier(Modifier::BOLD | Modifier::REVERSED),
+                (true, true) => st(th.accent).add_modifier(Modifier::BOLD),
+                _ => st(color),
+            };
+            let mut spans = vec![Span::styled(text, style)];
+            if *ok && i > 0 && !(i == p.group && !p.in_models) {
+                // the dot in the theme's ok colour, the rest as is
+                let t = spans.remove(0).content.to_string();
+                let (head, tail) = t.split_at(t.char_indices().nth(1).map_or(t.len(), |(b, _)| b));
+                let (dot_s, rest) = tail.split_at(tail.char_indices().nth(1).map_or(tail.len(), |(b, _)| b));
+                spans = vec![Span::styled(head.to_string(), style), Span::styled(dot_s.to_string(), st(th.ok)), Span::styled(rest.to_string(), style)];
+            }
+            lines.push(Line::from(spans));
+        }
+        f.render_widget(Paragraph::new(lines), Rect::new(body.x, body.y, gw as u16, body.height));
+        let sep: Vec<Line<'static>> = (0..body.height).map(|_| Line::from(Span::styled("│", st(th.border)))).collect();
+        f.render_widget(Paragraph::new(sep), Rect::new(body.x + gw as u16, body.y, 1, body.height));
+    }
+    let right = if two { Rect::new(body.x + gw as u16 + 2, body.y, body.width.saturating_sub(gw as u16 + 2), body.height) } else { body };
+    let iw = right.width as usize;
+    let cut = |s: String| s.chars().take(iw).collect::<String>();
+    let (gname, _, gok, gwhy) = p.groups.get(p.group).cloned().unwrap_or_else(|| ("models".into(), p.rows.len(), true, String::new()));
+    // the details under the list: the selected model in full, wrapped; with the providers in hand, the provider's state
+    let detail: Vec<Line<'static>> = if !p.in_models && two {
+        let state = if gok || p.group == 0 { format!("{} models · enter or → to pick one", p.rows.len()) } else { gwhy.clone() };
+        [(gname.clone(), th.text), (state, if gok || p.group == 0 { th.dim } else { th.warn })].into_iter()
+            .flat_map(|(t, c)| wrap_words(&t, iw).into_iter().map(move |l| Line::from(Span::styled(l, st(c))))).collect()
+    } else {
+        p.rows.get(p.selected).map(|r| {
+            let price = if r.price == "plan" { "on the plan".to_string() } else { format!("${} per M tokens (in / out)", r.price.replace(" / ", " / $")) };
+            let scores = [(!r.bench.is_empty()).then(|| format!("bench {}", r.bench)), (!r.aa.is_empty()).then(|| format!("AA {}", r.aa))];
+            let why = match r.state {
+                1 | 2 | 4 if !r.why.is_empty() => r.why.clone(),
+                _ if r.stale => format!("stale: {}", r.note),
+                _ => r.note.clone(),
+            };
+            let color = match r.state { 1 | 4 => th.faint, 2 => th.warn, _ if r.stale => th.warn, _ => th.dim };
+            let head: Vec<String> = [Some(r.label.clone()), Some(price)].into_iter().chain(scores).flatten().collect();
+            [(head.join(" · "), th.text), (r.place.clone(), th.dim), (why, color)].into_iter()
+                .filter(|(text, _)| !text.is_empty())
+                .flat_map(|(text, c)| wrap_words(&text, iw).into_iter().map(move |l| Line::from(Span::styled(l, st(c)))))
+                .collect()
+        }).unwrap_or_default()
+    };
+    let dh = (detail.len() as u16).min(right.height.saturating_sub(4)); // at least one row stays
+    let room = right.height.saturating_sub(2 + dh + u16::from(dh > 0)) as usize; // search, header; a gap before the details
     let first = p.selected.saturating_sub(room.saturating_sub(1));
     let fixed = 2 + ew + 1 + pw;
     let scores = iw >= fixed + 1 + bw + 1 + aw + 1 + 16.min(longest); // room for the scores and a 16-character label
-    // the label column takes what is left, so the table spans the panel (the title can make it wider than the table)
+    // the label column takes what is left, so the table spans the pane
     let lw = iw.saturating_sub(fixed + 1 + if scores { bw + 1 + aw + 1 } else { 0 }).max(4);
     let fit = |s: &str| {
         let n = s.chars().count();
@@ -655,32 +693,27 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
         }
         cut(s)
     };
-    let filter = match (&p.provider, p.filter.is_empty(), p.providers) {
-        (_, true, true) => "providers · details of the selected one below".to_string(),
-        (Some(n), true, _) => format!("{n} · its models · esc goes back to the providers"),
-        (Some(n), false, _) => format!("{n} · filter: {}", p.filter),
-        (None, true, false) => "every model".to_string(),
-        (None, _, _) => format!("every provider · filter: {}", p.filter),
+    let search = if p.filter.is_empty() {
+        Line::from(Span::styled(cut(format!("{gname} · {} models · type to search", p.rows.len())), st(th.faint)))
+    } else {
+        Line::from(vec![Span::styled("> ", st(th.accent)), Span::styled(cut(p.filter.clone()), st(th.text)), Span::styled("▍", st(th.accent))])
     };
-    let head = if p.providers { cols(" ", "provider", "", "models", "ready", "") } else { cols(" ", "model", "effort", "$/M in / out", "bench (runs)", "AA") };
-    let mut lines: Vec<Line<'static>> = vec![
-        Line::from(Span::styled(cut(filter), st(th.faint))),
-        Line::from(Span::styled(head, st(th.faint))),
-    ];
+    let mut lines: Vec<Line<'static>> = vec![search, Line::from(Span::styled(cols(" ", "model", "effort", "$/M in / out", "bench (runs)", "AA"), st(th.faint)))];
     for (i, r) in p.rows.iter().enumerate().skip(first).take(room) {
-        let mark = if i == p.selected { "›" } else if r.current { "•" } else { " " };
+        let on = i == p.selected && (p.in_models || !two);
+        let mark = if on { "›" } else if r.current { "•" } else { " " };
         let effort = if r.effort.is_empty() { String::new() } else { format!("‹{}›", r.effort) };
         let row = cols(mark, &r.label, &effort, &r.price, &r.bench, &r.aa);
         let color = match r.state { 1 | 4 => th.faint, 2 => th.warn, 3 => th.dim, _ if r.stale => th.warn, _ => th.text };
-        let style = if i == p.selected { st(color).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(color) };
+        let style = if on { st(color).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(color) };
         lines.push(Line::from(Span::styled(row, style)));
     }
     if p.rows.is_empty() {
         lines.push(Line::from(Span::styled("no model matches", st(th.faint))));
     }
-    f.render_widget(Paragraph::new(lines), inner);
+    f.render_widget(Paragraph::new(lines), right);
     if dh > 0 {
-        let at = Rect::new(inner.x, inner.y + inner.height - dh, inner.width, dh);
+        let at = Rect::new(right.x, right.y + right.height - dh, right.width, dh);
         f.render_widget(Paragraph::new(detail), at);
     }
 }
@@ -2051,7 +2084,8 @@ mod tests {
                 2 => "not trusted: the code would go to subrouter.ai; add the line subrouter.ai to ~/.config/tazuna/trusted-providers".into(),
                 _ => String::new(),
             }, stale, current: false };
-        let mut p = ModelsPanel { rows: vec![row("Opus 5.5", 0, false), row("deepseek-v4.1-flash-1017 · fast", 1, false), row("gpt-6.1-sol", 2, true), row("gpt-6-luna", 0, true)], selected: 0, filter: String::new(), providers: false, provider: Some("SubRouter".into()) };
+        let mut p = ModelsPanel { rows: vec![row("Opus 5.5", 0, false), row("deepseek-v4.1-flash-1017 · fast", 1, false), row("gpt-6.1-sol", 2, true), row("gpt-6-luna", 0, true)], selected: 0, filter: String::new(),
+            groups: vec![("All models".into(), 4, true, String::new()), ("SubRouter".into(), 4, true, String::new())], group: 1, in_models: true };
         let draw = |p: &ModelsPanel, w: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 24)).unwrap();
             term.draw(|f| draw_models(f, p, Design::Cockpit.theme())).unwrap();
@@ -2067,7 +2101,7 @@ mod tests {
             let at: Vec<usize> = rows.iter().map(|l| l[..l.find("0.0387 / 0.194").unwrap_or_else(|| panic!("{w}: price cut: {l}"))].chars().count()).collect();
             assert!(at.windows(2).all(|x| x[0] == x[1]), "{w}: {rows:?}");
             assert!(rows[1].contains("· fast"), "{w}: {}", rows[1]);
-            assert_eq!(rows[0].contains("6.8 (308)"), w >= 78, "{w}: scores shown where they fit");
+            assert_eq!(rows[0].contains("6.8 (308)"), w >= 120, "{w}: scores shown where they fit beside the providers");
             let text = lines.concat();
             assert!(text.contains("shared-openai-pro-52"), "{w}: the provider list wraps whole: {lines:#?}");
         }
@@ -2075,7 +2109,8 @@ mod tests {
         // a wide screen (the user's, 2026-11-01): the panel ends where the table does, not at 9/10 of the screen
         let wide = draw(&p, 200);
         let border = wide.iter().find(|l| l.contains('┌')).unwrap();
-        assert!(border.trim().chars().count() < 120, "{border}");
+        assert!(border.trim().chars().count() < 140, "{border}");
+        assert!(wide.concat().contains("SubRouter") && wide.concat().contains("All models"), "the providers pane");
         // the detail line says what to do: the variable to set, the line to add (it named `source ~/.subrouter-key`, a
         // file only the bench's machines have, until 0.1.77)
         for (i, want) in [(0, "cached 81%"), (1, "SUBROUTER_API_KEY"), (2, "trusted-providers"), (3, "stale")] {

@@ -16,7 +16,7 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
-## 0.1.84 (unreleased): a SubRouter key tazuna manages, or your own
+## 0.1.84 (2026-11-09): `/model` by provider (OMP-style), Mortera's models, a SubRouter key tazuna manages
 
 - On a SubRouter key with no provider list for a model, SubRouter picks the provider: a bench round on such a key sent
   every DeepSeek V4.1 Flash call to RelAI, 11% of the input cached, where the checked providers (bangai, kriora,
@@ -33,10 +33,12 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
   there, where claude and the agent's commands would inherit it): tazuna reads it from the file where it builds its own
   requests, and only the own loop's engine gets it, which removes it from its environment before any tool runs.
 
-- `/model` goes by provider first, as OMP's picker does: Claude, SubRouter, Mortera, Mistral and any other route, each with
-  how many of its models there are and how many can be picked now (a provider with none says why: no key, not trusted).
-  Enter opens one, esc or backspace goes back; typing on the first level searches every provider's models at once, each
-  row then naming its provider. The flat list had grown past 90 rows with Mortera's.
+- `/model` in two panes, as OMP's picker: on the left "All models" and each provider (Claude, SubRouter, Mortera, Mistral,
+  a machine of yours by its route's name) with how many models it has, ● where one can be picked now and ○ where not;
+  on the right the selected provider's models with effort, price and scores, and the details below (a provider that
+  cannot be used says why: no key, not trusted). ↑↓ moves through the providers and the right pane follows; enter or →
+  goes into its models (↑↓, ←→ effort, tab pins a checked provider, enter uses it, esc back); typing searches every model
+  at once, each naming its provider. The single list had grown past 90 rows with Mortera's.
 - Mortera in `/model` (`MORTERA_API_KEY`): every model on its list that answers in text (59 today: Gemini 3.1 Pro and 3.8
   Flash, Gemini 4 Argon, GPT-6.x, Kimi K3.x, Grok 4.x, Qwen3.x, GLM-5.x, MiMo, MiniMax, DeepSeek V4 and V4.1 Flash with
   its 1017 variants, Muse, Nemotron ...), read at start in the background and kept in the data folder, so new models show
