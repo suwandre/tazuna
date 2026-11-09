@@ -343,8 +343,7 @@ pub struct Live {
     runs_log: PathBuf,
     /// "live" or "headless", recorded in the run log.
     pub mode: &'static str,
-    /// Prompt cache lifetime for claude (`--cache-ttl`); None picks by mode: 5m headless (turns come seconds apart and cache
-    /// writes cost 1.25× instead of 2×: −10% per run, same judge), 1h live (a pause over 5 minutes would re-write it all).
+    /// Prompt cache lifetime for claude (`--cache-ttl`); None picks with `ttl()`.
     pub cache_ttl: Option<String>,
     /// Put a repo map in front of the session's first message (`--repo-map`); `mapped` once it went out.
     pub repo_map: bool,
@@ -1247,7 +1246,7 @@ impl Live {
         json!({
             "model": self.model, "effort": self.effort, "profile": "cc-mid", "version": env!("CARGO_PKG_VERSION"), "mode": self.mode,
             "verify": match &self.verify { verify::Mode::Auto => "auto", verify::Mode::Command(_) => "command", verify::Mode::Off => "off" },
-            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into()), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "batch_calls": self.batch_calls, "test_scope": self.test_scope, "lessons": self.lessons, "history": self.history, "boss_effort": self.boss_effort, "boss_pick": self.boss_pick, "boss_escalate": self.boss_escalate, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
+            "bash_cap": self.bash_cap, "diagnostics": self.diagnostics, "repo_map": self.repo_map, "explorer": self.explorer, "tester": self.tester, "cache_ttl": self.ttl(), "self_review": self.self_review, "repo_tools": if self.repo_tools_core { "core" } else { "all" }, "rtk": self.rtk, "batch_calls": self.batch_calls, "test_scope": self.test_scope, "lessons": self.lessons, "history": self.history, "boss_effort": self.boss_effort, "boss_pick": self.boss_pick, "boss_escalate": self.boss_escalate, "review_model": self.review_model.as_ref().map(|(m, e)| format!("{m} {e}")),
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
@@ -1280,6 +1279,15 @@ impl Live {
     }
 
     /// Which settings files claude loads (recorded in the run log).
+    /// Prompt cache lifetime: `--cache-ttl`, else 5m for headless runs without boss mode (turns come seconds apart and
+    /// writes cost 1.25× instead of 2×: −10% per run, same judge, 0.0.20), else 1h. Live: a pause over 5 minutes would
+    /// re-write it all. Boss mode: the lead waits on its workers past 5 minutes, and 1h also reads Claude Code's shared
+    /// prefix on the first call (5m changes ScheduleWakeup's text, so it misses); 313 recorded runs re-priced: −3.2% on
+    /// the boss baseline, +3% without boss (2026-11-09).
+    fn ttl(&self) -> String {
+        self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" && self.boss.is_none() { "5m" } else { "1h" }.into())
+    }
+
     fn setting_sources(&self) -> &'static str {
         match (self.profile, self.user_settings) {
             (Profile::Lean, _) => "",
@@ -1343,7 +1351,7 @@ impl Live {
         let mut cmd = Command::new("claude");
         // the user's own setting wins; otherwise the mode decides
         if std::env::var_os("CLAUDE_CODE_PROMPT_CACHE_TTL").is_none() {
-            let ttl = self.cache_ttl.clone().unwrap_or_else(|| if self.mode == "headless" { "5m" } else { "1h" }.into());
+            let ttl = self.ttl();
             cmd.env("CLAUDE_CODE_PROMPT_CACHE_TTL", ttl);
         }
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
@@ -1709,6 +1717,20 @@ mod tests {
         assert!(starts_turn(&json!({"type": "assistant", "message": {}})));
         assert!(!starts_turn(&json!({"type": "result"})));
         assert!(!starts_turn(&json!({"type": "system", "subtype": "init"})));
+    }
+
+    #[test]
+    fn cache_ttl_is_5m_only_headless_without_boss() {
+        let mut live = Live::new("", "").unwrap();
+        live.mode = "headless";
+        assert_eq!(live.ttl(), "5m");
+        live.boss = Some("haiku".into());
+        assert_eq!(live.ttl(), "1h", "the lead waits on its workers past 5 minutes");
+        live.mode = "live";
+        live.boss = None;
+        assert_eq!(live.ttl(), "1h");
+        live.cache_ttl = Some("5m".into());
+        assert_eq!(live.ttl(), "5m", "--cache-ttl wins");
     }
 
     #[test]

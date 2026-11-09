@@ -18,7 +18,7 @@
 //!                         # on by default (haiku) for --run on Opus on the claude path
 //!          [--tester <model>]   # a subagent on <model> runs tests and type checks and reports only the failures
 //!          [--repo-map]   # a map of the files that match the task, in front of the first message
-//!          [--cache-ttl 5m|1h]   # prompt cache lifetime (default: 5m for --run, 1h live)
+//!          [--cache-ttl 5m|1h]   # prompt cache lifetime (default: 5m for --run without boss mode, else 1h)
 //!          [--mode auto|ask|edits|plan]   # permissions: never ask (default), ask before edits and commands, ask before
 //!                                         # commands only, or plan read-only first; shift-tab cycles them live
 //!          [--review-model M [--review-effort E]]  # an independent reviewer on model M checks the diff once

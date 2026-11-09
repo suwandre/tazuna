@@ -72,7 +72,7 @@ Two paths, chosen by where the code may go (`--data trusted|any`):
    have): all done. Own loop ask and edits modes (0.0.42; plan mode claude-only), `ctrl-g` external editor (0.0.43),
    `ctrl-b` background-task view with stop (0.0.44), `/rewind` files and conversation (0.0.45; claude path, Claude Code's
    own edit tools), `ctrl-x` stash and `/vim` (0.0.46).
-2. **Cheap `claude` levers** before the own loop: ~~5-minute prompt cache~~ (v0.0.20: −10%, same judge; headless default),
+2. **Cheap `claude` levers** before the own loop: ~~5-minute prompt cache~~ (v0.0.20: −10%, same judge; headless default; boss mode back to 1 hour in 0.1.78),
    ~~a lower Bash output limit~~ (+30%: ruled out), ~~repo map~~ (v0.0.21: no gain, the agent reads as much),
    ~~Sonnet explorer subagent~~ (v0.0.23: −35% turns but +12% cost), ~~Haiku explorer~~ (v0.0.24: −28% cost, judge −0.25;
    default since 0.0.25), Haiku test-runner worker (v0.0.26: −14% cost, judge −0.40; a second judge agrees: opt-in),
@@ -294,9 +294,13 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Best of two cheap attempts, Opus picks with their test results (`tazuna-ownsubxbest2`) | judge 7.08 vs 6.92 one run (Luna, 3 tasks x 2, 2026-10-24); the pick took the better attempt 4 of 5 times | +0.16 within noise for twice the calls and the slower attempt's time; at most an opt-in for hard tasks |
 | Five-lens review + one fix round on the own loop (DeepSeek 1017 implementing, Opus 5.5 high reviewing, `tazuna-ownsubgate`) | judge 6.6 vs 8.2 alone, hidden tests 5/9 vs 9/9, +46% turns (3 tasks × 3 runs, 2026-10-22; 5 of those gate runs saw the reference fix). Clean redo on 0.0.83 (2026-10-25, 1 round): 6.5 vs 7.3 alone, same hidden tests, turns 355 vs 414 | findings in 3 of 9 runs; every fixed run judged lower (the fix widens the patch); the cheap model alone beat Opus on these tasks, and still does with clean runs |
 | Haiku explorer subagent (`--explorer haiku`) | −28% cost, −41% turns, judge −0.25 | default since 0.0.25 (price to performance) |
+| t3code as a rival (0.1.7, 2026-11-08, one-line fix, Opus 5.5 medium) | first call 34.7k tokens vs 17.6k for stock `claude -p`, ~725 MB RAM vs 250 MB (its server alone 418 MB idle) | on Claude it runs the `claude` CLI through the Agent SDK with Claude Code's full prompt plus its own Artifact tool (33.7k chars); nothing leaner to borrow. Its idle compaction before the cache expires is parked |
 
 ## Decision log
 
+- 2026-11-09: headless boss mode writes a 1-hour prompt cache (0.1.78). The 5-minute cache lost the lead's cache while it
+  waited on its workers and missed Claude Code's cross-session prefix; 313 recorded runs re-priced: −3.2% on the boss
+  baseline (CHANGELOG). Found while comparing t3code.
 - 2026-11-08: CI builds every platform, macOS too, and a release needs no Mac (`./release.sh` checks, tags and pushes).
   Reason: the Mac built macOS because macOS runners counted 10x against a private repo's Actions minutes; the repo is
   public now, where standard runners cost nothing. Installs the usual way too: one-line installers and `tazuna update`.

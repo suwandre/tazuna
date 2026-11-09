@@ -16,6 +16,33 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.78 (2026-11-09): a 1-hour prompt cache for boss mode
+
+- Headless runs in boss mode (the default for `--run` on Opus) now write the prompt cache with a 1-hour lifetime; other
+  headless runs keep 5 minutes (0.0.20), live sessions keep 1 hour. `--cache-ttl` still overrides.
+- Why: two costs of the 5-minute cache that 0.0.20 could not see. (1) In boss mode the lead waits on its workers, often
+  past 5 minutes: 106 of 316 recorded Opus medium runs lost the lead's cache at least once, 181 of 198 losses came after a
+  gap of 300 s or more, and those re-writes were 48% of the lead's cache writes. (2) Claude Code's tools and system
+  prompt are cached across sessions, but only as stock sends them: a 5-minute lifetime changes the ScheduleWakeup tool's
+  text, so the first call wrote the whole ~19.7k prefix. Single Haiku calls (`bench/prefixprobe.py`), one flag at a time against stock `claude -p`:
+  only `CLAUDE_CODE_PROMPT_CACHE_TTL=5m` dropped the first call's cache read to 0; tazuna's full flag set at 1 hour read
+  13.4k.
+- Re-pricing the 313 recorded runs (`bench/ttl_replay.py`, no API calls; 1-hour writes at 2x instead of 1.25x, the first call's 13.4k and the
+  re-writes after waits of 5 to 60 minutes read at 0.1x; the workers' writes at 2x too):
+
+| Set (Opus 5.5 medium) | Runs | 1h vs 5m | Runs cheaper with 1h |
+|---|---|---|---|
+| besc (boss, 0.1.45 baseline) | 12 | −3.2% | 10 |
+| bhmed (boss, workers medium) | 20 | −2.6% | 14 |
+| boss (0.0.49) | 12 | −20.9% | 12 |
+| bpick (`--boss-pick`) | 20 | +5.4% | 13 |
+| noboss | 8 | +3.1% | 2 |
+| all 313 | 313 | −3.6% | |
+
+- One live run on a one-line fix, boss mode, Opus 5.5 medium: the lead's first call read 13,316 tokens and wrote 6,290
+  (before: 0 and 19,726); the run cost $0.084 against $0.142 on 0.1.76 (one run each, not a benchmark). No change to
+  prompts, tools or routing.
+
 ## 0.1.77 (2026-11-08): copying on Windows and Linux, the plan line on a new install, `/model` for users without the bench, releases from any machine
 
 - Copying (a drag over the transcript, `ctrl-y`) ran `pbcopy` everywhere: "copy failed: pbcopy: program not found" on
