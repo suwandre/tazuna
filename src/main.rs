@@ -55,7 +55,8 @@
 //!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
 //!          [--trust] [--user-settings]   # trust the repo's hooks/skills without asking; also load your ~/.claude settings
 //!          [--connectors]   # repo profile: your claude.ai connectors and MCP servers (Jira, Slack ...), without the rest
-//!                             of ~/.claude; their tools load on demand, ~4k tokens a call for the names
+//!                             of ~/.claude; their tools load on demand, ~4k tokens a call for the names; /connectors
+//!                             switches them inside a session and remembers the choice for the next ones
 //!          [--no-project-instructions]   # lean profile: don't add the repo's CLAUDE.md / AGENTS.md to the prompt
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
@@ -559,7 +560,8 @@ fn main() -> Result<()> {
             let _ = labels::label_git(&base, Some(&std::env::current_dir()?));
             let mut live = live::Live::new("", "")?;
             live.user_settings = a.user_settings;
-    live.connectors = a.connectors;
+            // `/connectors` remembers its choice for the next live sessions; `--run` keeps only the flag (benches stay as given)
+            live.connectors = a.connectors || labels::dir().is_ok_and(|d| d.join("connectors").exists());
             let (lane, boss) = lane(&a, true)?;
             let route = live.set_lane(lane);
             live.verify = a.verify.clone();
@@ -1978,6 +1980,18 @@ fn run_live(
                     let msg = live.set_boss(want);
                     match msg {
                         Ok((t, e)) => s.apply(&e, t),
+                        Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
+                    }
+                    continue;
+                }
+                if text == "/connectors" {
+                    match live.set_connectors(!live.connectors) {
+                        Ok((t, e)) => {
+                            if let Ok(f) = labels::dir().map(|d| d.join("connectors")) {
+                                let _ = if live.connectors { std::fs::write(f, "") } else { std::fs::remove_file(f) };
+                            }
+                            s.apply(&e, t)
+                        }
                         Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
                     }
                     continue;

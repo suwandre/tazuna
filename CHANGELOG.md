@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.79 (2026-11-09): `/connectors` inside a session
+
+- `/connectors` turns the user's claude.ai connectors and MCP servers (Jira, Slack, Claude Docs) on or off without
+  restarting tazuna, as `--connectors` does at start: claude restarts with them and resumes the conversation (one cache
+  rebuild). The choice is remembered (`~/.local/share/tazuna/connectors`) for the next live sessions, so a plain `tazuna`
+  keeps them; `--run` still takes only the flag, so benches don't change. Repo profiles only, as before: the lean profile
+  and the own loop say so instead. Default unchanged (off); the cost when on is the ~4.6k tokens a call measured in 0.1.69.
+
 ## 0.1.78 (2026-11-09): a 1-hour prompt cache for boss mode
 
 - Headless runs in boss mode (the default for `--run` on Opus) now write the prompt cache with a 1-hour lifetime; other

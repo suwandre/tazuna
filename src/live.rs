@@ -693,6 +693,28 @@ impl Live {
         Ok(self.record(json!({"type": "harness_info", "text": text})))
     }
 
+    /// `/connectors`: the user's claude.ai connectors and MCP servers (Jira, Slack ...) on or off for the rest of the
+    /// session, as `--connectors` at start. claude restarts with them; the conversation goes on (one cache rebuild).
+    pub fn set_connectors(&mut self, on: bool) -> Result<(f64, Value)> {
+        if !self.idle() {
+            bail!("wait until the run has finished (or stop it with esc)");
+        }
+        if self.provider.is_some() || self.profile == Profile::Lean {
+            bail!("connectors are for claude in the repo profile (this session: {})", if self.provider.is_some() { "the own loop" } else { "the lean profile" });
+        }
+        if self.user_settings {
+            bail!("--user-settings already loads every connector and MCP server");
+        }
+        self.connectors = on;
+        self.respawn(self.model.clone(), self.effort.clone());
+        let text = if on {
+            "connectors on: your claude.ai connectors and MCP servers (Jira, Slack ...), ~4.6k tokens a call, cached after the first (the conversation goes on; remembered for the next sessions)"
+        } else {
+            "connectors off (the conversation goes on; remembered for the next sessions)"
+        };
+        Ok(self.record(json!({"type": "harness_info", "text": text})))
+    }
+
     /// `/new` (no id) and `/resume ID`: the next message starts a fresh conversation, or continues an earlier claude one,
     /// on the same model, effort and route. The conversation left behind stays resumable.
     pub fn restart(&mut self, resume: Option<String>) -> Result<(f64, Value)> {
@@ -1717,6 +1739,18 @@ mod tests {
         assert!(starts_turn(&json!({"type": "assistant", "message": {}})));
         assert!(!starts_turn(&json!({"type": "result"})));
         assert!(!starts_turn(&json!({"type": "system", "subtype": "init"})));
+    }
+
+    #[test]
+    fn connectors_switch_only_in_a_claude_repo_session() {
+        let mut live = Live::new("", "").unwrap();
+        live.profile = Profile::Lean;
+        assert!(live.set_connectors(true).is_err() && !live.connectors, "lean has no connectors");
+        live.profile = Profile::Repo;
+        assert!(live.set_connectors(true).is_ok() && live.connectors);
+        assert!(live.set_connectors(false).is_ok() && !live.connectors);
+        live.user_settings = true;
+        assert!(live.set_connectors(true).is_err(), "--user-settings loads them already");
     }
 
     #[test]
