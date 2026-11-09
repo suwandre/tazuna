@@ -29,6 +29,9 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
     when you switch to one (`tazuna subrouter --apply` still puts the checked lists on it).
 - Checked on the user's account: the key made with DeepSeek's list on the checked three and no limits, renewed in place
   on a second run (no second key), the file matching it, one call landing on LingAI; then deleted.
+- The managed key stays out of tazuna's environment (an automated security review caught the first version putting it
+  there, where claude and the agent's commands would inherit it): tazuna reads it from the file where it builds its own
+  requests, and only the own loop's engine gets it, which removes it from its environment before any tool runs.
 
 ## 0.1.83 (2026-11-09): a selection in the message box no longer copies itself
 

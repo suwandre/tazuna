@@ -151,7 +151,9 @@ takes `--data any`.
   review. Outside a repo it starts in ask mode.
 - A repo's `CLAUDE.md` / `AGENTS.md` go into the prompt; a repo whose config runs code (hooks, skills) asks "Trust this
   repo?" once. In repos you did not write, add `--no-project-instructions`.
-- Provider keys never reach the agent's commands. MCP logins sit in `~/.config/tazuna/mcp-auth/`, readable by you only.
+- On the own loop the provider key never reaches the agent's commands, and the managed SubRouter key is never put in
+  tazuna's environment. Keys you export in your shell are visible to Claude's commands, as in any terminal. MCP logins sit
+  in `~/.config/tazuna/mcp-auth/`, readable by you only.
 
 ## Development
 

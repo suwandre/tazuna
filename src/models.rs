@@ -141,7 +141,7 @@ fn routes_file(routes: &Path) -> (Value, bool) {
 /// models listed only those and answered 403 for another, 2026-11-08). None when the key is unset or SubRouter does not
 /// answer.
 pub fn key_models(var: &str) -> Option<std::collections::HashSet<String>> {
-    let key = std::env::var(var).ok()?;
+    let key = key(var)?;
     let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
     let mut r = http.get("https://subrouter.ai/v1/models").header("Authorization", format!("Bearer {}", key.trim())).call().ok()?;
     let d: Value = serde_json::from_str(&r.body_mut().read_to_string().ok()?).ok()?;
@@ -216,7 +216,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
         // either as at high, 2026-11-06); a route that lists none ignores the effort
         let distinct: Vec<&str> = r["efforts"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
         let levels = if distinct.is_empty() { " · effort is ignored".to_string() } else { String::new() };
-        let state_of = |var: &str| if std::env::var_os(var).is_none() {
+        let state_of = |var: &str| if key(var).is_none() {
             State::NoKey
         } else if !trusted(host) {
             State::Untrusted
@@ -276,7 +276,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
             price: format!("{} / {}", per_m(input), per_m(output)),
             note: "unchecked: SubRouter picks the provider (the price is the cheapest one's)".into(),
             stale: false,
-            state: if std::env::var_os(key).is_none() {
+            state: if self::key(key).is_none() {
                 State::NoKey
             } else if !trusted("subrouter.ai") {
                 State::Untrusted
@@ -317,7 +317,7 @@ pub fn fallbacks(routes: &Path, key_env: &str) -> String {
 }
 
 pub fn subrouter_balance() -> Option<f64> {
-    let key = std::env::var("SUBROUTER_API_KEY").ok()
+    let key = key("SUBROUTER_API_KEY")
         .or_else(|| std::env::vars().find(|(k, _)| k.starts_with("SUBROUTER_ROUTE_") && k.ends_with("_KEY")).map(|(_, v)| v))?;
     let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
     let get = |path: &str| -> Option<Value> {
@@ -341,19 +341,17 @@ pub fn managed_key() -> Option<String> {
     std::fs::read_to_string(managed_file()?).ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty())
 }
 
-/// At start: the managed key stands in for SUBROUTER_API_KEY when that is not set. The user's own key always wins.
-pub fn load_managed_key() {
-    if std::env::var_os("SUBROUTER_API_KEY").is_none()
-        && let Some(k) = managed_key()
-    {
-        // SAFETY: called first thing in main, before any other thread starts
-        unsafe { std::env::set_var("SUBROUTER_API_KEY", k) };
-    }
+/// The key a route's variable names: the environment's, else for SUBROUTER_API_KEY tazuna's managed key. The managed key
+/// never goes into tazuna's environment, where every child (claude, the agent's commands) would inherit it; only the
+/// own loop's engine gets it, and the engine takes its key out of its environment before any tool runs.
+pub fn key(var: &str) -> Option<String> {
+    std::env::var(var).ok().filter(|k| !k.trim().is_empty()).or_else(|| (var == "SUBROUTER_API_KEY").then(managed_key).flatten())
 }
 
-/// True when SUBROUTER_API_KEY is tazuna's managed key, so tazuna chose its providers.
+/// True when SUBROUTER_API_KEY means tazuna's managed key (the user set no key of their own), so tazuna chose its
+/// providers.
 pub fn key_is_managed() -> bool {
-    managed_key().is_some_and(|m| std::env::var("SUBROUTER_API_KEY").is_ok_and(|k| k.trim() == m))
+    managed_key().is_some_and(|m| std::env::var("SUBROUTER_API_KEY").map_or(true, |k| k.trim().is_empty() || k.trim() == m))
 }
 
 /// SubRouter's account API with the account's access token (~/.subrouter-account: SUBROUTER_ACCESS_TOKEN=,
@@ -489,7 +487,7 @@ pub fn subrouter_cli(args: &[String]) -> anyhow::Result<()> {
         std::io::Write::write_all(&mut crate::platform::private_file(&path, false)?, value.as_bytes())?;
         println!("\nready: \"{MANAGED_NAME}\" with {n} checked models, kept in {} (readable by you only). tazuna uses it whenever \
                   SUBROUTER_API_KEY is not set. Run this again after `tazuna update` to bring new checks in.", path.display());
-        if std::env::var("SUBROUTER_API_KEY").is_ok_and(|k| k.trim() != value) {
+        if std::env::var("SUBROUTER_API_KEY").is_ok_and(|k| !k.trim().is_empty() && k.trim() != value) {
             println!("note: SUBROUTER_API_KEY is set to another key, and it wins: unset it to use the managed key");
         }
         return Ok(());

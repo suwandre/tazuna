@@ -441,8 +441,6 @@ fn parse(argv: Vec<String>) -> Result<Args> {
 }
 
 fn main() -> Result<()> {
-    // tazuna's managed SubRouter key (`tazuna subrouter --manage`) when the user set none of their own
-    models::load_managed_key();
     if matches!(std::env::args().nth(1).as_deref(), Some("--version" | "-V")) {
         println!("tazuna {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -503,7 +501,7 @@ fn main() -> Result<()> {
     if let Some((_, url)) = a.review_model.as_deref().and_then(|m| m.split_once('@')) {
         check_data(url, a.data_any)?;
         let var = a.review_key_env.clone().context("--review-model MODEL@URL needs --review-key-env VAR")?;
-        a.review_key = Some(std::env::var(&var).with_context(|| format!("{var} not set"))?);
+        a.review_key = Some(models::key(&var).with_context(|| format!("{var} not set"))?);
         // SAFETY: no other thread has started yet
         unsafe { std::env::remove_var(&var) };
     }

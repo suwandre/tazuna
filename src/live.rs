@@ -1356,6 +1356,13 @@ impl Live {
             if let Some(p) = &self.price {
                 cmd.env("TAZUNA_PRICE", p);
             }
+            // the managed SubRouter key lives in a file, not in tazuna's environment: the engine gets it as the variable it
+            // reads, and takes it out of its own environment before any tool runs (engine.rs `connect`)
+            if std::env::var_os(&key_env).is_none()
+                && let Some(k) = crate::models::key(&key_env)
+            {
+                cmd.env(&key_env, k);
+            }
             if self.connectors {
                 cmd.env("TAZUNA_MCP", "1");
             }
