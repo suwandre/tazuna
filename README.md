@@ -38,8 +38,9 @@ tazuna -c                                       # continue this repo's last sess
 tazuna --run task.txt                           # one task, headless, result as JSON
 ```
 
-Type a task and press enter. `/model` switches to another model mid-session (Claude or the own loop), `/login` adds a
-provider's key, `/mcp` brings your tools, `/keys` lists every key and command.
+Type a task and press enter. `/model` switches to another model mid-session (Claude or the own loop) and asks its effort
+after, `/effort` changes only the effort (the conversation goes on), `/login` adds a provider's key, `/mcp` brings your
+tools, `/keys` lists every key and command.
 
 ## Results
 

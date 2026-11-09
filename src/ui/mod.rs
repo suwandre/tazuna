@@ -179,12 +179,13 @@ pub struct ModelsPanel {
     pub groups: Vec<(String, usize, bool, String)>,
     pub group: usize,
     pub in_models: bool,
+    /// A model chosen, its effort being picked: (its label, its levels, the one selected, the key line).
+    pub effort: Option<(String, Vec<String>, usize, &'static str)>,
 }
 
 pub struct ModelRow {
     pub label: String,
     pub place: String,
-    pub effort: String,
     pub price: String,
     pub note: String,
     /// "6.8 (308)": our judge and its runs; "32": Artificial Analysis' index (empty where unknown).
@@ -680,18 +681,19 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     let gw = if two { p.groups.iter().map(|(n, c, ..)| n.chars().count() + c.to_string().len() + 6).max().unwrap_or(18).clamp(18, 30) } else { 0 };
     // column widths: as wide as their header or longest entry
     let width = |head: &str, f: &dyn Fn(&ModelRow) -> usize| p.rows.iter().map(f).chain([head.chars().count()]).max().unwrap_or(0);
-    let ew = width("effort", &|r| r.effort.chars().count() + 2);
     let pw = width("$/M in / out", &|r| r.price.chars().count());
     let bw = width("bench (runs)", &|r| r.bench.chars().count());
     let aw = width("AA", &|r| r.aa.chars().count());
     let longest = width("model", &|r| r.label.chars().count());
-    let keys = if p.in_models || !two {
-        "↑↓ model · ←→ effort · tab provider pin · enter use · esc providers"
+    let keys = if let Some((.., k)) = &p.effort {
+        k
+    } else if p.in_models || !two {
+        "↑↓ model · ← providers · tab provider pin · enter choose · esc close"
     } else {
-        "↑↓ providers · enter or → its models · type to search · esc close"
+        "↑↓ providers · → its models · type to search · esc close"
     };
     // as wide as the panes need (and the key line), at most 9/10 of the screen
-    let table = 2 + longest + 1 + ew + 1 + pw + 1 + bw + 1 + aw;
+    let table = 2 + longest + 1 + pw + 1 + bw + 1 + aw;
     // one width while it is open (filtering does not make it jump): what the panes want, but at least 100 and at most
     // 9/10 of the screen
     let w = ((gw + usize::from(two) + table).max(keys.chars().count()).max(100) as u16 + 2).min(full.width * 9 / 10).max(20).min(full.width);
@@ -762,7 +764,7 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     let dh = (detail.len() as u16).min(right.height.saturating_sub(4)); // at least one row stays
     let room = right.height.saturating_sub(2 + dh + u16::from(dh > 0)) as usize; // search, header; a gap before the details
     let first = p.selected.saturating_sub(room.saturating_sub(1));
-    let fixed = 2 + ew + 1 + pw;
+    let fixed = 2 + pw;
     let scores = iw >= fixed + 1 + bw + 1 + aw + 1 + 16.min(longest); // room for the scores and a 16-character label
     // the label column takes what is left, so the table spans the pane
     let lw = iw.saturating_sub(fixed + 1 + if scores { bw + 1 + aw + 1 } else { 0 }).max(4);
@@ -774,8 +776,8 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
         let tail = (lw - 1) / 3;
         format!("{}…{}", s.chars().take(lw - 1 - tail).collect::<String>(), s.chars().skip(n - tail).collect::<String>())
     };
-    let cols = |mark: &str, l: &str, e: &str, pr: &str, b: &str, a: &str| {
-        let mut s = format!("{mark} {:<lw$} {e:<ew$} {pr:<pw$}", fit(l));
+    let cols = |mark: &str, l: &str, pr: &str, b: &str, a: &str| {
+        let mut s = format!("{mark} {:<lw$} {pr:<pw$}", fit(l));
         if scores {
             s.push_str(&format!(" {b:<bw$} {a:>aw$}"));
         }
@@ -786,12 +788,24 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     } else {
         Line::from(vec![Span::styled("> ", st(th.accent)), Span::styled(cut(p.filter.clone()), st(th.text)), Span::styled("▍", st(th.accent))])
     };
-    let mut lines: Vec<Line<'static>> = vec![search, Line::from(Span::styled(cols(" ", "model", "effort", "$/M in / out", "bench (runs)", "AA"), st(th.faint)))];
+    // a model chosen: the right pane picks its effort
+    if let Some((label, levels, at, _)) = &p.effort {
+        let mut lines = vec![Line::from(vec![Span::styled(cut(label.clone()), st(th.text).add_modifier(Modifier::BOLD)), Span::styled(" · effort", st(th.faint))]), Line::from("")];
+        for (i, l) in levels.iter().enumerate() {
+            let style = if i == *at { st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(th.text) };
+            lines.push(Line::from(Span::styled(cut(format!("{} {l}", if i == *at { "›" } else { " " })), style)));
+        }
+        lines.push(Line::from(""));
+        lines.extend(wrap_words("A higher level thinks longer and costs more. /effort changes it later; the conversation goes on.", iw)
+            .into_iter().map(|l| Line::from(Span::styled(l, st(th.faint)))));
+        f.render_widget(Paragraph::new(lines), right);
+        return;
+    }
+    let mut lines: Vec<Line<'static>> = vec![search, Line::from(Span::styled(cols(" ", "model", "$/M in / out", "bench (runs)", "AA"), st(th.faint)))];
     for (i, r) in p.rows.iter().enumerate().skip(first).take(room) {
         let on = i == p.selected && (p.in_models || !two);
         let mark = if on { "›" } else if r.current { "•" } else { " " };
-        let effort = if r.effort.is_empty() { String::new() } else { format!("‹{}›", r.effort) };
-        let row = cols(mark, &r.label, &effort, &r.price, &r.bench, &r.aa);
+        let row = cols(mark, &r.label, &r.price, &r.bench, &r.aa);
         let color = match r.state { 1 | 4 => th.faint, 2 => th.warn, 3 => th.dim, _ if r.stale => th.warn, _ => th.text };
         let style = if on { st(color).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(color) };
         lines.push(Line::from(Span::styled(row, style)));
@@ -2166,14 +2180,14 @@ mod tests {
     #[test]
     fn model_picker_shows_rows_effort_and_why_not() {
         let row = |label: &str, state: u8, stale: bool| ModelRow { label: label.into(), place: "SubRouter · kriora, shared-openai-pro-50, shared-openai-pro-52".into(),
-            effort: "high".into(), price: "0.0387 / 0.194".into(), note: "cached 81% · checked today".into(), bench: "6.8 (308)".into(), aa: "32".into(),
+            price: "0.0387 / 0.194".into(), note: "cached 81% · checked today".into(), bench: "6.8 (308)".into(), aa: "32".into(),
             state, why: match state {
                 1 => "no key: set the environment variable SUBROUTER_API_KEY before starting tazuna".into(),
                 2 => "not trusted: the code would go to subrouter.ai; add the line subrouter.ai to ~/.config/tazuna/trusted-providers".into(),
                 _ => String::new(),
             }, stale, current: false };
         let mut p = ModelsPanel { rows: vec![row("Opus 5.5", 0, false), row("deepseek-v4.1-flash-1017 · fast", 1, false), row("gpt-6.1-sol", 2, true), row("gpt-6-luna", 0, true)], selected: 0, filter: String::new(),
-            groups: vec![("All models".into(), 4, true, String::new()), ("SubRouter".into(), 4, true, String::new())], group: 1, in_models: true };
+            groups: vec![("All models".into(), 4, true, String::new()), ("SubRouter".into(), 4, true, String::new())], group: 1, in_models: true, effort: None };
         let draw = |p: &ModelsPanel, w: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 24)).unwrap();
             term.draw(|f| draw_models(f, p, Design::Cockpit.theme())).unwrap();
@@ -2184,7 +2198,7 @@ mod tests {
         // in one column; "· fast" survives a cut label
         for w in [50u16, 78, 120] {
             let lines = draw(&p, w);
-            let rows: Vec<&String> = lines.iter().filter(|l| l.contains("‹high›")).collect();
+            let rows: Vec<&String> = lines.iter().filter(|l| l.contains("0.0387 / 0.194")).collect();
             assert_eq!(rows.len(), 4, "{w}: {lines:#?}");
             let at: Vec<usize> = rows.iter().map(|l| l[..l.find("0.0387 / 0.194").unwrap_or_else(|| panic!("{w}: price cut: {l}"))].chars().count()).collect();
             assert!(at.windows(2).all(|x| x[0] == x[1]), "{w}: {rows:?}");
@@ -2205,6 +2219,12 @@ mod tests {
             p.selected = i;
             assert!(draw(&p, 78).concat().contains(want), "row {i}: {want}");
         }
+        // effort is not on the model rows: ← → move between the panes, and a model chosen gets its effort after
+        let text = draw(&p, 120).concat();
+        assert!(!text.contains("‹") && text.contains("← providers") && text.contains("enter choose"), "{text}");
+        p.effort = Some(("deepseek-v4.1-flash-1017".into(), vec!["high".into(), "max".into()], 1, "↑↓ effort · enter use · esc models"));
+        let text = draw(&p, 120).join("\n");
+        assert!(text.contains("deepseek-v4.1-flash-1017 · effort") && text.contains("› max") && text.contains("  high") && text.contains("esc models"), "{text}");
     }
 
     #[test]

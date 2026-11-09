@@ -733,21 +733,24 @@ struct LoginPick {
 fn login_save(l: &models::Login, typed: &str) -> Result<String> {
     let mut said = vec![];
     if !typed.trim().is_empty() {
-        let p = models::save_key(l.var, typed)?;
+        let mut p = PathBuf::new();
+        for var in l.vars {
+            p = models::save_key(var, typed)?;
+        }
         said.push(format!("logged in to {}: key saved in {} (readable by you only)", l.name, p.display()));
         if l.host == "mortera.cloud" {
             // ponytail: on the UI thread, ~1 s (15 s at most) once; Mortera's models come from its list, which needs the key
             models::refresh_mortera();
         }
-    } else if models::key(l.var).is_none() {
+    } else if l.vars.iter().all(|v| models::key(v).is_none()) {
         bail!("no key typed");
     }
     if !trusted_host(l.host) {
         trust_host(l.host)?;
         said.push(format!("{} may see the code now (trusted-providers)", l.host));
     }
-    said.push(format!("its models are in /model{}", if models::key_source(l.var).starts_with("key in the environment") {
-        format!(" ({} in the environment wins over a saved key)", l.var)
+    said.push(format!("its models are in /model{}", if models::key_source(l.vars).starts_with("key in the environment") {
+        format!(" ({} in the environment wins over a saved key)", l.vars.join(" / "))
     } else {
         String::new()
     }));
@@ -1455,7 +1458,7 @@ fn run_live(
         v.login = login.as_ref().map(|lp| ui::LoginPanel {
             rows: std::iter::once(("Claude".to_string(), "subscription".to_string(), "the claude CLI's own login".to_string()))
                 .chain(models::LOGINS.iter().map(|l| {
-                    let src = models::key_source(l.var);
+                    let src = models::key_source(l.vars);
                     let state = match (src.is_empty(), trusted_host(l.host)) {
                         (true, _) => "not logged in".to_string(),
                         (false, true) => src.to_string(),
@@ -1468,12 +1471,12 @@ fn run_live(
             form: lp.form.as_ref().and_then(|typed| {
                 let l = models::LOGINS.get(lp.sel.checked_sub(1)?)?;
                 Some(ui::LoginForm { name: l.name.into(), page: l.page.into(), opened: lp.opened, place: l.place.into(),
-                    example: l.example.into(), typed: typed.chars().count(), host: l.host.into(), var: l.var.into(),
-                    has: models::key_source(l.var).to_string() })
+                    example: l.example.into(), typed: typed.chars().count(), host: l.host.into(), var: l.vars.join(" / "),
+                    has: models::key_source(l.vars).to_string() })
             }),
         });
         v.models = pick.as_ref().map(|pk| {
-            let Picker { cs, sel, eff, prov, filter, psel, in_models } = pk;
+            let Picker { cs, sel, eff, prov, filter, psel, in_models, effort_at, effort_only } = pk;
             let group = pk.group();
             let usable = |i: usize| matches!(cs[i].state, models::State::Ready | models::State::Unchecked);
             // the left pane: All models, then each provider with how many models and whether any can be picked now
@@ -1491,8 +1494,7 @@ fn run_live(
                         (true, p) if p != "Claude" && p != "SubRouter" && !c.label.contains(" · ") => format!("{} · {}", c.label, p.to_lowercase()),
                         _ => c.label.clone(),
                     };
-                    ui::ModelRow { label, place: c.place.clone(), effort: c.efforts.get(eff[i]).cloned().unwrap_or_else(|| "default".into()),
-                        price: c.price.clone(), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
+                    ui::ModelRow { label, place: c.place.clone(), price: c.price.clone(), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
                         state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3, models::State::NotOnKey => 4 },
                         why: models::why_not(c).unwrap_or_default(), stale: c.stale, current: c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
                 }).collect(),
@@ -1501,6 +1503,8 @@ fn run_live(
                 groups,
                 group: *psel,
                 in_models: *in_models,
+                effort: effort_at.map(|i| (cs[i].label.clone(), cs[i].efforts.clone(), eff[i],
+                    if *effort_only { "↑↓ effort · enter use · esc close" } else { "↑↓ effort · enter use · esc models" })),
             }
         });
         let dt = last.elapsed();
@@ -1833,9 +1837,27 @@ fn run_live(
         }
         // the /model picker owns the keyboard while open
         if let (Some(pk), false) = (pick.as_mut(), stop_key) {
-            // the left pane has the keys: ↑↓ providers (the right pane follows), enter or → into its models, typing searches
-            // them, esc closes
-            if !pk.in_models {
+            // a model chosen: its effort, ↑↓ (or ←→) then enter for both; esc back to the models (from /effort: closes)
+            let mut chosen = None;
+            if let Some(i) = pk.effort_at {
+                let n = pk.cs[i].efforts.len();
+                match key.code {
+                    KeyCode::Up | KeyCode::Left => pk.eff[i] = pk.eff[i].saturating_sub(1),
+                    KeyCode::Down | KeyCode::Right => pk.eff[i] = (pk.eff[i] + 1).min(n.saturating_sub(1)),
+                    KeyCode::Esc if pk.effort_only => pick = None,
+                    KeyCode::Esc => pk.effort_at = None,
+                    KeyCode::Enter => {
+                        chosen = Some((models::pinned(&pk.cs[i], pk.prov[i]), pk.cs[i].efforts.get(pk.eff[i]).cloned()));
+                        pick = None;
+                    }
+                    _ => {}
+                }
+                if chosen.is_none() {
+                    continue;
+                }
+            } else if !pk.in_models {
+                // the left pane has the keys: ↑↓ providers (the right pane follows), → or enter into its models, typing
+                // searches them, esc closes
                 let n = models::providers(&pk.cs).len();
                 let mut close = false;
                 match key.code {
@@ -1856,42 +1878,48 @@ fn run_live(
                     pick = None;
                 }
                 continue;
-            }
-            let group = pk.group();
-            let Picker { cs, sel, eff, prov, filter, in_models, .. } = pk;
-            let rows = shown(cs, filter, group.as_deref());
-            let at = rows.get(*sel).copied();
-            let mut chosen = None;
-            match key.code {
-                KeyCode::Up => *sel = sel.saturating_sub(1),
-                KeyCode::Down => *sel = (*sel + 1).min(rows.len().saturating_sub(1)),
-                KeyCode::Left => if let Some(i) = at { eff[i] = eff[i].saturating_sub(1) },
-                KeyCode::Right => if let Some(i) = at { eff[i] = (eff[i] + 1).min(cs[i].efforts.len().saturating_sub(1)) },
-                // tab: the next checked provider pinned (after the last, any of them again); shift-tab: back
-                KeyCode::Tab => if let Some(i) = at { prov[i] = (prov[i] + 1) % (cs[i].pins.len() + 1) },
-                KeyCode::BackTab => if let Some(i) = at { prov[i] = (prov[i] + cs[i].pins.len()) % (cs[i].pins.len() + 1) },
-                KeyCode::Backspace if filter.is_empty() => *in_models = false,
-                KeyCode::Backspace => {
-                    filter.pop();
-                    *sel = 0;
+            } else {
+                // the right pane: ↑↓ models, ← back to the providers, enter a model (then its effort), esc closes
+                let group = pk.group();
+                let Picker { cs, sel, eff, prov, filter, in_models, effort_at, .. } = pk;
+                let rows = shown(cs, filter, group.as_deref());
+                let at = rows.get(*sel).copied();
+                match key.code {
+                    KeyCode::Up => *sel = sel.saturating_sub(1),
+                    KeyCode::Down => *sel = (*sel + 1).min(rows.len().saturating_sub(1)),
+                    KeyCode::Left => *in_models = false,
+                    // tab: the next checked provider pinned (after the last, any of them again); shift-tab: back
+                    KeyCode::Tab => if let Some(i) = at { prov[i] = (prov[i] + 1) % (cs[i].pins.len() + 1) },
+                    KeyCode::BackTab => if let Some(i) = at { prov[i] = (prov[i] + cs[i].pins.len()) % (cs[i].pins.len() + 1) },
+                    KeyCode::Backspace if filter.is_empty() => *in_models = false,
+                    KeyCode::Backspace => {
+                        filter.pop();
+                        *sel = 0;
+                    }
+                    KeyCode::Char(c) if !ctrl => {
+                        filter.push(c);
+                        *sel = 0;
+                    }
+                    // a model with levels to choose from: its effort next; one without (or with one), straight on
+                    KeyCode::Enter if at.is_some_and(|i| cs[i].efforts.len() > 1) => *effort_at = at,
+                    KeyCode::Enter => chosen = at.map(|i| (models::pinned(&cs[i], prov[i]), cs[i].efforts.get(eff[i]).cloned())),
+                    KeyCode::Esc if !filter.is_empty() => {
+                        filter.clear();
+                        *sel = 0;
+                    }
+                    KeyCode::Esc => pick = None,
+                    _ => {}
                 }
-                KeyCode::Char(c) if !ctrl => {
-                    filter.push(c);
-                    *sel = 0;
+                if chosen.is_some() {
+                    pick = None;
                 }
-                KeyCode::Enter => chosen = at.map(|i| (models::pinned(&cs[i], prov[i]), cs[i].efforts.get(eff[i]).cloned())),
-                KeyCode::Esc if !filter.is_empty() => {
-                    filter.clear();
-                    *sel = 0;
-                }
-                KeyCode::Esc => *in_models = false,
-                _ => {}
-            }
-            if key.code == KeyCode::Enter {
-                pick = None;
             }
             if let Some((c, effort)) = chosen {
-                let msg = match c.state {
+                // the model in use, on the same provider: only its effort changes, and the conversation goes on
+                let same = c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1));
+                let msg = if same && !matches!(c.state, models::State::NoKey | models::State::Untrusted | models::State::NotOnKey) {
+                    live.set_effort(effort.unwrap_or_else(|| live.effort.clone()))
+                } else { match c.state {
                     models::State::NoKey | models::State::Untrusted | models::State::NotOnKey =>
                         Err(anyhow::anyhow!("{}: {}", c.label, models::why_not(&c).unwrap_or_default())),
                     // a model without levels (the API ignores them) keeps the session's
@@ -1908,7 +1936,7 @@ fn run_live(
                             (bench/routes.py refresh {} checks it)", e["text"].as_str().unwrap_or_default(), c.model);
                         (t, json!({"type": "harness_switch", "model": e["model"], "effort": e["effort"], "text": text}))
                     }),
-                };
+                } };
                 match msg {
                     Ok((t, e)) => s.apply(&e, t),
                     Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
@@ -2185,6 +2213,30 @@ fn run_live(
                     }
                     let msg = if vim { "vim mode on: esc for normal mode, i/a/o to type (/vim again turns it off)" } else { "vim mode off" };
                     s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
+                    continue;
+                }
+                // /effort: the effort for the model in use (its levels to choose from); /effort LEVEL sets it at once
+                if text == "/effort" || text.starts_with("/effort ") {
+                    let want = text["/effort".len()..].trim().to_string();
+                    let mut pk = open_picker(live, &key_models)?;
+                    let i = pk.cs.iter().position(|c| c.model == live.model
+                        && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)));
+                    let levels = i.map(|i| pk.cs[i].efforts.clone()).unwrap_or_default();
+                    let r = if levels.len() < 2 {
+                        Err(anyhow::anyhow!("{} takes no effort level to choose (its API ignores it, or has one)", live.model))
+                    } else if want.is_empty() {
+                        (pk.effort_at, pk.effort_only) = (i, true);
+                        pick = Some(pk);
+                        continue;
+                    } else if levels.contains(&want) {
+                        live.set_effort(want)
+                    } else {
+                        Err(anyhow::anyhow!("{} takes {}", live.model, levels.join(", ")))
+                    };
+                    match r {
+                        Ok((t, e)) => s.apply(&e, t),
+                        Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
+                    }
                     continue;
                 }
                 if text == "/login" {
@@ -2477,6 +2529,10 @@ struct Picker {
     psel: usize,
     /// Keys move in the right pane (the models) rather than the left (the providers).
     in_models: bool,
+    /// A model chosen (its row in `cs`), its effort being picked before enter confirms both.
+    effort_at: Option<usize>,
+    /// Opened by `/effort`: only the effort step, for the model in use; esc closes.
+    effort_only: bool,
 }
 
 impl Picker {
@@ -2496,7 +2552,7 @@ fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     // it opens on the providers, the current one selected and its models beside it, the current model marked
     let current = cs.iter().position(|c| c.model == live.model).map(|i| models::provider_of(&cs[i]));
     let psel = models::providers(&cs).iter().position(|(n, _)| Some(n) == current.as_ref()).map_or(0, |i| i + 1);
-    let mut p = Picker { cs, sel: 0, eff, prov, filter: String::new(), psel, in_models: false };
+    let mut p = Picker { cs, sel: 0, eff, prov, filter: String::new(), psel, in_models: false, effort_at: None, effort_only: false };
     p.sel = shown(&p.cs, "", p.group().as_deref()).iter().position(|&i| p.cs[i].model == live.model).unwrap_or(0);
     Ok(p)
 }

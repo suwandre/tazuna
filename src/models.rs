@@ -499,7 +499,8 @@ pub fn key(var: &str) -> Option<String> {
 /// example of a key's start. None of them has a login for third-party tools (no OAuth), so an API key it is.
 pub struct Login {
     pub name: &'static str,
-    pub var: &'static str,
+    /// The variables its routes read the key from (the first is the usual one): a login saves it under each.
+    pub vars: &'static [&'static str],
     pub host: &'static str,
     pub page: &'static str,
     pub place: &'static str,
@@ -507,21 +508,22 @@ pub struct Login {
 }
 
 pub const LOGINS: [Login; 3] = [
-    Login { name: "SubRouter", var: "SUBROUTER_API_KEY", host: "subrouter.ai", page: "https://subrouter.ai/console/keys",
+    Login { name: "SubRouter", vars: &["SUBROUTER_API_KEY"], host: "subrouter.ai", page: "https://subrouter.ai/console/keys",
             place: "SubRouter's console", example: "sk-..." },
-    Login { name: "Mortera", var: "MORTERA_API_KEY", host: "mortera.cloud", page: "https://mortera.cloud",
+    Login { name: "Mortera", vars: &["MORTERA_API_KEY"], host: "mortera.cloud", page: "https://mortera.cloud",
             place: "your Mortera dashboard", example: "" },
-    Login { name: "Mistral", var: "MISTRAL_API_KEY", host: "api.mistral.ai", page: "https://console.mistral.ai/api-keys",
+    // a Vibe CLI key works on the same API, and a user's routes read it from MISTRAL_VIBE_API_KEY (2026-11-10)
+    Login { name: "Mistral", vars: &["MISTRAL_API_KEY", "MISTRAL_VIBE_API_KEY"], host: "api.mistral.ai", page: "https://console.mistral.ai/api-keys",
             place: "Mistral's console (or Code › Vibe CLI)", example: "" },
 ];
 
-/// Where a variable's key comes from, for `/login`'s list; empty: none.
-pub fn key_source(var: &str) -> &'static str {
-    if env_key(var).is_some() {
+/// Where a provider's key comes from, for `/login`'s list; empty: none.
+pub fn key_source(vars: &[&str]) -> &'static str {
+    if vars.iter().any(|v| env_key(v).is_some()) {
         "key in the environment"
-    } else if saved_key(var).is_some() {
+    } else if vars.iter().any(|v| saved_key(v).is_some()) {
         "logged in"
-    } else if var == "SUBROUTER_API_KEY" && managed_key().is_some() {
+    } else if vars.contains(&"SUBROUTER_API_KEY") && managed_key().is_some() {
         "managed key (tazuna subrouter --manage)"
     } else {
         ""

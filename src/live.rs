@@ -667,6 +667,25 @@ impl Live {
         Ok(self.record(json!({"type": "harness_switch", "model": model, "effort": effort, "text": text})))
     }
 
+    /// `/effort` (and `/model` on the model in use): the rest of the session at another effort, the conversation going on.
+    /// claude resumes its session at the new level; the own loop's engine takes it for its next calls.
+    pub fn set_effort(&mut self, effort: String) -> Result<(f64, Value)> {
+        if !self.idle() {
+            bail!("wait until the run has finished (or stop it with esc)");
+        }
+        if self.provider.is_some() {
+            if let Some(stdin) = self.stdin.as_mut() {
+                writeln!(stdin, "{}", json!({"type": "tazuna_effort", "effort": effort}))?;
+                stdin.flush()?;
+            }
+            self.effort = effort.clone();
+        } else {
+            self.respawn(self.model.clone(), effort.clone());
+        }
+        let text = format!("effort: {effort} for the rest of the session (the conversation goes on)");
+        Ok(self.record(json!({"type": "harness_effort", "effort": effort, "text": text})))
+    }
+
     /// `/boss`: the rest of the session with boss mode on (Some: the workers' model) or off. claude restarts with the
     /// subagents and rules of the new mode; the conversation goes on.
     pub fn set_boss(&mut self, boss: Option<String>) -> Result<(f64, Value)> {

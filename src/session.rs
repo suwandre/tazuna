@@ -281,7 +281,7 @@ impl Session {
             results: 0,
             profile: String::new(),
             mode: "auto".into(),
-            commands: vec!["bad".into(), "boss".into(), "diff".into(), "good".into(), "jira".into(), "keys".into(), "login".into(), "loop".into(), "mcp".into(), "model".into(), "new".into(), "resume".into(), "rewind".into(), "usage".into(), "vim".into()],
+            commands: vec!["bad".into(), "boss".into(), "diff".into(), "effort".into(), "good".into(), "jira".into(), "keys".into(), "login".into(), "loop".into(), "mcp".into(), "model".into(), "new".into(), "resume".into(), "rewind".into(), "usage".into(), "vim".into()],
             todos: Vec::new(),
             last_prompt: String::new(),
             streamed: false,
@@ -421,7 +421,7 @@ impl Session {
                 self.price_m = e["price_per_m"].as_array().filter(|p| p.len() == 3).map(|p| (p[0].as_f64().unwrap_or(0.0), p[1].as_f64().unwrap_or(0.0), p[2].as_f64().unwrap_or(0.0)));
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
-                cmds.extend(["good", "bad", "boss", "diff", "jira", "keys", "login", "loop", "mcp", "model", "new", "resume", "rewind", "usage", "vim"].map(String::from));
+                cmds.extend(["good", "bad", "boss", "diff", "effort", "jira", "keys", "login", "loop", "mcp", "model", "new", "resume", "rewind", "usage", "vim"].map(String::from));
                 cmds.sort();
                 cmds.dedup();
                 self.commands = cmds;
@@ -562,6 +562,10 @@ impl Session {
             }
             // a replayed recording's process ended there (`/resume` replays several, without their notices)
             (Some("harness_process_end"), _) => self.close_process(),
+            (Some("harness_effort"), _) => {
+                self.effort = s(&e["effort"]);
+                self.push(Block::Notice { text: s(&e["text"]), error: false });
+            }
             (Some("harness_switch"), _) => {
                 // /model: the old process is gone
                 self.close_process();

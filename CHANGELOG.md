@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.88 (2026-11-10): effort apart from the model
+
+- `/model` no longer sets the effort on the model rows (‹high› with ←→, which the user found mixed up with picking the
+  model). ← and → move between the providers and their models; enter on a model with levels to choose from shows its
+  levels, and enter there uses both. Esc goes back to the models, and esc again closes.
+- `/effort` changes only the effort of the model in use: alone it shows that model's levels, `/effort LEVEL` sets one
+  at once. The conversation goes on: claude resumes its session at the new level, and the own loop's engine takes it for
+  its next calls (before, a new effort on the own loop went through `/model` and started a new conversation). `/model` on
+  the model in use does the same.
+- `/login` for Mistral saves the key under MISTRAL_VIBE_API_KEY too, the variable a user's Mistral routes read (they
+  stayed greyed out after logging in). No measurable metric changes.
+
 ## 0.1.87 (2026-11-10): `/login`
 
 - Keys go in through `/login` now, not `/model`: in 0.1.86 enter on a greyed model turned the search line into a key

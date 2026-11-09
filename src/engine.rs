@@ -1123,6 +1123,10 @@ impl Loop {
         if m["type"] == "tazuna_mcp" {
             self.set_mcp(m["on"] == true);
         }
+        // `/effort`: the next calls at another level, the conversation going on
+        if m["type"] == "tazuna_effort" {
+            self.effort = m["effort"].as_str().map(String::from);
+        }
         if m["type"] == "control_request" && m["request"]["subtype"] == "set_permission_mode" {
             if let Some(mode) = m["request"]["mode"].as_str() {
                 self.mode = mode.to_string();
