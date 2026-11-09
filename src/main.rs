@@ -1577,15 +1577,13 @@ fn run_live(
                             }
                         }
                     }
-                    // a selection in the composer copies on release, as in the transcript (on Windows ctrl+c copies);
-                    // it stays for typing over it or deleting it
+                    // a selection in the composer stays for typing over it, deleting it or ctrl+c (cmd+c where the
+                    // terminal passes it on). No copy on release, unlike the transcript: select a word, then paste over
+                    // it, and the release had already put that word on the clipboard (the user, 2026-11-09)
                     MouseEventKind::Up(MouseButton::Left) if composer_drag => {
                         composer_drag = false;
-                        match ed.selection() {
-                            Some((a, z)) if !cfg!(windows) => v.toast = Some((copy_note(&ed.text[a..z]), Instant::now())),
-                            Some(_) => {}
-                            // a click without a drag: just the cursor, drawn again
-                            None => ed.anchor = None,
+                        if ed.selection().is_none() {
+                            ed.anchor = None; // a click without a drag: just the cursor, drawn again
                         }
                     }
                     MouseEventKind::Drag(MouseButton::Left) => {

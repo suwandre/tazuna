@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.83 (2026-11-09): a selection in the message box no longer copies itself
+
+- Releasing a drag in the message box copied the selection (0.1.81), so selecting a word and pasting over it pasted that
+  word back. The selection now copies with ctrl+c (cmd+c where the terminal passes it on: Terminal.app and iTerm2 keep
+  cmd+c for themselves); without a selection ctrl+c still stops or quits. The transcript still copies on release: text
+  there is only selected to be copied.
+
 ## 0.1.82 (2026-11-09): a model that refuses its effort gets one it takes
 
 - The own loop sent the session's effort to every model, and a model that refused it ended the call: Codestral (Mistral)
