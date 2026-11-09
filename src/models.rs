@@ -154,8 +154,10 @@ pub fn why_not(c: &Choice) -> Option<String> {
     let (url, var, _) = c.route.as_ref()?;
     let host = host_of(url);
     match c.state {
+        State::NoKey if host == "subrouter.ai" => Some(format!("no SubRouter key. Two ways: `tazuna subrouter --manage` makes \
+            one in your account with tested providers for each model (needs your account's access token); or bring your own \
+            key in {var} (its provider settings decide: a model without a list on it can land on any provider)")),
         State::NoKey => Some(format!("no key: set the environment variable {var} before starting tazuna{}", match host {
-            "subrouter.ai" => " (a SubRouter key: https://subrouter.ai/console/keys)",
             "api.mistral.ai" => " (a Mistral API key, or one made under Code › Vibe CLI)",
             _ => "",
         })),
@@ -176,6 +178,12 @@ fn host_of(url: &str) -> &str {
 pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, now: u64) -> Vec<Choice> {
     let (file, builtin) = routes_file(routes);
     let on_key = |var: &str, model: &str| keys.get(var).is_none_or(|ms| ms.contains(model));
+    // who chose the providers behind SUBROUTER_API_KEY: tazuna (its managed key) or the user (their own key)
+    let key_note = if key_is_managed() {
+        " · on tazuna's managed key"
+    } else {
+        " · your own key decides the providers: tazuna subrouter --apply pins these on it, --manage makes a key with them"
+    };
     let mut out: Vec<Choice> = CLAUDE.iter().map(|(m, l)| Choice {
         model: m.to_string(),
         label: l.to_string(),
@@ -238,7 +246,7 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
                 0 => "today".to_string(),
                 1 => "yesterday".to_string(),
                 d => format!("{d} days ago"),
-            }, if shipped { " · these providers on your key: tazuna subrouter" } else { "" }),
+            }, if shipped { key_note } else { "" }),
             // the built-in list is as old as the release, and `tazuna upgrade` renews it
             stale: days > STALE_DAYS && !builtin,
             state,
@@ -321,14 +329,117 @@ pub fn subrouter_balance() -> Option<f64> {
     Some((granted - used / 100.0) / 6.8)
 }
 
-/// `tazuna subrouter [--apply]`: each checked model's providers, for the user's one SubRouter key. A key holds a
-/// provider list per model (`subrouter_model_providers`) and SubRouter keeps each model's calls on its list, while models
-/// without one go anywhere (bench/onekey.py, 2026-11-06). Without --apply it prints the lists and where to set them;
-/// --apply sets them itself with the account's access token (~/.subrouter-account: SUBROUTER_ACCESS_TOKEN=,
-/// SUBROUTER_USER_ID=), on the key in SUBROUTER_API_KEY, and touches nothing else on it: its flat provider list, filled,
-/// limits every model (503s for the rest), so it is left as it is.
+/// The key tazuna makes and keeps in a user's SubRouter account (`tazuna subrouter --manage`).
+const MANAGED_NAME: &str = "tazuna (managed)";
+
+fn managed_file() -> Option<std::path::PathBuf> {
+    crate::platform::home().map(|h| h.join(".config/tazuna/subrouter-key"))
+}
+
+/// The managed key's value, when tazuna made one.
+pub fn managed_key() -> Option<String> {
+    std::fs::read_to_string(managed_file()?).ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty())
+}
+
+/// At start: the managed key stands in for SUBROUTER_API_KEY when that is not set. The user's own key always wins.
+pub fn load_managed_key() {
+    if std::env::var_os("SUBROUTER_API_KEY").is_none()
+        && let Some(k) = managed_key()
+    {
+        // SAFETY: called first thing in main, before any other thread starts
+        unsafe { std::env::set_var("SUBROUTER_API_KEY", k) };
+    }
+}
+
+/// True when SUBROUTER_API_KEY is tazuna's managed key, so tazuna chose its providers.
+pub fn key_is_managed() -> bool {
+    managed_key().is_some_and(|m| std::env::var("SUBROUTER_API_KEY").is_ok_and(|k| k.trim() == m))
+}
+
+/// SubRouter's account API with the account's access token (~/.subrouter-account: SUBROUTER_ACCESS_TOKEN=,
+/// SUBROUTER_USER_ID=). Used for the user's keys only.
+struct Account {
+    token: String,
+    user: String,
+    http: ureq::Agent,
+}
+
+impl Account {
+    fn load() -> anyhow::Result<Account> {
+        use anyhow::Context;
+        let path = crate::platform::home().context("HOME")?.join(".subrouter-account");
+        let how = format!("{}: needs SUBROUTER_ACCESS_TOKEN=... and SUBROUTER_USER_ID=... (SubRouter: your profile, \
+            security, access token; the user id is beside it)", path.display());
+        let acct = std::fs::read_to_string(&path).context(how.clone())?;
+        let get = |k: &str| acct.lines().find_map(|l| l.trim().strip_prefix(k)?.strip_prefix('=').map(|v| v.trim().to_string())).filter(|v| !v.is_empty());
+        let (Some(token), Some(user)) = (get("SUBROUTER_ACCESS_TOKEN"), get("SUBROUTER_USER_ID")) else { anyhow::bail!(how) };
+        let http = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(30))).http_status_as_error(false).build().into();
+        Ok(Account { token, user, http })
+    }
+
+    fn api(&self, method: &str, path: &str, body: Option<&Value>) -> anyhow::Result<Value> {
+        use anyhow::Context;
+        let url = format!("https://subrouter.ai{path}");
+        let (auth, user) = (format!("Bearer {}", self.token), self.user.as_str());
+        let mut resp = match (method, body) {
+            ("PUT" | "POST", Some(b)) => {
+                let r = if method == "PUT" { self.http.put(&url) } else { self.http.post(&url) };
+                r.header("Authorization", &auth).header("New-Api-User", user).header("Content-Type", "application/json").send(&b.to_string())?
+            }
+            ("DELETE", _) => self.http.delete(&url).header("Authorization", &auth).header("New-Api-User", user).call()?,
+            _ => self.http.get(&url).header("Authorization", &auth).header("New-Api-User", user).call()?,
+        };
+        let d: Value = serde_json::from_str(&resp.body_mut().read_to_string()?).with_context(|| format!("{path}: not JSON"))?;
+        if d["success"] != true {
+            anyhow::bail!("{path}: {}", d["message"].as_str().unwrap_or("refused"));
+        }
+        Ok(d["data"].clone())
+    }
+
+    /// Every key of the account (id and name), every page: the user's own account had 141 (bench keys) and its main key
+    /// was on page 2.
+    fn keys(&self) -> anyhow::Result<Vec<Value>> {
+        let mut all = Vec::new();
+        for p in 1.. {
+            let page = self.api("GET", &format!("/api/token/?p={p}&page_size=100"), None)?;
+            let got: Vec<Value> = page["items"].as_array().or(page.as_array()).cloned().unwrap_or_default();
+            let last = got.len() < 100;
+            all.extend(got);
+            if last {
+                break;
+            }
+        }
+        Ok(all)
+    }
+
+    /// Sets the per-model provider lists on a key (`replace`: only these lists, else added to the key's own) and the
+    /// shared pools a list names; nothing else on the key changes.
+    fn set_lists(&self, key: &mut Value, lists: &serde_json::Map<String, Value>, replace: bool) -> anyhow::Result<usize> {
+        let mut map: serde_json::Map<String, Value> =
+            if replace { Default::default() } else { key["subrouter_model_providers"].as_str().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default() };
+        map.extend(lists.clone());
+        key["subrouter_model_providers"] = Value::String(Value::Object(map.clone()).to_string());
+        // the shared OpenAI pools serve a key only when it allows them
+        let shared = map.values().flat_map(|v| v.as_array().cloned().unwrap_or_default()).any(|p| p.as_str().is_some_and(|p| p.starts_with("shared-")));
+        if shared && key["include_shared_subscriptions"] != true {
+            key["include_shared_subscriptions"] = Value::Bool(true);
+            println!("(allowing shared subscription pools on the key: some lists name them)");
+        }
+        self.api("PUT", "/api/token/", Some(key))?;
+        Ok(map.len())
+    }
+}
+
+/// `tazuna subrouter [--apply | --manage]`: each checked model's providers, and two ways to use them. A key holds a provider
+/// list per model (`subrouter_model_providers`) and SubRouter keeps each model's calls on its list, while models without
+/// one go anywhere (bench/onekey.py, 2026-11-06): on a key with no list for DeepSeek every call of a bench run went to a
+/// provider that cached 11% of the input, against 99% on the checked ones (2026-11-09).
+/// - `--manage`: tazuna makes a key of its own in the account ("tazuna (managed)"), or renews it, with exactly the
+///   checked lists, and keeps its value in ~/.config/tazuna/subrouter-key; it is used when SUBROUTER_API_KEY is not set.
+/// - `--apply`: the lists go onto the user's own key in SUBROUTER_API_KEY, beside its own; nothing else on it changes
+///   (its flat provider list, filled, limits every model: 503s for the rest, so it is left as it is).
 pub fn subrouter_cli(args: &[String]) -> anyhow::Result<()> {
-    use anyhow::{bail, Context};
+    use anyhow::Context;
     let (file, _) = routes_file(&crate::labels::dir()?.join("routes.json"));
     let mut lists = serde_json::Map::new();
     for (name, r) in file["routes"].as_object().into_iter().flatten() {
@@ -340,66 +451,63 @@ pub fn subrouter_cli(args: &[String]) -> anyhow::Result<()> {
         println!("{:28} {}", r["model"].as_str().unwrap_or(name), shown.join(", "));
         lists.insert(r["model"].as_str().unwrap_or(name).to_string(), Value::Array(ps));
     }
-    if !args.iter().any(|a| a == "--apply") {
-        println!("\nSet these on your SubRouter key (https://subrouter.ai/console/keys, edit the key, smart routing: per model, \
-                  only these providers; leave its other settings). Or let tazuna do it: `tazuna subrouter --apply`, with \
-                  your account's access token in ~/.subrouter-account (SUBROUTER_ACCESS_TOKEN=..., SUBROUTER_USER_ID=...).");
+    let manage = args.iter().any(|a| a == "--manage");
+    if !manage && !args.iter().any(|a| a == "--apply") {
+        println!("\nThese are the providers tazuna's checks passed for each model. Two ways to use them:\n\
+                  - tazuna subrouter --manage: tazuna makes a key in your SubRouter account with exactly these lists and \
+                  keeps it current when you run it again (needs your account's access token in ~/.subrouter-account: \
+                  SUBROUTER_ACCESS_TOKEN=..., SUBROUTER_USER_ID=...). New to SubRouter: this one.\n\
+                  - your own key in SUBROUTER_API_KEY: you choose its providers (https://subrouter.ai/console/keys, edit the \
+                  key, smart routing per model). tazuna subrouter --apply puts these lists on it for you. A model with no \
+                  list on the key can go to any provider, also ones that serve another model or barely cache.");
         return Ok(());
     }
-    let path = crate::platform::home().context("HOME")?.join(".subrouter-account");
-    let acct = std::fs::read_to_string(&path).with_context(|| format!("{}: needs SUBROUTER_ACCESS_TOKEN= and SUBROUTER_USER_ID=", path.display()))?;
-    let get = |k: &str| acct.lines().find_map(|l| l.trim().strip_prefix(k)?.strip_prefix('=').map(|v| v.trim().to_string())).filter(|v| !v.is_empty());
-    let (Some(token), Some(user)) = (get("SUBROUTER_ACCESS_TOKEN"), get("SUBROUTER_USER_ID")) else {
-        bail!("{}: needs SUBROUTER_ACCESS_TOKEN= and SUBROUTER_USER_ID=", path.display());
-    };
+    let acct = Account::load()?;
+    if manage {
+        println!("\ntazuna makes (or renews) the key \"{MANAGED_NAME}\" in your SubRouter account: each checked model's calls go only to \
+                  the providers above, which served the real model, cached well and answered in tazuna's checks. Other models \
+                  work too, where SubRouter picks the provider. The key has no spend cap of its own: your balance is the \
+                  limit, and tazuna stops a task at $1. Your other keys are not touched. Your own choice instead: a key you \
+                  set up yourself in SUBROUTER_API_KEY, which always wins over this one.");
+        let find = |acct: &Account| -> anyhow::Result<Option<u64>> {
+            Ok(acct.keys()?.iter().find(|k| k["name"] == MANAGED_NAME).and_then(|k| k["id"].as_u64()))
+        };
+        let id = match find(&acct)? {
+            Some(id) => id,
+            None => {
+                acct.api("POST", "/api/token/", Some(&serde_json::json!({"name": MANAGED_NAME, "expired_time": -1, "unlimited_quota": true,
+                    "model_limits_enabled": false, "model_limits": "", "subrouter_model_providers": "{}", "subrouter_providers": "",
+                    "include_cache_hit_rate": true})))?;
+                find(&acct)?.context("SubRouter did not keep the new key")?
+            }
+        };
+        let mut key = acct.api("GET", &format!("/api/token/{id}"), None)?;
+        let n = acct.set_lists(&mut key, &lists, true)?;
+        let value = format!("sk-{}", key["key"].as_str().context("SubRouter did not show the key")?.trim_start_matches("sk-"));
+        let path = managed_file().context("HOME")?;
+        crate::platform::private_dir(path.parent().context("no folder")?, true)?;
+        std::io::Write::write_all(&mut crate::platform::private_file(&path, false)?, value.as_bytes())?;
+        println!("\nready: \"{MANAGED_NAME}\" with {n} checked models, kept in {} (readable by you only). tazuna uses it whenever \
+                  SUBROUTER_API_KEY is not set. Run this again after `tazuna update` to bring new checks in.", path.display());
+        if std::env::var("SUBROUTER_API_KEY").is_ok_and(|k| k.trim() != value) {
+            println!("note: SUBROUTER_API_KEY is set to another key, and it wins: unset it to use the managed key");
+        }
+        return Ok(());
+    }
     let mine = std::env::var("SUBROUTER_API_KEY").context("SUBROUTER_API_KEY: the key to set the providers on")?;
     let mine = mine.trim().trim_start_matches("sk-");
-    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(30))).http_status_as_error(false).build().into();
-    let api = |method: &str, path: &str, body: Option<&Value>| -> anyhow::Result<Value> {
-        let url = format!("https://subrouter.ai{path}");
-        let auth = |r: ureq::RequestBuilder<ureq::typestate::WithoutBody>| r.header("Authorization", format!("Bearer {token}")).header("New-Api-User", &user);
-        let mut resp = match (method, body) {
-            ("PUT", Some(b)) => http.put(&url).header("Authorization", format!("Bearer {token}")).header("New-Api-User", &user)
-                .header("Content-Type", "application/json").send(&b.to_string())?,
-            _ => auth(http.get(&url)).call()?,
-        };
-        let d: Value = serde_json::from_str(&resp.body_mut().read_to_string()?).with_context(|| format!("{path}: not JSON"))?;
-        if d["success"] != true {
-            bail!("{path}: {}", d["message"].as_str().unwrap_or("refused"));
-        }
-        Ok(d["data"].clone())
-    };
-    // every page of the account's keys: the user's own account had 141 (bench keys), and its main key was on page 2
-    let mut ids: Vec<u64> = Vec::new();
-    for p in 1.. {
-        let page = api("GET", &format!("/api/token/?p={p}&page_size=100"), None)?;
-        let got: Vec<u64> = page["items"].as_array().or(page.as_array()).into_iter().flatten().filter_map(|k| k["id"].as_u64()).collect();
-        let last = got.len() < 100;
-        ids.extend(got);
-        if last {
-            break;
-        }
-    }
     let mut key = None;
-    for id in ids {
-        let k = api("GET", &format!("/api/token/{id}"), None)?;
+    for k in acct.keys()? {
+        let Some(id) = k["id"].as_u64() else { continue };
+        let k = acct.api("GET", &format!("/api/token/{id}"), None)?;
         if k["key"].as_str() == Some(mine) {
             key = Some(k);
             break;
         }
     }
     let mut key = key.context("SUBROUTER_API_KEY is not a key of this account")?;
-    let mut map: serde_json::Map<String, Value> = key["subrouter_model_providers"].as_str().and_then(|s| serde_json::from_str(s).ok()).unwrap_or_default();
-    map.extend(lists);
-    key["subrouter_model_providers"] = Value::String(Value::Object(map.clone()).to_string());
-    // the shared OpenAI pools serve a key only when it allows them
-    let shared = map.values().flat_map(|v| v.as_array().cloned().unwrap_or_default()).any(|p| p.as_str().is_some_and(|p| p.starts_with("shared-")));
-    if shared && key["include_shared_subscriptions"] != true {
-        key["include_shared_subscriptions"] = Value::Bool(true);
-        println!("(allowing shared subscription pools on the key: some lists name them)");
-    }
-    api("PUT", "/api/token/", Some(&key))?;
-    println!("\nset on your key \"{}\": {} models; other models and settings unchanged", key["name"].as_str().unwrap_or("?"), map.len());
+    let n = acct.set_lists(&mut key, &lists, false)?;
+    println!("\nset on your key \"{}\": {n} models; other models and settings unchanged", key["name"].as_str().unwrap_or("?"));
     if key["subrouter_providers"].as_str().is_some_and(|s| !s.trim().is_empty()) {
         println!("note: the key also has a flat provider list ({}), which limits every model to those; left as it is",
                  key["subrouter_providers"].as_str().unwrap_or_default());
@@ -485,7 +593,8 @@ mod tests {
         // the reasons name what to do
         let mut c = cs[2].clone();
         c.state = State::NoKey;
-        assert!(why_not(&c).unwrap().contains("set the environment variable SUBROUTER_API_KEY"));
+        let why = why_not(&c).unwrap();
+        assert!(why.contains("tazuna subrouter --manage") && why.contains("your own key in SUBROUTER_API_KEY"), "both ways: {why}");
         c.state = State::Untrusted;
         let why = why_not(&c).unwrap();
         assert!(why.contains("add the line subrouter.ai to") && why.contains("trusted-providers"), "{why}");

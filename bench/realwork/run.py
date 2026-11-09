@@ -125,14 +125,18 @@ def only_keys(env, *keep):
 _RELAYS = {}
 
 
-def relay(target, key, add=None):
+def relay(target, key, add=None, force=None, drop=()):
     """A localhost base URL forwarding to `target` with `key` as the bearer token: the harness holds a dummy, so its model
     cannot print the key (pi keeps its key in the environment its tools inherit). Streams the reply as it comes. `add`:
-    fields set on JSON request bodies that lack them (Command Code sends no reasoning effort for a BYOK model)."""
+    fields set on JSON request bodies that lack them (Command Code sends no reasoning effort for a BYOK model). `key` None:
+    the harness's own credentials pass through unchanged (OMP's claude.ai login), the relay only gets it out of the jail.
+    `force`: fields set on every JSON body (a model id the harness cannot name); `drop`: fields taken out (DeepSeek
+    Harness's own `dsh_session_log` and `dsh_plugin_packages`, which only DeepSeek's API knows)."""
     import http.client, http.server, urllib.parse
     with _PROXY_LOCK:
-        if (target, key, str(add)) in _RELAYS:
-            return _RELAYS[target, key, str(add)]
+        tag = (target, key, str(add), str(force), str(drop))
+        if tag in _RELAYS:
+            return _RELAYS[tag]
         u = urllib.parse.urlsplit(target)
 
         class H(http.server.BaseHTTPRequestHandler):
@@ -143,18 +147,19 @@ def relay(target, key, add=None):
 
             def do_POST(self):
                 body = self.rfile.read(int(self.headers.get("content-length", 0)))
-                if add and body:
+                if (add or force or drop) and body:
                     try:
                         b = json.loads(body)
                         if isinstance(b, dict) and "model" in b:
-                            body = json.dumps({**add, **b}).encode()
+                            b = {**(add or {}), **b, **(force or {})}
+                            body = json.dumps({k: v for k, v in b.items() if k not in drop}).encode()
                     except ValueError:
                         pass
-                hd = {k: v for k, v in self.headers.items()
-                      if k.lower() not in ("host", "authorization", "x-api-key", "content-length", "connection", "accept-encoding")}
+                skip = ("host", "content-length", "connection", "accept-encoding") + (("authorization", "x-api-key") if key else ())
+                hd = {k: v for k, v in self.headers.items() if k.lower() not in skip}
                 c = http.client.HTTPSConnection(u.hostname, u.port or 443, timeout=900)
                 try:
-                    c.request(self.command, self.path, body or None, {**hd, "Authorization": f"Bearer {key}"})
+                    c.request(self.command, self.path, body or None, {**hd, **({"Authorization": f"Bearer {key}"} if key else {})})
                     r = c.getresponse()
                     self.send_response(r.status)
                     for k, v in r.getheaders():
@@ -176,8 +181,8 @@ def relay(target, key, add=None):
         srv.daemon_threads = True
         srv.handle_error = lambda *a: None  # a client that hangs up between requests
         threading.Thread(target=srv.serve_forever, daemon=True).start()
-        _RELAYS[target, key, str(add)] = f"http://127.0.0.1:{srv.server_address[1]}"
-        return _RELAYS[target, key, str(add)]
+        _RELAYS[tag] = f"http://127.0.0.1:{srv.server_address[1]}"
+        return _RELAYS[tag]
 
 
 def proxy_url():
@@ -735,20 +740,27 @@ effort = "{effort}"
 
 
 def run_pi_family(h, w, prompt):
-    common = ["-p", prompt, "--mode", "json", "--no-session", "--thinking", EFFORT]
+    # the label's model and effort (`pi-v3@claude-opus-5-5:low`); before 2026-11-09 these took the globals and ran every
+    # label at Sonnet high
+    model, effort = model_effort(h) if "@" in h else (MODEL, EFFORT)
+    common = ["-p", prompt, "--mode", "json", "--no-session", "--thinking", effort]
     cmd = {
-        "pi": ["pi", *common, "--provider", "anthropic", "--model", MODEL],
-        "omo": [str(Path.home() / ".bun/bin/omo"), *common, "--provider", "anthropic-subscription", "--model", MODEL],
-        "omp": ["omp", *common, "--model", f"anthropic/{MODEL}", "--approval-mode", "yolo"],
+        "pi": ["pi", *common, "--provider", "anthropic", "--model", model],
+        "omo": [str(Path.home() / ".bun/bin/omo"), *common, "--provider", "anthropic-subscription", "--model", model],
+        "omp": ["omp", *common, "--model", f"anthropic/{model}", "--approval-mode", "yolo"],
     }[base_name(h)]
-    r = sh(cmd, w, timeout=TIMEOUT, env=env_for(base_name(h)))
+    # the jail lets agents reach only localhost, and OMP's binary ignores HTTPS_PROXY ("Couldn't connect to
+    # api.anthropic.com", 2026-11-09): Anthropic through a local relay that passes the harness's own login on
+    env = env_for(base_name(h), ANTHROPIC_BASE_URL=relay("https://api.anthropic.com", None))
+    r = sh(cmd, w, timeout=TIMEOUT, env=env)
     return parse_pi_events(r.stdout, r.stderr, r.returncode)
 
 
 def run_hermes(h, w, prompt):
+    model, effort = model_effort(h) if "@" in h else (MODEL, EFFORT)
     with tempfile.TemporaryDirectory() as t:
         uf = Path(t) / "usage.json"
-        r = sh(["hermes", "-z", prompt, "--provider", "anthropic", "-m", MODEL, "--reasoning", EFFORT, "--yolo",
+        r = sh(["hermes", "-z", prompt, "--provider", "anthropic", "-m", model, "--reasoning", effort, "--yolo",
                 "--in", str(w), "--usage-file", str(uf)], w, timeout=TIMEOUT, env=env_for(base_name(h)))
         if not uf.exists():
             raise RuntimeError(f"hermes rc={r.returncode}: {(r.stdout + r.stderr)[-800:]}")
@@ -775,6 +787,28 @@ def run_dsh(h, w, prompt):
     home.mkdir(parents=True, exist_ok=True)
     r = sh([DSH, "headless", "--json", prompt], w, timeout=TIMEOUT,
            env={"PATH": os.environ["PATH"], "HOME": str(home), "DSH_HOME": str(home / ".dsh"), "DEEPSEEK_API_KEY": key, **cur_go_env(), **proxy_env()})
+    return parse_dsh(r)
+
+
+def run_dsh_sub(h, w, prompt):
+    """DeepSeek Harness on the bench's SubRouter route (2026-11-09): the same harness as `dsh`, the provider every other
+    harness in the round uses. It speaks Anthropic's Messages API (`/v1/messages`, model `deepseek-flash`, thinking on at
+    effort high by default, as the round's other harnesses run): a relay names the route's model and drops its two
+    DeepSeek-only fields. Cost: the account log of the run's key (the per-step usage carries no price here)."""
+    model, _ = model_effort(h)
+    home = BENCH_HOMES / "dsh-sub"
+    home.mkdir(parents=True, exist_ok=True)
+    url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")],
+                force={"model": model}, drop=("dsh_session_log", "dsh_plugin_packages")) + "/v1"
+    r = sh([DSH, "headless", "--json", prompt], w, timeout=TIMEOUT,
+           env={"PATH": os.environ["PATH"], "HOME": str(home), "DSH_HOME": str(home / ".dsh"), "DEEPSEEK_API_KEY": "relay",
+                "DEEPSEEK_BASE_URL": url, **cur_go_env(), **proxy_env()})
+    d = parse_dsh(r)
+    d["reported_cost"] = 0
+    return d
+
+
+def parse_dsh(r):
     inp = cached = out = turns = 0
     final, cost = "", 0.0
     for line in r.stdout.splitlines():
@@ -1340,7 +1374,7 @@ def run_plan_exec(h, w, prompt):
                 phase_cost={k: round(v, 4) for k, v in costs.items()})
 
 
-HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-noboss": run_harness, "tazuna-rtall": run_harness, "tazuna-rtcore": run_harness, "tazuna-rtk": run_harness, "tazuna-rtbatch": run_harness, "tazuna-tscope": run_harness, "tazuna-hts": run_harness, "tazuna-lsn": run_harness, "tazuna-hist": run_harness, "tazuna-rev": run_harness, "tazuna-lhr": run_harness, "tazuna-tsson": run_harness, "tazuna-tslow": run_harness, "tazuna-hnts": run_harness, "tazuna-bhmed": run_harness, "tazuna-bhts": run_harness, "tazuna-besc": run_harness, "tazuna-bhhigh": run_harness, "tazuna-bhxhigh": run_harness, "tazuna-leanopus": run_harness, "tazuna-bpick": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-owndsk": run_harness, "tazuna-ownmis": run_harness, "tazuna-ownmisv": run_harness, "tazuna-owndskr": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubxs": run_harness, "tazuna-ownsubxni": run_harness, "tazuna-ownsubxsb": run_harness, "tazuna-ownsubxp2": run_harness, "tazuna-ownsubxa2": run_harness, "tazuna-ownsubxr": run_harness, "tazuna-ownsubxrev": run_harness, "tazuna-ownsubxopus": run_harness, "tazuna-reviewed": run_harness, "tazuna-ownsubxp3": run_harness, "tazuna-ownsubxtn": run_harness, "tazuna-ownsubxth": run_harness, "tazuna-ownsubxjg": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "vibe": run_vibe, "dsh": run_dsh, "kiro": run_kiro, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "pi-sub": run_pi_sub, "kimi-sub": run_kimi_sub, "omp-sub": run_omp_sub, "opencode-sub": run_opencode_sub, "cmd-sub": run_cmd_sub, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
+HARNESSES = {"harness": run_harness, "plan-haiku": run_plan_exec, "plan-ds": run_plan_exec, "tazuna": run_harness, "tazuna-instr": run_harness, "tazuna-repo": run_harness, "tazuna-repolean": run_harness, "tazuna-lean": run_harness, "tazuna-diag": run_harness, "tazuna-review": run_harness, "tazuna-opusrev": run_harness, "tazuna-ttl5m": run_harness, "tazuna-repomap": run_harness, "tazuna-explorer": run_harness, "tazuna-explorerhk": run_harness, "tazuna-dsexplorer": run_harness, "tazuna-noexplorer": run_harness, "tazuna-noboss": run_harness, "tazuna-rtall": run_harness, "tazuna-rtcore": run_harness, "tazuna-rtk": run_harness, "tazuna-rtbatch": run_harness, "tazuna-tscope": run_harness, "tazuna-hts": run_harness, "tazuna-lsn": run_harness, "tazuna-hist": run_harness, "tazuna-rev": run_harness, "tazuna-lhr": run_harness, "tazuna-tsson": run_harness, "tazuna-tslow": run_harness, "tazuna-hnts": run_harness, "tazuna-bhmed": run_harness, "tazuna-bhts": run_harness, "tazuna-besc": run_harness, "tazuna-bhhigh": run_harness, "tazuna-bhxhigh": run_harness, "tazuna-leanopus": run_harness, "tazuna-bpick": run_harness, "tazuna-tester": run_harness, "tazuna-fablerev": run_harness, "tazuna-own": run_harness, "tazuna-owndsk": run_harness, "tazuna-ownmis": run_harness, "tazuna-ownmisv": run_harness, "tazuna-owndskr": run_harness, "tazuna-ownbatch": run_harness, "tazuna-ownel": run_harness, "tazuna-ownapx": run_harness, "tazuna-ownuno": run_harness, "tazuna-ownunorev": run_harness, "tazuna-ownmrt": run_harness, "tazuna-ownshnds": run_harness, "tazuna-ownshngpt": run_harness, "tazuna-ownshn": run_harness, "tazuna-ownsub": run_harness, "tazuna-ownsubla": run_harness, "tazuna-ownsubl1": run_harness, "tazuna-ownsubl4": run_harness, "tazuna-ownsubhk": run_harness, "tazuna-ownsubglm": run_harness, "tazuna-ownsubglmf": run_harness, "tazuna-ownsubm": run_harness, "tazuna-ownsubgate": run_harness, "opencode": run_opencode, "tazuna-ownsubmbest2": run_best2, "tazuna-ownsubxbest2": run_best2, "tazuna-ownsubgp": run_harness, "tazuna-ownsubx": run_harness, "tazuna-ownsubxs": run_harness, "tazuna-ownsubxni": run_harness, "tazuna-ownsubxsb": run_harness, "tazuna-ownsubxp2": run_harness, "tazuna-ownsubxa2": run_harness, "tazuna-ownsubxr": run_harness, "tazuna-ownsubxrev": run_harness, "tazuna-ownsubxopus": run_harness, "tazuna-reviewed": run_harness, "tazuna-ownsubxp3": run_harness, "tazuna-ownsubxtn": run_harness, "tazuna-ownsubxth": run_harness, "tazuna-ownsubxjg": run_harness, "tazuna-ownsubmm": run_harness, "tazuna-ownbeat": run_harness, "tazuna-ownapxfree": run_harness, "tazuna-ownelide": run_harness, "tazuna-ownplan": run_harness, "tazuna-ownboth": run_harness, "tazuna-boss": run_harness, "tazuna-lensrev": run_harness, "tazuna-bossrev": run_harness, "tazuna-advisor": run_harness, "tazuna-bosssonnet": run_harness, "tazuna-cascade": run_harness, "tazuna-handmed": run_harness, "tazuna-handhigh": run_harness, "tazuna-bash8k": run_harness, "tazuna-noverify": run_harness, "tazuna-nocap": run_harness, "tazuna-route": run_harness, "cc-mid-jg": run_cc, "codex": run_codex, "vibe": run_vibe, "dsh": run_dsh, "dsh-sub": run_dsh_sub, "kiro": run_kiro, "codexsub": run_codex_sub, "empryo": run_empryo, "pi": run_pi_family, "pi-sub": run_pi_sub, "kimi-sub": run_kimi_sub, "omp-sub": run_omp_sub, "opencode-sub": run_opencode_sub, "cmd-sub": run_cmd_sub, "omp": run_pi_family, "omo": run_pi_family, "hermes": run_hermes,
              "cc": run_cc, "cc-lean": run_cc, "cc-mid": run_cc, "cc-ecc": run_cc, "cc-superpowers": run_cc, "cc-caveman": run_cc,
              "cc-graphify": run_cc, "cc-gstack": run_cc, "cc-allplugins": run_cc}
 

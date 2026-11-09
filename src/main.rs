@@ -441,6 +441,8 @@ fn parse(argv: Vec<String>) -> Result<Args> {
 }
 
 fn main() -> Result<()> {
+    // tazuna's managed SubRouter key (`tazuna subrouter --manage`) when the user set none of their own
+    models::load_managed_key();
     if matches!(std::env::args().nth(1).as_deref(), Some("--version" | "-V")) {
         println!("tazuna {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
@@ -1736,6 +1738,13 @@ fn run_live(
                     models::State::NoKey | models::State::Untrusted | models::State::NotOnKey =>
                         Err(anyhow::anyhow!("{}: {}", c.label, models::why_not(&c).unwrap_or_default())),
                     // a model without levels (the API ignores them) keeps the session's
+                    // a checked SubRouter model on the user's own key: its providers are the key's, not the checked ones
+                    models::State::Ready if c.route.as_ref().is_some_and(|r| r.1 == "SUBROUTER_API_KEY") && !models::key_is_managed() =>
+                        live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()).map(|(t, e)| {
+                            let text = format!("{} · on your own SubRouter key, whose settings choose the providers (tazuna subrouter \
+                                --apply pins the checked ones on it; --manage makes a key with them)", e["text"].as_str().unwrap_or_default());
+                            (t, json!({"type": "harness_switch", "model": e["model"], "effort": e["effort"], "text": text}))
+                        }),
                     models::State::Ready => live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()),
                     models::State::Unchecked => live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()).map(|(t, e)| {
                         let text = format!("{} · unchecked route: SubRouter picks the provider, so cache, price and quality are unknown \

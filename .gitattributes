@@ -1,0 +1,2 @@
+# results files grow on two machines (the Mac and the bench VM): a rebase keeps both sides' lines
+bench/**/*.jsonl merge=union

@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.84 (unreleased): a SubRouter key tazuna manages, or your own
+
+- On a SubRouter key with no provider list for a model, SubRouter picks the provider: a bench round on such a key sent
+  every DeepSeek V4.1 Flash call to RelAI, 11% of the input cached, where the checked providers (bangai, kriora,
+  lingai) cached 99% (2026-11-09). Two ways now, offered where a SubRouter model has no key yet:
+  - `tazuna subrouter --manage`: tazuna makes the key "tazuna (managed)" in your account, or renews it, with exactly
+    the checked provider list per model, and keeps its value in `~/.config/tazuna/subrouter-key` (readable by you only).
+    It is used whenever `SUBROUTER_API_KEY` is not set; other models still work on it, where SubRouter picks. A notice
+    says what it creates and that your own key always wins. Needs the account's access token (`~/.subrouter-account`).
+  - your own key in `SUBROUTER_API_KEY`: its settings choose the providers. `/model` says so on every checked row and
+    when you switch to one (`tazuna subrouter --apply` still puts the checked lists on it).
+- Checked on the user's account: the key made with DeepSeek's list on the checked three and no limits, renewed in place
+  on a second run (no second key), the file matching it, one call landing on LingAI; then deleted.
+
 ## 0.1.83 (2026-11-09): a selection in the message box no longer copies itself
 
 - Releasing a drag in the message box copied the selection (0.1.81), so selecting a word and pasting over it pasted that
