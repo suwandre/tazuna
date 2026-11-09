@@ -1530,7 +1530,7 @@ fn price_override(v: &str) -> Result<Price> {
 
 /// Rupiah per US dollar for Mortera's prices (its list and balance are in IDR; the bench's spend guard uses the same).
 /// ponytail: a fixed rate; read it from a rate source if the rupiah moves enough to matter for a $1 cap
-const IDR_PER_USD: f64 = 16_300.0;
+pub(crate) const IDR_PER_USD: f64 = 16_300.0;
 
 /// CheaperInference and OpenRouter-style lists give USD per million (`input_per_million`, as string or number);
 /// Experiential Labs gives nano-USD per million (`input_nano_usd_per_million_tokens`) and names the upstream provider in

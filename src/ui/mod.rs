@@ -150,6 +150,10 @@ pub struct ModelsPanel {
     pub selected: usize,
     /// What has been typed to narrow the list.
     pub filter: String,
+    /// The first level: one row per provider (its models in `price`, how many are ready in `bench`); else the provider
+    /// open (or every provider, while searching).
+    pub providers: bool,
+    pub provider: Option<String>,
 }
 
 pub struct ModelRow {
@@ -582,7 +586,11 @@ fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme) {
 fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
-    let title = " model · type to filter · ←→ effort · tab provider · enter · esc ";
+    let title = if p.providers {
+        " model · ↑↓ provider · enter opens it · type to search every model · esc "
+    } else {
+        " model · type to filter · ←→ effort · tab provider · enter · esc back "
+    };
     // column widths: as wide as their header or longest entry
     let width = |head: &str, f: &dyn Fn(&ModelRow) -> usize| p.rows.iter().map(f).chain([head.chars().count()]).max().unwrap_or(0);
     let ew = width("effort", &|r| r.effort.chars().count() + 2);
@@ -597,6 +605,11 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     let cut = |s: String| s.chars().take(iw).collect::<String>();
     // the selected row in full, wrapped: its height decides how many rows the list has
     let detail: Vec<Line<'static>> = p.rows.get(p.selected).map(|r| {
+        if p.providers {
+            let lines = [(format!("{} · {} · {}", r.label, r.price, r.bench), th.text), (r.why.clone(), th.faint)];
+            return lines.into_iter().filter(|(t, _)| !t.is_empty())
+                .flat_map(|(t, c)| wrap_words(&t, iw).into_iter().map(move |l| Line::from(Span::styled(l, st(c))))).collect();
+        }
         let price = if r.price == "plan" { "on the plan".to_string() } else { format!("${} per M tokens (in / out)", r.price.replace(" / ", " / $")) };
         let scores = [(!r.bench.is_empty()).then(|| format!("bench {}", r.bench)), (!r.aa.is_empty()).then(|| format!("AA {}", r.aa))];
         let why = match r.state {
@@ -642,14 +655,22 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
         }
         cut(s)
     };
-    let filter = if p.filter.is_empty() { "all models · details of the selected one below".to_string() } else { format!("filter: {}", p.filter) };
+    let filter = match (&p.provider, p.filter.is_empty(), p.providers) {
+        (_, true, true) => "providers · details of the selected one below".to_string(),
+        (Some(n), true, _) => format!("{n} · its models · esc goes back to the providers"),
+        (Some(n), false, _) => format!("{n} · filter: {}", p.filter),
+        (None, true, false) => "every model".to_string(),
+        (None, _, _) => format!("every provider · filter: {}", p.filter),
+    };
+    let head = if p.providers { cols(" ", "provider", "", "models", "ready", "") } else { cols(" ", "model", "effort", "$/M in / out", "bench (runs)", "AA") };
     let mut lines: Vec<Line<'static>> = vec![
         Line::from(Span::styled(cut(filter), st(th.faint))),
-        Line::from(Span::styled(cols(" ", "model", "effort", "$/M in / out", "bench (runs)", "AA"), st(th.faint))),
+        Line::from(Span::styled(head, st(th.faint))),
     ];
     for (i, r) in p.rows.iter().enumerate().skip(first).take(room) {
         let mark = if i == p.selected { "›" } else if r.current { "•" } else { " " };
-        let row = cols(mark, &r.label, &format!("‹{}›", r.effort), &r.price, &r.bench, &r.aa);
+        let effort = if r.effort.is_empty() { String::new() } else { format!("‹{}›", r.effort) };
+        let row = cols(mark, &r.label, &effort, &r.price, &r.bench, &r.aa);
         let color = match r.state { 1 | 4 => th.faint, 2 => th.warn, 3 => th.dim, _ if r.stale => th.warn, _ => th.text };
         let style = if i == p.selected { st(color).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(color) };
         lines.push(Line::from(Span::styled(row, style)));
@@ -2030,7 +2051,7 @@ mod tests {
                 2 => "not trusted: the code would go to subrouter.ai; add the line subrouter.ai to ~/.config/tazuna/trusted-providers".into(),
                 _ => String::new(),
             }, stale, current: false };
-        let mut p = ModelsPanel { rows: vec![row("Opus 5.5", 0, false), row("deepseek-v4.1-flash-1017 · fast", 1, false), row("gpt-6.1-sol", 2, true), row("gpt-6-luna", 0, true)], selected: 0, filter: String::new() };
+        let mut p = ModelsPanel { rows: vec![row("Opus 5.5", 0, false), row("deepseek-v4.1-flash-1017 · fast", 1, false), row("gpt-6.1-sol", 2, true), row("gpt-6-luna", 0, true)], selected: 0, filter: String::new(), providers: false, provider: Some("SubRouter".into()) };
         let draw = |p: &ModelsPanel, w: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 24)).unwrap();
             term.draw(|f| draw_models(f, p, Design::Cockpit.theme())).unwrap();

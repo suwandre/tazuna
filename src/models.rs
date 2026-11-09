@@ -149,6 +149,34 @@ pub fn key_models(var: &str) -> Option<std::collections::HashSet<String>> {
     (!ms.is_empty()).then_some(ms)
 }
 
+/// The provider a row belongs to in `/model`'s first level (OMP-style: providers, then their models): Claude for the
+/// subscription, else the route's host by its name.
+pub fn provider_of(c: &Choice) -> String {
+    match c.route.as_ref().map(|r| host_of(&r.0)) {
+        None => "Claude".into(),
+        Some("subrouter.ai") => "SubRouter".into(),
+        Some("mortera.cloud") => "Mortera".into(),
+        Some("api.mistral.ai") => "Mistral".into(),
+        Some(h) => h.to_string(),
+    }
+}
+
+/// `/model`'s providers in their order (Claude, SubRouter, Mortera, Mistral, then the rest as they come), each with its
+/// rows' indices.
+pub fn providers(cs: &[Choice]) -> Vec<(String, Vec<usize>)> {
+    let mut out: Vec<(String, Vec<usize>)> = vec![];
+    for (i, c) in cs.iter().enumerate() {
+        let p = provider_of(c);
+        match out.iter_mut().find(|(n, _)| *n == p) {
+            Some((_, v)) => v.push(i),
+            None => out.push((p, vec![i])),
+        }
+    }
+    let rank = |n: &str| ["Claude", "SubRouter", "Mortera", "Mistral"].iter().position(|x| *x == n).unwrap_or(9);
+    out.sort_by_key(|(n, _)| rank(n));
+    out
+}
+
 /// Why a row cannot be picked as it is, in words that say what to do; None when it can.
 pub fn why_not(c: &Choice) -> Option<String> {
     let (url, var, _) = c.route.as_ref()?;
@@ -260,6 +288,11 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
             pins,
         });
     }
+    // Mortera's own list (2026-11-09): every model that answers in text, from the copy `refresh_mortera` keeps
+    // beside the routes file: the data folder in use, a test's own folder in tests
+    if let Some(list) = routes.parent().and_then(|d| std::fs::read_to_string(d.join("mortera-models.json")).ok()) {
+        out.extend(mortera_choices(&serde_json::from_str(&list).unwrap_or_default(), &file, &trusted));
+    }
     // every other SubRouter model with a public score (the list also holds image and video models), best first. One model
     // once: SubRouter lists some under two spellings ("claude-opus-5.5" beside the subscription's "claude-opus-5-5",
     // "DeepSeek-V4-Flash-0731" beside "deepseek-v4-flash-0731"), and a pick of the copy ran Opus through SubRouter instead
@@ -298,6 +331,60 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
         });
     }
     out
+}
+
+/// Mortera's models as picker rows: those with text output, minus embeddings, image makers and Claude (Claude runs on the
+/// subscription; Mortera left its prompts uncached). Prices from its list, in rupiah; none of them checked by us yet.
+fn mortera_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) -> Vec<Choice> {
+    let mut rows: Vec<Choice> = list["data"].as_array().into_iter().flatten().filter_map(|m| {
+        let id = m["id"].as_str()?;
+        let out = m["architecture"]["output_modalities"].as_array();
+        let text = out.is_none_or(|o| o.iter().any(|x| x == "text"));
+        if !text || id.contains("embedding") || id.contains("image") || id.contains("banana") || id.starts_with("claude-") {
+            return None;
+        }
+        let rp = &m["pricing"]["payg_per_1m_idr"];
+        let usd = |k: &str| rp[k].as_f64().map(|r| r / crate::engine::IDR_PER_USD);
+        let (input, output) = (usd("in")?, usd("out")?);
+        Some(Choice {
+            model: id.to_string(),
+            label: id.to_string(),
+            route: Some(("https://mortera.cloud/v1".into(), "MORTERA_API_KEY".into(), route_price(input, output, usd("cache")))),
+            place: "Mortera".into(),
+            efforts: LEVELS.iter().map(|e| e.to_string()).collect(),
+            price: format!("{} / {}", per_m(input), per_m(output)),
+            note: "not checked yet: prices from Mortera's list; effort levels, cache and quality not measured".into(),
+            stale: false,
+            state: if key("MORTERA_API_KEY").is_none() {
+                State::NoKey
+            } else if !trusted("mortera.cloud") {
+                State::Untrusted
+            } else {
+                State::Ready
+            },
+            bench: scores(file, id).0,
+            aa: scores(file, id).1,
+            pins: vec![],
+        })
+    }).collect();
+    rows.sort_by(|a, b| a.model.cmp(&b.model));
+    rows
+}
+
+/// At start, with MORTERA_API_KEY set: Mortera's model list into the data folder, where `/model` reads it (a slow or
+/// absent answer leaves the last copy).
+pub fn refresh_mortera() {
+    let Some(k) = key("MORTERA_API_KEY") else { return };
+    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
+    let Ok(mut r) = http.get("https://mortera.cloud/v1/models").header("Authorization", format!("Bearer {}", k.trim())).call() else { return };
+    let Ok(body) = r.body_mut().with_config().limit(20 << 20).read_to_string() else { return };
+    let ok = serde_json::from_str::<Value>(&body).is_ok_and(|v| v["data"].as_array().is_some_and(|d| !d.is_empty()));
+    if let (true, Ok(dir)) = (ok, crate::labels::dir()) {
+        let tmp = dir.join("mortera-models.json.tmp");
+        if std::fs::write(&tmp, body).is_ok() {
+            let _ = std::fs::rename(&tmp, dir.join("mortera-models.json"));
+        }
+    }
 }
 
 /// SubRouter's balance in USD, read with an API key (SUBROUTER_API_KEY, else any route key; none set: nothing is
@@ -606,6 +693,29 @@ mod tests {
         c.state = State::Unchecked;
         assert_eq!(why_not(&c), None);
         std::fs::remove_file(&f).ok();
+    }
+
+    fn catalog_claude_row() -> Choice {
+        Choice { model: "claude-opus-5-5".into(), label: "Opus 5.5".into(), route: None, place: "Claude · subscription".into(), efforts: vec![],
+                 price: "plan".into(), note: String::new(), stale: false, state: State::Ready, bench: String::new(), aa: String::new(), pins: vec![] }
+    }
+
+    #[test]
+    fn mortera_rows_are_its_text_models() {
+        let list = serde_json::json!({"data": [
+            {"id": "deepseek-v4.1-flash-1017-uncensored", "architecture": {"output_modalities": ["text"]}, "pricing": {"payg_per_1m_idr": {"in": 391, "out": 1630, "cache": 39}}},
+            {"id": "muse-spark-1.3", "pricing": {"payg_per_1m_idr": {"in": 1630, "out": 3260}}},
+            {"id": "gpt-image-2", "architecture": {"output_modalities": ["image"]}, "pricing": {"payg_per_1m_idr": {"in": 1, "out": 1}}},
+            {"id": "claude-opus-5-5", "pricing": {"payg_per_1m_idr": {"in": 1, "out": 1}}},
+            {"id": "text-embedding-3-large", "pricing": {"payg_per_1m_idr": {"in": 1, "out": 1}}},
+            {"id": "no-price"}]});
+        let rows = mortera_choices(&list, &serde_json::json!({}), &|h: &str| h == "mortera.cloud");
+        assert_eq!(rows.iter().map(|c| c.model.as_str()).collect::<Vec<_>>(), ["deepseek-v4.1-flash-1017-uncensored", "muse-spark-1.3"]);
+        let order: Vec<String> = providers(&[rows[0].clone(), catalog_claude_row()]).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(order, ["Claude", "Mortera"], "Claude first in /model's providers");
+        let r = rows[1].route.as_ref().unwrap();
+        assert_eq!((r.0.as_str(), r.1.as_str(), r.2.as_str()), ("https://mortera.cloud/v1", "MORTERA_API_KEY", "0.1,0.01,0.2"), "rupiah at 16,300 to the dollar");
+        assert!(rows[0].note.starts_with("not checked yet"));
     }
 
     #[test]

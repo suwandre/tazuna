@@ -33,13 +33,18 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
   there, where claude and the agent's commands would inherit it): tazuna reads it from the file where it builds its own
   requests, and only the own loop's engine gets it, which removes it from its environment before any tool runs.
 
-- Mortera in `/model` (`MORTERA_API_KEY`): 14 of its coding models (Gemini 3.1 Pro and 3.8 Flash, Gemini 4 Argon, GPT-6.1 Sol
-  and GPT-6 Luna, Kimi K3.1 Pro, Grok 4.7, Qwen3.8 Max, GLM-5.3, MiMo V2.6 Pro, MiniMax M3.1 Flash, DeepSeek V4 Pro and
-  V4.1 Flash, Nemotron 3 Ultra), marked "not checked yet": prices from Mortera's list, effort levels, cache and quality
-  not measured. The own loop reads Mortera's prices, which are in rupiah (`payg_per_1m_idr`, at 16,300 to the dollar),
-  so any of its models runs with `--provider https://mortera.cloud/v1` too. Claude stays on the subscription (Mortera
-  left Claude prompts uncached in an earlier check). Checked: Gemini 3.8 Flash on Mortera made a file in 4 calls for
-  $0.0002. A model on another provider no longer hides SubRouter's own row for it in `/model`.
+- `/model` goes by provider first, as OMP's picker does: Claude, SubRouter, Mortera, Mistral and any other route, each with
+  how many of its models there are and how many can be picked now (a provider with none says why: no key, not trusted).
+  Enter opens one, esc or backspace goes back; typing on the first level searches every provider's models at once, each
+  row then naming its provider. The flat list had grown past 90 rows with Mortera's.
+- Mortera in `/model` (`MORTERA_API_KEY`): every model on its list that answers in text (59 today: Gemini 3.1 Pro and 3.8
+  Flash, Gemini 4 Argon, GPT-6.x, Kimi K3.x, Grok 4.x, Qwen3.x, GLM-5.x, MiMo, MiniMax, DeepSeek V4 and V4.1 Flash with
+  its 1017 variants, Muse, Nemotron ...), read at start in the background and kept in the data folder, so new models show
+  up by themselves. Embeddings, image makers and Claude are left out (Claude runs on the subscription; Mortera left its
+  prompts uncached in an earlier check). All "not checked yet": prices from Mortera's list, effort levels, cache and
+  quality not measured. The own loop reads Mortera's prices, which are in rupiah (`payg_per_1m_idr`, at 16,300 to the
+  dollar), so its models also run with `--provider https://mortera.cloud/v1`. Checked: Gemini 3.8 Flash on Mortera made
+  a file in 4 calls for $0.0002. A model on another provider no longer hides SubRouter's own row for it.
 
 ## 0.1.83 (2026-11-09): a selection in the message box no longer copies itself
 
