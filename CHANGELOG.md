@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.82 (2026-11-09): a model that refuses its effort gets one it takes
+
+- The own loop sent the session's effort to every model, and a model that refused it ended the call: Codestral (Mistral)
+  takes no `reasoning_effort` at all, not even `none`, and Mistral Small takes only `none` and `high`. With the cascade
+  on, each such task went to Opus untried. Now a refusal that names the effort is answered once per model: the
+  highest level the error lists up to the asked one (else the lowest listed), no effort field when the model takes none,
+  or one level lower when only the asked one is refused (the old `max` to `xhigh` rule, which tried `max` again on every
+  call). The model's later calls go out with that level from the start.
+- Checked against Mistral's API (one call per model and level): Codestral none; Small and Medium 3.5 `none` and `high`;
+  Large 4 `low`, `medium` and `high`; GLM 5.3 and 5.3 Flash `low`, `high` and `max`; DeepSeek V4.1 Flash all.
+  Headless runs that ended in an error before (Codestral at `off`, Small at `xhigh`) made their file at $0.0005 and
+  $0.0002. No change for models that take their effort.
+
 ## 0.1.81 (2026-11-09): the mouse in the message box; bold links open right
 
 - A click in the message box puts the cursor under it; a drag selects typed text, shown reversed. Typing (or a paste)

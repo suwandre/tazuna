@@ -350,6 +350,55 @@ fn input_item(mut item: Value) -> Value {
     item
 }
 
+/// Effort levels as the APIs name them, lowest first, and where a request body carries one.
+const LEVELS: [&str; 7] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const EFFORT_AT: [&str; 3] = ["/reasoning/effort", "/reasoning_effort", "/output_config/effort"];
+
+/// Per model, the effort its provider took instead after refusing the asked one: Some(level), or None for no effort field
+/// at all. Kept for the process, so a refusal costs one call, not one per turn.
+static EFFORT_TAKEN: Mutex<Vec<(String, Option<String>)>> = Mutex::new(Vec::new());
+
+fn body_effort(body: &Value) -> Option<String> {
+    EFFORT_AT.iter().find_map(|p| body.pointer(p)?.as_str().map(String::from))
+}
+
+/// Sets the body's effort, or takes the field out (its whole object: `reasoning` and `output_config` carry only it).
+fn put_effort(body: &mut Value, e: Option<&str>) {
+    for p in EFFORT_AT {
+        match (body.pointer_mut(p), e) {
+            (Some(v), Some(e)) => *v = json!(e),
+            (Some(_), None) => {
+                let top = p.split('/').nth(1).unwrap_or_default();
+                body.as_object_mut().map(|o| o.remove(top));
+            }
+            (None, _) => {}
+        }
+    }
+}
+
+/// What to send after a call refused for its effort (None: the refusal is about something else). A level from the
+/// error's list, the highest up to the asked one or else the lowest listed (Mistral Small: "Must be one of (...'none',
+/// ...'high')"; GLM: "supported values: ['low', 'high', 'max']"); a level lower when only the asked one is refused
+/// ("'reasoning_effort' does not support 'max'"); no field when the model takes none ("reasoning_effort is not enabled for
+/// this model": Codestral, even for "none"). The routes' level lists were guesses that no call had checked (2026-11-09).
+fn effort_instead(text: &str, asked: &str) -> Option<Option<String>> {
+    let t = text.to_lowercase();
+    let at = LEVELS.iter().position(|l| *l == asked)?;
+    if !t.contains("effort") {
+        return None;
+    }
+    if let Some(list) = ["must be", "supported values", "one of"].iter().find_map(|k| t.find(k).map(|i| &t[i..])) {
+        let allowed: Vec<usize> = (0..LEVELS.len()).filter(|&i| list.contains(&format!("'{}'", LEVELS[i]))).collect();
+        if let Some(&pick) = allowed.iter().filter(|&&i| i <= at).max().or(allowed.iter().min()) {
+            return (pick != at).then(|| Some(LEVELS[pick].to_string()));
+        }
+    }
+    if t.contains("not enabled") {
+        return Some(None);
+    }
+    (at > 0 && t.contains(&format!("'{asked}'")) && (t.contains("not support") || t.contains("unsupported"))).then(|| Some(LEVELS[at - 1].to_string()))
+}
+
 /// The effort as the API names it: the picker's "off" is the APIs' "none" (thinking off: DeepSeek V4.1 Flash on znu
 /// thought ~2.6k tokens on hard AIME problems with it, ~6-13k at low to xhigh alike, ~19k at max, 2026-11-06).
 fn api_effort(e: &str) -> &str {
@@ -1230,6 +1279,10 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             }
         }
     }
+    let model = body["model"].as_str().unwrap_or_default().to_string();
+    if let Some((_, e)) = EFFORT_TAKEN.lock().unwrap().iter().find(|(m, _)| *m == model) {
+        put_effort(&mut body, e.as_deref());
+    }
     // a call that times out is tried again with twice the time (up to 15 minutes): a slow provider's long reasoning answer
     // (MiMo V2.6 Pro at the official ~30 tok/s) takes over 3 minutes and was cut off at 180 s on every try. The limit is on
     // the reply's start; a stream that has started may run 15 minutes: cut at 180 s, UnoRouter's slow Luna calls were
@@ -1306,19 +1359,16 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             stream = true;
             continue;
         }
-        // an upstream that tops out at xhigh rejects max (one of UnoRouter's si upstreams, HTTP 400, which ended a run):
-        // that call goes again at xhigh
-        if status == 400 && text.contains("'max'") && wait > 0 {
-            let mut lowered = false;
-            for p in ["/reasoning/effort", "/reasoning_effort", "/output_config/effort"] {
-                if let Some(e) = body.pointer_mut(p).filter(|e| **e == "max") {
-                    *e = json!("xhigh");
-                    lowered = true;
-                }
-            }
-            if lowered {
-                continue;
-            }
+        // a model or upstream that does not take the asked effort (an UnoRouter upstream topping out at xhigh ended a run;
+        // Mistral's models each take their own few levels, and its Codestral none at all, which handed every task to
+        // Opus): the call goes again with what it takes, and so do the model's later calls
+        if status == 400 && wait > 0 && let Some(asked) = body_effort(&body) && let Some(instead) = effort_instead(&text, &asked) {
+            eprintln!("{model} does not take effort {asked}; using {}", instead.as_deref().unwrap_or("none at all"));
+            put_effort(&mut body, instead.as_deref());
+            let mut taken = EFFORT_TAKEN.lock().unwrap();
+            taken.retain(|(m, _)| *m != model);
+            taken.push((model.clone(), instead));
+            continue;
         }
         // the pinned group dropped out, or one of its upstreams refused the call (UnoRouter passes that on as a 400: "Provider
         // returned error ... Baidu", "bad_response_status_code"; it ended two runs, one after the task was solved): the
@@ -2074,6 +2124,24 @@ session: "s".into(),
     }
 
     #[test]
+    fn an_effort_the_model_refuses_is_replaced_by_one_it_takes() {
+        let e = |t: &str, asked: &str| effort_instead(t, asked);
+        let small = "reasoning_effort='xhigh' is not supported for this model. Must be one of (<ReasoningEffort.none: 'none'>, <ReasoningEffort.high: 'high'>)";
+        assert_eq!(e(small, "xhigh"), Some(Some("high".into())));
+        let large = "reasoning_effort none is not supported for this model, supported values: [<ReasoningEffort.high: 'high'>, <ReasoningEffort.low: 'low'>, <ReasoningEffort.medium: 'medium'>]";
+        assert_eq!(e(large, "none"), Some(Some("low".into())), "below every listed level: the lowest");
+        let glm = "reasoning_effort 'xhigh' is not supported for this model; supported values: ['low', 'high', 'max']";
+        assert_eq!(e(glm, "xhigh"), Some(Some("high".into())), "the highest up to the asked one");
+        assert_eq!(e("reasoning_effort is not enabled for this model", "none"), Some(None), "Codestral: no field at all");
+        assert_eq!(e("'reasoning_effort' does not support 'max'", "max"), Some(Some("xhigh".into())));
+        assert_eq!(e("model not found", "high"), None, "about something else");
+        assert_eq!(e(small, "high"), None, "already a listed level: nothing to change");
+        let mut b = json!({"model": "m", "reasoning_effort": "high", "reasoning": {"effort": "high"}});
+        put_effort(&mut b, None);
+        assert_eq!(b, json!({"model": "m"}));
+    }
+
+    #[test]
     fn a_call_rejected_for_max_effort_goes_again_at_xhigh() {
         use std::io::{Read, Write};
         let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2105,7 +2173,8 @@ session: "s".into(),
             bodies
         });
         let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
-        let r = chat(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": [], "reasoning_effort": "max"})).unwrap();
+        // a model name of its own: the effort it ends up with is remembered for the process (other tests send "m")
+        let r = chat(&http, &url, "k", Api::Chat, &json!({"model": "m-tops-at-xhigh", "messages": [], "reasoning_effort": "max"})).unwrap();
         assert_eq!(r["choices"][0]["message"]["content"], "ok");
         let bodies = got.join().unwrap();
         assert!(bodies[0].contains("\"max\"") && bodies[1].contains("\"xhigh\""), "{bodies:?}");
