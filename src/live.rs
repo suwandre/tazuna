@@ -270,14 +270,7 @@ pub struct Checkpoint {
 
 /// A random version-4 UUID (claude takes the message ids it is given, and they must be UUIDs).
 fn new_uuid() -> String {
-    let mut b = [0u8; 16];
-    if std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b)).is_err() {
-        // Windows: std's random hash keys, seeded per process and fresh for every RandomState
-        use std::hash::BuildHasher;
-        for (i, c) in b.chunks_mut(8).enumerate() {
-            c.copy_from_slice(&std::collections::hash_map::RandomState::new().hash_one(i).to_le_bytes());
-        }
-    }
+    let mut b = crate::platform::random::<16>();
     b[6] = (b[6] & 0x0f) | 0x40;
     b[8] = (b[8] & 0x3f) | 0x80;
     let h: String = b.iter().map(|x| format!("{x:02x}")).collect();
@@ -693,24 +686,29 @@ impl Live {
         Ok(self.record(json!({"type": "harness_info", "text": text})))
     }
 
-    /// `/connectors`: the user's claude.ai connectors and MCP servers (Jira, Slack ...) on or off for the rest of the
-    /// session, as `--connectors` at start. claude restarts with them; the conversation goes on (one cache rebuild).
+    /// `/mcp on|off`: the user's MCP servers (tazuna's list, ~/.config/tazuna/mcp.json) for every model, and on claude
+    /// the account's claude.ai connectors too, for the rest of the session (as `--mcp` at start). claude restarts with
+    /// them and resumes the conversation; the own loop connects them in place. Either way the conversation goes on.
     pub fn set_connectors(&mut self, on: bool) -> Result<(f64, Value)> {
         if !self.idle() {
             bail!("wait until the run has finished (or stop it with esc)");
         }
-        if self.provider.is_some() || self.profile == Profile::Lean {
-            bail!("connectors are for claude in the repo profile (this session: {})", if self.provider.is_some() { "the own loop" } else { "the lean profile" });
-        }
-        if self.user_settings {
-            bail!("--user-settings already loads every connector and MCP server");
-        }
-        self.connectors = on;
-        self.respawn(self.model.clone(), self.effort.clone());
-        let text = if on {
-            "connectors on: your claude.ai connectors and MCP servers (Jira, Slack ...), ~4.6k tokens a call, cached after the first (the conversation goes on; remembered for the next sessions)"
+        if self.provider.is_some() {
+            if let Some(stdin) = self.stdin.as_mut() {
+                writeln!(stdin, "{}", json!({"type": "tazuna_mcp", "on": on}))?;
+                stdin.flush()?;
+            }
+            self.connectors = on;
         } else {
-            "connectors off (the conversation goes on; remembered for the next sessions)"
+            self.connectors = on;
+            self.respawn(self.model.clone(), self.effort.clone());
+        }
+        let names: Vec<String> = crate::mcpc::servers().into_iter().map(|s| s.0).collect();
+        let text = match (on, names.is_empty(), self.provider.is_some()) {
+            (false, ..) => "MCP off (the conversation goes on; remembered for the next sessions)".to_string(),
+            (true, true, true) => "MCP on, but no server yet: /mcp add NAME URL (remembered for the next sessions)".to_string(),
+            (true, true, false) => "MCP on: your claude.ai connectors; /mcp add NAME URL adds servers for every model (the conversation goes on; remembered for the next sessions)".to_string(),
+            (true, false, own) => format!("MCP on: {}{} (the conversation goes on; remembered for the next sessions)", names.join(", "), if own { "" } else { ", and your claude.ai connectors" }),
         };
         Ok(self.record(json!({"type": "harness_info", "text": text})))
     }
@@ -1358,6 +1356,9 @@ impl Live {
             if let Some(p) = &self.price {
                 cmd.env("TAZUNA_PRICE", p);
             }
+            if self.connectors {
+                cmd.env("TAZUNA_MCP", "1");
+            }
             // the route's other checked providers as fallbacks, unless a bench run sets its own
             if std::env::var_os("TAZUNA_ROUTES").is_none() {
                 let fb = crate::labels::dir().map(|d| crate::models::fallbacks(&d.join("routes.json"), &key_env)).unwrap_or_default();
@@ -1445,7 +1446,8 @@ impl Live {
                     prompt.push_str(&text);
                     self.instructions_used = (bytes, sources);
                 }
-                cmd.arg("--system-prompt-file").arg(prompt_file(&prompt)?).args(["--tools", "Bash,Read,Edit,Write,Grep,Glob,Skill"]);
+                let tools = if self.connectors { "Bash,Read,Edit,Write,Grep,Glob,Skill,ToolSearch" } else { "Bash,Read,Edit,Write,Grep,Glob,Skill" };
+                cmd.arg("--system-prompt-file").arg(prompt_file(&prompt)?).args(["--tools", tools]);
             }
             Profile::Lean => {
                 let mut prompt = self.mid_prompt();
@@ -1458,13 +1460,22 @@ impl Live {
                 let exe = std::env::current_exe().context("locating the tazuna binary")?;
                 let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": exe, "args": ["mcp"], "env": {"LEAN_BASH_CAP": self.bash_cap.to_string()}}}}).to_string();
                 // cc-mid: lean prompt and tools, no skills or other MCP servers
-                cmd.args(["--strict-mcp-config", "--disable-slash-commands"])
+                if !self.connectors {
+                    cmd.arg("--strict-mcp-config");
+                }
+                cmd.arg("--disable-slash-commands")
                     .arg("--system-prompt-file")
                     .arg(prompt_file(&prompt)?)
-                    .args(["--tools", "Grep,Glob", "--mcp-config", &mcp])
+                    .args(["--tools", if self.connectors { "Grep,Glob,ToolSearch" } else { "Grep,Glob" }, "--mcp-config", &mcp])
                     // pre-allowed only in auto: the other modes ask about the lean tools too
                     .args(if self.permission_mode == "bypassPermissions" { &["--allowedTools", "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit"][..] } else { &[] });
             }
+        }
+        // `/mcp on`: the user's own servers too (tazuna's list, for every model); remote ones through `tazuna mcp-proxy`.
+        // Without ToolSearch claude sends every MCP tool's full definition: the lean profiles add it while MCP is on
+        // (+150 tokens; claude then sends a large set as names only, as in the repo profile).
+        if let Some(c) = self.connectors.then(crate::mcpc::claude_config).flatten() {
+            cmd.arg("--mcp-config").arg(c);
         }
         let mut settings = json!({});
         if self.diagnostics {
@@ -1742,15 +1753,15 @@ mod tests {
     }
 
     #[test]
-    fn connectors_switch_only_in_a_claude_repo_session() {
+    fn mcp_switches_on_every_path() {
         let mut live = Live::new("", "").unwrap();
-        live.profile = Profile::Lean;
-        assert!(live.set_connectors(true).is_err() && !live.connectors, "lean has no connectors");
-        live.profile = Profile::Repo;
-        assert!(live.set_connectors(true).is_ok() && live.connectors);
-        assert!(live.set_connectors(false).is_ok() && !live.connectors);
-        live.user_settings = true;
-        assert!(live.set_connectors(true).is_err(), "--user-settings loads them already");
+        for profile in [Profile::Lean, Profile::Repo] {
+            live.profile = profile;
+            assert!(live.set_connectors(true).is_ok() && live.connectors);
+            assert!(live.set_connectors(false).is_ok() && !live.connectors);
+        }
+        live.provider = Some(("https://api.example".into(), "KEY".into()));
+        assert!(live.set_connectors(true).is_ok() && live.connectors, "the own loop too");
     }
 
     #[test]

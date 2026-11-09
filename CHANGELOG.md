@@ -16,6 +16,49 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.80 (2026-11-09): MCP servers for every model (`/mcp`)
+
+- One list of MCP servers for every model: `/mcp add NAME URL` for a remote server, `/mcp add NAME COMMAND [ARGS]` for
+  a local one, kept in `~/.config/tazuna/mcp.json` in Claude Code's format. `/mcp on` and `/mcp off` replace
+  `/connectors` (0.1.79) and are remembered the same way; `--mcp` is `--connectors`' new name (the old one still works).
+  `/mcp` alone lists the servers.
+- Remote servers that ask for a login get one as tazuna itself: OAuth with dynamic client registration and PKCE, the
+  browser for consent, a one-time listener on 127.0.0.1, tokens in `~/.config/tazuna/mcp-auth/NAME.json` (0600, written
+  through a rename), refreshed when they run out. A token is tied to the server's URL: a name pointed at another address
+  never sends it there, and `/mcp add` over a name drops its login. Logins go over https only (or http to this machine),
+  and the authorization server's metadata must name itself. Atlassian's server (`https://mcp.atlassian.com/v1/mcp`)
+  registers tazuna as a client. No claude.ai connector token is used: those stay with claude.ai and the `claude` CLI.
+  `/mcp login NAME` logs in again.
+- The own loop (DeepSeek, Mistral, GPT ...) had no MCP client; it has one now (stdio and streamable HTTP). It gets one
+  `mcp` tool whose description names the servers' tools: a call with `tool` alone returns that tool's description and
+  parameters, a call with `arguments` runs it. The tool list stays the same all session, so the provider's prompt cache
+  holds. In the ask and edits modes every run asks first (a server's own read-only marks are not trusted), named as
+  claude names it (`mcp__server__tool`), so "always" covers that one tool. Servers connect in parallel within 30 s each;
+  a server that ended its session gets a new one. `/mcp on` in the middle of a conversation connects in place: the
+  conversation goes on.
+- On claude the user's servers come next to the claude.ai connectors, remote ones through `tazuna mcp-proxy NAME`
+  (tazuna's login). `/mcp on` works in every profile now: the lean profiles take the connectors too and add ToolSearch,
+  without which claude sends every MCP tool's full definition.
+- A server of the user's that does not connect shows a notice (`MCP NAME: ...`); claude.ai connectors waiting for a login
+  stay quiet. `${VAR}` and `${VAR:-default}` expand as in Claude Code. A mcp.json that does not parse is never written
+  over: `/mcp` says why. On Windows a server starts directly (npx.cmd from PATH), with no shell reading its arguments.
+- With MCP on, naming a ticket is enough: the model fetches it. `/jira` stays as the shortcut that needs no MCP.
+
+| Measured (default off: no metric moves) | MCP off | MCP on |
+|---|---|---|
+| Lean profile, Haiku, input tokens per message (claude 2.1.319; DeepWiki, Atlassian, Slack, Claude Docs: 83 tools) | 3.2k | 8.8k |
+| Own loop, the `mcp` tool for Atlassian's 41 tools (characters / 4) | 0 | ~400 |
+
+- Checked by hand: DeepWiki's `read_wiki_structure` through the proxy on Haiku (lean profile) and on Opus (ToolSearch
+  loaded it first), and through the `mcp` tool on the own loop (Mistral Small 2603, $0.0003), each with the right answer;
+  Atlassian's discovery and client registration up to the browser step.
+- An independent review before the release found 6 major and 14 minor issues (the ones above: "always" covering every
+  server's tools, a token following a renamed server, parallel refreshes losing tokens, a broken mcp.json written over,
+  no new session after a 404, minutes of waiting on a server that is down); all fixed but the last limit below.
+- Limits: the tokens sit in files the agent's commands can read, as `/jira`'s API token does; the older SSE transport is
+  not supported (a clear error); esc does not stop an MCP call in flight (it ends at 300 s); two sessions refreshing one
+  server's rotating token at the same moment can force a new login.
+
 ## 0.1.79 (2026-11-09): `/connectors` inside a session
 
 - `/connectors` turns the user's claude.ai connectors and MCP servers (Jira, Slack, Claude Docs) on or off without

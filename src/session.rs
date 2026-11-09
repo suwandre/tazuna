@@ -281,7 +281,7 @@ impl Session {
             results: 0,
             profile: String::new(),
             mode: "auto".into(),
-            commands: vec!["bad".into(), "boss".into(), "connectors".into(), "diff".into(), "good".into(), "jira".into(), "keys".into(), "loop".into(), "model".into(), "new".into(), "resume".into(), "rewind".into(), "usage".into(), "vim".into()],
+            commands: vec!["bad".into(), "boss".into(), "diff".into(), "good".into(), "jira".into(), "keys".into(), "loop".into(), "mcp".into(), "model".into(), "new".into(), "resume".into(), "rewind".into(), "usage".into(), "vim".into()],
             todos: Vec::new(),
             last_prompt: String::new(),
             streamed: false,
@@ -394,6 +394,19 @@ impl Session {
     }
 
     /// Apply one event that happened `at_ms` into the run.
+    /// The user's own MCP servers (tazuna's list) that did not connect. claude.ai connectors waiting for a login stay
+    /// quiet: claude.ai lists those, and an account has several.
+    fn mcp_failures(&mut self, e: &Value) {
+        let ours: Vec<String> = crate::mcpc::servers().into_iter().map(|s| s.0).collect();
+        for m in e["mcp_servers"].as_array().into_iter().flatten().filter(|m| matches!(m["status"].as_str(), Some("failed" | "needs-auth"))) {
+            let name = m["name"].as_str().unwrap_or_default().to_string();
+            if ours.contains(&name) {
+                let why = m["error"].as_str().map_or_else(|| format!("did not connect (/mcp login {name} if it needs a login)"), String::from);
+                self.push_aside(Block::Notice { text: format!("MCP {name}: {why}"), error: true });
+            }
+        }
+    }
+
     pub fn apply(&mut self, e: &Value, at_ms: f64) {
         self.now_ms = at_ms;
         if let Some(parent) = e["parent_tool_use_id"].as_str() {
@@ -408,12 +421,14 @@ impl Session {
                 self.price_m = e["price_per_m"].as_array().filter(|p| p.len() == 3).map(|p| (p[0].as_f64().unwrap_or(0.0), p[1].as_f64().unwrap_or(0.0), p[2].as_f64().unwrap_or(0.0)));
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
-                cmds.extend(["good", "bad", "boss", "connectors", "diff", "jira", "keys", "loop", "model", "new", "resume", "rewind", "usage", "vim"].map(String::from));
+                cmds.extend(["good", "bad", "boss", "diff", "jira", "keys", "loop", "mcp", "model", "new", "resume", "rewind", "usage", "vim"].map(String::from));
                 cmds.sort();
                 cmds.dedup();
                 self.commands = cmds;
                 self.activity = Activity::Waiting;
+                self.mcp_failures(e);
             }
+            (Some("system"), Some("mcp_status")) => self.mcp_failures(e),
             (Some("system"), Some("status")) => {
                 if let Some(m) = e["permissionMode"].as_str() {
                     self.mode = mode_name(m).to_string();

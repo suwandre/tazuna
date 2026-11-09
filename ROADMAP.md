@@ -298,6 +298,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-09: MCP servers belong to tazuna, not to one model (0.1.80). The user's own list (`/mcp add`, Claude Code's
+  format) goes to claude and, through a new MCP client, to the own loop; remote servers get tazuna's own OAuth login.
+  Reason: claude.ai connectors only reach the `claude` CLI, so a DeepSeek session had no Jira at all, and an all-in-one
+  harness should not need Claude to set up a tool. The own loop gets one `mcp` tool (names in its description, parameters
+  on first use) so its tool list and prompt cache never change. Off by default: no measured metric moves.
 - 2026-11-09: headless boss mode writes a 1-hour prompt cache (0.1.78). The 5-minute cache lost the lead's cache while it
   waited on its workers and missed Claude Code's cross-session prefix; 313 recorded runs re-priced: −3.2% on the boss
   baseline (CHANGELOG). Found while comparing t3code.

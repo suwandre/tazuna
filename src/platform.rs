@@ -110,6 +110,19 @@ pub fn kill(pid: u32) {
     let _ = Command::new("taskkill").args(["/F", "/PID", &pid.to_string()]).output();
 }
 
+/// N random bytes: /dev/urandom, else (Windows) std's random hash keys, seeded per process and fresh for every RandomState.
+pub fn random<const N: usize>() -> [u8; N] {
+    let mut b = [0u8; N];
+    if std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b)).is_err() {
+        use std::hash::BuildHasher;
+        for (i, c) in b.chunks_mut(8).enumerate() {
+            let h = std::collections::hash_map::RandomState::new().hash_one(i).to_le_bytes();
+            c.copy_from_slice(&h[..c.len()]);
+        }
+    }
+    b
+}
+
 /// A folder only the user can open: 0700 on Unix; on Windows the user's profile and temp folders are private already.
 pub fn private_dir(path: &Path, recursive: bool) -> std::io::Result<()> {
     #[cfg(unix)]

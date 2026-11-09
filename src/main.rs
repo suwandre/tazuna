@@ -54,9 +54,9 @@
 //!          [--profile repo|lean]   # repo (default when the repo has agent config): Claude Code's prompt and tools with
 //!                                  the repo's CLAUDE.md, settings, hooks, skills; lean: tazuna's ~30% cheaper cc-mid profile
 //!          [--trust] [--user-settings]   # trust the repo's hooks/skills without asking; also load your ~/.claude settings
-//!          [--connectors]   # repo profile: your claude.ai connectors and MCP servers (Jira, Slack ...), without the rest
-//!                             of ~/.claude; their tools load on demand, ~4k tokens a call for the names; /connectors
-//!                             switches them inside a session and remembers the choice for the next ones
+//!          [--mcp]   # MCP on: your servers (/mcp add, ~/.config/tazuna/mcp.json) for every model, on claude your
+//!                      claude.ai connectors too; /mcp on|off switches it inside a session and remembers the choice
+//!                      (--connectors: the same, its name before 0.1.80)
 //!          [--no-project-instructions]   # lean profile: don't add the repo's CLAUDE.md / AGENTS.md to the prompt
 //!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
@@ -83,6 +83,7 @@ mod lessons;
 mod live;
 mod looprun;
 mod mcp;
+mod mcpc;
 mod models;
 mod outcap;
 mod platform;
@@ -416,7 +417,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             }
             "--trust" => a.trust = true,
             "--user-settings" => a.user_settings = true,
-            "--connectors" => a.connectors = true,
+            "--mcp" | "--connectors" => a.connectors = true,
             "--verdict" => a.verdict = Some(val()?),
             "--note" => a.note = val()?,
             "--run-id" | "--id" => a.run_id = Some(val()?),
@@ -450,6 +451,10 @@ fn main() -> Result<()> {
     }
     if std::env::args().nth(1).as_deref() == Some("mcp") {
         return mcp::serve();
+    }
+    if std::env::args().nth(1).as_deref() == Some("mcp-proxy") {
+        // a remote MCP server as a local one for claude, with tazuna's login (mcpc.rs)
+        return mcpc::proxy(&std::env::args().nth(2).context("tazuna mcp-proxy NAME")?);
     }
     if std::env::args().nth(1).as_deref() == Some("boss-hook") {
         return live::boss_hook();
@@ -560,7 +565,7 @@ fn main() -> Result<()> {
             let _ = labels::label_git(&base, Some(&std::env::current_dir()?));
             let mut live = live::Live::new("", "")?;
             live.user_settings = a.user_settings;
-            // `/connectors` remembers its choice for the next live sessions; `--run` keeps only the flag (benches stay as given)
+            // `/mcp on|off` is remembered for the next live sessions; `--run` keeps only the flag (benches stay as given)
             live.connectors = a.connectors || labels::dir().is_ok_and(|d| d.join("connectors").exists());
             let (lane, boss) = lane(&a, true)?;
             let route = live.set_lane(lane);
@@ -1429,6 +1434,21 @@ fn run_live(
             match e["type"].as_str() {
                 Some("tazuna_balance") => s.balance = e["usd"].as_f64(),
                 Some("tazuna_update") => s.apply(&json!({"type": "harness_info", "text": e["text"]}), live.elapsed_ms()),
+                // a server added or logged in: it joins at once while MCP is on (claude restarts with it, the own loop
+                // reconnects), else with /mcp on
+                Some("tazuna_mcp_ready") => {
+                    let on = e["ok"] == true && live.connectors && live.idle();
+                    let hint = match (e["ok"] == true, live.connectors) {
+                        (false, _) => "",
+                        (true, false) => " · /mcp on to use it",
+                        (true, true) if on => "",
+                        (true, true) => " (joins after this run: /mcp on)",
+                    };
+                    s.apply(&json!({"type": "harness_info", "text": format!("{}{hint}", e["text"].as_str().unwrap_or_default())}), live.elapsed_ms());
+                    if on && let Ok((t, e)) = live.set_connectors(true) {
+                        s.apply(&e, t);
+                    }
+                }
                 Some("tazuna_usage_done") => {
                     let text = ui::limits_str(&s, v.design.theme()).map_or("no reading: claude sent none, and no SubRouter key is set".into(), |(t, _)| t);
                     s.apply(&json!({"type": "harness_info", "text": format!("usage: {text}")}), live.elapsed_ms());
@@ -1984,15 +2004,63 @@ fn run_live(
                     }
                     continue;
                 }
+                // /mcp: the user's MCP servers for every model (0.1.80); on and off remembered across sessions
+                // /connectors (0.1.79) by habit: say its new name instead of sending it to the model
                 if text == "/connectors" {
-                    match live.set_connectors(!live.connectors) {
-                        Ok((t, e)) => {
-                            if let Ok(f) = labels::dir().map(|d| d.join("connectors")) {
-                                let _ = if live.connectors { std::fs::write(f, "") } else { std::fs::remove_file(f) };
+                    s.apply(&json!({"type": "harness_info", "text": "/connectors is /mcp now: /mcp on, /mcp off, /mcp lists the servers"}), live.elapsed_ms());
+                    continue;
+                }
+                if text == "/mcp" || text.starts_with("/mcp ") {
+                    let args: Vec<&str> = text.split_whitespace().skip(1).collect();
+                    let at = live.elapsed_ms();
+                    let info = |s: &mut session::Session, t: String| s.apply(&json!({"type": "harness_info", "text": t}), at);
+                    // adding and logging in take the browser and the network: off the screen's thread
+                    let check = |name: &str, fresh: bool| {
+                        let (tx, name) = (status_tx.clone(), name.to_string());
+                        std::thread::spawn(move || {
+                            let say = |t: String| drop(tx.send(json!({"type": "harness_info", "text": t})));
+                            let (ok, text) = match mcpc::check(&name, fresh, &say) {
+                                Ok(n) => (true, format!("{name}: connected, {n} tools")),
+                                Err(e) => (false, format!("{name}: {e:#}")),
+                            };
+                            let _ = tx.send(json!({"type": "tazuna_mcp_ready", "ok": ok, "text": text}));
+                        });
+                    };
+                    match args.as_slice() {
+                        ["on" | "off"] => match live.set_connectors(args[0] == "on") {
+                            Ok((t, e)) => {
+                                if let Ok(f) = labels::dir().map(|d| d.join("connectors")) {
+                                    let _ = if live.connectors { std::fs::write(f, "") } else { std::fs::remove_file(f) };
+                                }
+                                s.apply(&e, t)
                             }
-                            s.apply(&e, t)
-                        }
-                        Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
+                            Err(err) => info(&mut s, format!("{err:#}")),
+                        },
+                        ["add", name, target @ ..] => match mcpc::add(name, target) {
+                            Ok(()) => {
+                                info(&mut s, format!("{name}: added, connecting…"));
+                                check(name, false);
+                            }
+                            Err(e) => info(&mut s, format!("{e:#}")),
+                        },
+                        ["login", name] => check(name, true),
+                        ["remove", name] => match mcpc::remove(name) {
+                            Ok(true) if live.connectors && live.idle() => {
+                                info(&mut s, format!("{name}: removed"));
+                                if let Ok((t, e)) = live.set_connectors(true) {
+                                    s.apply(&e, t);
+                                }
+                            }
+                            Ok(true) => info(&mut s, format!("{name}: removed")),
+                            Ok(false) => info(&mut s, format!("no server {name}")),
+                            Err(e) => info(&mut s, format!("{e:#}")),
+                        },
+                        _ => info(&mut s, format!(
+                            "MCP {}. Servers for every model (~/.config/tazuna/mcp.json){}:\n{}\n/mcp on · /mcp off · /mcp add NAME URL · /mcp add NAME COMMAND [ARGS] · /mcp login NAME · /mcp remove NAME",
+                            if live.connectors { "on" } else { "off" },
+                            if live.provider.is_some() { "" } else { "; on claude your claude.ai connectors too" },
+                            mcpc::list()
+                        )),
                     }
                     continue;
                 }

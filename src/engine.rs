@@ -232,11 +232,14 @@ pub fn serve(args: &[String]) -> Result<()> {
     // the web as a tool of its own (the model in bash knew curl but in another turn said it had no web access)
     let f = crate::mcp::fetch_tool();
     fns.push(json!({"type": "function", "function": {"name": f["name"], "description": f["description"], "parameters": f["inputSchema"]}}));
+    // the user's MCP servers (`/mcp on`, 0.1.80): one tool for all of them, the same all session
+    let hub = std::env::var_os("TAZUNA_MCP").is_some().then(crate::mcpc::Hub::connect);
+    fns.extend(hub.as_ref().and_then(|h| h.tool()));
     let names: Vec<Value> = fns.iter().map(|t| t["function"]["name"].clone()).collect();
     // the model's prices, so the screen's running cost is this model's and not Claude's list prices (a Luna turn read
     // ~$3 while it ran and $0.007 at its end, 2026-11-06)
     emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": [],
-                 "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6]}));
+                 "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "mcp_servers": mcp_status(hub.as_ref())}));
     let mut loop_ = Loop {
         call,
         api,
@@ -248,6 +251,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         // Responses and Messages keep the system prompt outside the history
         msgs: if api == Api::Chat { vec![json!({"role": "system", "content": system})] } else { vec![] },
         server: crate::mcp::Server::new(cwd).with_read_dedupe(),
+        hub,
         session,
         cost: 0.0,
         task: (std::time::Instant::now(), 0.0),
@@ -287,6 +291,8 @@ struct Loop {
     tools: Vec<Value>,
     msgs: Vec<Value>,
     server: crate::mcp::Server,
+    /// The user's MCP servers while MCP is on (`/mcp on`): the `mcp` tool.
+    hub: Option<crate::mcpc::Hub>,
     session: String,
     /// Spent by this process so far; `result` reports it like claude does.
     cost: f64,
@@ -812,6 +818,10 @@ impl Loop {
                         Permit::Allow(input) if name == "grep" || name == "glob" => {
                             explore_tool(if name == "grep" { "search" } else { "list" }, &input, &std::env::current_dir().unwrap_or_default())
                         }
+                        Permit::Allow(input) if name == "mcp" => match self.hub.as_mut() {
+                            Some(h) => h.call(&input),
+                            None => ("MCP is off: the user turns it on with /mcp on".to_string(), true),
+                        },
                         Permit::Allow(input) => match self.server.call(&json!({"name": name, "arguments": input})) {
                             Ok(r) => (r["content"][0]["text"].as_str().unwrap_or_default().to_string(), r["isError"] == true),
                             Err((_, e)) => (e, true),
@@ -995,7 +1005,8 @@ pub fn explore_serve(args: &[String]) -> Result<()> {
         tools,
         msgs: vec![],
         server: crate::mcp::Server::new(cwd),
-        session: format!("explore-{}", std::process::id()),
+                hub: None,
+session: format!("explore-{}", std::process::id()),
         cost: 0.0,
         task: (std::time::Instant::now(), 0.0),
         queued: VecDeque::new(),
@@ -1060,11 +1071,25 @@ enum Permit {
 
 impl Loop {
     fn set_mode(&mut self, m: &Value) {
+        if m["type"] == "tazuna_mcp" {
+            self.set_mcp(m["on"] == true);
+        }
         if m["type"] == "control_request" && m["request"]["subtype"] == "set_permission_mode" {
             if let Some(mode) = m["request"]["mode"].as_str() {
                 self.mode = mode.to_string();
             }
         }
+    }
+
+    /// `/mcp on|off` while the conversation goes on: connects the servers again (one added or logged in since) or drops
+    /// them. The tool list changes, so the provider's cache is rebuilt once.
+    fn set_mcp(&mut self, on: bool) {
+        self.tools.retain(|t| t["function"]["name"] != "mcp");
+        // the old servers stop first: a server that holds something (a browser profile, a database) can start again
+        self.hub = None;
+        self.hub = on.then(crate::mcpc::Hub::connect);
+        self.tools.extend(self.hub.as_ref().and_then(|h| h.tool()));
+        (self.out)(&json!({"type": "system", "subtype": "mcp_status", "mcp_servers": mcp_status(self.hub.as_ref())}));
     }
 
     /// Asks the user before a command or an edit when the mode says so, in claude's protocol (a `can_use_tool` control
@@ -1087,13 +1112,17 @@ impl Loop {
             "default" => matches!(tool, "bash" | "write" | "edit" | "fetch"),
             "acceptEdits" => matches!(tool, "bash" | "fetch"),
             _ => false,
-        };
+        } || (matches!(self.mode.as_str(), "default" | "acceptEdits") && tool == "mcp" && self.hub.as_ref().is_some_and(|h| !h.reads_only(input)));
+        // an MCP tool can write (a comment, a ticket moved) where the service allows it: it asks where commands ask,
+        // except for reading a tool's description
         if !ask {
             return Permit::Allow(input.clone());
         }
         self.asked += 1;
         let id = format!("perm-{}", self.asked);
-        (self.out)(&json!({"type": "control_request", "request_id": id, "request": {"subtype": "can_use_tool", "tool_name": tool, "input": input}}));
+        // an MCP call is asked about as claude names it (mcp__server__tool), so "always" covers that one tool
+        let shown = if tool == "mcp" { self.hub.as_ref().map_or("mcp".into(), |h| h.label(input)) } else { tool.to_string() };
+        (self.out)(&json!({"type": "control_request", "request_id": id, "request": {"subtype": "can_use_tool", "tool_name": shown, "input": input}}));
         loop {
             let Ok(m) = rx.recv() else { return Permit::Stop }; // tazuna is gone: nobody can answer
             if m["type"] == "control_response" && m["response"]["request_id"] == id.as_str() {
@@ -1111,6 +1140,13 @@ impl Loop {
             }
         }
     }
+}
+
+/// The servers' state as claude's init reports it: connected, or failed with the reason.
+fn mcp_status(hub: Option<&crate::mcpc::Hub>) -> Value {
+    let Some(h) = hub else { return json!([]) };
+    let ok = h.names().into_iter().map(|n| json!({"name": n, "status": "connected"}));
+    json!(ok.chain(h.failed.iter().map(|(n, e)| json!({"name": n, "status": "failed", "error": e}))).collect::<Vec<_>>())
 }
 
 /// claude's user content is a string or blocks; this slice sends text only.
@@ -1549,7 +1585,8 @@ mod tests {
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
             server: crate::mcp::Server::new(dir.clone()),
-            session: "s".into(),
+                        hub: None,
+session: "s".into(),
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
@@ -1598,7 +1635,8 @@ mod tests {
             msgs: vec![json!({"role": "user", "content": "fix it"}), json!({"type": "reasoning", "encrypted_content": "pool-50"}),
                        json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "plan: parser first"}]})],
             server: crate::mcp::Server::new(dir.clone()),
-            session: "s1".into(),
+                        hub: None,
+session: "s1".into(),
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
@@ -1648,7 +1686,8 @@ mod tests {
             tools: vec![],
             msgs: vec![],
             server: crate::mcp::Server::new(dir.clone()),
-            session: "s1".into(),
+                        hub: None,
+session: "s1".into(),
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
@@ -1709,7 +1748,8 @@ data: {\"choices\":[{\"delta\":{\"reasoning\":\"at a\"}}]}\n\n";
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
             server: crate::mcp::Server::new(dir.clone()),
-            session: "s".into(),
+                        hub: None,
+session: "s".into(),
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
@@ -1777,7 +1817,8 @@ data: {\"choices\":[{\"delta\":{\"reasoning\":\"at a\"}}]}\n\n";
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
             server: crate::mcp::Server::new(dir.clone()),
-            session: "s".into(),
+                        hub: None,
+session: "s".into(),
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
@@ -1876,7 +1917,8 @@ data: {\"type\":\"message_stop\"}\n";
             tools: vec![],
             msgs: vec![],
             server: crate::mcp::Server::new(dir.clone()),
-            session: "s".into(),
+                        hub: None,
+session: "s".into(),
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
@@ -2128,7 +2170,8 @@ data: {\"type\":\"message_stop\"}\n";
                 json!({"role": "assistant", "content": [{"type": "thinking", "thinking": "hm", "signature": "x"}, {"type": "tool_use", "id": "t1", "name": "bash", "input": {}}]}),
                 json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]})],
             server: crate::mcp::Server::new(std::env::temp_dir()),
-            session: "s".into(),
+                        hub: None,
+session: "s".into(),
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
@@ -2170,7 +2213,8 @@ data: {\"type\":\"message_stop\"}\n";
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
             server: crate::mcp::Server::new(std::env::temp_dir()),
-            session: "s".into(),
+                        hub: None,
+session: "s".into(),
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
@@ -2219,7 +2263,8 @@ data: {\"type\":\"message_stop\"}\n";
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
             server: crate::mcp::Server::new(dir.clone()),
-            session: "s".into(),
+                        hub: None,
+session: "s".into(),
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
@@ -2267,7 +2312,8 @@ data: {\"type\":\"message_stop\"}\n";
             tools: vec![],
             msgs: vec![],
             server: crate::mcp::Server::new(std::env::temp_dir()),
-            session: "s".into(),
+                        hub: None,
+session: "s".into(),
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),
@@ -2317,7 +2363,8 @@ data: {\"type\":\"message_stop\"}\n";
             tools: vec![],
             msgs: vec![],
             server: crate::mcp::Server::new(dir.to_path_buf()),
-            session: "s".into(),
+                        hub: None,
+session: "s".into(),
             cost: 0.0,
             task: (std::time::Instant::now(), 0.0),
             queued: VecDeque::new(),

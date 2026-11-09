@@ -22,17 +22,22 @@ Early. What works today:
   (`@shot.png`, a dragged-in path, or `ctrl-v` for the clipboard) go along as images; `!cmd` runs a command and hands
   its output to claude. `/jira ABC-123 [what to do]` sends a Jira ticket's text (summary, description, links,
   comments) with the request, for any model and without Atlassian's tools in every turn; `./jira-login.sh` sets it
-  up once (an Atlassian API token, kept in `~/.atlassian-token`).
+  up once (an Atlassian API token, kept in `~/.atlassian-token`). With MCP on (below), naming the ticket is enough.
   Permission modes (`--mode auto|ask|edits|plan`, `shift-tab` cycles): never ask (default), ask before edits and commands,
   ask before commands only, or plan read-only first and approve the plan.
 - **Profiles**: repos with agent config (`CLAUDE.md`, `AGENTS.md`, `.claude/`) run the **repo profile**: Claude Code's own
   prompt and tools with the repo's settings, hooks and skills (your personal `~/.claude` setup stays out unless
-  `--user-settings`; `--connectors`, or `/connectors` inside a session (remembered for the next ones), brings only your claude.ai
-  connectors and MCP servers, such as Jira, at ~4k tokens a call). Repos whose config runs code ask once "Trust this repo?";
+  `--user-settings`; MCP comes in with `/mcp on`, below). Repos whose config runs code ask once "Trust this repo?";
   headless runs need `--trust`. `--profile repo-lean` keeps the repo's config with the lean prompt (~10k instead of ~22k
   tokens per turn). Other repos, tiny repos and `--profile lean` use the lean profile below.
 - **Lean profile "cc-mid"**: ~10-line system prompt, `Grep`/`Glob` plus four lean tools (bash/read/write/edit) served by tazuna
   itself (`tazuna mcp`), and none of the user's settings, skills, hooks or MCP servers. Benchmarked as the best cost/quality profile.
+- **MCP servers for every model**: `/mcp add atlassian https://mcp.atlassian.com/v1/mcp` (or `/mcp add NAME COMMAND
+  [ARGS]` for a local server) and `/mcp on`, remembered for the next sessions (`--mcp` at start). Then "fix ABC-123" is
+  enough: the model reads the ticket itself, on Claude and on the own loop (DeepSeek, Mistral, GPT ...) alike. Servers
+  that ask for a login get one in the browser, as tazuna itself; the list is `~/.config/tazuna/mcp.json` (Claude Code's
+  format). On Claude your claude.ai connectors come along too. Cost while on: ~5k tokens a call on Claude (tool names;
+  definitions load when used), ~400 on the own loop for Atlassian's 41 tools (one `mcp` tool, cached all session).
 - **Four UI designs** (Ratatui + tachyonfx): aurora, cockpit (default: live context/cache gauges, tokens per turn, cost,
   tools, files), zen, timeline. `ctrl-t` switches.
 - **Recordings**: every session is saved to `~/.local/share/tazuna/sessions/` and replays like a video.
