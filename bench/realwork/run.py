@@ -672,7 +672,7 @@ def run_pi_sub(h, w, prompt):
     skills). Only the SubRouter key goes out (checked against a local stub, 2026-10-28)."""
     model, effort = model_effort(h)
     # an agent dir per run (PI_CODING_AGENT_DIR): each run.py has its own relay port
-    agent = Path(tempfile.mkdtemp(prefix="pi-agent-"))
+    agent = Path(tempfile.mkdtemp(prefix="rw-pi-agent-"))
     entry = pi_entry(model)
     # the Anthropic client adds /v1/messages itself (pi talks to MiniMax that way); the OpenAI ones take the /v1 base
     url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]) + (
@@ -946,7 +946,7 @@ def run_codex_sub(h, w, prompt):
     home.mkdir(parents=True, exist_ok=True)
     url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]) + "/v1"
     provider = f'{{name="SubRouter",base_url="{url}",env_key="CODEX_RELAY_KEY",wire_api="responses"}}'
-    with tempfile.TemporaryDirectory(prefix="codex-home-") as ch:
+    with tempfile.TemporaryDirectory(prefix="rw-codex-home-") as ch:
         r = sh(["codex", "exec", "--json", "--ephemeral", "--skip-git-repo-check", "--dangerously-bypass-approvals-and-sandbox",
                 "-m", model, "-c", f'model_reasoning_effort="{effort}"', "-c", 'model_provider="subrouter"',
                 "-c", f"model_providers.subrouter={provider}", prompt], w, timeout=TIMEOUT,
