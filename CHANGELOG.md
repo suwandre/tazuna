@@ -33,6 +33,14 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
   there, where claude and the agent's commands would inherit it): tazuna reads it from the file where it builds its own
   requests, and only the own loop's engine gets it, which removes it from its environment before any tool runs.
 
+- Mortera in `/model` (`MORTERA_API_KEY`): 14 of its coding models (Gemini 3.1 Pro and 3.8 Flash, Gemini 4 Argon, GPT-6.1 Sol
+  and GPT-6 Luna, Kimi K3.1 Pro, Grok 4.7, Qwen3.8 Max, GLM-5.3, MiMo V2.6 Pro, MiniMax M3.1 Flash, DeepSeek V4 Pro and
+  V4.1 Flash, Nemotron 3 Ultra), marked "not checked yet": prices from Mortera's list, effort levels, cache and quality
+  not measured. The own loop reads Mortera's prices, which are in rupiah (`payg_per_1m_idr`, at 16,300 to the dollar),
+  so any of its models runs with `--provider https://mortera.cloud/v1` too. Claude stays on the subscription (Mortera
+  left Claude prompts uncached in an earlier check). Checked: Gemini 3.8 Flash on Mortera made a file in 4 calls for
+  $0.0002. A model on another provider no longer hides SubRouter's own row for it in `/model`.
+
 ## 0.1.83 (2026-11-09): a selection in the message box no longer copies itself
 
 - Releasing a drag in the message box copied the selection (0.1.81), so selecting a word and pasting over it pasted that

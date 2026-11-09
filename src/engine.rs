@@ -1528,14 +1528,25 @@ fn price_override(v: &str) -> Result<Price> {
     Ok((i / 1e6, c / 1e6, o / 1e6))
 }
 
+/// Rupiah per US dollar for Mortera's prices (its list and balance are in IDR; the bench's spend guard uses the same).
+/// ponytail: a fixed rate; read it from a rate source if the rupiah moves enough to matter for a $1 cap
+const IDR_PER_USD: f64 = 16_300.0;
+
 /// CheaperInference and OpenRouter-style lists give USD per million (`input_per_million`, as string or number);
 /// Experiential Labs gives nano-USD per million (`input_nano_usd_per_million_tokens`) and names the upstream provider in
-/// `data_policy` instead of `owned_by`.
+/// `data_policy` instead of `owned_by`; Mortera gives rupiah per million (`payg_per_1m_idr`: `in`, `cache`, `out`).
 fn parse_price(m: &Value) -> Result<(Price, bool)> {
     let model = &m["id"];
+    let idr = &m["pricing"]["payg_per_1m_idr"];
     let p = |usd: &str, nano: &str| {
         let v = &m["pricing"][usd];
+        let rupiah = match usd {
+            "input_per_million" => &idr["in"],
+            "cache_read_input_per_million" => &idr["cache"],
+            _ => &idr["out"],
+        };
         v.as_str().and_then(|s| s.parse::<f64>().ok()).or(v.as_f64()).or(m["pricing"][nano].as_f64().map(|n| n / 1e9))
+            .or(rupiah.as_f64().map(|r| r / IDR_PER_USD))
     };
     let input = p("input_per_million", "input_nano_usd_per_million_tokens").with_context(|| format!("no input price for {model}: the dollar cap needs one"))?;
     let cached = p("cache_read_input_per_million", "cached_input_nano_usd_per_million_tokens").unwrap_or(input);
@@ -1548,6 +1559,14 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn mortera_prices_are_rupiah() {
+        let m = json!({"id": "gemini-3.1-pro", "owned_by": "Google", "pricing": {"payg_per_1m_idr": {"in": 1630, "out": 16300, "cache": 163}}});
+        let ((i, c, o), openai) = super::parse_price(&m).unwrap();
+        assert_eq!(((i * 1e6 * 1000.0).round(), (c * 1e6 * 1000.0).round(), (o * 1e6).round()), (100.0, 10.0, 1.0));
+        assert!(!openai);
+    }
 
     #[test]
     fn mistral_content_blocks_are_text_and_thinking() {

@@ -140,6 +140,8 @@ UI: 190 MB, 0.45 s to start (2026-10-08). A whole agent run: 21-22 MB on the own
 - **SubRouter** (DeepSeek, GPT, Kimi, GLM, MiniMax ...): one key in `SUBROUTER_API_KEY`. Providers differ a lot (some
   serve another model, some barely cache); `tazuna subrouter --apply` sets the ones tazuna checked on your key.
 - **Mistral**: a key in `MISTRAL_API_KEY`.
+- **Mortera** (Gemini, GPT, Kimi, Grok, Qwen, GLM ... at reseller prices): a key in `MORTERA_API_KEY`. Its models are
+  listed as not checked yet.
 - **Anything else** OpenAI-compatible: `--provider URL --key-env VAR --model ID`.
 
 A provider sees your code, so its host goes into `~/.config/tazuna/trusted-providers` first (one per line), or the run

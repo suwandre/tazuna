@@ -242,11 +242,16 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
             // only the levels that differ (DeepSeek: off, high, max); a route that names none offers them all
             efforts: if distinct.is_empty() { LEVELS.iter().map(|e| e.to_string()).collect() } else { distinct.iter().map(|e| e.to_string()).collect() },
             price: format!("{} / {}", per_m(input), per_m(output)),
-            note: format!("cached {}% · checked {}{levels}{}", r["cached"].as_u64().unwrap_or(0), match days {
-                0 => "today".to_string(),
-                1 => "yesterday".to_string(),
-                d => format!("{d} days ago"),
-            }, if shipped { key_note } else { "" }),
+            // a route added without our checks (Mortera's models, 2026-11-09) says so instead of a cache share and a date
+            note: if r["unchecked"] == true {
+                format!("not checked yet: prices from {}'s list; effort levels, cache and quality not measured", r["via"].as_str().unwrap_or(host))
+            } else {
+                format!("cached {}% · checked {}{levels}{}", r["cached"].as_u64().unwrap_or(0), match days {
+                    0 => "today".to_string(),
+                    1 => "yesterday".to_string(),
+                    d => format!("{d} days ago"),
+                }, if shipped { key_note } else { "" })
+            },
             // the built-in list is as old as the release, and `tazuna upgrade` renews it
             stale: days > STALE_DAYS && !builtin,
             state,
@@ -259,7 +264,9 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
     // once: SubRouter lists some under two spellings ("claude-opus-5.5" beside the subscription's "claude-opus-5-5",
     // "DeepSeek-V4-Flash-0731" beside "deepseek-v4-flash-0731"), and a pick of the copy ran Opus through SubRouter instead
     // of the plan (a 403 on a key without it, 2026-11-08); the lower-case spelling stays
-    let mut seen: std::collections::HashSet<String> = out.iter().map(|c| slug(&c.model)).collect();
+    // a model on another provider (Mortera, Mistral) does not hide SubRouter's own row for it
+    let mut seen: std::collections::HashSet<String> =
+        out.iter().filter(|c| c.route.as_ref().is_none_or(|r| host_of(&r.0) == "subrouter.ai")).map(|c| slug(&c.model)).collect();
     let mut rest: Vec<(f64, &String, &Value)> = file["catalog"].as_object().into_iter().flatten()
         .filter_map(|(m, c)| file["aa"][slug(m)].as_f64().map(|a| (a, m, c))).collect();
     rest.sort_by(|a, b| b.0.total_cmp(&a.0).then((*a.1 != a.1.to_lowercase()).cmp(&(*b.1 != b.1.to_lowercase()))).then(a.1.cmp(b.1)));
