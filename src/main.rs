@@ -720,24 +720,37 @@ fn trust_host(host: &str) -> Result<()> {
     Ok(())
 }
 
-/// `/model`, enter on a provider's greyed model: saves the key typed for it (when it has none) and trusts its host, as
-/// the question said. What it did, for the message line.
-fn allow_provider(c: &models::Choice, typed: &str) -> Result<String> {
-    let (url, var, _) = c.route.clone().context("Claude needs no key")?;
-    let host = host_of(&url);
+/// `/login`: the provider list (row 0 Claude, then `models::LOGINS`), and the key being typed on a provider's page.
+struct LoginPick {
+    sel: usize,
+    form: Option<String>,
+    /// The page where keys are made opened in the browser.
+    opened: bool,
+}
+
+/// `/login`, enter on a provider's page: saves the key typed (nothing typed: keeps the one it has) and trusts its host, as
+/// the page says. What it did, for the message line.
+fn login_save(l: &models::Login, typed: &str) -> Result<String> {
     let mut said = vec![];
-    if c.state == models::State::NoKey {
-        let p = models::save_key(&var, typed)?;
-        said.push(format!("{} key saved in {} (readable by you only; {var} set in the environment still wins)", models::provider_of(c), p.display()));
-        if host == "mortera.cloud" {
+    if !typed.trim().is_empty() {
+        let p = models::save_key(l.var, typed)?;
+        said.push(format!("logged in to {}: key saved in {} (readable by you only)", l.name, p.display()));
+        if l.host == "mortera.cloud" {
             // ponytail: on the UI thread, ~1 s (15 s at most) once; Mortera's models come from its list, which needs the key
             models::refresh_mortera();
         }
+    } else if models::key(l.var).is_none() {
+        bail!("no key typed");
     }
-    if !trusted_host(&host) {
-        trust_host(&host)?;
-        said.push(format!("{host} may see the code now (trusted-providers)"));
+    if !trusted_host(l.host) {
+        trust_host(l.host)?;
+        said.push(format!("{} may see the code now (trusted-providers)", l.host));
     }
+    said.push(format!("its models are in /model{}", if models::key_source(l.var).starts_with("key in the environment") {
+        format!(" ({} in the environment wins over a saved key)", l.var)
+    } else {
+        String::new()
+    }));
     Ok(said.join("; "))
 }
 
@@ -867,7 +880,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -1385,6 +1398,7 @@ fn run_live(
     let mut loop_after_plan: Option<Vec<String>> = None;
     // /model: the choices, the selected row (in the filtered list), each choice's effort and what has been typed to filter
     let mut pick: Option<Picker> = None;
+    let mut login: Option<LoginPick> = None;
     if a.pick {
         pick = Some(open_picker(live, &key_models)?);
     }
@@ -1438,8 +1452,28 @@ fn run_live(
         v.vim = if !vim { "" } else if normal { "NORMAL" } else { "INSERT" };
         v.sessions = resume_pick.as_ref().map(|(l, i)| ui::SessionsPanel { rows: l.iter().map(Earlier::row).collect(), selected: *i });
         v.rewind = rewind_sel.map(|i| ui::RewindPanel { items: live.checkpoints.iter().map(|c| c.text.clone()).collect(), selected: i });
+        v.login = login.as_ref().map(|lp| ui::LoginPanel {
+            rows: std::iter::once(("Claude".to_string(), "subscription".to_string(), "the claude CLI's own login".to_string()))
+                .chain(models::LOGINS.iter().map(|l| {
+                    let src = models::key_source(l.var);
+                    let state = match (src.is_empty(), trusted_host(l.host)) {
+                        (true, _) => "not logged in".to_string(),
+                        (false, true) => src.to_string(),
+                        (false, false) => format!("{src} · {} not trusted yet", l.host),
+                    };
+                    (l.name.to_string(), "API key".to_string(), state)
+                }))
+                .collect(),
+            selected: lp.sel,
+            form: lp.form.as_ref().and_then(|typed| {
+                let l = models::LOGINS.get(lp.sel.checked_sub(1)?)?;
+                Some(ui::LoginForm { name: l.name.into(), page: l.page.into(), opened: lp.opened, place: l.place.into(),
+                    example: l.example.into(), typed: typed.chars().count(), host: l.host.into(), var: l.var.into(),
+                    has: models::key_source(l.var).to_string() })
+            }),
+        });
         v.models = pick.as_ref().map(|pk| {
-            let Picker { cs, sel, eff, prov, filter, psel, in_models, ask } = pk;
+            let Picker { cs, sel, eff, prov, filter, psel, in_models } = pk;
             let group = pk.group();
             let usable = |i: usize| matches!(cs[i].state, models::State::Ready | models::State::Unchecked);
             // the left pane: All models, then each provider with how many models and whether any can be picked now
@@ -1467,19 +1501,6 @@ fn run_live(
                 groups,
                 group: *psel,
                 in_models: *in_models,
-                ask: ask.as_ref().map(|(i, typed)| {
-                    let c = &cs[*i];
-                    let url = c.route.as_ref().map_or("", |r| r.0.as_str());
-                    let host = host_of(url);
-                    if c.state == models::State::NoKey {
-                        let page = models::key_page(url);
-                        let from = if page.is_empty() { String::new() } else { format!(" (from {page})") };
-                        (format!("{} API key{from}: {} · saving it lets {host} see the code you run there", models::provider_of(c),
-                                 "•".repeat(typed.chars().count().min(40))), "paste or type the key · enter saves · esc back")
-                    } else {
-                        (format!("{host} would see the code of the sessions you run on it: allow it?"), "enter allows · esc back")
-                    }
-                }),
             }
         });
         let dt = last.elapsed();
@@ -1616,8 +1637,8 @@ fn run_live(
         }
         let key = match event::read()? {
             Event::Paste(text) => {
-                match pick.as_mut().and_then(|p| p.ask.as_mut()) {
-                    Some((_, typed)) => typed.push_str(text.trim()),
+                match login.as_mut().and_then(|l| l.form.as_mut()) {
+                    Some(typed) => typed.push_str(text.trim()),
                     None => ed.insert(&text.replace("\r\n", "\n")),
                 }
                 continue;
@@ -1774,30 +1795,44 @@ fn run_live(
         // ignored, and keys in the first moment after it appears count for nothing (typing must not approve by accident)
         // ctrl-c and ctrl-d still stop or quit: stopping answers every open question with no
         let stop_key = ctrl && matches!(key.code, KeyCode::Char('c') | KeyCode::Char('d'));
+        // /login owns the keyboard while open: the providers, then a provider's page with its key being typed
+        if let (Some(lp), false) = (login.as_mut(), stop_key) {
+            match (&mut lp.form, key.code) {
+                (Some(_), KeyCode::Esc) => lp.form = None,
+                (Some(typed), KeyCode::Backspace) => {
+                    typed.pop();
+                }
+                (Some(typed), KeyCode::Char(c)) if !ctrl => typed.push(c),
+                (Some(typed), KeyCode::Enter) => {
+                    let l = &models::LOGINS[lp.sel - 1];
+                    match login_save(l, typed) {
+                        Ok(text) => {
+                            s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
+                            login = None;
+                        }
+                        Err(e) if typed.is_empty() => s.apply(&json!({"type": "harness_info", "text": format!("{e:#}: paste the key, or esc")}), live.elapsed_ms()),
+                        Err(e) => s.apply(&json!({"type": "harness_info", "text": format!("{e:#}")}), live.elapsed_ms()),
+                    }
+                }
+                (None, KeyCode::Up) => lp.sel = lp.sel.saturating_sub(1),
+                (None, KeyCode::Down) => lp.sel = (lp.sel + 1).min(models::LOGINS.len()),
+                (None, KeyCode::Esc) => login = None,
+                (None, KeyCode::Enter) if lp.sel == 0 => {
+                    s.apply(&json!({"type": "harness_info", "text": "Claude runs on the claude CLI's own login (your subscription): if \
+                        it is not logged in, run `claude` in a terminal and /login there"}), live.elapsed_ms());
+                    login = None;
+                }
+                (None, KeyCode::Enter) => {
+                    // the page where keys are made opens in the browser, and the page here asks for the key
+                    lp.opened = platform::open_url(models::LOGINS[lp.sel - 1].page).is_ok();
+                    lp.form = Some(String::new());
+                }
+                _ => {}
+            }
+            continue;
+        }
         // the /model picker owns the keyboard while open
         if let (Some(pk), false) = (pick.as_mut(), stop_key) {
-            // a provider's key being typed, or whether it may see the code: enter saves (and trusts it), esc goes back
-            if let Some((i, typed)) = pk.ask.as_mut() {
-                let i = *i;
-                match key.code {
-                    KeyCode::Esc => pk.ask = None,
-                    KeyCode::Backspace => {
-                        typed.pop();
-                    }
-                    KeyCode::Char(c) if !ctrl => typed.push(c),
-                    KeyCode::Enter if pk.cs[i].state == models::State::NoKey && typed.trim().is_empty() => {}
-                    KeyCode::Enter => {
-                        let said = allow_provider(&pk.cs[i], typed);
-                        let (psel, in_models) = (pk.psel, pk.in_models);
-                        *pk = open_picker(live, &key_models)?;
-                        (pk.psel, pk.in_models) = (psel, in_models);
-                        let text = said.unwrap_or_else(|e| format!("{e:#}"));
-                        s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
-                    }
-                    _ => {}
-                }
-                continue;
-            }
             // the left pane has the keys: ↑↓ providers (the right pane follows), enter or → into its models, typing searches
             // them, esc closes
             if !pk.in_models {
@@ -1827,7 +1862,6 @@ fn run_live(
             let rows = shown(cs, filter, group.as_deref());
             let at = rows.get(*sel).copied();
             let mut chosen = None;
-            let mut ask_at = None;
             match key.code {
                 KeyCode::Up => *sel = sel.saturating_sub(1),
                 KeyCode::Down => *sel = (*sel + 1).min(rows.len().saturating_sub(1)),
@@ -1845,7 +1879,6 @@ fn run_live(
                     filter.push(c);
                     *sel = 0;
                 }
-                KeyCode::Enter if at.is_some_and(|i| matches!(cs[i].state, models::State::NoKey | models::State::Untrusted)) => ask_at = at,
                 KeyCode::Enter => chosen = at.map(|i| (models::pinned(&cs[i], prov[i]), cs[i].efforts.get(eff[i]).cloned())),
                 KeyCode::Esc if !filter.is_empty() => {
                     filter.clear();
@@ -1853,10 +1886,6 @@ fn run_live(
                 }
                 KeyCode::Esc => *in_models = false,
                 _ => {}
-            }
-            if let Some(i) = ask_at {
-                pk.ask = Some((i, String::new()));
-                continue;
             }
             if key.code == KeyCode::Enter {
                 pick = None;
@@ -2158,6 +2187,10 @@ fn run_live(
                     s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
                     continue;
                 }
+                if text == "/login" {
+                    login = Some(LoginPick { sel: 1, form: None, opened: false });
+                    continue;
+                }
                 if text == "/model" {
                     pick = Some(open_picker(live, &key_models)?);
                     continue;
@@ -2444,8 +2477,6 @@ struct Picker {
     psel: usize,
     /// Keys move in the right pane (the models) rather than the left (the providers).
     in_models: bool,
-    /// Enter on a model whose provider has no key or is not trusted: that row (in `cs`) and the key typed so far.
-    ask: Option<(usize, String)>,
 }
 
 impl Picker {
@@ -2465,7 +2496,7 @@ fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     // it opens on the providers, the current one selected and its models beside it, the current model marked
     let current = cs.iter().position(|c| c.model == live.model).map(|i| models::provider_of(&cs[i]));
     let psel = models::providers(&cs).iter().position(|(n, _)| Some(n) == current.as_ref()).map_or(0, |i| i + 1);
-    let mut p = Picker { cs, sel: 0, eff, prov, filter: String::new(), psel, in_models: false, ask: None };
+    let mut p = Picker { cs, sel: 0, eff, prov, filter: String::new(), psel, in_models: false };
     p.sel = shown(&p.cs, "", p.group().as_deref()).iter().position(|&i| p.cs[i].model == live.model).unwrap_or(0);
     Ok(p)
 }

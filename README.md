@@ -38,8 +38,8 @@ tazuna -c                                       # continue this repo's last sess
 tazuna --run task.txt                           # one task, headless, result as JSON
 ```
 
-Type a task and press enter. `/model` switches to another model mid-session (Claude or the own loop), `/mcp` brings your
-tools, `/keys` lists every key and command.
+Type a task and press enter. `/model` switches to another model mid-session (Claude or the own loop), `/login` adds a
+provider's key, `/mcp` brings your tools, `/keys` lists every key and command.
 
 ## Results
 
@@ -136,10 +136,10 @@ UI: 190 MB, 0.45 s to start (2026-10-08). A whole agent run: 21-22 MB on the own
 ## Models beyond Claude
 
 `/model` shows the providers on the left and the selected one's models on the right, with prices and benchmark
-scores; typing searches every provider at once. A provider without a key is greyed out: press enter on one of its models
-and paste the key. tazuna keeps it in `~/.config/tazuna/keys.json` (readable by you only) and puts the provider on
-`~/.config/tazuna/trusted-providers`, since it will see your code. A key in the environment (`MORTERA_API_KEY` and so on)
-still works and wins.
+scores; typing searches every provider at once. A provider without a key is greyed out until you log in: `/login` lists
+the providers, and picking one opens the page where its keys are made in your browser and asks for the key. tazuna keeps
+it in `~/.config/tazuna/keys.json` (readable by you only) and puts the provider on `~/.config/tazuna/trusted-providers`,
+since it will see your code. A key in the environment (`MORTERA_API_KEY` and so on) still works and wins.
 
 - **SubRouter** (DeepSeek, GPT, Kimi, GLM, MiniMax ...): your own key, or `tazuna subrouter --manage` makes one with the
   providers tazuna checked (they differ a lot: some serve another model, some barely cache); `tazuna subrouter --apply`

@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.87 (2026-11-10): `/login`
+
+- Keys go in through `/login` now, not `/model`: in 0.1.86 enter on a greyed model turned the search line into a key
+  prompt, cut at the screen's edge and hard to tell apart from searching (the user's screenshot). `/login` lists the
+  providers with their state (logged in, key in the environment, not logged in, not trusted yet). Picking one opens the
+  page where its keys are made in the browser and shows a page of its own, OMP-style: the link, where to find the key,
+  "Paste your Mortera API key", the key masked as it is typed, and what saving does (the host goes on the trusted list;
+  the key stays readable by you only and out of the agent's commands). Claude's row says it uses the claude CLI's own
+  login. `/model` says "/login" where a key is missing. No measurable metric changes.
+
 ## 0.1.86 (2026-11-09): provider keys pasted in `/model`
 
 - A provider's key no longer has to be an environment variable (on Windows `setx` plus a new terminal, which a user

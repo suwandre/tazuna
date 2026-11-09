@@ -186,13 +186,13 @@ pub fn why_not(c: &Choice) -> Option<String> {
     match c.state {
         State::NoKey if host == "subrouter.ai" => Some(format!("no SubRouter key. Two ways: `tazuna subrouter --manage` makes \
             one in your account with tested providers for each model (needs your account's access token); or bring your own \
-            key: enter pastes it here, or set {var} (its provider settings decide: a model without a list on it can land on \
-            any provider)")),
-        State::NoKey => Some(format!("no key: enter pastes it here, or set the environment variable {var} before starting tazuna{}", match host {
+            key: /login, or set {var} (its provider settings decide: a model without a list on it can land on any \
+            provider)")),
+        State::NoKey => Some(format!("no key: /login, or set the environment variable {var} before starting tazuna{}", match host {
             "api.mistral.ai" => " (a Mistral API key, or one made under Code › Vibe CLI)",
             _ => "",
         })),
-        State::Untrusted => Some(format!("not trusted: the code would go to {host}; enter allows it, or add the line {host} to {}",
+        State::Untrusted => Some(format!("not trusted: the code would go to {host}; /login allows it, or add the line {host} to {}",
             crate::platform::home().unwrap_or_default().join(".config/tazuna/trusted-providers").display())),
         State::NotOnKey => Some(format!("not on your key: SubRouter does not let {var} use {} (the key's models: \
             https://subrouter.ai/console/keys)", c.model)),
@@ -473,12 +473,18 @@ pub fn save_key(var: &str, value: &str) -> anyhow::Result<std::path::PathBuf> {
     Ok(p)
 }
 
+fn saved_key(var: &str) -> Option<String> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(keys_file()?).ok()?).ok()?;
+    v[var].as_str().map(|k| k.trim().to_string()).filter(|k| !k.is_empty())
+}
+
+fn env_key(var: &str) -> Option<String> {
+    std::env::var(var).ok().filter(|k| !k.trim().is_empty())
+}
+
 /// The user's own key for a variable: the environment's, else the one saved in tazuna.
 fn own_key(var: &str) -> Option<String> {
-    std::env::var(var).ok().filter(|k| !k.trim().is_empty()).or_else(|| {
-        let v: Value = serde_json::from_str(&std::fs::read_to_string(keys_file()?).ok()?).ok()?;
-        v[var].as_str().map(|k| k.trim().to_string()).filter(|k| !k.is_empty())
-    })
+    env_key(var).or_else(|| saved_key(var))
 }
 
 /// The key a route's variable names: the environment's, else one saved in tazuna, else for SUBROUTER_API_KEY tazuna's
@@ -489,14 +495,36 @@ pub fn key(var: &str) -> Option<String> {
     own_key(var).or_else(|| (var == "SUBROUTER_API_KEY").then(managed_key).flatten())
 }
 
-/// Where a provider's API keys are made, for the key prompt in `/model`.
-pub fn key_page(url: &str) -> &'static str {
-    match host_of(url) {
-        "subrouter.ai" => "https://subrouter.ai/console/keys",
-        "api.mistral.ai" => "https://console.mistral.ai/api-keys",
-        "mortera.cloud" => "https://mortera.cloud",
-        "generativelanguage.googleapis.com" => "https://aistudio.google.com/apikey",
-        _ => "",
+/// A provider `/login` offers: its name, the key's variable, its host (it sees the code), where keys are made, and an
+/// example of a key's start. None of them has a login for third-party tools (no OAuth), so an API key it is.
+pub struct Login {
+    pub name: &'static str,
+    pub var: &'static str,
+    pub host: &'static str,
+    pub page: &'static str,
+    pub place: &'static str,
+    pub example: &'static str,
+}
+
+pub const LOGINS: [Login; 3] = [
+    Login { name: "SubRouter", var: "SUBROUTER_API_KEY", host: "subrouter.ai", page: "https://subrouter.ai/console/keys",
+            place: "SubRouter's console", example: "sk-..." },
+    Login { name: "Mortera", var: "MORTERA_API_KEY", host: "mortera.cloud", page: "https://mortera.cloud",
+            place: "your Mortera dashboard", example: "" },
+    Login { name: "Mistral", var: "MISTRAL_API_KEY", host: "api.mistral.ai", page: "https://console.mistral.ai/api-keys",
+            place: "Mistral's console (or Code › Vibe CLI)", example: "" },
+];
+
+/// Where a variable's key comes from, for `/login`'s list; empty: none.
+pub fn key_source(var: &str) -> &'static str {
+    if env_key(var).is_some() {
+        "key in the environment"
+    } else if saved_key(var).is_some() {
+        "logged in"
+    } else if var == "SUBROUTER_API_KEY" && managed_key().is_some() {
+        "managed key (tazuna subrouter --manage)"
+    } else {
+        ""
     }
 }
 
@@ -744,7 +772,7 @@ mod tests {
         let mut c = cs[2].clone();
         c.state = State::NoKey;
         let why = why_not(&c).unwrap();
-        assert!(why.contains("tazuna subrouter --manage") && why.contains("enter pastes it here, or set SUBROUTER_API_KEY"), "both ways: {why}");
+        assert!(why.contains("tazuna subrouter --manage") && why.contains("/login, or set SUBROUTER_API_KEY"), "both ways: {why}");
         c.state = State::Untrusted;
         let why = why_not(&c).unwrap();
         assert!(why.contains("add the line subrouter.ai to") && why.contains("trusted-providers"), "{why}");
