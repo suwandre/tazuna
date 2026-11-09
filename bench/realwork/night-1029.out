@@ -1,3 +1,4 @@
 ./night-1029.sh: line 25: 46252 Terminated: 15          SUB_SET=$set SUB_HARNESS=$h HARNESS_BIN=$HOME/bench-homes/tz-v99/tazuna ./sub_run.sh $M v$v $P 0.5 $task < /dev/null
 night-1029-mm.phase: line 5: 86492 Terminated: 15          SUB_SET=$set SUB_HARNESS=$h HARNESS_BIN=$HOME/bench-homes/tz-v99/tazuna ./sub_run.sh $M v$v $P 0.5 $task < /dev/null
 night-1029-mm.phase: line 5:  3320 Terminated: 15          SUB_SET=$set SUB_HARNESS=$h HARNESS_BIN=$HOME/bench-homes/tz-v99/tazuna ./sub_run.sh $M v$v $P 0.5 $task < /dev/null
+Sleeping now...

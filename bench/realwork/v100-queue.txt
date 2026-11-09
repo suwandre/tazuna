@@ -1,2 +1,0 @@
-minimax-m3.1-flash SUBROUTER_VET4_KEY 0.024,0.0024,0.097 tasks caddy-quoted-braces 619
-deepseek-v4.1-flash-1017 SUBROUTER_VET2_KEY 0.02,0.0004,0.08 tasks-oct caddy-retry-match-expr 621
