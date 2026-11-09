@@ -29,7 +29,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.border));
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(4));
-    f.render_widget(Paragraph::new(hint).block(b), composer.inner(Margin { horizontal: 1, vertical: 0 }));
+    let boxed = composer.inner(Margin { horizontal: 1, vertical: 0 });
+    f.render_widget(Paragraph::new(hint).block(b), boxed);
 
     let (glyph, label, color) = activity(s, v, th);
     let u = &s.usage;
@@ -56,5 +57,5 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     let mut pulse = status;
     pulse.width = pulse.width.min(28);
-    Areas { pulse, last_block, transcript: area, rows: trows, links: vec![], files: None, top_line, ..Default::default() }
+    Areas { pulse, last_block, transcript: area, rows: trows, links: vec![], files: None, top_line, composer: Some(boxed.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() }
 }

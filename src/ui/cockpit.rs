@@ -268,7 +268,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
-    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, files: Some(p_files), tool_rows, tokens: Some(p_tokens), bars: Some((spark, first)), top_line, ..Default::default() }
+    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, files: Some(p_files), tool_rows, tokens: Some(p_tokens), bars: Some((spark, first)), top_line, composer: Some(composer.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() }
 }
 
 fn kv(k: &str, v: &str, th: &Theme) -> Span<'static> {

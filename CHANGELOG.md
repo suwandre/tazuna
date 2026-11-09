@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.81 (2026-11-09): the mouse in the message box; bold links open right
+
+- A click in the message box puts the cursor under it; a drag selects typed text, shown reversed. Typing (or a paste)
+  replaces the selection, backspace and delete remove it, any other key lets it go. Release copies it, as a transcript
+  selection does (on Windows ctrl+c copies). Before, the cursor moved only with the keys. The click lands on the
+  character drawn there: drawing and clicking share one layout of the wrapped text, and the cursor cell is not drawn
+  from the press on, so nothing shifts under a drag. Not in zen, whose message row shows only the end of the text.
+- Notes such as "copied 5 chars" now show under typed text too (before only in an empty message box).
+- A bare address in **bold** linked to itself plus the closing marks (`…/pull/1437**`): cmd-click, Copy Link and a
+  click opened a 404. The marks come out before links are found, as they already did for drawing.
+
 ## 0.1.80 (2026-11-09): MCP servers for every model (`/mcp`)
 
 - One list of MCP servers for every model: `/mcp add NAME URL` for a remote server, `/mcp add NAME COMMAND [ARGS]` for

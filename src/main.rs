@@ -834,7 +834,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -934,6 +934,14 @@ fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args)
 fn block_at(area: ratatui::layout::Rect, rows: &[Option<usize>], column: u16, row: u16) -> Option<usize> {
     let inside = column >= area.x && column < area.x + area.width && row >= area.y;
     inside.then(|| rows.get((row - area.y) as usize).copied().flatten()).flatten()
+}
+
+/// Copies text to the clipboard and says so ("copied 12 chars"), or why it could not.
+fn copy_note(text: &str) -> String {
+    match platform::copy_text(text) {
+        Ok(how) => format!("copied {} chars{}", text.chars().count(), how.how()),
+        Err(e) => format!("copy failed: {e:#}"),
+    }
 }
 
 fn scroll_mouse(v: &mut View, kind: MouseEventKind) {
@@ -1328,6 +1336,8 @@ fn run_live(
     let mut changed_at = Instant::now();
     let mut sel: Option<select::Selection> = None;
     let (mut copy_now, mut copied) = (false, None::<String>);
+    // the composer's text area as last drawn, and whether a left-button drag started in it (it selects typed text)
+    let (mut composer_area, mut composer_drag) = (None::<ratatui::layout::Rect>, false);
     // ctrl-b: the background-task view (which row is selected, when its output was last asked for)
     let (mut tasks_open, mut task_sel, mut outputs_read) = (false, 0usize, Instant::now());
     // /rewind: the picker's selected message, while it is open
@@ -1366,7 +1376,8 @@ fn run_live(
             let (start, token) = ed.token();
             v.hints = editor::suggest(token, start == 0, &s.commands, &files);
         }
-        (v.input, v.cursor) = (ed.text.clone(), ed.cursor);
+        // from the press on (an empty range until the drag moves): the cursor cell is not drawn, so nothing shifts
+        (v.input, v.cursor, v.select) = (ed.text.clone(), ed.cursor, ed.anchor.map(|a| (a.min(ed.cursor), a.max(ed.cursor))));
         // the question on screen is the one an answer applies to: the front of live's queue
         v.asking = live.pending.front().map(|req| question(req));
         v.mode = s.mode.clone();
@@ -1497,6 +1508,7 @@ fn run_live(
             (transcript, rows, links, files_area, diff_files) = (areas.transcript, areas.rows, areas.links, areas.files, areas.diff_files);
             (tool_rows, tokens_area, bars, top_line) = (areas.tool_rows, areas.tokens, areas.bars, areas.top_line);
             (list_area, list_links, list_rows) = (areas.list, areas.list_links, areas.list_rows);
+            composer_area = areas.composer;
             if let Some(sel) = sel.as_mut() {
                 // a drag held past an edge: the head moves with the scroll
                 sel.follow(top_line);
@@ -1511,11 +1523,7 @@ fn run_live(
             // 2026-11-02); a selection of blank cells copies nothing; the highlight stays until the next key or click
             copy_now = false;
             if !text.trim().is_empty() {
-                let msg = match platform::copy_text(&text) {
-                    Ok(how) => format!("copied {} chars{}", text.chars().count(), how.how()),
-                    Err(e) => format!("copy failed: {e:#}"),
-                };
-                v.toast = Some((msg, Instant::now()));
+                v.toast = Some((copy_note(&text), Instant::now()));
             }
         }
         if v.toast.as_ref().is_some_and(|(_, at)| at.elapsed() > Duration::from_millis(2500)) {
@@ -1545,7 +1553,41 @@ fn run_live(
             }
             Event::Mouse(m) => {
                 match m.kind {
-                    MouseEventKind::Down(MouseButton::Left) => sel = select::Selection::start(m.column, m.row, transcript, top_line),
+                    // in the composer: the cursor goes under the click, and a drag from there selects typed text
+                    MouseEventKind::Down(MouseButton::Left) if let Some(i) = composer_area
+                        .filter(|r| r.contains(ratatui::layout::Position::new(m.column, m.row)))
+                        .and_then(|r| ui::composer_index(&v, r.width, m.column - r.x, m.row - r.y)) =>
+                    {
+                        (ed.cursor, ed.anchor, composer_drag, sel) = (i, Some(i), true, None);
+                    }
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        ed.anchor = None;
+                        sel = select::Selection::start(m.column, m.row, transcript, top_line);
+                    }
+                    MouseEventKind::Drag(MouseButton::Left) if composer_drag => {
+                        if let Some(r) = composer_area.filter(|r| r.width > 0 && r.height > 0) {
+                            let (col, row) = (m.column.clamp(r.x, r.right() - 1) - r.x, m.row.clamp(r.y, r.bottom() - 1) - r.y);
+                            if let Some(i) = ui::composer_index(&v, r.width, col, row) {
+                                // dragged forward onto a character: it is in, as cells are in a transcript selection
+                                let on_char = ed.text[i..].chars().next().filter(|&c| c != '\n');
+                                ed.cursor = match on_char {
+                                    Some(c) if ed.anchor.is_some_and(|a| i >= a) => i + c.len_utf8(),
+                                    _ => i,
+                                };
+                            }
+                        }
+                    }
+                    // a selection in the composer copies on release, as in the transcript (on Windows ctrl+c copies);
+                    // it stays for typing over it or deleting it
+                    MouseEventKind::Up(MouseButton::Left) if composer_drag => {
+                        composer_drag = false;
+                        match ed.selection() {
+                            Some((a, z)) if !cfg!(windows) => v.toast = Some((copy_note(&ed.text[a..z]), Instant::now())),
+                            Some(_) => {}
+                            // a click without a drag: just the cursor, drawn again
+                            None => ed.anchor = None,
+                        }
+                    }
                     MouseEventKind::Drag(MouseButton::Left) => {
                         if let Some(sel) = sel.as_mut() {
                             sel.drag(m.column, m.row, top_line);
@@ -1641,6 +1683,17 @@ fn run_live(
         };
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
         let alt = key.modifiers.contains(KeyModifiers::ALT);
+        // text selected in the composer: ctrl-c (cmd-c) copies it, typing replaces it, backspace and delete remove it
+        // (editor.rs); any other key lets it go
+        if let Some((a, z)) = ed.selection() {
+            if key.code == KeyCode::Char('c') && (ctrl || key.modifiers.contains(KeyModifiers::SUPER)) {
+                v.toast = Some((copy_note(&ed.text[a..z]), Instant::now()));
+                continue;
+            }
+            if ctrl || alt || normal || !matches!(key.code, KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete) {
+                ed.anchor = None;
+            }
+        }
         // with text still selected, ctrl-c (or cmd-c where a terminal passes it on) copies it again rather than quitting;
         // ctrl-c without a selection still stops or quits
         if key.code == KeyCode::Char('c') && (ctrl || key.modifiers.contains(KeyModifiers::SUPER)) && sel.as_ref().is_some_and(|x| !x.is_empty()) {

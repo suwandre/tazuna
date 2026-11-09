@@ -16,6 +16,8 @@ pub struct Editor {
     file: Option<PathBuf>,
     /// A message put aside with ctrl-x.
     stash: Option<String>,
+    /// Where a mouse selection started (the cursor is its other end).
+    pub anchor: Option<usize>,
 }
 
 impl Editor {
@@ -30,13 +32,34 @@ impl Editor {
         Editor { history: history[start..].to_vec(), file: Some(file), ..Default::default() }
     }
 
+    /// The selected text's byte range, when there is some.
+    pub fn selection(&self) -> Option<(usize, usize)> {
+        let a = self.anchor.filter(|&a| a <= self.text.len() && self.text.is_char_boundary(a))?;
+        (a != self.cursor).then(|| (a.min(self.cursor), a.max(self.cursor)))
+    }
+
+    /// Removes the selected text; true when there was some. The selection ends either way.
+    fn cut_selection(&mut self) -> bool {
+        let sel = self.selection();
+        self.anchor = None;
+        let Some((a, z)) = sel else { return false };
+        self.text.replace_range(a..z, "");
+        self.cursor = a;
+        true
+    }
+
+    /// Typing (or a paste) replaces the selection.
     pub fn insert(&mut self, s: &str) {
+        self.cut_selection();
         self.text.insert_str(self.cursor, s);
         self.cursor += s.len();
         self.browsing = None;
     }
 
     pub fn backspace(&mut self) {
+        if self.cut_selection() {
+            return;
+        }
         if let Some(c) = self.text[..self.cursor].chars().next_back() {
             self.cursor -= c.len_utf8();
             self.text.remove(self.cursor);
@@ -44,6 +67,9 @@ impl Editor {
     }
 
     pub fn delete(&mut self) {
+        if self.cut_selection() {
+            return;
+        }
         if self.cursor < self.text.len() {
             self.text.remove(self.cursor);
         }
@@ -378,6 +404,22 @@ fn column(text: &str, start: usize, end: usize, col: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_selection_is_replaced_or_removed() {
+        let mut e = super::Editor::default();
+        e.insert("hello world");
+        (e.anchor, e.cursor) = (Some(0), 5);
+        assert_eq!(e.selection(), Some((0, 5)));
+        e.insert("bye");
+        assert_eq!((e.text.as_str(), e.cursor, e.anchor), ("bye world", 3, None), "typing replaces it");
+        (e.anchor, e.cursor) = (Some(9), 3); // dragged right to left
+        e.backspace();
+        assert_eq!((e.text.as_str(), e.cursor), ("bye", 3));
+        (e.anchor, e.cursor) = (Some(1), 1);
+        e.backspace();
+        assert_eq!(e.text, "ye", "a click without a drag selects nothing: a plain backspace");
+    }
+
     #[test]
     fn stash_sets_the_message_aside_and_brings_it_back_after_sending() {
         let mut e = Editor::default();
