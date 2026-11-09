@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 326" width="760" height="326" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-label="cost">
+<text x="16.0" y="26.0" font-size="16" font-weight="600" text-anchor="start" fill="#0b0b0b">What a task costs</text>
+<text x="16.0" y="46.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">Cost per task. Opus rows: six Go PRs, judge within 0.25 of stock Claude Code (ROADMAP, 2026-10). DeepSeek row:</text>
+<text x="16.0" y="62.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">14 PRs merged in October, after DeepSeek's release; the cheap model solved more of them (13 against 9).</text>
+<rect x="659" y="17" width="10" height="10" rx="2" fill="#898781"/>
+<text x="674.0" y="26.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">reference</text>
+<rect x="595" y="17" width="10" height="10" rx="2" fill="#2a78d6"/>
+<text x="610.0" y="26.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">tazuna</text>
+<text x="210.0" y="312.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$0</text>
+<text x="304.0" y="312.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$1</text>
+<text x="398.0" y="312.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$2</text>
+<text x="492.0" y="312.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$3</text>
+<text x="586.0" y="312.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$4</text>
+<text x="16.0" y="110.0" font-size="12" font-weight="600" text-anchor="start" fill="#0b0b0b">Claude Opus 5.5, six Go PRs</text>
+<line x1="210.0" x2="210.0" y1="116" y2="208" stroke="#c3c2b7" stroke-width="1"/>
+<line x1="304.0" x2="304.0" y1="116" y2="208" stroke="#e1e0d9" stroke-width="1"/>
+<line x1="398.0" x2="398.0" y1="116" y2="208" stroke="#e1e0d9" stroke-width="1"/>
+<line x1="492.0" x2="492.0" y1="116" y2="208" stroke="#e1e0d9" stroke-width="1"/>
+<line x1="586.0" x2="586.0" y1="116" y2="208" stroke="#e1e0d9" stroke-width="1"/>
+<text x="200.0" y="132.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">Claude Code</text>
+<path d="M210,120 H291.5 A4,4 0 0 1 295.5,124 V134 A4,4 0 0 1 291.5,138 H210 Z" fill="#898781"/>
+<text x="301.5" y="133.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">$0.91 · judge 7.58</text>
+<text x="200.0" y="162.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">tazuna</text>
+<path d="M210,150 H268.0 A4,4 0 0 1 272.0,154 V164 A4,4 0 0 1 268.0,168 H210 Z" fill="#2a78d6"/>
+<text x="278.0" y="163.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">$0.66 · judge 7.46</text>
+<text x="200.0" y="192.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">tazuna, boss mode</text>
+<path d="M210,180 H248.3 A4,4 0 0 1 252.3,184 V194 A4,4 0 0 1 248.3,198 H210 Z" fill="#2a78d6"/>
+<text x="258.3" y="193.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">$0.45 · judge 7.33</text>
+<text x="16.0" y="228.0" font-size="12" font-weight="600" text-anchor="start" fill="#0b0b0b">Code that may leave the machine, 14 October PRs</text>
+<line x1="210.0" x2="210.0" y1="234" y2="296" stroke="#c3c2b7" stroke-width="1"/>
+<line x1="304.0" x2="304.0" y1="234" y2="296" stroke="#e1e0d9" stroke-width="1"/>
+<line x1="398.0" x2="398.0" y1="234" y2="296" stroke="#e1e0d9" stroke-width="1"/>
+<line x1="492.0" x2="492.0" y1="234" y2="296" stroke="#e1e0d9" stroke-width="1"/>
+<line x1="586.0" x2="586.0" y1="234" y2="296" stroke="#e1e0d9" stroke-width="1"/>
+<text x="200.0" y="250.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">tazuna on Opus 5.5</text>
+<path d="M210,238 H467.3 A4,4 0 0 1 471.3,242 V252 A4,4 0 0 1 467.3,256 H210 Z" fill="#898781"/>
+<text x="477.3" y="251.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">$2.78 · judge 6.79 · 9 of 14 solved</text>
+<text x="200.0" y="280.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">tazuna on DeepSeek V4.1</text>
+<path d="M210,268 H262.4 A4,4 0 0 1 266.4,272 V282 A4,4 0 0 1 262.4,286 H210 Z" fill="#2a78d6"/>
+<text x="272.4" y="281.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">$0.60 · judge 7.79 · 13 of 14 solved</text>
+</svg>

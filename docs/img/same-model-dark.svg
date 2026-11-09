@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 296" width="760" height="296" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-label="same-model">
+<text x="16.0" y="26.0" font-size="16" font-weight="600" text-anchor="start" fill="#f0efec">Same model: its maker's harness against tazuna</text>
+<text x="16.0" y="46.0" font-size="12" font-weight="400" text-anchor="start" fill="#c3c2b7">Minutes per task, shorter is better; four Go PRs, one run each, blind judge (DeepSeek on Mistral's API:</text>
+<text x="16.0" y="62.0" font-size="12" font-weight="400" text-anchor="start" fill="#c3c2b7">tazuna 0.1.73 against Vibe CLI 3.1 at max; Kimi on SubRouter: tazuna 0.1.4 against Kimi Code 2.4.0).</text>
+<rect x="589" y="17" width="10" height="10" rx="2" fill="#898781"/>
+<text x="604.0" y="26.0" font-size="12" font-weight="400" text-anchor="start" fill="#c3c2b7">the maker's harness</text>
+<rect x="448" y="17" width="10" height="10" rx="2" fill="#3987e5"/>
+<text x="463.0" y="26.0" font-size="12" font-weight="400" text-anchor="start" fill="#c3c2b7">tazuna's own loop</text>
+<text x="210.0" y="282.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">0 min</text>
+<text x="285.2" y="282.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">5 min</text>
+<text x="360.4" y="282.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">10 min</text>
+<text x="435.6" y="282.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">15 min</text>
+<text x="510.8" y="282.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">20 min</text>
+<text x="586.0" y="282.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">25 min</text>
+<text x="16.0" y="110.0" font-size="12" font-weight="600" text-anchor="start" fill="#f0efec">DeepSeek V4.1 Flash</text>
+<line x1="210.0" x2="210.0" y1="116" y2="178" stroke="#3d434c" stroke-width="1"/>
+<line x1="285.2" x2="285.2" y1="116" y2="178" stroke="#2a2e35" stroke-width="1"/>
+<line x1="360.4" x2="360.4" y1="116" y2="178" stroke="#2a2e35" stroke-width="1"/>
+<line x1="435.6" x2="435.6" y1="116" y2="178" stroke="#2a2e35" stroke-width="1"/>
+<line x1="510.8" x2="510.8" y1="116" y2="178" stroke="#2a2e35" stroke-width="1"/>
+<line x1="586.0" x2="586.0" y1="116" y2="178" stroke="#2a2e35" stroke-width="1"/>
+<text x="200.0" y="132.0" font-size="12" font-weight="400" text-anchor="end" fill="#c3c2b7">Mistral Vibe CLI</text>
+<path d="M210,120 H521.8 A4,4 0 0 1 525.8,124 V134 A4,4 0 0 1 521.8,138 H210 Z" fill="#898781"/>
+<text x="531.8" y="133.0" font-size="12" font-weight="400" text-anchor="start" fill="#f0efec">21 min · judge 7.50 · 10/11 tests</text>
+<text x="200.0" y="162.0" font-size="12" font-weight="400" text-anchor="end" fill="#c3c2b7">tazuna</text>
+<path d="M210,150 H311.3 A4,4 0 0 1 315.3,154 V164 A4,4 0 0 1 311.3,168 H210 Z" fill="#3987e5"/>
+<text x="321.3" y="163.0" font-size="12" font-weight="400" text-anchor="start" fill="#f0efec">7 min · judge 8.00 · 11/11 tests</text>
+<text x="16.0" y="198.0" font-size="12" font-weight="600" text-anchor="start" fill="#f0efec">Kimi K3.1 Pro</text>
+<line x1="210.0" x2="210.0" y1="204" y2="266" stroke="#3d434c" stroke-width="1"/>
+<line x1="285.2" x2="285.2" y1="204" y2="266" stroke="#2a2e35" stroke-width="1"/>
+<line x1="360.4" x2="360.4" y1="204" y2="266" stroke="#2a2e35" stroke-width="1"/>
+<line x1="435.6" x2="435.6" y1="204" y2="266" stroke="#2a2e35" stroke-width="1"/>
+<line x1="510.8" x2="510.8" y1="204" y2="266" stroke="#2a2e35" stroke-width="1"/>
+<line x1="586.0" x2="586.0" y1="204" y2="266" stroke="#2a2e35" stroke-width="1"/>
+<text x="200.0" y="220.0" font-size="12" font-weight="400" text-anchor="end" fill="#c3c2b7">Kimi Code</text>
+<path d="M210,208 H514.3 A4,4 0 0 1 518.3,212 V222 A4,4 0 0 1 514.3,226 H210 Z" fill="#898781"/>
+<text x="524.3" y="221.0" font-size="12" font-weight="400" text-anchor="start" fill="#f0efec">20.5 min · judge 7.25 · 11/13 tests</text>
+<text x="200.0" y="250.0" font-size="12" font-weight="400" text-anchor="end" fill="#c3c2b7">tazuna</text>
+<path d="M210,238 H420.3 A4,4 0 0 1 424.3,242 V252 A4,4 0 0 1 420.3,256 H210 Z" fill="#3987e5"/>
+<text x="430.3" y="251.0" font-size="12" font-weight="400" text-anchor="start" fill="#f0efec">14.3 min · judge 6.88 · 11/13 tests</text>
+</svg>

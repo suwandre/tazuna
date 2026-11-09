@@ -1,4 +1,4 @@
-//! tazuna: a lean terminal UI around Claude Code.
+//! tazuna: a lean terminal coding agent for any model: Claude through the official `claude` CLI, other models on its own loop.
 //!
 //!   tazuna [--model M] [--effort E] [--design 1-4] [--allow-non-git]   # live: drive claude in the current repo
 //!          (without --model/--effort the router picks: tiny repos Sonnet medium, escalating to Opus high if tests
