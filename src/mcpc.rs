@@ -87,7 +87,7 @@ fn read_conf() -> Result<Value> {
 }
 
 /// Writes through a temporary file and a rename: a reader never sees half a file, and a crash leaves the old one.
-fn write_private(p: &Path, v: &Value) -> Result<()> {
+pub(crate) fn write_private(p: &Path, v: &Value) -> Result<()> {
     let parent = p.parent().context("no folder")?;
     crate::platform::private_dir(parent, true)?;
     let tmp = parent.join(format!(".{}.{}", p.file_name().unwrap_or_default().to_string_lossy(), std::process::id()));

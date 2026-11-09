@@ -1370,6 +1370,12 @@ impl Live {
             if std::env::var_os("TAZUNA_ROUTES").is_none() {
                 let fb = crate::labels::dir().map(|d| crate::models::fallbacks(&d.join("routes.json"), &key_env)).unwrap_or_default();
                 if !fb.is_empty() {
+                    // a fallback's key may be saved in tazuna rather than set: the engine reads it from its environment
+                    for var in fb.split("; ").filter_map(|r| r.split_once(' ').map(|(_, v)| v)) {
+                        if std::env::var_os(var).is_none() && let Some(k) = crate::models::key(var) {
+                            cmd.env(var, k);
+                        }
+                    }
                     cmd.env("TAZUNA_ROUTES", fb);
                 }
             }

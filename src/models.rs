@@ -186,12 +186,13 @@ pub fn why_not(c: &Choice) -> Option<String> {
     match c.state {
         State::NoKey if host == "subrouter.ai" => Some(format!("no SubRouter key. Two ways: `tazuna subrouter --manage` makes \
             one in your account with tested providers for each model (needs your account's access token); or bring your own \
-            key in {var} (its provider settings decide: a model without a list on it can land on any provider)")),
-        State::NoKey => Some(format!("no key: set the environment variable {var} before starting tazuna{}", match host {
+            key: enter pastes it here, or set {var} (its provider settings decide: a model without a list on it can land on \
+            any provider)")),
+        State::NoKey => Some(format!("no key: enter pastes it here, or set the environment variable {var} before starting tazuna{}", match host {
             "api.mistral.ai" => " (a Mistral API key, or one made under Code › Vibe CLI)",
             _ => "",
         })),
-        State::Untrusted => Some(format!("not trusted: the code would go to {host}; add the line {host} to {} to allow it",
+        State::Untrusted => Some(format!("not trusted: the code would go to {host}; enter allows it, or add the line {host} to {}",
             crate::platform::home().unwrap_or_default().join(".config/tazuna/trusted-providers").display())),
         State::NotOnKey => Some(format!("not on your key: SubRouter does not let {var} use {} (the key's models: \
             https://subrouter.ai/console/keys)", c.model)),
@@ -422,7 +423,7 @@ pub fn fallbacks(routes: &Path, key_env: &str) -> String {
             continue;
         }
         let url = r["url"].as_str().unwrap_or_default();
-        let mut others: Vec<(f64, &str)> = pins.into_iter().filter(|(_, k)| *k != key_env && std::env::var_os(k).is_some()).collect();
+        let mut others: Vec<(f64, &str)> = pins.into_iter().filter(|(_, k)| *k != key_env && key(k).is_some()).collect();
         others.sort_by(|a, b| a.0.total_cmp(&b.0));
         return others.iter().map(|(_, k)| format!("{url} {k}")).collect::<Vec<_>>().join("; ");
     }
@@ -454,17 +455,55 @@ pub fn managed_key() -> Option<String> {
     std::fs::read_to_string(managed_file()?).ok().map(|k| k.trim().to_string()).filter(|k| !k.is_empty())
 }
 
-/// The key a route's variable names: the environment's, else for SUBROUTER_API_KEY tazuna's managed key. The managed key
-/// never goes into tazuna's environment, where every child (claude, the agent's commands) would inherit it; only the
-/// own loop's engine gets it, and the engine takes its key out of its environment before any tool runs.
+/// Keys saved in tazuna (`/model`: enter on a provider without one), by variable name, readable by the user only.
+fn keys_file() -> Option<std::path::PathBuf> {
+    crate::platform::home().map(|h| h.join(".config/tazuna/keys.json"))
+}
+
+/// Saves a provider's key under its variable name (a file that does not parse is left alone: an error, not a reset).
+pub fn save_key(var: &str, value: &str) -> anyhow::Result<std::path::PathBuf> {
+    let p = keys_file().ok_or_else(|| anyhow::anyhow!("HOME not set"))?;
+    let mut v: Value = match std::fs::read_to_string(&p) {
+        Ok(t) => serde_json::from_str(&t).map_err(|e| anyhow::anyhow!("{} does not parse ({e}): fix or remove it", p.display()))?,
+        Err(_) => serde_json::json!({}),
+    };
+    let Some(m) = v.as_object_mut() else { anyhow::bail!("{} is not a JSON object: fix or remove it", p.display()) };
+    m.insert(var.to_string(), value.trim().into());
+    crate::mcpc::write_private(&p, &v)?;
+    Ok(p)
+}
+
+/// The user's own key for a variable: the environment's, else the one saved in tazuna.
+fn own_key(var: &str) -> Option<String> {
+    std::env::var(var).ok().filter(|k| !k.trim().is_empty()).or_else(|| {
+        let v: Value = serde_json::from_str(&std::fs::read_to_string(keys_file()?).ok()?).ok()?;
+        v[var].as_str().map(|k| k.trim().to_string()).filter(|k| !k.is_empty())
+    })
+}
+
+/// The key a route's variable names: the environment's, else one saved in tazuna, else for SUBROUTER_API_KEY tazuna's
+/// managed key. Saved and managed keys never go into tazuna's environment, where every child (claude, the agent's
+/// commands) would inherit them; only the own loop's engine gets its key, and takes it out of its environment before any
+/// tool runs.
 pub fn key(var: &str) -> Option<String> {
-    std::env::var(var).ok().filter(|k| !k.trim().is_empty()).or_else(|| (var == "SUBROUTER_API_KEY").then(managed_key).flatten())
+    own_key(var).or_else(|| (var == "SUBROUTER_API_KEY").then(managed_key).flatten())
+}
+
+/// Where a provider's API keys are made, for the key prompt in `/model`.
+pub fn key_page(url: &str) -> &'static str {
+    match host_of(url) {
+        "subrouter.ai" => "https://subrouter.ai/console/keys",
+        "api.mistral.ai" => "https://console.mistral.ai/api-keys",
+        "mortera.cloud" => "https://mortera.cloud",
+        "generativelanguage.googleapis.com" => "https://aistudio.google.com/apikey",
+        _ => "",
+    }
 }
 
 /// True when SUBROUTER_API_KEY means tazuna's managed key (the user set no key of their own), so tazuna chose its
 /// providers.
 pub fn key_is_managed() -> bool {
-    managed_key().is_some_and(|m| std::env::var("SUBROUTER_API_KEY").map_or(true, |k| k.trim().is_empty() || k.trim() == m))
+    managed_key().is_some_and(|m| own_key("SUBROUTER_API_KEY").is_none_or(|k| k == m))
 }
 
 /// SubRouter's account API with the account's access token (~/.subrouter-account: SUBROUTER_ACCESS_TOKEN=,
@@ -600,12 +639,12 @@ pub fn subrouter_cli(args: &[String]) -> anyhow::Result<()> {
         std::io::Write::write_all(&mut crate::platform::private_file(&path, false)?, value.as_bytes())?;
         println!("\nready: \"{MANAGED_NAME}\" with {n} checked models, kept in {} (readable by you only). tazuna uses it whenever \
                   SUBROUTER_API_KEY is not set. Run this again after `tazuna update` to bring new checks in.", path.display());
-        if std::env::var("SUBROUTER_API_KEY").is_ok_and(|k| !k.trim().is_empty() && k.trim() != value) {
-            println!("note: SUBROUTER_API_KEY is set to another key, and it wins: unset it to use the managed key");
+        if own_key("SUBROUTER_API_KEY").is_some_and(|k| k != value) {
+            println!("note: SUBROUTER_API_KEY is set (or saved in tazuna) to another key, and it wins: remove it to use the managed key");
         }
         return Ok(());
     }
-    let mine = std::env::var("SUBROUTER_API_KEY").context("SUBROUTER_API_KEY: the key to set the providers on")?;
+    let mine = own_key("SUBROUTER_API_KEY").context("SUBROUTER_API_KEY: the key to set the providers on")?;
     let mine = mine.trim().trim_start_matches("sk-");
     let mut key = None;
     for k in acct.keys()? {
@@ -705,7 +744,7 @@ mod tests {
         let mut c = cs[2].clone();
         c.state = State::NoKey;
         let why = why_not(&c).unwrap();
-        assert!(why.contains("tazuna subrouter --manage") && why.contains("your own key in SUBROUTER_API_KEY"), "both ways: {why}");
+        assert!(why.contains("tazuna subrouter --manage") && why.contains("enter pastes it here, or set SUBROUTER_API_KEY"), "both ways: {why}");
         c.state = State::Untrusted;
         let why = why_not(&c).unwrap();
         assert!(why.contains("add the line subrouter.ai to") && why.contains("trusted-providers"), "{why}");

@@ -136,17 +136,19 @@ UI: 190 MB, 0.45 s to start (2026-10-08). A whole agent run: 21-22 MB on the own
 ## Models beyond Claude
 
 `/model` shows the providers on the left and the selected one's models on the right, with prices and benchmark
-scores, and says what a greyed-out one still needs; typing searches every provider at once.
+scores; typing searches every provider at once. A provider without a key is greyed out: press enter on one of its models
+and paste the key. tazuna keeps it in `~/.config/tazuna/keys.json` (readable by you only) and puts the provider on
+`~/.config/tazuna/trusted-providers`, since it will see your code. A key in the environment (`MORTERA_API_KEY` and so on)
+still works and wins.
 
-- **SubRouter** (DeepSeek, GPT, Kimi, GLM, MiniMax ...): one key in `SUBROUTER_API_KEY`. Providers differ a lot (some
-  serve another model, some barely cache); `tazuna subrouter --apply` sets the ones tazuna checked on your key.
-- **Mistral**: a key in `MISTRAL_API_KEY`.
-- **Mortera** (Gemini, GPT, Kimi, Grok, Qwen, GLM, DeepSeek ... at reseller prices): a key in `MORTERA_API_KEY`. `/model`
-  lists every text model on its list, as not checked yet.
-- **Anything else** OpenAI-compatible: `--provider URL --key-env VAR --model ID`.
-
-A provider sees your code, so its host goes into `~/.config/tazuna/trusted-providers` first (one per line), or the run
-takes `--data any`.
+- **SubRouter** (DeepSeek, GPT, Kimi, GLM, MiniMax ...): your own key, or `tazuna subrouter --manage` makes one with the
+  providers tazuna checked (they differ a lot: some serve another model, some barely cache); `tazuna subrouter --apply`
+  sets them on your own key.
+- **Mistral**: an API key, or one made under Code › Vibe CLI.
+- **Mortera** (Gemini, GPT, Kimi, Grok, Qwen, GLM, DeepSeek ... at reseller prices): once its key is in, `/model` lists
+  every text model on its list, as not checked yet.
+- **Anything else** OpenAI-compatible: `--provider URL --key-env VAR --model ID` (its host on the trusted list, or
+  `--data any`).
 
 ## Safety
 
@@ -154,8 +156,9 @@ takes `--data any`.
   review. Outside a repo it starts in ask mode.
 - A repo's `CLAUDE.md` / `AGENTS.md` go into the prompt; a repo whose config runs code (hooks, skills) asks "Trust this
   repo?" once. In repos you did not write, add `--no-project-instructions`.
-- On the own loop the provider key never reaches the agent's commands, and the managed SubRouter key is never put in
-  tazuna's environment. Keys you export in your shell are visible to Claude's commands, as in any terminal. MCP logins sit
+- On the own loop the provider key never reaches the agent's commands, and keys saved in tazuna (and the managed
+  SubRouter key) are never put in tazuna's environment. Keys you export in your shell are visible to Claude's commands,
+  as in any terminal. MCP logins sit
   in `~/.config/tazuna/mcp-auth/`, readable by you only.
 
 ## Development

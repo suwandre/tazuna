@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.86 (2026-11-09): provider keys pasted in `/model`
+
+- A provider's key no longer has to be an environment variable (on Windows `setx` plus a new terminal, which a user
+  rightly called unfriendly). Enter on a greyed model in `/model` asks for its provider's key, masked, and names where
+  keys are made (SubRouter, Mistral, Mortera, Google AI Studio). tazuna keeps it in `~/.config/tazuna/keys.json`,
+  readable by the user only, and puts the host on the trusted list, as the question says. Enter on a model whose
+  provider is not trusted asks just that. A key in the environment still wins. Mortera's whole list loads right after.
+- Saved keys stay out of tazuna's environment, like the managed SubRouter key: only the own loop's engine gets its key
+  (and a fallback route's), and drops it before any tool runs.
+- No OAuth: none of these providers offers a login for third-party tools (Anthropic and Google forbid using their
+  subscriptions' logins outside their own apps), so an API key is the way in. No measurable metric changes.
+- Bench: the judge passes its prompt on stdin. As an argument, a task with long diffs passed Linux's 128 KB limit for one
+  argument on the bench VM ("Argument list too long").
+
 ## 0.1.85 (2026-11-09): Mortera in `/model` before its key is set
 
 - Mortera's models come from its own list, which tazuna can only fetch with MORTERA_API_KEY set. Without the key,

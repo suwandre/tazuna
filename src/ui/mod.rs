@@ -155,6 +155,9 @@ pub struct ModelsPanel {
     pub groups: Vec<(String, usize, bool, String)>,
     pub group: usize,
     pub in_models: bool,
+    /// A question in place of the search line: a provider's key being typed (shown masked), or whether a provider may see
+    /// the code; with its key line.
+    pub ask: Option<(String, &'static str)>,
 }
 
 pub struct ModelRow {
@@ -597,7 +600,9 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     let bw = width("bench (runs)", &|r| r.bench.chars().count());
     let aw = width("AA", &|r| r.aa.chars().count());
     let longest = width("model", &|r| r.label.chars().count());
-    let keys = if p.in_models || !two {
+    let keys = if let Some((_, k)) = &p.ask {
+        k
+    } else if p.in_models || !two {
         "↑↓ model · ←→ effort · tab provider pin · enter use · esc providers"
     } else {
         "↑↓ providers · enter or → its models · type to search · esc close"
@@ -693,7 +698,9 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
         }
         cut(s)
     };
-    let search = if p.filter.is_empty() {
+    let search = if let Some((q, _)) = &p.ask {
+        Line::from(vec![Span::styled("> ", st(th.accent)), Span::styled(cut(q.clone()), st(th.text)), Span::styled("▍", st(th.accent))])
+    } else if p.filter.is_empty() {
         Line::from(Span::styled(cut(format!("{gname} · {} models · type to search", p.rows.len())), st(th.faint)))
     } else {
         Line::from(vec![Span::styled("> ", st(th.accent)), Span::styled(cut(p.filter.clone()), st(th.text)), Span::styled("▍", st(th.accent))])
@@ -2085,7 +2092,7 @@ mod tests {
                 _ => String::new(),
             }, stale, current: false };
         let mut p = ModelsPanel { rows: vec![row("Opus 5.5", 0, false), row("deepseek-v4.1-flash-1017 · fast", 1, false), row("gpt-6.1-sol", 2, true), row("gpt-6-luna", 0, true)], selected: 0, filter: String::new(),
-            groups: vec![("All models".into(), 4, true, String::new()), ("SubRouter".into(), 4, true, String::new())], group: 1, in_models: true };
+            groups: vec![("All models".into(), 4, true, String::new()), ("SubRouter".into(), 4, true, String::new())], group: 1, in_models: true, ask: None };
         let draw = |p: &ModelsPanel, w: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 24)).unwrap();
             term.draw(|f| draw_models(f, p, Design::Cockpit.theme())).unwrap();
@@ -2117,6 +2124,10 @@ mod tests {
             p.selected = i;
             assert!(draw(&p, 78).concat().contains(want), "row {i}: {want}");
         }
+        // enter on a greyed model: its key is asked for in place of the search line, masked, with its own keys
+        p.ask = Some(("Mortera API key (from https://mortera.cloud): ••• · saving it lets mortera.cloud see the code".into(), "enter saves · esc back"));
+        let text = draw(&p, 120).concat();
+        assert!(text.contains("> Mortera API key") && text.contains("•••") && text.contains("enter saves · esc back"), "{text}");
     }
 
     #[test]

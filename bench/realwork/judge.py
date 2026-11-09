@@ -64,12 +64,14 @@ def ask_judge(prompt, model, effort):
         return verdict_json(ask_api(prompt, model, effort))
     guard_allows()
     with tempfile.TemporaryDirectory() as cfg, tempfile.TemporaryDirectory() as cwd:
-        cmd = ["claude", "-p", prompt, "--model", model, "--effort", effort, "--output-format", "json",
+        # the prompt on stdin: as an argument, a task with long diffs passed Linux's 128 KB limit for one argument
+        # ("Argument list too long", hugo on the bench VM, 2026-11-09); macOS has no such limit per argument
+        cmd = ["claude", "-p", "--model", model, "--effort", effort, "--output-format", "json",
                "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config",
                "--disable-slash-commands", "--exclude-dynamic-system-prompt-sections", "--tools", "",
                "--system-prompt", SYSTEM_NOREF if NOREF else SYSTEM]
         out = subprocess.run(cmd, cwd=cwd, env={**os.environ, "CLAUDE_CONFIG_DIR": cfg},
-                             capture_output=True, text=True, timeout=1800).stdout
+                             input=prompt, capture_output=True, text=True, timeout=1800).stdout
     d = json.loads(out.strip().splitlines()[-1])
     if d.get("is_error"):
         raise RuntimeError(d.get("result"))
