@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.94 (2026-11-10): a long background-task list scrolls
+
+- ctrl-b's list of background tasks kept showing its first rows, so in a session with 30-odd tasks the selected one
+  moved off the bottom of the window. The list now follows the selection, with "↑ N earlier" and "↓ N more" where rows
+  are out of view, and a third of the height stays for the selected task's output. No measurable metric changes.
+
 ## 0.1.93 (2026-11-10): verify sets aside failures the change did not cause
 
 - When verify's Go tests fail, the failing tests run again on the last commit, in a git worktree of its own. Those that

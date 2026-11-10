@@ -462,13 +462,29 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
     if p.rows.is_empty() {
         lines.push(Line::from(Span::styled("No background tasks in this session yet.", st(th.faint))));
     }
-    for (i, r) in p.rows.iter().enumerate() {
+    // a long list scrolls with the selection: the window kept the first rows, and the selected one went off its bottom
+    // edge (a session with 30-odd tasks, 2026-11-10); the output below keeps a third of the height
+    let list_room = (inner.height as usize).saturating_sub(2 + (inner.height as usize / 3)).max(3);
+    let (first, last) = if p.rows.len() <= list_room {
+        (0, p.rows.len())
+    } else {
+        let room = list_room - 2; // a line each for "↑ N earlier" and "↓ N more"
+        let first = p.selected.saturating_sub(room / 2).min(p.rows.len() - room);
+        (first, first + room)
+    };
+    if first > 0 {
+        lines.push(Line::from(Span::styled(format!("  ↑ {first} earlier"), st(th.faint))));
+    }
+    for (i, r) in p.rows.iter().enumerate().take(last).skip(first) {
         let mark = if i == p.selected { "›" } else { " " };
         let age = if r.secs >= 60 { format!("{}m{:02}s", r.secs / 60, r.secs % 60) } else { format!("{}s", r.secs) };
         let colour = if r.status == "running" { th.accent } else if r.status == "completed" { th.faint } else { th.warn };
         let row = format!("{mark} {:<10} {:>7}  {:<11} {}", plain(&r.status), age, plain(&r.kind), plain(&r.description).replace('\n', " "));
         let style = if i == p.selected { st(colour).add_modifier(Modifier::BOLD) } else { st(colour) };
         lines.push(Line::from(Span::styled(row.chars().take(inner.width as usize).collect::<String>(), style)));
+    }
+    if p.rows.len() > last {
+        lines.push(Line::from(Span::styled(format!("  ↓ {} more", p.rows.len() - last), st(th.faint))));
     }
     if let Some(r) = p.rows.get(p.selected) {
         lines.push(Line::from(""));
@@ -2177,6 +2193,25 @@ mod tests {
         assert_eq!(plain("\x1bPq#0;2;0;0;0\x1b\\x"), "x");
         assert_eq!(plain("\u{9b}31m\x07\x08\u{202e}rm"), "\u{FFFD}31m\u{FFFD}\u{FFFD}\u{FFFD}rm");
         assert!(!plain("\x1b[?1049h\x1b(0\x1b=x").chars().any(|c| c.is_control()));
+    }
+
+    #[test]
+    fn a_long_task_list_follows_the_selection() {
+        let row = |i: usize| TaskRow { kind: "local_bash".into(), description: format!("task number {i}"), status: "completed".into(), secs: 2,
+            output: String::new(), agent: String::new(), tokens: 0, tools: 0, doing: String::new() };
+        let draw = |selected: usize| {
+            let p = TasksPanel { rows: (0..40).map(row).collect(), selected };
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+            term.draw(|f| draw_tasks(f, &p, Design::Cockpit.theme())).unwrap();
+            let b = term.backend().buffer().clone();
+            (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n")
+        };
+        let top = draw(0);
+        assert!(top.contains("› completed") && top.contains("task number 0 ") && top.contains("more") && !top.contains("earlier"), "{top}");
+        let low = draw(39);
+        assert!(low.contains("task number 39") && low.contains("earlier") && !low.contains(" more"), "the last one in view: {low}");
+        let mid = draw(20);
+        assert!(mid.contains("task number 20") && mid.contains("earlier") && mid.contains("more"), "{mid}");
     }
 
     #[test]
