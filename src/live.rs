@@ -88,6 +88,8 @@ const HISTORY_RULE: &str = "Before you change a file, read why it is the way it 
 /// same judge, -17% cost, 40-58% faster (2026-11-03).
 const CALLERS_RULE: &str = "Before you change a function, type or option, find every place that uses it and every code path that reaches it (other commands and entry points too), and make your change cover all of them.";
 
+const COVER_ALL_RULE: &str = "Make your change, and its tests, cover every command, flag or API the task names, and each one's error cases, not only the main path: read the code behind each one before you change it.";
+
 const WRITE_TESTS_RULE: &str = "Add or update tests for the behavior you change, including its edge cases: tazuna's check only runs the tests, it does not write them.";
 
 const TEST_SCOPE_RULE: &str = "While working, run only the tests that cover your change (in Go: `go test -run 'TestA|TestB' ./pkg/`), not whole packages or the whole repository: when you finish, tazuna runs the changed packages' tests and sends you any failure.";
@@ -1483,7 +1485,11 @@ impl Live {
                 // Claude Code (1,743 against 2,620 lines over 18 runs) and the judge's tests score was 0.50 lower, the
                 // bulk of the gap (2026-11-10): the rule may read as "tazuna does the testing"
                 let write_tests = (scoped && std::env::var_os("TAZUNA_WRITE_TESTS").is_some()).then_some(WRITE_TESTS_RULE);
-                let append: Vec<&str> = [callers, self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), write_tests, lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
+                // experiment (TAZUNA_COVER_ALL): Claude Code tested every command the k6 task names (run, archive,
+                // cloud run) and hugo's error case in every run; tazuna tested `k6 cloud run` in none and the error in
+                // none, and its code missed those paths too (2026-11-10)
+                let cover_all = std::env::var_os("TAZUNA_COVER_ALL").is_some().then_some(COVER_ALL_RULE);
+                let append: Vec<&str> = [callers, self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), write_tests, cover_all, lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
                     .into_iter()
                     .flatten()
                     .collect();
