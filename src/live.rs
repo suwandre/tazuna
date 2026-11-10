@@ -1360,6 +1360,13 @@ impl Live {
             let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", search);
             prompt.push_str(API_RULE);
             prompt.push_str(PLAN_RULE);
+            // experiment (TAZUNA_OWN_TEST_SCOPE): the Claude path's test rule. DeepSeek spent about half of each k6 and hugo
+            // run in `go test`, whole packages and `./...` included (650 s once), tests tazuna's verify runs anyway after
+            // "run the wider suite once at the end"-style habits (2026-11-10)
+            if std::env::var_os("TAZUNA_OWN_TEST_SCOPE").is_some() && self.test_scope && verify::covers(&self.verify, &self.cwd) {
+                prompt.push_str("\n- ");
+                prompt.push_str(TEST_SCOPE_RULE);
+            }
             if self.project_instructions {
                 let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                 prompt.push_str(&text);
