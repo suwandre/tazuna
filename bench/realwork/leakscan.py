@@ -20,7 +20,12 @@ MODS = Path(os.environ.get("GOMODCACHE", Path.home() / "go/pkg/mod"))
 
 # refusals by run.py's proxy (web) and sandbox (local files): an attempt that got one of these is not a leak
 BLOCKED = re.compile(r"Blocked by the benchmark|Transport error \(GET|Web search cancelled|CONNECT tunnel failed, response 403|Tunnel connection failed: 403|non 2xx status code \(403"
-                     r"|\[exit 56\]|exit:56\b|Operation not permitted|command not found|content:,is_error|returned error: 403|content:/usr/bin/curl\s*,is_error|proxy refused the connection|\(no output\)")  # exit 56: a silent curl refused by the proxy; pi's empty result: (no output); `timeout` missing: the fetch never ran; an empty result (or only `command -v curl`'s line): nothing came back; curl -f's 403
+                     r"|\[exit 56\]|exit:56\b|Operation not permitted|command not found|content:,is_error|returned error: 403|content:/usr/bin/curl\s*,is_error|proxy refused the connection|\(no output\)"
+                     # the Linux jail (bubblewrap) lays an empty tmpfs over the bench repos: git finds no repository there, a
+                     # listing shows only . and .. (`ls -la`: an empty tmpfs directory, 2 links and 40 bytes), a file is missing
+                     # (tazuna and pi on the VM, 2026-11-10: flagged, refused)
+                     r"|up to mount point /home/bench/bench-repos|No such file or directory|content:\.\s\.\.\s*,is_error"
+                     r"|\s2 \S+ \S+\s+40 [^\n]* \.\n")  # exit 56: a silent curl refused by the proxy; pi's empty result: (no output); `timeout` missing: the fetch never ran; an empty result (or only `command -v curl`'s line): nothing came back; curl -f's 403
 
 
 # labels invalid as a whole: OpenCode v287/v288 ran with the bench directory as their project (no PWD), where the tasks'
@@ -219,6 +224,13 @@ def main(sets=()):
                                       if ch != "web" or not ran or w.group(0) in ran):
                     hits.discard(ch)
                     hits.add(ch + "-blocked")  # tried, refused by the proxy or the sandbox
+            # the Linux jail (bubblewrap, run.py since 2026-11-08; the VM's labels from v1100) lays an empty tmpfs over the
+            # bench repos and the tasks: a local read finds nothing there. pi's hugo run was still flagged for its own
+            # thinking ("maybe bench-repos/hugo ... It's empty"), 2026-11-10
+            v = re.search(r"-v(\d+)@", m.group(2))
+            if sys.platform.startswith("linux") and v and int(v.group(1)) >= 1100 and "local" in hits:
+                hits.discard("local")
+                hits.add("local-blocked")
             if hits:
                 found.setdefault((m.group(1), m.group(2)), set()).update(hits)
     with open(HERE / "leaks.jsonl", "w") as out:
