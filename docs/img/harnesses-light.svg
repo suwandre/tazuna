@@ -1,42 +1,36 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 412" width="760" height="412" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-label="harnesses">
-<text x="16.0" y="26.0" font-size="16" font-weight="600" text-anchor="start" fill="#0b0b0b">tazuna against other harnesses</text>
-<text x="16.0" y="46.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">Six merged Go PRs, two runs each, hidden tests and a blind Opus judge; every harness on Claude Sonnet 5.5</text>
-<text x="16.0" y="62.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">high (2026-10-07). Up and to the left is better; under 0.75 judge points is within noise.</text>
-<rect x="680" y="17" width="10" height="10" rx="2" fill="#898781"/>
-<text x="695.0" y="26.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">others</text>
-<rect x="616" y="17" width="10" height="10" rx="2" fill="#2a78d6"/>
-<text x="631.0" y="26.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">tazuna</text>
+<text x="16.0" y="26.0" font-size="16" font-weight="600" text-anchor="start" fill="#0b0b0b">tazuna against Claude Code, same model</text>
+<text x="16.0" y="46.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">Six merged Go PRs, three runs each, hidden tests and a blind Opus judge; tazuna 0.1.93 and Claude Code 2.1.322,</text>
+<text x="16.0" y="62.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">both on Opus 5.5 (2026-11-10). Up and to the left is better; under 0.75 judge points is within noise.</text>
+<rect x="645" y="17" width="10" height="10" rx="2" fill="#898781"/>
+<text x="660.0" y="26.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">Claude Code</text>
+<rect x="581" y="17" width="10" height="10" rx="2" fill="#2a78d6"/>
+<text x="596.0" y="26.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">tazuna</text>
 <line x1="70" x2="720" y1="360.0" y2="360.0" stroke="#e1e0d9" stroke-width="1"/>
-<text x="62.0" y="364.0" font-size="11" font-weight="400" text-anchor="end" fill="#6e6d68">5.0</text>
+<text x="62.0" y="364.0" font-size="11" font-weight="400" text-anchor="end" fill="#6e6d68">6.0</text>
 <line x1="70" x2="720" y1="292.5" y2="292.5" stroke="#e1e0d9" stroke-width="1"/>
-<text x="62.0" y="296.5" font-size="11" font-weight="400" text-anchor="end" fill="#6e6d68">5.5</text>
+<text x="62.0" y="296.5" font-size="11" font-weight="400" text-anchor="end" fill="#6e6d68">6.3</text>
 <line x1="70" x2="720" y1="225.0" y2="225.0" stroke="#e1e0d9" stroke-width="1"/>
-<text x="62.0" y="229.0" font-size="11" font-weight="400" text-anchor="end" fill="#6e6d68">6.0</text>
+<text x="62.0" y="229.0" font-size="11" font-weight="400" text-anchor="end" fill="#6e6d68">6.6</text>
 <line x1="70" x2="720" y1="157.5" y2="157.5" stroke="#e1e0d9" stroke-width="1"/>
-<text x="62.0" y="161.5" font-size="11" font-weight="400" text-anchor="end" fill="#6e6d68">6.5</text>
+<text x="62.0" y="161.5" font-size="11" font-weight="400" text-anchor="end" fill="#6e6d68">6.9</text>
 <line x1="70" x2="720" y1="90.0" y2="90.0" stroke="#e1e0d9" stroke-width="1"/>
-<text x="62.0" y="94.0" font-size="11" font-weight="400" text-anchor="end" fill="#6e6d68">7.0</text>
-<text x="162.9" y="378.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$0.30</text>
-<text x="348.6" y="378.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$0.40</text>
-<text x="534.3" y="378.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$0.50</text>
-<text x="720.0" y="378.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$0.60</text>
+<text x="62.0" y="94.0" font-size="11" font-weight="400" text-anchor="end" fill="#6e6d68">7.2</text>
+<text x="110.6" y="378.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$0.30</text>
+<text x="273.1" y="378.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$0.50</text>
+<text x="435.6" y="378.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$0.70</text>
+<text x="598.1" y="378.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">$0.90</text>
 <line x1="70" x2="720" y1="360" y2="360" stroke="#c3c2b7" stroke-width="1"/>
-<text x="395.0" y="398.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">median cost per task</text>
+<text x="395.0" y="398.0" font-size="11" font-weight="400" text-anchor="middle" fill="#6e6d68">cost per task</text>
 <text x="20" y="225.0" font-size="11" fill="#6e6d68" text-anchor="middle" transform="rotate(-90 20 225.0)">judge score (1-10)</text>
-<circle cx="552.9" cy="152.1" r="6" fill="#898781" stroke="#ffffff" stroke-width="2"/>
-<text x="562.9" y="156.1" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">OMP</text>
-<circle cx="404.3" cy="173.7" r="6" fill="#898781" stroke="#ffffff" stroke-width="2"/>
-<text x="414.3" y="177.7" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">Claude Code</text>
-<circle cx="627.1" cy="196.7" r="6" fill="#898781" stroke="#ffffff" stroke-width="2"/>
-<text x="637.1" y="200.7" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">Hermes</text>
-<circle cx="125.7" cy="214.2" r="6" fill="#898781" stroke="#ffffff" stroke-width="2"/>
-<text x="115.7" y="218.2" font-size="12" font-weight="400" text-anchor="end" fill="#0b0b0b">pi</text>
-<circle cx="515.7" cy="308.7" r="6" fill="#898781" stroke="#ffffff" stroke-width="2"/>
-<text x="525.7" y="312.7" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">OMO</text>
-<circle cx="534.3" cy="343.8" r="6" fill="#898781" stroke="#ffffff" stroke-width="2"/>
-<text x="544.3" y="347.8" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">Empryo</text>
-<circle cx="367.1" cy="134.6" r="6" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-<text x="377.1" y="138.6" font-size="12" font-weight="600" text-anchor="start" fill="#0b0b0b">tazuna</text>
-<circle cx="181.4" cy="219.6" r="6" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
-<text x="191.4" y="223.6" font-size="12" font-weight="600" text-anchor="start" fill="#0b0b0b">tazuna lean</text>
+<line x1="614.4" y1="148.5" x2="273.1" y2="184.5" stroke="#898781" stroke-width="2" stroke-dasharray="4 4"/>
+<line x1="395.0" y1="247.5" x2="151.2" y2="297.0" stroke="#2a78d6" stroke-width="2" stroke-dasharray="4 4"/>
+<circle cx="614.4" cy="148.5" r="6" fill="#898781" stroke="#ffffff" stroke-width="2"/>
+<text x="614.4" y="134.5" font-size="12" font-weight="400" text-anchor="middle" fill="#0b0b0b">Claude Code · medium  6.94 · $0.92</text>
+<circle cx="273.1" cy="184.5" r="6" fill="#898781" stroke="#ffffff" stroke-width="2"/>
+<text x="273.1" y="170.5" font-size="12" font-weight="400" text-anchor="middle" fill="#0b0b0b">Claude Code · low  6.78 · $0.50</text>
+<circle cx="395.0" cy="247.5" r="6" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="405.0" y="251.5" font-size="12" font-weight="600" text-anchor="start" fill="#0b0b0b">tazuna · medium (default)  6.50 · $0.65</text>
+<circle cx="151.2" cy="297.0" r="6" fill="#2a78d6" stroke="#ffffff" stroke-width="2"/>
+<text x="143.2" y="319.0" font-size="12" font-weight="600" text-anchor="start" fill="#0b0b0b">tazuna · low, no explorer  6.28 · $0.35</text>
 </svg>

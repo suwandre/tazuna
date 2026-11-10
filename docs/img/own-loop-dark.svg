@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 298" width="760" height="298" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-label="own-loop">
+<text x="16.0" y="26.0" font-size="16" font-weight="600" text-anchor="start" fill="#f0efec">Own loop: five harnesses on the same model</text>
+<text x="16.0" y="46.0" font-size="12" font-weight="400" text-anchor="start" fill="#c3c2b7">DeepSeek V4.1 Flash 1017 at high on one checked SubRouter route; three Go PRs, two runs each, blind judge</text>
+<text x="16.0" y="62.0" font-size="12" font-weight="400" text-anchor="start" fill="#c3c2b7">(2026-11-09). Command Code: two of six runs passed the 90-minute limit and are not scored.</text>
+<rect x="680" y="17" width="10" height="10" rx="2" fill="#898781"/>
+<text x="695.0" y="26.0" font-size="12" font-weight="400" text-anchor="start" fill="#c3c2b7">others</text>
+<rect x="616" y="17" width="10" height="10" rx="2" fill="#3987e5"/>
+<text x="631.0" y="26.0" font-size="12" font-weight="400" text-anchor="start" fill="#c3c2b7">tazuna</text>
+<text x="210.0" y="284.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">0</text>
+<text x="285.2" y="284.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">2</text>
+<text x="360.4" y="284.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">4</text>
+<text x="435.6" y="284.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">6</text>
+<text x="510.8" y="284.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">8</text>
+<text x="586.0" y="284.0" font-size="11" font-weight="400" text-anchor="middle" fill="#9a9890">10</text>
+<text x="16.0" y="110.0" font-size="12" font-weight="600" text-anchor="start" fill="#f0efec">Judge score</text>
+<line x1="210.0" x2="210.0" y1="116" y2="268" stroke="#3d434c" stroke-width="1"/>
+<line x1="285.2" x2="285.2" y1="116" y2="268" stroke="#2a2e35" stroke-width="1"/>
+<line x1="360.4" x2="360.4" y1="116" y2="268" stroke="#2a2e35" stroke-width="1"/>
+<line x1="435.6" x2="435.6" y1="116" y2="268" stroke="#2a2e35" stroke-width="1"/>
+<line x1="510.8" x2="510.8" y1="116" y2="268" stroke="#2a2e35" stroke-width="1"/>
+<line x1="586.0" x2="586.0" y1="116" y2="268" stroke="#2a2e35" stroke-width="1"/>
+<text x="200.0" y="132.0" font-size="12" font-weight="400" text-anchor="end" fill="#c3c2b7">Command Code 1.88</text>
+<path d="M210,120 H497.4 A4,4 0 0 1 501.4,124 V134 A4,4 0 0 1 497.4,138 H210 Z" fill="#898781"/>
+<text stroke="#0d1117" stroke-width="4" paint-order="stroke" x="507.4" y="133.0" font-size="12" font-weight="400" text-anchor="start" fill="#f0efec">7.75 · 42 min · $0.16 a run</text>
+<text x="200.0" y="162.0" font-size="12" font-weight="400" text-anchor="end" fill="#c3c2b7">OpenCode 2.2</text>
+<path d="M210,150 H444.0 A4,4 0 0 1 448.0,154 V164 A4,4 0 0 1 444.0,168 H210 Z" fill="#898781"/>
+<text stroke="#0d1117" stroke-width="4" paint-order="stroke" x="454.0" y="163.0" font-size="12" font-weight="400" text-anchor="start" fill="#f0efec">6.33 · 27 min · $0.013</text>
+<text x="200.0" y="192.0" font-size="12" font-weight="400" text-anchor="end" fill="#c3c2b7">tazuna 0.1.83</text>
+<path d="M210,180 H438.0 A4,4 0 0 1 442.0,184 V194 A4,4 0 0 1 438.0,198 H210 Z" fill="#3987e5"/>
+<text stroke="#0d1117" stroke-width="4" paint-order="stroke" x="448.0" y="193.0" font-size="12" font-weight="400" text-anchor="start" fill="#f0efec">6.17 · 38 min · $0.013</text>
+<text x="200.0" y="222.0" font-size="12" font-weight="400" text-anchor="end" fill="#c3c2b7">pi 1.5</text>
+<path d="M210,210 H438.0 A4,4 0 0 1 442.0,214 V224 A4,4 0 0 1 438.0,228 H210 Z" fill="#898781"/>
+<text stroke="#0d1117" stroke-width="4" paint-order="stroke" x="448.0" y="223.0" font-size="12" font-weight="400" text-anchor="start" fill="#f0efec">6.17 · 27 min · $0.015</text>
+<text x="200.0" y="252.0" font-size="12" font-weight="400" text-anchor="end" fill="#c3c2b7">OMP 18.18</text>
+<path d="M210,240 H438.0 A4,4 0 0 1 442.0,244 V254 A4,4 0 0 1 438.0,258 H210 Z" fill="#898781"/>
+<text stroke="#0d1117" stroke-width="4" paint-order="stroke" x="448.0" y="253.0" font-size="12" font-weight="400" text-anchor="start" fill="#f0efec">6.17 · 17 min · $0.012</text>
+</svg>

@@ -46,7 +46,12 @@ tools, `/keys` lists every key and command.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/harnesses-dark.svg">
-  <img alt="Judge score against median cost per task for eight harnesses on Claude Sonnet 5.5: tazuna 6.67 at $0.41, OMP 6.54 at $0.51, Claude Code 6.38 at $0.43, Hermes 6.21 at $0.55, pi 6.08 at $0.28, tazuna lean 6.04 at $0.31, OMO 5.38 at $0.49, Empryo 5.12 at $0.50" src="docs/img/harnesses-light.svg">
+  <img alt="Judge score against cost per task on Opus 5.5, six Go PRs, three runs each: Claude Code medium 6.94 at $0.92, Claude Code low 6.78 at $0.50, tazuna medium (its default) 6.50 at $0.65, tazuna low without the explorer 6.28 at $0.35" src="docs/img/harnesses-light.svg">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/own-loop-dark.svg">
+  <img alt="Judge score on DeepSeek V4.1 Flash at high, five harnesses on the same route, three Go PRs, two runs each: Command Code 7.75 (two of six runs over the time limit), OpenCode 6.33, tazuna 6.17, pi 6.17, OMP 6.17" src="docs/img/own-loop-light.svg">
 </picture>
 
 <picture>
@@ -55,39 +60,49 @@ tools, `/keys` lists every key and command.
 </picture>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/img/cost-dark.svg">
-  <img alt="Cost per task: on Opus 5.5, Claude Code $0.91, tazuna $0.66, tazuna boss mode $0.45 at about the same judge score; on 14 October PRs, tazuna on Opus $2.78 against tazuna on DeepSeek V4.1 $0.60, which solved 13 of 14 against 9" src="docs/img/cost-light.svg">
-</picture>
-
-<picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/memory-dark.svg">
   <img alt="Memory: Claude Code's UI 190 MB against tazuna's 7.8 MB; a whole agent run on the claude CLI 262-282 MB against 21-22 MB on tazuna's own loop" src="docs/img/memory-light.svg">
 </picture>
 
-How to read these: tasks are real merged PRs (Go: caddy, hugo, k6, prometheus, rclone, terraform) with the PR's own tests
-hidden from the agent, and a blind Opus judge scoring every candidate for a task together. One run varies by about
-±1.2 judge points and ±$0.40, so judge differences under 0.75 and cost differences under 15% count as noise. The
-same-model rounds are small (one run per task): read them as "faster and cheaper", not "better". Every measured change
-is in the [changelog](CHANGELOG.md); the kit is in [bench/](bench/README.md); the charts come from
-[docs/charts.py](docs/charts.py).
+In short: on Opus, tazuna is about 30% cheaper than Claude Code and finishes sooner, and its judge score is 0.4-0.5
+lower (inside the noise of one round, but on the lower side on most tasks). On a cheap model, tazuna's own loop is on par
+with pi, OMP and OpenCode; Command Code scores higher at twelve times the cost and runs past the time limit.
+
+How to read these: tasks are real merged PRs (Go: caddy, hugo, k6, prometheus, terraform) with the PR's own tests hidden
+from the agent, and a blind Opus judge scoring every candidate for a task together. One run varies by about ±1.5 judge
+points, so judge differences under 0.75 count as noise. All rounds since 2026-11-09 run on one Linux VM, every harness in
+the same sandbox. Every measured change is in the [changelog](CHANGELOG.md); the kit is in [bench/](bench/README.md); the
+charts come from [docs/charts.py](docs/charts.py).
 
 <details>
 <summary>The numbers as tables</summary>
 
-Other harnesses, Claude Sonnet 5.5 high, six Go PRs × 2 runs (2026-10-07, tazuna 0.0.11):
+Claude path, Opus 5.5, six Go PRs × 3 runs per setting, judged per task (2026-11-10; tazuna 0.1.93, Claude Code 2.1.322):
 
-| Harness | Judge | All hidden tests pass | Median cost | Median time |
+| Task | Claude Code low | tazuna low, no explorer | Claude Code medium | tazuna medium (default) |
 |---|---|---|---|---|
-| **tazuna** | **6.67** | **8/12** | **$0.41** | **411 s** |
-| OMP 18.8.3 | 6.54 | 8/12 | $0.51 | 401 s |
-| Claude Code 2.1.292 | 6.38 | 8/12 | $0.43 | 420 s |
-| Hermes 0.21.5 | 6.21 | 7/12 | $0.55 | 453 s |
-| pi 1.0.4 | 6.08 | 8/12 | $0.28 | 458 s |
-| tazuna lean | 6.04 | 8/12 | $0.31 | 381 s |
-| OMO 5.1.23 | 5.38 | 7/12 | $0.49 | 307 s |
-| Empryo 3.8.7-beta | 5.12 | 8/12 | $0.50 | 464 s |
+| caddy | 8.00 · $0.29 | 5.00 · $0.16 | 8.33 · $0.49 | 8.00 · $0.43 |
+| hugo (section slug) | 7.00 · $0.35 | 7.00 · $0.22 | 7.67 · $0.51 | 7.67 · $0.34 |
+| hugo (template return) | 7.00 · $0.86 | 5.67 · $0.58 | 6.00 · $1.62 | 5.33 · $1.19 |
+| k6 | 6.00 · $0.48 | 7.00 · $0.33 | 7.33 · $1.20 | 6.67 · $0.68 |
+| prometheus | 7.67 · $0.64 | 8.00 · $0.53 | 7.67 · $1.02 | 7.33 · $0.91 |
+| terraform | 5.00 · $0.40 | 5.00 · $0.26 | 4.67 · $0.68 | 4.00 · $0.34 |
+| **all six** | **6.78 · $3.02** | **6.28 · $2.08** | **6.94 · $5.52** | **6.50 · $3.89** |
 
-Same model, four Go PRs, one run each:
+Medium adds about 0.2 judge points over low for either harness, at about 1.8× the cost.
+
+Own loop, DeepSeek V4.1 Flash 1017 at high on one SubRouter route (BangAi, Kriora, LingAI), three Go PRs × 2 runs
+(2026-11-09; tazuna 0.1.83):
+
+| Harness | Judge | All hidden tests pass | Median minutes | Cost per run |
+|---|---|---|---|---|
+| Command Code 1.88 | 7.75 (4 runs scored) | 4/6 (two runs over 90 min) | 42 | $0.162 |
+| OpenCode 2.2 | 6.33 | 4/6 | 27 | $0.013 |
+| **tazuna** | **6.17** | **4/6** | **38** | **$0.013** |
+| pi 1.5 | 6.17 | 5/6 | 27 | $0.015 |
+| OMP 18.18 | 6.17 | 4/6 | 17 | $0.012 |
+
+Same model, its maker's harness, four Go PRs, one run each:
 
 | Model | Harness | Judge | Hidden tests | Minutes per task | Cost per task |
 |---|---|---|---|---|---|
@@ -96,15 +111,9 @@ Same model, four Go PRs, one run each:
 | Kimi K3.1 Pro (SubRouter) | **tazuna 0.1.4** | 6.88 | 11/13 | **14.3** | **$0.05** |
 | | Kimi Code 2.4.0 | 7.25 | 11/13 | 20.5 | $0.11 |
 
-Cost per task:
-
-| Round | Setup | Judge | Cost per task |
-|---|---|---|---|
-| Opus 5.5 medium, six Go PRs | Claude Code | 7.58 | $0.91 |
-| | tazuna | 7.46 | $0.66 |
-| | tazuna, boss mode | 7.33 | $0.45 |
-| 14 Go PRs merged in October 2026 | tazuna on Opus 5.5 medium | 6.79 (9/14 solved) | $2.78 |
-| | tazuna on DeepSeek V4.1 Flash, max | 7.79 (13/14 solved) | $0.60 |
+Earlier round, eight harnesses on Claude Sonnet 5.5 high, six Go PRs × 2 runs (2026-10-07, tazuna 0.0.11): tazuna 6.67,
+OMP 6.54, Claude Code 6.38, Hermes 6.21, pi 6.08, tazuna lean 6.04, OMO 5.38, Empryo 5.12 (judge; median cost
+$0.28-0.55 a task).
 
 Footprint: binary 4.4 MB; UI 7.8 MB RAM, ~2% CPU while animating, first frame in 8 ms (tazuna 0.1.83). Claude Code's own
 UI: 190 MB, 0.45 s to start (2026-10-08). A whole agent run: 21-22 MB on the own loop, 262-282 MB on the claude CLI
