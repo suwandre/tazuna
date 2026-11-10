@@ -272,12 +272,17 @@ fn trim(out: &str) -> String {
 /// The message that sends a failure back to claude.
 pub fn feedback(o: &Outcome, round: u32) -> String {
     format!(
-        "Verification failed (round {round} of {MAX_ROUNDS}): `{}` exited with {}.\n\n```\n{}\n```\n\nFix the cause of these failures, run the tests again, and finish with a short summary.",
+        "Verification failed (round {round} of {MAX_ROUNDS}): `{}` exited with {}.\n\n```\n{}\n```\n\nFix the cause of these failures, run the tests again, and finish with a short summary.{}",
         o.cmd,
         o.code.map_or("a timeout".into(), |c| format!("code {c}")),
-        o.output
+        o.output,
+        if std::env::var_os("TAZUNA_FIX_CODE").is_some() { FIX_CODE } else { "" }
     )
 }
+
+/// Experiment (TAZUNA_FIX_CODE): Opus at low broke hugo's `return add . 42` syntax in two runs and rewrote the existing
+/// test that caught it, which the judge marked down as hiding a regression (2026-11-10).
+const FIX_CODE: &str = " A test that existed before your change and fails now protects behavior your change broke: fix the code, not the test, unless the task itself changes that behavior.";
 
 #[cfg(test)]
 mod tests {
