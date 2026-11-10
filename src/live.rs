@@ -88,6 +88,8 @@ const HISTORY_RULE: &str = "Before you change a file, read why it is the way it 
 /// same judge, -17% cost, 40-58% faster (2026-11-03).
 const CALLERS_RULE: &str = "Before you change a function, type or option, find every place that uses it and every code path that reaches it (other commands and entry points too), and make your change cover all of them.";
 
+const WRITE_TESTS_RULE: &str = "Add or update tests for the behavior you change, including its edge cases: tazuna's check only runs the tests, it does not write them.";
+
 const TEST_SCOPE_RULE: &str = "While working, run only the tests that cover your change (in Go: `go test -run 'TestA|TestB' ./pkg/`), not whole packages or the whole repository: when you finish, tazuna runs the changed packages' tests and sends you any failure.";
 const FINISH_RULES: &str = "Finish only when the task is fully done: every requirement and acceptance criterion in the request is met and checked. Do not stop to ask for confirmation or leave steps for the user. Before relying on a name you have not read (a database column, function, field, API), read where it is defined.";
 
@@ -1473,7 +1475,11 @@ impl Live {
                 // experiment (TAZUNA_READ_CALLERS): Opus at low read about half of what Claude Code read and missed code
                 // paths (k6's archive and cloud commands, hugo's template boundaries), 2026-11-10
                 let callers = std::env::var_os("TAZUNA_READ_CALLERS").is_some().then_some(CALLERS_RULE);
-                let append: Vec<&str> = [callers, self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
+                // experiment (TAZUNA_WRITE_TESTS): with the test rule, Opus at medium wrote a third less test code than
+                // Claude Code (1,743 against 2,620 lines over 18 runs) and the judge's tests score was 0.50 lower, the
+                // bulk of the gap (2026-11-10): the rule may read as "tazuna does the testing"
+                let write_tests = (scoped && std::env::var_os("TAZUNA_WRITE_TESTS").is_some()).then_some(WRITE_TESTS_RULE);
+                let append: Vec<&str> = [callers, self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), write_tests, lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
                     .into_iter()
                     .flatten()
                     .collect();
