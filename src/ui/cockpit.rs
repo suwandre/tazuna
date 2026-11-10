@@ -105,7 +105,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     // how long the cache stays warm: after that the next call writes the whole context again
     if let (Some(left), Some(ttl)) = (s.cache_left(v.clock_ms), s.cache_ttl_ms) {
         let life = if ttl >= 3_600_000.0 { "1h" } else { "5m" };
-        let (text, color) = if left > 0.0 { (format!("{} of {life}", clock_str(left)), th.ok) } else { (format!("expired ({life})"), th.warn) };
+        // expired: what the next message costs, before it is sent (Session::rebuild)
+        let cold = s.rebuild().map_or(String::new(), |(t, _)| format!(" · next re-reads {}", human(t)));
+        let (text, color) = if left > 0.0 { (format!("{} of {life}", clock_str(left)), th.ok) } else { (format!("expired ({life}){cold}"), th.warn) };
         f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!("{:<12}", "cache life"), st(th.text)), Span::styled(text, st(color))])), g4);
     }
 

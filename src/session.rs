@@ -317,6 +317,21 @@ impl Session {
 
     /// Milliseconds the cache stays warm after `now_ms`, from the latest call's start (the one in flight renewed it), None
     /// when unknown.
+    /// What Claude re-reads without its cache after a model or effort switch, or once the cache has expired: the whole
+    /// context, written again at the cache-write price (1.25x input for a 5-minute cache, 2x for an hour). None when
+    /// it is too small to mention, or on the own loop. In the user's sessions (2026-11-10) the first call after
+    /// `/effort` read 13k from the cache and wrote 24k again: only the fixed start of the prompt survived.
+    pub fn rebuild(&self) -> Option<(u64, Option<f64>)> {
+        if self.context < 50_000 || self.price_m.is_some() {
+            return None;
+        }
+        // ponytail: list prices per M input (2026-11), a model not in the list gets the tokens without a price
+        let m = self.model.as_str();
+        let input = if m.contains("opus") { Some(4.0) } else if m.contains("sonnet") { Some(2.0) } else if m.contains("haiku") { Some(0.10) } else if m.contains("fable") { Some(8.0) } else { None };
+        let write = if self.cache_ttl_ms.is_some_and(|t| t < 3_600_000.0) { 1.25 } else { 2.0 };
+        Some((self.context, input.map(|p| self.context as f64 / 1e6 * p * write)))
+    }
+
     pub fn cache_left(&self, now_ms: f64) -> Option<f64> {
         let ttl = self.cache_ttl_ms?;
         Some((self.call_start.or(self.last_call_ms)? + ttl - now_ms).max(0.0))
@@ -996,6 +1011,15 @@ mod tests {
         k.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 2, "cache_read_input_tokens": 90762, "cache_creation_input_tokens": 1486,
             "iterations": [{"cache_creation": {"ephemeral_5m_input_tokens": 0, "ephemeral_1h_input_tokens": 1486}}]}})), 1000.0);
         assert_eq!((k.cache_ttl_ms, k.cache_left(61_000.0), k.cache_left(4_000_000.0)), (Some(3_600_000.0), Some(3_539_000.0), Some(0.0)), "from the call's start");
+        // a rebuild's price: the whole context written again, at twice Opus 5.5's input price for an hour's cache
+        let mut r = Session::new("", "medium");
+        (r.model, r.context, r.cache_ttl_ms) = ("claude-opus-5-5".into(), 514_000, Some(3_600_000.0));
+        let (t, usd) = r.rebuild().unwrap();
+        assert!(t == 514_000 && (usd.unwrap() - 4.112).abs() < 0.001, "{usd:?}");
+        r.context = 20_000;
+        assert!(r.rebuild().is_none(), "too small to mention");
+        (r.context, r.price_m) = (514_000, Some((0.02, 0.002, 0.07)));
+        assert!(r.rebuild().is_none(), "the own loop's providers keep their cache across an effort change");
         assert_eq!(k.last_call_hit().map(|h| (h * 1000.0).round()), Some(984.0));
         k.apply(&ev(json!({"type": "message_start"})), 5_000_000.0);
         assert_eq!(k.cache_left(5_000_500.0), Some(3_599_500.0), "a call in flight renews it");

@@ -720,6 +720,13 @@ fn trust_host(host: &str) -> Result<()> {
     Ok(())
 }
 
+/// The price of a switch that rebuilds Claude's cache, for the switch's question and message: "the next message re-reads
+/// ~514k tokens without the cache (≈ $4.11 of plan usage)".
+fn rebuild_text(s: &session::Session) -> Option<String> {
+    let (tokens, usd) = s.rebuild()?;
+    Some(format!("the next message re-reads ~{} tokens without the cache{}", ui::human(tokens), usd.map_or(String::new(), |u| format!(" (≈ ${u:.2} of plan usage)"))))
+}
+
 /// `/login`: the provider list (row 0 Claude, then `models::LOGINS`), and the key being typed on a provider's page.
 struct LoginPick {
     sel: usize,
@@ -883,7 +890,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -1402,6 +1409,9 @@ fn run_live(
     // /model: the choices, the selected row (in the filtered list), each choice's effort and what has been typed to filter
     let mut pick: Option<Picker> = None;
     let mut login: Option<LoginPick> = None;
+    // `/effort LEVEL` that would rebuild Claude's cache of a long conversation: asked once with its price, the same
+    // command again switches
+    let mut effort_pending: Option<String> = None;
     if a.pick {
         pick = Some(open_picker(live, &key_models)?);
     }
@@ -1434,6 +1444,7 @@ fn run_live(
         v.asking = live.pending.front().map(|req| question(req));
         v.mode = s.mode.clone();
         v.bg_running = live.bg.iter().filter(|t| t.ended.is_none()).count();
+        v.cold = if s.cache_left(v.clock_ms) == Some(0.0) { s.rebuild().map_or(0, |r| r.0) } else { 0 };
         if tasks_open && outputs_read.elapsed() > Duration::from_secs(1) {
             live.read_task_outputs();
             outputs_read = Instant::now();
@@ -1476,7 +1487,11 @@ fn run_live(
             }),
         });
         v.models = pick.as_ref().map(|pk| {
-            let Picker { cs, sel, eff, prov, filter, psel, in_models, effort_at, effort_only } = pk;
+            let Picker { cs, sel, eff, prov, filter, psel, in_models, effort_at, effort_only, confirm } = pk;
+            // switching Claude's model or effort in a long conversation rebuilds its cache: the price, before the switch
+            let note = effort_at.and_then(|i| (cs[i].route.is_none() && live.provider.is_none()).then(|| rebuild_text(&s)).flatten())
+                .map(|t| if *confirm { format!("Enter again to switch: {t}.") } else { format!("Switching rebuilds Claude's cache once: {t}.") })
+                .unwrap_or_default();
             let group = pk.group();
             let usable = |i: usize| matches!(cs[i].state, models::State::Ready | models::State::Unchecked);
             // the left pane: All models, then each provider with how many models and whether any can be picked now
@@ -1504,7 +1519,12 @@ fn run_live(
                 group: *psel,
                 in_models: *in_models,
                 effort: effort_at.map(|i| (cs[i].label.clone(), cs[i].efforts.clone(), eff[i],
-                    if *effort_only { "↑↓ effort · enter use · esc close" } else { "↑↓ effort · enter use · esc models" })),
+                    match (*confirm, *effort_only) {
+                        (true, true) => "enter again to switch · esc close",
+                        (true, false) => "enter again to switch · esc models",
+                        (false, true) => "↑↓ effort · enter use · esc close",
+                        (false, false) => "↑↓ effort · enter use · esc models",
+                    }, note.clone())),
             }
         });
         let dt = last.elapsed();
@@ -1841,11 +1861,18 @@ fn run_live(
             let mut chosen = None;
             if let Some(i) = pk.effort_at {
                 let n = pk.cs[i].efforts.len();
+                // a Claude switch in a long conversation asks once more, with its price shown (Session::rebuild)
+                let costly = pk.cs[i].route.is_none() && live.provider.is_none() && s.rebuild().is_some()
+                    && (pk.cs[i].model != live.model || pk.cs[i].efforts.get(pk.eff[i]).is_some_and(|e| *e != live.effort));
+                if key.code != KeyCode::Enter {
+                    pk.confirm = false;
+                }
                 match key.code {
                     KeyCode::Up | KeyCode::Left => pk.eff[i] = pk.eff[i].saturating_sub(1),
                     KeyCode::Down | KeyCode::Right => pk.eff[i] = (pk.eff[i] + 1).min(n.saturating_sub(1)),
                     KeyCode::Esc if pk.effort_only => pick = None,
                     KeyCode::Esc => pk.effort_at = None,
+                    KeyCode::Enter if costly && !pk.confirm => pk.confirm = true,
                     KeyCode::Enter => {
                         chosen = Some((models::pinned(&pk.cs[i], pk.prov[i]), pk.cs[i].efforts.get(pk.eff[i]).cloned()));
                         pick = None;
@@ -2231,7 +2258,18 @@ fn run_live(
                         pick = Some(pk);
                         continue;
                     } else if levels.contains(&want) {
-                        live.set_effort(want)
+                        match rebuild_text(&s).filter(|_| live.provider.is_none() && want != live.effort) {
+                            Some(t) if effort_pending.as_deref() != Some(want.as_str()) => {
+                                let text = format!("Switching to {want} rebuilds Claude's cache once: {t}. Send /effort {want} again to switch.");
+                                s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
+                                effort_pending = Some(want);
+                                continue;
+                            }
+                            _ => {
+                                effort_pending = None;
+                                live.set_effort(want)
+                            }
+                        }
                     } else {
                         Err(anyhow::anyhow!("{} takes {}", live.model, levels.join(", ")))
                     };
@@ -2307,7 +2345,11 @@ fn run_live(
                                 if let Ok(f) = labels::dir().map(|d| d.join("connectors")) {
                                     let _ = if live.connectors { std::fs::write(f, "") } else { std::fs::remove_file(f) };
                                 }
-                                s.apply(&e, t)
+                                s.apply(&e, t);
+                                // claude restarts with the new MCP setting, which rebuilds its cache once
+                                if let Some(r) = rebuild_text(&s).filter(|_| live.provider.is_none()) {
+                                    info(&mut s, format!("Claude restarts with it, so {r}"));
+                                }
                             }
                             Err(err) => info(&mut s, format!("{err:#}")),
                         },
@@ -2535,6 +2577,8 @@ struct Picker {
     effort_at: Option<usize>,
     /// Opened by `/effort`: only the effort step, for the model in use; esc closes.
     effort_only: bool,
+    /// Enter once on a switch that rebuilds Claude's cache of a large conversation: the price shown, the next enter switches.
+    confirm: bool,
 }
 
 impl Picker {
@@ -2554,7 +2598,7 @@ fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     // it opens on the providers, the current one selected and its models beside it, the current model marked
     let current = cs.iter().position(|c| c.model == live.model).map(|i| models::provider_of(&cs[i]));
     let psel = models::providers(&cs).iter().position(|(n, _)| Some(n) == current.as_ref()).map_or(0, |i| i + 1);
-    let mut p = Picker { cs, sel: 0, eff, prov, filter: String::new(), psel, in_models: false, effort_at: None, effort_only: false };
+    let mut p = Picker { cs, sel: 0, eff, prov, filter: String::new(), psel, in_models: false, effort_at: None, effort_only: false, confirm: false };
     p.sel = shown(&p.cs, "", p.group().as_deref()).iter().position(|&i| p.cs[i].model == live.model).unwrap_or(0);
     Ok(p)
 }

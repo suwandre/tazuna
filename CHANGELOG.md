@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.95 (2026-11-10): the price of rebuilding Claude's cache, shown before you pay it
+
+- Switching Claude's model or effort in a conversation rebuilds its prompt cache once: in the user's sessions the first
+  call after `/effort` read 13k tokens from the cache and wrote 24k again (only the fixed start of the prompt survived).
+  On a long conversation that is the whole context at the cache-write price, ≈ $4 of plan usage at 514k tokens on Opus.
+  `/model` and `/effort` now show it under the levels ("Switching rebuilds Claude's cache once: the next message
+  re-reads ~514k tokens without the cache (≈ $4.11 of plan usage)") and ask for a second enter; `/effort LEVEL` asks
+  once and switches when sent again; `/mcp on|off` on Claude says what its restart costs. Under 50k tokens nothing
+  is asked. The own loop is left out: its providers' caches survive an effort change.
+- Once Claude's cache has expired (after an hour, or five minutes), the message box says "cache cold: the next message
+  re-reads 514k tokens", and the cockpit's cache-life line does too, before the message is sent.
+- From an article on Claude Code's cache leaks the user shared: the other points (an hour's cache, cache meters, a fixed
+  tool list on the own loop, checked provider caches, subagents with a context of their own) tazuna already covers.
+  No measurable metric changes.
+
 ## 0.1.94 (2026-11-10): a long background-task list scrolls
 
 - ctrl-b's list of background tasks kept showing its first rows, so in a session with 30-odd tasks the selected one

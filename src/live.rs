@@ -686,7 +686,11 @@ impl Live {
         } else {
             self.respawn(self.model.clone(), effort.clone());
         }
-        let text = format!("effort: {effort} for the rest of the session (the conversation goes on)");
+        let text = if self.provider.is_some() {
+            format!("effort: {effort} for the rest of the session (the conversation goes on)")
+        } else {
+            format!("effort: {effort} for the rest of the session (the conversation goes on; Claude rebuilds its cache once)")
+        };
         Ok(self.record(json!({"type": "harness_effort", "effort": effort, "text": text})))
     }
 
