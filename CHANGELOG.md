@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.89 (2026-11-10): Fable 5.2
+
+- `/model` lists Fable 5.2 instead of Fable 5.1: tazuna keeps its own list of Claude models (with their effort levels),
+  and it still named 5.1 after the claude CLI (2.1.321) had 5.2. SubRouter's Claude listings stay out of `/model`, where
+  Fable 5.1 would otherwise have come back as a SubRouter row: Claude runs on the subscription. No measurable metric
+  changes.
+
 ## 0.1.88 (2026-11-10): effort apart from the model
 
 - `/model` no longer sets the effort on the model rows (‹high› with ←→, which the user found mixed up with picking the

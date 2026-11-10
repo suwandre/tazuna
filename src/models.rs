@@ -11,7 +11,7 @@ use std::path::Path;
 pub const LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 
 /// The effort levels a Claude model takes and its default (Anthropic's effort docs, 2026-11-02: Opus 5.5, Sonnet 5.5,
-/// Haiku 5.5 and Fable 5.1 take all five; Opus 5.5 and Haiku 5.5 default to medium, the others to high). Claude Code
+/// Haiku 5.5 and Fable 5.2 take all five; Opus 5.5 and Haiku 5.5 default to medium, the others to high). Claude Code
 /// names them by family ("haiku", "sonnet") as well. The own loop's models list theirs per route in routes.json: the
 /// levels that differ (DeepSeek V4.1 Flash: high and max; Kimi: none).
 pub fn claude_levels(model: &str) -> (&'static [&'static str], &'static str) {
@@ -25,7 +25,7 @@ pub fn known_claude(model: &str) -> bool {
 }
 
 const CLAUDE: [(&str, &str); 4] =
-    [("claude-opus-5-5", "Opus 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"), ("claude-haiku-5-5", "Haiku 5.5"), ("claude-fable-5-1", "Fable 5.1")];
+    [("claude-opus-5-5", "Opus 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"), ("claude-haiku-5-5", "Haiku 5.5"), ("claude-fable-5-2", "Fable 5.2")];
 /// A route checked longer ago than this is marked stale: provider prices move by the day (Sol's cheapest provider changed
 /// within days, 2026-11-01).
 const STALE_DAYS: u64 = 7;
@@ -323,7 +323,9 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
     let mut rest: Vec<(f64, &String, &Value)> = file["catalog"].as_object().into_iter().flatten()
         .filter_map(|(m, c)| file["aa"][slug(m)].as_f64().map(|a| (a, m, c))).collect();
     rest.sort_by(|a, b| b.0.total_cmp(&a.0).then((*a.1 != a.1.to_lowercase()).cmp(&(*b.1 != b.1.to_lowercase()))).then(a.1.cmp(b.1)));
-    rest.retain(|(_, m, _)| seen.insert(slug(m)));
+    // Claude runs on the subscription, never through SubRouter (with Fable 5.2 in the list, SubRouter's Fable 5.1 would
+    // have come in as a row of its own, 2026-11-10)
+    rest.retain(|(_, m, _)| !m.to_lowercase().starts_with("claude-") && seen.insert(slug(m)));
     let key = "SUBROUTER_API_KEY";
     for (_, model, c) in rest {
         let (input, output) = (c["price"][0].as_f64().unwrap_or(0.0), c["price"][1].as_f64().unwrap_or(0.0));
@@ -829,7 +831,7 @@ mod tests {
         std::fs::write(&f, d.to_string()).unwrap();
         let c: Vec<Choice> = catalog(&f, |h| h == "subrouter.ai", &KeyModels::new(), now).into_iter().filter(|c| c.place != "Mortera").collect();
         assert_eq!(c.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
-                   ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.1", "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017 · fast", "gpt-6.1-sol", "glm-5.3"],
+                   ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.2", "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017 · fast", "gpt-6.1-sol", "glm-5.3"],
                    "routed models once; unchecked ones only with a public score (no video model)");
         assert_eq!((c[6].bench.as_str(), c[6].aa.as_str(), c[6].price.as_str()), ("6.6 (51)", "54", "0.0387 / 0.194"));
         assert_eq!((c[7].route.as_ref().unwrap().1.as_str(), c[7].price.as_str()), ("SUBROUTER_API_KEY", "0.1 / 0.4"));
