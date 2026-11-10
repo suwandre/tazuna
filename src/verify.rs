@@ -28,6 +28,10 @@ pub struct Outcome {
     pub secs: f64,
     /// Trimmed to what claude needs to fix the failure.
     pub output: String,
+    /// Go tests that failed, top-level names ("(build)" for a package that did not build), from the untrimmed output.
+    pub failed: Vec<String>,
+    /// Of those, the ones that fail on the last commit too: not the change's doing, so not sent back as its failure.
+    pub preexisting: Vec<String>,
 }
 
 /// Extra rounds claude gets to fix failing tests before the run ends as `verify_failed`.
@@ -147,11 +151,11 @@ pub fn check(cwd: &Path, tests: Option<String>, types: Option<(String, String)>)
             (cmd, new_type_errors(&before, &after), secs)
         })
     });
-    let mut o = tests.map(|c| run(cwd, &c));
+    let mut o = tests.map(|c| preexisting(run(cwd, &c), |o| failing_before(cwd, &o.cmd, &o.failed)));
     let Some((cmd, errors, secs)) = tc.and_then(|h| h.join().ok()) else {
-        return o.unwrap_or_else(|| Outcome { cmd: String::new(), ok: true, no_tests: true, timed_out: false, code: None, secs: 0.0, output: String::new() });
+        return o.unwrap_or_else(|| Outcome { cmd: String::new(), ok: true, no_tests: true, timed_out: false, code: None, secs: 0.0, output: String::new(), failed: vec![], preexisting: vec![] });
     };
-    let base = o.take().unwrap_or(Outcome { cmd: String::new(), ok: true, no_tests: false, timed_out: false, code: Some(0), secs: 0.0, output: String::new() });
+    let base = o.take().unwrap_or(Outcome { cmd: String::new(), ok: true, no_tests: false, timed_out: false, code: Some(0), secs: 0.0, output: String::new(), failed: vec![], preexisting: vec![] });
     let cmd = if base.cmd.is_empty() { cmd } else { format!("{} + {cmd}", base.cmd) };
     if errors.is_empty() {
         return Outcome { cmd, no_tests: false, secs: base.secs.max(secs), ..base };
@@ -161,7 +165,7 @@ pub fn check(cwd: &Path, tests: Option<String>, types: Option<(String, String)>)
     if !base.ok {
         output = format!("{}\n\n{output}", base.output);
     }
-    Outcome { cmd, ok: false, no_tests: false, timed_out: false, code: base.code.filter(|&c| c != 0).or(Some(1)), secs: base.secs.max(secs), output: trim(&output) }
+    Outcome { cmd, ok: false, no_tests: false, timed_out: false, code: base.code.filter(|&c| c != 0).or(Some(1)), secs: base.secs.max(secs), output: trim(&output), ..base }
 }
 
 /// Whether verify can test this repo at all: a command given, or one it would find (a Go module, a Cargo crate, Python
@@ -205,7 +209,78 @@ fn run_for(cwd: &Path, cmd: &str, limit: Duration) -> Outcome {
     let (code, output, secs) = run_limited(cwd, cmd, limit);
     let no_tests = code == Some(5) && (cmd.contains("pytest") || cmd.contains("unittest"));
     let timed_out = code.is_none() && secs >= limit.as_secs_f64();
-    Outcome { cmd: cmd.into(), ok: code == Some(0), no_tests, timed_out, code, secs, output: trim(&output) }
+    Outcome { cmd: cmd.into(), ok: code == Some(0), no_tests, timed_out, code, secs, failed: go_failures(&output), preexisting: vec![], output: trim(&output) }
+}
+
+/// The Go tests a `go test` output reports failing, by top-level name (a subtest counts as its test), once each; a
+/// package that did not build or set up counts as "(build)", which no earlier run explains away.
+fn go_failures(out: &str) -> Vec<String> {
+    let mut v: Vec<String> = vec![];
+    for l in out.lines() {
+        let name = if let Some(rest) = l.trim_start().strip_prefix("--- FAIL: ") {
+            rest.split([' ', '/']).next().unwrap_or_default().to_string()
+        } else if l.starts_with("FAIL") && (l.contains("[build failed]") || l.contains("[setup failed]")) {
+            "(build)".to_string()
+        } else {
+            continue;
+        };
+        if !name.is_empty() && !v.contains(&name) {
+            v.push(name);
+        }
+    }
+    v
+}
+
+/// A failed verify whose failing tests also fail on the last commit is not the change's doing: those go back to the
+/// agent as "not yours", and when all of them do, the run counts as verified. k6's TestStdLogOutputIsSet times out
+/// behind the bench's proxy on untouched code too; tazuna sent it back twice in every run, the agent proved twice by hand
+/// that it failed without its change, and one run cleared the proxy variables in the test to make it pass (2026-11-10).
+fn preexisting(mut o: Outcome, before: impl FnOnce(&Outcome) -> Option<Vec<String>>) -> Outcome {
+    if o.ok || o.timed_out || o.failed.is_empty() || o.failed.iter().any(|t| t == "(build)") {
+        return o;
+    }
+    let Some(old) = before(&o).filter(|old| !old.is_empty()) else { return o };
+    let new: Vec<&String> = o.failed.iter().filter(|t| !old.contains(t)).collect();
+    if new.is_empty() {
+        o.ok = true;
+        o.output = format!("{} fail on the last commit too, without this change: left alone", old.join(", "));
+    } else {
+        o.output = format!("{} also fail on the last commit, without your change: not yours to fix. Fix the others.\n\n{}", old.join(", "), o.output);
+    }
+    o.preexisting = old;
+    o
+}
+
+/// Of `tests` (failing now), those that fail on the last commit as well: the same packages in a git worktree of HEAD.
+/// Only for verify's own `go test ./pkg/` commands; None where it cannot tell (no git, no worktree). Remembered for the
+/// session: the next fix round does not check the same test again.
+// ponytail: HEAD, not the tree as the session found it; changes the user had not committed count as the agent's
+fn failing_before(cwd: &Path, cmd: &str, tests: &[String]) -> Option<Vec<String>> {
+    static KNOWN: std::sync::Mutex<Vec<(std::path::PathBuf, String)>> = std::sync::Mutex::new(Vec::new());
+    let pkgs = cmd.strip_prefix("go test ").filter(|p| p.split(' ').all(|p| p.starts_with("./") && safe_path(p)))?;
+    if !tests.iter().all(|t| !t.is_empty() && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')) {
+        return None;
+    }
+    let known: Vec<String> = KNOWN.lock().ok()?.iter().filter(|(d, _)| d == cwd).map(|(_, t)| t.clone()).collect();
+    let ask: Vec<&String> = tests.iter().filter(|t| !known.contains(t)).collect();
+    let mut old: Vec<String> = tests.iter().filter(|t| known.contains(t)).cloned().collect();
+    if !ask.is_empty() {
+        let dir = std::env::temp_dir().join(format!("tazuna-base-{}-{}", std::process::id(), crate::platform::random::<4>().iter().map(|b| format!("{b:02x}")).collect::<String>()));
+        let git = |args: &[&str]| Command::new("git").args(args).current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+        if !git(&["worktree", "add", "--detach", "-q", &dir.to_string_lossy(), "HEAD"]).is_ok_and(|s| s.success()) {
+            return None;
+        }
+        let pattern = ask.iter().map(|t| t.as_str()).collect::<Vec<_>>().join("|");
+        let (_, out, _) = run_limited(&dir, &format!("go test -count=1 -run '^({pattern})$' {pkgs}"), TIMEOUT);
+        let _ = git(&["worktree", "remove", "--force", &dir.to_string_lossy()]);
+        let failed = go_failures(&out);
+        let mut k = KNOWN.lock().ok()?;
+        for t in ask.into_iter().filter(|t| failed.contains(t)) {
+            k.push((cwd.to_path_buf(), t.clone()));
+            old.push(t.clone());
+        }
+    }
+    Some(old)
 }
 
 /// Exit code (None: did not start or timed out), full output, seconds.
@@ -287,6 +362,47 @@ const FIX_CODE: &str = " A test that existed before your change and fails now pr
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_last_commit_is_checked_in_a_worktree_of_its_own() {
+        if Command::new("go").arg("version").stdout(Stdio::null()).status().is_err() {
+            return; // no Go here (some CI runners)
+        }
+        let dir = std::env::temp_dir().join(format!("tazuna-before-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sh = |c: &str| assert!(crate::platform::shell(c, &[]).current_dir(&dir).stdout(Stdio::null()).stderr(Stdio::null()).status().unwrap().success(), "{c}");
+        std::fs::write(dir.join("go.mod"), "module x\n\ngo 1.21\n").unwrap();
+        std::fs::write(dir.join("a_test.go"), "package x\n\nimport \"testing\"\n\nfunc TestOld(t *testing.T) { t.Fatal(\"broken before\") }\n").unwrap();
+        sh("git init -q && git add -A && git -c user.email=a@b -c user.name=a commit -qm base");
+        std::fs::write(dir.join("b_test.go"), "package x\n\nimport \"testing\"\n\nfunc TestNew(t *testing.T) { t.Fatal(\"broken by the change\") }\n").unwrap();
+        let o = check(&dir, Some("go test ./".into()), None);
+        assert!(!o.ok && o.preexisting == ["TestOld"] && o.output.starts_with("TestOld also fail on the last commit"), "{}", o.output);
+        std::fs::remove_file(dir.join("b_test.go")).unwrap();
+        let o = check(&dir, Some("go test ./".into()), None);
+        assert!(o.ok && o.preexisting == ["TestOld"], "only the old failure left: {}", o.output);
+        let wt = String::from_utf8(Command::new("git").args(["worktree", "list"]).current_dir(&dir).output().unwrap().stdout).unwrap();
+        assert_eq!(wt.lines().count(), 1, "the worktree is gone: {wt}");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn failures_that_predate_the_change_are_not_sent_back_as_its() {
+        let out = "=== RUN   TestA\n--- FAIL: TestA (60.01s)\n=== RUN   TestB\n    --- FAIL: TestB/sub (0.00s)\n--- FAIL: TestB (0.00s)\nFAIL\tgo.k6.io/k6/v2/internal/cmd\t62.3s\n";
+        assert_eq!(go_failures(out), ["TestA", "TestB"]);
+        assert_eq!(go_failures("FAIL\tx/y [build failed]\n"), ["(build)"]);
+        let failed = |names: &[&str]| Outcome { cmd: "go test ./a/".into(), ok: false, no_tests: false, timed_out: false, code: Some(1), secs: 1.0,
+            output: "the failure".into(), failed: names.iter().map(|s| s.to_string()).collect(), preexisting: vec![] };
+        let old = |names: &[&str]| { let v: Vec<String> = names.iter().map(|s| s.to_string()).collect(); move |_: &Outcome| Some(v) };
+        let o = preexisting(failed(&["TestA"]), old(&["TestA"]));
+        assert!(o.ok && o.preexisting == ["TestA"] && o.output.contains("left alone"), "{}", o.output);
+        let o = preexisting(failed(&["TestA", "TestB"]), old(&["TestA"]));
+        assert!(!o.ok && o.output.starts_with("TestA also fail on the last commit") && o.output.ends_with("the failure"), "{}", o.output);
+        let o = preexisting(failed(&["TestB"]), old(&[]));
+        assert!(!o.ok && o.preexisting.is_empty() && o.output == "the failure", "new failures stay as they were");
+        let o = preexisting(failed(&["(build)", "TestA"]), |_| panic!("a build failure is never the last commit's"));
+        assert!(!o.ok);
+    }
 
     #[test]
     fn covers_only_repos_it_can_test() {

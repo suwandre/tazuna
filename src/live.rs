@@ -1222,6 +1222,10 @@ impl Live {
         let mut out = vec![self.record(json!({
             "type": "harness_verify_done", "cmd": o.cmd, "ok": o.ok, "code": o.code, "secs": o.secs, "output": o.output, "final": !retry,
         }))];
+        if !o.preexisting.is_empty() {
+            let text = format!("tests: {} fail on the last commit too, without this change: not counted against it", o.preexisting.join(", "));
+            out.push(self.record(json!({"type": "harness_info", "text": text})));
+        }
         if retry {
             let round = self.runs.front().map_or(1, |r| r.failed_rounds());
             if let Some((m, e)) = self.escalate.clone().filter(|_| !self.escalated) {
