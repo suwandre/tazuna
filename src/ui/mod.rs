@@ -946,6 +946,8 @@ pub fn spinner(clock_ms: f64) -> &'static str {
 pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Color) {
     let spin = spinner(v.clock_ms);
     match s.activity {
+        // the turn is over, but claude's background work goes on: say so where "done" would be (ctrl-b lists it)
+        Activity::Ready | Activity::Done if v.bg_running > 0 => (spin, format!("{} working in background · ctrl-b", v.bg_running), th.accent2),
         Activity::Ready => ("●", "ready".into(), th.dim),
         Activity::Starting => (spin, "starting".into(), th.dim),
         Activity::Waiting => (spin, "waiting for model".into(), th.dim),

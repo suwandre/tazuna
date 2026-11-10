@@ -1010,7 +1010,14 @@ impl Live {
                         (Some("system"), Some("task_started"), Some(id)) => {
                             let owner = e["parent_task_id"].as_str().filter(|_| e["owned_by_subagent"] == true).map(String::from);
                             self.tasks.insert(id.to_string(), owner);
-                            if !self.bg.iter().any(|t| t.id == id) {
+                            // an agent continued with SendMessage starts again under its id: running again, not the ended
+                            // row it left (a resumed implementation agent worked for minutes with no sign of it, 2026-11-10)
+                            if let Some(t) = self.bg.iter_mut().find(|t| t.id == id) {
+                                (t.status, t.started, t.ended, t.doing) = ("running".into(), Instant::now(), None, String::new());
+                                if let Some(d) = e["description"].as_str().filter(|d| !d.is_empty()) {
+                                    t.description = d.to_string();
+                                }
+                            } else {
                                 self.bg.push(BgTask { id: id.to_string(), kind: e["task_type"].as_str().unwrap_or("task").to_string(),
                                     description: e["description"].as_str().unwrap_or_default().to_string(), status: "running".into(),
                                     started: Instant::now(), ended: None, output: String::new(),
@@ -1839,6 +1846,11 @@ mod tests {
         live.tx.send(line(json!({"type": "system", "subtype": "task_notification", "task_id": "server", "status": "completed"}))).unwrap();
         live.poll();
         assert!(live.tasks.is_empty() && live.tasks_done.is_some());
+        // an agent continued with SendMessage starts again under the same id: running again, in the count the UI shows
+        live.tx.send(line(json!({"type": "system", "subtype": "task_started", "task_id": "agent", "task_type": "local_agent", "description": "again"}))).unwrap();
+        live.poll();
+        let agent = live.bg.iter().find(|t| t.id == "agent").unwrap();
+        assert!(agent.ended.is_none() && agent.status == "running" && agent.description == "again", "{} {:?}", agent.status, agent.ended);
         std::fs::remove_file(&live.rec_path).ok();
     }
 

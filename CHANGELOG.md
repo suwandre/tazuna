@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.91 (2026-11-10): background agents you can see
+
+- An agent claude continued with SendMessage ran with no sign of it: claude starts it again under the task id it had when
+  it first ended, and tazuna kept that task as ended, so the count, the footer under the transcript and ctrl-b's list all
+  said nothing was running (a user asked "is the agent running?" after the turn showed done, 2026-11-10). A task started
+  again is running again. And while claude's background work goes on after a turn, the status says "1 working in
+  background · ctrl-b" where it said "done". No measurable metric changes.
+
 ## 0.1.90 (2026-11-10): cmd-backspace goes on past a line's start
 
 - In the message box, cmd-backspace (ctrl-u) stopped at the start of a line, and a backspace had to join the lines before
