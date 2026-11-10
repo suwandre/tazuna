@@ -2186,7 +2186,9 @@ fn run_live(
             KeyCode::Char('j') if ctrl => ed.insert("\n"),
             KeyCode::Char('a') if ctrl => ed.home(),
             KeyCode::Char('e') if ctrl => ed.end(),
+            // cmd-backspace: most Mac terminals send ctrl-u; with the kitty keyboard protocol it arrives as super-backspace
             KeyCode::Char('u') if ctrl => ed.kill_to_start(),
+            KeyCode::Backspace if key.modifiers.contains(KeyModifiers::SUPER) => ed.kill_to_start(),
             KeyCode::Char('k') if ctrl => ed.kill_to_end(),
             KeyCode::Char('w') if ctrl => ed.kill_word(),
             KeyCode::Backspace if alt => ed.kill_word(),

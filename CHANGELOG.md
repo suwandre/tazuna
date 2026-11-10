@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.90 (2026-11-10): cmd-backspace goes on past a line's start
+
+- In the message box, cmd-backspace (ctrl-u) stopped at the start of a line, and a backspace had to join the lines before
+  the next one went on. At a line's start it now deletes the line break, so pressing it again clears the line above too.
+  With text selected it deletes the selection; terminals that send cmd-backspace as super-backspace (the kitty keyboard
+  protocol) get the same. No measurable metric changes.
+
 ## 0.1.89 (2026-11-10): Fable 5.2
 
 - `/model` lists Fable 5.2 instead of Fable 5.1: tazuna keeps its own list of Claude models (with their effort levels),

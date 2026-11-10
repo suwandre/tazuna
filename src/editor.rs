@@ -103,9 +103,17 @@ impl Editor {
         self.cursor = self.line_end();
     }
 
-    /// Ctrl-U: delete back to the start of the line.
+    /// Ctrl-U (cmd-backspace on a Mac): delete back to the start of the line; at the start of a line, the line break
+    /// before it, so pressing it again goes on into the line above (it stopped there, and took a backspace first).
     pub fn kill_to_start(&mut self) {
+        if self.cut_selection() {
+            return;
+        }
         let s = self.line_start();
+        if s == self.cursor {
+            self.backspace();
+            return;
+        }
         self.text.replace_range(s..self.cursor, "");
         self.cursor = s;
     }
@@ -460,6 +468,20 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn line_kill_goes_on_into_the_line_above() {
+        let mut e = Editor::default();
+        e.insert("first\nsecond");
+        e.kill_to_start();
+        assert_eq!(e.text, "first\n");
+        e.kill_to_start();
+        assert_eq!((e.text.as_str(), e.cursor), ("first", 5), "at a line's start: the line break, not nothing");
+        e.kill_to_start();
+        assert_eq!(e.text, "");
+        e.kill_to_start();
+        assert_eq!(e.text, "", "at the very start: nothing to delete");
+    }
 
     #[test]
     fn edits_at_the_cursor() {
