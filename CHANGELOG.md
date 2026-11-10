@@ -16,6 +16,26 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.93 (2026-11-10): verify sets aside failures the change did not cause
+
+- When verify's Go tests fail, the failing tests run again on the last commit, in a git worktree of its own. Those that
+  fail there too are not the change's doing: they no longer go back to the agent as its failure, and when they are all
+  that failed, the run counts as verified (the session says which ones were left alone). New failures still go back,
+  with the old ones named as "not yours to fix". A package that does not build always counts as the change's.
+- Found on k6, where `TestStdLogOutputIsSet` times out behind the bench's proxy on untouched code. tazuna sent it back
+  twice in every run; the agent proved twice by hand that it failed without its change, half of each run went there,
+  and one run (2026-11-09) cleared the proxy variables inside the test to make it pass, which the judge marked down.
+  Claude Code has no such check, so the comparison on k6 was tilted against tazuna since the jail came in.
+
+| k6-run-once, Opus 5.5 low, 3 runs each, one judge pool (Opus xhigh, 1 pass) | Judge | Hidden tests | Cost / run | Minutes | Calls |
+|---|---|---|---|---|---|
+| tazuna 0.1.91 | 5.00 | 3/5, 5/5, 3/5 | $0.555 | 7.2 | 18-24 |
+| **tazuna with this change** | **6.33** | 5/5, 5/5, 4/5 | **$0.333** | **3.9** | 5-13 |
+| Claude Code 2.1.322 | 6.67 | 4/5, 5/5, 5/5 | $0.482 | 7.5 | 13-20 |
+
+Cost -40% and time -46% are the wasted fix rounds gone; the judge's +1.33 is mostly the right place for the change in
+two of three runs, which is likely noise at three runs. Against Claude Code now: judge inside noise, cost -31%.
+
 ## 0.1.92 (2026-11-10): DeepSeek V4.1 Flash on five checked providers
 
 - The DeepSeek V4.1 Flash 1017 route on SubRouter goes from BangAi, Kriora and LingAI to those plus RelAI and zZ 妞
