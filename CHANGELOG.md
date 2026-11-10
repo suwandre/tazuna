@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.92 (2026-11-10): DeepSeek V4.1 Flash on five checked providers
+
+- The DeepSeek V4.1 Flash 1017 route on SubRouter goes from BangAi, Kriora and LingAI to those plus RelAI and zZ 妞
+  (znu), after the checks a route gets: 32 agent-like calls each with no error and served by the provider itself, warm
+  cache 90% and 84%, the same 49 input tokens a test line as the others (the same model), and long-context answers of
+  83% and 79% of 42 against Artificial Analysis' 83%. Of the providers the user asked about, RedQueen timed out on 18 of
+  32 calls and Orbelis cached 54% (and has no Messages route): both stay out. `tazuna subrouter --manage` or `--apply`
+  brings the new list onto your key.
+- Mistral's routes list the effort levels each model takes (checked against Mistral's API on 2026-11-09), so `/model`
+  no longer offers levels it refuses. No measurable metric changes.
+
 ## 0.1.91 (2026-11-10): background agents you can see
 
 - An agent claude continued with SendMessage ran with no sign of it: claude starts it again under the task id it had when

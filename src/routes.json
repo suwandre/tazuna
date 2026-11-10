@@ -249,7 +249,7 @@
    "url": "https://api.mistral.ai/v1",
    "vetted_at": 1794092682,
    "via": "mistral",
-   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06)."
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06). Effort levels checked against Mistral's API 2026-11-09 (its refusals list what each model takes)."
   },
   "deepseek-v4.1-flash-1017": {
    "cached": 99,
@@ -259,18 +259,20 @@
     "max"
    ],
    "price": [
-    0.01616,
-    0.06463
+    0.01691,
+    0.06765
    ],
    "providers": [
     "bangai",
+    "kriora",
     "lingai",
-    "kriora"
+    "relai",
+    "znu"
    ],
    "url": "https://subrouter.ai/v1",
-   "vetted_at": 1794079024,
+   "vetted_at": 1794316758,
    "via": "subrouter",
-   "why": "2026-11-07: a6aa dropped: its content filter refused two of six bench tasks outright (hugo, 2026-11-07) after refusing a question on 11-05; SubRouter does not pass a refusal on. bangai and lingai 29/30, kriora 30/30 (AIME, evening 11-07)"
+   "why": "2026-11-10: RelAI and znu added after the user's smoke test: chat route 32/32 each, warm cached 90% and 84%, 49 tokens a line as the others, long context 83% and 79% of 42 (AA 83%)"
   },
   "deepseek-v4.1-flash-1017@mistral": {
    "cached": 95,
@@ -299,10 +301,8 @@
   "glm-5.3-flash@mistral": {
    "cached": 0,
    "efforts": [
-    "off",
     "low",
     "high",
-    "xhigh",
     "max"
    ],
    "key_env": "MISTRAL_API_KEY",
@@ -318,15 +318,13 @@
    "url": "https://api.mistral.ai/v1",
    "vetted_at": 1794092682,
    "via": "mistral",
-   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06)."
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06). Effort levels checked against Mistral's API 2026-11-09 (its refusals list what each model takes)."
   },
   "glm-5.3@mistral": {
    "cached": 0,
    "efforts": [
-    "off",
     "low",
     "high",
-    "xhigh",
     "max"
    ],
    "key_env": "MISTRAL_API_KEY",
@@ -342,7 +340,7 @@
    "url": "https://api.mistral.ai/v1",
    "vetted_at": 1794092682,
    "via": "mistral",
-   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06)."
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06). Effort levels checked against Mistral's API 2026-11-09 (its refusals list what each model takes)."
   },
   "gpt-6-luna": {
    "cached": 92,
@@ -415,11 +413,9 @@
   "mistral-large-4@mistral": {
    "cached": 0,
    "efforts": [
-    "off",
     "low",
-    "high",
-    "xhigh",
-    "max"
+    "medium",
+    "high"
    ],
    "key_env": "MISTRAL_API_KEY",
    "model": "mistral-large-4",
@@ -434,16 +430,13 @@
    "url": "https://api.mistral.ai/v1",
    "vetted_at": 1794092682,
    "via": "mistral",
-   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06)."
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06). Effort levels checked against Mistral's API 2026-11-09 (its refusals list what each model takes)."
   },
   "mistral-medium-3.5@mistral": {
    "cached": 0,
    "efforts": [
     "off",
-    "low",
-    "high",
-    "xhigh",
-    "max"
+    "high"
    ],
    "key_env": "MISTRAL_API_KEY",
    "model": "mistral-medium-3-5",
@@ -457,16 +450,13 @@
    "url": "https://api.mistral.ai/v1",
    "vetted_at": 1794092682,
    "via": "mistral",
-   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price: not on Mistral's price list (shown 0)."
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price: not on Mistral's price list (shown 0). Effort levels checked against Mistral's API 2026-11-09 (its refusals list what each model takes)."
   },
   "mistral-small-2603@mistral": {
    "cached": 0,
    "efforts": [
     "off",
-    "low",
-    "high",
-    "xhigh",
-    "max"
+    "high"
    ],
    "key_env": "MISTRAL_API_KEY",
    "model": "mistral-small-2603",
@@ -481,7 +471,7 @@
    "url": "https://api.mistral.ai/v1",
    "vetted_at": 1794092682,
    "via": "mistral",
-   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06)."
+   "why": "2026-11-08: on the user's Mistral Vibe-plan key (MISTRAL_VIBE_API_KEY; bills Vibe Code usage). Added unchecked at the user's request: effort levels, price and cache not measured (price shown 0: plan usage); a level the model refuses is dropped by the own loop and the call retried. Price from docs.mistral.ai/inference/pricing (2026-11-08): input, output, cached per M; the plan's usage counts at these rates (DeepSeek's reproduced the billed caddy run: $0.062 vs $0.06). Effort levels checked against Mistral's API 2026-11-09 (its refusals list what each model takes)."
   }
  }
 }
