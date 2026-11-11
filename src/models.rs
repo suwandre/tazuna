@@ -449,13 +449,14 @@ fn openrouter_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> boo
 
 /// kenari's chat models that take tools, as picker rows (a gateway in Indonesia, the user's pick, 2026-11-11): one key and
 /// balance for many providers, the OpenAI and Anthropic APIs both. Free ones first, then the paid ones, each in kenari's
-/// order (its list has no dates); without Claude (it runs on the subscription). Prices are micro-rupiah per 1M tokens;
-/// the effort levels are each model's own.
+/// order (its list has no dates); Claude too, billed by kenari, for a user without the subscription (the user, 2026-11-11).
+/// Left out: image, voice and video models, and chat models without tool calls (an agent cannot work without them).
+/// Prices are micro-rupiah per 1M tokens; the effort levels are each model's own.
 fn kenari_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) -> Vec<Choice> {
     let mut rows: Vec<(bool, Choice)> = list["data"].as_array().into_iter().flatten().filter_map(|m| {
         let id = m["id"].as_str()?;
         let chat = m["endpoints"].as_array().is_some_and(|e| e.iter().any(|e| e == "chat"));
-        if id.starts_with("claude-") || !chat || m["tool_call"] != true {
+        if !chat || m["tool_call"] != true {
             return None;
         }
         let p = &m["pricing"];
@@ -919,7 +920,7 @@ mod tests {
             m("no-tools:free", true, false, serde_json::json!(null)), m("claude-fable-5", false, true, serde_json::json!(null)),
             serde_json::json!({"id": "kokoro-tts", "endpoints": ["speech"], "tool_call": false, "pricing": {"free": true, "input": 0.0, "output": 0.0}})]});
         let rows = kenari_choices(&list, &serde_json::json!({}), &|h: &str| h == "kenari.id");
-        assert_eq!(rows.iter().map(|c| c.model.as_str()).collect::<Vec<_>>(), ["hy4:free", "deepseek-v4-1-flash"], "chat models with tools, free first, no Claude");
+        assert_eq!(rows.iter().map(|c| c.model.as_str()).collect::<Vec<_>>(), ["hy4:free", "deepseek-v4-1-flash", "claude-fable-5"], "chat models with tools, free first, Claude billed by kenari too");
         assert_eq!(rows[1].efforts, ["low", "high", "max"]);
         assert!(rows[0].efforts.is_empty() && rows[0].price == "free" && rows[0].note.contains("50 a day"));
         assert_eq!(rows[1].route.as_ref().unwrap().0, "https://kenari.id/v1");

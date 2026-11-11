@@ -179,8 +179,8 @@ since it will see your code. A key in the environment (`MORTERA_API_KEY` and so 
   every text model on its list, as not checked yet.
 - **OpenRouter**: every model on its list that takes tools (about 300), newest free ones first, then the newest paid
   ones. Free models are rate-limited, and their providers may keep or train on your code.
-- **Kenari** (a gateway priced in rupiah): every chat model on its list that takes tools (76), the free ones first (5 calls
-  a minute and 50 a day without a top-up), each with its own effort levels.
+- **Kenari** (a gateway priced in rupiah): every chat model on its list that takes tools (85, Claude included, billed by
+  kenari), the free ones first (5 calls a minute and 50 a day without a top-up), each with its own effort levels.
 - **Anything else** OpenAI-compatible: `--provider URL --key-env VAR --model ID` (its host on the trusted list, or
   `--data any`).
 

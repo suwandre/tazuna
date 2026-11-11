@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.105 (2026-11-11): kenari's Claude models too
+
+- `/model` lists kenari's 9 Claude models as well (85 kenari rows), billed by kenari through the own loop: for a user
+  without a Claude subscription. Still left out: image, voice, music and video models, and the 2 chat models without
+  tool calls. No measurable metric changes.
+
 ## 0.1.104 (2026-11-11): kenari in /model and /login
 
 - kenari (kenari.id), a gateway that bills in rupiah, joins `/login` (an API key, `KENARI_API_KEY`) and `/model`: every
