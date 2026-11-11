@@ -206,6 +206,8 @@ pub struct Session {
     last_prompt: String,
     /// The current model message arrived as content blocks (claude streams them; the own loop sends whole messages).
     streamed: bool,
+    /// This call's text came as a stream (its message then adds no text block of its own).
+    streamed_text: bool,
 }
 
 pub fn unix_now() -> u64 {
@@ -285,6 +287,7 @@ impl Session {
             todos: Vec::new(),
             last_prompt: String::new(),
             streamed: false,
+            streamed_text: false,
         }
     }
 
@@ -615,13 +618,15 @@ impl Session {
             (Some("assistant"), _) => {
                 // Full message: tool inputs arrive complete here (partial JSON is not worth rendering). The own loop
                 // streams no content blocks, only the message: its text and tool calls are drawn from here.
-                if !self.streamed {
-                    for c in e["message"]["content"].as_array().into_iter().flatten() {
-                        match c["type"].as_str() {
-                            Some("text") if !s(&c["text"]).trim().is_empty() => self.push(Block::Text { text: s(&c["text"]), live: false }),
-                            Some("tool_use") => self.stream(&json!({"type": "content_block_start", "content_block": c})),
-                            _ => {}
+                // since 0.1.98 the own loop streams its text and reasoning but not its tool calls: those still come from
+                // here, and its text too when none was streamed
+                for c in e["message"]["content"].as_array().into_iter().flatten() {
+                    match c["type"].as_str() {
+                        Some("text") if !self.streamed_text && !s(&c["text"]).trim().is_empty() => self.push(Block::Text { text: s(&c["text"]), live: false }),
+                        Some("tool_use") if !self.streamed || self.tool_mut(&s(&c["id"])).is_none() => {
+                            self.stream(&json!({"type": "content_block_start", "content_block": c}))
                         }
+                        _ => {}
                     }
                 }
                 for c in e["message"]["content"].as_array().into_iter().flatten() {
@@ -730,7 +735,7 @@ impl Session {
     fn stream(&mut self, ev: &Value) {
         match ev["type"].as_str() {
             Some("message_start") => {
-                self.streamed = false;
+                (self.streamed, self.streamed_text) = (false, false);
                 self.turns += 1;
                 // the own loop sends this when its request goes out, right after the tool results
                 self.call_start = Some(self.ready_at.take().unwrap_or(self.now_ms));
@@ -745,6 +750,7 @@ impl Session {
                     Some("text") => {
                         self.push(Block::Text { text: String::new(), live: true });
                         self.activity = Activity::Writing;
+                        self.streamed_text = true;
                     }
                     Some("thinking") => {
                         self.push(Block::Thinking { tokens: 0, live: true, exact: false });

@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.98 (2026-11-11): the own loop streams its words; a clear selection in ctrl-b
+
+- The own loop asked its provider for a stream, then read the whole reply before showing any of it: the screen stood
+  still while the model wrote and the answer appeared at once (a user on OpenRouter, "lags and hangs"; every own-loop
+  provider did it). The engine now passes the reply's text and reasoning on as they arrive, as Claude's stream events,
+  and the session draws them live; tool calls still come with the finished message. A fake provider sending a word every
+  0.6 s showed each word 0.6 s apart.
+- ctrl-b's background tasks: the selected row is in reverse video across the whole width, as in the other lists (bold
+  on a completed task's faint row was hard to find). No measurable metric changes.
+
 ## 0.1.97 (2026-11-11): OpenRouter's models
 
 - `/model` lists OpenRouter: every model on its public list that takes tools (304 on 2026-11-11), without Claude (it runs

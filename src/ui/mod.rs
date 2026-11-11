@@ -483,8 +483,9 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
         let age = if r.secs >= 60 { format!("{}m{:02}s", r.secs / 60, r.secs % 60) } else { format!("{}s", r.secs) };
         let colour = if r.status == "running" { th.accent } else if r.status == "completed" { th.faint } else { th.warn };
         let row = format!("{mark} {:<10} {:>7}  {:<11} {}", plain(&r.status), age, plain(&r.kind), plain(&r.description).replace('\n', " "));
-        let style = if i == p.selected { st(colour).add_modifier(Modifier::BOLD) } else { st(colour) };
-        lines.push(Line::from(Span::styled(row.chars().take(inner.width as usize).collect::<String>(), style)));
+        // the selected row in reverse video, as in the other lists: bold alone on a completed (faint) row was hard to find
+        let style = if i == p.selected { st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(colour) };
+        lines.push(Line::from(Span::styled(format!("{:<w$}", row.chars().take(inner.width as usize).collect::<String>(), w = inner.width as usize), style)));
     }
     if p.rows.len() > last {
         lines.push(Line::from(Span::styled(format!("  ↓ {} more", p.rows.len() - last), st(th.faint))));

@@ -265,6 +265,8 @@ pub fn serve(args: &[String]) -> Result<()> {
         connector: connect_key,
         out: Box::new(|e: &Value| emit(e)),
     };
+    // the session's own engine: its streamed replies reach the screen as they come (not the explorer's server or `ask`)
+    STREAM_TO_UI.store(true, std::sync::atomic::Ordering::Relaxed);
     loop {
         let msg = match loop_.queued.pop_front() {
             Some(m) => m,
@@ -1229,6 +1231,66 @@ fn chat_content(content: &Value) -> (String, String) {
     (text, thinking)
 }
 
+/// Set by the session's engine: a streamed reply's text and reasoning go out as they arrive (`read_streaming`).
+static STREAM_TO_UI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Reads a streamed reply line by line, as it arrives, and passes its text and reasoning on as Claude's stream events
+/// (content_block_start, _delta, _stop), so the screen shows them while the model writes. Before 0.1.98 the whole reply
+/// was read first: nothing moved until it was done, then all of it appeared at once (a user on OpenRouter, 2026-11-11).
+/// Returns the reply's whole text for the usual parsing (`sse`, `from_stream`).
+fn read_streaming(reader: impl std::io::Read, api: Api, out: &mut dyn FnMut(&Value)) -> std::io::Result<String> {
+    let mut all = String::new();
+    // the block open on the screen: "text" or "thinking"
+    let mut open: Option<&str> = None;
+    let mut send = |kind: &'static str, piece: &str, open: &mut Option<&str>| {
+        if piece.is_empty() {
+            return;
+        }
+        if *open != Some(kind) {
+            if open.is_some() {
+                out(&json!({"type": "stream_event", "event": {"type": "content_block_stop"}}));
+            }
+            let start = if kind == "text" { json!({"type": "text", "text": ""}) } else { json!({"type": "thinking", "thinking": ""}) };
+            out(&json!({"type": "stream_event", "event": {"type": "content_block_start", "content_block": start}}));
+            *open = Some(kind);
+        }
+        let delta = if kind == "text" { json!({"type": "text_delta", "text": piece}) } else { json!({"type": "thinking_delta", "thinking": piece}) };
+        out(&json!({"type": "stream_event", "event": {"type": "content_block_delta", "delta": delta}}));
+    };
+    for line in std::io::BufReader::new(reader).lines() {
+        let line = line?;
+        all.push_str(&line);
+        all.push('\n');
+        let Some(d) = line.strip_prefix("data:").map(str::trim).and_then(|d| serde_json::from_str::<Value>(d).ok()) else { continue };
+        let (text, thinking) = match api {
+            Api::Chat => {
+                let d = &d["choices"][0]["delta"];
+                (d["content"].as_str(), d["reasoning_content"].as_str().or(d["reasoning"].as_str()))
+            }
+            Api::Responses => match d["type"].as_str() {
+                Some("response.output_text.delta") => (d["delta"].as_str(), None),
+                Some("response.reasoning_summary_text.delta" | "response.reasoning_text.delta") => (None, d["delta"].as_str()),
+                _ => (None, None),
+            },
+            Api::Messages => match (d["type"].as_str(), d["delta"]["type"].as_str()) {
+                (Some("content_block_delta"), Some("text_delta")) => (d["delta"]["text"].as_str(), None),
+                (Some("content_block_delta"), Some("thinking_delta")) => (None, d["delta"]["thinking"].as_str()),
+                _ => (None, None),
+            },
+        };
+        if let Some(t) = thinking {
+            send("thinking", t, &mut open);
+        }
+        if let Some(t) = text {
+            send("text", t, &mut open);
+        }
+    }
+    if open.is_some() {
+        out(&json!({"type": "stream_event", "event": {"type": "content_block_stop"}}));
+    }
+    Ok(all)
+}
+
 fn emit(e: &Value) {
     let mut out = std::io::stdout().lock();
     let _ = writeln!(out, "{e}").and_then(|_| out.flush());
@@ -1323,8 +1385,16 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             Some(g) => req.header("X-Group", &g),
             None => req,
         };
-        let sent = req.send(&body.to_string())
-            .and_then(|mut r| Ok((r.status().as_u16(), r.body_mut().with_config().limit(50 << 20).read_to_string()?)));
+        let sent = req.send(&body.to_string()).and_then(|mut r| {
+            let status = r.status().as_u16();
+            let body = r.body_mut().with_config().limit(50 << 20);
+            let text = if status == 200 && stream && STREAM_TO_UI.load(std::sync::atomic::Ordering::Relaxed) {
+                read_streaming(body.reader(), api, &mut |e| emit(e)).map_err(ureq::Error::Io)?
+            } else {
+                body.read_to_string()?
+            };
+            Ok((status, text))
+        });
         let (status, text) = match sent {
             Ok(st) => st,
             Err(e) if wait > 0 => {
@@ -1563,6 +1633,20 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_streamed_reply_reaches_the_screen_as_it_comes() {
+        let sse_text = "data: {\"choices\":[{\"delta\":{\"reasoning\":\"let me \"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"reasoning\":\"think\"}}]}\n\n\
+                        data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\ndata: [DONE]\n";
+        let mut events = vec![];
+        let all = read_streaming(sse_text.as_bytes(), Api::Chat, &mut |e| events.push(e["event"].clone())).unwrap();
+        let kinds: Vec<String> = events.iter().map(|e| format!("{}:{}", e["type"].as_str().unwrap(), e["delta"]["type"].as_str().or(e["content_block"]["type"].as_str()).unwrap_or(""))).collect();
+        assert_eq!(kinds, ["content_block_start:thinking", "content_block_delta:thinking_delta", "content_block_delta:thinking_delta", "content_block_stop:",
+                           "content_block_start:text", "content_block_delta:text_delta", "content_block_delta:text_delta", "content_block_stop:"]);
+        assert_eq!(events[5]["delta"]["text"], "Hel");
+        let parsed = from_stream(&sse(&all).unwrap(), Api::Chat).unwrap();
+        assert_eq!(parsed["choices"][0]["message"]["content"], "Hello", "the whole reply is parsed as before");
+    }
 
     #[test]
     fn mortera_prices_are_rupiah() {
