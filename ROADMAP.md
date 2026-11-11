@@ -300,6 +300,9 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-11: the own loop sends DeepSeek its earlier reasoning back on SubRouter (0.1.106), reversing 0.0.96's "no
+  provider passes it on": some now do, and it ran faster on hugo, caddy and k6 at a judge within noise. The known
+  failures told up front (`TAZUNA_BASELINE`) saved no time and stay off.
 - 2026-11-11: the bench judge is Fable 5.2 at high (the user's choice), after Opus 5.5 xhigh judged every round before.
   Re-judging the six hugo candidates of that day: equal on four, one point lower on two, same order. Rounds are compared
   within themselves (each has its baseline arm), not across the change. Fable's own weekly cap is not in the plan meter

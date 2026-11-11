@@ -8,7 +8,7 @@ Per task, all candidate diffs are anonymized, shuffled and scored in one call ag
 reference fix. One pass by default (screening); --passes 2 (two orders, averaged against position bias) for results a
 default decision rests on. --dry-run prints how many judge calls a round would make, without making any.
 """
-import argparse, json, os, random, re, statistics, subprocess, sys, tempfile
+import argparse, json, os, random, re, statistics, subprocess, sys, tempfile, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -79,10 +79,17 @@ def ask_judge(prompt, model, effort):
 
 
 def verdict_json(text):
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        raise RuntimeError("judge returned no JSON: " + text[:300])
-    return json.loads(m.group(0))
+    """The first whole JSON object in the reply: Fable 5.2 wrote text after it, and "first { to last }" took that in
+    ("Extra data", the call lost, 2026-11-11). A reply that still does not parse is kept in judge-raw.txt."""
+    i = text.find("{")
+    try:
+        if i < 0:
+            raise ValueError("no JSON object")
+        return json.JSONDecoder().raw_decode(text[i:])[0]
+    except ValueError as e:
+        with open(HERE / "judge-raw.txt", "a") as f:
+            f.write(f"--- {time.strftime('%Y-%m-%d %H:%M:%S')} ({e})\n{text}\n")
+        raise RuntimeError(f"judge reply did not parse ({e}); kept in judge-raw.txt: {text[:200]}")
 
 
 def ask_api(prompt, model, effort, system=None):
@@ -121,8 +128,13 @@ def candidates(task_name):
     sys.path.insert(0, str(HERE))  # python3 -I leaves the script's directory off the path
     from leakscan import leaked
     bad = leaked()  # runs that saw the reference fix are not judged
+    # leakscan names a harness and task, not the run: JUDGE_SKIP_RUNS (<harness>-rN, comma-separated) names the runs that
+    # leaked, and that pair's other runs are judged after all (tazuna v1142's k6 r1 read the hidden tests, 2026-11-11)
+    skip = set(filter(None, os.environ.get("JUDGE_SKIP_RUNS", "").split(",")))
+    lifted = {x.rsplit("-r", 1)[0] for x in skip}
     results = {(r["harness"], r["run"]): r for r in map(json.loads, RESULTS.read_text().splitlines())
-               if r["task"] == task_name and (task_name, r["harness"]) not in bad}
+               if r["task"] == task_name and ((task_name, r["harness"]) not in bad or r["harness"] in lifted)
+               and f'{r["harness"]}-r{r["run"]}' not in skip}
     cands = []
     only = set(filter(None, os.environ.get("JUDGE_ONLY", "").split(",")))
     for f in sorted((RUNS / task_name).glob("*.diff")):

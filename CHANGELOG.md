@@ -16,6 +16,26 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.106 (2026-11-11): DeepSeek on SubRouter gets its earlier reasoning back
+
+- The own loop now sends DeepSeek its earlier reasoning with the history on SubRouter too, as on DeepSeek's own API.
+  In October no SubRouter provider passed it on; a code word planted only in the reasoning (bench/recallprobe.py) is
+  now recalled on bangai and znu, some of the time. DeepSeek V4.1 Flash 1017 at high, 3 runs per arm, blind Fable 5.2
+  high judge, no web in the jail:
+
+| task | judge (before → with) | hidden tests | minutes (before → with) |
+|---|---|---|---|
+| hugo-template-return | 3.33 → 2.33 | 13/24 → 15/24 | 39, 56, 67 → 41, 41, 44 |
+| caddy-quoted-braces | 8.00 → 8.00 | 15/15 → 15/15 | 32, 4, 40 → 1, 4, 3 |
+| k6-run-once | 6.00 → 6.00 (2 runs) | 15/15 → 10/10 | 16, 15, 20 → 17, 13 |
+
+  Faster on every task at the same or lower cost; the judge is level on two tasks and one point lower on hugo (within
+  the noise of 3 runs, mean of the task means 5.78 → 5.44). One k6 run of the new arm read the hidden tests through the
+  VM checkout's git history, a hole in the bench's jail now closed; it is left out. Other SubRouter models keep it off
+  (MiniMax kept and billed the reasoning past its context limit); `TAZUNA_SEND_REASONING` turns it on for any provider.
+- Test and build commands that give no timeout of their own get 600 s instead of 120 s (a cold `go test` of hugo was
+  killed with its work in 2 of 12 runs).
+
 ## 0.1.105 (2026-11-11): kenari's Claude models too
 
 - `/model` lists kenari's 9 Claude models as well (85 kenari rows), billed by kenari through the own loop: for a user

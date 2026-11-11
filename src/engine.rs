@@ -243,6 +243,7 @@ pub fn serve(args: &[String]) -> Result<()> {
     // ~$3 while it ran and $0.007 at its end, 2026-11-06)
     emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": [],
                  "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "mcp_servers": mcp_status(hub.as_ref())}));
+    let send_reasoning = reasoning_back(&url, &model);
     let mut loop_ = Loop {
         call,
         api,
@@ -261,7 +262,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         queued: VecDeque::new(),
         mode,
         asked: 0,
-        send_reasoning: reasoning_back(&url),
+        send_reasoning,
         cache_key: std::env::var_os("TAZUNA_NO_CACHE_KEY").is_none(),
         routes,
         route_calls: vec![],
@@ -513,8 +514,13 @@ fn test_note(cmd: &str, out: &str, tree: impl FnOnce() -> Option<(u64, bool)>, g
 /// re-planning. MiniMax-M3.1-Flash on foxrouter keeps and bills it: 3.6M characters of reasoning took one run's prompt to
 /// 910K tokens and past the context limit (0.1.0, 2026-10-29). On by default for DeepSeek's official API, where it was
 /// measured: 45% less uncached input on every task, same judge and time (2026-11-04).
-fn reasoning_back(url: &str) -> bool {
+/// On by default for DeepSeek on SubRouter too since 0.1.106: some of its providers now pass it on (recallprobe.py, bangai
+/// and znu), and over hugo, caddy and k6 (3 runs each, Fable judge) it ran -27% on hugo and about a quarter or more on the
+/// others, judge 2.33 vs 3.33 on hugo but level on caddy (8.00) and k6 (6.00); hidden tests 15/24 vs 13/24 on hugo, all
+/// passed on caddy and k6 either way (2026-11-11).
+fn reasoning_back(url: &str, model: &str) -> bool {
     std::env::var_os("TAZUNA_SEND_REASONING").is_some() || url.starts_with("https://api.deepseek.com")
+        || (url.starts_with("https://subrouter.ai") && model.to_lowercase().contains("deepseek"))
 }
 
 /// The end of a long reasoning step, kept in the history as visible text (0.0.97). Providers drop a model's earlier
@@ -556,7 +562,7 @@ impl Loop {
                     drop_thinking(&mut self.msgs);
                     self.msgs.retain(|m| m["type"] != "reasoning");
                     self.cache_key = std::env::var_os("TAZUNA_NO_CACHE_KEY").is_none();
-                    self.send_reasoning = reasoning_back(&url);
+                    self.send_reasoning = reasoning_back(&url, &self.model);
                     self.route_calls.clear();
                     (self.out)(&json!({"type": "system", "subtype": "route_switch", "message": format!("now {url}: {why}")}));
                     return true;
@@ -1920,8 +1926,10 @@ session: "s".into(),
         let switch = events.iter().find(|e| e["subtype"] == "route_switch").expect("a route_switch event");
         assert!(switch["message"].as_str().unwrap().contains("b.example") && switch["message"].as_str().unwrap().contains("403"));
         assert_eq!(events.last().unwrap()["subtype"], "success", "the next route finished the turn");
-        assert!(l.send_reasoning == reasoning_back("https://b.example/v1") && l.routes.is_empty(), "per-route flags start over; the list is used up");
-        assert!(reasoning_back("https://api.deepseek.com/v1"), "on by default for DeepSeek's own API");
+        assert!(l.send_reasoning == reasoning_back("https://b.example/v1", "m") && l.routes.is_empty(), "per-route flags start over; the list is used up");
+        assert!(reasoning_back("https://api.deepseek.com/v1", "deepseek-chat"), "on by default for DeepSeek's own API");
+        assert!(reasoning_back("https://subrouter.ai/v1", "deepseek-v4.1-flash-1017") && !reasoning_back("https://subrouter.ai/v1", "minimax-m3.1-flash"),
+            "on SubRouter for DeepSeek only: MiniMax kept and billed it past its context limit");
         std::fs::remove_dir_all(&dir).ok();
     }
 
