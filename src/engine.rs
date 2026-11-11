@@ -593,6 +593,19 @@ impl Loop {
         let ((began, start), mut turns, mut usage) = (self.task, 0, [0u64; 3]);
         let mut nudges = 0;
         let (mut green, mut told) = (None, false);
+        // experiment (TAZUNA_BASELINE): what already fails on the last commit, found while the agent starts reading; told
+        // once, with the first test run after it is known (verify.rs suite_baseline)
+        let baseline: Option<std::sync::mpsc::Receiver<String>> = (std::env::var_os("TAZUNA_BASELINE").is_some() && !followup).then(|| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            std::thread::spawn(move || {
+                if let Some(n) = crate::verify::suite_baseline(&cwd) {
+                    let _ = tx.send(n);
+                }
+            });
+            rx
+        });
+        let mut baseline_told = false;
         let end = |s: &mut Self, subtype: &str, text: String, turns: usize, usage: [u64; 3]| {
             // a stop that ended a model call or a wait: its message is still queued; taken out here, it cannot stop the
             // next run
@@ -903,7 +916,13 @@ impl Loop {
                         Permit::Stop => return end(self, "error_during_execution", "[interrupted]".into(), turns, usage),
                     },
                 };
-                note = cmd.and_then(|c| test_note(&c, &text, tree_state, &mut green, &mut told)).or(note);
+                let base = (!baseline_told && cmd.as_deref().is_some_and(|c| c.contains("go test")))
+                    .then(|| baseline.as_ref().and_then(|r| r.try_recv().ok())).flatten();
+                baseline_told |= base.is_some();
+                note = cmd.and_then(|c| test_note(&c, &text, tree_state, &mut green, &mut told)).map(String::from).or(note);
+                if let Some(b) = base {
+                    note = Some(note.map_or(b.clone(), |n| format!("{n}\n{b}")));
+                }
                 match self.api {
                     Api::Responses => self.msgs.push(json!({"type": "function_call_output", "call_id": id, "output": text})),
                     Api::Chat => self.msgs.push(json!({"role": "tool", "tool_call_id": id, "content": text})),

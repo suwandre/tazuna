@@ -283,6 +283,37 @@ fn failing_before(cwd: &Path, cmd: &str, tests: &[String]) -> Option<Vec<String>
     Some(old)
 }
 
+/// Experiment (TAZUNA_BASELINE): the module's tests on the last commit, in a worktree of HEAD, started with the task. The
+/// own loop spent 133 of its 284 test minutes over 12 hugo and k6 runs on whole-module runs, many of them to learn whether
+/// a failure was there before (`git stash`, then the suite again), 2026-11-11. Go only; None when it could not run.
+/// Returns the note for the agent: the packages and tests that fail without its change.
+pub fn suite_baseline(cwd: &Path) -> Option<String> {
+    if !cwd.join("go.mod").exists() {
+        return None;
+    }
+    let dir = std::env::temp_dir().join(format!("tazuna-suite-{}-{}", std::process::id(), crate::platform::random::<4>().iter().map(|b| format!("{b:02x}")).collect::<String>()));
+    let git = |args: &[&str]| Command::new("git").args(args).current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status();
+    if !git(&["worktree", "add", "--detach", "-q", &dir.to_string_lossy(), "HEAD"]).is_ok_and(|s| s.success()) {
+        return None;
+    }
+    let (code, out, secs) = run_limited(&dir, "go test ./...", Duration::from_secs(1200));
+    let _ = git(&["worktree", "remove", "--force", &dir.to_string_lossy()]);
+    Some(baseline_note(code, &out, secs))
+}
+
+fn baseline_note(code: Option<i32>, out: &str, secs: f64) -> String {
+    let pkgs: Vec<&str> = out.lines().filter_map(|l| l.strip_prefix("FAIL\t")).filter_map(|l| l.split('\t').next()).collect();
+    let tests: Vec<String> = go_failures(out).into_iter().filter(|t| t != "(build)").collect();
+    let list = |v: &[String]| if v.len() > 25 { format!("{} and {} more", v[..25].join(", "), v.len() - 25) } else { v.join(", ") };
+    match code {
+        Some(0) => format!("For reference: `go test ./...` passes on the last commit, without your change ({secs:.0} s); any failure now is yours."),
+        None => format!("For reference: `go test ./...` on the last commit, without your change, did not finish in {secs:.0} s."),
+        Some(_) => format!("For reference, `go test ./...` on the last commit, without your change, already fails ({secs:.0} s): \
+            {} package(s): {}; tests: {}. Those failures are not yours: no need to check them again with git stash or another \
+            run of the whole suite.", pkgs.len(), pkgs.iter().map(|p| p.to_string()).collect::<Vec<_>>().join(", "), if tests.is_empty() { "none named".to_string() } else { list(&tests) }),
+    }
+}
+
 /// Exit code (None: did not start or timed out), full output, seconds.
 pub fn run_raw(cwd: &Path, cmd: &str) -> (Option<i32>, String, f64) {
     run_limited(cwd, cmd, TIMEOUT)
@@ -384,6 +415,14 @@ mod tests {
         let wt = String::from_utf8(Command::new("git").args(["worktree", "list"]).current_dir(&dir).output().unwrap().stdout).unwrap();
         assert_eq!(wt.lines().count(), 1, "the worktree is gone: {wt}");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn the_baseline_names_what_already_fails() {
+        let out = "--- FAIL: TestVimeo (0.10s)\nFAIL\nFAIL\tgithub.com/x/hugo/tpl/tplimpl\t1.2s\nok  \tgithub.com/x/hugo/common\t0.3s\n--- FAIL: TestNet (0.01s)\nFAIL\tgithub.com/x/hugo/deps\t0.4s\n";
+        let n = super::baseline_note(Some(1), out, 95.0);
+        assert!(n.contains("2 package(s): github.com/x/hugo/tpl/tplimpl, github.com/x/hugo/deps") && n.contains("tests: TestVimeo, TestNet") && n.contains("(95 s)"), "{n}");
+        assert!(super::baseline_note(Some(0), "ok\n", 3.0).contains("passes"));
     }
 
     #[test]

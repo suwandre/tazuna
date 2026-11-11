@@ -17,6 +17,14 @@ const BASH_TIMEOUT: Duration = Duration::from_secs(120);
 /// The longest `timeout` (seconds) a bash call may ask for (0.0.88): at a fixed 120 s the model ran long test runs in the
 /// background and polled them with `sleep 115; tail`, one turn each (33-47 a prometheus run, 2026-10-25).
 const MAX_TIMEOUT: u64 = 1800;
+/// A test or build run without a timeout of its own: a cold `go test` of hugo passed 120 s and was killed with its work in
+/// 2 of 12 own-loop runs (2026-11-11).
+const BUILD_TIMEOUT: Duration = Duration::from_secs(600);
+
+fn builds_or_tests(command: &str) -> bool {
+    ["go test", "go build", "go vet", "cargo test", "cargo build", "cargo check", "npm test", "npm run", "pnpm ", "yarn ", "pytest", "make", "mvn ", "gradle"]
+        .iter().any(|k| command.contains(k))
+}
 
 pub fn serve() -> anyhow::Result<()> {
     let mut server = Server::new(std::env::current_dir()?);
@@ -191,7 +199,8 @@ impl Server {
             "bash" => {
                 // seconds, a number or a numeric string (some models quote it)
                 let t = a["timeout"].as_u64().or_else(|| a["timeout"].as_str()?.trim().parse().ok());
-                Ok(self.bash(s("command"), t.map_or(BASH_TIMEOUT, |t| Duration::from_secs(t.clamp(1, MAX_TIMEOUT)))))
+                let default = if builds_or_tests(s("command")) { BUILD_TIMEOUT } else { BASH_TIMEOUT };
+                Ok(self.bash(s("command"), t.map_or(default, |t| Duration::from_secs(t.clamp(1, MAX_TIMEOUT)))))
             }
             "read" => read_range(&a["offset"], &a["limit"]).and_then(|(o, l)| self.read(path.unwrap_or_default(), o, l)),
             "write" => write(&path.unwrap_or_default(), s("content")),
@@ -357,7 +366,7 @@ fn read_into(r: &mut impl Read, buf: &std::sync::Mutex<Vec<u8>>) {
 pub(crate) fn tools() -> Value {
     let (s, i) = (json!({"type": "string"}), json!({"type": "integer"}));
     json!([
-        {"name": "bash", "description": "Run shell command. Working directory persists between calls. It stops after 120 s unless you give a timeout in seconds (up to 1800): give one for long builds and test runs rather than running them in the background.",
+        {"name": "bash", "description": "Run shell command. Working directory persists between calls. It stops after 120 s (test and build commands: 600 s) unless you give a timeout in seconds (up to 1800): give one for longer runs rather than running them in the background.",
          "inputSchema": {"type": "object", "properties": {"command": s, "timeout": i}, "required": ["command"]}},
         {"name": "read", "description": "Read file: the whole file (up to 2000 lines) unless you give a 1-based offset or a limit. Use it rather than cat, head or sed.",
          "inputSchema": {"type": "object", "properties": {"path": s, "offset": i, "limit": i}, "required": ["path"]}},
@@ -800,7 +809,7 @@ mod tests {
         assert_eq!(ask(&mut s, r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#), None);
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).unwrap(),
-            r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"bash","description":"Run shell command. Working directory persists between calls. It stops after 120 s unless you give a timeout in seconds (up to 1800): give one for long builds and test runs rather than running them in the background.","inputSchema":{"type":"object","properties":{"command":{"type":"string"},"timeout":{"type":"integer"}},"required":["command"]}},{"name":"read","description":"Read file: the whole file (up to 2000 lines) unless you give a 1-based offset or a limit. Use it rather than cat, head or sed.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},{"name":"write","description":"Write file, creating dirs.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},{"name":"edit","description":"Replace exact unique text in file. Use it for every change to an existing file, rather than sed or scripts.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}},"required":["path","old","new"]}}]}}"#
+            r#"{"jsonrpc":"2.0","id":2,"result":{"tools":[{"name":"bash","description":"Run shell command. Working directory persists between calls. It stops after 120 s (test and build commands: 600 s) unless you give a timeout in seconds (up to 1800): give one for longer runs rather than running them in the background.","inputSchema":{"type":"object","properties":{"command":{"type":"string"},"timeout":{"type":"integer"}},"required":["command"]}},{"name":"read","description":"Read file: the whole file (up to 2000 lines) unless you give a 1-based offset or a limit. Use it rather than cat, head or sed.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}},{"name":"write","description":"Write file, creating dirs.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}},{"name":"edit","description":"Replace exact unique text in file. Use it for every change to an existing file, rather than sed or scripts.","inputSchema":{"type":"object","properties":{"path":{"type":"string"},"old":{"type":"string"},"new":{"type":"string"}},"required":["path","old","new"]}}]}}"#
         );
         assert_eq!(
             ask(&mut s, r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read","arguments":{"path":"f.txt","offset":2,"limit":1}}}"#).unwrap(),
