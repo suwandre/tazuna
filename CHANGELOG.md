@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.97 (2026-11-11): OpenRouter's models
+
+- `/model` lists OpenRouter: every model on its public list that takes tools (304 on 2026-11-11), without Claude (it runs
+  on the subscription) and without the `:batch` copies. Newest free models first, then the newest paid ones. Free ones say
+  what they cost in another way: OpenRouter limits them to a few dozen calls a minute and a daily cap (one agent task can
+  use it up), and their providers may keep or train on prompts. The list is fetched at start (public, no key) into the
+  data folder; `/login` takes the key (OPENROUTER_API_KEY), and typing in `/model` searches it like every provider.
+  Not checked yet: effort levels, cache and quality. No measurable metric changes.
+
 ## 0.1.96 (2026-11-11): cover every command the task names, and its error cases
 
 - On Claude, the prompt now asks to make the change, and its tests, cover every command, flag or API the task names and

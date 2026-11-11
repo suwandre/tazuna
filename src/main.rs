@@ -1349,8 +1349,9 @@ fn run_live(
             if let Some(ms) = models::key_models("SUBROUTER_API_KEY") {
                 let _ = tx.send(json!({"type": "tazuna_key_models", "var": "SUBROUTER_API_KEY", "models": ms}));
             }
-            // Mortera's list for /model, kept in the data folder
+            // Mortera's and OpenRouter's lists for /model, kept in the data folder
             models::refresh_mortera();
+            models::refresh_openrouter();
         }
     });
     // a newer release, said once a day (versions::update_notice); off the UI thread: it may ask GitHub

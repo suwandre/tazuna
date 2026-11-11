@@ -169,6 +169,8 @@ since it will see your code. A key in the environment (`MORTERA_API_KEY` and so 
 - **Mistral**: an API key, or one made under Code › Vibe CLI.
 - **Mortera** (Gemini, GPT, Kimi, Grok, Qwen, GLM, DeepSeek ... at reseller prices): once its key is in, `/model` lists
   every text model on its list, as not checked yet.
+- **OpenRouter**: every model on its list that takes tools (about 300), newest free ones first, then the newest paid
+  ones. Free models are rate-limited, and their providers may keep or train on your code.
 - **Anything else** OpenAI-compatible: `--provider URL --key-env VAR --model ID` (its host on the trusted list, or
   `--data any`).
 
