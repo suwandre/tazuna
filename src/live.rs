@@ -31,6 +31,11 @@ const MID_PROMPT: &str = "You are a coding agent working in {cwd}. Today is {dat
 /// 8/8 and judge 7.75 against 5.30 with this text; DeepSeek on prometheus still left the interface alone.
 const API_RULE: &str = "\n- Do not change or remove existing exported APIs (public functions, methods, interfaces and types other packages use), or add methods to exported interfaces, unless the task asks for it; adding a new exported function, or a method on a concrete type, is fine.";
 
+/// Experiment (TAZUNA_API_SCOPE): the rule above held for code only the repo can reach too. On hugo the model quoted it in
+/// 5 of 6 runs and worked around Go's internal/ template fork instead of changing it: a parallel interface, a dead field
+/// kept, judge 3-4 on "heavier than needed" (2026-11-11). Same protection outside the repo, a free hand inside.
+const API_SCOPE_RULE: &str = "\n- Do not change or remove exported APIs that code outside this repository can use (public functions, methods, interfaces and types of its importable packages; in Go, not those under internal/), or add methods to such interfaces, unless the task asks for it; adding a new exported function, or a method on a concrete type, is fine. Inside the repository, change signatures and their call sites when that is the simplest fix, and delete what your change leaves unused.";
+
 /// The own loop (0.0.96): providers drop a model's earlier reasoning (DeepSeek through SubRouter's foxrouter and LingAI,
 /// Chat and Messages alike: a code word planted in it was never recalled), so a design worked out once was worked out
 /// again at every new finding (six times, 13-26K characters each, on one caddy run). A plan written in the reply stays.
@@ -1403,7 +1408,7 @@ impl Live {
             // 2026-11-04 test of those tools)
             let search = if std::env::var_os("TAZUNA_SEARCH_TOOLS").is_some() { "Search with the grep and glob tools, not in bash; read files with read." } else { "Search with grep -rn in bash; read whole files with read." };
             let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", search);
-            prompt.push_str(API_RULE);
+            prompt.push_str(if std::env::var_os("TAZUNA_API_SCOPE").is_some() { API_SCOPE_RULE } else { API_RULE });
             prompt.push_str(PLAN_RULE);
             // experiment (TAZUNA_OWN_TEST_SCOPE): the Claude path's test rule. DeepSeek spent about half of each k6 and hugo
             // run in `go test`, whole packages and `./...` included (650 s once), tests tazuna's verify runs anyway after
