@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.99 (2026-11-11): no freeze at the end of a reply
+
+- The screen froze for seconds when a reply ended, on Claude and on the own loop alike. In a repo with a `typecheck`
+  npm script, each message started that type check in the background, as the baseline that verification compares
+  against; when the reply ended, the UI thread waited for it to finish, even when the reply changed no file. In a
+  workspace repo that check takes 12.4 s (about 38 CPU-seconds), so a quick answer froze the screen for the rest of
+  it. Verification's own thread now waits for the baseline, and only when the run changed a typed file. A test holds
+  a 3 s baseline open while a reply ends: the old code froze 3.1 s, the new one does not wait.
+- A message that starts on the same tree as the previous one (a question, with no edit in between) reuses that
+  message's baseline instead of type-checking the repo again. No change to quality, tokens or cost; less CPU per
+  message where a type check exists.
+
 ## 0.1.98 (2026-11-11): the own loop streams its words; a clear selection in ctrl-b
 
 - The own loop asked its provider for a stream, then read the whole reply before showing any of it: the screen stood

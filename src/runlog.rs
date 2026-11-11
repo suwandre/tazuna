@@ -19,7 +19,7 @@ pub struct Run {
     ids: BTreeMap<String, String>,
     interrupted: bool,
     /// Content hashes of the files that differed from HEAD when the run started.
-    git_before: Option<BTreeMap<String, String>>,
+    pub git_before: Option<BTreeMap<String, String>>,
     /// $ across all rounds (claude reports per process; the caller adds each result's share).
     cost: f64,
     verify_cmd: Option<String>,
@@ -27,13 +27,16 @@ pub struct Run {
     verify_rounds: Vec<(bool, f64)>,
     /// Failed tests moved this run to the stronger model.
     escalated: bool,
-    /// The repo's type check output when the run started, so verification only fails on errors this run added.
-    pub types_before: Option<Baseline>,
+    /// The repo's type check output when the run started, so verification only fails on errors this run added. Shared:
+    /// the next run on the same tree reuses it, and verification's thread waits for it, not the screen.
+    pub types_before: Option<SharedBaseline>,
     /// The self-review turn was sent, or the independent reviewer ran: once per run.
     pub reviewed: bool,
     /// The independent reviewer's result (`--review-model`), for the run log.
     pub review: Option<Value>,
 }
+
+pub type SharedBaseline = std::sync::Arc<std::sync::Mutex<Baseline>>;
 
 /// Output of a command that started with the run: pending until the first verification needs it.
 pub enum Baseline {

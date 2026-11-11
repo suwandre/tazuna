@@ -406,6 +406,8 @@ pub struct Live {
     pub bg: Vec<BgTask>,
     /// The messages the user sent in this process's conversation, oldest first: what /rewind offers.
     pub checkpoints: Vec<Checkpoint>,
+    /// The tree at the last run's start and the type check baseline taken there (`start_run`).
+    types_last: Option<(Option<std::collections::BTreeMap<String, String>>, crate::runlog::SharedBaseline)>,
     /// The uuid of claude's latest top-level reply.
     last_assistant: Option<String>,
     /// A conversation rewind waiting for the file rewind's answer: where to resume (None inside: start fresh).
@@ -520,6 +522,7 @@ impl Live {
             tasks: Default::default(),
             bg: Vec::new(),
             checkpoints: Vec::new(),
+            types_last: None,
             last_assistant: None,
             pending_resume: None,
             resume_at: None,
@@ -578,11 +581,19 @@ impl Live {
     }
 
     fn start_run(&mut self, text: &str, attach: bool) -> Result<()> {
-        // ponytail: taken while claude starts reading; an edit that lands first is counted as known, never as new
-        let types_before = verify::typecheck_command(&self.verify, &self.cwd).map(|cmd| {
-            let cwd = self.cwd.clone();
-            crate::runlog::Baseline::Pending(std::thread::spawn(move || verify::run_raw(&cwd, &cmd).1))
+        let mut run = Run::new(text, self.elapsed_ms(), &self.cwd);
+        // ponytail: taken while claude starts reading; an edit that lands first is counted as known, never as new. The
+        // tree of the last run's start again (a question, not an edit): its baseline holds. One per message cost a
+        // workspace repo 12 s and ~38 CPU-seconds each (2026-11-11). ponytail: the key is git's view of the tree, so an
+        // `npm install` in between keeps the old baseline
+        run.types_before = verify::typecheck_command(&self.verify, &self.cwd).map(|cmd| match &self.types_last {
+            Some((tree, b)) if run.git_before.is_some() && *tree == run.git_before => b.clone(),
+            _ => {
+                let cwd = self.cwd.clone();
+                std::sync::Arc::new(std::sync::Mutex::new(crate::runlog::Baseline::Pending(std::thread::spawn(move || verify::run_raw(&cwd, &cmd).1))))
+            }
         });
+        self.types_last = run.types_before.clone().map(|b| (run.git_before.clone(), b));
         // the map orients the first message of a session; the run log keeps the user's own words
         let first = if self.repo_map && !self.mapped && self.session_id.is_none() {
             self.mapped = true;
@@ -597,8 +608,6 @@ impl Live {
             self.checkpoints.push(Checkpoint { uuid: u.clone(), text: text.to_string(), before: self.last_assistant.clone() });
         }
         self.write_content(if attach { user_content(sent, &self.cwd) } else { json!(sent) }, false, uuid.as_deref())?;
-        let mut run = Run::new(text, self.elapsed_ms(), &self.cwd);
-        run.types_before = types_before;
         (self.task, self.task_reviewed) = (text.to_string(), false);
         self.runs.push_back(run);
         Ok(())
@@ -1176,9 +1185,9 @@ impl Live {
         }
         let Some(run) = self.runs.front_mut() else { return vec![] };
         let tests = verify::command(&self.verify, &self.cwd, &changed);
-        // the baseline stays with the run, so fix rounds compare against the state before the run too
-        let before = run.types_before.as_mut().and_then(|b| b.get());
-        let types = verify::typecheck_command(&self.verify, &self.cwd).filter(|_| verify::touches_types(&changed)).zip(before);
+        // the baseline stays with the run, so fix rounds compare against the state before the run too. Waited for on
+        // verification's thread: here it froze the screen until the type check ended, after every reply (2026-11-11)
+        let types = verify::typecheck_command(&self.verify, &self.cwd).filter(|_| verify::touches_types(&changed)).zip(run.types_before.clone());
         if tests.is_none() && types.is_none() {
             return self.finish_front();
         }
@@ -1187,6 +1196,7 @@ impl Live {
         let cmd = [tests.clone(), types.as_ref().map(|t| t.0.clone())].into_iter().flatten().collect::<Vec<_>>().join(" + ");
         let (tx, g, cwd) = (self.tx.clone(), self.generation, self.cwd.clone());
         std::thread::spawn(move || {
+            let types = types.and_then(|(cmd, b)| Some((cmd, b.lock().ok()?.get()?)));
             let _ = tx.send((g, Msg::Verified(verify::check(&cwd, tests, types))));
         });
         vec![self.record(json!({"type": "harness_verify_start", "cmd": cmd, "round": round}))]
@@ -1877,6 +1887,24 @@ mod tests {
         live.poll();
         let agent = live.bg.iter().find(|t| t.id == "agent").unwrap();
         assert!(agent.ended.is_none() && agent.status == "running" && agent.description == "again", "{} {:?}", agent.status, agent.ended);
+        std::fs::remove_file(&live.rec_path).ok();
+    }
+
+    #[test]
+    fn a_reply_does_not_wait_for_the_type_check_baseline() {
+        let mut live = Live::new("", "").unwrap();
+        let mut run = Run::new("question", 0.0, &live.cwd);
+        // the baseline of a slow type check, still running when the reply comes
+        let slow = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_secs(3));
+            String::new()
+        });
+        run.types_before = Some(std::sync::Arc::new(std::sync::Mutex::new(crate::runlog::Baseline::Pending(slow))));
+        live.runs.push_back(run);
+        live.tx.send((0, Msg::Line(json!({"type": "result", "subtype": "success", "is_error": false}).to_string()))).unwrap();
+        let t = Instant::now();
+        live.poll();
+        assert!(t.elapsed() < Duration::from_secs(1), "the screen froze {:?} for the baseline", t.elapsed());
         std::fs::remove_file(&live.rec_path).ok();
     }
 
