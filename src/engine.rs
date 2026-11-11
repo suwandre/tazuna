@@ -1476,8 +1476,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
                 if matches!(e, ureq::Error::Timeout(_)) {
                     limit = (limit * 2).min(Duration::from_secs(900));
                 }
-                eprintln!("model call failed ({e}); retrying in {wait}s");
-                pause(wait);
+                retry(&e.to_string(), wait);
                 continue;
             }
             Err(e) => return Err(e.into()),
@@ -1486,8 +1485,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             match sse(&text).map(|events| from_stream(&events, api)) {
                 // an error inside a stream (a gateway's upstream failed after the headers) is retried like a 5xx
                 Some(Err(e)) if wait > 0 => {
-                    eprintln!("model call failed ({e:#}); retrying in {wait}s");
-                    pause(wait);
+                    retry(&format!("{e:#}"), wait);
                     continue;
                 }
                 Some(r) => return r,
@@ -1530,13 +1528,15 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         }
         // a 429 for a locked model or an empty balance never clears by waiting (Experiential Labs: "insufficient_quota"),
         // but the same type with code free_limit_reached is its hourly free allowance, which does
-        let permanent = (text.contains("insufficient_quota") || text.contains("requires_purchase")) && !text.contains("free_limit_reached");
+        // OpenRouter's daily allowance of free calls (50 without credits) lasts until midnight UTC: no wait helps, and
+        // the tries below held "waiting for first token" for over an hour behind a 429 that came in 0.1 s (2026-11-11)
+        let permanent = (text.contains("insufficient_quota") || text.contains("requires_purchase") || text.contains("free-models-per-day"))
+            && !text.contains("free_limit_reached");
         // a rate limit clears by waiting, but an hourly allowance outlasts the ~15 minutes of tries above (Experiential
         // Labs' free models: 166,500 output tokens an hour, reset on the hour; a run that crossed it ended): the last try
         // is repeated every 5 minutes for up to 70 more minutes
         if status == 429 && !permanent && wait == 0 && limited < 70 * 60 && !FALLBACK.load(Ordering::Relaxed) {
-            eprintln!("rate limited ({}); trying again in 300s", text.chars().take(120).collect::<String>());
-            pause(300);
+            retry(&http_error(status, &text), 300);
             limited += 300;
             i -= 1;
             continue;
@@ -1550,7 +1550,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         if wait == 0 || permanent || !(status == 429 || status >= 500 || text.contains("model_unavailable")) {
             bail!("{}", http_error(status, &text));
         }
-        pause(wait);
+        retry(&http_error(status, &text), wait);
     }
     unreachable!()
 }
@@ -1572,8 +1572,25 @@ fn http_error(status: u16, text: &str) -> String {
     let msg: String = msg.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(200).collect();
     let mut extra: Vec<String> = ["code", "type", "param"].iter().filter_map(|k| field(k)).filter(|c| !msg.contains(c.as_str()) && *c != status.to_string()).collect();
     extra.extend(err["metadata"]["provider_name"].as_str().map(String::from));
+    // OpenRouter's limits say when they reset (ms since 1970)
+    let reset = err["metadata"]["headers"]["X-RateLimit-Reset"].as_str().and_then(|r| r.parse::<u64>().ok()).or(err["metadata"]["headers"]["X-RateLimit-Reset"].as_u64());
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
+    if let Some(mins) = reset.filter(|r| *r > now).map(|r| (r - now).div_ceil(60_000)) {
+        extra.push(if mins >= 60 { format!("resets in {}h {:02}m", mins / 60, mins % 60) } else { format!("resets in {mins}m") });
+    }
     extra.dedup();
     if extra.is_empty() { format!("HTTP {status}: {msg}") } else { format!("HTTP {status}: {msg} ({})", extra.join(", ")) }
+}
+
+/// A failed call that is tried again: said on the screen (the session's engine) and in the log, then the wait. Silent, a
+/// provider that refused every call looked like a model slow to its first token.
+fn retry(why: &str, secs: u64) {
+    eprintln!("model call failed ({why}); retrying in {secs}s");
+    if STREAM_TO_UI.load(Ordering::Relaxed) {
+        let why: String = why.chars().take(200).collect();
+        emit(&json!({"type": "system", "subtype": "call_retry", "message": format!("{why} · trying again in {secs}s")}));
+    }
+    pause(secs);
 }
 
 /// Sleeps between tries (not in tests).
@@ -2257,6 +2274,37 @@ session: "s".into(),
         assert!(pinned_away(&format!("{e:#}")));
         t.join().unwrap();
         assert_eq!(seen.load(Ordering::Relaxed), 1, "one request: the loop moves the conversation instead of waiting");
+    }
+
+    #[test]
+    fn the_free_daily_cap_ends_the_call_at_once() {
+        use std::io::Write;
+        // OpenRouter's 50 free calls a day used up: one 429 is the answer until midnight UTC, not 12 tries over an hour
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", server.local_addr().unwrap());
+        let reset = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64 + 90 * 60_000;
+        let body = format!(r#"{{"error":{{"message":"Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day","code":429,"metadata":{{"headers":{{"X-RateLimit-Limit":"50","X-RateLimit-Remaining":"0","X-RateLimit-Reset":"{reset}"}},"limit_source":"openrouter_free_tier_daily"}}}}}}"#);
+        // counts every request until none has come for half a second
+        let calls = std::thread::spawn(move || {
+            server.set_nonblocking(true).unwrap();
+            let (mut n, mut last) = (0, std::time::Instant::now());
+            while last.elapsed() < Duration::from_millis(500) {
+                match server.accept() {
+                    Ok((mut c, _)) => {
+                        c.set_nonblocking(false).unwrap();
+                        read_request(&mut c);
+                        let _ = c.write_all(format!("HTTP/1.1 429 Too Many Requests\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}").as_bytes());
+                        (n, last) = (n + 1, std::time::Instant::now());
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(5)),
+                }
+            }
+            n
+        });
+        let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+        let e = format!("{:#}", chat_in(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": []}), &Groups::from("", None)).unwrap_err());
+        assert!(e.starts_with("HTTP 429: Rate limit exceeded: free-models-per-day") && e.contains("resets in 1h 30m"), "{e}");
+        assert_eq!(calls.join().unwrap(), 1, "no tries after it");
     }
 
     #[test]

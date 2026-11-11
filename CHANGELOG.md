@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.101 (2026-11-11): a provider's refusal is said, not waited on
+
+- OpenRouter's free models allow 50 calls a day without credits. Once they were used, every call came back in 0.1 s
+  with HTTP 429 "free-models-per-day", and tazuna took it for a passing rate limit: about 15 minutes of silent tries,
+  then one every 5 minutes for up to 70 more, while the screen said "waiting for first token" (a user waited 120 s+ on
+  ernie-5.5-flash-preview:free, thinking the model was slow). That limit now ends the call at once: "HTTP 429: Rate limit
+  exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day (resets in 11h 57m)", read
+  against OpenRouter itself in 45 ms. A fake provider sending that 429 got one call where 0.1.100 made 26.
+- Every call the own loop tries again now says so in the transcript, with the provider's reason and the wait ("provider ·
+  HTTP 429: ... · trying again in 30s"), instead of only in a log nobody sees. No measurable metric changes.
+
 ## 0.1.100 (2026-11-11): open a background agent; a stop that stops; shorter provider errors
 
 - ctrl-b, then enter (or a click) on a background agent opens its conversation in place of the main one, as Claude Code
