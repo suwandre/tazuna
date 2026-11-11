@@ -1388,6 +1388,11 @@ impl Live {
                 prompt.push_str("\n- ");
                 prompt.push_str(TEST_SCOPE_RULE);
             }
+            // experiment (TAZUNA_OWN_COVER_ALL): the Claude path's 0.1.96 rule on the own loop
+            if std::env::var_os("TAZUNA_OWN_COVER_ALL").is_some() {
+                prompt.push_str("\n- ");
+                prompt.push_str(COVER_ALL_RULE);
+            }
             if self.project_instructions {
                 let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                 prompt.push_str(&text);
