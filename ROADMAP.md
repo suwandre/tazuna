@@ -258,6 +258,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Idea | Result | Reason |
 |---|---|---|
 | jevgrep in cc-mid | −0.7 to −0.8 judge | no saving on Opus medium |
+| Own loop: what already fails on the last commit, told with the first test run (`TAZUNA_BASELINE`, 2026-11-11) | hugo 3+3 runs (Fable judge): 4.00 vs 3.33, hidden 14 vs 13/24, but 56-64 min vs 39-67, more calls | the note arrived in every run and test time stayed (33-38 min); the background suite competes for the CPU |
 | Own loop: exported-API rule only for code outside the repo (`TAZUNA_API_SCOPE`, 2026-11-11) | hugo 3+3 runs: judge 4.33 vs 5.00 (Opus; Fable re-judge 4.33 vs 4.33), hidden 15/24 both, −18% calls | the design faults the judge names (template boundary, editing the fork) stayed; not the rule's doing |
 | ponytail + graphify + agent-skills | −1.2 judge, 2× slower | always-on skill/memory layers cost quality |
 | Per-turn model switching | rejected | breaks the prompt cache (per subagent is fine) |
