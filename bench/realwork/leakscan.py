@@ -130,6 +130,10 @@ def task_rules(tdir):
         "local": re.compile(r"bench-repos/" + re.escape(Path(g["repo"]).name) + r"\b|bench/realwork/tasks[\w-]*/"
                             + re.escape(tdir.name) + r"/(solution\.patch|hidden|expected)"),
         # a fetch, not an import path or a doc link: curl/wget/WebFetch url within one line (quotes removed first)
+        # the repo's own git history (`git show HEAD:bench/realwork/tasks/...`): the jails hid the directory, not .git,
+        # until 2026-11-11 (a tazuna run on the VM read k6's hidden tests that way, v1142)
+        "local-git": re.compile(r"\bgit\b[^\n]{0,300}?\b(?:show|cat-file|log|archive|grep|checkout|restore|diff)\b[^\n]{0,300}?"
+                                r"bench/realwork/tasks[\w-]*/" + re.escape(tdir.name) + r"/"),
         "web": re.compile(r"(?:(curl|wget|urlopen|requests\.get|git clone|git ls-remote)[^\n]{0,300}?|\burl:\s*)https?://"
                           r"(github\.com|raw\.githubusercontent\.com|api\.github\.com/repos|codeload\.github\.com)/"
                           + re.escape(owner) + "/" + re.escape(repo) + r"\b"),
