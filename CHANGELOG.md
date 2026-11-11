@@ -33,8 +33,8 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
   the noise of 3 runs, mean of the task means 5.78 → 5.44). One k6 run of the new arm read the hidden tests through the
   VM checkout's git history, a hole in the bench's jail now closed; it is left out. Other SubRouter models keep it off
   (MiniMax kept and billed the reasoning past its context limit); `TAZUNA_SEND_REASONING` turns it on for any provider.
-- Test and build commands that give no timeout of their own get 600 s instead of 120 s (a cold `go test` of hugo was
-  killed with its work in 2 of 12 runs).
+- Since 0.1.104 (not noted there): test and build commands that give no timeout of their own get 600 s instead of 120 s
+  (a cold `go test` of hugo was killed with its work in 2 of 12 runs).
 
 ## 0.1.105 (2026-11-11): kenari's Claude models too
 
