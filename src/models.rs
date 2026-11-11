@@ -157,6 +157,7 @@ pub fn provider_of(c: &Choice) -> String {
         Some("subrouter.ai") => "SubRouter".into(),
         Some("mortera.cloud") => "Mortera".into(),
         Some("openrouter.ai") => "OpenRouter".into(),
+        Some("kenari.id") => "Kenari".into(),
         Some("api.mistral.ai") => "Mistral".into(),
         // a machine of the user's (an address, not a name): the route's own name for it ("qwen3.8-flash-next@pc": pc)
         Some(h) if h == "localhost" || h.parse::<std::net::IpAddr>().is_ok() => c.label.rsplit_once(" · ").map_or(h.to_string(), |(_, n)| n.to_string()),
@@ -175,7 +176,7 @@ pub fn providers(cs: &[Choice]) -> Vec<(String, Vec<usize>)> {
             None => out.push((p, vec![i])),
         }
     }
-    let rank = |n: &str| ["Claude", "SubRouter", "Mortera", "Mistral", "OpenRouter"].iter().position(|x| *x == n).unwrap_or(9);
+    let rank = |n: &str| ["Claude", "SubRouter", "Mortera", "Mistral", "OpenRouter", "Kenari"].iter().position(|x| *x == n).unwrap_or(9);
     out.sort_by_key(|(n, _)| rank(n));
     out
 }
@@ -318,6 +319,10 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
     if let Some(list) = routes.parent().and_then(|d| std::fs::read_to_string(d.join("openrouter-models.json")).ok()) {
         out.extend(openrouter_choices(&serde_json::from_str(&list).unwrap_or_default(), &file, &trusted));
     }
+    // kenari's list (2026-11-11), the same way (`refresh_kenari`)
+    if let Some(list) = routes.parent().and_then(|d| std::fs::read_to_string(d.join("kenari-models.json")).ok()) {
+        out.extend(kenari_choices(&serde_json::from_str(&list).unwrap_or_default(), &file, &trusted));
+    }
     // every other SubRouter model with a public score (the list also holds image and video models), best first. One model
     // once: SubRouter lists some under two spellings ("claude-opus-5.5" beside the subscription's "claude-opus-5-5",
     // "DeepSeek-V4-Flash-0731" beside "deepseek-v4-flash-0731"), and a pick of the copy ran Opus through SubRouter instead
@@ -442,17 +447,65 @@ fn openrouter_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> boo
     rows.into_iter().map(|(_, _, c)| c).collect()
 }
 
-/// At start: OpenRouter's model list (public, no key needed) into the data folder, where `/model` reads it (a slow or
-/// absent answer leaves the last copy).
+/// kenari's chat models that take tools, as picker rows (a gateway in Indonesia, the user's pick, 2026-11-11): one key and
+/// balance for many providers, the OpenAI and Anthropic APIs both. Free ones first, then the paid ones, each in kenari's
+/// order (its list has no dates); without Claude (it runs on the subscription). Prices are micro-rupiah per 1M tokens;
+/// the effort levels are each model's own.
+fn kenari_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) -> Vec<Choice> {
+    let mut rows: Vec<(bool, Choice)> = list["data"].as_array().into_iter().flatten().filter_map(|m| {
+        let id = m["id"].as_str()?;
+        let chat = m["endpoints"].as_array().is_some_and(|e| e.iter().any(|e| e == "chat"));
+        if id.starts_with("claude-") || !chat || m["tool_call"] != true {
+            return None;
+        }
+        let p = &m["pricing"];
+        let usd = |k: &str| p[k].as_f64().map(|v| v / 1e6 / crate::engine::IDR_PER_USD);
+        let free = p["free"] == true;
+        // a free model's prices are null, not 0
+        let (input, output) = if free { (usd("input").unwrap_or(0.0), usd("output").unwrap_or(0.0)) } else { (usd("input")?, usd("output")?) };
+        let efforts = m["supported_reasoning_levels"].as_array().into_iter().flatten().filter_map(Value::as_str).map(String::from).collect();
+        Some((free, Choice {
+            model: id.to_string(),
+            label: m["name"].as_str().filter(|n| !n.is_empty() && *n != id).map_or(id.to_string(), |n| format!("{n} · {id}")),
+            route: Some(("https://kenari.id/v1".into(), "KENARI_API_KEY".into(), route_price(input, output, usd("cache_read")))),
+            place: "Kenari".into(),
+            efforts,
+            price: if free { "free".into() } else { format!("{} / {}", per_m(input), per_m(output)) },
+            note: if free {
+                "free on kenari: 5 calls a minute and 50 a day without a top-up (one agent task can use that up), 1,000 a day after a Rp 10,000 top-up".into()
+            } else {
+                "not checked yet: prices from kenari's list (rupiah); cache and quality not measured".into()
+            },
+            stale: false,
+            state: if key("KENARI_API_KEY").is_none() {
+                State::NoKey
+            } else if !trusted("kenari.id") {
+                State::Untrusted
+            } else {
+                State::Ready
+            },
+            bench: scores(file, id).0,
+            aa: scores(file, id).1,
+            pins: vec![],
+        }))
+    }).collect();
+    rows.sort_by(|a, b| b.0.cmp(&a.0)); // stable: kenari's own order within free and paid
+    rows.into_iter().map(|(_, c)| c).collect()
+}
+
+/// At start: OpenRouter's and kenari's model lists (public, no key needed) into the data folder, where `/model` reads them
+/// (a slow or absent answer leaves the last copy).
 pub fn refresh_openrouter() {
-    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
-    let Ok(mut r) = http.get("https://openrouter.ai/api/v1/models").call() else { return };
-    let Ok(body) = r.body_mut().with_config().limit(40 << 20).read_to_string() else { return };
-    let ok = serde_json::from_str::<Value>(&body).is_ok_and(|v| v["data"].as_array().is_some_and(|d| !d.is_empty()));
-    if let (true, Ok(dir)) = (ok, crate::labels::dir()) {
-        let tmp = dir.join("openrouter-models.json.tmp");
-        if std::fs::write(&tmp, body).is_ok() {
-            let _ = std::fs::rename(&tmp, dir.join("openrouter-models.json"));
+    for (url, name) in [("https://openrouter.ai/api/v1/models", "openrouter-models.json"), ("https://kenari.id/v1/models", "kenari-models.json")] {
+        let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
+        let Ok(mut r) = http.get(url).call() else { continue };
+        let Ok(body) = r.body_mut().with_config().limit(40 << 20).read_to_string() else { continue };
+        let ok = serde_json::from_str::<Value>(&body).is_ok_and(|v| v["data"].as_array().is_some_and(|d| !d.is_empty()));
+        if let (true, Ok(dir)) = (ok, crate::labels::dir()) {
+            let tmp = dir.join(format!("{name}.tmp"));
+            if std::fs::write(&tmp, body).is_ok() {
+                let _ = std::fs::rename(&tmp, dir.join(name));
+            }
         }
     }
 }
@@ -573,7 +626,7 @@ pub struct Login {
     pub example: &'static str,
 }
 
-pub const LOGINS: [Login; 4] = [
+pub const LOGINS: [Login; 5] = [
     Login { name: "SubRouter", vars: &["SUBROUTER_API_KEY"], host: "subrouter.ai", page: "https://subrouter.ai/console/keys",
             place: "SubRouter's console", example: "sk-..." },
     Login { name: "Mortera", vars: &["MORTERA_API_KEY"], host: "mortera.cloud", page: "https://mortera.cloud",
@@ -581,6 +634,8 @@ pub const LOGINS: [Login; 4] = [
     // a Vibe CLI key works on the same API, and a user's routes read it from MISTRAL_VIBE_API_KEY (2026-11-10)
     Login { name: "OpenRouter", vars: &["OPENROUTER_API_KEY"], host: "openrouter.ai", page: "https://openrouter.ai/keys",
             place: "your OpenRouter account", example: "sk-or-v1-..." },
+    Login { name: "Kenari", vars: &["KENARI_API_KEY"], host: "kenari.id", page: "https://kenari.id/login?next=/keys",
+            place: "your kenari dashboard (Keys)", example: "" },
     Login { name: "Mistral", vars: &["MISTRAL_API_KEY", "MISTRAL_VIBE_API_KEY"], host: "api.mistral.ai", page: "https://console.mistral.ai/api-keys",
             place: "Mistral's console (or Code › Vibe CLI)", example: "" },
 ];
@@ -854,6 +909,21 @@ mod tests {
     fn catalog_claude_row() -> Choice {
         Choice { model: "claude-opus-5-5".into(), label: "Opus 5.5".into(), route: None, place: "Claude · subscription".into(), efforts: vec![],
                  price: "plan".into(), note: String::new(), stale: false, state: State::Ready, bench: String::new(), aa: String::new(), pins: vec![] }
+    }
+
+    #[test]
+    fn kenari_rows_free_first_with_each_models_efforts() {
+        let m = |id: &str, free: bool, tools: bool, levels: serde_json::Value| serde_json::json!({"id": id, "name": id.to_uppercase(), "endpoints": ["chat"], "tool_call": tools,
+            "supported_reasoning_levels": levels, "pricing": {"free": free, "input": if free { serde_json::Value::Null } else { serde_json::json!(3_250_000_000.0) }, "output": if free { serde_json::Value::Null } else { serde_json::json!(6_000_000_000.0) }, "cache_read": null}});
+        let list = serde_json::json!({"data": [m("deepseek-v4-1-flash", false, true, serde_json::json!(["low", "high", "max"])), m("hy4:free", true, true, serde_json::json!(null)),
+            m("no-tools:free", true, false, serde_json::json!(null)), m("claude-fable-5", false, true, serde_json::json!(null)),
+            serde_json::json!({"id": "kokoro-tts", "endpoints": ["speech"], "tool_call": false, "pricing": {"free": true, "input": 0.0, "output": 0.0}})]});
+        let rows = kenari_choices(&list, &serde_json::json!({}), &|h: &str| h == "kenari.id");
+        assert_eq!(rows.iter().map(|c| c.model.as_str()).collect::<Vec<_>>(), ["hy4:free", "deepseek-v4-1-flash"], "chat models with tools, free first, no Claude");
+        assert_eq!(rows[1].efforts, ["low", "high", "max"]);
+        assert!(rows[0].efforts.is_empty() && rows[0].price == "free" && rows[0].note.contains("50 a day"));
+        assert_eq!(rows[1].route.as_ref().unwrap().0, "https://kenari.id/v1");
+        assert!(rows[1].price.starts_with("0.199"), "Rp 3,250 per 1M at Rp 16,300 a dollar: {}", rows[1].price);
     }
 
     #[test]

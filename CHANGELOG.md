@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.104 (2026-11-11): kenari in /model and /login
+
+- kenari (kenari.id), a gateway that bills in rupiah, joins `/login` (an API key, `KENARI_API_KEY`) and `/model`: every
+  chat model on its public list that takes tools, 76 on 2026-11-11, the 23 free ones first, then the paid ones in kenari's
+  order, each with the effort levels kenari lists for it and its price in dollars (Rp 16,300 to the dollar; DeepSeek V4.1
+  Flash $0.199 / $0.368 per 1M). Free models note kenari's limits: 5 calls a minute and 50 a day without a top-up, 1,000
+  a day after Rp 10,000. Claude is left out (it runs on the subscription). The list is fetched at start (public, no
+  key) beside OpenRouter's. Not checked yet: cache, quality and effort behavior are not measured. No measurable metric
+  changes.
+
 ## 0.1.103 (2026-11-11): the own loop covers every command the task names
 
 - The 0.1.96 rule (cover every command, flag or API the task names, and their error cases, reading the code behind each

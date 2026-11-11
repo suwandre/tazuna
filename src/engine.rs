@@ -1744,6 +1744,12 @@ pub(crate) const IDR_PER_USD: f64 = 16_300.0;
 /// `data_policy` instead of `owned_by`; Mortera gives rupiah per million (`payg_per_1m_idr`: `in`, `cache`, `out`).
 fn parse_price(m: &Value) -> Result<(Price, bool)> {
     let model = &m["id"];
+    // kenari: micro-rupiah per million (`input`, `cache_read`, `output`), null on its free models
+    if m["pricing"]["unit"] == "micro_idr_per_1m_tokens" {
+        let usd = |k: &str| m["pricing"][k].as_f64().map(|v| v / 1e6 / IDR_PER_USD).or((m["pricing"]["free"] == true).then_some(0.0));
+        let input = usd("input").with_context(|| format!("no input price for {model}: the dollar cap needs one"))?;
+        return Ok(((input / 1e6, usd("cache_read").unwrap_or(input) / 1e6, usd("output").context("no output price")? / 1e6), model.as_str().is_some_and(|id| id.starts_with("gpt-"))));
+    }
     let idr = &m["pricing"]["payg_per_1m_idr"];
     let p = |usd: &str, nano: &str| {
         let v = &m["pricing"][usd];
@@ -1766,6 +1772,15 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn kenari_prices_are_micro_rupiah_per_million() {
+        let m = serde_json::json!({"id": "deepseek-v4-1-flash", "pricing": {"unit": "micro_idr_per_1m_tokens", "free": false, "input": 3_260_000_000.0, "cache_read": null, "output": 6_520_000_000.0}});
+        let ((i, c, o), openai) = super::parse_price(&m).unwrap();
+        assert!(((i * 1e6) - 0.2).abs() < 1e-9 && c == i && ((o * 1e6) - 0.4).abs() < 1e-9 && !openai, "{i} {c} {o}");
+        let free = serde_json::json!({"id": "hy4:free", "pricing": {"unit": "micro_idr_per_1m_tokens", "free": true, "input": null, "output": null}});
+        assert_eq!(super::parse_price(&free).unwrap().0, (0.0, 0.0, 0.0));
+    }
+
     #[test]
     fn a_provider_error_reads_as_its_code_and_message() {
         let openrouter = r#"{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"baidu/ernie-5.5-flash-preview:free is temporarily rate-limited upstream. Please retry shortly.","provider_name":"Baidu"}},"user_id":"u1"}"#;
