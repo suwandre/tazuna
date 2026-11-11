@@ -258,7 +258,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Idea | Result | Reason |
 |---|---|---|
 | jevgrep in cc-mid | −0.7 to −0.8 judge | no saving on Opus medium |
-| Own loop: exported-API rule only for code outside the repo (`TAZUNA_API_SCOPE`, 2026-11-11) | hugo 3+3 runs: judge 4.33 vs 5.00, hidden 15/24 both, −18% calls | the design faults the judge names (template boundary, editing the fork) stayed; not the rule's doing |
+| Own loop: exported-API rule only for code outside the repo (`TAZUNA_API_SCOPE`, 2026-11-11) | hugo 3+3 runs: judge 4.33 vs 5.00 (Opus; Fable re-judge 4.33 vs 4.33), hidden 15/24 both, −18% calls | the design faults the judge names (template boundary, editing the fork) stayed; not the rule's doing |
 | ponytail + graphify + agent-skills | −1.2 judge, 2× slower | always-on skill/memory layers cost quality |
 | Per-turn model switching | rejected | breaks the prompt cache (per subagent is fine) |
 | LongHarness (arXiv 2610.13075: open questions steer reading, an evidence ledger) | not tested | document QA, not coding; plan tool and elision (nearby ideas) already failed; its backbones did not finish our tasks |
@@ -299,6 +299,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-11: the bench judge is Fable 5.2 at high (the user's choice), after Opus 5.5 xhigh judged every round before.
+  Re-judging the six hugo candidates of that day: equal on four, one point lower on two, same order. Rounds are compared
+  within themselves (each has its baseline arm), not across the change. Fable's own weekly cap is not in the plan meter
+  the guard reads: a judge call that hits it fails rather than spilling into extra usage.
 - 2026-11-11: bench agents get no web at all (the proxy allows model APIs and logins only), and leakscan flags any
   transcript holding two of a task's new hidden test names. Reason: OMP read hugo's and k6's merged fixes, hidden tests
   included, from cdn.jsdelivr.net and a Gitea mirror (4 of its 6 runs there; 4 runs of OMP and pi on 2026-11-09), past

@@ -8,7 +8,7 @@
   cloned at run time), `hidden/` tests, `solution.patch` (the reference fix).
   - `run.py --harness H@MODEL:EFFORT --tasks a,b --runs N --workers 8` runs the agents. `BENCH_SET=tasks-oct` picks the set.
     Results go to `results[-SET].jsonl` and diffs to `runs[-SET]/`.
-  - `judge.py`: blind Opus 5.5 xhigh judge over the saved diffs. One pass by default; `--passes 2` for results a default
+  - `judge.py`: blind Fable 5.2 high judge over the saved diffs (Opus 5.5 xhigh until 2026-11-11; scores compare within a round). One pass by default; `--passes 2` for results a default
     rests on. `--dry-run` first: it prints the number of judge calls. `JUDGE_ONLY=harness[-rN]`, `JUDGE_NOREF=1`.
   - `calibrate.py`: does a cheap judge rank like Opus (Experiential Labs balance, no Claude usage).
 - `model_check.py`: the daily model check (ROADMAP Next 5). `roles.json` holds who does what, why, and how each kind of

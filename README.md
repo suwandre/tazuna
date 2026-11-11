@@ -69,7 +69,8 @@ On a cheap model, tazuna's own loop scores level with OMP, OpenCode and pi (with
 times as long; Command Code scores higher at twelve times the cost and runs past the time limit.
 
 How to read these: tasks are real merged PRs (Go: caddy, hugo, k6, prometheus, terraform) with the PR's own tests hidden
-from the agent, and a blind Opus judge scoring every candidate for a task together. One run varies by about ±1.5 judge
+from the agent, and a blind judge scoring every candidate for a task together (Opus 5.5 xhigh for the rounds shown here;
+Fable 5.2 high from 2026-11-11 on). One run varies by about ±1.5 judge
 points, so judge differences under 0.75 count as noise. All rounds since 2026-11-09 run on one Linux VM, every harness in
 the same sandbox. Every measured change is in the [changelog](CHANGELOG.md); the kit is in [bench/](bench/README.md); the
 charts come from [docs/charts.py](docs/charts.py).

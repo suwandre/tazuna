@@ -184,8 +184,11 @@ def summarize():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default="claude-opus-5-5")
-    ap.add_argument("--effort", default="xhigh")
+    # Fable 5.2 at high since 2026-11-11 (the user's choice); Opus 5.5 xhigh judged every earlier round. Scores are compared
+    # within a round (each has its baseline arm), not across the change. Fable has a weekly cap of its own that the plan
+    # meter (guard.py) does not show: a call that hits it fails, it does not spill into extra usage
+    ap.add_argument("--model", default="claude-fable-5-2")
+    ap.add_argument("--effort", default="high")
     ap.add_argument("--passes", type=int, default=1)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--summary", action="store_true")
