@@ -1,6 +1,6 @@
-# tazuna
+# tazuna (手綱)
 
-手綱 (*tazuna*, "reins"). A lean terminal coding agent for any model. Claude runs through the official `claude` CLI on
+A lean terminal coding agent for any model. Claude runs through the official `claude` CLI on
 your own subscription; DeepSeek, GPT, Kimi, GLM, Mistral and others run on tazuna's own agent loop. Every change is
 benchmarked before it stays.
 
