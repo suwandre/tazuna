@@ -1801,6 +1801,16 @@ fn run_live(
                                     Err(e) => format!("could not open {url}: {e}"),
                                 };
                                 s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
+                            } else if let Some(i) = block_at(transcript, &rows, m.column, m.row).and_then(|b| b.checked_sub(ui::TASK_ROW)) {
+                                // a running task under the transcript: it opens, as a click on it does in Claude Code (an
+                                // agent's conversation; a command's output in the ctrl-b list)
+                                if let Some(k) = live.bg.iter().enumerate().filter(|(_, t)| t.ended.is_none()).nth(i).map(|(k, _)| k) {
+                                    (tasks_open, task_sel) = (true, k);
+                                    if let Some(t) = live.bg.get(task_sel).filter(|t| !t.calls.is_empty()) {
+                                        viewing = Some((t.id.clone(), usize::MAX, Session::new("", "")));
+                                        main_place = (std::mem::take(&mut v.scroll), std::mem::take(&mut v.open));
+                                    }
+                                }
                             } else if let Some(b) = block_at(transcript, &rows, m.column, m.row)
                                 && !v.open.remove(&b)
                             {

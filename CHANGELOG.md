@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.102 (2026-11-11): a click on a running task opens it
+
+- The running background tasks under the transcript open with a click, as in Claude Code: an agent shows its own
+  conversation (the prompt it was given, its steps, its answer, following it live; esc goes back), a command shows the
+  ctrl-b list with its output. Until now that took ctrl-b, then enter. No measurable metric changes.
+
 ## 0.1.101 (2026-11-11): a provider's refusal is said, not waited on
 
 - OpenRouter's free models allow 50 calls a day without credits. Once they were used, every call came back in 0.1 s

@@ -1255,16 +1255,23 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
     let footer = background_lines(s, v, th, width);
     if !footer.is_empty() {
         last_rows = 0; // the newest block is no longer the bottom rows: no effect on them
-        owners.resize(lines.len() + footer.len(), None);
-        lines.extend(footer);
+        owners.resize(lines.len(), None);
+        for (line, owner) in footer {
+            lines.push(line);
+            owners.push(owner);
+        }
     }
     (lines, last_rows, owners)
 }
 
+/// The rows of a running background task under the transcript are owned by `TASK_ROW + its place in View::running`, not
+/// by a block: a click there opens the task.
+pub const TASK_ROW: usize = usize::MAX - 64;
+
 /// Under the transcript while background tasks run: a slowly pulsing line (the screen otherwise looks still while the
 /// agent waits on them), then one row per task with what Claude Code shows for it: its time, and for a subagent its
 /// tokens, tool calls and current step, as they come.
-fn background_lines(s: &Session, v: &View, th: &Theme, width: usize) -> Vec<Line<'static>> {
+fn background_lines(s: &Session, v: &View, th: &Theme, width: usize) -> Vec<(Line<'static>, Option<usize>)> {
     let n = v.running.len();
     if n == 0 {
         return vec![];
@@ -1272,9 +1279,9 @@ fn background_lines(s: &Session, v: &View, th: &Theme, width: usize) -> Vec<Line
     let pulse = lerp(th.dim, th.accent, 0.5 + 0.5 * (v.clock_ms / 1600.0 * std::f64::consts::TAU).sin());
     let waiting = matches!(s.activity, Activity::Ready | Activity::Done);
     let head = format!("{} {}{n} background task{}", spinner(v.clock_ms), if waiting { "waiting on " } else { "" }, if n == 1 { "" } else { "s" });
-    let mut out = vec![Line::default(), Line::from(vec![Span::styled(head, st(pulse).add_modifier(Modifier::ITALIC)), Span::styled("  ctrl-b: all of them", st(th.faint))])];
+    let mut out = vec![(Line::default(), None), (Line::from(vec![Span::styled(head, st(pulse).add_modifier(Modifier::ITALIC)), Span::styled("  click one to open it · ctrl-b: all of them", st(th.faint))]), None)];
     let cut = |s: String| if s.width() > width { format!("{}…", s.chars().take(width.saturating_sub(1)).collect::<String>()) } else { s };
-    for t in v.running.iter().take(4) {
+    for (i, t) in v.running.iter().enumerate().take(4) {
         let who = if !t.agent.is_empty() { t.agent.clone() } else { t.kind.trim_start_matches("local_").to_string() };
         let time = if t.secs >= 60 { format!("{}m {:02}s", t.secs / 60, t.secs % 60) } else { format!("{}s", t.secs) };
         let mut facts = vec![time];
@@ -1284,13 +1291,13 @@ fn background_lines(s: &Session, v: &View, th: &Theme, width: usize) -> Vec<Line
         if t.tools > 0 {
             facts.push(format!("{} tool call{}", t.tools, if t.tools == 1 { "" } else { "s" }));
         }
-        out.push(Line::from(vec![Span::styled(cut(format!("  {who} · {} · {}", t.description, facts.join(" · "))), st(th.dim))]));
+        out.push((Line::from(vec![Span::styled(cut(format!("  {who} · {} · {}", t.description, facts.join(" · "))), st(th.dim))]), Some(TASK_ROW + i)));
         if !t.doing.is_empty() {
-            out.push(Line::from(Span::styled(cut(format!("    ⎿ {}", t.doing)), st(th.faint))));
+            out.push((Line::from(Span::styled(cut(format!("    ⎿ {}", t.doing)), st(th.faint))), Some(TASK_ROW + i)));
         }
     }
     if n > 4 {
-        out.push(Line::from(Span::styled(format!("  +{} more", n - 4), st(th.faint))));
+        out.push((Line::from(Span::styled(format!("  +{} more", n - 4), st(th.faint))), None));
     }
     out
 }
@@ -2449,7 +2456,9 @@ mod tests {
         assert_eq!(text[2], "  explorer · Tick workflows loss window check · 1m 12s · 21.1k tokens · 3 tool calls");
         assert_eq!(text[3], "    ⎿ Running Show Ledger tick workflow");
         assert_eq!(text[4], "  bash · Tick workflows loss window check · 12s");
-        assert_eq!((last, owners.iter().all(Option::is_none)), (0, true));
+        // a click on a task's rows opens it: they belong to the task, not to a block
+        assert_eq!(&owners[owners.len() - 4..], [None, Some(TASK_ROW), Some(TASK_ROW), Some(TASK_ROW + 1)]);
+        assert_eq!((last, owners[..owners.len() - 4].iter().all(Option::is_none)), (0, true));
         assert_eq!(lines_n(1), "1 line");
     }
 
