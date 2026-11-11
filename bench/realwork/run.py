@@ -54,19 +54,23 @@ def cur_go_env():
     return e
 
 
-# Hosts an agent could copy the merged upstream fix from (runs did, 2026-10-24: raw files, the commit API, .patch URLs,
-# newer module versions). Agents and harnesses reach the internet through this proxy; these hosts are refused, the rest
-# (model APIs, logins) tunnel through. Since 2026-10-28 the jail (JAIL below) also refuses any connection that is not to
-# localhost, so a command that drops the proxy variables gets nowhere (pi's model fetched the fix commit with
-# `curl --noproxy '*'`, v514); leakscan.py stays the backstop.
-BLOCKED = ("github.com", "githubusercontent.com", "proxy.golang.org", "goproxy.io", "goproxy.cn", "pkg.go.dev",
-           "sourcegraph.com", "gitlab.com", "codeberg.org")
-
-
+# Hosts an agent could copy the merged upstream fix from: a denylist (GitHub, GitLab, the Go proxies, ...) until
+# 2026-11-11, when OMP's runs turned out to have read the merged hugo and k6 fixes, hidden tests included, from
+# cdn.jsdelivr.net and a Gitea mirror (4 of its 6 runs on those tasks that day; 4 runs of OMP and pi in the 2026-11-09
+# round, through mirrors and a newer module release). Mirrors have no end, so it is an allowlist now: harnesses reach
+# their model APIs and logins, agents get no web at all. A refused host goes to proxy-refused.log: a harness that needs
+# one more shows up there. Since 2026-10-28 the jail (JAIL below) also refuses any connection that is not to localhost,
+# so a command that drops the proxy variables gets nowhere (pi's model fetched the fix commit with `curl --noproxy '*'`,
+# v514); leakscan.py stays the backstop.
+ALLOWED = ("anthropic.com", "claude.ai", "claude.com", "subrouter.ai", "openrouter.ai", "mortera.cloud", "mistral.ai",
+           "deepseek.com", "moonshot.ai", "moonshot.cn", "kimi.com", "commandcode.ai", "opencode.ai", "models.dev",
+           "cheaperinference.com", "experientiallabs.ai", "unorouter.com", "shannonapi.xyz", "typesafe.ai", "beatapi.io",
+           "apinex.bond")
 def blocked(host):
-    return any(host == b or host.endswith("." + b) for b in BLOCKED)
-
-
+    return not any(host == a or host.endswith("." + a) for a in ALLOWED)
+def refused(host):
+    with open(Path(__file__).with_name("proxy-refused.log"), "a") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {host}\n")
 def _proxy_conn(c):
     import socket
     try:
@@ -81,6 +85,7 @@ def _proxy_conn(c):
             return c.sendall(b"HTTP/1.1 405 Only CONNECT\r\n\r\n")
         host, _, port = parts[1].decode().rpartition(":")
         if blocked(host.strip("[]").lower()):
+            refused(host)
             return c.sendall(b"HTTP/1.1 403 Blocked by the benchmark\r\n\r\n")
         u = socket.create_connection((host.strip("[]"), int(port)), timeout=30)
         u.settimeout(None)

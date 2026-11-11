@@ -32,8 +32,13 @@ counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 | pi 1.5.2 | 5.00 | 8.00 | 2.00 | 5.00 | 32/54 | 11 |
 
   +0.45 judge is within noise (±0.75); the hidden tests and two of three tasks point the same way, at the same number of
-  calls. OMP is well ahead (+2.3), mostly on hugo, where tazuna's own loop also takes 2-4x as long: the next thing to
-  fix. The round spent 390 fen on SubRouter (about $0.56) for all five harnesses.
+  calls. The round spent 390 fen on SubRouter (about $0.56) for all five harnesses.
+- Correction (same day): OMP's lead was a leak. Four of its runs, hugo r0 and r2 and k6 r0 and r2, read the merged
+  upstream fix and its hidden tests from cdn.jsdelivr.net and a Gitea mirror, hosts the bench's denylist did not cover;
+  each scored 9. Without them OMP is 5.89 (5 runs: caddy 8.67, hugo 5.00, k6 4.00, the mean of the per-task means),
+  against tazuna with cover-all 5.56: within noise. tazuna's own loop still takes 2-4x as long on hugo and k6. The bench
+  proxy now allows only model APIs and logins (no web for agents), and leakscan.py flags a transcript holding two of the
+  hidden tests' new names; it found the 2026-11-09 round's four (OMP once, pi three times) too.
 
 ## 0.1.102 (2026-11-11): a click on a running task opens it
 

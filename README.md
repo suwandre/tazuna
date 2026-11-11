@@ -51,7 +51,7 @@ tools, `/keys` lists every key and command.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/own-loop-dark.svg">
-  <img alt="Judge score on DeepSeek V4.1 Flash at high, five harnesses on the same route, three Go PRs, two runs each: Command Code 7.75 (two of six runs over the time limit), OpenCode 6.33, tazuna 6.17, pi 6.17, OMP 6.17" src="docs/img/own-loop-light.svg">
+  <img alt="Judge score on DeepSeek V4.1 Flash at high, four harnesses on the same route, three Go PRs, three runs each: OMP 5.89 (5 clean runs), tazuna 0.1.103 5.56, OpenCode 5.44, pi 5.00" src="docs/img/own-loop-light.svg">
 </picture>
 
 <picture>
@@ -65,8 +65,8 @@ tools, `/keys` lists every key and command.
 </picture>
 
 In short: on Opus, tazuna 0.1.96 scores the same as Claude Code at 25% less cost and in about two thirds of the time.
-On a cheap model, tazuna's own loop is on par with pi, OMP and OpenCode (measured with 0.1.83; a new round is due);
-Command Code scores higher at twelve times the cost and runs past the time limit.
+On a cheap model, tazuna's own loop scores level with OMP, OpenCode and pi (within judge noise) but takes two to four
+times as long; Command Code scores higher at twelve times the cost and runs past the time limit.
 
 How to read these: tasks are real merged PRs (Go: caddy, hugo, k6, prometheus, terraform) with the PR's own tests hidden
 from the agent, and a blind Opus judge scoring every candidate for a task together. One run varies by about ±1.5 judge
@@ -103,16 +103,23 @@ Low against medium effort, the same six PRs × 3 runs, judged per effort (2026-1
 
 Medium adds about 0.2 judge points over low for either harness, at about 1.8× the cost.
 
-Own loop, DeepSeek V4.1 Flash 1017 at high on one SubRouter route (BangAi, Kriora, LingAI), three Go PRs × 2 runs
-(2026-11-09; tazuna 0.1.83):
+Own loop, DeepSeek V4.1 Flash 1017 at high on one SubRouter route, three Go PRs (caddy, hugo, k6) × 3 runs
+(2026-11-11). Judge is the mean of the per-task means:
 
-| Harness | Judge | All hidden tests pass | Median minutes | Cost per run |
+| Harness | Judge | caddy / hugo / k6 | All hidden tests pass | Median minutes |
 |---|---|---|---|---|
-| Command Code 1.88 | 7.75 (4 runs scored) | 4/6 (two runs over 90 min) | 42 | $0.162 |
-| OpenCode 2.2 | 6.33 | 4/6 | 27 | $0.013 |
-| **tazuna** | **6.17** | **4/6** | **38** | **$0.013** |
-| pi 1.5 | 6.17 | 5/6 | 27 | $0.015 |
-| OMP 18.18 | 6.17 | 4/6 | 17 | $0.012 |
+| OMP 18.18 (5 clean runs) | 5.89 | 8.67 / 5.00 / 4.00 | 3/5 | 10 |
+| **tazuna 0.1.103** | **5.56** | 7.00 / 3.67 / 6.00 | **6/9** | **41** |
+| OpenCode 2.2 | 5.44 | 7.33 / 4.00 / 5.00 | 5/9 | 14 |
+| tazuna 0.1.96 | 5.11 | 7.33 / 3.33 / 4.67 | 5/9 | 35 |
+| pi 1.5 | 5.00 | 8.00 / 2.00 / 5.00 | 5/9 | 11 |
+
+Four of OMP's runs (hugo and k6, two each) read the merged upstream fix and its hidden tests from cdn.jsdelivr.net
+and a Gitea mirror, which the bench's denylist did not cover; they scored 9 each and are left out. The same check
+found four such runs in the 2026-11-09 round (OMP once, pi three times). Without them that round reads Command Code
+7.75 (4 runs), OpenCode 6.33, tazuna 0.1.83 6.17, pi 6.00 (3 runs), OMP 5.17 (5 runs), where it had shown tazuna, pi
+and OMP level at 6.17. Agents in the bench now get no web at all, and leakscan flags any transcript that holds the
+hidden tests' names.
 
 Same model, its maker's harness, four Go PRs, one run each:
 

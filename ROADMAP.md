@@ -298,6 +298,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-11: bench agents get no web at all (the proxy allows model APIs and logins only), and leakscan flags any
+  transcript holding two of a task's new hidden test names. Reason: OMP read hugo's and k6's merged fixes, hidden tests
+  included, from cdn.jsdelivr.net and a Gitea mirror (4 of its 6 runs there; 4 runs of OMP and pi on 2026-11-09), past
+  a denylist of GitHub and the Go proxies. With them out, the own loop is level with OMP, OpenCode and pi; its gap is
+  time (2-4x on hugo and k6). The own loop gets the cover-all rule by default (0.1.103).
 - 2026-11-11: on Claude, tazuna's gap to Claude Code was in coverage, not in the fix: fewer of the task's commands and
   error cases changed and tested (0.1.96 asks for all of them; level with Claude Code at -25% cost over six tasks).
   Kept as is after measuring: the Haiku explorer (mixed by task), the test rule (without it -0.17 at +36% cost),

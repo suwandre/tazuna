@@ -162,6 +162,18 @@ def drop_raw_input(line):
     return json.dumps(e)
 
 
+def new_tests(tdir):
+    """Test names the PR's hidden tests add: not in the repo before the fix, not in the prompt. A transcript that holds
+    two of them saw the upstream tests, from whatever host or copy (OMP read hugo's and k6's from cdn.jsdelivr.net and
+    a Gitea mirror, 2026-11-11, past every rule above). One name alone can be the model's own (k6's TestRunOnce)."""
+    g = json.loads((tdir / "git.json").read_text())
+    repo = g["repo"] if os.path.exists(g["repo"]) else str(Path.home() / "bench-repos" / Path(g["repo"]).name)
+    prompt = (tdir / "prompt.txt").read_text(errors="ignore") if (tdir / "prompt.txt").exists() else ""
+    names = {n for f in (tdir / "hidden").rglob("*") if f.is_file() for n in re.findall(r"func (Test\w{6,})", f.read_text(errors="ignore"))}
+    return {n for n in names if n not in prompt
+            and subprocess.run(["git", "-C", repo, "grep", "-q", "-w", n, g["base"]], capture_output=True).returncode != 0}
+
+
 def transcripts():
     """(name, text) of every transcript: JSON(L) files, and OpenCode's sessions (sqlite, one text per session)."""
     import sqlite3
@@ -194,6 +206,7 @@ def main(sets=()):
     tasks = {t.name: task_rules(t) for d in tdirs for t in sorted(d.iterdir()) if (t / "git.json").exists()}
     for name, (_, fixed) in tasks.items():
         print(f"{name}: fix in module cache copies {fixed or 'none'}")
+    added = {name: new_tests(t) for d in tdirs for t in sorted(d.iterdir()) if (t / "git.json").exists() for name in [t.name]}
     label = re.compile(r"rw-(" + "|".join(map(re.escape, tasks)) + r")-(\S+?@[\w.-]+(?::[a-z]+)?)-[a-z0-9_]{8}")
     found = {}
     for f, s in transcripts():
@@ -231,6 +244,8 @@ def main(sets=()):
             if sys.platform.startswith("linux") and v and int(v.group(1)) >= 1100 and "local" in hits:
                 hits.discard("local")
                 hits.add("local-blocked")
+            if len({n for n in added[m.group(1)] if n in s}) >= 2:
+                hits.add("hidden-tests")
             if hits:
                 found.setdefault((m.group(1), m.group(2)), set()).update(hits)
     with open(HERE / "leaks.jsonl", "w") as out:
