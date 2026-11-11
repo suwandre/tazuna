@@ -298,6 +298,12 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-11: on Claude, tazuna's gap to Claude Code was in coverage, not in the fix: fewer of the task's commands and
+  error cases changed and tested (0.1.96 asks for all of them; level with Claude Code at -25% cost over six tasks).
+  Kept as is after measuring: the Haiku explorer (mixed by task), the test rule (without it -0.17 at +36% cost),
+  Opus as the model (Fable 5.2 medium the same judge at +40% cost), medium as the default effort (low is 1.8x cheaper
+  at -0.2, a candidate once more task kinds are measured). The bench's sandbox proxy had tilted k6 against tazuna since
+  the VM came in (0.1.93: verify no longer sends back failures that predate the change).
 - 2026-11-09: MCP servers belong to tazuna, not to one model (0.1.80). The user's own list (`/mcp add`, Claude Code's
   format) goes to claude and, through a new MCP client, to the own loop; remote servers get tazuna's own OAuth login.
   Reason: claude.ai connectors only reach the `claude` CLI, so a DeepSeek session had no Jira at all, and an all-in-one

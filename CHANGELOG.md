@@ -16,6 +16,26 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.96 (2026-11-11): cover every command the task names, and its error cases
+
+- On Claude, the prompt now asks to make the change, and its tests, cover every command, flag or API the task names and
+  each one's error cases, reading the code behind each one first. Claude Code did that on its own: on k6 it tested
+  `k6 run`, `k6 archive` and `k6 cloud run` in all of its runs, tazuna tested `cloud run` in none, and its code missed
+  those paths too; on hugo Claude Code tested the error case in every run, tazuna in none. The tests the judge scores were
+  the bulk of the gap to Claude Code (3.83 against 4.44 at medium).
+
+| Opus 5.5 medium, six Go PRs × 3 runs, one judge pool per task (Opus xhigh, 1 pass) | Judge | Tests | Cost (sum of six) | Minutes (sum) |
+|---|---|---|---|---|
+| **tazuna with the rule** | **6.67** | 4.11 | $4.15 | **45** |
+| tazuna 0.1.95 | 6.39 | 3.83 | $3.82 | 52 |
+| Claude Code 2.1.322 | 6.67 | 4.22 | $5.52 | 71 |
+
+  Level with Claude Code at 25% less cost; +0.28 over 0.1.95 for +9% cost (better on both hugo tasks and k6, lower on
+  prometheus, the same on caddy and terraform). `TAZUNA_NO_COVER_ALL=1` leaves it out.
+- Also measured and not kept: Fable 5.2 at medium as the model, on k6 and hugo-template-return × 3: judge 6.00 like Opus
+  5.5 medium (6.00) at +40% cost ($1.29 against $0.92 a run); a "write tests" nudge (+0.33, inside noise); no test
+  rule at all (-0.17, +36% cost, twice the time); the explorer off (mixed by task).
+
 ## 0.1.95 (2026-11-10): the price of rebuilding Claude's cache, shown before you pay it
 
 - Switching Claude's model or effort in a conversation rebuilds its prompt cache once: in the user's sessions the first

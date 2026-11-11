@@ -1485,10 +1485,11 @@ impl Live {
                 // Claude Code (1,743 against 2,620 lines over 18 runs) and the judge's tests score was 0.50 lower, the
                 // bulk of the gap (2026-11-10): the rule may read as "tazuna does the testing"
                 let write_tests = (scoped && std::env::var_os("TAZUNA_WRITE_TESTS").is_some()).then_some(WRITE_TESTS_RULE);
-                // experiment (TAZUNA_COVER_ALL): Claude Code tested every command the k6 task names (run, archive,
-                // cloud run) and hugo's error case in every run; tazuna tested `k6 cloud run` in none and the error in
-                // none, and its code missed those paths too (2026-11-10)
-                let cover_all = std::env::var_os("TAZUNA_COVER_ALL").is_some().then_some(COVER_ALL_RULE);
+                // every command, flag or API the task names, and their error cases (0.1.96): Claude Code tested each one
+                // the k6 task names and hugo's error case in every run, tazuna missed `k6 cloud run` in all; with the rule,
+                // six tasks at Opus medium: judge 6.67 like Claude Code's (6.39 before), cost +9%, still 25% under Claude
+                // Code's (2026-11-11). TAZUNA_NO_COVER_ALL turns it off (bench baselines)
+                let cover_all = std::env::var_os("TAZUNA_NO_COVER_ALL").is_none().then_some(COVER_ALL_RULE);
                 let append: Vec<&str> = [callers, self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), write_tests, cover_all, lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
                     .into_iter()
                     .flatten()
