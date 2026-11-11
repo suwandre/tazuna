@@ -73,30 +73,30 @@ def bars(title, sub, legend, groups, domain, ticks, unit_fmt, name):
 def scatter(name):
     # (label, cost per task in USD, judge, tazuna?, label side, effort) — 2026-11-10 rounds on the bench VM (CHANGELOG
     # 0.1.93): the mean over six tasks of each task's median cost and of its judge score, 3 runs a task
-    pts = [
-        ("Claude Code · medium", 0.92, 6.94, False, "above", "medium"), ("Claude Code · low", 0.50, 6.78, False, "above", "low"),
-        ("tazuna · medium (default)", 0.65, 6.50, True, "right", "medium"), ("tazuna · low, no explorer", 0.35, 6.28, True, "below", "low"),
+    pts = [  # one judge pool per task (CHANGELOG 0.1.96): Opus 5.5 medium, six tasks × 3 runs; cost = the six tasks' sum / 6
+        ("Claude Code", 0.92, 6.67, False, "above", "medium"),
+        ("tazuna 0.1.96", 0.69, 6.67, True, "above", "medium"),
+        ("tazuna 0.1.95", 0.64, 6.39, True, "below", "medium"),
     ]
-    sub = ["Six merged Go PRs, three runs each, hidden tests and a blind Opus judge; tazuna 0.1.93 and Claude Code 2.1.322,",
-           "both on Opus 5.5 (2026-11-10). Up and to the left is better; under 0.75 judge points is within noise."]
+    sub = ["Six merged Go PRs, three runs each, hidden tests and a blind Opus judge scoring all three setups together; Opus 5.5",
+           "at medium (2026-11-11). Up and to the left is better; under 0.75 judge points is within noise."]
     out = header("tazuna against Claude Code, same model", sub, [("tazuna", "hi"), ("Claude Code", "lo")])
     left, right, top, bottom = 70, W - 40, 90, 360
     sx = lambda v: left + (right - left) * (v - 0.25) / 0.80
-    sy = lambda v: bottom - (bottom - top) * (v - 6.0) / 1.2
-    for t in (6.0, 6.3, 6.6, 6.9, 7.2):
+    sy = lambda v: bottom - (bottom - top) * (v - 6.0) / 1.0
+    for t in (6.0, 6.25, 6.5, 6.75, 7.0):
         out.append(f'<line x1="{left}" x2="{right}" y1="{sy(t):.1f}" y2="{sy(t):.1f}" stroke="{{grid}}" stroke-width="1"/>')
-        out.append(text(left - 8, sy(t) + 4, f"{t:.1f}", 11, "muted", "end"))
+        out.append(text(left - 8, sy(t) + 4, f"{t:.2f}", 11, "muted", "end"))
     for t in (0.30, 0.50, 0.70, 0.90):
         out.append(text(sx(t), bottom + 18, f"${t:.2f}", 11, "muted", "middle"))
     out.append(f'<line x1="{left}" x2="{right}" y1="{bottom}" y2="{bottom}" stroke="{{axis}}" stroke-width="1"/>')
     out.append(text((left + right) / 2, bottom + 38, "cost per task", 11, "muted", "middle"))
     out.append(f'<text x="20" y="{(top + bottom) / 2:.1f}" font-size="11" fill="{{muted}}" text-anchor="middle" '
                f'transform="rotate(-90 20 {(top + bottom) / 2:.1f})">judge score (1-10)</text>')
-    # each harness from low to medium effort: a thin line, so the step up reads as one move
-    for ours in (False, True):
-        a, b = [p for p in pts if p[3] == ours]
-        out.append(f'<line x1="{sx(a[1]):.1f}" y1="{sy(a[2]):.1f}" x2="{sx(b[1]):.1f}" y2="{sy(b[2]):.1f}" '
-                   f'stroke="{{{"hi" if ours else "lo"}}}" stroke-width="2" stroke-dasharray="4 4"/>')
+    # tazuna's step from 0.1.95 to 0.1.96: a thin line, so the change reads as one move
+    a, b = pts[2], pts[1]
+    out.append(f'<line x1="{sx(a[1]):.1f}" y1="{sy(a[2]):.1f}" x2="{sx(b[1]):.1f}" y2="{sy(b[2]):.1f}" '
+               f'stroke="{{hi}}" stroke-width="2" stroke-dasharray="4 4"/>')
     for label, cost, judge, ours, side, _ in sorted(pts, key=lambda p: p[3]):  # tazuna's points on top
         x, y = sx(cost), sy(judge)
         out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="6" fill="{{{"hi" if ours else "lo"}}}" stroke="{{ring}}" stroke-width="2"/>')

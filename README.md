@@ -46,7 +46,7 @@ tools, `/keys` lists every key and command.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/harnesses-dark.svg">
-  <img alt="Judge score against cost per task on Opus 5.5, six Go PRs, three runs each: Claude Code medium 6.94 at $0.92, Claude Code low 6.78 at $0.50, tazuna medium (its default) 6.50 at $0.65, tazuna low without the explorer 6.28 at $0.35" src="docs/img/harnesses-light.svg">
+  <img alt="Judge score against cost per task on Opus 5.5 medium, six Go PRs, three runs each, one judge pool: Claude Code 6.67 at $0.92, tazuna 0.1.96 6.67 at $0.69, tazuna 0.1.95 6.39 at $0.64" src="docs/img/harnesses-light.svg">
 </picture>
 
 <picture>
@@ -64,9 +64,9 @@ tools, `/keys` lists every key and command.
   <img alt="Memory: Claude Code's UI 190 MB against tazuna's 7.8 MB; a whole agent run on the claude CLI 262-282 MB against 21-22 MB on tazuna's own loop" src="docs/img/memory-light.svg">
 </picture>
 
-In short: on Opus, tazuna is about 30% cheaper than Claude Code and finishes sooner, and its judge score is 0.4-0.5
-lower (inside the noise of one round, but on the lower side on most tasks). On a cheap model, tazuna's own loop is on par
-with pi, OMP and OpenCode; Command Code scores higher at twelve times the cost and runs past the time limit.
+In short: on Opus, tazuna 0.1.96 scores the same as Claude Code at 25% less cost and in about two thirds of the time.
+On a cheap model, tazuna's own loop is on par with pi, OMP and OpenCode (measured with 0.1.83; a new round is due);
+Command Code scores higher at twelve times the cost and runs past the time limit.
 
 How to read these: tasks are real merged PRs (Go: caddy, hugo, k6, prometheus, terraform) with the PR's own tests hidden
 from the agent, and a blind Opus judge scoring every candidate for a task together. One run varies by about ±1.5 judge
@@ -77,7 +77,19 @@ charts come from [docs/charts.py](docs/charts.py).
 <details>
 <summary>The numbers as tables</summary>
 
-Claude path, Opus 5.5, six Go PRs × 3 runs per setting, judged per task (2026-11-10; tazuna 0.1.93, Claude Code 2.1.322):
+Claude path, Opus 5.5 medium, six Go PRs × 3 runs, one judge pool per task (2026-11-11; Claude Code 2.1.322):
+
+| Task | Claude Code | tazuna 0.1.96 | tazuna 0.1.95 |
+|---|---|---|---|
+| caddy | 8.33 · $0.50 | 8.00 · $0.48 | 8.00 · $0.45 |
+| hugo (section slug) | 7.33 · $0.48 | 8.00 · $0.31 | 7.67 · $0.34 |
+| hugo (template return) | 5.67 · $1.62 | 6.67 · $1.10 | 5.00 · $1.11 |
+| k6 | 7.00 · $1.19 | 6.67 · $0.90 | 6.33 · $0.72 |
+| prometheus | 7.67 · $1.06 | 6.67 · $1.09 | 7.33 · $0.85 |
+| terraform | 4.00 · $0.68 | 4.00 · $0.26 | 4.00 · $0.34 |
+| **all six** | **6.67 · $5.52 · 71 min** | **6.67 · $4.15 · 45 min** | **6.39 · $3.82 · 52 min** |
+
+Low against medium effort, the same six PRs × 3 runs, judged per effort (2026-11-10; tazuna 0.1.93):
 
 | Task | Claude Code low | tazuna low, no explorer | Claude Code medium | tazuna medium (default) |
 |---|---|---|---|---|
