@@ -176,6 +176,8 @@ pub struct Session {
     pub calls: Vec<CallTime>,
     call_start: Option<f64>,
     first_token: Option<f64>,
+    /// Each subagent's own messages, by the call that started it: ctrl-b opens one as a conversation of its own.
+    pub sub_events: std::collections::HashMap<String, Vec<(f64, Value)>>,
     call_est: f64,
     call_thinking: Vec<usize>,
     /// When the last call started (ms into the session) and the cache life claude wrote it with (5 minutes or 1 hour, from
@@ -271,6 +273,7 @@ impl Session {
             calls: vec![],
             call_start: None,
             first_token: None,
+            sub_events: Default::default(),
             call_est: 0.0,
             call_thinking: vec![],
             last_call_ms: None,
@@ -429,6 +432,7 @@ impl Session {
         self.now_ms = at_ms;
         if let Some(parent) = e["parent_tool_use_id"].as_str() {
             // a subagent's own messages: they belong under the call that started it, not in the main transcript
+            self.sub_events.entry(parent.to_string()).or_default().push((at_ms, e.clone()));
             self.subagent(parent, e);
             return;
         }
@@ -602,6 +606,8 @@ impl Session {
             }
             (Some("harness_notice"), _) => {
                 self.stopping = false;
+                // a killed process ends its call without message_delta or result: "waiting for first token" kept counting
+                (self.call_start, self.first_token) = (None, None);
                 self.push(Block::Notice { text: s(&e["text"]), error: e["error"].as_bool().unwrap_or(false) });
                 // the process ended: its reported cost is final, the next one starts from $0
                 self.close_process();
@@ -906,7 +912,7 @@ pub fn failure_reason(result: &str) -> String {
         Some("insufficient_quota") => "the provider account has no balance left".into(),
         Some("model_not_found") => "no provider serves this model on the route right now (it may have dropped out)".into(),
         Some(_) => "rate limited by the provider: try again in a moment".into(),
-        None => result.trim().chars().take(200).collect(),
+        None => result.trim().trim_start_matches('[').trim_end_matches(']').chars().take(200).collect(),
     }
 }
 
@@ -1125,7 +1131,7 @@ mod tests {
     fn a_failed_turn_says_why() {
         let msg = r#"[provider error: HTTP 403: {"error":{"message":"请求内容未通过安全检查。","type":"content_policy_violation","code":"content_policy_violation"}}]"#;
         assert!(super::failure_reason(msg).starts_with("the provider's content filter refused"));
-        assert_eq!(super::failure_reason("[provider error: HTTP 500: boom]"), "[provider error: HTTP 500: boom]");
+        assert_eq!(super::failure_reason("[provider error: HTTP 500: boom]"), "provider error: HTTP 500: boom");
     }
 
     #[test]
@@ -1145,7 +1151,9 @@ mod tests {
         let mut s = Session::new("", "low");
         s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.01}), 1.0);
         s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.03}), 2.0); // same process: cumulative
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 2.5);
         s.apply(&json!({"type": "harness_notice", "text": "stopped"}), 3.0);
+        assert!(s.in_flight().is_none(), "a killed call stops its clock");
         s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.005}), 4.0); // resumed process restarts at $0
         assert!((s.cost() - 0.035).abs() < 1e-9, "{}", s.cost());
         // `/resume` replays: each recording's process starts again at $0; a slash command (no tokens) kept claude's

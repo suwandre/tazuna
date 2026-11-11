@@ -16,6 +16,25 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.100 (2026-11-11): open a background agent; a stop that stops; shorter provider errors
+
+- ctrl-b, then enter (or a click) on a background agent opens its conversation in place of the main one, as Claude Code
+  does: the prompt claude gave it, each step it took and its answer, drawn like the main transcript and following it while
+  it runs. Esc goes back to the list. The agent's messages were already in claude's stream; tazuna kept only a count of
+  them under the call that started it.
+- Esc or ctrl-c on the own loop stops a model call at once. The engine heard a stop only between calls, so a free
+  OpenRouter model that took minutes to its first token held the stop until tazuna killed the process after 3 s, and
+  each further press started those 3 s over (about 10 s, then a lost conversation). The call now runs on a thread of its
+  own, and the call and the waits between tries look for a stop every 100 ms. A fake provider that never answers: a stop
+  3 s into the call ended the turn in 0.04 s, and the next message ran normally (0.1.99 was still waiting after 30 s). A
+  second press while a stop is pending now stops at once, on Claude too.
+- "waiting for first token" stopped counting when a call was killed.
+- A provider's error reads as its code and message, "HTTP 429: ... is temporarily rate-limited upstream (Baidu)", not
+  its JSON body; OpenRouter's "Provider returned error" gives way to the provider's own words.
+- Links on screen could leave the rest of the screen underlined: a link opened on its first cell and closed on its last,
+  and when a frame redrew only the first one (a drag selection starting on it), every cell drawn after it was part of the
+  link. Each cell of a link now opens and closes it itself. No measurable metric changes.
+
 ## 0.1.99 (2026-11-11): no freeze at the end of a reply
 
 - The screen froze for seconds when a reply ended, on Claude and on the own loop alike. In a repo with a `typecheck`

@@ -8,7 +8,7 @@ use std::{
     collections::VecDeque,
     io::{BufRead, Write},
     sync::{
-        Mutex, OnceLock,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
         mpsc::{Receiver, TryRecvError},
     },
@@ -202,6 +202,9 @@ pub fn serve(args: &[String]) -> Result<()> {
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             if let Ok(v) = serde_json::from_str::<Value>(&line) {
+                if is_stop(&v) {
+                    STOPS_SENT.fetch_add(1, Ordering::SeqCst);
+                }
                 if tx.send(v).is_err() {
                     return;
                 }
@@ -277,6 +280,9 @@ pub fn serve(args: &[String]) -> Result<()> {
         };
         if msg["type"] == "user" {
             loop_.run(&msg["message"]["content"], msg["tazuna_followup"] == true, &rx);
+        }
+        if is_stop(&msg) {
+            STOPS_TAKEN.fetch_add(1, Ordering::SeqCst);
         }
         loop_.set_mode(&msg); // a mode switch while idle; an interrupt while idle has nothing to stop
     }
@@ -588,6 +594,21 @@ impl Loop {
         let mut nudges = 0;
         let (mut green, mut told) = (None, false);
         let end = |s: &mut Self, subtype: &str, text: String, turns: usize, usage: [u64; 3]| {
+            // a stop that ended a model call or a wait: its message is still queued; taken out here, it cannot stop the
+            // next run
+            let (subtype, text) = if stop_pending() {
+                let until = std::time::Instant::now() + Duration::from_secs(2);
+                while let Ok(m) = rx.recv_timeout(until.saturating_duration_since(std::time::Instant::now())) {
+                    if is_stop(&m) {
+                        STOPS_TAKEN.fetch_add(1, Ordering::SeqCst);
+                        break;
+                    }
+                    if m["type"] == "user" { s.queued.push_back(m) } else { s.set_mode(&m) }
+                }
+                ("error_during_execution", "[interrupted]".to_string())
+            } else {
+                (subtype, text)
+            };
             (s.out)(&json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "result": text,
                 "num_turns": turns, "total_cost_usd": s.cost, "session_id": s.session, "duration_ms": began.elapsed().as_millis() as u64,
                 "usage": {"input_tokens": usage[0], "cache_creation_input_tokens": 0, "cache_read_input_tokens": usage[1], "output_tokens": usage[2]}}));
@@ -595,7 +616,8 @@ impl Loop {
         loop {
             loop {
                 match rx.try_recv() {
-                    Ok(m) if m["type"] == "control_request" && m["request"]["subtype"] == "interrupt" => {
+                    Ok(m) if is_stop(&m) => {
+                        STOPS_TAKEN.fetch_add(1, Ordering::SeqCst);
                         return end(self, "error_during_execution", "[interrupted]".into(), turns, usage);
                     }
                     Ok(m) if m["type"] == "user" => self.queued.push_back(m),
@@ -718,7 +740,7 @@ impl Loop {
                     }
                 }
                 // the route failed for good (a refusal, or 3 failed tries while another route waits): the same turn on the next
-                Err(e) if self.switch_route(&format!("{e:#}").chars().take(120).collect::<String>()) => continue,
+                Err(e) if !stop_pending() && self.switch_route(&format!("{e:#}").chars().take(120).collect::<String>()) => continue,
                 Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
             };
             // an empty reply (no text, no call) is a provider hiccup, not an answer: the same request again, up to 3
@@ -727,7 +749,7 @@ impl Loop {
                 if !empty_reply(&reply, self.api) {
                     break;
                 }
-                std::thread::sleep(Duration::from_secs(if cfg!(test) { 0 } else { wait }));
+                pause(wait);
                 reply = match (self.call)(&body) {
                     Ok(r) => r,
                     Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
@@ -1189,7 +1211,10 @@ impl Loop {
                 };
             }
             match (m["type"].as_str(), m["request"]["subtype"].as_str()) {
-                (Some("control_request"), Some("interrupt")) => return Permit::Stop,
+                (Some("control_request"), Some("interrupt")) => {
+                    STOPS_TAKEN.fetch_add(1, Ordering::SeqCst);
+                    return Permit::Stop;
+                }
                 (Some("user"), _) => self.queued.push_back(m),
                 _ => self.set_mode(&m),
             }
@@ -1229,6 +1254,33 @@ fn chat_content(content: &Value) -> (String, String) {
         }
     }
     (text, thinking)
+}
+
+/// Stops tazuna sent (counted by the stdin reader as it passes them on) and stops taken from the queue: one sent and not
+/// yet taken is pending. A model call and the waits between tries look at it every 100 ms: the engine heard a stop only
+/// between calls, and a free model that took minutes to its first token kept esc and ctrl-c waiting until tazuna killed
+/// the process, conversation and all (2026-11-11).
+static STOPS_SENT: AtomicUsize = AtomicUsize::new(0);
+static STOPS_TAKEN: AtomicUsize = AtomicUsize::new(0);
+
+fn stop_pending() -> bool {
+    STOPS_SENT.load(Ordering::SeqCst) > STOPS_TAKEN.load(Ordering::SeqCst)
+}
+
+fn is_stop(m: &Value) -> bool {
+    m["type"] == "control_request" && m["request"]["subtype"] == "interrupt"
+}
+
+/// A reader that fails once its call is given up, so a stream stops at its next chunk.
+struct Stoppable<R>(R, Arc<AtomicBool>);
+
+impl<R: std::io::Read> std::io::Read for Stoppable<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        if self.1.load(Ordering::Relaxed) {
+            return Err(std::io::Error::other("stopped"));
+        }
+        self.0.read(buf)
+    }
 }
 
 /// Set by the session's engine: a streamed reply's text and reasoning go out as they arrive (`read_streaming`).
@@ -1362,6 +1414,9 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         // with another route waiting, 3 tries are enough: that route is the better wait (0.0.79)
         let wait = if FALLBACK.load(Ordering::Relaxed) && i >= 2 { 0 } else { TRIES[i] };
         i += 1;
+        if stop_pending() {
+            bail!("stopped");
+        }
         if stream {
             body["stream"] = json!(true);
             if api == Api::Chat {
@@ -1385,16 +1440,36 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             Some(g) => req.header("X-Group", &g),
             None => req,
         };
-        let sent = req.send(&body.to_string()).and_then(|mut r| {
-            let status = r.status().as_u16();
-            let body = r.body_mut().with_config().limit(50 << 20);
-            let text = if status == 200 && stream && STREAM_TO_UI.load(std::sync::atomic::Ordering::Relaxed) {
-                read_streaming(body.reader(), api, &mut |e| emit(e)).map_err(ureq::Error::Io)?
-            } else {
-                body.read_to_string()?
-            };
-            Ok((status, text))
+        // on a thread of its own, so a stop is heard while the provider has not answered; the call given up stops reading
+        // at its next chunk and shows nothing more
+        let (payload, to_ui, cancel) = (body.to_string(), stream && STREAM_TO_UI.load(Ordering::Relaxed), Arc::new(AtomicBool::new(false)));
+        let (done, reply) = std::sync::mpsc::channel();
+        let c = cancel.clone();
+        std::thread::spawn(move || {
+            let sent = req.send(&payload).and_then(|mut r| {
+                let status = r.status().as_u16();
+                let body = r.body_mut().with_config().limit(50 << 20);
+                let text = if status == 200 && to_ui {
+                    let quiet = c.clone();
+                    read_streaming(Stoppable(body.reader(), c), api, &mut |e| if !quiet.load(Ordering::Relaxed) { emit(e) }).map_err(ureq::Error::Io)?
+                } else {
+                    body.read_to_string()?
+                };
+                Ok((status, text))
+            });
+            let _ = done.send(sent);
         });
+        let sent = loop {
+            match reply.recv_timeout(Duration::from_millis(100)) {
+                Ok(sent) => break sent,
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) if stop_pending() => {
+                    cancel.store(true, Ordering::Relaxed);
+                    bail!("stopped");
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => bail!("the model call ended without a reply"),
+            }
+        };
         let (status, text) = match sent {
             Ok(st) => st,
             Err(e) if wait > 0 => {
@@ -1468,22 +1543,44 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         }
         // the pool holding this conversation is down: waiting does not bring it back soon, the caller moves the conversation
         if pinned_away(&text) {
-            bail!("HTTP {status}: {}", text.chars().take(300).collect::<String>());
+            bail!("{}", http_error(status, &text));
         }
         // Mortera Cloud's 422 "model_unavailable" says not to retry, yet passes within a minute or two (Muse Spark came
         // back after one; it ended a Haiku run at call 38): tried again like a 5xx
         if wait == 0 || permanent || !(status == 429 || status >= 500 || text.contains("model_unavailable")) {
-            bail!("HTTP {status}: {}", text.chars().take(300).collect::<String>());
+            bail!("{}", http_error(status, &text));
         }
         pause(wait);
     }
     unreachable!()
 }
 
+/// A provider's error body as a person reads it: "HTTP 429: its message (code, provider)", not the JSON (a free model's
+/// rate limit filled the screen with it, 2026-11-11). Code, type and parameter stay: the retries look for them.
+fn http_error(status: u16, text: &str) -> String {
+    let v: Value = serde_json::from_str(text).unwrap_or(Value::Null);
+    let err = if v["error"].is_object() { &v["error"] } else { &v };
+    let field = |k: &str| err[k].as_str().map(String::from).or_else(|| err[k].as_i64().map(|n| n.to_string()));
+    // OpenRouter says "Provider returned error" and keeps the provider's own words in metadata.raw
+    let raw = err["metadata"]["raw"].as_str().map(|r| {
+        let j: Value = serde_json::from_str(r).unwrap_or(Value::Null);
+        j["error"]["message"].as_str().or(j["message"].as_str()).unwrap_or(r).to_string()
+    });
+    let Some(msg) = raw.or_else(|| field("message")).or_else(|| v["error"].as_str().map(String::from)) else {
+        return format!("HTTP {status}: {}", text.chars().take(300).collect::<String>());
+    };
+    let msg: String = msg.split_whitespace().collect::<Vec<_>>().join(" ").chars().take(200).collect();
+    let mut extra: Vec<String> = ["code", "type", "param"].iter().filter_map(|k| field(k)).filter(|c| !msg.contains(c.as_str()) && *c != status.to_string()).collect();
+    extra.extend(err["metadata"]["provider_name"].as_str().map(String::from));
+    extra.dedup();
+    if extra.is_empty() { format!("HTTP {status}: {msg}") } else { format!("HTTP {status}: {msg} ({})", extra.join(", ")) }
+}
+
 /// Sleeps between tries (not in tests).
 fn pause(secs: u64) {
-    if !cfg!(test) {
-        std::thread::sleep(Duration::from_secs(secs));
+    let until = std::time::Instant::now() + Duration::from_secs(if cfg!(test) { 0 } else { secs });
+    while std::time::Instant::now() < until && !stop_pending() {
+        std::thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -1633,6 +1730,16 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_provider_error_reads_as_its_code_and_message() {
+        let openrouter = r#"{"error":{"message":"Provider returned error","code":429,"metadata":{"raw":"baidu/ernie-5.5-flash-preview:free is temporarily rate-limited upstream. Please retry shortly.","provider_name":"Baidu"}},"user_id":"u1"}"#;
+        assert_eq!(http_error(429, openrouter), "HTTP 429: baidu/ernie-5.5-flash-preview:free is temporarily rate-limited upstream. Please retry shortly. (Baidu)");
+        let deepseek = r#"{"error":{"message":"This reasoning model requires previous reasoning_content in multi-turn requests","type":"invalid_request_error","param":null,"code":"invalid_request_error"}}"#;
+        assert_eq!(http_error(400, deepseek), "HTTP 400: This reasoning model requires previous reasoning_content in multi-turn requests (invalid_request_error)");
+        let pool = r#"{"error":{"message":"source unavailable","type":"server_error","code":"responses_source_unavailable"}}"#;
+        assert!(pinned_away(&http_error(503, pool)), "the code a retry looks for stays");
+        assert_eq!(http_error(502, "<html>bad gateway</html>"), "HTTP 502: <html>bad gateway</html>");
+    }
 
     #[test]
     fn a_streamed_reply_reaches_the_screen_as_it_comes() {

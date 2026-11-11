@@ -912,6 +912,32 @@ fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) ->
     Ok(())
 }
 
+/// A background agent's conversation as a session of its own (ctrl-b, enter): the prompt it was given, then its messages as
+/// claude passed them on (`Session::sub_events`), drawn like the main transcript.
+fn agent_session(s: &Session, t: &live::BgTask) -> Session {
+    let mut a = Session::new("", "");
+    let what = if t.agent.is_empty() { "agent".to_string() } else { format!("{} agent", t.agent) };
+    a.apply(&json!({"type": "harness_info", "text": format!("{what} · {} · esc back to the list", t.description)}), 0.0);
+    let mut last = 0.0;
+    for (call, prompt) in &t.calls {
+        let events = s.sub_events.get(call).map(Vec::as_slice).unwrap_or_default();
+        a.apply(&json!({"type": "harness_user", "text": prompt}), events.first().map_or(last, |e| e.0));
+        for (at, e) in events {
+            let mut e = e.clone();
+            e["parent_tool_use_id"] = serde_json::Value::Null;
+            if a.model.is_empty() && let Some(m) = e["message"]["model"].as_str() {
+                a.model = m.to_string();
+            }
+            a.apply(&e, *at);
+            last = *at;
+        }
+    }
+    if t.ended.is_some() {
+        a.apply(&json!({"type": "harness_notice", "text": format!("── {} ──", t.status), "error": false}), last);
+    }
+    a
+}
+
 /// A permission question ignores keys for this long after it appears.
 const ANSWER_DELAY_MS: u64 = 600;
 const QUIT_MS: u128 = 480;
@@ -1399,6 +1425,11 @@ fn run_live(
     let (mut composer_area, mut composer_drag) = (None::<ratatui::layout::Rect>, false);
     // ctrl-b: the background-task view (which row is selected, when its output was last asked for)
     let (mut tasks_open, mut task_sel, mut outputs_read) = (false, 0usize, Instant::now());
+    // ctrl-b, enter on an agent: its conversation in place of the main one, as in Claude Code (the task's id, how many of
+    // its events it was built from, the session); and the main transcript's scroll and open blocks, for esc
+    let mut viewing: Option<(String, usize, Session)> = None;
+    let mut main_place: (usize, std::collections::HashSet<usize>) = Default::default();
+    let mut task_rows: Vec<(ratatui::layout::Rect, usize)> = vec![];
     // /rewind: the picker's selected message, while it is open
     let mut rewind_sel: Option<usize> = None;
     // /resume: this repo's sessions and the selected one, while the picker is open
@@ -1463,7 +1494,21 @@ fn run_live(
             doing: t.doing.clone(),
         };
         v.running = live.bg.iter().filter(|t| t.ended.is_none()).map(row).collect();
-        v.tasks = tasks_open.then(|| ui::TasksPanel { selected: task_sel, rows: live.bg.iter().map(row).collect() });
+        if let Some(id) = viewing.as_ref().map(|w| w.0.clone()) {
+            match live.bg.iter().find(|t| t.id == id) {
+                Some(t) => {
+                    let n = t.calls.iter().map(|(c, _)| s.sub_events.get(c).map_or(0, Vec::len)).sum::<usize>() + usize::from(t.ended.is_some());
+                    if viewing.as_ref().is_some_and(|w| w.1 != n) {
+                        viewing = Some((id, n, agent_session(&s, t)));
+                    }
+                }
+                None => {
+                    viewing = None;
+                    (v.scroll, v.open) = std::mem::take(&mut main_place);
+                }
+            }
+        }
+        v.tasks = (tasks_open && viewing.is_none()).then(|| ui::TasksPanel { selected: task_sel, rows: live.bg.iter().map(row).collect() });
         v.vim = if !vim { "" } else if normal { "NORMAL" } else { "INSERT" };
         v.sessions = resume_pick.as_ref().map(|(l, i)| ui::SessionsPanel { rows: l.iter().map(Earlier::row).collect(), selected: *i });
         v.rewind = rewind_sel.map(|i| ui::RewindPanel { items: live.checkpoints.iter().map(|c| c.text.clone()).collect(), selected: i });
@@ -1617,18 +1662,19 @@ fn run_live(
             s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
         }
         v.clock_ms = live.elapsed_ms();
+        let drawn = viewing.as_ref().map_or(&s, |w| &w.2);
         term.draw(|f| {
-            let areas = fx.frame(f, &s, &v, dt);
+            let areas = fx.frame(f, drawn, &v, dt);
             (transcript, rows, links, files_area, diff_files) = (areas.transcript, areas.rows, areas.links, areas.files, areas.diff_files);
             (tool_rows, tokens_area, bars, top_line) = (areas.tool_rows, areas.tokens, areas.bars, areas.top_line);
-            (list_area, list_links, list_rows) = (areas.list, areas.list_links, areas.list_rows);
+            (list_area, list_links, list_rows, task_rows) = (areas.list, areas.list_links, areas.list_rows, areas.task_rows);
             composer_area = areas.composer;
             if let Some(sel) = sel.as_mut() {
                 // a drag held past an edge: the head moves with the scroll
                 sel.follow(top_line);
                 sel.highlight(f.buffer_mut(), top_line);
                 if copy_now {
-                    copied = Some(sel.text(&ui::transcript_lines(&s, &v, transcript.width)));
+                    copied = Some(sel.text(&ui::transcript_lines(drawn, &v, transcript.width)));
                 }
             }
         })?;
@@ -1717,7 +1763,14 @@ fn run_live(
                         _ => {
                             sel = None;
                             let pos = ratatui::layout::Position::new(m.column, m.row);
-                            if v.list.is_some() {
+                            let task = task_rows.iter().find(|(r, _)| tasks_open && viewing.is_none() && r.contains(pos)).map(|&(_, i)| i);
+                            if let Some(i) = task {
+                                task_sel = i;
+                                if let Some(t) = live.bg.get(task_sel).filter(|t| !t.calls.is_empty()) {
+                                    viewing = Some((t.id.clone(), usize::MAX, Session::new("", "")));
+                                    main_place = (std::mem::take(&mut v.scroll), std::mem::take(&mut v.open));
+                                }
+                            } else if v.list.is_some() {
                                 // a click inside the list stays (on a link: opens it); outside it closes the list
                                 if let Some((_, url)) = list_links.iter().find(|(r, _)| r.contains(pos)) {
                                     v.toast = Some((match platform::open_url(url) { Ok(()) => format!("opened {url}"), Err(e) => format!("could not open {url}: {e}") }, Instant::now()));
@@ -2067,9 +2120,33 @@ fn run_live(
             }
             continue;
         }
-        // the background-task view owns the keyboard while open: select, stop, close
+        // an agent's conversation, opened from ctrl-b: it scrolls; esc goes back to the list
+        if viewing.is_some() && !stop_key && live.pending.is_empty() {
+            match key.code {
+                KeyCode::Esc | KeyCode::Left | KeyCode::Char('b') if key.code != KeyCode::Char('b') || ctrl => {
+                    viewing = None;
+                    (v.scroll, v.open) = std::mem::take(&mut main_place);
+                    tasks_open = key.code != KeyCode::Char('b');
+                }
+                KeyCode::Up => v.scroll += 1,
+                KeyCode::Down => v.scroll = v.scroll.saturating_sub(1),
+                KeyCode::PageUp => v.scroll += 15,
+                KeyCode::PageDown => v.scroll = v.scroll.saturating_sub(15),
+                KeyCode::End => v.scroll = 0,
+                KeyCode::Char('o') if ctrl => v.expand_all = !v.expand_all,
+                _ => {}
+            }
+            continue;
+        }
+        // the background-task view owns the keyboard while open: select, open an agent, stop, close
         if tasks_open && !stop_key && live.pending.is_empty() {
             match key.code {
+                KeyCode::Enter | KeyCode::Right => {
+                    if let Some(t) = live.bg.get(task_sel).filter(|t| !t.calls.is_empty()) {
+                    viewing = Some((t.id.clone(), usize::MAX, Session::new("", "")));
+                    main_place = (std::mem::take(&mut v.scroll), std::mem::take(&mut v.open));
+                }
+                }
                 KeyCode::Up => task_sel = task_sel.saturating_sub(1),
                 KeyCode::Down => task_sel = (task_sel + 1).min(live.bg.len().saturating_sub(1)),
                 KeyCode::Char('x') => {
@@ -2730,6 +2807,24 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn a_background_agent_opens_as_a_conversation_of_its_own() {
+        let mut s = Session::new("", "");
+        s.apply(&json!({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "tool_use", "id": "call1", "name": "Agent"}}}), 1.0);
+        s.apply(&json!({"type": "assistant", "parent_tool_use_id": "call1", "message": {"model": "claude-haiku-5-5", "content": [{"type": "tool_use", "id": "r1", "name": "Read", "input": {"file_path": "src/a.rs"}}]}}), 2.0);
+        s.apply(&json!({"type": "user", "parent_tool_use_id": "call1", "message": {"content": [{"type": "tool_result", "tool_use_id": "r1", "content": "fn a() {}"}]}}), 3.0);
+        s.apply(&json!({"type": "assistant", "parent_tool_use_id": "call1", "message": {"content": [{"type": "text", "text": "a.rs has one function"}]}}), 4.0);
+        let t = live::BgTask { id: "t1".into(), kind: "local_agent".into(), description: "look at a.rs".into(), status: "completed".into(), started: Instant::now(),
+            ended: Some(Instant::now()), output: String::new(), agent: "explorer".into(), tokens: 0, tools: 0, doing: String::new(),
+            calls: vec![("call1".into(), "What is in src/a.rs?".into())] };
+        let a = agent_session(&s, &t);
+        assert_eq!(a.model, "claude-haiku-5-5");
+        assert!(matches!(&a.blocks[1], session::Block::Prompt(p) if p == "What is in src/a.rs?"), "the prompt claude gave it");
+        assert!(a.blocks.iter().any(|b| matches!(b, session::Block::Tool(t) if t.name == "Read" && t.result.is_some())), "its steps, finished");
+        assert!(a.blocks.iter().any(|b| matches!(b, session::Block::Text { text, .. } if text == "a.rs has one function")), "its answer");
+        assert!(!s.blocks.iter().any(|b| matches!(b, session::Block::Text { .. })), "none of it in the main transcript");
+    }
 
     #[test]
     fn finds_the_session_to_continue() {

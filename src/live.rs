@@ -302,6 +302,9 @@ pub struct BgTask {
     pub tokens: u64,
     pub tools: u64,
     pub doing: String,
+    /// A subagent's calls (the first, then each SendMessage that continued it) and the prompt of each: its messages come
+    /// under the call's id (`Session::sub_events`).
+    pub calls: Vec<(String, String)>,
 }
 
 enum Msg {
@@ -926,6 +929,11 @@ impl Live {
             self.runs.front_mut()?.interrupted();
             return Some(self.record(json!({"type": "harness_verify_cancel"})));
         }
+        // a second esc or ctrl-c while the first waits for an answer: stop now. Each press sent the stop again and started
+        // the 3 s wait over, so pressing on kept everything waiting (about 10 s on a free model, 2026-11-11)
+        if self.interrupting.is_some() {
+            return Some(self.kill("stopped"));
+        }
         let stdin = self.stdin.as_mut()?;
         self.interrupts_sent += 1;
         let req = json!({"type": "control_request", "request_id": format!("interrupt-{}", self.interrupts_sent), "request": {"subtype": "interrupt"}});
@@ -1029,16 +1037,21 @@ impl Live {
                             self.tasks.insert(id.to_string(), owner);
                             // an agent continued with SendMessage starts again under its id: running again, not the ended
                             // row it left (a resumed implementation agent worked for minutes with no sign of it, 2026-11-10)
+                            let call = e["tool_use_id"].as_str().map(|c| (c.to_string(), e["prompt"].as_str().unwrap_or_default().to_string()));
                             if let Some(t) = self.bg.iter_mut().find(|t| t.id == id) {
                                 (t.status, t.started, t.ended, t.doing) = ("running".into(), Instant::now(), None, String::new());
                                 if let Some(d) = e["description"].as_str().filter(|d| !d.is_empty()) {
                                     t.description = d.to_string();
                                 }
+                                if let Some(c) = call.filter(|c| !t.calls.iter().any(|(id, _)| *id == c.0)) {
+                                    t.calls.push(c);
+                                }
                             } else {
                                 self.bg.push(BgTask { id: id.to_string(), kind: e["task_type"].as_str().unwrap_or("task").to_string(),
                                     description: e["description"].as_str().unwrap_or_default().to_string(), status: "running".into(),
                                     started: Instant::now(), ended: None, output: String::new(),
-                                    agent: e["subagent_type"].as_str().unwrap_or_default().to_string(), tokens: 0, tools: 0, doing: String::new() });
+                                    agent: e["subagent_type"].as_str().unwrap_or_default().to_string(), tokens: 0, tools: 0, doing: String::new(),
+                                    calls: call.into_iter().collect() });
                             }
                         }
                         (Some("system"), Some("task_progress"), Some(id)) => {
@@ -1120,7 +1133,8 @@ impl Live {
             }
         }
         if self.interrupting.is_some_and(|t| t.elapsed().as_secs() >= 3) {
-            out.push(self.kill("stopped (claude did not respond, process restarted)"));
+            let who = if self.provider.is_some() { "the model" } else { "claude" };
+            out.push(self.kill(&format!("stopped ({who} did not respond, process restarted)")));
         }
         out
     }

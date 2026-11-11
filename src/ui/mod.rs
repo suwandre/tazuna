@@ -252,6 +252,8 @@ pub struct Areas {
     pub list: Option<Rect>,
     pub list_links: Vec<(Rect, String)>,
     pub list_rows: Vec<(Rect, usize)>,
+    /// ctrl-b's task rows: a click opens one.
+    pub task_rows: Vec<(Rect, usize)>,
 }
 
 /// One file this conversation changed, with its lines added and removed (git).
@@ -328,7 +330,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
         }
     }
     if let Some(p) = &v.tasks {
-        draw_tasks(f, p, th);
+        areas.task_rows = draw_tasks(f, p, th);
     }
     if let Some(p) = &v.rewind {
         draw_rewind(f, p, th);
@@ -451,14 +453,14 @@ pub fn written_by_tools(s: &Session, skip: &[String]) -> Vec<Changed> {
 }
 
 /// The ctrl-b view: background tasks with status and age, and the latest output of the selected one.
-fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
+fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) -> Vec<(Rect, usize)> {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
     let (w, h) = ((full.width * 9 / 10).max(20).min(full.width), (full.height * 8 / 10).max(8).min(full.height));
     let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
     f.render_widget(Clear, area);
     let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(" background tasks · ↑↓ select · x stop · esc close ", st(th.accent).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(" background tasks · ↑↓ select · enter open an agent · x stop · esc close ", st(th.accent).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let mut lines: Vec<Line<'static>> = Vec::new();
@@ -478,7 +480,9 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
     if first > 0 {
         lines.push(Line::from(Span::styled(format!("  ↑ {first} earlier"), st(th.faint))));
     }
+    let mut rows = vec![];
     for (i, r) in p.rows.iter().enumerate().take(last).skip(first) {
+        rows.push((Rect::new(inner.x, inner.y + lines.len() as u16, inner.width, 1), i));
         let mark = if i == p.selected { "›" } else { " " };
         let age = if r.secs >= 60 { format!("{}m{:02}s", r.secs / 60, r.secs % 60) } else { format!("{}s", r.secs) };
         let colour = if r.status == "running" { th.accent } else if r.status == "completed" { th.faint } else { th.warn };
@@ -496,12 +500,14 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) {
         let text = plain(&r.output);
         let room = (inner.height as usize).saturating_sub(lines.len());
         let out: Vec<&str> = text.lines().collect();
-        let shown = if r.kind == "local_agent" { vec!["(a subagent: no command output to show)"] } else if out.is_empty() { vec!["(no output yet)"] } else { out[out.len().saturating_sub(room)..].to_vec() };
+        let shown = if r.kind == "local_agent" { vec!["(a subagent: enter or a click opens its conversation)"] } else if out.is_empty() { vec!["(no output yet)"] } else { out[out.len().saturating_sub(room)..].to_vec() };
         for l in shown {
             lines.push(Line::from(Span::styled(l.chars().take(inner.width as usize).collect::<String>(), st(th.text))));
         }
     }
     f.render_widget(Paragraph::new(lines), inner);
+    rows.retain(|(r, _)| r.y < inner.bottom());
+    rows
 }
 
 /// /rewind: the messages sent so far; the chosen one and everything after it can be undone.
@@ -1805,11 +1811,17 @@ fn link_cells(buf: &mut ratatui::buffer::Buffer, area: Rect, links: &[(String, S
             }
             let run: String = (start..x).map(|c| buf[(c, y)].symbol().to_string()).collect();
             let Some((_, url)) = links.iter().find(|(t, _)| !run.trim().is_empty() && t.contains(run.trim())) else { continue };
-            let width = |s: &str| std::num::NonZeroU16::new(s.width().max(1) as u16).expect("at least 1");
-            let first = buf[(start, y)].symbol().to_string();
-            buf[(start, y)].set_symbol(&format!("\x1b]8;;{url}\x1b\\{first}")).set_diff_option(CellDiffOption::ForcedWidth(width(&first)));
-            let last = buf[(x - 1, y)].symbol().to_string();
-            buf[(x - 1, y)].set_symbol(&format!("{last}\x1b]8;;\x1b\\")).set_diff_option(CellDiffOption::ForcedWidth(width(&plain(&last))));
+            // each cell opens and closes the link itself: ratatui writes only the cells that changed, and an opening on
+            // the first cell without the closing on the last left everything drawn after it a link, underlined by the
+            // terminal (2026-11-11). The id joins the cells into one link for the terminal's hover
+            let id = url.bytes().fold(0u32, |h, b| h.wrapping_mul(31).wrapping_add(b as u32));
+            let mut c = start;
+            while c < x {
+                let sym = buf[(c, y)].symbol().to_string();
+                let w = std::num::NonZeroU16::new(sym.width().max(1) as u16).expect("at least 1");
+                buf[(c, y)].set_symbol(&format!("\x1b]8;id={id:x};{url}\x1b\\{sym}\x1b]8;;\x1b\\")).set_diff_option(CellDiffOption::ForcedWidth(w));
+                c += w.get(); // a wide character's second cell stays as ratatui left it
+            }
             found.push((Rect::new(start, y, x - start, 1), url.clone()));
         }
     }
@@ -2183,6 +2195,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_link_redrawn_in_part_is_still_closed() {
+        use ratatui::backend::Backend;
+        let area = Rect::new(0, 0, 40, 1);
+        let mut a = ratatui::buffer::Buffer::empty(area);
+        a.set_string(0, 0, "see GitHub changelog now", Style::default());
+        for x in 4..20 {
+            a[(x, 0)].modifier.insert(Modifier::UNDERLINED);
+        }
+        link_cells(&mut a, area, &[("GitHub changelog".into(), "https://github.blog/c".into())]);
+        // the next frame changes only the link's first cell (a drag selection that starts there): ratatui writes only
+        // that cell, and an opening without its closing left every later cell a link, underlined (2026-11-11)
+        let mut b = a.clone();
+        b[(4, 0)].modifier.insert(Modifier::REVERSED);
+        let mut out = Vec::new();
+        ratatui::backend::CrosstermBackend::new(&mut out).draw(b.diff(&a).into_iter()).unwrap();
+        let out = String::from_utf8_lossy(&out);
+        let (all, closes) = (out.matches("\x1b]8;").count(), out.matches("\x1b]8;;\x1b\\").count());
+        assert!(all > closes && all - closes == closes, "every opened link is closed: {out:?}");
+    }
+
+    #[test]
     fn claude_and_lean_edits_read_the_same() {
         let tool = |name: &str, input: serde_json::Value| Tool { id: String::new(), name: name.into(), input, result: None, error: false, started_ms: 0.0, done_ms: None, sub: None };
         let lean = tool("mcp__lean__edit", serde_json::json!({"path": "/r/a.ts", "old": "x", "new": "y"}));
@@ -2213,7 +2246,7 @@ mod tests {
         let draw = |selected: usize| {
             let p = TasksPanel { rows: (0..40).map(row).collect(), selected };
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
-            term.draw(|f| draw_tasks(f, &p, Design::Cockpit.theme())).unwrap();
+            term.draw(|f| { draw_tasks(f, &p, Design::Cockpit.theme()); }).unwrap();
             let b = term.backend().buffer().clone();
             (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n")
         };
@@ -2380,7 +2413,7 @@ mod tests {
         let areas = areas.unwrap();
         assert_eq!(areas.links.iter().map(|(r, u)| (r.width, u.as_str())).collect::<Vec<_>>(), [(16, "https://github.blog/c")]);
         let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
-        assert!(text.contains("\x1b]8;;https://github.blog/c\x1b\\G") && !text.contains("](https"), "a terminal hyperlink, no raw markdown");
+        assert!(text.contains(";https://github.blog/c\x1b\\G\x1b]8;;\x1b\\") && !text.contains("](https"), "a terminal hyperlink, no raw markdown");
         assert_eq!(plain(&text).matches("GitHub changelog").count(), 1, "copied text keeps the title, not the escape");
         // the mouse over the link: its cells reversed, the rest of the row not
         let r = areas.links[0].0;
