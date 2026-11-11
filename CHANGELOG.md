@@ -16,6 +16,25 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.103 (2026-11-11): the own loop covers every command the task names
+
+- The 0.1.96 rule (cover every command, flag or API the task names, and their error cases, reading the code behind each
+  first) is now in the own loop's prompt by default, as on the Claude path. `TAZUNA_NO_COVER_ALL` turns it off on both.
+  Measured on DeepSeek V4.1 Flash 1017 at high through SubRouter, 3 tasks x 3 runs, one blind Opus xhigh judge pass, with
+  pi, OMP and OpenCode on the same model and keys:
+
+| arm | judge (9 runs) | caddy | hugo | k6 | hidden tests | median min |
+|---|---|---|---|---|---|---|
+| tazuna 0.1.96 | 5.11 | 7.33 | 3.33 | 4.67 | 39/54 | 35 |
+| **tazuna 0.1.96 + cover-all** | **5.56** | 7.00 | 3.67 | 6.00 | **44/54** | 41 |
+| OMP 18.18.8 | 7.89 | 8.67 | 7.67 | 7.33 | 50/54 | 21 |
+| OpenCode 2.2.6 | 5.44 | 7.33 | 4.00 | 5.00 | 43/54 | 14 |
+| pi 1.5.2 | 5.00 | 8.00 | 2.00 | 5.00 | 32/54 | 11 |
+
+  +0.45 judge is within noise (±0.75); the hidden tests and two of three tasks point the same way, at the same number of
+  calls. OMP is well ahead (+2.3), mostly on hugo, where tazuna's own loop also takes 2-4x as long: the next thing to
+  fix. The round spent 390 fen on SubRouter (about $0.56) for all five harnesses.
+
 ## 0.1.102 (2026-11-11): a click on a running task opens it
 
 - The running background tasks under the transcript open with a click, as in Claude Code: an agent shows its own

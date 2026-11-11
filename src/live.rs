@@ -1412,8 +1412,10 @@ impl Live {
                 prompt.push_str("\n- ");
                 prompt.push_str(TEST_SCOPE_RULE);
             }
-            // experiment (TAZUNA_OWN_COVER_ALL): the Claude path's 0.1.96 rule on the own loop
-            if std::env::var_os("TAZUNA_OWN_COVER_ALL").is_some() {
+            // the Claude path's 0.1.96 rule, on the own loop by default since 0.1.103: DeepSeek V4.1 Flash, 3 tasks x 3 runs,
+            // judge 5.56 against 5.11 and hidden tests 44/54 against 39/54, at the same calls (2026-11-11).
+            // TAZUNA_NO_COVER_ALL turns it off here too
+            if std::env::var_os("TAZUNA_NO_COVER_ALL").is_none() {
                 prompt.push_str("\n- ");
                 prompt.push_str(COVER_ALL_RULE);
             }
