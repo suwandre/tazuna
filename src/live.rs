@@ -1936,6 +1936,27 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_call_written_as_text_is_asked_every_time() {
+        let mut live = Live::new("", "").unwrap();
+        live.mode = "live".into();
+        let ask = |id: &str, from_text: bool| (0, Msg::Line(json!({"type": "control_request", "request_id": id,
+            "request": {"subtype": "can_use_tool", "tool_name": "bash", "input": {"command": "uptime"}, "from_text": from_text}}).to_string()));
+        live.tx.send(ask("p1", true)).unwrap();
+        live.poll();
+        assert_eq!(live.pending.len(), 1, "asked");
+        live.answer(true, true); // "always", on a text-written call
+        live.tx.send(ask("p2", true)).unwrap();
+        live.poll();
+        assert_eq!(live.pending.len(), 1, "asked again: no always for it");
+        live.answer(true, false);
+        // the same command as a real call is not covered either: nothing was stored
+        live.tx.send(ask("p3", false)).unwrap();
+        live.poll();
+        assert_eq!(live.pending.len(), 1);
+        std::fs::remove_file(&live.rec_path).ok();
+    }
+
+    #[test]
     fn a_reply_does_not_wait_for_the_type_check_baseline() {
         let mut live = Live::new("", "").unwrap();
         let mut run = Run::new("question", 0.0, &live.cwd);
