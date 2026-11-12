@@ -1,0 +1,41 @@
+A teammate asks you to review their pull request. It is the last commit in this repository (`git show HEAD`,
+or `git diff HEAD~1`); the commit before it is the base branch.
+
+Title: fix(core): Limit resume attempts for waiting and queued executions
+
+Description:
+## Context
+
+A Wait node can leave an execution paused, and a shutdown can leave a execution queued up to start on the next startup. In both cases, the execution's run data sits in the DB and is loaded again later to resume or start the execution.
+
+Loading happens before we set an execution to `running`. Data too large to fit in memory at that time leads to an OOM kill, while keeping the execution paused or queued, so this repeats. On cloud, this crahslooping ends only when support edits the status of the execution. Of the 37 crashloops escalated to support since August, 22 had this cause.
+
+## Approach
+
+The PR adds a counter column to the execution table. Before we load a paused or queued execution, we increment the counter, so a load that kills the process stays counted. If the counter reaches two, we give the execution the terminal status `crashed`. The counter resets once the execution runs.
+
+Two supporting changes: 
+
+- The wait tracker polls for due `waiting` executions on an interval and resumes them. The row stays `waiting` until its run data has loaded, and a load near the memory limit can outlast the interval, so it was possible for the next poll to find the same execution and resume it again! This preexisting bug doubled the memory a resume needs, and with the new count, the second resume also consumed the second attempt. The wait tracker now skips an execution it is already resuming.
+- During startup we were reading the data of every queued execution in one query, before any counter could be incremented, so a crash there could loop. During startup we now read queued executions one at a time and increment the counter before each one.
+
+## How to review
+
+1. `execution.repository.ts` → Counter queries, i.e. add, subtract, mark as `crashed`
+2. `resume-attempt.service.ts` → Decision before load: go ahead to load, or mark as `crashed` at attempt limit
+3. `wait-tracker.ts` → Count before loading a paused execution, and do not resume one that is already loading
+4. `enqueued-execution-recovery.service.ts` → Load queued executions one at a time, counting before each load
+
+## Related Linear tickets, Github issues, and Community forum posts
+
+n/a
+
+## Review / Merge checklist
+
+- [x] PR title and summary are descriptive. ([conventions](../blob/master/.github/pull_request_title_conventions.md))
+- [ ] [Docs updated](https://github.com/n8n-io/n8n-docs) or follow-up ticket created.
+- [x] Tests included.
+- [ ] PR Labeled with `Backport to Beta`, `Backport to Stable`, or `Backport to v1` (if the PR is an urgent fix that needs to be backported)
+
+Is it good to approve? List the blockers and the nits worth commenting, each with file:line and why. Do not change
+any files.

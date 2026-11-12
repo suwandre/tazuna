@@ -1,0 +1,10 @@
+{
+  "kind": "review",
+  "difficulty": "medium",
+  "lang": "typescript",
+  "split": "dev",
+  "source": "regression",
+  "size": 296,
+  "files": 22,
+  "merged_at": "2026-11-09T14:03:45Z"
+}

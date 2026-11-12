@@ -442,6 +442,12 @@ def setup_workdir(task, w):
     subprocess.run(f"git -C '{repo_path(g['repo'])}' archive {g['base']} | tar -x -C '{w}'", shell=True, check=True)
     sh(["git", "init", "-q"], w); sh(["git", "config", "gc.auto", "0"], w)  # no background gc racing copies of the tree
     sh(["git", "add", "-A"], w); sh(["git", *GIT_ID, "commit", "-qm", "base"], w)
+    # a review task (bench/suite): the PR under review as a commit of its own on top, so `git show HEAD` is the PR; the
+    # later fix that says what was wrong with it is nowhere in the tree
+    if g.get("pr_head"):
+        d = subprocess.run(["git", "-C", repo_path(g["repo"]), "diff", "--binary", g["base"], g["pr_head"]], capture_output=True, check=True).stdout
+        subprocess.run(["git", "apply", "--whitespace=nowarn", "-"], cwd=w, input=d, check=True)
+        sh(["git", "add", "-A"], w); sh(["git", *GIT_ID, "commit", "-qm", g.get("pr_title", "the pull request under review")], w)
     # the setup fetches the base's modules into the task's own cache (the agent then runs with GOPROXY=off)
     r = sh(g["setup"], w, shell=True, env={**os.environ, **cur_go_env(), "GOPROXY": os.environ.get("GOPROXY", "https://proxy.golang.org,direct")})
     if r.returncode:
@@ -462,8 +468,11 @@ def expected_total(task):
 
 
 def hidden_score(task, w):
-    """(passed, total, suite_failed) — hidden = PR tests copied over the agent's tree."""
+    """(passed, total, suite_failed) — hidden = PR tests copied over the agent's tree. A task answered in words (a review,
+    a question: bench/suite) has no hidden tests: (0, 0, None), and the judge grades the answer."""
     g = json.loads((task / "git.json").read_text())
+    if not g.get("hidden_cmd"):
+        return 0, 0, None
     hidden = task / "hidden"
     # Score the agent's code against the PR's tests: in each package that has hidden tests, reset the agent's
     # *_test.go edits to base (agent-added tests can collide with hidden test names). The judge still sees them.

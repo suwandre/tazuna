@@ -1,0 +1,78 @@
+A teammate asks you to review their pull request. It is the last commit in this repository (`git show HEAD`,
+or `git diff HEAD~1`); the commit before it is the base branch.
+
+Title: Remove functionality deprecated during the 2.x timeline
+
+Description:
+Part of #10033.
+
+This PR removes the functionality deprecated during the 2.x timeline (2.6 to 2.14). Each item is a separate commit.
+
+## Behavior changes
+
+### `model_fields` and `model_computed_fields` can only be accessed from the model class
+
+They are now properties of the model metaclass ([commit](https://github.com/pydantic/pydantic/pull/14158/commits/80400c4dcf12e7a6dab0bcba1ba97978eac68ac0)):
+
+```python
+class Model(BaseModel):
+    x: int
+
+Model.model_fields
+#> {'x': FieldInfo(annotation=int, required=True)}
+Model(x=1).model_fields
+#> AttributeError: 'Model' object has no attribute 'model_fields'
+```
+
+The API documentation is updated in pydantic/unified-docs#323 to keep documenting them on `BaseModel` (and in the MkDocs build, [commit](https://github.com/pydantic/pydantic/pull/14158/commits/c8ba559c315b1359c7958c3da995e88d86e3235f)).
+
+### `Final` annotations with a default value are treated as fields
+
+Following the [typing specification update](https://github.com/python/typing/pull/1669), these are no longer class variables ([commit](https://github.com/pydantic/pydantic/pull/14158/commits/d76297bf144d614c25297c3a36401a36afe27a58)). The mypy plugin is updated accordingly.
+
+```python
+class Model(BaseModel):
+    a: Final[int] = 1
+
+Model(a=2)
+#> In <= 2.x: Model(), `a` is a class variable
+#> In >= 3.0: Model(a=2), frozen field
+```
+
+Use `ClassVar` to define a class variable. Part of #11119 (inferring the type of bare `Final` annotations from the default isn't done yet).
+
+### `@model_validator(mode='after')` must be applied on an instance method
+
+Using a class method (or a function whose first parameter is `cls`, previously converted to a class method) now raises a `model-after-validator-classmethod` error ([commit](https://github.com/pydantic/pydantic/pull/14158/commits/fbb0429cdd21ede6902a3b840cddd0ad6cf529d4)):
+
+```python
+class Model(BaseModel):
+    @model_validator(mode='after')
+    @classmethod
+    def check(cls, model): ...
+#> PydanticUserError: `@model_validator` with mode='after' must be applied on an instance method, not a class method.
+```
+
+## Removals
+
+* The `GenerateJsonSchema.tuple_positional_schema()` and `tuple_variable_schema()` methods, use `tuple_schema()` (2.6, [commit](https://github.com/pydantic/pydantic/pull/14158/commits/1c442c2c9402fcee3f540a7c0691ee63d532d2bb)).
+* Support for dict examples in `Examples`, use a list (2.9, [commit](https://github.com/pydantic/pydantic/pull/14158/commits/9c3d658998806986b2b85e1677a269fd2c089619)).
+* The `schema_generator` config value, which had no effect (2.10, [commit](https://github.com/pydantic/pydantic/pull/14158/commits/26a18548a3a93ca2f23375625e4e51f13f551cd0)).
+* Passing `config` as a keyword argument to `with_config()`, pass it positionally (2.11, [commit](https://github.com/pydantic/pydantic/pull/14158/commits/918d4c8e5b93416c3a2e57d2b69e7fd1d4f49519)).
+* The `pydantic.experimental.missing_sentinel` module, import `MISSING` from `pydantic` (2.14, [commit](https://github.com/pydantic/pydantic/pull/14158/commits/b013e484a5321385702b97a8440d039b2f594a30)).
+* The `FieldInfo.merge_field_infos()` method ([commit](https://github.com/pydantic/pydantic/pull/14158/commits/2790f6119e952e2bcd802f8f7d0ca1b5b9fbd3ab)).
+* The private `eval_type_lenient()` function ([commit](https://github.com/pydantic/pydantic/pull/14158/commits/f03c2d1f3e6ea2654695356728816caadc9e9aa4)), and the `cls_ref` default of the private `Decorator.build()` method ([commit](https://github.com/pydantic/pydantic/pull/14158/commits/88d61b6adb76bd82a319368a6d81f367545d396d)).
+* The `PydanticDeprecatedSince26`, `PydanticDeprecatedSince29`, `PydanticDeprecatedSince210`, `PydanticDeprecatedSince212` and `PydanticDeprecatedSince214` warnings, now unused.
+* In `pydantic_core.core_schema` ([commit](https://github.com/pydantic/pydantic/pull/14158/commits/e7c8815dab9e38e1e5a1a887734001bf24373e03)):
+  * The `missing` argument of `enum_schema()`.
+  * The `field_name` argument of the `with_info_*_validator_function()` functions.
+  * The `field_*_validator_function()` and `general_*_validator_function()` functions, and the `FieldValidationInfo`, `FieldValidatorFunction`, `GeneralValidatorFunction` and `FieldWrapValidatorFunction` aliases.
+  * The `tuple_positional_schema()` and `tuple_variable_schema()` functions, use `tuple_schema()`.
+
+## Not yet included
+
+* The deprecated `BaseModel.__get_pydantic_core_schema__()` method (and thus `PydanticDeprecatedSince211`).
+* Changes announced for V3 that weren't deprecated yet (e.g. `populate_by_name`, `ser_json_timedelta`, `create_model(__validators__=...)`).
+
+Is it good to approve? List the blockers and the nits worth commenting, each with file:line and why. Do not change
+any files.

@@ -1,0 +1,9 @@
+{
+  "repo": "/Users/suwandre/bench-repos/n8n",
+  "base": "f5ed6cc72cdc2f9270cbddf05761e8c1fddc9b60",
+  "pr_head": "c08ba2dd33b2955577971e0e210c77c66ca7bd7e",
+  "pr_title": "fix(core): Limit resume attempts for waiting and queued executions (#42135)",
+  "pr": "https://github.com/n8n-io/n8n/pull/42135",
+  "fix_pr": "https://github.com/n8n-io/n8n/pull/43641",
+  "setup": "true"
+}

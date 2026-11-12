@@ -35,6 +35,31 @@ Then overall 1-10.
 Reply with only a JSON object: {"<candidate id>": {"correctness": n, "edge_cases": n, "code_quality": n, "scope": n, "tests": n, "overall": n, "note": "<one sentence>"}, ...}"""
 
 
+# Tasks answered in words (bench/suite: review, question, investigate, plan): the answer is graded against the task's
+# reference.md (known defects, the checked answer, the root cause), not a patch against a reference fix.
+SYSTEM_ANSWER = """You are a strict senior engineer grading anonymous answers to one request about a codebase (a review, a question,
+an investigation or a plan). The reference states what is known to be true: the defects a review should find, the
+checked answer, the real root cause, or the maintainers' chosen approach. It may not list everything that is true.
+Do not reward length or confident tone. A confident wrong claim is worse than saying it is unsure. For a review,
+an invented blocker (a problem that is not real) counts against the answer; real issues beyond the reference count for it.
+
+Score each dimension 1-5:
+- correctness: what it states is true of the code
+- coverage: it finds or covers what the reference says matters
+- precision: no invented problems, no wrong claims
+- clarity: easy to act on (file:line where it matters, blockers apart from nits)
+- fit: answers what was asked, at the depth asked
+Then overall 1-10.
+
+Reply with only a JSON object: {"<candidate id>": {"correctness": n, "coverage": n, "precision": n, "clarity": n, "fit": n, "overall": n, "note": "<one sentence>"}, ...}"""
+DIMS_ANSWER = ["correctness", "coverage", "precision", "clarity", "fit"]
+
+
+def answer_kind(task):
+    m = task / "meta.json"
+    return m.exists() and json.loads(m.read_text()).get("kind") in ("review", "question", "investigate", "plan", "followup")
+
+
 NOREF = bool(os.environ.get("JUDGE_NOREF"))
 SYSTEM_NOREF = SYSTEM.replace(" and the reference fix (the merged PR's non-test changes). The reference is one valid solution, not the only one.", ". There is no reference solution: judge from the task, the code and the test facts.")
 assert SYSTEM_NOREF != SYSTEM
@@ -59,9 +84,9 @@ def guard_allows():
         raise RuntimeError("usage guard not running or says stop (ABORT/PAUSE): no judge call")
 
 
-def ask_judge(prompt, model, effort):
+def ask_judge(prompt, model, effort, system=None):
     if "@" in model:
-        return verdict_json(ask_api(prompt, model, effort))
+        return verdict_json(ask_api(prompt, model, effort, system))
     guard_allows()
     with tempfile.TemporaryDirectory() as cfg, tempfile.TemporaryDirectory() as cwd:
         # the prompt on stdin: as an argument, a task with long diffs passed Linux's 128 KB limit for one argument
@@ -69,7 +94,7 @@ def ask_judge(prompt, model, effort):
         cmd = ["claude", "-p", "--model", model, "--effort", effort, "--output-format", "json",
                "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config",
                "--disable-slash-commands", "--exclude-dynamic-system-prompt-sections", "--tools", "",
-               "--system-prompt", SYSTEM_NOREF if NOREF else SYSTEM]
+               "--system-prompt", system or (SYSTEM_NOREF if NOREF else SYSTEM)]
         out = subprocess.run(cmd, cwd=cwd, env={**os.environ, "CLAUDE_CONFIG_DIR": cfg},
                              input=prompt, capture_output=True, text=True, timeout=1800).stdout
     d = json.loads(out.strip().splitlines()[-1])
@@ -144,7 +169,8 @@ def candidates(task_name):
             continue
         r = results.get((h, int(run)))
         if r:
-            cands.append(dict(harness=h, run=int(run), diff=f.read_text(), r=r))
+            final = f.with_suffix(".final.txt")
+            cands.append(dict(harness=h, run=int(run), diff=f.read_text(), r=r, final=final.read_text() if final.exists() else ""))
     return cands
 
 
@@ -160,6 +186,17 @@ def judge_task(task_name, model, effort, passes):
         random.Random(f"{task_name}-{p}").shuffle(order)
         ids = {f"C{k + 1}": i for k, i in enumerate(order)}
         parts = [f"# Task\n{(task / 'prompt.txt').read_text()}"]
+        if answer_kind(task):
+            parts.append(f"# Reference\n{(task / 'reference.md').read_text()}")
+            for cid, i in ids.items():
+                c = cands[i]
+                ans = c["final"] if len(c["final"]) <= MAX_DIFF else c["final"][:MAX_DIFF] + "\n[answer truncated]"
+                parts.append(f"# Candidate {cid}\n{ans or '(no answer)'}" + (f"\n\n(it also changed files:)\n```diff\n{c['diff'][:4000]}\n```" if c["diff"].strip() else ""))
+            verdict = ask_judge("\n\n".join(parts), model, effort, SYSTEM_ANSWER)
+            for cid, i in ids.items():
+                if cid in verdict:
+                    scores[i].append(verdict[cid])
+            continue
         if not NOREF:  # JUDGE_NOREF=1: no reference fix, to measure how much the judge anchors on it
             parts.append(f"# Reference fix\n```diff\n{reference(task)[:MAX_DIFF]}\n```")
         for cid, i in ids.items():
@@ -176,7 +213,7 @@ def judge_task(task_name, model, effort, passes):
     for i, c in enumerate(cands):
         if not scores[i]:
             continue
-        avg = {k: statistics.mean(s[k] for s in scores[i]) for k in DIMS + ["overall"]}
+        avg = {k: statistics.mean(s[k] for s in scores[i]) for k in (DIMS_ANSWER if answer_kind(task) else DIMS) + ["overall"] if all(k in s for s in scores[i])}
         rows.append(dict(task=task_name, harness=c["harness"], run=c["run"], judge=model, effort=effort,
                          passes=len(scores[i]), notes=[s.get("note", "") for s in scores[i]], **avg))
     return rows
@@ -190,7 +227,7 @@ def summarize():
         for h in sorted({r["harness"] for r in rows}):
             rs = [r for r in rows if r["harness"] == h and (g == "ALL" or tier(r) == g)]
             if rs:
-                print(f"{g:<10} {h:<8} {len(rs):>3} " + " ".join(f"{statistics.mean(r[d] for r in rs):>8.2f}" for d in DIMS)
+                print(f"{g:<10} {h:<8} {len(rs):>3} " + " ".join(f"{statistics.mean(r.get(d, float('nan')) for r in rs):>8.2f}" for d in DIMS)
                       + f" {statistics.mean(r['overall'] for r in rs):>8.2f}")
 
 

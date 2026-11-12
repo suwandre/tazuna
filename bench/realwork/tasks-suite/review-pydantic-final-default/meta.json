@@ -1,0 +1,10 @@
+{
+  "kind": "review",
+  "difficulty": "hard",
+  "lang": "python",
+  "split": "dev",
+  "source": "regression",
+  "size": 1323,
+  "files": 48,
+  "merged_at": "2026-10-31T12:22:39Z"
+}

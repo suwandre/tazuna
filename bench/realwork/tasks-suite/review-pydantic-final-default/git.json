@@ -1,0 +1,9 @@
+{
+  "repo": "/Users/suwandre/bench-repos/pydantic",
+  "base": "91c44cd1bfc8c7cb909cefa8395e0a720957f1d1",
+  "pr_head": "69e9ca4658a6471cadae5216b44ebfb4fde040f3",
+  "pr_title": "Remove functionality deprecated during the 2.x timeline (#14158)",
+  "pr": "https://github.com/pydantic/pydantic/pull/14158",
+  "fix_pr": "https://github.com/pydantic/pydantic/pull/14159",
+  "setup": "true"
+}

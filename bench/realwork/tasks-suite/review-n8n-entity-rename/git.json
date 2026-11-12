@@ -1,0 +1,9 @@
+{
+  "repo": "/Users/suwandre/bench-repos/n8n",
+  "base": "67b6a82d0b8149373f8e4fee6f6fb12e2ab9fbbc",
+  "pr_head": "4e33df80f1726d416b8ef1f2978bf9883f220b3d",
+  "pr_title": "refactor(core): Move the agent file entity and repository into the knowledge module (#43090)",
+  "pr": "https://github.com/n8n-io/n8n/pull/43090",
+  "fix_pr": "https://github.com/n8n-io/n8n/pull/43220",
+  "setup": "true"
+}
