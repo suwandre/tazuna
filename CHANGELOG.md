@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.113 (2026-11-12): a tool call written as text always asks
+
+- 0.1.112's text tool calls opened a path for injected instructions: a page or file the agent reads could hold text
+  shaped like a tool call, and a model quoting it in its reply would have run it, unasked in the bypass mode (security
+  review). A call recovered from text now always asks, whatever the mode, under its own name ("bash (written as text by
+  the model)"), so an "always" given to the real tool does not cover it; headless it is refused. It is also taken only
+  when the calls close the reply (no text after them) and never inside a fenced code block. No measurable metric changes.
+
 ## 0.1.112 (2026-11-12): a tool call written as text is run
 
 - Some models, served without a proper tool parser, write their tool call into the reply's text instead of the API's
