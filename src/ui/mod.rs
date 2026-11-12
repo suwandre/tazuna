@@ -637,7 +637,10 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme) {
             lines.push(Line::from(""));
             lines.extend(wrapped(&format!("{} will see the code of the sessions you run on it, so saving also puts {} on your trusted providers. \
                 The key stays in ~/.config/tazuna/keys.json, readable by you only, and out of the agent's commands.", fm.name, fm.host), th.dim));
-            if fm.has.starts_with("key in the environment") {
+            if fm.has == "key in this terminal only" {
+                lines.extend(wrapped(&format!("{} is set in this terminal only: tazuna started in another terminal or folder does not see it. \
+                    Enter with nothing typed saves it for every folder.", fm.var), th.warn));
+            } else if fm.has.starts_with("key in the environment") {
                 lines.extend(wrapped(&format!("{} is set in your environment, and it wins over a key saved here.", fm.var), th.dim));
             }
             (format!(" Login to {} ", fm.name), lines)
@@ -980,6 +983,8 @@ pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Col
         Activity::Ready | Activity::Done if v.bg_running > 0 => (spin, format!("{} working in background · ctrl-b", v.bg_running), th.accent2),
         Activity::Ready => ("●", "ready".into(), th.dim),
         Activity::Starting => (spin, "starting".into(), th.dim),
+        // keep-alive pings and no output (the own loop's provider queueing it): said, so it does not look like tazuna hangs
+        Activity::Waiting if s.waiting_note.is_some() => (spin, "provider still processing (no output yet)".into(), th.warn),
         Activity::Waiting => (spin, "waiting for model".into(), th.dim),
         Activity::Thinking => (spin, "thinking".into(), th.warn),
         Activity::Writing => (spin, "writing".into(), th.accent),

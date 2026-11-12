@@ -602,6 +602,12 @@ fn env_key(var: &str) -> Option<String> {
     std::env::var(var).ok().filter(|k| !k.trim().is_empty())
 }
 
+/// The first of these variables set in this process's environment: what `/login` saves for every folder when the user
+/// types nothing.
+pub fn env_value(vars: &[&str]) -> Option<String> {
+    vars.iter().find_map(|v| env_key(v))
+}
+
 /// The user's own key for a variable: the environment's, else the one saved in tazuna.
 fn own_key(var: &str) -> Option<String> {
     env_key(var).or_else(|| saved_key(var))
@@ -643,7 +649,11 @@ pub const LOGINS: [Login; 5] = [
 
 /// Where a provider's key comes from, for `/login`'s list; empty: none.
 pub fn key_source(vars: &[&str]) -> &'static str {
-    if vars.iter().any(|v| env_key(v).is_some()) {
+    // a variable set in one terminal is seen by tazuna started there only (a Mistral key showed in one folder's terminal
+    // and not another's, 2026-11-12): /login saves it for every folder
+    if vars.iter().any(|v| env_key(v).is_some()) && !vars.iter().any(|v| saved_key(v).is_some()) {
+        "key in this terminal only"
+    } else if vars.iter().any(|v| env_key(v).is_some()) {
         "key in the environment"
     } else if vars.iter().any(|v| saved_key(v).is_some()) {
         "logged in"

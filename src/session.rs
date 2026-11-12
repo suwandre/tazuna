@@ -176,6 +176,8 @@ pub struct Session {
     pub calls: Vec<CallTime>,
     call_start: Option<f64>,
     first_token: Option<f64>,
+    /// The own loop's provider is sending keep-alive comments and no output yet (cleared when the call answers or ends).
+    pub waiting_note: Option<String>,
     /// Each subagent's own messages, by the call that started it: ctrl-b opens one as a conversation of its own.
     pub sub_events: std::collections::HashMap<String, Vec<(f64, Value)>>,
     call_est: f64,
@@ -274,6 +276,7 @@ impl Session {
             call_start: None,
             first_token: None,
             sub_events: Default::default(),
+            waiting_note: None,
             call_est: 0.0,
             call_thinking: vec![],
             last_call_ms: None,
@@ -451,6 +454,7 @@ impl Session {
                 self.mcp_failures(e);
             }
             (Some("system"), Some("mcp_status")) => self.mcp_failures(e),
+            (Some("system"), Some("call_waiting")) => self.waiting_note = e["message"].as_str().map(String::from),
             (Some("system"), Some("status")) => {
                 if let Some(m) = e["permissionMode"].as_str() {
                     self.mode = mode_name(m).to_string();
@@ -670,6 +674,7 @@ impl Session {
                 self.activity = Activity::Waiting;
             }
             (Some("result"), _) => {
+                self.waiting_note = None;
                 self.end_live();
                 (self.call_start, self.first_token) = (None, None); // a stopped call never ends with message_delta
                 // a slash command answered without a model turn (/cost, /context …): its text is the only output
@@ -742,6 +747,7 @@ impl Session {
     fn stream(&mut self, ev: &Value) {
         match ev["type"].as_str() {
             Some("message_start") => {
+                self.waiting_note = None;
                 (self.streamed, self.streamed_text) = (false, false);
                 self.turns += 1;
                 // the own loop sends this when its request goes out, right after the tool results
@@ -783,6 +789,7 @@ impl Session {
             Some("content_block_delta") => {
                 let d = &ev["delta"];
                 self.first_token.get_or_insert(self.now_ms);
+                self.waiting_note = None;
                 self.call_est += d["text"].as_str().or(d["partial_json"].as_str()).map_or(0, str::len) as f64 / 4.0;
                 if let (Some("text_delta"), Some(Block::Text { text, .. })) = (d["type"].as_str(), self.live_block()) {
                     text.push_str(d["text"].as_str().unwrap_or_default());

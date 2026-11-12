@@ -1315,11 +1315,23 @@ static STREAM_TO_UI: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// (content_block_start, _delta, _stop), so the screen shows them while the model writes. Before 0.1.98 the whole reply
 /// was read first: nothing moved until it was done, then all of it appeared at once (a user on OpenRouter, 2026-11-11).
 /// Returns the reply's whole text for the usual parsing (`sse`, `from_stream`).
-fn read_streaming(reader: impl std::io::Read, api: Api, out: &mut dyn FnMut(&Value)) -> std::io::Result<String> {
+/// The start of the error a stream of keep-alive comments only ends with (`read_streaming`).
+const KEEPALIVE_STALL: &str = "the provider sent only keep-alive pings for";
+
+/// How long a stream may send keep-alive comments only before the call is given up: TAZUNA_STALL_SECS, else 5 minutes.
+fn stall_limit() -> Duration {
+    Duration::from_secs(std::env::var("TAZUNA_STALL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(300))
+}
+
+fn read_streaming(reader: impl std::io::Read, api: Api, stall: Duration, out: &mut dyn FnMut(&Value)) -> std::io::Result<String> {
     let mut all = String::new();
+    // keep-alive comments and no data yet (Mortera's free Muse Spark: ": processing" every 10 s and not one token in over
+    // 3 minutes, a user waiting on "waiting for first token", 2026-11-12): said on the screen every 30 s, given up at
+    // `stall` instead of the 15-minute limit
+    let (t0, mut data, mut said) = (std::time::Instant::now(), false, 0u64);
     // the block open on the screen: "text" or "thinking"
     let mut open: Option<&str> = None;
-    let mut send = |kind: &'static str, piece: &str, open: &mut Option<&str>| {
+    let send = |out: &mut dyn FnMut(&Value), kind: &'static str, piece: &str, open: &mut Option<&str>| {
         if piece.is_empty() {
             return;
         }
@@ -1338,6 +1350,18 @@ fn read_streaming(reader: impl std::io::Read, api: Api, out: &mut dyn FnMut(&Val
         let line = line?;
         all.push_str(&line);
         all.push('\n');
+        if !data && line.starts_with(':') {
+            let secs = t0.elapsed().as_secs();
+            if t0.elapsed() >= stall {
+                return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, format!("{KEEPALIVE_STALL} {secs} s and no output")));
+            }
+            if secs / 30 > said {
+                said = secs / 30;
+                out(&json!({"type": "system", "subtype": "call_waiting", "message": format!("the provider is still processing, no output yet ({secs} s)")}));
+            }
+            continue;
+        }
+        data |= line.starts_with("data:");
         let Some(d) = line.strip_prefix("data:").map(str::trim).and_then(|d| serde_json::from_str::<Value>(d).ok()) else { continue };
         let (text, thinking) = match api {
             Api::Chat => {
@@ -1356,10 +1380,10 @@ fn read_streaming(reader: impl std::io::Read, api: Api, out: &mut dyn FnMut(&Val
             },
         };
         if let Some(t) = thinking {
-            send("thinking", t, &mut open);
+            send(out, "thinking", t, &mut open);
         }
         if let Some(t) = text {
-            send("text", t, &mut open);
+            send(out, "text", t, &mut open);
         }
     }
     if open.is_some() {
@@ -1476,7 +1500,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
                 let body = r.body_mut().with_config().limit(50 << 20);
                 let text = if status == 200 && to_ui {
                     let quiet = c.clone();
-                    read_streaming(Stoppable(body.reader(), c), api, &mut |e| if !quiet.load(Ordering::Relaxed) { emit(e) }).map_err(ureq::Error::Io)?
+                    read_streaming(Stoppable(body.reader(), c), api, stall_limit(), &mut |e| if !quiet.load(Ordering::Relaxed) { emit(e) }).map_err(ureq::Error::Io)?
                 } else {
                     body.read_to_string()?
                 };
@@ -1496,6 +1520,10 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             }
         };
         let (status, text) = match sent {
+            // a queue or a stuck model: trying again would wait as long again
+            Err(e) if e.to_string().contains(KEEPALIVE_STALL) => {
+                bail!("{}: the model did not start answering; try again later or another model", e.to_string().trim_start_matches("io: "))
+            }
             Ok(st) => st,
             Err(e) if wait > 0 => {
                 if matches!(e, ureq::Error::Timeout(_)) {
@@ -1799,11 +1827,22 @@ mod tests {
     }
 
     #[test]
+    fn keep_alives_alone_end_the_call_at_the_limit() {
+        let stalled = ": processing\n\n: processing\n\n";
+        let e = super::read_streaming(stalled.as_bytes(), Api::Chat, Duration::ZERO, &mut |_| {}).unwrap_err();
+        assert!(e.to_string().starts_with(super::KEEPALIVE_STALL), "{e}");
+        // once data has come, a comment is only a comment
+        let answered = ": processing\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n: processing\n\ndata: [DONE]\n\n";
+        let mut n = 0;
+        assert!(super::read_streaming(answered.as_bytes(), Api::Chat, Duration::from_secs(300), &mut |_| n += 1).is_ok() && n > 0);
+    }
+
+    #[test]
     fn a_streamed_reply_reaches_the_screen_as_it_comes() {
         let sse_text = "data: {\"choices\":[{\"delta\":{\"reasoning\":\"let me \"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"reasoning\":\"think\"}}]}\n\n\
                         data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\ndata: [DONE]\n";
         let mut events = vec![];
-        let all = read_streaming(sse_text.as_bytes(), Api::Chat, &mut |e| events.push(e["event"].clone())).unwrap();
+        let all = read_streaming(sse_text.as_bytes(), Api::Chat, Duration::from_secs(300), &mut |e| events.push(e["event"].clone())).unwrap();
         let kinds: Vec<String> = events.iter().map(|e| format!("{}:{}", e["type"].as_str().unwrap(), e["delta"]["type"].as_str().or(e["content_block"]["type"].as_str()).unwrap_or(""))).collect();
         assert_eq!(kinds, ["content_block_start:thinking", "content_block_delta:thinking_delta", "content_block_delta:thinking_delta", "content_block_stop:",
                            "content_block_start:text", "content_block_delta:text_delta", "content_block_delta:text_delta", "content_block_stop:"]);

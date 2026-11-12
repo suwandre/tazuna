@@ -739,6 +739,9 @@ struct LoginPick {
 /// the page says. What it did, for the message line.
 fn login_save(l: &models::Login, typed: &str) -> Result<String> {
     let mut said = vec![];
+    // nothing typed and the key only in this terminal's environment: that key is saved, for tazuna in every folder
+    let from_env = (typed.trim().is_empty() && models::key_source(l.vars) == "key in this terminal only").then(|| models::env_value(l.vars)).flatten();
+    let typed = from_env.as_deref().unwrap_or(typed);
     if !typed.trim().is_empty() {
         let mut p = PathBuf::new();
         for var in l.vars {
@@ -755,6 +758,9 @@ fn login_save(l: &models::Login, typed: &str) -> Result<String> {
     if !trusted_host(l.host) {
         trust_host(l.host)?;
         said.push(format!("{} may see the code now (trusted-providers)", l.host));
+    }
+    if from_env.is_some() {
+        said.push("this terminal's key, now saved for tazuna in every folder".into());
     }
     said.push(format!("its models are in /model{}", if models::key_source(l.vars).starts_with("key in the environment") {
         format!(" ({} in the environment wins over a saved key)", l.vars.join(" / "))

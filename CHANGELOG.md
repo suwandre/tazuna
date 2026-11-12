@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.107 (2026-11-12): a provider that only pings is said and given up; /login saves a terminal's key everywhere
+
+- A provider that accepts a call and then sends only keep-alive comments no longer looks like tazuna waiting: Mortera's
+  free Muse Spark 1.3 answered HTTP 200 and then ": processing" every 10 s with not one token in over 3 minutes (a
+  user waited on "waiting for first token · 190s"). The activity line now says "provider still processing (no output
+  yet)", and after 5 minutes of keep-alives alone (`TAZUNA_STALL_SECS`) the call ends with a clear error, or goes to the
+  route's next provider; trying the same one again would wait as long again. Checked against Mortera with a 40 s limit:
+  the notice at 30 s, the error at 40 s. A provider that has started answering is never cut.
+- A key set only in one terminal's environment (`export MISTRAL_API_KEY=...`) was seen by tazuna started from that
+  terminal alone, so Mistral showed in one folder and not another. `/login` now marks such a key as "in this terminal
+  only", and Enter with nothing typed saves it in `~/.config/tazuna/keys.json`, for every folder. No measurable metric
+  changes.
+
 ## 0.1.106 (2026-11-11): DeepSeek on SubRouter gets its earlier reasoning back
 
 - The own loop now sends DeepSeek its earlier reasoning with the history on SubRouter too, as on DeepSeek's own API.
