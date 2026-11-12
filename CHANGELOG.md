@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## Clean cross-harness round, 2026-11-12 (bench only)
+
+DeepSeek V4.1 Flash 1017 at high on SubRouter, caddy, hugo and k6 × 3 runs, no web for agents, a Go build cache per run
+(the shared one had leaked the hidden tests' names), blind Fable 5.2 high judge: OpenCode 2.2 6.44, OMP 18.18 6.00,
+tazuna 0.1.106 5.78, pi 1.5 5.78 (mean of the task means; within noise), hidden tests 46 / 41 / 43 / 45 of 54, median
+29 minutes for tazuna against 24-42 for the others (2-4x the others' before 0.1.104-0.1.106). 409 fen on SubRouter
+for this round and the test-focus rerun together.
+
 ## 0.1.108 (2026-11-12): Mistral's streams whole on screen; nothing else prints over it
 
 - DeepSeek through Mistral's API lost its first words and its thinking on screen ("actually know." for "I don't actually

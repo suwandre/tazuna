@@ -120,13 +120,13 @@ def charts():
         25, (0, 5, 10, 15, 20, 25), lambda t: f"{t} min", "same-model")
     yield bars(
         "Own loop: four harnesses on the same model",
-        ["DeepSeek V4.1 Flash 1017 at high on one SubRouter route; caddy, hugo, k6, three runs each, blind judge, mean",
-         "of the per-task means (2026-11-11). Four OMP runs that read the merged fix from mirrors are left out."],
+        ["DeepSeek V4.1 Flash 1017 at high on one SubRouter route; caddy, hugo, k6, three runs each, no web, a build cache",
+         "per run; blind Fable 5.2 judge, mean of the per-task means (2026-11-12)."],
         [("tazuna", "hi"), ("others", "lo")],
-        [("Judge score", [("OMP 18.18", 5.89, "lo", "5.89 · 10 min · 5 runs"),
-                          ("tazuna 0.1.103", 5.56, "hi", "5.56 · 41 min"),
-                          ("OpenCode 2.2", 5.44, "lo", "5.44 · 14 min"),
-                          ("pi 1.5", 5.00, "lo", "5.00 · 11 min")])],
+        [("Judge score", [("OpenCode 2.2", 6.44, "lo", "6.44 · 42 min"),
+                          ("OMP 18.18", 6.00, "lo", "6.00 · 30 min"),
+                          ("tazuna 0.1.106", 5.78, "hi", "5.78 · 29 min"),
+                          ("pi 1.5", 5.78, "lo", "5.78 · 24 min")])],
         10, (0, 2, 4, 6, 8, 10), lambda t: f"{t}", "own-loop")
     yield bars(
         "Memory",

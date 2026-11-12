@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 268" width="760" height="268" font-family="system-ui,-apple-system,'Segoe UI',Helvetica,Arial,sans-serif" role="img" aria-label="own-loop">
 <text x="16.0" y="26.0" font-size="16" font-weight="600" text-anchor="start" fill="#0b0b0b">Own loop: four harnesses on the same model</text>
-<text x="16.0" y="46.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">DeepSeek V4.1 Flash 1017 at high on one SubRouter route; caddy, hugo, k6, three runs each, blind judge, mean</text>
-<text x="16.0" y="62.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">of the per-task means (2026-11-11). Four OMP runs that read the merged fix from mirrors are left out.</text>
+<text x="16.0" y="46.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">DeepSeek V4.1 Flash 1017 at high on one SubRouter route; caddy, hugo, k6, three runs each, no web, a build cache</text>
+<text x="16.0" y="62.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">per run; blind Fable 5.2 judge, mean of the per-task means (2026-11-12).</text>
 <rect x="680" y="17" width="10" height="10" rx="2" fill="#898781"/>
 <text x="695.0" y="26.0" font-size="12" font-weight="400" text-anchor="start" fill="#52514e">others</text>
 <rect x="616" y="17" width="10" height="10" rx="2" fill="#2a78d6"/>
@@ -19,16 +19,16 @@
 <line x1="435.6" x2="435.6" y1="116" y2="238" stroke="#e1e0d9" stroke-width="1"/>
 <line x1="510.8" x2="510.8" y1="116" y2="238" stroke="#e1e0d9" stroke-width="1"/>
 <line x1="586.0" x2="586.0" y1="116" y2="238" stroke="#e1e0d9" stroke-width="1"/>
-<text x="200.0" y="132.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">OMP 18.18</text>
-<path d="M210,120 H427.5 A4,4 0 0 1 431.5,124 V134 A4,4 0 0 1 427.5,138 H210 Z" fill="#898781"/>
-<text stroke="#ffffff" stroke-width="4" paint-order="stroke" x="437.5" y="133.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">5.89 · 10 min · 5 runs</text>
-<text x="200.0" y="162.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">tazuna 0.1.103</text>
-<path d="M210,150 H415.1 A4,4 0 0 1 419.1,154 V164 A4,4 0 0 1 415.1,168 H210 Z" fill="#2a78d6"/>
-<text stroke="#ffffff" stroke-width="4" paint-order="stroke" x="425.1" y="163.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">5.56 · 41 min</text>
-<text x="200.0" y="192.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">OpenCode 2.2</text>
-<path d="M210,180 H410.5 A4,4 0 0 1 414.5,184 V194 A4,4 0 0 1 410.5,198 H210 Z" fill="#898781"/>
-<text stroke="#ffffff" stroke-width="4" paint-order="stroke" x="420.5" y="193.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">5.44 · 14 min</text>
+<text x="200.0" y="132.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">OpenCode 2.2</text>
+<path d="M210,120 H448.1 A4,4 0 0 1 452.1,124 V134 A4,4 0 0 1 448.1,138 H210 Z" fill="#898781"/>
+<text stroke="#ffffff" stroke-width="4" paint-order="stroke" x="458.1" y="133.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">6.44 · 42 min</text>
+<text x="200.0" y="162.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">OMP 18.18</text>
+<path d="M210,150 H431.6 A4,4 0 0 1 435.6,154 V164 A4,4 0 0 1 431.6,168 H210 Z" fill="#898781"/>
+<text stroke="#ffffff" stroke-width="4" paint-order="stroke" x="441.6" y="163.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">6.00 · 30 min</text>
+<text x="200.0" y="192.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">tazuna 0.1.106</text>
+<path d="M210,180 H423.3 A4,4 0 0 1 427.3,184 V194 A4,4 0 0 1 423.3,198 H210 Z" fill="#2a78d6"/>
+<text stroke="#ffffff" stroke-width="4" paint-order="stroke" x="433.3" y="193.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">5.78 · 29 min</text>
 <text x="200.0" y="222.0" font-size="12" font-weight="400" text-anchor="end" fill="#52514e">pi 1.5</text>
-<path d="M210,210 H394.0 A4,4 0 0 1 398.0,214 V224 A4,4 0 0 1 394.0,228 H210 Z" fill="#898781"/>
-<text stroke="#ffffff" stroke-width="4" paint-order="stroke" x="404.0" y="223.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">5.00 · 11 min</text>
+<path d="M210,210 H423.3 A4,4 0 0 1 427.3,214 V224 A4,4 0 0 1 423.3,228 H210 Z" fill="#898781"/>
+<text stroke="#ffffff" stroke-width="4" paint-order="stroke" x="433.3" y="223.0" font-size="12" font-weight="400" text-anchor="start" fill="#0b0b0b">5.78 · 24 min</text>
 </svg>
