@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.111 (2026-11-12): "DONE" after the nudge ends the run
+
+- A model that answers the no-change nudge with "DONE" is done: no second nudge, and a "DONE" never replaces the answer
+  kept from before it. A review pilot was nudged twice and its second "DONE" overwrote the review (0.1.110 kept only
+  the answer before the latest nudge). No measurable metric changes.
+
 ## 0.1.110 (2026-11-12): a headless question or review keeps its answer
 
 - `tazuna --run` (and the own loop headless) nudges a model that stops without changing a file. On a review, a

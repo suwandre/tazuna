@@ -901,9 +901,12 @@ impl Loop {
             if parsed.is_empty() {
                 // a headless task that stops before changing anything gets up to two nudges: some models and routes
                 // stop after a plan or with an empty reply (two rclone runs on two gateways ended with no change at all)
-                if nudges < 2 && !followup && (text.trim().is_empty() || (headless() && !repo_changed())) {
+                // "DONE" after a nudge is the answer to it: no second nudge (a review pilot was nudged twice and its
+                // second "DONE" replaced the review, 2026-11-12)
+                let done = nudges > 0 && text.trim_start().starts_with("DONE");
+                if nudges < 2 && !followup && !done && (text.trim().is_empty() || (headless() && !repo_changed())) {
                     nudges += 1;
-                    if !text.trim().is_empty() {
+                    if !text.trim().is_empty() && !text.trim_start().starts_with("DONE") {
                         answered = text.clone();
                     }
                     self.msgs.push(json!({"role": "user", "content": NUDGE}));

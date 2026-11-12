@@ -448,6 +448,7 @@ def setup_workdir(task, w):
         d = subprocess.run(["git", "-C", repo_path(g["repo"]), "diff", "--binary", g["base"], g["pr_head"]], capture_output=True, check=True).stdout
         subprocess.run(["git", "apply", "--whitespace=nowarn", "-"], cwd=w, input=d, check=True)
         sh(["git", "add", "-A"], w); sh(["git", *GIT_ID, "commit", "-qm", g.get("pr_title", "the pull request under review")], w)
+    sh(["git", "tag", "bench-start"], w)  # what the agent changes is measured from here (for a review, after the PR)
     # the setup fetches the base's modules into the task's own cache (the agent then runs with GOPROXY=off)
     r = sh(g["setup"], w, shell=True, env={**os.environ, **cur_go_env(), "GOPROXY": os.environ.get("GOPROXY", "https://proxy.golang.org,direct")})
     if r.returncode:
@@ -458,7 +459,10 @@ def capture_diff(w):
     """Everything the agent changed since the base commit, committed or not (an agent that commits left an empty
     `git diff --cached` before: lazygit, two planner runs, one tester run)."""
     sh(["git", "add", "-A"], w)
-    base = sh(["git", "rev-list", "--max-parents=0", "HEAD"], w).stdout.split()[-1]
+    # from the tree the agent was given: for a review task that is the PR's commit, not the base (the judge read the PR's
+    # own changes as the reviewer's edits, 2026-11-12)
+    start = sh(["git", "rev-parse", "-q", "--verify", "bench-start"], w).stdout.strip()
+    base = start or sh(["git", "rev-list", "--max-parents=0", "HEAD"], w).stdout.split()[-1]
     return sh(["git", "diff", "--cached", base], w).stdout
 
 
