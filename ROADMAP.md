@@ -258,6 +258,7 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 | Idea | Result | Reason |
 |---|---|---|
 | jevgrep in cc-mid | −0.7 to −0.8 judge | no saving on Opus medium |
+| Own loop: covering tests while working, the changed packages once at the end (`TAZUNA_OWN_TEST_FOCUS`, 2026-11-12) | hugo and k6, 3 runs each, Fable judge: 5.00 vs 4.33 and 6.00 vs 5.67 (within noise), but 20-79 min vs 16-43 | meant to save test time, it ran longer; the speed gap had closed anyway (0.1.104-0.1.106) |
 | Claude path at Opus low instead of medium (tazuna 0.1.106, 2026-11-12) | six tasks x 3 runs, Fable judge: 5.83 vs 6.83, hidden 60 vs 63/72, $6.29 vs $12.43, 4 vs 7 min | lower on 5 of 6 tasks, a point beyond noise: half the price is not worth it; medium stays |
 | Own loop: what already fails on the last commit, told with the first test run (`TAZUNA_BASELINE`, 2026-11-11) | hugo 3+3 runs (Fable judge): 4.00 vs 3.33, hidden 14 vs 13/24, but 56-64 min vs 39-67, more calls | the note arrived in every run and test time stayed (33-38 min); the background suite competes for the CPU |
 | Own loop: exported-API rule only for code outside the repo (`TAZUNA_API_SCOPE`, 2026-11-11) | hugo 3+3 runs: judge 4.33 vs 5.00 (Opus; Fable re-judge 4.33 vs 4.33), hidden 15/24 both, −18% calls | the design faults the judge names (template boundary, editing the fork) stayed; not the rule's doing |
