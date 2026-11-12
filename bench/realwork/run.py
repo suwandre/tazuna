@@ -280,7 +280,9 @@ JAIL_DENY = sorted({repo_path(json.loads(g.read_text())["repo"]) for g in HERE.g
     HERE.parent, _H / "go/pkg/mod", _H / ".claude/projects", _H / ".codex/sessions", _H / ".local/share/opencode",
     # this repo's history holds every task's hidden tests and reference fix: a tazuna run on the VM read k6's with
     # `git show HEAD:bench/realwork/tasks/...` while the bench directory itself was hidden (v1142, 2026-11-11)
-    HERE.parents[1] / ".git"]
+    HERE.parents[1] / ".git",
+    # the shared build cache of the rounds before 2026-11-12 (compiled hidden tests in it); runs get their own now
+    _H / "bench-gocache"]
 # any copy of this directory too: a git worktree of the repo in ~/bench-homes held the tasks' reference patches, and a
 # run read one (v353, 2026-10-25)
 JAIL = "(version 1)(allow default)(deny file-read* " + " ".join(
