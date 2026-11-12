@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.109 (2026-11-12): a mistyped command is caught, commands stay out of the run log
+
+- A one-word command that matches nothing (`/nwe`) is answered in tazuna with the nearest command ("did you mean /new?")
+  and stays in the composer, instead of going to the model as a message, where one hung until stopped.
+- Slash commands alone (`/clear`, `/mcp off`, `/cost`) are no longer logged as runs, and a run's cost cannot go negative
+  when the process starts over (a `/clear` was logged at -$16.26). From the usage analysis of 517 live runs: 9 such rows,
+  4 of them counted as stopped runs. No measurable metric changes.
+
 ## Clean cross-harness round, 2026-11-12 (bench only)
 
 DeepSeek V4.1 Flash 1017 at high on SubRouter, caddy, hugo and k6 × 3 runs, no web for agents, a Go build cache per run

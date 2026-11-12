@@ -2330,6 +2330,17 @@ fn run_live(
                 if let Some(first) = text.strip_prefix('/').filter(|w| !w.is_empty() && !w.contains(char::is_whitespace)).and_then(|w| short_command(w, &s.commands)) {
                     text = format!("/{first}");
                 }
+                // a word that is no command at all (a typo, "/nwe"): said here, with the nearest one, instead of going to the
+                // model as a message (claude took "/nwe" and the run had to be stopped, 2026-11-12)
+                if let Some(word) = text.strip_prefix('/').filter(|w| live::is_command(&text) && !w.contains(char::is_whitespace))
+                    && !s.commands.is_empty() && !s.commands.iter().any(|c| c == word)
+                {
+                    let near = s.commands.iter().min_by_key(|c| edit_distance(word, c)).filter(|c| edit_distance(word, c) <= 2);
+                    let msg = match near { Some(c) => format!("unknown command /{word}: did you mean /{c}?"), None => format!("unknown command /{word}: /keys lists them") };
+                    s.apply(&json!({"type": "harness_info", "text": msg}), live.elapsed_ms());
+                    ed.set(text);
+                    continue;
+                }
                 if text == "/vim" {
                     vim = !vim;
                     (normal, vim_op) = (false, None);
@@ -2731,6 +2742,22 @@ fn start_loop(flags: Vec<String>) -> (std::sync::Arc<std::sync::atomic::AtomicBo
 
 /// The command a short `/word` stands for: the first one starting with it (the one the hint row shows first), unless
 /// `word` is a command itself.
+/// Letters to change, add or drop to turn one word into the other.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut prev = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let cur = row[j + 1];
+            row[j + 1] = (prev + usize::from(ca != *cb)).min(row[j] + 1).min(cur + 1);
+            prev = cur;
+        }
+    }
+    row[b.len()]
+}
+
 fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
     if commands.iter().any(|c| c == word) {
         return None;
@@ -2740,6 +2767,12 @@ fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_typo_is_one_letter_or_two_from_its_command() {
+        assert_eq!((super::edit_distance("nwe", "new"), super::edit_distance("modle", "model"), super::edit_distance("zzzz", "new")), (2, 2, 4));
+        assert!(crate::live::is_command("/nwe") && crate::live::is_command("/mcp off") && !crate::live::is_command("/usr/bin is broken") && !crate::live::is_command("fix /x"));
+    }
+
     #[test]
     fn a_short_command_runs_the_first_suggestion() {
         let cmds: Vec<String> = ["compact", "rename", "resume", "review", "usage", "usage-report"].map(String::from).to_vec();

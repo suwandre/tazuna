@@ -36,6 +36,12 @@ const API_RULE: &str = "\n- Do not change or remove existing exported APIs (publ
 /// kept, judge 3-4 on "heavier than needed" (2026-11-11). Same protection outside the repo, a free hand inside.
 const API_SCOPE_RULE: &str = "\n- Do not change or remove exported APIs that code outside this repository can use (public functions, methods, interfaces and types of its importable packages; in Go, not those under internal/), or add methods to such interfaces, unless the task asks for it; adding a new exported function, or a method on a concrete type, is fine. Inside the repository, change signatures and their call sites when that is the simplest fix, and delete what your change leaves unused.";
 
+/// A slash command and nothing else ("/clear", "/mcp off"): its first word is a command name, not a path ("/usr/bin").
+pub fn is_command(text: &str) -> bool {
+    text.trim_start().strip_prefix('/').and_then(|t| t.split_whitespace().next())
+        .is_some_and(|w| !w.is_empty() && w.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ':'))
+}
+
 /// The own loop (0.0.96): providers drop a model's earlier reasoning (DeepSeek through SubRouter's foxrouter and LingAI,
 /// Chat and Messages alike: a code word planted in it was never recalled), so a design worked out once was worked out
 /// again at every new finding (six times, 13-26K characters each, on one caddy run). A plan written in the reply stays.
@@ -1105,7 +1111,9 @@ impl Live {
                         self.interrupting = None;
                         let total = e["total_cost_usd"].as_f64().unwrap_or(self.proc_cost);
                         if let Some(run) = self.runs.front_mut() {
-                            run.add_cost(total - self.proc_cost);
+                            // a process that started over (/clear, /new) reports from $0: its total is all new (the run
+                            // log had -$16.26 for a /clear, 2026-11-12)
+                            run.add_cost(if total >= self.proc_cost { total - self.proc_cost } else { total });
                         }
                         self.proc_cost = total;
                         self.last_result = Some(e.clone());
@@ -1345,6 +1353,11 @@ impl Live {
     }
 
     fn log(&mut self, line: Value) {
+        // a slash command alone (/cost, /clear, /mcp) is no agent work: it stays out of the run log, where it counted as a
+        // run, stopped or at a negative cost (9 of 517 live runs, 2026-11-12)
+        if line["prompt"].as_str().is_some_and(is_command) {
+            return;
+        }
         self.last_run = line["id"].as_str().map(String::from);
         self.last_log = Some(line.clone());
         self.logs.push(line.clone());
