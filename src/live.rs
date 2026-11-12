@@ -802,7 +802,7 @@ impl Live {
     pub fn answer(&mut self, allow: bool, always: bool) -> Option<(f64, Value)> {
         let req = self.pending.pop_front()?;
         let tool = req["request"]["tool_name"].as_str().unwrap_or_default().to_string();
-        if allow && always {
+        if allow && always && req["request"]["from_text"] != true {
             self.allowed.insert(always_key(&req));
         }
         // an approved plan leaves plan mode: edits go ahead, commands still ask
@@ -992,14 +992,18 @@ impl Live {
                         }
                     }
                     if e["type"] == "control_request" && e["request"]["subtype"] == "can_use_tool" {
-                        if self.allowed.contains(&always_key(&e)) {
+                        // a tool call the own loop recovered from the model's text is asked every time: no "always"
+                        // covers it (a page could hold such text, security review 2026-11-12)
+                        let from_text = e["request"]["from_text"] == true;
+                        if !from_text && self.allowed.contains(&always_key(&e)) {
                             self.respond(&e, true, None);
                         } else if self.mode == "headless" {
                             // nobody is there to answer: a question (AskUserQuestion, or any tool in ask mode) would wait forever
                             self.respond(&e, false, None);
                         } else {
                             let tool = e["request"]["tool_name"].as_str().unwrap_or_default().to_string();
-                            out.push(self.record(json!({"type": "harness_permission", "tool": tool, "input": e["request"]["input"], "scope": always_scope(&tool)})));
+                            let scope = if from_text { "once only: the model wrote this call as text" } else { always_scope(&tool) };
+                            out.push(self.record(json!({"type": "harness_permission", "tool": tool, "input": e["request"]["input"], "scope": scope})));
                             self.pending.push_back(e);
                         }
                         continue;

@@ -870,6 +870,8 @@ impl Loop {
             // not be read before (41 of tazuna's 176 calls wrote over 5K tokens against Claude Code's 8 of 190, 2026-10-27)
             let mut thought = String::new();
             // text and calls as (id, name, arguments), in Chat Completions' shape for both APIs
+            // calls recovered from the reply's text (`text_tool_calls`): said on the turn, not by an id that can be renamed
+            let mut from_text = false;
             let (text, calls): (String, Vec<Value>) = match self.api {
                 Api::Responses => {
                     let items = reply["output"].as_array().cloned().unwrap_or_default();
@@ -902,7 +904,7 @@ impl Loop {
                         let names: Vec<&str> = self.tools.iter().filter_map(|t| t["function"]["name"].as_str()).collect();
                         let (rest, found) = text_tool_calls(&text, &names);
                         if !found.is_empty() {
-                            (text, calls) = (rest, found);
+                            (text, calls, from_text) = (rest, found, true);
                         }
                     }
                     // LingAI sent 16 calls with an empty id in one DeepSeek run; the history was accepted until call 161,
@@ -974,7 +976,7 @@ impl Loop {
                 let cmd = (name == "bash").then(|| input.as_ref().and_then(|i| i["command"].as_str()).map(String::from)).flatten();
                 let (text, is_error) = match input {
                     None => ("the arguments were not valid JSON; call the tool again with a JSON object".to_string(), true),
-                    Some(input) => match self.permit(&name, &input, rx, id.starts_with("text_call_")) {
+                    Some(input) => match self.permit(&name, &input, rx, from_text) {
                         Permit::Allow(input) if self.mode == "explore" && (name == "search" || name == "list") => {
                             explore_tool(&name, &input, &std::env::current_dir().unwrap_or_default())
                         }
@@ -1300,7 +1302,7 @@ impl Loop {
         // an MCP call is asked about as claude names it (mcp__server__tool), so "always" covers that one tool
         let shown = if tool == "mcp" { self.hub.as_ref().map_or("mcp".into(), |h| h.label(input)) } else { tool.to_string() };
         let shown = if from_text { format!("{shown} (written as text by the model)") } else { shown };
-        (self.out)(&json!({"type": "control_request", "request_id": id, "request": {"subtype": "can_use_tool", "tool_name": shown, "input": input}}));
+        (self.out)(&json!({"type": "control_request", "request_id": id, "request": {"subtype": "can_use_tool", "tool_name": shown, "input": input, "from_text": from_text}}));
         loop {
             let Ok(m) = rx.recv() else { return Permit::Stop }; // tazuna is gone: nobody can answer
             if m["type"] == "control_response" && m["response"]["request_id"] == id.as_str() {

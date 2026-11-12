@@ -1076,6 +1076,10 @@ fn question(req: &serde_json::Value) -> String {
         Some(w) => session::shown(w, 400),
         None => session::shown(&i.to_string(), 400),
     };
+    // a call the model wrote as text gets no "always": a or y both allow it once (live.rs)
+    if r["from_text"] == true {
+        return format!("{tool}: {what}  (once only: the model wrote this call as text)");
+    }
     let scope = if matches!(tool.as_str(), "Bash" | "mcp__lean__bash" | "PowerShell") { "this command" } else { "this tool" };
     format!("{tool}: {what}  (always = {scope})")
 }

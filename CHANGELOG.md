@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.114 (2026-11-12): a text-written tool call is asked once, every time
+
+- Two holes in 0.1.113, found by a security review: the mark that a call came from the model's text rode on its id,
+  which the engine renames when a provider repeats ids, so a later such call could lose it and run unasked; and an
+  "always" given to one of them was scoped to the renamed tool, so it would have covered every later text-written call.
+  The turn now carries the mark itself, the request says `from_text`, and such a call is never auto-allowed nor stored
+  as "always": the question says "once only". No measurable metric changes.
+
 ## 0.1.113 (2026-11-12): a tool call written as text always asks
 
 - 0.1.112's text tool calls opened a path for injected instructions: a page or file the agent reads could hold text
