@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.108 (2026-11-12): Mistral's streams whole on screen; nothing else prints over it
+
+- DeepSeek through Mistral's API lost its first words and its thinking on screen ("actually know." for "I don't actually
+  know.", the thinking drawn below the answer): Mistral streams content as typed blocks (thinking, then the first words
+  of the text) before plain strings, and the live reader took strings only. It now reads each piece as the final reply
+  is assembled (which always had the whole text), so the screen shows all of it as it comes.
+- The tokens panel showed the last call's speed between calls (743 tok/s) beside the summary line's figure for the whole
+  session (788 tok/s). Both now show the session's: output tokens over the time from each call's first token to its end
+  (the wait for the first token is shown apart); the chart's click still lists each call.
+- Claude and the own loop run in a session of their own, without the terminal, so nothing their commands start can write
+  over the screen: a helper woken by an agent's `du` and `docker` printed "live again" into the transcript, where it
+  stayed. ctrl-l draws the whole screen again for anything else. No measurable metric changes.
+
 ## 0.1.107 (2026-11-12): a provider that only pings is said and given up; /login saves a terminal's key everywhere
 
 - A provider that accepts a call and then sends only keep-alive comments no longer looks like tazuna waiting: Mortera's

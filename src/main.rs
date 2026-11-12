@@ -2250,6 +2250,8 @@ fn run_live(
                 v.design = v.design.next();
                 fx.boot = true;
             }
+            // the whole screen drawn again: anything another program wrote over it is gone
+            KeyCode::Char('l') if ctrl => term.clear()?,
             // ctrl-o like Claude Code's detail toggle; ctrl-e is end of line
             KeyCode::Char('o') if ctrl => v.expand_all = !v.expand_all,
             KeyCode::Char('s') if ctrl => {

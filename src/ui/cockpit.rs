@@ -164,12 +164,15 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             let rate = if v.clock_ms - first > 500.0 { format!("≈{:.0}", est / (v.clock_ms - first) * 1000.0) } else { "…".into() };
             vec![Span::styled(rate, st(th.text)), Span::styled(" tok/s · ", st(th.faint)), Span::styled(secs(first - start), st(th.text)), Span::styled(" to first token", st(th.faint))]
         }
-        (None, Some(c)) => {
+        // between calls the session's figures, as the run's summary line has them: the last call's alone (743 tok/s beside
+        // the summary's 788, a user asking which was right, 2026-11-12) are one click away, on the chart above
+        (None, Some(_)) => {
+            let (ttft, tps) = crate::session::speed(&s.calls);
             let mut l = vec![];
-            if c.gen_ms > 0.0 {
-                l.extend([Span::styled(format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0), st(th.text)), Span::styled(" tok/s", st(th.faint))]);
+            if let Some(r) = tps {
+                l.extend([Span::styled(format!("{r:.0}"), st(th.text)), Span::styled(" tok/s", st(th.faint))]);
             }
-            if let Some(t) = c.ttft_ms {
+            if let Some(t) = ttft {
                 l.extend([Span::styled(if l.is_empty() { "" } else { " · " }, st(th.faint)), Span::styled(secs(t), st(th.text)), Span::styled(" to first token", st(th.faint))]);
             }
             l

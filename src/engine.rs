@@ -1364,26 +1364,31 @@ fn read_streaming(reader: impl std::io::Read, api: Api, stall: Duration, out: &m
         data |= line.starts_with("data:");
         let Some(d) = line.strip_prefix("data:").map(str::trim).and_then(|d| serde_json::from_str::<Value>(d).ok()) else { continue };
         let (text, thinking) = match api {
+            // as `from_stream` reads it: Mistral sends content as typed blocks (thinking, then the first words of the text)
+            // before plain strings, and an empty `reasoning_content` beside `reasoning` (the screen lost the thinking and
+            // "I don't", 2026-11-12)
             Api::Chat => {
                 let d = &d["choices"][0]["delta"];
-                (d["content"].as_str(), d["reasoning_content"].as_str().or(d["reasoning"].as_str()))
+                let (text, thinking) = chat_content(&d["content"]);
+                let r = d["reasoning_content"].as_str().filter(|r| !r.is_empty()).or(d["reasoning"].as_str()).unwrap_or_default();
+                (Some(text), Some(thinking + r))
             }
             Api::Responses => match d["type"].as_str() {
-                Some("response.output_text.delta") => (d["delta"].as_str(), None),
-                Some("response.reasoning_summary_text.delta" | "response.reasoning_text.delta") => (None, d["delta"].as_str()),
+                Some("response.output_text.delta") => (d["delta"].as_str().map(String::from), None),
+                Some("response.reasoning_summary_text.delta" | "response.reasoning_text.delta") => (None, d["delta"].as_str().map(String::from)),
                 _ => (None, None),
             },
             Api::Messages => match (d["type"].as_str(), d["delta"]["type"].as_str()) {
-                (Some("content_block_delta"), Some("text_delta")) => (d["delta"]["text"].as_str(), None),
-                (Some("content_block_delta"), Some("thinking_delta")) => (None, d["delta"]["thinking"].as_str()),
+                (Some("content_block_delta"), Some("text_delta")) => (d["delta"]["text"].as_str().map(String::from), None),
+                (Some("content_block_delta"), Some("thinking_delta")) => (None, d["delta"]["thinking"].as_str().map(String::from)),
                 _ => (None, None),
             },
         };
         if let Some(t) = thinking {
-            send(out, "thinking", t, &mut open);
+            send(out, "thinking", &t, &mut open);
         }
         if let Some(t) = text {
-            send(out, "text", t, &mut open);
+            send(out, "text", &t, &mut open);
         }
     }
     if open.is_some() {
@@ -1824,6 +1829,23 @@ mod tests {
         let pool = r#"{"error":{"message":"source unavailable","type":"server_error","code":"responses_source_unavailable"}}"#;
         assert!(pinned_away(&http_error(503, pool)), "the code a retry looks for stays");
         assert_eq!(http_error(502, "<html>bad gateway</html>"), "HTTP 502: <html>bad gateway</html>");
+    }
+
+    #[test]
+    fn mistral_block_chunks_reach_the_screen_whole() {
+        // Mistral: thinking as typed blocks, the first words as a text block, then plain strings
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":[{\"type\":\"thinking\",\"thinking\":[{\"type\":\"text\",\"text\":\"Be honest.\"}]}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":[{\"type\":\"text\",\"text\":\"I don't\"}]}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\" actually know.\",\"reasoning_content\":\"\",\"reasoning\":null}}]}\n\n",
+            "data: [DONE]\n\n");
+        let mut shown = (String::new(), String::new());
+        super::read_streaming(sse.as_bytes(), Api::Chat, Duration::from_secs(300), &mut |e| {
+            let d = &e["event"]["delta"];
+            shown.0.push_str(d["text"].as_str().unwrap_or_default());
+            shown.1.push_str(d["thinking"].as_str().unwrap_or_default());
+        }).unwrap();
+        assert_eq!(shown, ("I don't actually know.".to_string(), "Be honest.".to_string()));
     }
 
     #[test]

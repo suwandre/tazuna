@@ -80,6 +80,25 @@ pub fn plain(p: &Path) -> String {
     s
 }
 
+/// In a session of its own, without the terminal: nothing it starts can open /dev/tty and print over tazuna's screen.
+/// An agent's command woke a helper (OrbStack's, through `du` and `docker`) that wrote "live again" into the middle of
+/// the transcript, where it stayed (2026-11-12); a password prompt would have done the same and waited there. Also a
+/// process group of its own (setsid makes one), so `kill_tree` still reaches it. Windows: nothing to do.
+pub fn detach(cmd: &mut Command) -> &mut Command {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe extern "C" {
+            fn setsid() -> i32;
+        }
+        // SAFETY: setsid is async-signal-safe, the one call made between fork and exec
+        unsafe {
+            cmd.pre_exec(|| if setsid() == -1 { Err(std::io::Error::last_os_error()) } else { Ok(()) });
+        }
+    }
+    cmd
+}
+
 /// In a process group of its own, so `kill_tree` can stop everything it starts.
 pub fn own_group(cmd: &mut Command) -> &mut Command {
     #[cfg(unix)]
@@ -394,6 +413,15 @@ pub fn sh_quote(p: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    #[test]
+    fn a_detached_command_cannot_reach_the_terminal() {
+        // its own session: no controlling terminal, so /dev/tty does not open (with or without one in the test's run)
+        let out = super::detach(&mut std::process::Command::new("sh").args(["-c", "(echo x > /dev/tty) 2>/dev/null && echo reached || echo none"]))
+            .output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "none");
+    }
+
     use super::*;
 
     #[test]

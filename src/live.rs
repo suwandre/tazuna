@@ -1631,7 +1631,8 @@ impl Live {
 
     /// Starts the agent process and the threads that read its output.
     fn start(&mut self, mut cmd: Command) -> Result<()> {
-        let mut child = cmd
+        // without the terminal, so nothing the agent's commands start prints over the screen (platform::detach)
+        let mut child = crate::platform::detach(&mut cmd)
             .current_dir(&self.cwd)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
