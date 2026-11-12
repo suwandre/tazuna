@@ -82,6 +82,7 @@ One own-loop run each (DeepSeek V4.1 Flash high on SubRouter), Fable 5.2 high ju
 | investigate | 3 (Astro bug issues, the fix PR as reference) | 9, 9, 6 | 1-3.5 min | $0.009 for the 3 |
 | plan | 3 (Astro bug issues, the maintainers' fix as reference) | 9, 9, 7 | 1-5 min | $0.011 |
 | question | 3 ("TL;DR this PR" in n8n, Astro, TanStack Query) | 8, 8, 8 | 1.5-2.5 min | $0.005 |
+| change | 3 (Astro bug fixes; the PR's unit tests hidden, failing on the base and passing with the fix) | 2/2, 1/1, 2/7 tests | 30-41 min | $0.065 |
 
 - The grading separates: the low scores name a concrete wrong claim (a loop said to add hashes that never runs) or a
   recommendation wider than what the maintainers shipped, not style.
@@ -89,5 +90,9 @@ One own-loop run each (DeepSeek V4.1 Flash high on SubRouter), Fable 5.2 high ju
   name the cause, larger PRs) to leave room between harnesses. Review is already hard.
 - The judge sees the reference, not the repo, and says so when it cannot check a cited file:line. A mechanical check
   of cited paths and lines against the tree would close that gap.
+- Change tasks (build_change.py, validate_change.py, nodetest.py): 7 of 8 candidates had tests that fail on the base and
+  pass with the fix. The 2/7 run rejected valid paths (an encoded `/`) that the PR keeps passing: the hidden tests caught
+  a real regression. That run also "fixed" unrelated tests that fail only without network (three extra files): scope
+  the judge should see. Runs were long (93-160 turns) because the agents ran Astro's integration tests.
 - Found in passing: every answer ended with the nudge's "DONE" reply (fixed in 0.1.115); one DeepSeek answer began
   with an unclosed `<thinking>` block written as text (a model quirk, 1 of 9; watch it).
