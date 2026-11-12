@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.117 (2026-11-12): the model picker lists every SubRouter chat model
+
+- It listed a SubRouter model only if Artificial Analysis scores it (a way to keep image and video models out): about
+  20 of SubRouter's 311 chat models. It now goes by SubRouter's own category: every chat model, scored ones first, then
+  the rest by name (about 270 rows after Claude's and duplicate spellings). Image, video, audio and embedding models stay
+  out. The built-in list (src/routes.json) carries the categories. No measurable metric changes.
+
 ## 0.1.116 (2026-11-12): the own loop commits, pushes or opens a PR when asked
 
 - Its prompt said "Do not commit". Asked "CI failed on PR #77. Find out why and fix it in that PR" (an ops task of the

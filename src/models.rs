@@ -330,8 +330,14 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
     // a model on another provider (Mortera, Mistral) does not hide SubRouter's own row for it
     let mut seen: std::collections::HashSet<String> =
         out.iter().filter(|c| c.route.as_ref().is_none_or(|r| host_of(&r.0) == "subrouter.ai")).map(|c| slug(&c.model)).collect();
+    // every chat model, by SubRouter's own category (image, video, audio and embedding models stay out), those with a
+    // public score first; a list from before categories (no "category") keeps only the scored ones. Until 0.1.117 only the
+    // scored ones were listed: about 20 of SubRouter's 311 chat models (2026-11-12)
     let mut rest: Vec<(f64, &String, &Value)> = file["catalog"].as_object().into_iter().flatten()
-        .filter_map(|(m, c)| file["aa"][slug(m)].as_f64().map(|a| (a, m, c))).collect();
+        .filter_map(|(m, c)| {
+            let aa = file["aa"][slug(m)].as_f64();
+            (c["category"] == "chat" || aa.is_some()).then_some((aa.unwrap_or(f64::NEG_INFINITY), m, c))
+        }).collect();
     rest.sort_by(|a, b| b.0.total_cmp(&a.0).then((*a.1 != a.1.to_lowercase()).cmp(&(*b.1 != b.1.to_lowercase()))).then(a.1.cmp(b.1)));
     // Claude runs on the subscription, never through SubRouter (with Fable 5.2 in the list, SubRouter's Fable 5.1 would
     // have come in as a row of its own, 2026-11-10)
@@ -989,14 +995,16 @@ mod tests {
         let now = 1000000 + 9 * 86_400;
         let mut d: Value = serde_json::from_str(&std::fs::read_to_string(&f).unwrap()).unwrap();
         d["catalog"] = serde_json::json!({"glm-5.3": {"price": [0.1, 0.4], "providers": 3}, "seadance-video": {"price": [1, 1], "providers": 1},
-                                          "gpt-6.1-sol": {"price": [0.03, 0.2], "providers": 40}});
+                                          "gpt-6.1-sol": {"price": [0.03, 0.2], "providers": 40},
+                                          "kimi-k3": {"price": [0.5, 2], "providers": 2, "category": "chat"},
+                                          "flux-pro": {"price": [1, 1], "providers": 1, "category": "image"}});
         d["aa"] = serde_json::json!({"glm-5-3": 41.0, "gpt-6-1-sol": 54.5});
         d["bench"] = serde_json::json!({"gpt-6.1-sol": {"judge": 6.6, "runs": 51, "minutes": 19}});
         std::fs::write(&f, d.to_string()).unwrap();
         let c: Vec<Choice> = catalog(&f, |h| h == "subrouter.ai", &KeyModels::new(), now).into_iter().filter(|c| c.place != "Mortera").collect();
         assert_eq!(c.iter().map(|c| c.label.as_str()).collect::<Vec<_>>(),
-                   ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.2", "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017 · fast", "gpt-6.1-sol", "glm-5.3"],
-                   "routed models once; unchecked ones only with a public score (no video model)");
+                   ["Opus 5.5", "Sonnet 5.5", "Haiku 5.5", "Fable 5.2", "deepseek-v4.1-flash-1017", "deepseek-v4.1-flash-1017 · fast", "gpt-6.1-sol", "glm-5.3", "kimi-k3"],
+                   "routed models once; then every chat model, scored ones first (no image or video model)");
         assert_eq!((c[6].bench.as_str(), c[6].aa.as_str(), c[6].price.as_str()), ("6.6 (51)", "54", "0.0387 / 0.194"));
         assert_eq!((c[7].route.as_ref().unwrap().1.as_str(), c[7].price.as_str()), ("SUBROUTER_API_KEY", "0.1 / 0.4"));
         assert_eq!([0.01296, 0.02206, 1.17647, 0.003, 12.5, 120.0].map(per_m), ["0.013", "0.0221", "1.18", "0.003", "12.5", "120"]);

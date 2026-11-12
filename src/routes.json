@@ -11,6 +11,7 @@
   "gemini-3-8-flash-low": 22.3,
   "gemini-3-8-flash-medium": 30,
   "gemini-4-argon": 50.4,
+  "gemini-4-carbon": 59.4,
   "glm-5-3": 31.7,
   "glm-5-3-flash": 27.8,
   "gpt-6-1-sol": 54.5,
@@ -28,208 +29,2493 @@
   "qwen3-8-max": 33.6
  },
  "catalog": {
+  "DeepSeek-V4-Flash-0731": {
+   "category": "chat",
+   "price": [
+    2,
+    2
+   ],
+   "providers": 1
+  },
+  "DeepSeek-V4.1-Flash-1017": {
+   "category": "chat",
+   "price": [
+    0.03,
+    0.24
+   ],
+   "providers": 1
+  },
+  "ERNIE-3.5-8K": {
+   "category": "chat",
+   "price": [
+    1.65,
+    1.65
+   ],
+   "providers": 1
+  },
+  "ERNIE-4.0-8K": {
+   "category": "chat",
+   "price": [
+    16.44,
+    16.44
+   ],
+   "providers": 1
+  },
+  "ERNIE-Speed-128K": {
+   "category": "chat",
+   "price": [
+    0.55,
+    1.1
+   ],
+   "providers": 1
+  },
+  "ERNIE-Speed-8K": {
+   "category": "chat",
+   "price": [
+    0.55,
+    1.1
+   ],
+   "providers": 1
+  },
+  "ERNIE-Tiny-8K": {
+   "category": "chat",
+   "price": [
+    0.14,
+    0.14
+   ],
+   "providers": 1
+  },
+  "GPT5.6SOL": {
+   "category": "chat",
+   "price": [
+    0.4,
+    2
+   ],
+   "providers": 1
+  },
+  "JDseadanco2.1-933-720p": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 1
+  },
+  "Kimi-K3.1-Pro": {
+   "category": "chat",
+   "price": [
+    0.75,
+    7.5
+   ],
+   "providers": 1
+  },
+  "Ling-2.6-flash": {
+   "category": "chat",
+   "price": [
+    0.08,
+    0.24
+   ],
+   "providers": 1
+  },
+  "MiniMax-M2.5": {
+   "category": "chat",
+   "price": [
+    0.01265,
+    0.05059
+   ],
+   "providers": 2
+  },
   "MiniMax-M3": {
+   "category": "chat",
    "price": [
     0.17647,
     0.70588
    ],
    "providers": 2
   },
-  "claude-fable-5-1": {
+  "MiniMax-M3.1-Flash": {
+   "category": "chat",
    "price": [
-    0.19824,
-    0.99118
+    0.06,
+    0.24
    ],
-   "providers": 22
+   "providers": 1
+  },
+  "Qwen/Qwen3.5-0.8B": {
+   "category": "chat",
+   "price": [
+    6e-05,
+    0.00024
+   ],
+   "providers": 1
+  },
+  "Qwen/Qwen3.5-122B-A10B": {
+   "category": "chat",
+   "price": [
+    0.00029,
+    0.00118
+   ],
+   "providers": 1
+  },
+  "Qwen/Qwen3.5-27B": {
+   "category": "chat",
+   "price": [
+    0.00016,
+    0.00065
+   ],
+   "providers": 1
+  },
+  "Qwen/Qwen3.5-2B": {
+   "category": "chat",
+   "price": [
+    7e-05,
+    0.00029
+   ],
+   "providers": 1
+  },
+  "Qwen/Qwen3.5-397B-A17B": {
+   "category": "chat",
+   "price": [
+    0.00051,
+    0.00206
+   ],
+   "providers": 1
+  },
+  "Qwen/Qwen3.5-4B": {
+   "category": "chat",
+   "price": [
+    9e-05,
+    0.00035
+   ],
+   "providers": 1
+  },
+  "Qwen/Qwen3.5-9B": {
+   "category": "chat",
+   "price": [
+    0.00013,
+    0.00053
+   ],
+   "providers": 1
+  },
+  "Qwen/Qwen3.6-27B": {
+   "category": "chat",
+   "price": [
+    0.00016,
+    0.00065
+   ],
+   "providers": 1
+  },
+  "Qwen/Qwen3.6-27B-FP8": {
+   "category": "chat",
+   "price": [
+    0.00016,
+    0.00065
+   ],
+   "providers": 1
+  },
+  "Qwen/Qwen3.6-35B-A3B": {
+   "category": "chat",
+   "price": [
+    0.00018,
+    0.00071
+   ],
+   "providers": 1
+  },
+  "Qwen/Qwen3.6-35B-A3B-FP8": {
+   "category": "chat",
+   "price": [
+    0.00018,
+    0.00071
+   ],
+   "providers": 1
+  },
+  "SparkDesk-v1.1": {
+   "category": "chat",
+   "price": [
+    2.6,
+    2.6
+   ],
+   "providers": 1
+  },
+  "SparkDesk-v2.1": {
+   "category": "chat",
+   "price": [
+    2.6,
+    2.6
+   ],
+   "providers": 1
+  },
+  "SparkDesk-v3.1": {
+   "category": "chat",
+   "price": [
+    2.6,
+    2.6
+   ],
+   "providers": 1
+  },
+  "SparkDesk-v3.5": {
+   "category": "chat",
+   "price": [
+    2.6,
+    2.6
+   ],
+   "providers": 1
+  },
+  "agnes-2.5-pro-alpha": {
+   "category": "chat",
+   "price": [
+    0.36,
+    0.72
+   ],
+   "providers": 1
+  },
+  "agnes-3.0-flash": {
+   "category": "chat",
+   "price": [
+    0.03,
+    0.09
+   ],
+   "providers": 1
+  },
+  "capysearch-v1": {
+   "category": "chat",
+   "price": [
+    2,
+    2
+   ],
+   "providers": 1
+  },
+  "claude-fable-5": {
+   "category": "chat",
+   "price": [
+    0.14029,
+    0.70147
+   ],
+   "providers": 39
+  },
+  "claude-fable-5-1": {
+   "category": "chat",
+   "price": [
+    0.21963,
+    1.09813
+   ],
+   "providers": 23
+  },
+  "claude-fable-5-2": {
+   "category": "chat",
+   "price": [
+    0.92647,
+    4.63235
+   ],
+   "providers": 12
   },
   "claude-fable-5.1": {
+   "category": "chat",
    "price": [
     0.42017,
     2
    ],
    "providers": 5
   },
+  "claude-haiku-4-5": {
+   "category": "chat",
+   "price": [
+    0.01,
+    0.01485
+   ],
+   "providers": 6
+  },
+  "claude-haiku-4-5-20251001": {
+   "category": "chat",
+   "price": [
+    0.01,
+    0.05
+   ],
+   "providers": 14
+  },
+  "claude-haiku-4.5": {
+   "category": "chat",
+   "price": [
+    0.01,
+    0.05
+   ],
+   "providers": 1
+  },
   "claude-haiku-5-5": {
+   "category": "chat",
    "price": [
     0.05,
     0.25
    ],
-   "providers": 12
+   "providers": 13
   },
-  "claude-opus-5-5": {
+  "claude-opus-4-5": {
+   "category": "chat",
    "price": [
-    0.03515,
-    0.17574
+    0.05,
+    0.25
+   ],
+   "providers": 1
+  },
+  "claude-opus-4-5-20251101": {
+   "category": "chat",
+   "price": [
+    0.05,
+    0.25
+   ],
+   "providers": 2
+  },
+  "claude-opus-4-6": {
+   "category": "chat",
+   "price": [
+    0.05,
+    0.25
+   ],
+   "providers": 28
+  },
+  "claude-opus-4-6-thinking": {
+   "category": "chat",
+   "price": [
+    0.07074,
+    0.35368
+   ],
+   "providers": 18
+  },
+  "claude-opus-4-7": {
+   "category": "chat",
+   "price": [
+    0.05,
+    0.25
    ],
    "providers": 31
   },
+  "claude-opus-4-7-thinking": {
+   "category": "chat",
+   "price": [
+    0.11574,
+    0.57868
+   ],
+   "providers": 14
+  },
+  "claude-opus-4-8": {
+   "category": "chat",
+   "price": [
+    0.09412,
+    0.47059
+   ],
+   "providers": 31
+  },
+  "claude-opus-4-8-thinking": {
+   "category": "chat",
+   "price": [
+    0.11382,
+    0.56912
+   ],
+   "providers": 14
+  },
+  "claude-opus-4.5": {
+   "category": "chat",
+   "price": [
+    0.05,
+    0.25
+   ],
+   "providers": 1
+  },
+  "claude-opus-4.6": {
+   "category": "chat",
+   "price": [
+    0.05,
+    0.25
+   ],
+   "providers": 1
+  },
+  "claude-opus-4.7": {
+   "category": "chat",
+   "price": [
+    0.05,
+    0.25
+   ],
+   "providers": 1
+  },
+  "claude-opus-4.8": {
+   "category": "chat",
+   "price": [
+    0.05,
+    0.25
+   ],
+   "providers": 1
+  },
+  "claude-opus-5": {
+   "category": "chat",
+   "price": [
+    0.05,
+    0.25
+   ],
+   "providers": 39
+  },
+  "claude-opus-5-5": {
+   "category": "chat",
+   "price": [
+    0.10691,
+    0.53456
+   ],
+   "providers": 30
+  },
+  "claude-opus-5-5-claude-opus-5-5": {
+   "category": "chat",
+   "price": [
+    0.10985,
+    0.54926
+   ],
+   "providers": 1
+  },
+  "claude-opus-5-thinking": {
+   "category": "chat",
+   "price": [
+    0.10309,
+    0.51544
+   ],
+   "providers": 1
+  },
   "claude-opus-5.5": {
+   "category": "chat",
    "price": [
     0.04,
     0.2
    ],
    "providers": 1
   },
-  "claude-sonnet-5-5": {
+  "claude-sonnet-4": {
+   "category": "chat",
    "price": [
-    0.00647,
-    0.03235
+    0.03,
+    0.15
    ],
-   "providers": 24
+   "providers": 1
+  },
+  "claude-sonnet-4-5": {
+   "category": "chat",
+   "price": [
+    0.03,
+    0.15
+   ],
+   "providers": 1
+  },
+  "claude-sonnet-4-5-20250929": {
+   "category": "chat",
+   "price": [
+    0.125,
+    0.58824
+   ],
+   "providers": 1
+  },
+  "claude-sonnet-4-6": {
+   "category": "chat",
+   "price": [
+    0.03,
+    0.15
+   ],
+   "providers": 34
+  },
+  "claude-sonnet-4-6-thinking": {
+   "category": "chat",
+   "price": [
+    0.18441,
+    0.92206
+   ],
+   "providers": 8
+  },
+  "claude-sonnet-4-8": {
+   "category": "chat",
+   "price": [
+    0.8,
+    0.2
+   ],
+   "providers": 1
+  },
+  "claude-sonnet-4.5": {
+   "category": "chat",
+   "price": [
+    0.03,
+    0.15
+   ],
+   "providers": 1
+  },
+  "claude-sonnet-4.6": {
+   "category": "chat",
+   "price": [
+    0.03,
+    0.15
+   ],
+   "providers": 1
+  },
+  "claude-sonnet-5": {
+   "category": "chat",
+   "price": [
+    0.04588,
+    0.22941
+   ],
+   "providers": 34
+  },
+  "claude-sonnet-5-5": {
+   "category": "chat",
+   "price": [
+    0.01074,
+    0.05368
+   ],
+   "providers": 27
+  },
+  "claude-sonnet-5-claude-sonnet-5": {
+   "category": "chat",
+   "price": [
+    0.07206,
+    0.36029
+   ],
+   "providers": 1
+  },
+  "claude-sonnet-5-thinking": {
+   "category": "chat",
+   "price": [
+    0.05103,
+    0.25515
+   ],
+   "providers": 2
   },
   "claude-sonnet-5.5": {
+   "category": "chat",
    "price": [
     0.16912,
     0.29412
    ],
    "providers": 1
   },
-  "deepseek-v4-pro": {
+  "codex-auto-review": {
+   "category": "chat",
    "price": [
-    0.02353,
-    0.06753
+    0.035,
+    0.04221
    ],
-   "providers": 32
+   "providers": 16
   },
-  "deepseek-v4.1-flash-1017": {
+  "cohere/north-mini-code:free": {
+   "category": "chat",
    "price": [
     0,
     0
    ],
-   "providers": 27
+   "providers": 1
   },
-  "gemini-3.5-flash-lite": {
+  "cx/gpt-5.5": {
+   "category": "chat",
+   "price": [
+    2,
+    2
+   ],
+   "providers": 1
+  },
+  "cx/gpt-5.6-terra": {
+   "category": "chat",
+   "price": [
+    2,
+    2
+   ],
+   "providers": 1
+  },
+  "deepseek-ai/DeepSeek-OCR-2": {
+   "category": "chat",
+   "price": [
+    9e-05,
+    0.00035
+   ],
+   "providers": 1
+  },
+  "deepseek-ai/DeepSeek-R1-0528": {
+   "category": "chat",
+   "price": [
+    0.00041,
+    0.00165
+   ],
+   "providers": 1
+  },
+  "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B": {
+   "category": "chat",
+   "price": [
+    0.00015,
+    0.00059
+   ],
+   "providers": 1
+  },
+  "deepseek-ai/DeepSeek-V3": {
+   "category": "chat",
+   "price": [
+    0.0004,
+    0.00159
+   ],
+   "providers": 1
+  },
+  "deepseek-ai/DeepSeek-V3.2": {
+   "category": "chat",
+   "price": [
+    0.00037,
+    0.00147
+   ],
+   "providers": 1
+  },
+  "deepseek-ai/DeepSeek-V4-Flash": {
+   "category": "chat",
+   "price": [
+    0.00125,
+    0.01265
+   ],
+   "providers": 1
+  },
+  "deepseek-flash": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 2
+  },
+  "deepseek-r1": {
+   "category": "chat",
+   "price": [
+    1.35,
+    5.4
+   ],
+   "providers": 1
+  },
+  "deepseek-r1-0528": {
+   "category": "chat",
+   "price": [
+    1.35,
+    5.4
+   ],
+   "providers": 1
+  },
+  "deepseek-v3": {
+   "category": "chat",
+   "price": [
+    0.29,
+    1.15
+   ],
+   "providers": 1
+  },
+  "deepseek-v3-0324": {
+   "category": "chat",
+   "price": [
+    1.14,
+    4.56
+   ],
+   "providers": 1
+  },
+  "deepseek-v3.1": {
+   "category": "chat",
+   "price": [
+    0.56,
+    1.7
+   ],
+   "providers": 1
+  },
+  "deepseek-v3.2": {
+   "category": "chat",
+   "price": [
+    0.03794,
+    0.05
+   ],
+   "providers": 4
+  },
+  "deepseek-v4-flash": {
+   "category": "chat",
+   "price": [
+    0.01456,
+    0.05824
+   ],
+   "providers": 29
+  },
+  "deepseek-v4-flash-0731": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 10
+  },
+  "deepseek-v4-flash-vision-exp": {
+   "category": "chat",
+   "price": [
+    0.09,
+    0.36
+   ],
+   "providers": 9
+  },
+  "deepseek-v4-pro": {
+   "category": "chat",
+   "price": [
+    0.02562,
+    0.05125
+   ],
+   "providers": 33
+  },
+  "deepseek-v4-pro-0813": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 18
+  },
+  "deepseek-v4.1-flash": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 33
+  },
+  "deepseek-v4.1-flash-1017": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 32
+  },
+  "deepseek-v4.1-flash-1017-uncensored": {
+   "category": "chat",
+   "price": [
+    0.13529,
+    0.64706
+   ],
+   "providers": 1
+  },
+  "deepseek-v4.1-flash-expires-on-0910": {
+   "category": "chat",
+   "price": [
+    0.105,
+    0.42
+   ],
+   "providers": 2
+  },
+  "deepseek-v4.1-flash-uncensored": {
+   "category": "chat",
+   "price": [
+    0.13529,
+    0.64706
+   ],
+   "providers": 2
+  },
+  "dots-studio/dots-3-note-preview:free": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 1
+  },
+  "doubao-seed-1-6-vision-250815": {
+   "category": "chat",
+   "price": [
+    0.11,
+    0.17
+   ],
+   "providers": 1
+  },
+  "doubao-seed-2-0-code-preview-260215": {
+   "category": "chat",
+   "price": [
+    0.38,
+    1.9
+   ],
+   "providers": 1
+  },
+  "doubao-seed-2-0-pro-260215": {
+   "category": "chat",
+   "price": [
+    0.44,
+    2.2
+   ],
+   "providers": 1
+  },
+  "doubao-seed-2.0-mini": {
+   "category": "chat",
+   "price": [
+    0.024,
+    0.224
+   ],
+   "providers": 1
+  },
+  "doubao-seedance-1-0-pro-250528": {
+   "category": "chat",
+   "price": [
+    1,
+    8
+   ],
+   "providers": 1
+  },
+  "doubao-seedance-1-5-pro-251215": {
+   "category": "chat",
+   "price": [
+    1,
+    8
+   ],
+   "providers": 1
+  },
+  "doubao-seedream-4-0-250828": {
+   "category": "chat",
+   "price": [
+    1,
+    8
+   ],
+   "providers": 1
+  },
+  "gemini-2.5-flash": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 10
+  },
+  "gemini-2.5-flash-lite": {
+   "category": "chat",
+   "price": [
+    0.008,
+    0.032
+   ],
+   "providers": 5
+  },
+  "gemini-2.5-flash-thinking": {
+   "category": "chat",
    "price": [
     0.024,
     0.2
    ],
+   "providers": 4
+  },
+  "gemini-2.5-pro": {
+   "category": "chat",
+   "price": [
+    0.1,
+    0.8
+   ],
+   "providers": 8
+  },
+  "gemini-3-flash": {
+   "category": "chat",
+   "price": [
+    0.015,
+    0.09
+   ],
    "providers": 5
   },
+  "gemini-3-flash-agent": {
+   "category": "chat",
+   "price": [
+    0.5,
+    3
+   ],
+   "providers": 3
+  },
+  "gemini-3-flash-preview": {
+   "category": "chat",
+   "price": [
+    0.3,
+    1.8
+   ],
+   "providers": 4
+  },
+  "gemini-3-flash-preview-thinking": {
+   "category": "chat",
+   "price": [
+    0.09706,
+    0.58235
+   ],
+   "providers": 1
+  },
+  "gemini-3-pro-preview": {
+   "category": "chat",
+   "price": [
+    1,
+    6
+   ],
+   "providers": 3
+  },
+  "gemini-3.1-flash-lite": {
+   "category": "chat",
+   "price": [
+    0.02,
+    0.12
+   ],
+   "providers": 11
+  },
+  "gemini-3.1-flash-lite-preview": {
+   "category": "chat",
+   "price": [
+    0.03496,
+    0.20974
+   ],
+   "providers": 6
+  },
+  "gemini-3.1-pro": {
+   "category": "chat",
+   "price": [
+    0.11529,
+    0.69176
+   ],
+   "providers": 6
+  },
+  "gemini-3.1-pro-low": {
+   "category": "chat",
+   "price": [
+    0.06,
+    0.36
+   ],
+   "providers": 1
+  },
+  "gemini-3.1-pro-preview": {
+   "category": "chat",
+   "price": [
+    0.11471,
+    0.68824
+   ],
+   "providers": 8
+  },
+  "gemini-3.1-pro-preview-customtools": {
+   "category": "chat",
+   "price": [
+    1.2,
+    7.2
+   ],
+   "providers": 1
+  },
+  "gemini-3.1-pro-preview-low": {
+   "category": "chat",
+   "price": [
+    1,
+    6
+   ],
+   "providers": 3
+  },
+  "gemini-3.5-flash": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 9
+  },
+  "gemini-3.5-flash-extra-low": {
+   "category": "chat",
+   "price": [
+    1.5,
+    9
+   ],
+   "providers": 3
+  },
+  "gemini-3.5-flash-high": {
+   "category": "chat",
+   "price": [
+    0.15882,
+    0.95294
+   ],
+   "providers": 4
+  },
+  "gemini-3.5-flash-lite": {
+   "category": "chat",
+   "price": [
+    0.024,
+    0.2
+   ],
+   "providers": 8
+  },
+  "gemini-3.5-flash-low": {
+   "category": "chat",
+   "price": [
+    0.15882,
+    0.95294
+   ],
+   "providers": 2
+  },
+  "gemini-3.5-flash-preview": {
+   "category": "chat",
+   "price": [
+    0.9,
+    5.4
+   ],
+   "providers": 1
+  },
+  "gemini-3.6-flash": {
+   "category": "chat",
+   "price": [
+    0.03971,
+    0.19853
+   ],
+   "providers": 9
+  },
+  "gemini-3.6-flash-high": {
+   "category": "chat",
+   "price": [
+    0.0225,
+    0.1125
+   ],
+   "providers": 1
+  },
+  "gemini-3.7-flash": {
+   "category": "chat",
+   "price": [
+    0.03151,
+    0.15756
+   ],
+   "providers": 16
+  },
   "gemini-3.8-flash": {
+   "category": "chat",
    "price": [
     0.036,
     0.18
    ],
-   "providers": 26
+   "providers": 28
+  },
+  "gemini-3.8-flash-high": {
+   "category": "chat",
+   "price": [
+    0.0225,
+    0.1125
+   ],
+   "providers": 6
   },
   "gemini-3.8-flash-low": {
+   "category": "chat",
    "price": [
     0.06,
     0.3
    ],
-   "providers": 2
+   "providers": 5
   },
   "gemini-3.8-flash-medium": {
+   "category": "chat",
    "price": [
     0.06,
     0.3
    ],
-   "providers": 2
+   "providers": 5
+  },
+  "gemini-3.8-flash-tiered": {
+   "category": "chat",
+   "price": [
+    0.06,
+    0.3
+   ],
+   "providers": 4
   },
   "gemini-4-argon": {
+   "category": "chat",
    "price": [
-    0.25235,
+    0.25753,
     0.84
    ],
-   "providers": 21
-  },
-  "glm-5.3": {
-   "price": [
-    0.025,
-    0.07857
-   ],
    "providers": 23
   },
-  "glm-5.3-flash": {
+  "gemini-4-argon-disabled": {
+   "category": "chat",
+   "price": [
+    0.16,
+    0.8
+   ],
+   "providers": 4
+  },
+  "gemini-4-carbon": {
+   "category": "chat",
+   "price": [
+    0.22059,
+    1.76471
+   ],
+   "providers": 2
+  },
+  "gemini-embedding-2-preview": {
+   "category": "chat",
+   "price": [
+    0.12,
+    0.12
+   ],
+   "providers": 4
+  },
+  "gemini-flash-latest": {
+   "category": "chat",
+   "price": [
+    0.45,
+    2.25
+   ],
+   "providers": 1
+  },
+  "gemini-flash-lite-latest": {
+   "category": "chat",
+   "price": [
+    0.18,
+    1.5
+   ],
+   "providers": 1
+  },
+  "gemini-pro-latest": {
+   "category": "chat",
+   "price": [
+    1.2,
+    7.2
+   ],
+   "providers": 1
+  },
+  "gemma-4-31b-it": {
+   "category": "chat",
+   "price": [
+    0.01,
+    0.1
+   ],
+   "providers": 1
+  },
+  "glm-4.5": {
+   "category": "chat",
+   "price": [
+    0.36,
+    1.32
+   ],
+   "providers": 1
+  },
+  "glm-5.1": {
+   "category": "chat",
+   "price": [
+    0.0238,
+    0.0748
+   ],
+   "providers": 9
+  },
+  "glm-5.1-wending": {
+   "category": "chat",
+   "price": [
+    8,
+    28
+   ],
+   "providers": 1
+  },
+  "glm-5.2": {
+   "category": "chat",
    "price": [
     0,
     0
-   ],
-   "providers": 23
-  },
-  "gpt-6-astra": {
-   "price": [
-    0,
-    0
-   ],
-   "providers": 62
-  },
-  "gpt-6-luna": {
-   "price": [
-    0.003,
-    0.015
-   ],
-   "providers": 22
-  },
-  "gpt-6.1-sol": {
-   "price": [
-    0.00544,
-    0.02721
-   ],
-   "providers": 46
-  },
-  "gpt-6.1-terra": {
-   "price": [
-    0.03882,
-    0.19412
-   ],
-   "providers": 18
-  },
-  "grok-4.7": {
-   "price": [
-    0.011,
-    0.033
-   ],
-   "providers": 24
-  },
-  "kimi-k3.1-pro": {
-   "price": [
-    0.11463,
-    0.57316
-   ],
-   "providers": 14
-  },
-  "mimo-v2.6-flash": {
-   "price": [
-    0.01324,
-    0.02647
-   ],
-   "providers": 6
-  },
-  "mimo-v2.6-pro": {
-   "price": [
-    0.17647,
-    0.35294
-   ],
-   "providers": 6
-  },
-  "minimax-m3": {
-   "price": [
-    0.02912,
-    0.11647
    ],
    "providers": 12
   },
-  "minimax-m3.1-flash": {
+  "glm-5.2-dijia": {
+   "category": "chat",
    "price": [
-    0.02353,
-    0.09412
+    8,
+    28
    ],
-   "providers": 8
+   "providers": 1
   },
-  "qwen3.8-27b": {
+  "glm-5.3": {
+   "category": "chat",
    "price": [
-    0.12,
+    0.02368,
+    0.07441
+   ],
+   "providers": 27
+  },
+  "glm-5.3-flash": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 23
+  },
+  "glm-5.3-flash-abliterated": {
+   "category": "chat",
+   "price": [
+    0.32353,
+    1.35882
+   ],
+   "providers": 1
+  },
+  "glm-5.3-flash-dijia": {
+   "category": "chat",
+   "price": [
+    0.8,
+    2.8
+   ],
+   "providers": 1
+  },
+  "glm-5.3-flash-uncensored": {
+   "category": "chat",
+   "price": [
+    0.13529,
+    0.40588
+   ],
+   "providers": 1
+  },
+  "glm-5.3-flash-wending": {
+   "category": "chat",
+   "price": [
+    0.8,
+    2.8
+   ],
+   "providers": 1
+  },
+  "glm-5.3-flashx": {
+   "category": "chat",
+   "price": [
+    0.0185,
+    0.0625
+   ],
+   "providers": 12
+  },
+  "glm-5.3-wending": {
+   "category": "chat",
+   "price": [
+    8,
+    28
+   ],
+   "providers": 1
+  },
+  "google/gemma-4-26b-a4b-it:free": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 1
+  },
+  "google/gemma-4-31b-it:free": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 1
+  },
+  "gpt-4.1": {
+   "category": "chat",
+   "price": [
+    1,
+    4
+   ],
+   "providers": 1
+  },
+  "gpt-4.1-2025-04-14": {
+   "category": "chat",
+   "price": [
+    1,
+    4
+   ],
+   "providers": 1
+  },
+  "gpt-4.1-mini": {
+   "category": "chat",
+   "price": [
+    0.2,
     0.8
    ],
    "providers": 1
   },
+  "gpt-4.1-mini-2025-04-14": {
+   "category": "chat",
+   "price": [
+    0.2,
+    0.8
+   ],
+   "providers": 1
+  },
+  "gpt-4.1-nano": {
+   "category": "chat",
+   "price": [
+    0.08,
+    0.32
+   ],
+   "providers": 1
+  },
+  "gpt-4o": {
+   "category": "chat",
+   "price": [
+    1.25,
+    5
+   ],
+   "providers": 1
+  },
+  "gpt-4o-2024-08-06": {
+   "category": "chat",
+   "price": [
+    1.25,
+    5
+   ],
+   "providers": 1
+  },
+  "gpt-4o-2024-11-20": {
+   "category": "chat",
+   "price": [
+    1.25,
+    5
+   ],
+   "providers": 1
+  },
+  "gpt-4o-hk-1": {
+   "category": "chat",
+   "price": [
+    2.5,
+    10
+   ],
+   "providers": 1
+  },
+  "gpt-4o-mini": {
+   "category": "chat",
+   "price": [
+    0.075,
+    0.3
+   ],
+   "providers": 3
+  },
+  "gpt-4o-mini-2024-07-18": {
+   "category": "chat",
+   "price": [
+    0.075,
+    0.3
+   ],
+   "providers": 1
+  },
+  "gpt-5": {
+   "category": "chat",
+   "price": [
+    0.625,
+    5
+   ],
+   "providers": 1
+  },
+  "gpt-5-2025-08-07": {
+   "category": "chat",
+   "price": [
+    0.625,
+    5
+   ],
+   "providers": 1
+  },
+  "gpt-5-mini": {
+   "category": "chat",
+   "price": [
+    0.125,
+    1
+   ],
+   "providers": 1
+  },
+  "gpt-5-mini-2025-08-07": {
+   "category": "chat",
+   "price": [
+    0.125,
+    1
+   ],
+   "providers": 1
+  },
+  "gpt-5-nano": {
+   "category": "chat",
+   "price": [
+    0.025,
+    0.2
+   ],
+   "providers": 1
+  },
+  "gpt-5-nano-2025-08-07": {
+   "category": "chat",
+   "price": [
+    0.025,
+    0.2
+   ],
+   "providers": 1
+  },
+  "gpt-5-pro": {
+   "category": "chat",
+   "price": [
+    7.5,
+    60
+   ],
+   "providers": 1
+  },
+  "gpt-5-pro-2025-10-06": {
+   "category": "chat",
+   "price": [
+    7.5,
+    60
+   ],
+   "providers": 1
+  },
+  "gpt-5.1": {
+   "category": "chat",
+   "price": [
+    0.625,
+    5
+   ],
+   "providers": 1
+  },
+  "gpt-5.1-2025-11-13": {
+   "category": "chat",
+   "price": [
+    0.625,
+    5
+   ],
+   "providers": 1
+  },
+  "gpt-5.2": {
+   "category": "chat",
+   "price": [
+    0.875,
+    7
+   ],
+   "providers": 1
+  },
+  "gpt-5.2-2025-12-11": {
+   "category": "chat",
+   "price": [
+    0.875,
+    7
+   ],
+   "providers": 1
+  },
+  "gpt-5.2-pro": {
+   "category": "chat",
+   "price": [
+    10.5,
+    84
+   ],
+   "providers": 1
+  },
+  "gpt-5.2-pro-2025-12-11": {
+   "category": "chat",
+   "price": [
+    10.5,
+    84
+   ],
+   "providers": 1
+  },
+  "gpt-5.2-thinking": {
+   "category": "chat",
+   "price": [
+    0.21324,
+    1.70588
+   ],
+   "providers": 12
+  },
+  "gpt-5.3-codex-thinking": {
+   "category": "chat",
+   "price": [
+    0.26647,
+    2.13176
+   ],
+   "providers": 12
+  },
+  "gpt-5.4": {
+   "category": "chat",
+   "price": [
+    0.02162,
+    0.12971
+   ],
+   "providers": 16
+  },
+  "gpt-5.4-2026-03-05": {
+   "category": "chat",
+   "price": [
+    1.25,
+    7.5
+   ],
+   "providers": 1
+  },
+  "gpt-5.4-mini": {
+   "category": "chat",
+   "price": [
+    0.02,
+    0.12
+   ],
+   "providers": 12
+  },
+  "gpt-5.4-mini-2026-03-17": {
+   "category": "chat",
+   "price": [
+    0.375,
+    2.25
+   ],
+   "providers": 1
+  },
+  "gpt-5.4-nano": {
+   "category": "chat",
+   "price": [
+    0.03338,
+    0.20864
+   ],
+   "providers": 3
+  },
+  "gpt-5.4-nano-2026-03-17": {
+   "category": "chat",
+   "price": [
+    0.1,
+    0.625
+   ],
+   "providers": 1
+  },
+  "gpt-5.4-pro": {
+   "category": "chat",
+   "price": [
+    0.10147,
+    0.60882
+   ],
+   "providers": 13
+  },
+  "gpt-5.4-pro-2026-03-05": {
+   "category": "chat",
+   "price": [
+    15,
+    90
+   ],
+   "providers": 1
+  },
+  "gpt-5.4-thinking": {
+   "category": "chat",
+   "price": [
+    0.31985,
+    1.91912
+   ],
+   "providers": 3
+  },
+  "gpt-5.5": {
+   "category": "chat",
+   "price": [
+    0.05882,
+    0.38912
+   ],
+   "providers": 20
+  },
+  "gpt-5.5-2026-04-23": {
+   "category": "chat",
+   "price": [
+    2.5,
+    15
+   ],
+   "providers": 1
+  },
+  "gpt-5.5-pro": {
+   "category": "chat",
+   "price": [
+    0.19368,
+    1.16206
+   ],
+   "providers": 11
+  },
+  "gpt-5.5-pro-2026-04-23": {
+   "category": "chat",
+   "price": [
+    15,
+    90
+   ],
+   "providers": 1
+  },
+  "gpt-5.5-thinking": {
+   "category": "chat",
+   "price": [
+    0.35529,
+    2.13176
+   ],
+   "providers": 3
+  },
+  "gpt-5.6": {
+   "category": "chat",
+   "price": [
+    0.16779,
+    0.83897
+   ],
+   "providers": 6
+  },
+  "gpt-5.6-luna": {
+   "category": "chat",
+   "price": [
+    0.005,
+    0.03
+   ],
+   "providers": 24
+  },
+  "gpt-5.6-sol": {
+   "category": "chat",
+   "price": [
+    0.03624,
+    0.18118
+   ],
+   "providers": 61
+  },
+  "gpt-5.6-terra": {
+   "category": "chat",
+   "price": [
+    0.03824,
+    0.22941
+   ],
+   "providers": 46
+  },
+  "gpt-6-astra": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 63
+  },
+  "gpt-6-astra(\u4f01\u4e1a\u6e20\u9053\u4e0d\u964d\u667a)": {
+   "category": "chat",
+   "price": [
+    2,
+    10
+   ],
+   "providers": 1
+  },
+  "gpt-6-astra(\u7eaf\u8840\u4e0d\u964d\u667a)": {
+   "category": "chat",
+   "price": [
+    2,
+    8
+   ],
+   "providers": 1
+  },
+  "gpt-6-astra-pro": {
+   "category": "chat",
+   "price": [
+    0.35294,
+    1.76471
+   ],
+   "providers": 3
+  },
+  "gpt-6-astra-promax": {
+   "category": "chat",
+   "price": [
+    0.73529,
+    3.67647
+   ],
+   "providers": 1
+  },
+  "gpt-6-chat-thinking": {
+   "category": "chat",
+   "price": [
+    0.4,
+    2
+   ],
+   "providers": 1
+  },
+  "gpt-6-luna": {
+   "category": "chat",
+   "price": [
+    0.0025,
+    0.0125
+   ],
+   "providers": 26
+  },
+  "gpt-6-luna-decisions": {
+   "category": "chat",
+   "price": [
+    0.26471,
+    0.26471
+   ],
+   "providers": 1
+  },
+  "gpt-6-luna-plus": {
+   "category": "chat",
+   "price": [
+    0.03,
+    0.15
+   ],
+   "providers": 2
+  },
+  "gpt-6-luna-pro": {
+   "category": "chat",
+   "price": [
+    0.03,
+    0.15
+   ],
+   "providers": 1
+  },
+  "gpt-6-sol": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 46
+  },
+  "gpt-6-sol-plus": {
+   "category": "chat",
+   "price": [
+    0.12,
+    0.6
+   ],
+   "providers": 3
+  },
+  "gpt-6-sol-pro-stable": {
+   "category": "chat",
+   "price": [
+    0.45,
+    2.25
+   ],
+   "providers": 3
+  },
+  "gpt-6.1-sol": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 50
+  },
+  "gpt-6.1-sol-plus": {
+   "category": "chat",
+   "price": [
+    0.1,
+    0.5
+   ],
+   "providers": 3
+  },
+  "gpt-6.1-sol-pro": {
+   "category": "chat",
+   "price": [
+    0.08824,
+    0.44118
+   ],
+   "providers": 2
+  },
+  "gpt-6.1-sol-pro-max": {
+   "category": "chat",
+   "price": [
+    0.4,
+    2
+   ],
+   "providers": 3
+  },
+  "gpt-6.1-sol-promax": {
+   "category": "chat",
+   "price": [
+    0.11471,
+    0.58824
+   ],
+   "providers": 1
+  },
+  "gpt-6.1-terra": {
+   "category": "chat",
+   "price": [
+    0.04338,
+    0.21691
+   ],
+   "providers": 22
+  },
+  "gpt-oss-120b": {
+   "category": "chat",
+   "price": [
+    0.08,
+    0.32
+   ],
+   "providers": 1
+  },
+  "grok-4.20-0309-non-reasoning": {
+   "category": "chat",
+   "price": [
+    0.6,
+    1.25
+   ],
+   "providers": 1
+  },
+  "grok-4.20-0309-reasoning": {
+   "category": "chat",
+   "price": [
+    1.25,
+    2.5
+   ],
+   "providers": 2
+  },
+  "grok-4.20-multi-agent-0309": {
+   "category": "chat",
+   "price": [
+    1.25,
+    2.5
+   ],
+   "providers": 1
+  },
+  "grok-4.3": {
+   "category": "chat",
+   "price": [
+    1.25,
+    2.5
+   ],
+   "providers": 1
+  },
+  "grok-4.5": {
+   "category": "chat",
+   "price": [
+    0.01176,
+    0.03529
+   ],
+   "providers": 19
+  },
+  "grok-4.5-Heavy": {
+   "category": "chat",
+   "price": [
+    0.1,
+    0.3
+   ],
+   "providers": 1
+  },
+  "grok-4.6": {
+   "category": "chat",
+   "price": [
+    0.00941,
+    0.02824
+   ],
+   "providers": 30
+  },
+  "grok-4.6-latest": {
+   "category": "chat",
+   "price": [
+    2,
+    6
+   ],
+   "providers": 1
+  },
+  "grok-4.7": {
+   "category": "chat",
+   "price": [
+    0.011,
+    0.033
+   ],
+   "providers": 27
+  },
+  "grok-4.7-Heavy": {
+   "category": "chat",
+   "price": [
+    0.18,
+    0.54
+   ],
+   "providers": 3
+  },
+  "grok-4.7-build-fast": {
+   "category": "chat",
+   "price": [
+    0.02,
+    0.06
+   ],
+   "providers": 7
+  },
+  "hunyuan-a13b": {
+   "category": "chat",
+   "price": [
+    0.07,
+    0.28
+   ],
+   "providers": 1
+  },
+  "hunyuan-code": {
+   "category": "chat",
+   "price": [
+    0.48,
+    0.96
+   ],
+   "providers": 1
+  },
+  "hunyuan-functioncall": {
+   "category": "chat",
+   "price": [
+    0.55,
+    1.1
+   ],
+   "providers": 1
+  },
+  "hunyuan-large": {
+   "category": "chat",
+   "price": [
+    0.55,
+    1.65
+   ],
+   "providers": 1
+  },
+  "hunyuan-large-longcontext": {
+   "category": "chat",
+   "price": [
+    0.83,
+    2.5
+   ],
+   "providers": 1
+  },
+  "hunyuan-large-role": {
+   "category": "chat",
+   "price": [
+    0.33,
+    1.32
+   ],
+   "providers": 1
+  },
+  "hunyuan-lite": {
+   "category": "chat",
+   "price": [
+    2,
+    2
+   ],
+   "providers": 1
+  },
+  "hunyuan-pro": {
+   "category": "chat",
+   "price": [
+    0.55,
+    1.7
+   ],
+   "providers": 1
+  },
+  "hunyuan-role": {
+   "category": "chat",
+   "price": [
+    0.55,
+    1.1
+   ],
+   "providers": 1
+  },
+  "hunyuan-standard": {
+   "category": "chat",
+   "price": [
+    0.11,
+    0.3
+   ],
+   "providers": 1
+  },
+  "hunyuan-standard-256K": {
+   "category": "chat",
+   "price": [
+    0.07,
+    0.28
+   ],
+   "providers": 1
+  },
+  "hunyuan-t1-20250403": {
+   "category": "chat",
+   "price": [
+    0.07,
+    0.28
+   ],
+   "providers": 1
+  },
+  "hunyuan-t1-vision": {
+   "category": "chat",
+   "price": [
+    0.45,
+    1.25
+   ],
+   "providers": 1
+  },
+  "hunyuan-turbo": {
+   "category": "chat",
+   "price": [
+    0.35,
+    1.35
+   ],
+   "providers": 1
+  },
+  "hunyuan-turbos-vision": {
+   "category": "chat",
+   "price": [
+    0.45,
+    1.25
+   ],
+   "providers": 1
+  },
+  "hunyuan-vision": {
+   "category": "chat",
+   "price": [
+    2.5,
+    2.5
+   ],
+   "providers": 1
+  },
+  "hy3": {
+   "category": "chat",
+   "price": [
+    0.01471,
+    0.05882
+   ],
+   "providers": 5
+  },
+  "hy4": {
+   "category": "chat",
+   "price": [
+    0.07059,
+    0.21176
+   ],
+   "providers": 4
+  },
+  "hy4-preview": {
+   "category": "chat",
+   "price": [
+    0.0864,
+    0.37815
+   ],
+   "providers": 2
+  },
+  "jev-1.14": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 1
+  },
+  "kimi-k2": {
+   "category": "chat",
+   "price": [
+    0.4,
+    2.5
+   ],
+   "providers": 1
+  },
+  "kimi-k2-0711-preview": {
+   "category": "chat",
+   "price": [
+    0.6,
+    2.5
+   ],
+   "providers": 1
+  },
+  "kimi-k2-instruct": {
+   "category": "chat",
+   "price": [
+    0.56,
+    2.65
+   ],
+   "providers": 1
+  },
+  "kimi-k2-thinking": {
+   "category": "chat",
+   "price": [
+    0.4,
+    2.5
+   ],
+   "providers": 1
+  },
+  "kimi-k2.5": {
+   "category": "chat",
+   "price": [
+    0.066,
+    0.33
+   ],
+   "providers": 14
+  },
+  "kimi-k2.6": {
+   "category": "chat",
+   "price": [
+    0.04107,
+    0.17294
+   ],
+   "providers": 7
+  },
+  "kimi-k2.7-code": {
+   "category": "chat",
+   "price": [
+    0.08926,
+    0.37585
+   ],
+   "providers": 9
+  },
+  "kimi-k2.7-code-highspeed": {
+   "category": "chat",
+   "price": [
+    1.52,
+    6.4
+   ],
+   "providers": 2
+  },
+  "kimi-k2.8": {
+   "category": "chat",
+   "price": [
+    0.11765,
+    0.55471
+   ],
+   "providers": 4
+  },
+  "kimi-k2.8-preview": {
+   "category": "chat",
+   "price": [
+    0.05882,
+    0.29412
+   ],
+   "providers": 1
+  },
+  "kimi-k3": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 32
+  },
+  "kimi-k3-1": {
+   "category": "chat",
+   "price": [
+    0.18088,
+    0.90441
+   ],
+   "providers": 1
+  },
+  "kimi-k3.1-pro": {
+   "category": "chat",
+   "price": [
+    0.12903,
+    0.64513
+   ],
+   "providers": 16
+  },
+  "kimi-k3.1-pro-highspeed": {
+   "category": "chat",
+   "price": [
+    0.29412,
+    1.47059
+   ],
+   "providers": 2
+  },
+  "knowledgeops.io/gpt-6-luna": {
+   "category": "chat",
+   "price": [
+    2,
+    2
+   ],
+   "providers": 1
+  },
+  "mimo-v2.5": {
+   "category": "chat",
+   "price": [
+    0.01176,
+    0.02353
+   ],
+   "providers": 4
+  },
+  "mimo-v2.5-pro": {
+   "category": "chat",
+   "price": [
+    0.14268,
+    0.28535
+   ],
+   "providers": 5
+  },
+  "mimo-v2.6-flash": {
+   "category": "chat",
+   "price": [
+    0.01456,
+    0.02912
+   ],
+   "providers": 5
+  },
+  "mimo-v2.6-pro": {
+   "category": "chat",
+   "price": [
+    0.20692,
+    0.41384
+   ],
+   "providers": 5
+  },
+  "minimax-m2": {
+   "category": "chat",
+   "price": [
+    2,
+    2
+   ],
+   "providers": 1
+  },
+  "minimax-m2.5": {
+   "category": "chat",
+   "price": [
+    0.096,
+    0.576
+   ],
+   "providers": 12
+  },
+  "minimax-m2.7": {
+   "category": "chat",
+   "price": [
+    0.08857,
+    0.35426
+   ],
+   "providers": 2
+  },
+  "minimax-m3": {
+   "category": "chat",
+   "price": [
+    0.01915,
+    0.07662
+   ],
+   "providers": 14
+  },
+  "minimax-m3.1-flash": {
+   "category": "chat",
+   "price": [
+    0.02353,
+    0.09412
+   ],
+   "providers": 9
+  },
+  "ministral-14b-2512": {
+   "category": "chat",
+   "price": [
+    0.16,
+    0.16
+   ],
+   "providers": 1
+  },
+  "mistral-large-latest": {
+   "category": "chat",
+   "price": [
+    2,
+    6
+   ],
+   "providers": 1
+  },
+  "mistral-small-latest": {
+   "category": "chat",
+   "price": [
+    0.1,
+    0.3
+   ],
+   "providers": 1
+  },
+  "nemotron-3.5-lightning-30b-a3b": {
+   "category": "chat",
+   "price": [
+    0.02,
+    0.08
+   ],
+   "providers": 1
+  },
+  "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 1
+  },
+  "nvidia/nemotron-3-ultra-550b-a55b:free": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 1
+  },
+  "nvidia/nemotron-3.5-lightning:free": {
+   "category": "chat",
+   "price": [
+    0,
+    0
+   ],
+   "providers": 1
+  },
+  "o3": {
+   "category": "chat",
+   "price": [
+    1,
+    4
+   ],
+   "providers": 1
+  },
+  "o3-2025-04-16": {
+   "category": "chat",
+   "price": [
+    1,
+    4
+   ],
+   "providers": 1
+  },
+  "o3-pro-2025-06-10": {
+   "category": "chat",
+   "price": [
+    10,
+    40
+   ],
+   "providers": 1
+  },
+  "qwen-3.8-flash": {
+   "category": "chat",
+   "price": [
+    2,
+    2
+   ],
+   "providers": 1
+  },
+  "qwen-flash": {
+   "category": "chat",
+   "price": [
+    0.0176,
+    0.1728
+   ],
+   "providers": 1
+  },
+  "qwen-max": {
+   "category": "chat",
+   "price": [
+    0.33,
+    1.32
+   ],
+   "providers": 1
+  },
+  "qwen-plus": {
+   "category": "chat",
+   "price": [
+    0.11,
+    0.28
+   ],
+   "providers": 2
+  },
+  "qwen-turbo": {
+   "category": "chat",
+   "price": [
+    0.05,
+    0.09
+   ],
+   "providers": 1
+  },
+  "qwen2.5-7b-instruct": {
+   "category": "chat",
+   "price": [
+    0.04,
+    0.04
+   ],
+   "providers": 1
+  },
+  "qwen2:1.5b": {
+   "category": "chat",
+   "price": [
+    0.01,
+    0.02
+   ],
+   "providers": 1
+  },
+  "qwen3-235b-a22b": {
+   "category": "chat",
+   "price": [
+    0.28,
+    1.1
+   ],
+   "providers": 1
+  },
+  "qwen3-max": {
+   "category": "chat",
+   "price": [
+    0.5,
+    1.8
+   ],
+   "providers": 1
+  },
+  "qwen3.5-9b": {
+   "category": "chat",
+   "price": [
+    0.012,
+    0.18
+   ],
+   "providers": 1
+  },
+  "qwen3.6-plus": {
+   "category": "chat",
+   "price": [
+    0.3,
+    1.8
+   ],
+   "providers": 1
+  },
+  "qwen3.7-max": {
+   "category": "chat",
+   "price": [
+    0.12838,
+    0.38515
+   ],
+   "providers": 2
+  },
+  "qwen3.7-plus": {
+   "category": "chat",
+   "price": [
+    0.14706,
+    0.58824
+   ],
+   "providers": 2
+  },
+  "qwen3.8-27b": {
+   "category": "chat",
+   "price": [
+    0.12,
+    0.8
+   ],
+   "providers": 2
+  },
+  "qwen3.8-27b-abliterated": {
+   "category": "chat",
+   "price": [
+    0.345,
+    2.34
+   ],
+   "providers": 1
+  },
+  "qwen3.8-flash": {
+   "category": "chat",
+   "price": [
+    0.01681,
+    0.05266
+   ],
+   "providers": 11
+  },
   "qwen3.8-max": {
+   "category": "chat",
    "price": [
     0.04412,
     0.13235
    ],
    "providers": 13
+  },
+  "qwen3.8-max-0902": {
+   "category": "chat",
+   "price": [
+    1.64384,
+    4.93151
+   ],
+   "providers": 1
+  },
+  "qwen3.8-omni-flash": {
+   "category": "chat",
+   "price": [
+    0.10959,
+    0.36986
+   ],
+   "providers": 1
+  },
+  "step-5-preview": {
+   "category": "chat",
+   "price": [
+    0.7672,
+    2.1928
+   ],
+   "providers": 1
+  },
+  "text-embedding-3-large": {
+   "category": "chat",
+   "price": [
+    0.06304,
+    0
+   ],
+   "providers": 4
+  },
+  "text-embedding-v1": {
+   "category": "chat",
+   "price": [
+    0.7,
+    0.7
+   ],
+   "providers": 1
+  },
+  "writer/palmyra-med-70b": {
+   "category": "chat",
+   "price": [
+    2,
+    2
+   ],
+   "providers": 1
   }
  },
  "routes": {

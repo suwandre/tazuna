@@ -265,7 +265,7 @@ def catalog():
     cur = json.loads(OUT.read_text()) if OUT.exists() else {"routes": {}}
     cur["catalog"] = {m["model_name"]: dict(price=[round(min(p["min_input_price"] for p in m["providers"]), 5),
                                                  round(min(p["min_output_price"] for p in m["providers"]), 5)],
-                                          providers=len(m["providers"]))
+                                          providers=len(m["providers"]), category=m.get("category"))
                       for m in s.api("/api/user/self/subrouter/models") if m.get("providers")}
     subprocess.run([sys.executable, "-I", str(HERE / "scoreboard.py")], capture_output=True, timeout=600)
     db = sqlite3.connect(HERE / ".model-check" / "scoreboard.sqlite")
@@ -391,8 +391,8 @@ PUBLIC = {"api.mistral.ai": "MISTRAL_API_KEY"}
 def ship():
     """tazuna's built-in list (src/routes.json), for a user without our bench: SubRouter's checked routes without key
     names (their one key is SUBROUTER_API_KEY; `tazuna subrouter` sets each model's providers on it), the routes on a
-    PUBLIC provider with that provider's key variable, and every SubRouter model the picker lists (those with an AA
-    index) with its price. Until 0.1.77 only the SubRouter routes shipped: a new install listed four SubRouter models
+    PUBLIC provider with that provider's key variable, and every SubRouter chat model with its price (by SubRouter's
+    category; until 0.1.117 only those with an AA index). Until 0.1.77 only the SubRouter routes shipped: a new install listed four SubRouter models
     and no Mistral, the bench's machines over a hundred (2026-11-08). Our bench's scores stay home."""
     cur = json.loads(OUT.read_text())
     keep = ("url", "model", "providers", "price", "cached", "efforts", "vetted_at", "why", "via")
@@ -406,7 +406,8 @@ def ship():
         elif h in PUBLIC:
             routes[n] = {**{k: v for k, v in r.items() if k in keep}, "key_env": PUBLIC[h]}
     aa = cur.get("aa", {})
-    listed = {m: c for m, c in cur.get("catalog", {}).items() if slug(m) in aa}
+    # every chat model (SubRouter's category); until 0.1.117 only those with an AA index, about 20 of 311
+    listed = {m: c for m, c in cur.get("catalog", {}).items() if c.get("category") == "chat" or slug(m) in aa}
     wanted = {slug(r.get("model", n)) for n, r in routes.items()} | {slug(m) for m in listed}
     out = {"routes": routes, "catalog": listed, "aa": {k: v for k, v in aa.items() if k in wanted}}
     (HERE.parent / "src" / "routes.json").write_text(json.dumps(out, indent=1, sort_keys=True) + "\n")
