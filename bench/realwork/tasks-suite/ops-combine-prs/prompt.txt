@@ -1,0 +1,1 @@
+PRs #101 and #102 are tiny and related. Combine them into one PR from a new branch off main, then close the two old ones with a comment pointing to the new one.

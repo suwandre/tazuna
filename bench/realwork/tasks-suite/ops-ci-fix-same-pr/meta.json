@@ -1,0 +1,7 @@
+{
+  "kind": "ops",
+  "lang": "git",
+  "split": "dev",
+  "difficulty": "easy",
+  "source": "scripted scenario on TanStack Query with a gh stand-in"
+}

@@ -1,0 +1,18 @@
+from opslib import *
+DOC = "docs/framework/react/guides/important-defaults.md"
+start()
+branch("feat/gc-docs")
+edit(DOC, "garbage collected after **5 minutes**.", "garbage collected after **5 minutes** (see `gcTime`).")
+commit("docs: point to gcTime", author="dev")
+edit("packages/query-core/src/retryer.ts", "function defaultRetryDelay(failureCount: number) {", "// doubles per failure, capped at 30 seconds\nfunction defaultRetryDelay(failureCount: number) {")
+commit("chore: comment the retry delay", author="dev")
+push("feat/gc-docs")
+first = git("rev-parse", "feat/gc-docs")
+git("checkout", "-q", "main")
+edit(DOC, "garbage collected after **5 minutes**.", "garbage collected after **5 minutes** of inactivity.")
+commit("docs: say when inactive queries are collected")
+edit("packages/query-core/src/utils.ts", "// UTILS\n", "// UTILS (shared by every adapter)\n")
+commit("chore: note who uses utils")
+push("main")
+p = pr(55, "feat/gc-docs", "docs: point to gcTime", "Points the 5 minute default to gcTime, plus a comment on the retry delay.")
+finish(pr_entries([p], 56), on="feat/gc-docs", branch_head=first)
