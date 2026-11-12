@@ -1516,7 +1516,8 @@ def _run_job(task, h, i):
     g = json.loads((task / "git.json").read_text())
     _TL.gowork = subprocess.run(["git", "-C", repo_path(g["repo"]), "cat-file", "-e", f"{g['base']}:go.work"], capture_output=True).returncode == 0
     for attempt in range(8):
-        with tempfile.TemporaryDirectory(prefix=f"rw-{task.name}-{h}-", ignore_cleanup_errors=True) as d:
+        # no ":" in the path (from a label's effort): pnpm refuses it, as the PATH delimiter (Astro tasks, 2026-11-12)
+        with tempfile.TemporaryDirectory(prefix=f"rw-{task.name}-{h.replace(':', '~')}-", ignore_cleanup_errors=True) as d:
             w = Path(d).resolve()
             try:
                 setup_workdir(task, w)
@@ -1609,7 +1610,7 @@ def summarize(rows):
             med = lambda k: statistics.median(r[k] for r in rs)
             tot = [r["inp"] + r["cache_w"] + r["cache_r"] for r in rs]
             print(f"{task:<28} {h:<8} {len(rs):>2} {sum(r['passed'] for r in rs) / max(1, sum(r['total'] for r in rs)):>5.0%} "
-                  f"{sum(r['passed'] == r['total'] for r in rs) / len(rs):>4.0%} {sum(r['regress'] for r in rs):>5} "
+                  f"{sum(r['passed'] == r['total'] for r in rs) / len(rs):>4.0%} {sum(r['regress'] or 0 for r in rs):>5} "
                   f"{med('secs'):>6.0f} {med('turns'):>5.0f} {statistics.median(tot):>9.0f} "
                   f"{sum(r['cache_r'] for r in rs) / max(1, sum(tot)):>4.0%} {med('out'):>6.0f} "
                   f"{statistics.median(r['out'] / max(1, r['secs']) for r in rs):>5.1f} {med('cost'):>7.3f}")
