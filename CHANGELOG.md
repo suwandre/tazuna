@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.110 (2026-11-12): a headless question or review keeps its answer
+
+- `tazuna --run` (and the own loop headless) nudges a model that stops without changing a file. On a review, a
+  question or a plan that is wrong twice over: the nudge said "make the change", so a reviewer edited a file it was told
+  to leave alone, and its reply "DONE, the review above stands" became the whole result, the review itself lost (three
+  review pilots of the new suite, 2026-11-12). The nudge now names questions, reviews, plans and investigations as
+  needing no change, and a short "DONE" after it keeps the answer it points back to. No measurable metric changes.
+
 ## 0.1.109 (2026-11-12): a mistyped command is caught, commands stay out of the run log
 
 - A one-word command that matches nothing (`/nwe`) is answered in tazuna with the nearest command ("did you mean /new?")

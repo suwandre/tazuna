@@ -431,8 +431,19 @@ fn empty_reply(reply: &Value, api: Api) -> bool {
     }
 }
 
-const NUDGE: &str = "You stopped without changing any file. If the task needs no change, reply DONE and say why. \
-Otherwise continue now and make the change with the tools.";
+/// The run's answer when a nudge came after it: a short "DONE" reply keeps the answer it points back to.
+fn after_nudge(answered: &str, text: String) -> String {
+    if !answered.is_empty() && text.trim_start().starts_with("DONE") && text.len() < 1200 {
+        format!("{answered}\n\n{text}")
+    } else {
+        text
+    }
+}
+
+/// A question, a review or a plan needs no change: said, so the nudge does not push a reviewer into editing (a review
+/// pilot edited a test it was told to leave alone, and answered only "DONE", 2026-11-12).
+const NUDGE: &str = "You stopped without changing any file. If the request needs no file change (a question, a review, a plan, an \
+investigation), reply DONE: your answer above stands. Otherwise continue now and make the change with the tools.";
 
 /// Clean DeepSeek runs on rclone spent ~53 turns each after their tests first passed, against ~25 in OpenCode: re-reading
 /// their own code, diffs, builds and repros, and 7-15 test runs with nothing changed since the last pass (2026-10-24).
@@ -597,7 +608,7 @@ impl Loop {
             self.task = (std::time::Instant::now(), self.cost);
         }
         let ((began, start), mut turns, mut usage) = (self.task, 0, [0u64; 3]);
-        let mut nudges = 0;
+        let (mut nudges, mut answered) = (0, String::new());
         let (mut green, mut told) = (None, false);
         // experiment (TAZUNA_BASELINE): what already fails on the last commit, found while the agent starts reading; told
         // once, with the first test run after it is known (verify.rs suite_baseline)
@@ -892,10 +903,16 @@ impl Loop {
                 // stop after a plan or with an empty reply (two rclone runs on two gateways ended with no change at all)
                 if nudges < 2 && !followup && (text.trim().is_empty() || (headless() && !repo_changed())) {
                     nudges += 1;
+                    if !text.trim().is_empty() {
+                        answered = text.clone();
+                    }
                     self.msgs.push(json!({"role": "user", "content": NUDGE}));
                     (self.out)(&json!({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": NUDGE}]}}));
                     continue;
                 }
+                // the answer before a nudge stands when the reply to it is only "DONE": that reply alone was the result
+                // the user (and the bench) got, and the review itself was lost
+                let text = after_nudge(&answered, text);
                 return end(self, "success", text, turns, usage);
             }
             let (mut results, mut note) = (vec![], None);
@@ -2668,6 +2685,14 @@ session: "s".into(),
         let last = sent.borrow()[8]["messages"].as_array().unwrap().last().unwrap().clone();
         assert_eq!((last["role"].as_str(), last["content"].as_str()), (Some("user"), Some(NUDGE)));
         assert_eq!(events.borrow().last().unwrap()["num_turns"].as_u64(), Some(3));
+    }
+
+    #[test]
+    fn a_done_after_a_nudge_keeps_the_answer_before_it() {
+        let review = "Blocker: the importer drops agentfile.jsonl (src/import.ts:40).";
+        assert_eq!(super::after_nudge(review, "DONE: the review above stands.".into()), format!("{review}\n\nDONE: the review above stands."));
+        assert_eq!(super::after_nudge(review, "Fixed it: changed the importer.".into()), "Fixed it: changed the importer.", "a real new answer replaces it");
+        assert_eq!(super::after_nudge("", "DONE".into()), "DONE", "no answer before: nothing to keep");
     }
 
     #[test]
