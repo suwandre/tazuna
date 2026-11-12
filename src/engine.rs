@@ -431,6 +431,38 @@ fn empty_reply(reply: &Value, api: Api) -> bool {
     }
 }
 
+/// Tool calls a model wrote into its text instead of the API's field: Qwen 3.8 Omni Flash on Mortera answered
+/// `<function_call>{"name": "bash", "arguments": {...}}</function></tool_call>` as plain text, and the turn ended with
+/// nothing run (2026-11-12). Taken only after a `<tool_call>` or `<function_call>` marker, as a JSON object naming one of
+/// the session's tools; they go through the same permission checks as any call. Returns the text without them, and the
+/// calls in Chat Completions' shape.
+fn text_tool_calls(text: &str, tools: &[&str]) -> (String, Vec<Value>) {
+    let (mut keep, mut calls, mut rest) = (String::new(), vec![], text);
+    while let Some((pos, len)) = ["<tool_call>", "<function_call>"].iter().filter_map(|m| rest.find(m).map(|i| (i, m.len()))).min() {
+        let after = &rest[pos + len..];
+        let start = after.len() - after.trim_start().len();
+        let mut it = serde_json::Deserializer::from_str(&after[start..]).into_iter::<Value>();
+        let v = match it.next() {
+            Some(Ok(v)) if v["name"].as_str().is_some_and(|n| tools.contains(&n)) => v,
+            _ => {
+                keep.push_str(&rest[..pos + len]);
+                rest = after;
+                continue;
+            }
+        };
+        let mut tail = &after[start + it.byte_offset()..];
+        while let Some(close) = ["</function_call>", "</function>", "</tool_call>"].iter().find(|c| tail.trim_start().starts_with(**c)) {
+            tail = &tail.trim_start()[close.len()..];
+        }
+        let args = if v["arguments"].is_null() { v["parameters"].clone() } else { v["arguments"].clone() };
+        calls.push(json!({"id": format!("text_call_{}", calls.len()), "type": "function", "function": {"name": v["name"], "arguments": args}}));
+        keep.push_str(&rest[..pos]);
+        rest = tail;
+    }
+    keep.push_str(rest);
+    (keep.trim_end().to_string(), calls)
+}
+
 /// The run's answer when a nudge came after it: a short "DONE" reply keeps the answer it points back to.
 fn after_nudge(answered: &str, text: String) -> String {
     if !answered.is_empty() && text.trim_start().starts_with("DONE") && text.len() < 1200 {
@@ -852,8 +884,15 @@ impl Loop {
                 }
                 Api::Chat => {
                     let m = &reply["choices"][0]["message"];
-                    let (text, thinking) = chat_content(&m["content"]);
+                    let (mut text, thinking) = chat_content(&m["content"]);
                     let mut calls: Vec<Value> = m["tool_calls"].as_array().cloned().unwrap_or_default();
+                    if calls.is_empty() {
+                        let names: Vec<&str> = self.tools.iter().filter_map(|t| t["function"]["name"].as_str()).collect();
+                        let (rest, found) = text_tool_calls(&text, &names);
+                        if !found.is_empty() {
+                            (text, calls) = (rest, found);
+                        }
+                    }
                     // LingAI sent 16 calls with an empty id in one DeepSeek run; the history was accepted until call 161,
                     // then refused: "Assistant tool_calls require distinct non-empty ids" (2026-10-24)
                     for (i, c) in calls.iter_mut().enumerate() {
@@ -2688,6 +2727,18 @@ session: "s".into(),
         let last = sent.borrow()[8]["messages"].as_array().unwrap().last().unwrap().clone();
         assert_eq!((last["role"].as_str(), last["content"].as_str()), (Some("user"), Some(NUDGE)));
         assert_eq!(events.borrow().last().unwrap()["num_turns"].as_u64(), Some(3));
+    }
+
+    #[test]
+    fn a_tool_call_written_as_text_is_run() {
+        let text = "I'll check your system stats.<function_call>\n{\"name\": \"bash\", \"arguments\": {\"command\": \"uptime\"}}\n</function>\n</tool_call>";
+        let (rest, calls) = super::text_tool_calls(text, &["bash", "read"]);
+        assert_eq!(rest, "I'll check your system stats.");
+        assert_eq!((calls.len(), calls[0]["function"]["name"].as_str(), calls[0]["function"]["arguments"]["command"].as_str()), (1, Some("bash"), Some("uptime")));
+        // an unknown tool, or JSON that is no call, stays text
+        let (rest, calls) = super::text_tool_calls("see <tool_call>{\"name\": \"rm_rf\"}</tool_call>", &["bash"]);
+        assert!(calls.is_empty() && rest.contains("rm_rf"));
+        assert!(super::text_tool_calls("plain answer, no markers", &["bash"]).1.is_empty());
     }
 
     #[test]

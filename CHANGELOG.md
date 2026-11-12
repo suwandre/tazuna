@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.112 (2026-11-12): a tool call written as text is run
+
+- Some models, served without a proper tool parser, write their tool call into the reply's text instead of the API's
+  field: Qwen 3.8 Omni Flash on Mortera answered `<function_call>{"name": "bash", "arguments": {...}}</function>` as
+  plain text, the turn ended, and nothing ran. The own loop now runs such a call when the reply has no real ones: JSON
+  after a `<tool_call>` or `<function_call>` marker that names one of the session's tools, through the same permission
+  checks as any call; the markup leaves the shown text. The same model sends proper calls at other times. No measurable
+  metric changes.
+
 ## 0.1.111 (2026-11-12): "DONE" after the nudge ends the run
 
 - A model that answers the no-change nudge with "DONE" is done: no second nudge, and a "DONE" never replaces the answer
