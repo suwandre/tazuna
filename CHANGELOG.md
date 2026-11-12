@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.118 (2026-11-12): SubRouter's models and prices are fetched at start
+
+- SubRouter's model list and cheapest prices came only with a tazuna release (built into src/routes.json), so a model it
+  added, or a provider's new price, waited for the next version (and the cost shown for a model used the old price).
+  tazuna now fetches SubRouter's public price list (/api/pricing, no key) at every start, beside OpenRouter's, Kenari's
+  and Mortera's lists, and the picker uses it over the built-in copy: every model with a provider, each at its cheapest
+  provider's price, chat models told apart by the endpoints they serve (306 of 445 today, against 311 by SubRouter's
+  own category). Offline, the last fetched copy or the built-in one stays. No measurable metric changes.
+
 ## 0.1.117 (2026-11-12): the model picker lists every SubRouter chat model
 
 - It listed a SubRouter model only if Artificial Analysis scores it (a way to keep image and video models out): about

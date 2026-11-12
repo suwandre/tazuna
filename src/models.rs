@@ -129,6 +129,26 @@ fn per_m(x: f64) -> String {
 /// bench's machines 34 rows).
 const SHIPPED: &str = include_str!("routes.json");
 
+/// SubRouter's public price list (/api/pricing) as the catalog routes.json carries: per model its cheapest provider's
+/// input and output price, the provider count, and "chat" for a model that answers chat requests (by the endpoint
+/// types it lists: no image, video, speech or embedding endpoint). None for an empty or unreadable list.
+fn subrouter_catalog(list: &Value) -> Option<Value> {
+    const NOT_CHAT: [&str; 6] = ["openai-video", "image-generation", "image-edit", "audio-speech", "embeddings", "gemini-embedding"];
+    let mut out = serde_json::Map::new();
+    for m in list["data"].as_array()? {
+        let (Some(name), Some(ps)) = (m["model_name"].as_str(), m["provider_prices"].as_array()) else { continue };
+        if ps.is_empty() {
+            continue;
+        }
+        let low = |k: &str| ps.iter().filter_map(|p| p[k].as_f64()).fold(f64::INFINITY, f64::min);
+        let types: Vec<&str> = m["supported_endpoint_types"].as_array().into_iter().flatten().filter_map(|t| t.as_str()).collect();
+        let chat = types.iter().any(|t| ["openai", "anthropic"].contains(t)) && !types.iter().any(|t| NOT_CHAT.contains(t));
+        out.insert(name.to_string(), serde_json::json!({"price": [low("input_price"), low("output_price")], "providers": ps.len(),
+                                                       "category": if chat { "chat" } else { "other" }}));
+    }
+    (!out.is_empty()).then_some(Value::Object(out))
+}
+
 /// The bench's routes.json, else the built-in list; true for the built-in one.
 fn routes_file(routes: &Path) -> (Value, bool) {
     match std::fs::read_to_string(routes).ok().and_then(|t| serde_json::from_str(&t).ok()) {
@@ -209,7 +229,12 @@ fn host_of(url: &str) -> &str {
 /// Claude's models, then the checked routes, then the unchecked SubRouter models that have a public score; `trusted` says
 /// whether a provider host may see the code, `keys` which models a key may use.
 pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, now: u64) -> Vec<Choice> {
-    let (file, builtin) = routes_file(routes);
+    let (mut file, builtin) = routes_file(routes);
+    // SubRouter's live price list, when tazuna has fetched it, over the copy from the release or the bench
+    if let Some(c) = routes.parent().and_then(|d| std::fs::read_to_string(d.join("subrouter-pricing.json")).ok())
+        .and_then(|t| subrouter_catalog(&serde_json::from_str(&t).unwrap_or_default())) {
+        file["catalog"] = c;
+    }
     let on_key = |var: &str, model: &str| keys.get(var).is_none_or(|ms| ms.contains(model));
     // who chose the providers behind SUBROUTER_API_KEY: tazuna (its managed key) or the user (their own key)
     let key_note = if key_is_managed() {
@@ -500,10 +525,12 @@ fn kenari_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) -
     rows.into_iter().map(|(_, c)| c).collect()
 }
 
-/// At start: OpenRouter's and kenari's model lists (public, no key needed) into the data folder, where `/model` reads them
-/// (a slow or absent answer leaves the last copy).
+/// At start: OpenRouter's and kenari's model lists and SubRouter's price list (public, no key needed) into the data
+/// folder, where `/model` reads them (a slow or absent answer leaves the last copy). SubRouter's came only with a
+/// release until 0.1.118: a model it added, or a provider's new price, waited for the next tazuna.
 pub fn refresh_openrouter() {
-    for (url, name) in [("https://openrouter.ai/api/v1/models", "openrouter-models.json"), ("https://kenari.id/v1/models", "kenari-models.json")] {
+    for (url, name) in [("https://openrouter.ai/api/v1/models", "openrouter-models.json"), ("https://kenari.id/v1/models", "kenari-models.json"),
+                        ("https://subrouter.ai/api/pricing", "subrouter-pricing.json")] {
         let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
         let Ok(mut r) = http.get(url).call() else { continue };
         let Ok(body) = r.body_mut().with_config().limit(40 << 20).read_to_string() else { continue };
@@ -958,6 +985,20 @@ mod tests {
         assert_eq!((rows[2].price.as_str(), rows[2].efforts.len(), rows[3].efforts.len()), ("2 / 2", 5, 0));
         assert!(rows[0].note.contains("rate-limited") && rows[2].note.starts_with("not checked yet"));
         assert_eq!(provider_of(&rows[0]), "OpenRouter");
+    }
+
+    #[test]
+    fn subrouter_price_list_gives_cheapest_prices_and_chat_models() {
+        let list = serde_json::json!({"data": [
+            {"model_name": "kimi-k4", "supported_endpoint_types": ["openai"], "provider_prices": [
+                {"input_price": 0.5, "output_price": 2.0}, {"input_price": 0.3, "output_price": 2.5}]},
+            {"model_name": "seadance-3", "supported_endpoint_types": ["openai", "openai-video"], "provider_prices": [{"input_price": 1, "output_price": 1}]},
+            {"model_name": "no-provider", "supported_endpoint_types": ["openai"], "provider_prices": []}]});
+        let c = super::subrouter_catalog(&list).unwrap();
+        assert_eq!(c["kimi-k4"], serde_json::json!({"price": [0.3, 2.0], "providers": 2, "category": "chat"}), "each price at its cheapest provider");
+        assert_eq!(c["seadance-3"]["category"], "other", "a video model is not listed as chat");
+        assert!(c.get("no-provider").is_none(), "a model nobody serves is left out");
+        assert!(super::subrouter_catalog(&serde_json::json!({"data": []})).is_none());
     }
 
     #[test]
