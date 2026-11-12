@@ -24,6 +24,8 @@ ask, not tuned to one task.
 - **Difficulty**: 50% easy, 40% medium, 10% hard, plus a few improbable asks (ambiguous, impossible, should ask or say
   no) graded on whether the agent noticed.
 - **Languages**: TypeScript first (where the real work is), then Python, Go and Rust.
+- **Later, general chat**: today tazuna runs from the CLI for work only; a desktop version for everyday chat is planned,
+  and then non-coding conversations (explain, write, look something up) join the mix.
 - **Two tiers**:
   - *public*: open-source repos, PRs merged after the models' release, results go into the README;
   - *private*: tasks replayed from the user's own sessions on the work repo at the commit they were asked at, in the
