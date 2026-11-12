@@ -71,3 +71,23 @@ what I asked"); a question asked again; edits reverted in git. It catches regres
    from bad answers.
 3. Fill to ~36, split dev / held-out; then the baseline pass across harnesses (own loop on SubRouter about $2-3; the
    Claude path and the judge on the plan, after a weekly reset).
+
+## Pilots (2026-11-12)
+
+One own-loop run each (DeepSeek V4.1 Flash high on SubRouter), Fable 5.2 high judging against reference.md.
+
+| kind | tasks | scores (of 10) | run time | cost |
+|---|---|---|---|---|
+| review | 3 (n8n, pydantic; known defects from later fix PRs) | 7, 4, 3 | 10-27 min | a few cents |
+| investigate | 3 (Astro bug issues, the fix PR as reference) | 9, 9, 6 | 1-3.5 min | $0.009 for the 3 |
+| plan | 3 (Astro bug issues, the maintainers' fix as reference) | 9, 9, 7 | 1-5 min | $0.011 |
+| question | 3 ("TL;DR this PR" in n8n, Astro, TanStack Query) | 8, 8, 8 | 1.5-2.5 min | $0.005 |
+
+- The grading separates: the low scores name a concrete wrong claim (a loop said to add hashes that never runs) or a
+  recommendation wider than what the maintainers shipped, not style.
+- Answer kinds sit high for a cheap model (8-9): the suite needs its harder half (multi-turn, bug reports that do not
+  name the cause, larger PRs) to leave room between harnesses. Review is already hard.
+- The judge sees the reference, not the repo, and says so when it cannot check a cited file:line. A mechanical check
+  of cited paths and lines against the tree would close that gap.
+- Found in passing: every answer ended with the nudge's "DONE" reply (fixed in 0.1.115); one DeepSeek answer began
+  with an unclosed `<thinking>` block written as text (a model quirk, 1 of 9; watch it).
