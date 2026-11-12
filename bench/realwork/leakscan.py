@@ -168,8 +168,8 @@ def drop_raw_input(line):
 
 def new_tests(tdir):
     """Test names the PR's hidden tests add: not in the repo before the fix, not in the prompt. A transcript that holds
-    two of them saw the upstream tests, from whatever host or copy (OMP read hugo's and k6's from cdn.jsdelivr.net and
-    a Gitea mirror, 2026-11-11, past every rule above). One name alone can be the model's own (k6's TestRunOnce)."""
+    three of them (or all, if fewer) saw the upstream tests, from whatever host or copy (OMP read hugo's and k6's from
+    cdn.jsdelivr.net and a Gitea mirror, 2026-11-11, past every rule above). One or two can be the model's own guesses."""
     g = json.loads((tdir / "git.json").read_text())
     repo = g["repo"] if os.path.exists(g["repo"]) else str(Path.home() / "bench-repos" / Path(g["repo"]).name)
     prompt = (tdir / "prompt.txt").read_text(errors="ignore") if (tdir / "prompt.txt").exists() else ""
@@ -248,7 +248,10 @@ def main(sets=()):
             if sys.platform.startswith("linux") and v and int(v.group(1)) >= 1100 and "local" in hits:
                 hits.discard("local")
                 hits.add("local-blocked")
-            if len({n for n in added[m.group(1)] if n in s}) >= 2:
+            # three names (or all, for a task with fewer): two were one model's own good guesses (OpenCode named its test
+            # TestRunOnceRejectsMultipleScenarios beside TestRunOnce, k6, 2026-11-12); every real leak showed 3 to 9
+            new = added[m.group(1)]
+            if len(new) >= 2 and len({n for n in new if n in s}) >= min(3, len(new)):
                 hits.add("hidden-tests")
             if hits:
                 found.setdefault((m.group(1), m.group(2)), set()).update(hits)
