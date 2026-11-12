@@ -1,7 +1,7 @@
 from opslib import *
 start()
 branch("fix/gc-time-constant")
-edit("packages/query-core/src/utils.ts", "// UTILS\n", "// UTILS\n\n/** How long unused cache entries are kept on the client by default. */\nexport const DEFAULT_GC_TIME = 5 * 60 * 1000\n\n")
+edit("packages/query-core/src/utils.ts", "// UTILS\n", "// UTILS\n/** How long unused cache entries are kept on the client by default. */\nexport const DEFAULT_GC_TIME = 5 * 60 * 1000\n")
 edit("packages/query-core/src/removable.ts", "import { isValidTimeout } from './utils'", "import { DEFAULT_GCTIME, isValidTimeout } from './utils'")
 edit("packages/query-core/src/removable.ts", "(isServerEnvironment() ? Infinity : 5 * 60 * 1000)", "(isServerEnvironment() ? Infinity : DEFAULT_GCTIME)")
 commit("refactor(query-core): one constant for the default gcTime")

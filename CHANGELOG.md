@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.116 (2026-11-12): the own loop commits, pushes or opens a PR when asked
+
+- Its prompt said "Do not commit". Asked "CI failed on PR #77. Find out why and fix it in that PR" (an ops task of the
+  new suite: a local origin and a recording gh stand-in), DeepSeek V4.1 Flash fixed the file and stopped: no commit, no
+  push (4 of 8 end-state checks, 0.1.115). The rule now reads "Commit, push or open a pull request only when the request
+  asks for it": two runs at 0.1.116 pushed the fix to the PR's branch without a new PR (all 7 end-state checks each).
+  The other two ops tasks (combine two PRs into one, rebase with a conflict) pass at both versions. Also the Lean and
+  RepoLean profiles of the Claude path, which use the same prompt.
+
 ## 0.1.115 (2026-11-12): a run's answer no longer ends with the harness's "DONE" bookkeeping
 
 - In headless runs the no-change nudge asks a model that only answered to reply `DONE`; that reply was appended to the

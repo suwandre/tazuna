@@ -122,7 +122,8 @@ def has_fix(moddir, patch):
 
 def task_rules(tdir):
     g = json.loads((tdir / "git.json").read_text())
-    owner, repo = re.match(r"https://github.com/([^/]+)/([^/]+)/", g["pr"]).groups()  # type: ignore[union-attr]
+    # an ops task (bench/suite) is a scripted scenario with no upstream PR: nothing on GitHub to fetch it from
+    owner, repo = re.match(r"https://github.com/([^/]+)/([^/]+)/", g["pr"]).groups() if g.get("pr") else ("-", "-")  # type: ignore[union-attr]
     repo = g["repo"] if os.path.exists(g["repo"]) else str(Path.home() / "bench-repos" / Path(g["repo"]).name)  # the Linux VM
     mod = subprocess.run(["git", "-C", repo, "show", f"{g['base']}:go.mod"], capture_output=True,
                          text=True).stdout.split("\n", 1)[0].removeprefix("module ").strip()

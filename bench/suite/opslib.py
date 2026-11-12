@@ -106,3 +106,7 @@ def show(ref, path):
 def report(checks):
     for name, ok in checks.items():
         print(json.dumps({"Test": name, "Action": "pass" if ok else "fail"}))
+    # kept beside the bench's results (the run's tree is deleted after scoring): which checks failed, and the gh calls
+    with open(Path(__file__).resolve().parents[1] / "realwork" / "ops-checks.jsonl", "a") as f:
+        f.write(json.dumps(dict(run=W.name, failed=[k for k, v in checks.items() if not v], gh=[c["args"] for c in gh_log()],
+                                branches=remote("for-each-ref", "--format=%(refname:short) %(objectname:short)", "refs/heads").splitlines())) + "\n")

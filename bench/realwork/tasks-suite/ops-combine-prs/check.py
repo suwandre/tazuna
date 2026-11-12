@@ -3,7 +3,8 @@ s, log = started(), gh_log()
 old = set(s["heads"])
 new = [b for b in remote("for-each-ref", "--format=%(refname:short)", "refs/heads").split() if b != "main" and b not in old]
 nb = new[0] if len(new) == 1 else None
-files = set(remote("diff", "--name-only", f"{s['main']}...{nb}").split()) if nb else set()
+# a changeset beside the change is the repo's convention, not extra scope
+files = {f for f in remote("diff", "--name-only", f"{s['main']}...{nb}").split() if not f.startswith(".changeset/")} if nb else set()
 creates = [c for c in log if c["args"][:2] == ["pr", "create"]]
 closes = {n: [c for c in log if c["args"][:2] in (["pr", "close"], ["pr", "comment"]) and n in c["args"]] for n in ("101", "102")}
 report(dict(
