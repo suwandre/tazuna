@@ -16,6 +16,13 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.115 (2026-11-12): a run's answer no longer ends with the harness's "DONE" bookkeeping
+
+- In headless runs the no-change nudge asks a model that only answered to reply `DONE`; that reply was appended to the
+  answer, so every answer of the first answer-kind pilot (9 tasks: investigate, plan, question) ended with "DONE: the
+  request was a read-only ...". The answer now stands alone. Live sessions were not affected (the nudge there only
+  follows an empty reply). No measurable metric changes.
+
 ## 0.1.114 (2026-11-12): a text-written tool call is asked once, every time
 
 - Two holes in 0.1.113, found by a security review: the mark that a call came from the model's text rode on its id,

@@ -475,10 +475,11 @@ fn text_tool_calls(text: &str, tools: &[&str]) -> (String, Vec<Value>) {
     (keep.trim_end().to_string(), calls)
 }
 
-/// The run's answer when a nudge came after it: a short "DONE" reply keeps the answer it points back to.
+/// The run's answer when a nudge came after it: a short "DONE" reply stands for the answer it points back to (the reply
+/// itself is only the harness's bookkeeping; it ended every answer of the 2026-11-12 suite pilot).
 fn after_nudge(answered: &str, text: String) -> String {
     if !answered.is_empty() && text.trim_start().starts_with("DONE") && text.len() < 1200 {
-        format!("{answered}\n\n{text}")
+        answered.to_string()
     } else {
         text
     }
@@ -2766,7 +2767,7 @@ session: "s".into(),
     #[test]
     fn a_done_after_a_nudge_keeps_the_answer_before_it() {
         let review = "Blocker: the importer drops agentfile.jsonl (src/import.ts:40).";
-        assert_eq!(super::after_nudge(review, "DONE: the review above stands.".into()), format!("{review}\n\nDONE: the review above stands."));
+        assert_eq!(super::after_nudge(review, "DONE: the review above stands.".into()), review);
         assert_eq!(super::after_nudge(review, "Fixed it: changed the importer.".into()), "Fixed it: changed the importer.", "a real new answer replaces it");
         assert_eq!(super::after_nudge("", "DONE".into()), "DONE", "no answer before: nothing to keep");
     }
