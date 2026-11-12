@@ -1,0 +1,10 @@
+{
+  "kind": "change",
+  "lang": "typescript",
+  "split": "dev",
+  "difficulty": "medium",
+  "source": "issue 18509 + fix PR 18511",
+  "size": 43,
+  "files": 1,
+  "merged_at": "2026-10-28T11:36:08Z"
+}

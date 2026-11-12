@@ -1,0 +1,10 @@
+{
+  "repo": "/Users/suwandre/bench-repos/astro",
+  "base": "883e672fd0beb575b14776bc842bdee84433e6af",
+  "fix": "e3bec3d2c770cb53771dad723db57a2ebf931b42",
+  "pr": "https://github.com/withastro/astro/pull/18544",
+  "issue": "https://github.com/withastro/astro/issues/18545",
+  "setup": "corepack pnpm install --frozen-lockfile --reporter=silent && corepack pnpm --filter 'astro^...' run build",
+  "hidden_cmd": "python3 $HOME/tazuna/bench/suite/nodetest.py --only $HOME/tazuna/bench/realwork/tasks-suite/change-astro-18544/expected.json test/units/app/double-encoding-bypass.test.ts test/units/app/malformed-uri.test.ts",
+  "suite_cmd": "true"
+}

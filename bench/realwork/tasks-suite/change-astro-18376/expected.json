@@ -1,0 +1,7 @@
+{
+  "hidden_total": 2,
+  "tests": [
+    "lockfile > isLockFileProcessAlive > returns false when a successful process lookup finds no matching PID",
+    "lockfile > isLockFileProcessAlive > treats a Linux thread ID as stale without killing its owning process"
+  ]
+}

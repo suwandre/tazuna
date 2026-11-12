@@ -1,0 +1,9 @@
+{
+  "hidden_total": 4,
+  "tests": [
+    "double-encoding-bypass > URL normalization: undecodable paths > rejects a path that is not valid UTF-8 with 400 (lone surrogate)",
+    "double-encoding-bypass > URL normalization: undecodable paths > rejects a path that is not valid UTF-8 with 400 (overlong escape)",
+    "double-encoding-bypass > URL normalization: undecodable paths > rejects a path with a malformed escape with 400 (bare percent)",
+    "malformed-uri > Malformed URI handling in App.match > render() returns a 400 for a malformed percent-sequence"
+  ]
+}

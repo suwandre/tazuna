@@ -1,0 +1,6 @@
+{
+  "hidden_total": 1,
+  "tests": [
+    "getImage > getImage > densities > emits one srcset candidate per equivalent density"
+  ]
+}

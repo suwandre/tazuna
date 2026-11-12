@@ -1,0 +1,77 @@
+Image service does not deduplicate equivalent densities values
+
+### Astro Info
+
+```text
+Astro                    v7.4.2
+Node                     v24.22.1
+System                   macOS (arm64)
+Package Manager          pnpm
+Output                   static
+Adapter                  none
+Integrations             none
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+I tested this on my MacBook Air with Chrome, Safari, and Firefox, and saw the same behavior in all three. The duplicate candidates are already present in the built HTML, so this doesn't appear to be browser-specific.
+
+The images render correctly, and I haven't noticed any visual issues. I opened this issue because having duplicate candidates in the `srcset` attribute seems unnecessary.
+
+### Describe the Bug
+
+In Astro 7.4.2, Astro emits duplicate pixel density descriptors when `<Image>` receives equivalent numeric and string densities. For example, `densities={[1, '1x', 2]}` produces `1x, 1x, 2x`.
+
+```astro
+---
+import { Image } from 'astro:assets';
+import fixture from '../assets/fixture.png';
+---
+
+<Image
+  id="subject"
+  src={fixture}
+  width={400}
+  height={280}
+  densities={[1, '1x', 2]}
+  format="webp"
+  loading="eager"
+  alt="Generated gradient and checkerboard fixture"
+/>
+```
+
+The duplicate descriptors are not limited to mixed numeric and string inputs:
+
+| `densities` | Emitted descriptors |
+| --- | --- |
+| `[1, '1x', 2]` | `1x, 1x, 2x` |
+| `[1, 1, 2]` | `1x, 1x, 2x` |
+| `['1x', '1.0x', 2]` | `1x, 1x, 2x` |
+| `[1, 2]` (baseline) | `1x, 2x` |
+
+- Chrome
+
+  ![Chrome showing the image and duplicate 1x srcset candidates](https://github.com/user-attachments/assets/149a6509-237b-46c5-b97b-7c4cbab2be50)
+
+- Safari
+
+  ![Safari showing the image and duplicate 1x srcset candidates](https://github.com/user-attachments/assets/aac06632-fbaa-4451-a18f-6cb7e30e6db7)
+
+- Firefox
+
+  ![Firefox showing the image and duplicate 1x srcset candidates](https://github.com/user-attachments/assets/15c0364b-1356-48ac-ac18-651345e93a40)
+
+### What's the expected result?
+
+Equivalent numeric and string densities should be normalized and emitted once: `densities={[1, '1x', 2]}` should produce one `1x` candidate and one `2x` candidate.
+
+The [HTML standard disallows duplicate density descriptors](https://html.spec.whatwg.org/multipage/images.html#srcset-attributes). It also [removes later equal-density candidates during source selection](https://html.spec.whatwg.org/multipage/images.html#select-an-image-source), which explains why duplicate markup need not cause a visible failure.
+
+### Link to Minimal Reproducible Example
+
+- [Source repository](https://github.com/Yusaku01/astro-image-densities-repro)
+- [Live reproduction on GitHub Pages](https://yusaku01.github.io/astro-image-densities-repro/)
+
+### Participation
+
+- [x] I am willing to submit a pull request for this issue.

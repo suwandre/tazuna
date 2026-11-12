@@ -1,0 +1,12 @@
+{
+  "hidden_total": 7,
+  "tests": [
+    "malformed-path > astro:preview \u2014 malformed percent-encoding > passes \u2215a%2Fb through",
+    "malformed-path > astro:preview \u2014 malformed percent-encoding > passes \u2215a%2Fb\u2215 through",
+    "malformed-path > astro:preview \u2014 malformed percent-encoding > responds 400 for \u2215%",
+    "malformed-path > astro:preview \u2014 malformed percent-encoding > responds 400 for \u2215%C0%AF",
+    "malformed-path > astro:preview \u2014 malformed percent-encoding > responds 400 for \u2215%\u2215",
+    "malformed-path-middleware > dev middleware \u2014 malformed percent-encoding > baseMiddleware returns 400 for malformed paths",
+    "malformed-path-middleware > dev middleware \u2014 malformed percent-encoding > trailingSlashMiddleware returns 400 for malformed paths"
+  ]
+}

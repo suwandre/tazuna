@@ -1,0 +1,10 @@
+{
+  "repo": "/Users/suwandre/bench-repos/astro",
+  "base": "5e476365378e41aa2745d003b2383d02008d7b44",
+  "fix": "d060ff9b68f737af2788e521635afb6f6a84b029",
+  "pr": "https://github.com/withastro/astro/pull/18511",
+  "issue": "https://github.com/withastro/astro/issues/18509",
+  "setup": "corepack pnpm install --frozen-lockfile --reporter=silent && corepack pnpm --filter 'astro^...' run build",
+  "hidden_cmd": "python3 $HOME/tazuna/bench/suite/nodetest.py --only $HOME/tazuna/bench/realwork/tasks-suite/change-astro-18511/expected.json test/units/vite-plugin-head/head-metadata.test.ts",
+  "suite_cmd": "true"
+}

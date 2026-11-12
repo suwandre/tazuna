@@ -1,0 +1,35 @@
+`transition:name` is silently dropped in astro dev when the element is inside a component nested under a non-head-propagating component
+
+### Astro Info
+
+```block
+Astro                    v7.4.2
+Vite                     v8.3.5
+Node                     v24.14.0
+System                   Linux (x64)
+Package Manager          npm
+Output                   static
+Adapter                  none
+Integrations             none
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+_No response_
+
+### Describe the Bug
+
+When running `astro dev`, `[data-astro-transition-scope="..."] { view-transition-name: ... }` styles are missing when the component with the `transition:name` directive is nested inside another component, that itself has no style, script or css import of its own. In the linked stackblitz this can be seen by removing the `<Dot />` component from the index.astro file. In that case Dot is only included via the Menu component which causes the styles not to be emitted. Running the repo as is (Dot imported in index.astro) yields the appropriate style `[data-astro-transition-scope="..."] { view-transition-name: the-dot; }...` in the output.
+NOTE: I can't get stackblitz to actually run this repro, but it works when checking it out locally
+
+### What's the expected result?
+
+`data-astro-transition-scope` styles should always be emitted in dev mode when an element with `transition:name` is present
+
+### Link to Minimal Reproducible Example
+
+https://stackblitz.com/~/github.com/Trombach/github-67thufzz
+
+### Participation
+
+- [x] I am willing to submit a pull request for this issue.

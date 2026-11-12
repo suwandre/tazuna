@@ -1,0 +1,51 @@
+Request path with invalid percent-encoding logs `[ERROR] Error: Invalid URL encoding` and is routed undecoded instead of rejected with a 400
+
+### Astro Info
+
+```block
+Astro                    v7.4.4
+Node                     v24.15.0
+System                   Linux (x64)
+Package Manager          npm
+Output                   server
+Adapter                  @astrojs/node (middleware mode)
+Integrations             none
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+_No response_
+
+### Describe the Bug
+
+A request whose path has a percent-escape that isn't valid UTF-8, for example `/%C0/`, logs this on every request:
+
+```
+[ERROR] Error: Invalid URL encoding
+```
+
+and then carries on with the undecoded path. A dynamic route like `src/pages/[slug].astro` renders it with `slug` = `%C0` and a `200`; without one, the 404 page renders.
+
+We noticed it in production on `@astrojs/cloudflare` from scanners. `%C0%AF` is the overlong-UTF-8 `/` used in path-traversal probes. Each request counts as a server error in our logs and pays for a full render.
+
+The error is caught in `#normalizePathname` at [`fetch-state.ts#L1096-L1110`](https://github.com/withastro/astro/blob/883e672fd0beb575b14776bc842bdee84433e6af/packages/astro/src/core/fetch/fetch-state.ts#L1096-L1110). `validateAndDecodePathname` throws `Error('Invalid URL encoding')` when the first `decodeURI` fails ([`pathname.ts#L41-L45`](https://github.com/withastro/astro/blob/883e672fd0beb575b14776bc842bdee84433e6af/packages/astro/src/core/util/pathname.ts#L41-L45)). The catch only turns `MultiLevelEncodingError` into `invalidEncoding`, which rejects the request with a `400` before middleware or routing run. Any other error goes to `this.logger.error(...)` and the raw path carries on.
+
+So a path encoded too many times gets a clean `400`, but a path that can't be decoded at all is logged as a server error and routed as-is.
+
+The `@astrojs/node` standalone server already answers these with `400` ([`standalone.ts`](https://github.com/withastro/astro/blob/883e672fd0beb575b14776bc842bdee84433e6af/packages/integrations/node/src/standalone.ts) runs `decodeURI(req.url)` first), so the repro uses middleware mode to reach core.
+
+#16916 fixed the earlier version of this, where the same input crashed `App.match()` with a 500. The crash is gone, but the error log and the undecoded routing are still there.
+
+### What's the expected result?
+
+The same answer as the over-encoded case: `400` before middleware and routing, with nothing logged at error level. That matches what the node standalone server already does.
+
+I have a PR up with the fix and unit tests: #18544
+
+### Link to Minimal Reproducible Example
+
+https://github.com/skezo/astro-invalid-url-encoding
+
+### Participation
+
+- [x] I am willing to submit a pull request for this issue.

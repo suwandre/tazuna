@@ -1,0 +1,10 @@
+{
+  "repo": "/Users/suwandre/bench-repos/astro",
+  "base": "6cf3423e4c62af5e54a2676c8304a209ab1e064d",
+  "fix": "e4e25fa7d47e702985cbb1ee633d4ffb92f8dad6",
+  "pr": "https://github.com/withastro/astro/pull/18488",
+  "issue": "https://github.com/withastro/astro/issues/18487",
+  "setup": "corepack pnpm install --frozen-lockfile --reporter=silent && corepack pnpm --filter 'astro^...' run build",
+  "hidden_cmd": "python3 $HOME/tazuna/bench/suite/nodetest.py --only $HOME/tazuna/bench/realwork/tasks-suite/change-astro-18488/expected.json test/units/csp/rendering.test.ts",
+  "suite_cmd": "true"
+}

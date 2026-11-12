@@ -1,0 +1,16 @@
+diff --git a/packages/astro/src/core/dev/lockfile.ts b/packages/astro/src/core/dev/lockfile.ts
+index 27b4afa327c1..4b8521fe083c 100644
+--- a/packages/astro/src/core/dev/lockfile.ts
++++ b/packages/astro/src/core/dev/lockfile.ts
+@@ -134,7 +134,10 @@ export async function isLockFileProcessAlive(
+ 
+ 	try {
+ 		const processInfo = await find(data.pid);
+-		return processInfo?.command === undefined || isAstroCommand(processInfo.command);
++		if (processInfo === undefined) {
++			return false;
++		}
++		return processInfo.command === undefined || isAstroCommand(processInfo.command);
+ 	} catch {
+ 		return true;
+ 	}

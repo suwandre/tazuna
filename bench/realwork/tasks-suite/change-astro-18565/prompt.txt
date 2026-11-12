@@ -1,0 +1,44 @@
+Sanity Studio CSS is included on static pages using `getRelativeLocaleUrl()`
+
+### Astro Info
+
+```block
+Astro                    v7.4.4
+Vite                     v8.3.5
+Node                     v22.22.3
+System                   Linux (x64)
+Package Manager          npm
+Output                   static
+Adapter                  none
+Integrations             @sanity/astro (v3.6.0)
+                         @astrojs/react (v7.1.0)
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+All browsers
+
+### Describe the Bug
+
+When `getRelativeLocaleUrl()` is used in a shared layout, the static build includes the Sanity Studio stylesheet on the front-end pages.
+
+The minimal reproduction mounts Sanity at `/admin` and uses `getRelativeLocaleUrl("fr", "/")` and `getRelativeLocaleUrl("en", "/")` in `src/layouts/Layout.astro`. After `npm run build`, both `dist/index.html` and `dist/en/index.html` contain a link to `/_astro/studio-component-*.css`. Replacing those calls with literal `href` values removes the unwanted stylesheet link.
+
+Steps to reproduce:
+1. Open the StackBlitz reproduction linked below.
+2. Run `npm run build`.
+3. Inspect `dist/index.html` and `dist/en/index.html`.
+
+The issue reproduces in all browsers with the static production build. I did not see it in the dev preview. The StackBlitz WebContainer is fixed at Node `v22.22.3` despite the project declaring `engines.node >=22.23.4`.
+
+### What's the expected result?
+
+The French and English site pages should not load Sanity Studio CSS. That stylesheet should be included only on `/admin`. Calling `getRelativeLocaleUrl()` for locale links should not add Sanity CSS to the generated site pages.
+
+### Link to Minimal Reproducible Example
+
+https://stackblitz.com/edit/github-jbs78jez?file=package.json,src%2Flayouts%2FLayout.astro
+
+### Participation
+
+- [ ] I am willing to submit a pull request for this issue.

@@ -1,0 +1,6 @@
+{
+  "hidden_total": 1,
+  "tests": [
+    "graph > getTopLevelPageModuleInfos > attributes components to their owning page and stops before virtual page manifest links"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "hidden_total": 1,
+  "tests": [
+    "head-metadata > astro:head-metadata > marks importers in-tree when a self-propagating module is transformed"
+  ]
+}

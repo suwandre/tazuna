@@ -1,0 +1,91 @@
+astro dev takes a lock-file pid that is now a thread for a running server: refuses to start, and --force / stop kill the unrelated process
+
+### Astro Info
+
+```
+Astro                    v7.3.8
+Node                     v24.8.0
+System                   Linux (x64)
+Package Manager          bun
+Output                   static
+Adapter                  none
+Integrations             @astrojs/sitemap
+                         @astrojs/react
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+_No response_ (CLI issue)
+
+### Describe the Bug
+
+`astro dev` decides whether the server recorded in `.astro/dev.json` is still running with `isLockFileProcessAlive` (`packages/astro/src/core/dev/lockfile.ts`):
+
+1. `process.kill(pid, 0)` succeeds, then
+2. `find("pid", pid)` (find-proc, i.e. `ps -p <pid>`) is asked for the command line, and
+3. `return processInfo?.cmd === undefined || isAstroCommand(processInfo.cmd);`
+
+On Linux, `kill(pid, 0)` also succeeds for a **thread id**, but `ps -p <tid>` lists nothing. `processInfo` is then `undefined`, and the lock is treated as a live Astro server.
+
+That is the normal state after a container restart. When the project is on a bind mount, `.astro/dev.json` outlives the container: a SIGTERM'd `astro dev` does not remove it (we saw this on 7.3.5). The new container hands out pids from 1 again, so the recorded pid is very often a **thread of some other process** in the new container. We hit it twice in one week, with pid 260 (a thread of turbo) and pid 7 (a thread of the container's init process).
+
+The result, on every restart until someone deletes the file by hand:
+
+```
+Another astro dev server is already running.
+
+  URL:  http://localhost:4321/
+  PID:  3580542
+
+Run `astro dev stop` to stop it, or use `astro dev --force` to replace it.
+```
+
+Both suggested remedies make it worse. `astro dev --force` (`killDevServer`) and `astro dev stop` (`stopExistingServer`) send SIGTERM, then SIGKILL, to that pid. On Linux, `kill()` with a thread id signals the **whole process the thread belongs to**. So they kill an unrelated process; in a container that can be PID 1. In the reproduction below, `--force` kills the unrelated `node` process.
+
+In an AI-agent environment the same misjudgment prints `Dev server already running at http://localhost:4321/ (pid <tid>)` and exits 0, so the agent believes a server is up when none is.
+
+This is a follow-up to #17656 and #17744. The own-pid guard and the command check fixed the case where the new `astro dev` reuses the old pid. They do not cover an old pid that is now a thread of a different process.
+
+### What's the expected result?
+
+A lock whose pid is not a running Astro process is stale, as when the pid is dead. Concretely, when `ps` succeeds but does not list the pid, `isLockFileProcessAlive` should return `false`. The lock is then removed, `astro dev` starts, and `--force` / `stop` never signal it.
+
+The fix we are running as a patch on 7.3.8:
+
+```diff
+ 		const processInfo = (await find('pid', data.pid, { logLevel: 'error' })).find(
+ 			({ pid }) => pid === data.pid,
+ 		);
+-		return processInfo?.cmd === undefined || isAstroCommand(processInfo.cmd);
++		// kill(pid, 0) also accepts a thread id, which ps does not list: not a running server.
++		if (processInfo === undefined) {
++			return false;
++		}
++		return processInfo.cmd === undefined || isAstroCommand(processInfo.cmd);
+```
+
+It keeps the conservative `true` when `ps` itself fails (the `catch`). With it, the reproduction below starts the dev server, and the unrelated process is left alone. An alternative on Linux is to read `/proc/<pid>/status` and require `Tgid == pid` before trusting the pid.
+
+### Link to Minimal Reproducible Example
+
+There is no StackBlitz link, because it needs real Linux thread ids, which a WebContainer does not have. This runs in any Astro project on Linux (for example `npm create astro@latest -- --template minimal`). Run it in a plain terminal; an AI-agent environment takes the agent-mode path described above.
+
+```sh
+node -e 'setInterval(() => {}, 1000)' &          # an unrelated long-running process
+HELPER=$!; sleep 1
+TID=$(ls /proc/$HELPER/task | grep -vx "$HELPER" | head -1)   # one of its threads
+kill -0 "$TID" && echo "kill -0 accepts the thread id"
+ps -p "$TID" >/dev/null || echo "ps does not list it"
+mkdir -p .astro
+printf '{"pid": %s, "port": 4321, "url": "http://localhost:4321/", "background": false, "startedAt": "2026-01-01T00:00:00.000Z"}' "$TID" > .astro/dev.json
+
+npx astro dev            # "Another astro dev server is already running ... PID: <TID>", exit 1
+npx astro dev --force    # SIGTERMs <TID>: the HELPER process dies
+kill -0 "$HELPER" 2>/dev/null || echo "the unrelated process was killed"
+```
+
+Verified on 7.3.8, and on 7.3.5 where we first hit it. The same check is unchanged in 7.4.0-beta.1 and on `main`.
+
+### Participation
+
+- [ ] I am willing to submit a pull request for this issue.

@@ -1,0 +1,42 @@
+Malformed URL paths return HTTP 500 in dev and static preview
+
+## Astro Info
+
+```text
+Astro: 7.4.7
+Vite: 8.3.5
+Node: 24.22.1
+OS: Windows (x64)
+Output: static; no SSR adapter or custom middleware
+```
+
+## Describe the Bug
+
+Malformed percent-encoded request paths return HTTP 500 in both the development server and static preview on Windows. A normal request returns 200 before and after the malformed requests; the servers remain running.
+
+The minimal fixture sends raw HTTP request targets, without URL normalization. The observed status sequence is identical in both modes:
+
+```text
+GET /                  -> 200
+GET /fixture/%         -> 500
+GET /fixture/%C0%AF    -> 500
+GET /                  -> 200
+```
+
+In the local test, dev `trailingSlashMiddleware` passes a `decodeURI` error to the error handler before the App/render pipeline. Static preview reaches `fileURLToPath`, which throws for the malformed path. The App-level invalid-encoding guard in #18544 therefore does not appear to cover these two paths. I have not tested production servers or other operating systems.
+
+## Expected Result
+
+Malformed paths should receive HTTP 400 or 404 rather than HTTP 500; subsequent valid requests should continue to work.
+
+## Minimal Reproducible Example
+
+https://gist.github.com/joylia771/583073e0eda1abe6944afe76c6f2fc28
+
+Save the four files in one directory, then run `npm install` and `npm run repro`. The script creates a minimal Astro page, starts and stops its own localhost dev server, builds the fixture, then starts and stops static preview. It prints the four status codes for each mode.
+
+The recorded verification used the same versions from an existing local installation; a clean `npm install`, the separately suggested `curl` commands, and the Astro CLI have not been independently tested. The reproduction uses Astro's programmatic API.
+
+## Related
+
+Related issue: #18545; related App-level fix: #18544. This report concerns the earlier dev middleware and the separate static-preview middleware.
