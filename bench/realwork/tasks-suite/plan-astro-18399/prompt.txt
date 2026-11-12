@@ -1,0 +1,60 @@
+A bug report came in for this repository:
+
+Title: Server island with astro:actions 500s in dev since 7.3.6
+
+### Astro Info
+
+```block
+Astro                    v7.3.8
+Vite                     v8.3.4
+Node                     v24.18.0
+System                   macOS (arm64)
+Package Manager          npm
+Output                   server
+Adapter                  @astrojs/node (v11.1.7)
+Integrations             none
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+_No response_
+
+### Describe the Bug
+
+In dev, a `server:defer` island that imports `astro:actions` 500s if its page isn't the first island page you load after starting the server:
+
+```
+Error: Could not find server component name …/src/components/IslandB.astro
+    at ServerIslandComponent.getIslandContent (…/astro/dist/runtime/server/render/server-islands.js:116:10)
+    at async ServerIslandComponent.initImpl (…/astro/dist/runtime/server/render/server-islands.js:58:19)
+    at async collectPropagatedHeadParts (…/astro/dist/core/head-propagation/buffer.js:44:23)
+    ...
+```
+
+Open `/`, click "Go to /b", and `/b` breaks. It's about which island page the dev server renders first after starting. Restart and open `/b` first, and both pages work. Build works fine. Same thing happens with `astro:config/server` instead of `astro:actions`.
+
+Works in 7.3.5, broken from 7.3.6. Looks like #18166 caused it. If I put back `env.moduleGraph.invalidateModule(mod)` in `vite-plugin-server-islands.js`, it works again.
+
+From adding some logging, this is what seems to happen:
+
+1. The island plugin finds IslandB and clears the cached transform for the island manifest.
+2. `ensureModulesLoaded()` in the dev CSS plugin follows `astro:actions` → `virtual:astro:manifest` → the island manifest and fetches it again on the server side.
+3. When the module runner then asks for the manifest, Vite answers "cached", so the runner keeps the old copy without IslandB.
+
+Skipping the island manifest in `ensureModulesLoaded()` fixed it for me.
+
+Workaround: `vite.server.warmup.ssrFiles: ['./src/pages/**/*.astro']`
+
+### What's the expected result?
+
+Both pages work no matter which one you open first, like in 7.3.5
+
+### Link to Minimal Reproducible Example
+
+https://stackblitz.com/github/kasperkberg/astro-server-island-actions-repro
+
+### Participation
+
+- [ ] I am willing to submit a pull request for this issue.
+
+How should we fix this? Give the options you see, their trade-offs, and the one you recommend for this codebase, with the files it would touch. Do not change any files.

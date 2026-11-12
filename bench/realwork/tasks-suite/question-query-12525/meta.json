@@ -1,0 +1,10 @@
+{
+  "kind": "question",
+  "lang": "typescript",
+  "split": "dev",
+  "size": 184,
+  "files": 3,
+  "merged_at": "2026-11-04T19:38:16Z",
+  "source": "PR 12525",
+  "difficulty": "easy"
+}

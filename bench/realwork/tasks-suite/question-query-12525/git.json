@@ -1,0 +1,8 @@
+{
+  "repo": "/Users/suwandre/bench-repos/query",
+  "pr": "https://github.com/TanStack/query/pull/12525",
+  "setup": "true",
+  "base": "f69b28a1dd2a2b4ca9b8f9117e0f60cc70443775",
+  "pr_head": "e7124128ccab29f8dbbbdf1297df05aa13171b6d",
+  "pr_title": "fix(vue-query): accept shared options in imperative queries (#12525)"
+}

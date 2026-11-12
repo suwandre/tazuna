@@ -1,0 +1,6 @@
+{
+  "repo": "/Users/suwandre/bench-repos/astro",
+  "pr": "https://github.com/withastro/astro/pull/18506",
+  "setup": "true",
+  "base": "e71884a2c055bc8e02c4138aa63f06506761a276"
+}

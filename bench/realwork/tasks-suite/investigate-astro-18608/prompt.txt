@@ -1,0 +1,60 @@
+A bug report came in for this repository:
+
+Title: First page reloads after a fresh `astro dev` start: data store write listener sends full-reload during startup sync
+
+### Astro Info
+
+```block
+Astro                    v7.4.4
+Node                     v24.22.2
+System                   Linux (x64)
+Package Manager          unknown
+Output                   static
+Adapter                  none
+Integrations             none
+```
+
+(Package manager is npm, which `astro info` reported as unknown. Vite resolves to 8.3.5.)
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+_No response_
+
+### Describe the Bug
+
+When `astro dev` starts without an existing `.astro/data-store.json` (a fresh clone, or after deleting `.astro/`), the first page opened loads and then immediately does a full reload. It happens once per start. A start with the data store already on disk does not reload. This is the same symptom as #17283, but it comes from a different call site than the one #17286 fixed, and it needs a project with a content collection.
+
+**Observed**
+
+In the linked reproduction (one glob-loader collection with one entry, one page that calls `getCollection`), after a fresh start the first page shows `page load #2`. The browser's HMR websocket receives:
+
+```text
+{"type":"connected"}
+{"type":"full-reload","path":"*"}
+{"type":"connected"}
+```
+
+Restarting with `.astro/` left in place gives `page load #1` and only `{"type":"connected"}`. I checked both cases repeatedly on the same port. Both behave the same every time.
+
+To find the sender, I temporarily added a log just before the `full-reload` send in `invalidateDataStore` in `node_modules`. On a fresh start it fired exactly once, with `viteServer.ws.clients.size === 0`, and this stack:
+
+```text
+at invalidateDataStore (astro/dist/content/vite-plugin-content-virtual-mod.js)
+at <store.onFileWritten listener> (astro/dist/content/vite-plugin-content-virtual-mod.js)
+at #notifyFileWritten (astro/dist/content/mutable-data-store.js)
+at MutableDataStore.writeToDisk (astro/dist/content/mutable-data-store.js)
+at async #saveToDiskNow (astro/dist/content/mutable-data-store.js)
+at async MutableDataStore.waitUntilSaveComplete (astro/dist/content/mutable-data-store.js)
+at async #doSync (astro/dist/content/content-layer.js)
+```
+
+With that listener's call changed to `invalidateDataStore(server, { notifyClient: false })`, a fresh start no longer reloads the first page.
+
+**Read in the source (`astro@7.4.4`; these files are identical on `main` at 10dae2f)**
+
+- `dev()` in [`core/dev/dev.ts`](https://github.com/withastro/astro/blob/883e672fd0beb575b14776bc842bdee84433e6af/packages/astro/src/core/dev/dev.ts#L108-L134) attaches `attachDataStoreInvalidation` (L112), then awaits `contentLayer.sync()` (L128), and only after that calls `startContainer` (L134). The sync awaits [`waitUntilSaveComplete()`](https://github.com/withastro/astro/blob/883e672fd0beb575b14776bc842bdee84433e6af/packages/astro/src/content/content-layer.ts#L361), so the first store write and its notification happen before the server listens.
+- The write listener in [`attachDataStoreInvalidation`](https://github.com/withastro/astro/blob/883e672fd0beb575b14776bc842bdee84433e6af/packages/astro/src/content/vite-plugin-content-virtual-mod.ts#L140-L155) calls `invalidateDataStore(server)`, and [`notifyClient` defaults to `true`](https://github.com/withastro/astro/blob/883e672fd0beb575b14776bc842bdee84433e6af/packages/astro/src/content/vite-plugin-content-virtual-mod.ts#L60), so it [sends `full-reload`](https://github.com/withastro/astro/blob/883e672fd0beb575b14776bc842bdee84433e6af/packages/astro/src/content/vite-plugin-content-virtual-mod.ts#L96-L105).
+- `buildStart` deliberately [passes `{ notifyClient: false }`](https://github.com/withastro/astro/blob/883e672fd0beb575b14776bc842bdee84433e6af/packages/astro/src/content/vite-plugin-content-virtual-mod.ts#L194-L196), with the comment "Skip client reload since no browser has loaded content yet at startup" (#17286). The write listener, added later in #17755, has no equivalent guard.
+- Vite 8.3.5's websocket server [buffers a `full-reload` sent while it has no cl
+
+Find the root cause: what in the code makes this happen, with file:line, and why. Do not fix it or change any files.

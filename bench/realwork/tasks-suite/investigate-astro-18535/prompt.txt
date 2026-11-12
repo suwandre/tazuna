@@ -1,0 +1,79 @@
+A bug report came in for this repository:
+
+Title: @astrojs/react still strips the component's own <link> tags from island HTML (#16987 was closed without the fix)
+
+### Astro Info
+
+```
+Astro                    v7.4.0
+Node                     v24.12.0
+System                   macOS (arm64)
+Package Manager          npm
+Output                   static
+Adapter                  none
+Integrations             @astrojs/react
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+_No response_
+
+### Describe the Bug
+
+Since #16224, `renderToStaticMarkup` in `@astrojs/react` runs this over the island HTML:
+
+```js
+html = html.replace(/<link\s[^>]*rel="(?:preload|modulepreload|stylesheet|preconnect|dns-prefetch)"[^>]*>/g, "");
+```
+
+It is meant for the preloads React 19 injects (#16212), but it also removes the `<link>` tags the component renders itself. The server HTML ships without them while the client render still has them, so:
+
+- before hydration, or without JS, the page is painted without the component's stylesheet;
+- hydration fails. With React 18.3.1 it logs React errors `#418` twice and `#423`, and React throws away the server HTML and client-renders the island. With React 19.3.1 it logs `#418`.
+
+This was reported in #16987, and #16988 fixed it. But the author closed #16987 when they confirmed that the PR fixed it, and #16988 was then closed without merging because its issue was closed. `@astrojs/react` 7.1.0 still has the same regex.
+
+#16988 also only took `stylesheet` out of the list, so a component's own `preload`, `modulepreload`, `preconnect` and `dns-prefetch` links would still be stripped. React 18 shares `server.js` with React 19 (`dist/version.js`) and injects none of these, so with React 18 the strip only ever removes the component's own links.
+
+Component:
+
+```jsx
+export default function Widget() {
+	return (
+		<>
+			<link rel="stylesheet" href="/widget.css" />
+			<link rel="preconnect" href="https://example.com" />
+			<div id="widget">Widget</div>
+		</>
+	);
+}
+```
+
+Page:
+
+```astro
+---
+import Widget from "../components/Widget.jsx";
+---
+
+<html lang="en">
+	<head><title>repro</title></head>
+	<body><Widget client:load /></body>
+</html>
+```
+
+`astro build` writes `<astro-island …><div id="widget">Widget</div><!--astro:end--></astro-island>`: both links are gone, with React 18 and with React 19.
+
+### What's the expected result?
+
+The island HTML keeps the `<link>` tags the component renders, as `react-dom/server` writes them. The server HTML then matches the client render, and the page is styled before hydration. Only the hints React injects by itself should be removed. At the least, `stylesheet` should come out of the list, as in #16988, and React 18, which injects none, could skip the strip.
+
+### Link to Minimal Reproducible Example
+
+https://github.com/FrancisVega/astro-react-island-links-repro
+
+### Participation
+
+- [ ] I am willing to submit a pull request for this issue.
+
+Find the root cause: what in the code makes this happen, with file:line, and why. Do not fix it or change any files.

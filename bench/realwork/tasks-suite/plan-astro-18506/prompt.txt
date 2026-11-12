@@ -1,0 +1,44 @@
+A bug report came in for this repository:
+
+Title: `ClientRouter` animates back/forward scroll restoration when CSS smooth scrolling is enabled
+
+### Astro Info
+
+```block
+Astro                    v7.4.1
+Vite                     v8.3.5
+Node                     v26.12.1
+System                   Linux (x64)
+Package Manager          yarn
+Output                   static
+Adapter                  none
+Integrations             @astrojs/sitemap (v3.7.4)
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+_No response_
+
+### Describe the Bug
+
+When using `<ClientRouter />` with `html { scroll-behavior: smooth; }`, navigating back or forward animates the scroll restoration.
+
+Without `<ClientRouter />`, the browser restores the scroll position instantly with the same CSS.
+
+The router calls `scrollTo()` without specifying `behavior: 'instant'`, so it follows the CSS smooth scrolling setting.
+
+https://github.com/user-attachments/assets/a8e49242-a979-48d7-8fad-af1845209364
+
+### What's the expected result?
+
+Back/forward navigation should restore the saved scroll position instantly, matching the browser's default behavior. Anchor navigation should still respect smooth scrolling.
+
+### Link to Minimal Reproducible Example
+
+https://stackblitz.com/edit/github-sdxzyo41?file=src%2Fpages%2Findex.astro,src%2Fpages%2Flong-page.astro&on=stackblitz
+
+### Participation
+
+- [x] I am willing to submit a pull request for this issue.
+
+How should we fix this? Give the options you see, their trade-offs, and the one you recommend for this codebase, with the files it would touch. Do not change any files.

@@ -1,0 +1,5 @@
+A teammate asks you about the pull request in this repository's last commit (`git show HEAD`; the commit before it is the base branch):
+
+Title: perf(core): Reduce per-item setup in the expression runtime (backport to release-candidate/2.48.x)
+
+TL;DR this PR: what does it change, why, and what could it break? Keep it short. Do not change any files.

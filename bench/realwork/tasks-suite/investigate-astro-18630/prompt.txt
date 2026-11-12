@@ -1,0 +1,48 @@
+A bug report came in for this repository:
+
+Title: security.csp: strictDynamic blocks Astro's own bundled <script src> files
+
+### Astro Info
+
+```block
+Astro                    v7.4.5
+Vite                     v8.3.5
+Node                     v24.22.1
+System                   macOS (arm64)
+Package Manager          npm
+Output                   static
+Adapter                  none
+Integrations             none
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+_No response_
+
+### Describe the Bug
+
+With `security.csp.scriptDirective.strictDynamic: true`, Astro adds `'strict-dynamic'` to `script-src`. Under `'strict-dynamic'`, browsers ignore `'self'` and host sources ([CSP spec](https://w3c.github.io/webappsec-csp/#strict-dynamic-usage)), so a `<script src>` in the HTML only loads with a nonce, or with a hash plus a matching `integrity` attribute.
+
+Astro emits bundled scripts that import shared code as `<script type="module" src="/_astro/…">` with neither, so the browser blocks Astro's own scripts:
+
+```
+Loading the script 'http://localhost:4321/_astro/index.astro_astro_type_script_index_1_lang.D2LeoRwO.js' violates the following Content Security Policy directive: "script-src 'self' 'strict-dynamic' 'sha256-…'"
+```
+
+In the reproduction, a self-contained `<script>` (inlined and hashed) runs, while two `<script>`s that import a shared module (emitted as files) are blocked. Any real site has scripts like that, so turning on `strictDynamic` breaks them.
+
+Adding `integrity` to those tags isn't enough by itself: the chunks they import carry no hash and would be blocked too.
+
+### What's the expected result?
+
+With `strictDynamic: true`, Astro's own bundled scripts, and the chunks they import, load.
+
+### Link to Minimal Reproducible Example
+
+https://stackblitz.com/github/moonmeister/astro-repro/tree/csp-strict-dynamic
+
+### Participation
+
+- [x] I am willing to submit a pull request for this issue.
+
+Find the root cause: what in the code makes this happen, with file:line, and why. Do not fix it or change any files.

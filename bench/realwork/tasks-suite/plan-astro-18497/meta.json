@@ -1,0 +1,11 @@
+{
+  "kind": "plan",
+  "lang": "typescript",
+  "split": "dev",
+  "size": 56,
+  "files": 3,
+  "merged_at": "2026-10-27T14:58:39Z",
+  "source": "issue 18495 + fix PR 18497",
+  "difficulty": "easy",
+  "note": "the issue itself names the cause or the fix"
+}

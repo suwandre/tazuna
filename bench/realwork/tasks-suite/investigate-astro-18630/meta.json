@@ -1,0 +1,10 @@
+{
+  "kind": "investigate",
+  "lang": "typescript",
+  "split": "dev",
+  "size": 273,
+  "files": 12,
+  "merged_at": "2026-11-09T21:30:37Z",
+  "source": "issue 18607 + fix PR 18630",
+  "difficulty": "medium"
+}

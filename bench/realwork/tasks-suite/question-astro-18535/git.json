@@ -1,0 +1,8 @@
+{
+  "repo": "/Users/suwandre/bench-repos/astro",
+  "pr": "https://github.com/withastro/astro/pull/18535",
+  "setup": "true",
+  "base": "9591b52d2f27b9325ce2df25f69dfc387ee0a97c",
+  "pr_head": "b21d72469403c7bac8b0000829dd3582d135a174",
+  "pr_title": "fix(react): preserve component-rendered link tags in island output (#18535)"
+}
