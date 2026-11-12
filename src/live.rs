@@ -1410,6 +1410,12 @@ impl Live {
             let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", search);
             prompt.push_str(if std::env::var_os("TAZUNA_API_SCOPE").is_some() { API_SCOPE_RULE } else { API_RULE });
             prompt.push_str(PLAN_RULE);
+            // experiment (TAZUNA_OWN_TEST_FOCUS): covering tests while working, and the changed packages' suites once by the
+            // model before it finishes. The own loop's test runs still took 17-38 min of a hugo run (2026-11-11); the
+            // rule below, which leaves the wider run to verify, ran faster and lost 0.83 judge (v1127)
+            if std::env::var_os("TAZUNA_OWN_TEST_FOCUS").is_some() {
+                prompt.push_str("\n- While working, run only the tests that cover your change (in Go: `go test -run 'TestA|TestB' ./pkg/`), not whole packages or the whole repository. Once, before you finish, run the full tests of every package you changed and fix what your change broke.");
+            }
             // experiment (TAZUNA_OWN_TEST_SCOPE): the Claude path's test rule. DeepSeek spent about half of each k6 and hugo
             // run in `go test`, whole packages and `./...` included (650 s once), tests tazuna's verify runs anyway after
             // "run the wider suite once at the end"-style habits (2026-11-10)
