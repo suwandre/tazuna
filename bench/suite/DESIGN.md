@@ -206,3 +206,25 @@ the delegation worth its time on short asks.
   against 5.25 in the comparison round: that weakness was mostly noise. TAZUNA_EXPLORER_STRICT (0.1.120's rule) stays as
   an experiment for measuring delegation.
 
+## Outside coding: the general set (2026-11-14)
+
+bench/realwork/tasks-general: 12 tasks (math, science, law, writing, spreadsheet formulas, software architecture; two
+each) in an empty repo, one run each, Fable 5.2 high judging all six answers per task together (SYSTEM_GENERAL).
+
+| | judge | total time | cost (API prices) | input tokens |
+|---|---|---|---|---|
+| Opus 5.5 alone (`claude -p`, no tools) | 8.42 | 2.5 min | $0.30 | 5k |
+| stock Claude Code | 8.33 | 2.8 min | $0.88 | 211k |
+| OMP | 8.17 | 2.7 min | $0.57 | 152k |
+| tazuna (Claude path) | 7.83 | 2.9 min | $0.41 | 44k |
+| DeepSeek V4.1 Flash alone (one call) | 8.25 | 1.6 min | ~$0 | 1k |
+| tazuna (own loop, DeepSeek) | 7.92 | 3.0 min | ~$0 | 74k |
+
+- No harness beats the model alone outside coding, as expected; Claude Code comes closest (-0.09), tazuna the furthest
+  (-0.59 on Opus, -0.33 on DeepSeek), at the lowest harness cost.
+- Coding habits leak: the own loop wrote the essay into a file and answered with a diff (the headless no-change nudge;
+  a bench artifact, live has no nudge) and added workspace notes to a GDPR answer; the Claude path ran furthest over
+  length limits (600 words for "under 400"; a five-sentence explanation for "one or two"). Every harness broke the
+  architecture tasks' word limits, the bare model least.
+- For the desktop app's general chat: a chat mode without the coding rules and tools, and limits in the request kept.
+
