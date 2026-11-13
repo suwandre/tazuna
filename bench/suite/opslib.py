@@ -96,7 +96,7 @@ def body(call):
     """The text a gh call carried: --body/-b/--comment/-c values, or what it read from stdin."""
     a = call["args"]
     vals = [a[i + 1] for i, x in enumerate(a[:-1]) if x in ("--body", "-b", "--comment", "-c")]
-    return " ".join(vals + [call.get("stdin") or ""])
+    return " ".join(vals + [call.get("stdin") or "", call.get("body_file") or ""])
 
 
 def show(ref, path):

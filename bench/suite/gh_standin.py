@@ -31,8 +31,11 @@ def main(args):
         print("gh: command not available in this environment", file=sys.stderr)
         return 127
     stdin = sys.stdin.read() if "-" in args and not sys.stdin.isatty() else None
+    # a body from a file (`--body-file PATH`, `-F PATH`): its text, for the check to read as it would on GitHub
+    path = next((args[i + 1] for i, a in enumerate(args[:-1]) if a in ("--body-file", "-F") and args[i + 1] != "-"), None)
+    body_file = open(path, errors="replace").read()[:20000] if path and os.path.isfile(path) else None
     with open(os.path.join(d, "gh-log.jsonl"), "a") as f:
-        f.write(json.dumps({"t": time.time(), "args": args, "stdin": stdin}) + "\n")
+        f.write(json.dumps({"t": time.time(), "args": args, "stdin": stdin, "body_file": body_file}) + "\n")
     entry = next((e for e in json.load(open(scen)) if matches(e["match"], args)), None)
     if entry is None:
         print(f"gh: `gh {' '.join(args[:2])}` failed: HTTP 404: Not Found", file=sys.stderr)

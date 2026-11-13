@@ -8,7 +8,8 @@ head = a[a.index("--head") + 1] if "--head" in a else a[a.index("-H") + 1] if "-
 base = a[a.index("--base") + 1] if "--base" in a else a[a.index("-B") + 1] if "-B" in a else "main"
 text = body(c).lower()
 report(dict(
-    branch_pushed=remote("rev-parse", B) == s["head"],
+    # pushed with its commits (one more, such as a changeset, is fine: the repo's convention)
+    branch_pushed=s["head"] in remote("rev-list", B).split(),
     one_pr_created=len(creates) == 1,
     pr_from_the_branch_to_main=head == B and base == "main",
     description_says_what_changes="jitter" in text and "retry" in text,

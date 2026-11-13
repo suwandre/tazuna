@@ -118,6 +118,10 @@ question, one plan, one ops. The pilot tasks are all dev.
   earlier PR (image pins, a docs link the docs team was about to move, a refactor that "does not change the behavior").
   It needs another source: review threads by people, not bots, whose point a later commit in the same PR addressed, on
   more repos and a longer window.
-- Each new task gets one cheap own-loop run before it counts, to see that it works (suite-fill1); judging waits for a
-  weekly reset.
+- Each new task gets one cheap own-loop run before it counts, to see that it works; judging waits for a weekly reset.
+  suite-fill1 (0.1.119, DeepSeek V4.1 Flash high, $0.195 for 12 runs, no leaks): every answer task answered (1-23 min);
+  change 4/4 and 1/1 tests, and 0/1 on change-astro-18511, whose test pins an internal function the issue does not name
+  (a hard task, 62 min); ops-open-pr 4/5, where the check wanted the pushed branch to equal the original and the run
+  added a commit before pushing: the check now asks that the branch holds the original commits. The gh stand-in also
+  records a `--body-file`'s text now (a run used one for the PR description).
 
