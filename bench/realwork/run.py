@@ -294,10 +294,13 @@ JAIL = "(version 1)(allow default)(deny file-read* " + " ".join(
 # Other runs' work trees and transcripts hold their solutions: tazuna v504 ran `git diff` in the Claude Code run beside it
 # and copied tests from a killed run's tree left in TMPDIR; pi v518 mined an earlier pi transcript in its own HOME
 # (2026-10-28). A run reads only its own work tree among rw-*; the harnesses' logs can be written and listed, not read.
-LOGS = r"/bench-homes/[^/]+/(transcripts|\.local/share/(tazuna/sessions|opencode)|\.codex/sessions|\.claude/projects)/"
+LOGS = r"/bench-homes/[^/]+/(transcripts|\.local/share/(tazuna/sessions|tazuna/own-sessions|opencode)|\.codex/sessions|\.claude/projects)/"
 
 
-LOG_DIRS = ["transcripts", ".local/share/tazuna/sessions", ".local/share/opencode", ".codex/sessions", ".claude/projects"]
+# tazuna's own-sessions (0.1.119: each own-loop session's whole history, for --resume) was not on this list: two runs of
+# 2026-11-13 read other runs' histories there, one of them an earlier run of its own task
+LOG_DIRS = ["transcripts", ".local/share/tazuna/sessions", ".local/share/tazuna/own-sessions", ".local/share/opencode", ".codex/sessions",
+            ".claude/projects"]
 _PROXY_SOCK = []
 
 
@@ -320,14 +323,17 @@ def bwrap_jail(cwd, env, cmd):
         elif os.path.basename(root) == "realwork" and os.path.basename(os.path.dirname(root)) == "bench":
             args += ["--tmpfs", root]
             dirs[:] = []
-    for f in [*_H.glob(".*-key"), _H / ".bench-token", _H / ".subrouter-account", _H / ".subrouter-key"]:
+    # tazuna's run log (every run's prompt, model, outcome) in every bench home and this machine's: read as empty, its
+    # appends lost (tazuna only reports a failed write); run.py takes a run's result from its output, not from there
+    logs = [h / ".local/share/tazuna/runs.jsonl" for h in [*BENCH_HOMES.glob("*"), _H]]
+    for f in [*_H.glob(".*-key"), _H / ".bench-token", _H / ".subrouter-account", _H / ".subrouter-key", *logs]:
         if f.is_file():
             args += ["--ro-bind", "/dev/null", str(f)]
     for d in (_H / ".ssh", _H / ".config/gh"):
         if d.is_dir():
             args += ["--tmpfs", str(d)]
     own = [h for h in {env.get("HOME"), env.get("CLAUDE_CONFIG_DIR"), env.get("BENCH_JAIL_ALSO")} if h]
-    for h in BENCH_HOMES.glob("*"):  # every harness's logs are hidden
+    for h in [*BENCH_HOMES.glob("*"), _H]:  # every harness's logs are hidden (and this machine's own tazuna sessions)
         for rel in LOG_DIRS:
             if (h / rel).is_dir() and not any(str(h / rel).startswith(o) for o in own):
                 args += ["--tmpfs", str(h / rel)]

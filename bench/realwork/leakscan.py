@@ -49,7 +49,7 @@ def leaked():
 # that only lists them (ls, find, a scandir) is "peer-listed", not a leak.
 JAILED_FROM = 526  # first run under run.py's jail_for (2026-10-28)
 RUNDIR = re.compile(r"rw-[a-z0-9-]+?-[a-z][\w-]*?-v(\d+)@[^\s'\"\\]*")
-LOGDIR = re.compile(r"bench-homes/[^\s'\"\\]*?/(?:transcripts|tazuna/sessions|\.claude/projects|opencode|\.codex/sessions)\b")
+LOGDIR = re.compile(r"bench-homes/[^\s'\"\\]*?/(?:transcripts|tazuna/sessions|tazuna/own-sessions|tazuna/runs\.jsonl|\.claude/projects|opencode|\.codex/sessions)\b")
 READS = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:cd|cat|sed|head|tail|less|more|diff|git|cp|rsync|grep|rg|awk|cut|xxd|od|strings|"
                    r"python3?|patch|jq|bat|vim?|nano|tar|zip|unzip|base64|go|for|while)\b|open\(|read_text|\.read\(|glob\(")
 
