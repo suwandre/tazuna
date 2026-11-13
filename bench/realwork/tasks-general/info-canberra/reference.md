@@ -1,0 +1,1 @@
+Answer: Canberra. It was chosen as a compromise in the rivalry between Sydney and Melbourne at federation (1901); the constitution required the capital to be in New South Wales but at least 100 miles from Sydney; Canberra was purpose-built (site chosen 1908, founded 1913), with Melbourne the temporary seat of government until Parliament moved in 1927. Wrong capital costs heavily.

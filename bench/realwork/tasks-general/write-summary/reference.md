@@ -1,0 +1,1 @@
+Must capture: revenue +12% to EUR 4.2M; gross margin down from 38% to 35% because of steel prices; cordless drills 18% of sales since August; Q4 actions (prices +4% on 1 October, Rotterdam warehouse in January). Headcount and cash are optional. Exactly 3 bullets, each under 20 words; breaking the form costs heavily.

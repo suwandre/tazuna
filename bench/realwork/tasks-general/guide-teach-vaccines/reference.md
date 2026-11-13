@@ -1,0 +1,1 @@
+Points: a vaccine shows the immune system a harmless piece or weakened/inactivated form of a germ (or instructions to make a protein, mRNA); the body makes antibodies and memory cells (B and T cells); on real exposure the response is faster and stronger, preventing or softening illness; side effects are usually mild signs of this response. Accurate, plain, under 150 words.

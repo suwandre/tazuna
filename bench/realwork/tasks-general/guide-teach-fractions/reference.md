@@ -1,0 +1,1 @@
+A good answer: correct and age-appropriate; uses a concrete picture (e.g. 3 / (1/2) asks how many halves fit in 3: six, the same as 3 x 2); shows that dividing by 1/n counts how many nths fit, i.e. multiplies by n, and extends to a/b; one worked example; under 150 words (over costs).

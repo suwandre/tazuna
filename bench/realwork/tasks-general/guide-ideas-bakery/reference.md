@@ -1,0 +1,1 @@
+Constraints: exactly 10 names, each with a one-line rationale; no puns on 'bread' or 'loaf' (names using those words as puns break the constraint); names should fit sourdough (starter, levain, crumb, crust, wild yeast, slow ferment...). Quality: varied, usable, not generic.

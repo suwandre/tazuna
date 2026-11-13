@@ -1,0 +1,1 @@
+Answer: needs 50% = EUR 1,500, wants 30% = EUR 900, savings and debt repayment 20% = EUR 600, with examples of what goes in each and a tip or two (automate savings, emergency fund). Wrong amounts cost heavily.

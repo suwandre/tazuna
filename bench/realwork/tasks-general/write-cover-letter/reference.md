@@ -1,0 +1,1 @@
+Constraints: 60-90 words; opening paragraph only. Quality: names the role and company type, frames the career switch as a strength (inventory, scheduling, sales data, KPIs, people management), concrete and confident without cliches, makes the reader want to continue.

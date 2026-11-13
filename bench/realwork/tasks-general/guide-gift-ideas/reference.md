@@ -1,0 +1,1 @@
+Constraints: exactly 5 ideas, one line each, each plausibly under $50, tied to hiking and/or coffee (e.g. a packable pour-over or collapsible dripper, insulated camp mug, specialty beans from a local roaster, trail map or guidebook of a local area, merino socks). Thoughtful, specific, not generic.

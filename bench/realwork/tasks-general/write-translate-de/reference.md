@@ -1,0 +1,1 @@
+Reference: 'Vielen Dank fuer Ihre schnelle Antwort. Leider passt uns der Liefertermin nicht; koennten wir ihn auf die darauffolgende Woche verschieben?' Equivalent formal phrasings are fine (Sie-form, e.g. 'Leider ist der Liefertermin fuer uns nicht moeglich'); informal du-form or wrong meaning costs heavily.

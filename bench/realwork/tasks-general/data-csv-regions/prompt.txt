@@ -1,0 +1,13 @@
+Here is monthly revenue data:
+
+month,region,revenue
+Jan,North,1200
+Jan,South,900
+Jan,East,1500
+Jan,West,700
+Feb,North,1300
+Feb,South,1150
+Feb,East,1450
+Feb,West,840
+
+Give the total revenue per region over both months, and say which region grew most from January to February in percent.

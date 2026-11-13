@@ -1,0 +1,1 @@
+Errors a good answer catches and fixes: 'Their' -> 'They're'; the comma splice before 'however' (use a semicolon or a full stop); 'mean' -> 'means'; 'Me and Sarah thinks' -> 'Sarah and I think'; 'effect' -> 'affect'; 'the team haven't' is fine in British English, 'hasn't' in American (noting this is a plus, not required). The corrected version must keep the meaning.

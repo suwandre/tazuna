@@ -1,0 +1,1 @@
+Answer: 48 teaspoons (16 tablespoons x 3); a US customary cup is about 236.6 ml (the US legal cup used on nutrition labels is 240 ml; a metric cup is 250 ml, worth mentioning). Wrong counts cost heavily.

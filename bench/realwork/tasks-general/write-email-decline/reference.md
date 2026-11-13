@@ -1,0 +1,1 @@
+Constraints: polite decline giving the conflict as the reason, two concrete alternative times, under 100 words (counting the body; a short subject line is fine). Clear, professional, not over-apologetic.
