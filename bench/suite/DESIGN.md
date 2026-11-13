@@ -144,3 +144,51 @@ three change tasks, below) and two of its runs read other runs' saved histories 
 - Leak-seeking: on both pydantic tasks tazuna's DeepSeek searched the whole home folder for the task's name and other
   runs' session ids; the jail hid the repos and transcripts but not 0.1.119's own-sessions folder.
 
+## Own-loop comparison, complete (2026-11-13, evening)
+
+All 34 tasks for every harness (DeepSeek V4.1 Flash high on SubRouter, tazuna 0.1.120), one run each; the 21 answer
+tasks judged with all four answers together (Fable 5.2 high).
+
+| kind | tazuna | OpenCode | pi | OMP |
+|---|---|---|---|---|
+| question (7) | 7.86 | 7.20 (5) | 6.86 | 7.71 |
+| investigate (6) | 8.17 | 8.33 | 7.67 | 7.83 |
+| follow-up (1) | 8.00 | 8.00 | 7.00 | 9.00 |
+| plan (4) | 5.25 | 6.50 | 7.50 | 6.50 |
+| review (3) | 3.67 | 5.33 | 3.67 | 5.00 (2) |
+| the 18 all four answered | 6.89 | 7.33 | 7.06 | 7.28 |
+
+Efficiency over the 33 tasks all four finished (cost at SubRouter's DeepSeek price, the same for every harness):
+
+| | time | median | fresh input | cached input | output | cost |
+|---|---|---|---|---|---|---|
+| tazuna | 4.9 h | 5.5 min | 3.9M | 60M | 0.71M | $0.21 |
+| OpenCode | 5.2 h | 4.7 min | 6.0M | 76M | 0.67M | $0.26 |
+| pi | 5.5 h | 5.1 min | 5.6M | 80M | 0.67M | $0.26 |
+| OMP | 5.5 h | 6.2 min | 6.0M | 75M | 0.86M | $0.27 |
+
+tazuna: the cheapest and least total time, level on change, ops and code follow-ups, within noise on answers overall;
+weakest on plan (twice: 5.75, 5.25) and review. The next own-loop work.
+
+## Claude-path comparison, first batch (2026-11-13)
+
+Claude Opus 5.5 high on the plan, six dev tasks, one run each: tazuna 0.1.120 (its Claude path, default profile), stock
+Claude Code, and OMP (stock, its own Anthropic login).
+
+| task | tazuna | Claude Code | OMP |
+|---|---|---|---|
+| question (judge) | 9 · 34 s | 8 · 22 s | 8 · 25 s |
+| investigate | 9 · 151 s | 9 · 38 s | 8 · 47 s |
+| plan | 9 · 75 s | 9 · 39 s | 9 · 36 s |
+| review | 7 · 250 s | 8 · 267 s | 6 · 211 s |
+| change (hidden tests) | 1/1 · 270 s | 1/1 · 79 s | 1/1 · 57 s |
+| ops rebase (checks) | 9/9 · 89 s | 9/9 · 28 s | 9/9 · 37 s |
+| judge average (4) | 8.50 | 8.50 | 7.75 |
+| total time | 14.5 min | 7.9 min | 6.9 min |
+| cost at API prices | $2.32 | $2.78 | $2.63 |
+
+tazuna matches Claude Code on quality at 17% less cost but takes about 1.8x the time: its Claude path hands work to
+helper subagents (1-2 minutes of Agent calls in the investigate run). Some of these times (tazuna's investigate and
+change, Claude Code's investigate) ran while /tmp was full, so the gap is approximate. The next Claude-path work: is
+the delegation worth its time on short asks.
+
