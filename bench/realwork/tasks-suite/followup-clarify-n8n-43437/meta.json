@@ -1,0 +1,11 @@
+{
+  "kind": "followup",
+  "lang": "typescript",
+  "split": "dev",
+  "size": 147,
+  "files": 3,
+  "merged_at": "2026-11-12T10:37:26Z",
+  "source": "PR 43437 (TL;DR, then a clarifying question)",
+  "difficulty": "easy",
+  "turns": 2
+}

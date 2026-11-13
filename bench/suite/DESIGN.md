@@ -83,6 +83,7 @@ One own-loop run each (DeepSeek V4.1 Flash high on SubRouter), Fable 5.2 high ju
 | plan | 3 (Astro bug issues, the maintainers' fix as reference) | 9, 9, 7 | 1-5 min | $0.011 |
 | question | 3 ("TL;DR this PR" in n8n, Astro, TanStack Query) | 8, 8, 8 | 1.5-2.5 min | $0.005 |
 | ops | 3 (combine PRs, rebase with a conflict, fix CI in the same PR; local origin, gh stand-in) | 9/9, 9/9, 7/7 checks (0.1.116) | 1-7 min | $0.006 |
+| follow-up | 3 (plan then "go ahead"; TL;DR then "so X, right?"; find why CI fails then "same PR"), two messages in one session | 1/1 test, 9/10, 7/7 checks | 7-41 min | $0.075 |
 | change | 3 (Astro bug fixes; the PR's unit tests hidden, failing on the base and passing with the fix) | 2/2, 1/1, 2/7 tests | 30-41 min | $0.065 |
 
 - The grading separates: the low scores name a concrete wrong claim (a loop said to add hashes that never runs) or a
@@ -100,5 +101,9 @@ One own-loop run each (DeepSeek V4.1 Flash high on SubRouter), Fable 5.2 high ju
   uncommitted fix (fixed in 0.1.116). Checks count outcomes only: a changeset added beside a change is the repo's
   convention, and finding the cause without opening the CI log is fine. A harder variant should fail where reading the
   code cannot show why (a flaky test, an environment difference).
+- Follow-up tasks send a second message into the same session (`tazuna --run P --then F`; run.py passes a task's
+  followup.txt) and keep both replies for the judge. The clarifying run corrected a wrong premise in the question
+  itself (the values are still made per item, only lazily): the reference was fixed to say so before judging. Other
+  harnesses need the same two-message support before the baseline.
 - Found in passing: every answer ended with the nudge's "DONE" reply (fixed in 0.1.115); one DeepSeek answer began
   with an unclosed `<thinking>` block written as text (a model quirk, 1 of 9; watch it).

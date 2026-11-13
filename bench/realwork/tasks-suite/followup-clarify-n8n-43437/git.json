@@ -1,0 +1,8 @@
+{
+  "repo": "/Users/suwandre/bench-repos/n8n",
+  "pr": "https://github.com/n8n-io/n8n/pull/43437",
+  "setup": "true",
+  "base": "1df677415f567a623db88ac6fc1b9a8e470c43fb",
+  "pr_head": "3f2736bfb87b6d6a7b655c0c043b2744fd9dc050",
+  "pr_title": "perf(core): Reduce per-item setup in the expression runtime (backport to release-candidate/2.48.x) (#43437)"
+}

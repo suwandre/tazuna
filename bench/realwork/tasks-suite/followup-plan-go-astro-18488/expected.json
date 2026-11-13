@@ -1,0 +1,6 @@
+{
+  "hidden_total": 1,
+  "tests": [
+    "rendering > CSP Rendering > Style Hashes > does not hash empty children on external stylesheets and scripts"
+  ]
+}

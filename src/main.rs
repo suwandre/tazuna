@@ -63,7 +63,8 @@
 //!   tazuna upgrade [--force]   # (or update) the newest release (GitHub) in place of this binary; `tazuna --version` says which
 //!   tazuna subrouter [--apply]   # each checked model's SubRouter providers, set on your one key (--apply: with the
 //!                                # account's access token in ~/.subrouter-account)
-//!   tazuna --run <prompt-file> [--model M] [--effort E]   # headless: one task, prints claude's result JSON (benchmarks)
+//!   tazuna --run <prompt-file> [--then <file>]... [--model M] [--effort E]   # headless: one task (later messages
+//!                                                    with --then), prints claude's result JSON (benchmarks)
 //!   tazuna --loop [FLAGS]   # build TODO.md's open items one by one (fresh headless run each, with FLAGS, e.g.
 //!                           # --preset reviewed), commit each; in a session: /loop [PRESET|FLAGS], /loop stop
 //!   tazuna --log [N]   # the last N runs from the run log (~/.local/share/tazuna/runs.jsonl)
@@ -134,6 +135,9 @@ struct Args {
     effort: Option<String>,
     allow_non_git: bool,
     run: Option<PathBuf>,
+    /// `--then FILE` (repeatable, with --run): later messages of the same session, each sent when the last reply is in
+    /// (the suite's follow-up tasks: "go ahead", "same PR", "so X, right?").
+    then: Vec<PathBuf>,
     log: Option<usize>,
     verify: verify::Mode,
     bash_cap: usize,
@@ -280,6 +284,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         review_key: None,
         provider: None,
         resume: None,
+        then: vec![],
         mode: "bypassPermissions".into(),
         cache_ttl: None,
         repo_map: false,
@@ -316,6 +321,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--effort" => a.effort = Some(val()?),
             "--allow-non-git" => a.allow_non_git = true,
             "--run" => a.run = Some(val()?.into()),
+            "--then" => a.then.push(val()?.into()),
             "--verify" => a.verify = verify::Mode::Command(val()?),
             "--no-verify" => a.verify = verify::Mode::Off,
             "--bash-cap" => a.bash_cap = val()?.parse()?,
@@ -776,6 +782,7 @@ fn host_of(url: &str) -> String {
 
 fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     let prompt = std::fs::read_to_string(prompt_file).with_context(|| format!("reading {}", prompt_file.display()))?;
+    let thens = a.then.iter().map(|f| std::fs::read_to_string(f).with_context(|| format!("reading {}", f.display()))).collect::<Result<Vec<_>>>()?;
     if a.mode != "bypassPermissions" {
         eprintln!("--mode does not apply to --run: nobody is there to answer questions, so headless runs never ask");
     }
@@ -815,17 +822,22 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
         let (sid, _) = previous_session(&labels::dir()?, &std::env::current_dir()?, id.as_deref()).context("no earlier tazuna session in this repo to continue")?;
         live.resume(&sid);
     }
-    live.send(&prompt)?;
-    loop {
-        for (_, e) in live.poll() {
-            if e["type"] == "harness_notice" && e["error"] == true {
-                bail!("{}", e["text"].as_str().unwrap_or("claude failed"));
+    // each message in turn, the next one once the reply to the last is in; every reply is kept for a multi-turn run
+    let mut answers = vec![];
+    for text in std::iter::once(&prompt).chain(&thens) {
+        live.send(text)?;
+        loop {
+            for (_, e) in live.poll() {
+                if e["type"] == "harness_notice" && e["error"] == true {
+                    bail!("{}", e["text"].as_str().unwrap_or("claude failed"));
+                }
             }
+            if live.idle() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
         }
-        if live.idle() {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
+        answers.push(live.last_result.as_ref().and_then(|r| r["result"].as_str()).unwrap_or_default().to_string());
     }
     // claude's last result, with usage, turns and cost summed over every run of the session: the task's run, plus any run
     // claude started on its own after a background command finished
@@ -846,6 +858,9 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
         let explorer = live.explorer_cost();
         r["explorer_cost_usd"] = json!(explorer);
         r["total_cost_usd"] = json!(((cost + explorer) * 1e6).round() / 1e6);
+    }
+    if !thens.is_empty() {
+        r["answers"] = json!(answers);
     }
     println!("{r}");
     Ok(())

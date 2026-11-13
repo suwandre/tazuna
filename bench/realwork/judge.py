@@ -42,6 +42,8 @@ an investigation or a plan). The reference states what is known to be true: the 
 checked answer, the real root cause, or the maintainers' chosen approach. It may not list everything that is true.
 Do not reward length or confident tone. A confident wrong claim is worse than saying it is unsure. For a review,
 an invented blocker (a problem that is not real) counts against the answer; real issues beyond the reference count for it.
+For a follow-up (the user's second message is given), grade the last reply: true, consistent with the first reply or
+plainly correcting it, and doing what the second message asks.
 
 Score each dimension 1-5:
 - correctness: what it states is true of the code
@@ -57,7 +59,9 @@ DIMS_ANSWER = ["correctness", "coverage", "precision", "clarity", "fit"]
 
 def answer_kind(task):
     m = task / "meta.json"
-    return m.exists() and json.loads(m.read_text()).get("kind") in ("review", "question", "investigate", "plan", "followup")
+    # a follow-up whose second turn asks for a change has hidden tests or an end-state check: graded as code, not as an answer
+    return m.exists() and json.loads(m.read_text()).get("kind") in ("review", "question", "investigate", "plan", "followup") \
+        and not json.loads((task / "git.json").read_text()).get("hidden_cmd")
 
 
 NOREF = bool(os.environ.get("JUDGE_NOREF"))
@@ -186,6 +190,8 @@ def judge_task(task_name, model, effort, passes):
         random.Random(f"{task_name}-{p}").shuffle(order)
         ids = {f"C{k + 1}": i for k, i in enumerate(order)}
         parts = [f"# Task\n{(task / 'prompt.txt').read_text()}"]
+        if (task / "followup.txt").exists():  # a follow-up task: the user's second message, sent after the first reply
+            parts.append(f"# The user's second message, after the first reply\n{(task / 'followup.txt').read_text()}")
         if answer_kind(task):
             parts.append(f"# Reference\n{(task / 'reference.md').read_text()}")
             for cid, i in ids.items():

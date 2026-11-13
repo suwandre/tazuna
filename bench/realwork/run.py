@@ -1078,12 +1078,17 @@ JG_NOTE = ("A code search tool is installed: `jg \"<question about what the code
            "leads and source excerpts. Use it to find where things are before reading files.\n\n")
 
 
-def run_harness(h, w, prompt):
-    """Our Rust harness in headless mode (cc-mid profile, driven over stream-json). Prints claude's result JSON."""
+def run_harness(h, w, prompt, then=None):
+    """Our Rust harness in headless mode (cc-mid profile, driven over stream-json). Prints claude's result JSON. `then`: a
+    follow-up task's second message (followup.txt), sent in the same session once the first reply is in."""
     model, effort = model_effort(h)
     with tempfile.TemporaryDirectory() as cfg, tempfile.TemporaryDirectory() as t:
         pf = Path(t) / "prompt.txt"
         pf.write_text(prompt)
+        turns = []
+        if then:
+            (Path(t) / "then.txt").write_text(then)
+            turns = ["--then", str(Path(t) / "then.txt")]
         extra = {"tazuna-noverify": ["--no-verify"], "tazuna-nocap": ["--bash-cap", "0"], "tazuna-repo": ["--trust"],
                  "tazuna-repolean": ["--trust", "--profile", "repo-lean"], "tazuna-lean": ["--profile", "lean"],
                  "tazuna-diag": ["--trust", "--diagnostics"],
@@ -1116,7 +1121,7 @@ def run_harness(h, w, prompt):
                    "PATH": f"{JG.parent}:{env['PATH']}"}
             pf.write_text(JG_NOTE + prompt)
         try:
-            r = sh([str(HARNESS_BIN), "--run", str(pf), *pin, *extra], w, timeout=TIMEOUT, env=env)
+            r = sh([str(HARNESS_BIN), "--run", str(pf), *turns, *pin, *extra], w, timeout=TIMEOUT, env=env)
         finally:
             if jg_dir:
                 shutil.rmtree(jg_dir, ignore_errors=True)
@@ -1129,7 +1134,9 @@ def run_harness(h, w, prompt):
     u = d["usage"]
     return dict(inp=u.get("input_tokens", 0), cache_w=u.get("cache_creation_input_tokens", 0),
                 cache_r=u.get("cache_read_input_tokens", 0), out=u.get("output_tokens", 0),
-                turns=d.get("num_turns", 0), reported_cost=d.get("total_cost_usd", 0), final=d.get("result") or "",
+                turns=d.get("num_turns", 0), reported_cost=d.get("total_cost_usd", 0),
+                # a follow-up task: both replies, for the judge to see the first answer and what the second turn did with it
+                final="\n\n".join(f"[reply {i + 1}]\n{a}" for i, a in enumerate(d["answers"])) if d.get("answers") else d.get("result") or "",
                 verify=((d.get("tazuna") or {}).get("verify") or {}).get("status"),
                 # the key variables the run billed to: real costs come from the provider's account log per key (Codex and
                 # tazuna's own usage figures can differ from it, 2026-10-29)
@@ -1522,7 +1529,10 @@ def _run_job(task, h, i):
             try:
                 setup_workdir(task, w)
                 t0 = time.time()
-                r = runner(h)(h, w, (task / "prompt.txt").read_text())
+                # a follow-up task's second message goes to harnesses that can hold a session over two messages (ours
+                # for now); another raises TypeError, so the run fails rather than answering only the first
+                then = (task / "followup.txt").read_text() if (task / "followup.txt").exists() else None
+                r = runner(h)(h, w, (task / "prompt.txt").read_text(), **({"then": then} if then else {}))
                 r["secs"] = round(time.time() - t0, 1)
                 diff = capture_diff(w)
                 r["passed"], r["total"], r["regress"] = hidden_score(task, w)

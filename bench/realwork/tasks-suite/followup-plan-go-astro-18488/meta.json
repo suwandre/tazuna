@@ -1,0 +1,11 @@
+{
+  "kind": "followup",
+  "lang": "typescript",
+  "split": "dev",
+  "difficulty": "medium",
+  "source": "issue 18487 + fix PR 18488 (plan, then go ahead)",
+  "size": 57,
+  "files": 1,
+  "merged_at": "2026-10-23T02:29:35Z",
+  "turns": 2
+}

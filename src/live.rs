@@ -1490,6 +1490,11 @@ impl Live {
             if self.mode == "headless" {
                 cmd.env("TAZUNA_HEADLESS", "1"); // a task, not a conversation: stopping without a change gets a nudge
             }
+            // a resumed session (`-c`, `--resume`, or the engine started again mid-session): the engine reads the history it
+            // saved (until 0.1.119 it was never passed, and an own-loop session always started empty)
+            if let Some(id) = &self.session_id {
+                cmd.args(["--resume", id]);
+            }
             return self.start(cmd);
         }
         let mut cmd = Command::new("claude");

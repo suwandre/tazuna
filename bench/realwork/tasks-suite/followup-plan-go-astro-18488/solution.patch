@@ -1,0 +1,34 @@
+diff --git a/packages/astro/src/core/fetch/fetch-state.ts b/packages/astro/src/core/fetch/fetch-state.ts
+index 922614dd40f7..da5229dbf170 100644
+--- a/packages/astro/src/core/fetch/fetch-state.ts
++++ b/packages/astro/src/core/fetch/fetch-state.ts
+@@ -155,6 +155,17 @@ export function getFetchStateFromAPIContext(context: APIContext): FetchState {
+ 	return state;
+ }
+ 
++/**
++ * External `<link href>` / `<script src>` entries are stored with empty
++ * `children`. Hashing that empty string puts the SHA of `''` in CSP and
++ * disables `'unsafe-inline'` for that directive.
++ */
++function isInlineCspHeadContent(element: { children: string; props?: Record<string, unknown> }): boolean {
++	if (!element.children) return false;
++	const props = element.props ?? {};
++	return props.href == null && props.src == null;
++}
++
+ /**
+  * Holds per-request state as it flows through the handler pipeline.
+  *
+@@ -446,9 +457,11 @@ export class FetchState implements AstroFetchState {
+ 		const cspAlgorithm = manifest.csp?.algorithm ?? 'SHA-256';
+ 		if (shouldInjectCspMetaTags) {
+ 			for (const style of styles) {
++				if (!isInlineCspHeadContent(style)) continue;
+ 				extraStyleHashes.push(await generateCspDigest(style.children, cspAlgorithm));
+ 			}
+ 			for (const script of scripts) {
++				if (!isInlineCspHeadContent(script)) continue;
+ 				extraScriptHashes.push(await generateCspDigest(script.children, cspAlgorithm));
+ 			}
+ 		}

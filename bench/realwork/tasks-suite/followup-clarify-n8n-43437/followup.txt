@@ -1,0 +1,1 @@
+So in short: $now and $today are now created on first use instead of for every item, right? Could that change what an existing workflow gets for $now?

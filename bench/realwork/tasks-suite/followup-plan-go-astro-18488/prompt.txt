@@ -1,0 +1,34 @@
+A bug report came in for this repository:
+
+CSP: sha256 of the empty string added to script-src and style-src for external <link> and <script src>
+
+### Astro Info
+
+Astro v7.3.8 (also present in the v7.4.2 source), static output, `security.csp` enabled, `build.inlineStylesheets: 'never'`.
+
+### Describe the Bug
+
+With CSP meta tags on, every page's `script-src` and `style-src` contain `'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU='` — the SHA-256 of the empty string — even when the page has no inline `<script>` or `<style>` at all.
+
+Cause, as far as I can read the built code:
+
+- `core/render/ssr-element.js` puts an external stylesheet into a page's head *styles* as `{ props: { rel: 'stylesheet', href }, children: '' }`, and an external module script into *scripts* as `{ props: { type: 'module', src }, children: '' }`.
+- `core/fetch/fetch-state.js` (`createResult`, ~line 303) then hashes `style.children` / `script.children` for **every** entry when `shouldInjectCspMetaTags` is set, so each external `<link>` / `<script src>` contributes the hash of `''`.
+
+The same hash is visible in the CSPs pasted in #14495, #16635 and #15408, but none of those is about it.
+
+### What's the expected result?
+
+Only inline elements (non-empty `children`, no `href` / `src`) are hashed. On its own the extra hash only allows an empty `<style>`/`<script>`, but per CSP Level 3 any hash in a directive makes `'unsafe-inline'` ignored (https://www.w3.org/TR/CSP3/#allow-all-inline), so a project that relies on `'unsafe-inline'` for element styles or scripts would have it silently disabled by a hash it never asked for.
+
+Suggested fix: skip entries that have an `href`/`src` (or empty `children`) in the loop in `createResult`.
+
+### Link to Minimal Reproducible Example
+
+Any static project with `security: { csp: true }` and a global stylesheet import plus one hoisted `<script>`: build, then read the `<meta http-equiv="content-security-policy">` in `dist/index.html` — both directives carry the empty-string hash while the page has no inline style or script.
+
+### Participation
+
+- [ ] I am willing to submit a pull request for this issue.
+
+How should we fix this? Give the options you see and the one you recommend. Do not change any files yet.

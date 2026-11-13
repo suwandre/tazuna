@@ -1,0 +1,8 @@
+{
+  "kind": "followup",
+  "lang": "git",
+  "split": "dev",
+  "difficulty": "easy",
+  "source": "ops-ci-fix-same-pr split in two turns",
+  "turns": 2
+}

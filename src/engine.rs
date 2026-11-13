@@ -212,7 +212,15 @@ pub fn serve(args: &[String]) -> Result<()> {
         }
     });
     let cwd = std::env::current_dir()?;
-    let session = format!("own-{}-{:x}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos());
+    // `--resume ID` (tazuna -c / --resume): the history this session left on disk, when it was on the same API (until 0.1.119
+    // the flag was ignored and a resumed own-loop session started empty, while a Claude one went on)
+    let resume = flag("--resume");
+    let resumed: Option<(String, Vec<Value>)> = resume.as_deref().and_then(|id| Some((id.to_string(), load_history(id, api)?)));
+    if resume.is_some() && resumed.is_none() {
+        emit(&json!({"type": "system", "subtype": "resume_failed", "message": "this session left no history this model can read (an earlier tazuna, or another kind of provider): starting fresh"}));
+    }
+    let session = resumed.as_ref().map(|r| r.0.clone()).unwrap_or_else(|| format!("own-{}-{:x}", std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
     let tools = crate::mcp::tools();
     // TAZUNA_SEARCH_TOOLS (`--search-tools`): grep and glob as tools of their own, as DeepSeek's own harness has: there
     // DeepSeek searched and read through them and ran bash 6 times a task; in the own loop it grepped, cat-ed and sed-ed
@@ -253,7 +261,9 @@ pub fn serve(args: &[String]) -> Result<()> {
         price,
         tools: fns,
         // Responses and Messages keep the system prompt outside the history
-        msgs: if api == Api::Chat { vec![json!({"role": "system", "content": system})] } else { vec![] },
+        msgs: if api == Api::Chat { vec![json!({"role": "system", "content": system})] } else { vec![] }.into_iter()
+            .chain(resumed.map(|r| r.1).unwrap_or_default()).collect(),
+        saved: history_file(&session),
         server: crate::mcp::Server::new(cwd).with_read_dedupe(),
         hub,
         session,
@@ -281,12 +291,25 @@ pub fn serve(args: &[String]) -> Result<()> {
         };
         if msg["type"] == "user" {
             loop_.run(&msg["message"]["content"], msg["tazuna_followup"] == true, &rx);
+            loop_.save();
         }
         if is_stop(&msg) {
             STOPS_TAKEN.fetch_add(1, Ordering::SeqCst);
         }
         loop_.set_mode(&msg); // a mode switch while idle; an interrupt while idle has nothing to stop
     }
+}
+
+/// An own-loop session's history on disk. Only our own ids ("own-<pid>-<hex>"), so a crafted id cannot name another path.
+fn history_file(session: &str) -> Option<std::path::PathBuf> {
+    let ours = session.starts_with("own-") && session.len() < 80 && session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    ours.then(|| crate::labels::dir().ok()).flatten().map(|d| d.join("own-sessions").join(format!("{session}.json")))
+}
+
+/// A saved history, when it was written for the same API (a Chat history means nothing to Responses or Messages).
+fn load_history(session: &str, api: Api) -> Option<Vec<Value>> {
+    let v: Value = serde_json::from_str(&std::fs::read_to_string(history_file(session)?).ok()?).ok()?;
+    (v["api"] == format!("{api:?}")).then(|| v["msgs"].as_array().cloned().unwrap_or_default())
 }
 
 struct Loop {
@@ -299,6 +322,9 @@ struct Loop {
     price: Price,
     tools: Vec<Value>,
     msgs: Vec<Value>,
+    /// Where the history goes after each run, for a later `--resume` (the session id it started with; a moved
+    /// conversation's cache key changes `session`, not this).
+    saved: Option<std::path::PathBuf>,
     server: crate::mcp::Server,
     /// The user's MCP servers while MCP is on (`/mcp on`): the `mcp` tool.
     hub: Option<crate::mcpc::Hub>,
@@ -647,6 +673,16 @@ impl Loop {
     }
 
     /// One user message: model calls and tool runs until the model answers without tools, or a cap or interrupt ends it.
+    /// The history after a run, for `--resume` (the system prompt is rebuilt at start, so a Chat history leaves it out).
+    fn save(&self) {
+        let Some(p) = &self.saved else { return };
+        let skip = usize::from(self.api == Api::Chat).min(self.msgs.len());
+        if let Some(d) = p.parent() {
+            let _ = std::fs::create_dir_all(d);
+        }
+        let _ = std::fs::write(p, json!({"api": format!("{:?}", self.api), "msgs": &self.msgs[skip..]}).to_string());
+    }
+
     fn run(&mut self, content: &Value, followup: bool, rx: &Receiver<Value>) {
         self.msgs.push(json!({"role": "user", "content": text_of(content)}));
         if !followup {
@@ -1176,6 +1212,7 @@ pub fn explore_serve(args: &[String]) -> Result<()> {
         price,
         tools,
         msgs: vec![],
+        saved: None, // the reviewer's one-off loop keeps nothing
         server: crate::mcp::Server::new(cwd),
                 hub: None,
 session: format!("explore-{}", std::process::id()),
@@ -2045,6 +2082,7 @@ mod tests {
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
+            saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
 session: "s".into(),
@@ -2097,6 +2135,7 @@ session: "s".into(),
             tools: vec![],
             msgs: vec![json!({"role": "user", "content": "fix it"}), json!({"type": "reasoning", "encrypted_content": "pool-50"}),
                        json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "plan: parser first"}]})],
+            saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
 session: "s1".into(),
@@ -2148,6 +2187,7 @@ session: "s1".into(),
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![],
+            saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
 session: "s1".into(),
@@ -2210,6 +2250,7 @@ data: {\"choices\":[{\"delta\":{\"reasoning\":\"at a\"}}]}\n\n";
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
+            saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
 session: "s".into(),
@@ -2279,6 +2320,7 @@ session: "s".into(),
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
+            saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
 session: "s".into(),
@@ -2379,6 +2421,7 @@ data: {\"type\":\"message_stop\"}\n";
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![],
+            saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
 session: "s".into(),
@@ -2682,6 +2725,7 @@ session: "s".into(),
             msgs: vec![json!({"role": "user", "content": "fix it"}),
                 json!({"role": "assistant", "content": [{"type": "thinking", "thinking": "hm", "signature": "x"}, {"type": "tool_use", "id": "t1", "name": "bash", "input": {}}]}),
                 json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]})],
+            saved: None,
             server: crate::mcp::Server::new(std::env::temp_dir()),
                         hub: None,
 session: "s".into(),
@@ -2725,6 +2769,7 @@ session: "s".into(),
             price: (0.0, 0.0, 0.0),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
+            saved: None,
             server: crate::mcp::Server::new(std::env::temp_dir()),
                         hub: None,
 session: "s".into(),
@@ -2747,6 +2792,20 @@ session: "s".into(),
         let last = sent.borrow()[8]["messages"].as_array().unwrap().last().unwrap().clone();
         assert_eq!((last["role"].as_str(), last["content"].as_str()), (Some("user"), Some(NUDGE)));
         assert_eq!(events.borrow().last().unwrap()["num_turns"].as_u64(), Some(3));
+    }
+
+    #[test]
+    fn a_saved_own_session_is_read_back_by_the_same_api_only() {
+        assert!(super::history_file("own-../../etc/passwd").is_none() && super::history_file("4b1d-claude").is_none(), "only our own ids");
+        let id = format!("own-test-{}", std::process::id());
+        let p = super::history_file(&id).unwrap();
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        let msgs = vec![json!({"role": "user", "content": "fix it"}), json!({"role": "assistant", "content": "done"})];
+        std::fs::write(&p, json!({"api": format!("{:?}", super::Api::Chat), "msgs": msgs}).to_string()).unwrap();
+        let (same, other) = (super::load_history(&id, super::Api::Chat), super::load_history(&id, super::Api::Messages));
+        std::fs::remove_file(&p).unwrap();
+        assert_eq!(same, Some(msgs));
+        assert_eq!(other, None, "a Chat history is not sent to the Messages API");
     }
 
     #[test]
@@ -2798,6 +2857,7 @@ session: "s".into(),
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
+            saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
 session: "s".into(),
@@ -2847,6 +2907,7 @@ session: "s".into(),
             price: (0.0, 0.0, 0.0),
             tools: vec![],
             msgs: vec![],
+            saved: None,
             server: crate::mcp::Server::new(std::env::temp_dir()),
                         hub: None,
 session: "s".into(),
@@ -2898,6 +2959,7 @@ session: "s".into(),
             price: (0.0, 0.0, 0.0),
             tools: vec![],
             msgs: vec![],
+            saved: None,
             server: crate::mcp::Server::new(dir.to_path_buf()),
                         hub: None,
 session: "s".into(),

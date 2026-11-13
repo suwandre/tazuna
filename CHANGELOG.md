@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.119 (2026-11-13): an own-loop session resumes with its history; headless runs take a second message
+
+- `tazuna -c` / `--resume` on an own-loop model (SubRouter, Mortera, OpenRouter, Mistral, Kenari) started with an empty
+  history: tazuna never passed the session to the engine, and the engine kept no history to read. The engine now saves
+  each session's history after every reply (~/.local/share/tazuna/own-sessions/) and reads it back when resumed, on the
+  same kind of API (a session moved to another kind of provider says so and starts fresh). Checked on the bench VM: a
+  word planted in one process was answered by the next (`--run` then `--run -c`, DeepSeek V4.1 Flash on SubRouter).
+- `tazuna --run P --then F` (repeatable): later messages of the same session, each sent once the last reply is in,
+  every reply kept in the result. The suite's follow-up kind uses it (plan then "go ahead", a TL;DR then "so X, right?",
+  find why CI fails then "same PR"): 1/1 hidden test, 9/10 judge, 7/7 end-state checks in the pilot.
+  No measurable metric changes.
+
 ## 0.1.118 (2026-11-12): SubRouter's models and prices are fetched at start
 
 - SubRouter's model list and cheapest prices came only with a tazuna release (built into src/routes.json), so a model it

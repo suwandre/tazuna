@@ -476,6 +476,7 @@ impl Session {
                     "reasoning_dropped" => "the provider refused the reasoning: sent again without it",
                     "reasoning_resent" => "the provider asked for the reasoning: sent again with it",
                     "cache_key_dropped" => "the provider refused the cache key: sent again without it",
+                    "resume_failed" => "session",
                     _ => return,
                 };
                 // whole (the transcript cuts it until clicked), a known provider refusal said in plain words: a route switch
