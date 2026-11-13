@@ -125,3 +125,22 @@ question, one plan, one ops. The pilot tasks are all dev.
   added a commit before pushing: the check now asks that the branch holds the original commits. The gh stand-in also
   records a `--body-file`'s text now (a run used one for the PR description).
 
+## Own-loop comparison, first pass (2026-11-13)
+
+tazuna, OpenCode, pi and OMP on DeepSeek V4.1 Flash high through SubRouter, one run per task, Fable 5.2 high judging
+each answer task's four answers together. Incomplete: the SubRouter balance capped the round, so OpenCode and OMP missed
+the question and review tasks and pi three tasks; tazuna ran at 0.1.120 (its first pass at 0.1.119 spent its share on
+three change tasks, below) and two of its runs read other runs' saved histories and were left out (a jail gap, fixed).
+
+- Change (7, hidden tests), ops (4, end-state checks), code follow-ups (2): every harness passed nearly all; the hard
+  change-astro-18651 got 1-3 of 7 from everyone. tazuna 0.1.120: 6 of 7 change tasks fully, ops 4/4, follow-ups 1/1
+  and 6/7.
+- The 9 answer tasks all four answered (5 investigate, 3 plan, 1 follow-up): OpenCode 8.11, tazuna 7.89, OMP 7.89,
+  pi 7.78, within noise. tazuna against pi on the 17 they share: 7.65 to 7.41. Plan was tazuna's lowest kind (5.75 over
+  4 against 6.25-7.50): it recommended a broader design than the maintainers' fix twice, as others did once each.
+- Speed found the real gap: tazuna 0.1.119 took 26-57 min per Astro change task where the others took 2-11, running
+  the whole monorepo's tests and chasing a network test's failure. 0.1.120 fixed that (173 to 71 min on the four dev
+  change tasks).
+- Leak-seeking: on both pydantic tasks tazuna's DeepSeek searched the whole home folder for the task's name and other
+  runs' session ids; the jail hid the repos and transcripts but not 0.1.119's own-sessions folder.
+
