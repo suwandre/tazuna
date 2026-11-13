@@ -1,0 +1,1 @@
+Answer: 0.250 L x 0.40 mol/L = 0.100 mol; molar mass 58.44 g/mol; mass = 5.84 g (5.844). A good answer may add: dissolve in less water, then fill to the 250 mL mark (volume of solution, not of water added).

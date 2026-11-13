@@ -1,0 +1,1 @@
+Answer: $1,199.10 (to the cent). Formula: P = L*r / (1 - (1+r)^-n) with r = 0.06/12 = 0.005 and n = 360. A good answer shows the formula and lands within a cent; total paid over the loan is about $431,676 if mentioned.

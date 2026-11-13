@@ -1,0 +1,1 @@
+Students' scores are in B2:B30 and the matching course credits in C2:C30. Write one spreadsheet formula for the credit-weighted average score, ignoring rows where the score cell is blank, and explain briefly.

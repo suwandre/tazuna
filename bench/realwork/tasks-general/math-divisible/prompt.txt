@@ -1,0 +1,1 @@
+How many positive integers n with 1 <= n <= 1000 make n^2 + 1 divisible by 5? Give the number and a short justification.

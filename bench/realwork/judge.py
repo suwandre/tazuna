@@ -57,10 +57,32 @@ Reply with only a JSON object: {"<candidate id>": {"correctness": n, "coverage":
 DIMS_ANSWER = ["correctness", "coverage", "precision", "clarity", "fit"]
 
 
+# the general set (tasks-general, 2026-11-13): math, science, law, writing, formulas, software architecture; no codebase
+SYSTEM_GENERAL = """You are a strict expert grading anonymous answers to one request outside coding (math, science, law,
+writing, spreadsheet formulas or software architecture). The reference gives the correct result or the points a good
+answer covers, and any constraints the request set. Do not reward length or confident tone; a wrong final answer or a
+broken constraint (length, form) costs heavily, and a confident wrong claim is worse than saying it is unsure.
+
+Score each dimension 1-5:
+- correctness: what it states is true; the final answer or result is right
+- coverage: it covers what the reference says matters
+- precision: no wrong claims, no padding
+- clarity: easy to follow and use
+- fit: answers what was asked, in the form and length asked
+Then overall 1-10.
+
+Reply with only a JSON object: {"<candidate id>": {"correctness": n, "coverage": n, "precision": n, "clarity": n, "fit": n, "overall": n, "note": "<one sentence>"}, ...}"""
+
+
+def general_kind(task):
+    m = task / "meta.json"
+    return m.exists() and json.loads(m.read_text()).get("kind") == "general"
+
+
 def answer_kind(task):
     m = task / "meta.json"
     # a follow-up whose second turn asks for a change has hidden tests or an end-state check: graded as code, not as an answer
-    return m.exists() and json.loads(m.read_text()).get("kind") in ("review", "question", "investigate", "plan", "followup") \
+    return m.exists() and json.loads(m.read_text()).get("kind") in ("review", "question", "investigate", "plan", "followup", "general") \
         and not json.loads((task / "git.json").read_text()).get("hidden_cmd")
 
 
@@ -198,7 +220,7 @@ def judge_task(task_name, model, effort, passes):
                 c = cands[i]
                 ans = c["final"] if len(c["final"]) <= MAX_DIFF else c["final"][:MAX_DIFF] + "\n[answer truncated]"
                 parts.append(f"# Candidate {cid}\n{ans or '(no answer)'}" + (f"\n\n(it also changed files:)\n```diff\n{c['diff'][:4000]}\n```" if c["diff"].strip() else ""))
-            verdict = ask_judge("\n\n".join(parts), model, effort, SYSTEM_ANSWER)
+            verdict = ask_judge("\n\n".join(parts), model, effort, SYSTEM_GENERAL if general_kind(task) else SYSTEM_ANSWER)
             for cid, i in ids.items():
                 if cid in verdict:
                     scores[i].append(verdict[cid])

@@ -1,0 +1,1 @@
+Write a short essay (250-300 words, exactly three paragraphs) arguing that small software teams should prefer boring, proven technology over new tools. Include at least one counterargument and answer it.

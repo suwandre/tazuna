@@ -1,0 +1,1 @@
+Design a URL shortener for about 100 million new links per month and 10x as many redirects. Cover the key generation, storage, the redirect path, and scaling, in under 400 words.

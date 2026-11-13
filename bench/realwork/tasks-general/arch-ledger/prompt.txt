@@ -1,0 +1,1 @@
+For a bank's account ledger, compare event sourcing with a conventional CRUD table of balances, and recommend one. Keep it under 300 words.

@@ -1,0 +1,1 @@
+In a spreadsheet, column A holds dates (A2:A1000) and column B holds amounts (B2:B1000). Write one formula (Excel or Google Sheets) that returns the total of B for dates in the current calendar month, and explain it in one or two sentences.

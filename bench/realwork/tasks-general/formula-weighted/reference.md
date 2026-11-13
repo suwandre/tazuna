@@ -1,0 +1,1 @@
+A correct formula: =SUMPRODUCT(B2:B30, C2:C30) / SUMIFS(C2:C30, B2:B30, "<>") (blank scores add 0 to the numerator, and their credits must be left out of the denominator), or an equivalent with FILTER or SUMPRODUCT((B2:B30<>"")*C2:C30). Using SUM(C2:C30) as the denominator is wrong when blanks exist; the answer should handle it.

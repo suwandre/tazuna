@@ -1,0 +1,1 @@
+A 2 kg ball is dropped from rest from 20 m above the ground. Ignoring air resistance and using g = 9.81 m/s^2, how long does it fall and how fast is it moving when it hits the ground?
