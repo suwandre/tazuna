@@ -6,7 +6,7 @@ candidates.jsonl. Public GitHub data only; writes task folders into ../realwork/
   question     "explain this PR": the PR as the last commit (as for a review), its description and diff the reference
   plan         "how should we fix this": a bug issue as the prompt, the maintainers' fix as the reference approach
 """
-import json, random, subprocess
+import json, random, subprocess, time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -14,7 +14,12 @@ OUT = HERE.parent / "realwork" / "tasks-suite"
 
 
 def api(path):
-    return json.loads(subprocess.run(["gh", "api", path], capture_output=True, text=True, check=True).stdout)
+    for wait in (5, 20, 60, 0):  # GitHub's API drops a call now and then
+        r = subprocess.run(["gh", "api", path], capture_output=True, text=True, timeout=120)
+        if r.returncode == 0 or not wait:
+            r.check_returncode()
+            return json.loads(r.stdout)
+        time.sleep(wait)
 
 
 def diff(repo, n, limit=6000):
@@ -45,15 +50,25 @@ def main():
     rnd = random.Random(20261112)
     inv = [r for r in rows if "investigate" in r["kinds"] and r["bug_issues"]]
     rnd.shuffle(inv)
-    picks = {"investigate": inv[:3], "plan": inv[3:6]}
+    # the pilots took inv[:3] and inv[3:6]; the fill (2026-11-13) the next ones, past any PR another task already uses
+    # (named, so a rerun draws the same: computed from the task folders, a second run drew past the first's picks)
+    used = {18535, 18608, 18630, 18506, 18497, 18399, 12525, 43437, 18651, 18544, 18511, 18565, 18376, 18488, 18500, 18602}
+    more = [r for r in inv[6:] if r["number"] not in used]
+    picks = {"investigate": inv[:3] + more[:3], "plan": inv[3:6] + more[3:4]}
     qs = [r for r in rows if "change" in r["kinds"] and 80 <= r["size"] <= 600]
     rnd.shuffle(qs)
     by_repo, question = set(), []
-    for r in qs:  # one per repo, for spread
+    for r in qs:  # one per repo first, for spread
         if r["repo"] not in by_repo:
             by_repo.add(r["repo"]); question.append(r)
         if len(question) == 3:
             break
+    # then four more, any repo, at most two per repo in all
+    for r in qs:
+        if len(question) == 7:
+            break
+        if r not in question and r["number"] not in used and sum(q["repo"] == r["repo"] for q in question) < 2:
+            question.append(r)
     picks["question"] = question
     for kind, rs in picks.items():
         for r in rs:
@@ -62,6 +77,8 @@ def main():
             merge = pr["merge_commit_sha"]
             name = repo.split("/")[1]
             slug = f"{kind}-{name}-{n}"
+            if (OUT / slug).exists():  # built before (and maybe edited by hand since): left as it is
+                continue
             git = dict(repo=f"/Users/suwandre/bench-repos/{name}", pr=pr["html_url"], setup="true")
             meta = dict(kind=kind, lang="python" if name == "pydantic" else "typescript", split="dev",
                         size=pr["additions"] + pr["deletions"], files=pr["changed_files"], merged_at=pr["merged_at"])

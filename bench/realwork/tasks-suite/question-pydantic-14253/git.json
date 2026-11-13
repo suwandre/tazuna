@@ -1,0 +1,8 @@
+{
+  "repo": "/Users/suwandre/bench-repos/pydantic",
+  "pr": "https://github.com/pydantic/pydantic/pull/14253",
+  "setup": "true",
+  "base": "1e40cc1354854b1a4a94ad1ccdc0f75c66ec7cb4",
+  "pr_head": "57ffc4a517ddbd16ce697b4600d24a4fa1e33801",
+  "pr_title": "Fix more issues about GC tracking in `pydantic-core` (#14253)"
+}

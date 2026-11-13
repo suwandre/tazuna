@@ -1,0 +1,83 @@
+A bug report came in for this repository:
+
+Title: collectionStorage "chunked": getChunkEnd() calls TextEncoder.encode() per character, ~60s of every content sync on large stores
+
+### Astro Info
+
+```
+Astro                    v7.4.0
+Node                     v22.23.3
+System                   Linux (x64)
+Package Manager          pnpm
+Output                   static
+Adapter                  none
+Integrations             @astrojs/react (v6.0.0)
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+_No response_
+
+### Describe the Bug
+
+With `experimental.collectionStorage: "chunked"`, content sync re-serializes the whole data store on every build (even when every loader reports "unchanged" and all part files end up identical and skipped). Most of that time goes into `getChunkEnd()` in `packages/astro/src/content/data-store-writer.ts`:
+
+https://github.com/withastro/astro/blob/c75e89711a4935a0befea6f768842f6d6a9de2bb/packages/astro/src/content/data-store-writer.ts#L71
+
+```ts
+const charBytes = ENCODER.encode(str.slice(index, index + charLength)).length;
+```
+
+It calls `TextEncoder.encode()` once **per character** of the serialized store, purely to learn that character's UTF-8 byte width. On a store of ~44k entries (~180 MB serialized) this is 63s of an 89s content sync, measured with `node --cpu-prof` on `astro sync`:
+
+| | self time |
+|---|---|
+| `getChunkEnd` (TextEncoder per char) | 63s |
+| devalue `stringify_string` | 16s |
+| everything else | ~10s |
+
+The UTF-8 width is fully determined by the code point, so the encoder call can be replaced by arithmetic:
+
+```ts
+const charBytes = codePoint < 0x80 ? 1 : codePoint < 0x800 ? 2 : codePoint < 0x10000 ? 3 : 4;
+```
+
+The only non-obvious input is a lone surrogate: `TextEncoder` emits U+FFFD (3 bytes) for it, and the lone surrogate's own code point (0xD800–0xDFFF) also falls in the 3-byte branch, so the two agree. I differential-fuzzed the original vs. the arithmetic version on ~25M cases (ASCII, 2/3-byte BMP, boundary values 0x7F/0x80/0x7FF/0x800/0xFFFF, astral pairs, lone high/low surrogates, reversed surrogates, U+FFFD, NUL; `maxBytes` 1–1000; arbitrary start offsets including mid-pair) comparing both `endIndex` and `bytes` as well as the full `chunkString()` split: 0 mismatches, parts always rejoin exactly, no part exceeds `maxBytes` except the single-code-point case.
+
+Results on the real project (16.4k pages, warm cache): content sync **89s → 5.5s**, full `astro build` **2:28 → 1:31**. The 14 part files hash identically before and after, so no cache invalidation. I'm currently carrying this as a one-line `pnpm patch`.
+
+### What's the expected result?
+
+Content sync time should be dominated by serialization, not by a per-character `TextEncoder` round-trip. The arithmetic width produces byte-identical output ~100× faster (see repro: 10.3s → 0.08s on a 20 MB string).
+
+### Link to Minimal Reproducible Example
+
+https://gist.github.com/Abhirup-99/2adc2e813117342d215f1b998a4a461a (repro.mjs + fuzz-equivalence.mjs). Slow line: https://github.com/withastro/astro/blob/c75e89711a4935a0befea6f768842f6d6a9de2bb/packages/astro/src/content/data-store-writer.ts#L71 — standalone timing script below (no Astro project needed; `npm i astro@7.4.0 && node repro.mjs`):
+
+<details>
+<summary>repro.mjs</summary>
+
+```js
+// Repro for: getChunkEnd() in astro/dist/content/data-store-writer.js calls
+// TextEncoder.encode() once per character to learn its UTF-8 width.
+//
+//   npm i astro@7.4.0 && node repro.mjs
+//
+// Builds a 20 MB devalue-like string (mostly ASCII with some multi-byte
+// chars, like a real serialized data store) and times chunkString() against
+// a copy of the same function with the one-line arithmetic fix.
+import { chunkString } from "./node_modules/astro/dist/content/data-store-writer.js";
+
+const MB = 1024 * 1024;
+const CHUNK = 10 * MB; // default collectionStorage: "chunked" part size
+const parts = [];
+let bytes = 0;
+while (bytes < 20 * MB) {
+	const s = `["brand/${bytes}",{"title":"Été café — naïve 日本語 emoji 😀","body":"${"lorem ipsum ".repeat(40)}"}]\n`;
+	parts.push(s);
+	bytes += s.length;
+}
+const str = parts.join("");
+console.log(`input: ${(str.length
+
+Find the root cause: what in the code makes this happen, with file:line, and why. Do not fix it or change any files.

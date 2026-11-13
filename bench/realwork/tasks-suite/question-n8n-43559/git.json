@@ -1,0 +1,8 @@
+{
+  "repo": "/Users/suwandre/bench-repos/n8n",
+  "pr": "https://github.com/n8n-io/n8n/pull/43559",
+  "setup": "true",
+  "base": "fcafa080929ceb2e71875f8d8450d604ec6a7294",
+  "pr_head": "f932917665607b1e639ce222946293f3f80a2de8",
+  "pr_title": "fix(AI Agent Node): Keep the model's text before tool calls in agent history (#43559)"
+}

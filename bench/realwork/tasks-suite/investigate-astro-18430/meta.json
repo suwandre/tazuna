@@ -1,0 +1,10 @@
+{
+  "kind": "investigate",
+  "lang": "typescript",
+  "split": "held-out",
+  "size": 40,
+  "files": 3,
+  "merged_at": "2026-10-20T17:19:39Z",
+  "source": "issue 18429 + fix PR 18430",
+  "difficulty": "medium"
+}

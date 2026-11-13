@@ -1,0 +1,85 @@
+A bug report came in for this repository:
+
+Title: pydantic-core 2.50.2: model_validate_json retains ~25% more memory than 2.50.1 for large JSON payloads
+
+### Initial Checks
+
+- [x] I confirm that I'm using Pydantic V2
+
+### Description
+
+Hi! 
+
+While bisecting a ~650 MB increase in the peak memory of one of our scheduled jobs, we ended up on a potential pydantic-core regression.
+
+**What we see:** parsing a large JSON document with `model_validate_json` retains noticeably more live memory on pydantic-core 2.50.2 (pydantic 2.14.2) than on 2.50.1 (pydantic 2.14.1), for the *same* parsed object graph. Roughly **+25%** on our workload.
+
+**What we'd expect:** the same retained memory as 2.50.1 for the same input, since the parsed data is identical.
+
+We verified a few things to narrow it down:
+
+- **Bisected to pydantic-core 2.50.1 → 2.50.2.** It is still present in pydantic 2.14.3 (pydantic-core 2.50.4).
+- **It's live memory, not GC garbage or fragmentation.** The extra memory is still held after `gc.collect()` (we checked VmRSS, not just peak RSS). The parsed objects are all reachable and accounted for — the new version simply builds them with more overhead.
+- **It scales with the number of mapping entries, not with value size or type.** Varying the number of key/value pairs per object in the same document:
+
+  | entries per object | retained (2.14.1) | retained (2.14.2) | delta |
+  |---|---|---|---|
+  | 5   | 276 MB  | 229 MB  | −47 MB (new is *lower*) |
+  | 30  | 463 MB  | 556 MB  | +93 MB |
+  | 100 | 1214 MB | 1675 MB | +461 MB |
+
+  All points fit ≈ **−740 B per object + 53 B per mapping entry** (break-even at ~14 entries). For a fixed entry count the delta is the same for empty-string, small-int, and ~20-char string values, which makes it look like per-key / per-entry overhead in the dict-building path.
+- **It's not a leak.** Parsing the same document in 6 sequential batches (dropping the result and collecting between batches) gives a flat peak in both versions; only the per-batch peak is higher.
+- **No model machinery required.** A plain `RootModel[dict[str, object]]` reproduces it (see below), as does our real hierarchy of nested models with `alias_generator=to_camel`.
+- **Standalone jiter is not affected.** `jiter.from_json` from the PyPI `jiter` package uses identical RSS on the same payloads in 0.16.0 and 0.18.0. That points at pydantic-core's own JSON → Python-object construction rather than jiter's top-level object builder (though pydantic-core does consume jiter through the finer-grained iter/string APIs, which also changed between those versions).
+
+For reference, the 2.50.1 → 2.50.2 window contains two commits that touch exactly this path:
+
+- `331637ca` — Bump PyO3 to 0.30.1, jiter to 0.18.0, use `PyFrozenDict`
+- `2771e57c` — Make JSON validation by iteration consistent with Python approach
+
+**Real-world impact:** the job in question parses batches of ~100k objects (~74 MB of JSON, mixed str/int/float/bool values) per hour. After the upgrade its peak on the host went from ~2.0 GB to ~2.7 GB for the same data, which matches the per-entry delta above. The host has limited headroom, so we had to pin pydantic back to 2.14.1 in the meantime.
+
+Observed output (same machine, CPython 3.14.8, Linux x86_64):
+
+```console
+$ uv run --isolated --python 3.14 --with "pydantic==2.14.1" python repro.py
+python 3.14.8
+pydantic 2.14.1, pydantic-core 2.50.1
+json=47MB  retained_after_validate=356MB
+
+$ uv run --isolated --python 3.14 --with "pydantic==2.14.2" python repro.py
+python 3.14.8
+pydantic 2.14.2, pydantic-core 2.50.2
+json=47MB  retained_after_validate=443MB
+
+$ uv run --isolated --python 3.14 --with "pydantic==2.14.3" python repro.py
+python 3.14.8
+pydantic 2.14.3, pydantic-core 2.50.4
+json=47MB  retained_after_validate=443MB
+```
+
+Could you check whether this is a known issue? I'm happy to provide more measurements or traces if that would help.
+
+
+### Example Code
+
+```Python
+import gc
+import json
+import resource
+import sys
+
+import pydantic
+import pydantic_core
+from pydantic import RootModel
+
+
+class Plain(RootModel):
+    root: dict[str, object]
+
+
+def rss_mb() -> float:
+    return resource.getru
+
+Find the root cause: what in the code makes this happen, with file:line, and why. Do not fix it or change any files.

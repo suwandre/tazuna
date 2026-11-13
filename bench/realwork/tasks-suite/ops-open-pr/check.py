@@ -1,0 +1,16 @@
+from opslib import *
+s, log = started(), gh_log()
+B = "feat/retry-jitter"
+creates = [c for c in log if c["args"][:2] == ["pr", "create"]]
+c = creates[0] if creates else {"args": []}
+a = c["args"]
+head = a[a.index("--head") + 1] if "--head" in a else a[a.index("-H") + 1] if "-H" in a else B  # gh's default: the current branch
+base = a[a.index("--base") + 1] if "--base" in a else a[a.index("-B") + 1] if "-B" in a else "main"
+text = body(c).lower()
+report(dict(
+    branch_pushed=remote("rev-parse", B) == s["head"],
+    one_pr_created=len(creates) == 1,
+    pr_from_the_branch_to_main=head == B and base == "main",
+    description_says_what_changes="jitter" in text and "retry" in text,
+    main_untouched=remote("rev-parse", "main") == s["main"],
+))

@@ -1,0 +1,8 @@
+{
+  "repo": "/Users/suwandre/bench-repos/astro",
+  "pr": "https://github.com/withastro/astro/pull/18647",
+  "setup": "true",
+  "base": "21288058cc365da6a0a3e3719c2d13c000509053",
+  "pr_head": "f1c5a5fa8f7478f1424efbc0883e8bbfe75e6e86",
+  "pr_title": "Use compiler-rs for TypeScript plugin TSX conversion (#18647)"
+}

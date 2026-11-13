@@ -1,0 +1,40 @@
+A bug report came in for this repository:
+
+Title: Type variables wrongly replaced when two models share the same type variable instance
+
+### Initial Checks
+
+- [X] I confirm that I'm using Pydantic V2
+
+### Description
+
+From https://github.com/pydantic/pydantic/issues/9887#issuecomment-2382877486:
+
+```python
+from typing import Generic, TypeVar
+
+from pydantic import BaseModel
+
+T = TypeVar('T')
+
+class Model1(BaseModel, Generic[T]):
+    m2: 'Model2'
+
+class Model2(BaseModel, Generic[T]):
+    t: T
+
+Model1[int].model_validate({'m2': {'t': 'not_an_int'}})
+# raises a ValidationError, shouldn't
+```
+
+### Example Code
+
+_No response_
+
+### Python, Pydantic & OS Version
+
+```Text
+2.10
+```
+
+How should we fix this? Give the options you see, their trade-offs, and the one you recommend for this codebase, with the files it would touch. Do not change any files.

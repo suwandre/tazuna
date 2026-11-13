@@ -1,0 +1,10 @@
+{
+  "kind": "investigate",
+  "lang": "python",
+  "split": "held-out",
+  "size": 6,
+  "files": 2,
+  "merged_at": "2026-11-06T21:09:19Z",
+  "source": "issue 14234 + fix PR 14247",
+  "difficulty": "medium"
+}

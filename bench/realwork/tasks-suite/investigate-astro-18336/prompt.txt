@@ -1,0 +1,67 @@
+A bug report came in for this repository:
+
+Title: Inlined Vue <style> blocks are served untransformed (unscoped, raw v-bind()) by dev server
+
+### Astro Info
+
+```block
+Astro                    v7.3.8
+Vite                     v8.3.4
+Node                     v24.11.1
+System                   Windows (x64)
+Package Manager          npm
+Output                   static
+Adapter                  none
+Integrations             @astrojs/vue (v7.0.3)
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+_No response_
+
+### Describe the Bug
+
+When using `astro dev` server, emitted Vue CSS in the initial HTML is not the version that was transformed by Vite, dropping style scoping and leaving raw `v-bind` strings in CSS. I suspect that the server-rendered `<style>` was captured before `@vitejs/plugin-vue` could transform it.
+
+This causes collisions between components and broken initial states. In the attached reproduction, `astro dev` outputs unscoped CSS at first, and a subsequent script that Astro adds in for Vite HMR fixes it. I believe the inline CSS is meant to be identical to what the Vite transform would swap in based on this comment in `vite-plugin-app/environment.js`:
+
+> The style tags should emulate what Vite injects so further HMR works as expected
+
+A build using `astro build` does not do this, and SSR using a Node adapter work too, so this is dev-only.
+
+I think this is similar to issue #17312, but is a different cause. It's also close to #16334, but that was closed only for ClientRouter and is still a different root cause.
+
+Here's a sample of the HTML produced by the reproduction:
+
+```html
+<style data-vite-dev-id="(big path)/src/components/VueA.vue?vue&amp;type=style&amp;index=0&amp;scoped=6f4de1fe&amp;lang.css">
+.box {
+    color: red;
+}
+</style><style data-vite-dev-id="(big path)/src/components/VueB.vue?vue&amp;type=style&amp;index=0&amp;scoped=bd4d3358&amp;lang.css">
+.box {
+    color: blue;
+}
+</style><style data-vite-dev-id="(big path)/src/components/VBind.vue?vue&amp;type=style&amp;index=0&amp;scoped=4c9bd129&amp;lang.css">
+.box {
+  background-color: green;
+  width: v-bind("wide ? '400px' : '100px'");
+}
+</style><script type="module" src="/@vite/client"></script><!-- more scripts --><div class="box" data-v-6f4de1fe>Vue A (should be red)</div><div class="box" data-v-bd4d3358>Vue B (should be blue)</div><div class="box" data-v-4c9bd129>Narrow</div></body></html>
+```
+
+In the reproduction, the flash is usually not visible, but with larger sites `astro dev` sometimes produces meaningful collisions and invalid CSS that causes spurious layout shifts while the page loads that disappear when actually built. If testing for JavaScript disabled behavior, this can also create the illusion of bugs.
+
+### What's the expected result?
+
+`astro dev` should use the transformed CSS for Vue components in the initial HTML, identical to the subsequent Vite transformed CSS.
+
+### Link to Minimal Reproducible Example
+
+https://stackblitz.com/edit/astro-dev-vue-bug-repro-1?file=src%2Fpages%2Findex.astro
+
+### Participation
+
+- [ ] I am willing to submit a pull request for this issue.
+
+Find the root cause: what in the code makes this happen, with file:line, and why. Do not fix it or change any files.

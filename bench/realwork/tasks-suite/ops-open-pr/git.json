@@ -1,0 +1,7 @@
+{
+  "repo": "/Users/suwandre/bench-repos/query",
+  "base": "f69b28a1dd2a2b4ca9b8f9117e0f60cc70443775",
+  "setup": "PYTHONPATH=$HOME/tazuna/bench/suite python3 $HOME/tazuna/bench/realwork/tasks-suite/ops-open-pr/setup.py",
+  "hidden_cmd": "PYTHONPATH=$HOME/tazuna/bench/suite python3 $HOME/tazuna/bench/realwork/tasks-suite/ops-open-pr/check.py",
+  "suite_cmd": "true"
+}

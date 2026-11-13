@@ -1,0 +1,10 @@
+{
+  "kind": "question",
+  "lang": "python",
+  "split": "dev",
+  "size": 138,
+  "files": 6,
+  "merged_at": "2026-11-08T11:52:38Z",
+  "source": "PR 14253",
+  "difficulty": "easy"
+}

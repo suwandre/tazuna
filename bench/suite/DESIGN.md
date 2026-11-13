@@ -107,3 +107,17 @@ One own-loop run each (DeepSeek V4.1 Flash high on SubRouter), Fable 5.2 high ju
   harnesses need the same two-message support before the baseline.
 - Found in passing: every answer ended with the nudge's "DONE" reply (fixed in 0.1.115); one DeepSeek answer began
   with an unclosed `<thinking>` block written as text (a model quirk, 1 of 9; watch it).
+
+## The suite now (2026-11-13)
+
+34 public tasks in bench/realwork/tasks-suite: review 3, question 7, change 7, investigate 6, plan 4, ops 4, follow-up 3
+(two-message). `split.py` holds out 8, drawn only from tasks nobody read closely: two change, two investigate, two
+question, one plan, one ops. The pilot tasks are all dev.
+
+- Review is short of its share (3 of a planned 9). The later-fix signal found 14 pairs, and most are not defects of the
+  earlier PR (image pins, a docs link the docs team was about to move, a refactor that "does not change the behavior").
+  It needs another source: review threads by people, not bots, whose point a later commit in the same PR addressed, on
+  more repos and a longer window.
+- Each new task gets one cheap own-loop run before it counts, to see that it works (suite-fill1); judging waits for a
+  weekly reset.
+

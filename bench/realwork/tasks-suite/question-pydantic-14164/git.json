@@ -1,0 +1,8 @@
+{
+  "repo": "/Users/suwandre/bench-repos/pydantic",
+  "pr": "https://github.com/pydantic/pydantic/pull/14164",
+  "setup": "true",
+  "base": "6b9a0d7b1e9a9897ae24427fa312dd7b2daff68c",
+  "pr_head": "132df974eaf99818dd98988d21a175015857e9d9",
+  "pr_title": "Fix deeply nested data being reported as a cyclic reference (#14164)"
+}
