@@ -192,3 +192,17 @@ helper subagents (1-2 minutes of Agent calls in the investigate run). Some of th
 change, Claude Code's investigate) ran while /tmp was full, so the gap is approximate. The next Claude-path work: is
 the delegation worth its time on short asks.
 
+## Explorer rule, hard tasks, and two experiments (2026-11-13, late)
+
+- The Claude path's explorer now takes broad searches only (0.1.121; CHANGELOG has the 12-task numbers). On four hard
+  tasks (Opus 5.5 high, judged with Claude Code): light rule judge 8.00, 18.3 min, $3.53; strict delegation 7.00, 18.7
+  min, $2.15 (Haiku's summaries cost the pydantic review its defect: 5 against 8); boss 7.33, 20.0 min, $2.75; Claude Code
+  7.67, 13.9 min, $4.07. One logic for all difficulties: delegation saves cost on hard tasks only by losing review detail.
+- change-astro-18651, the hard change: Claude Code 4/7 once, then 1/7 twice (mean 2.0); tazuna 1, 1, 1; tazuna without
+  the cover-all rule 3, 1, 3. No gap to Claude Code; a hint against cover-all on the Claude path, to test on more tasks.
+  No run but one fixed the dev base middleware the report does not name.
+- TAZUNA_ANSWER_RULES (own loop, a rule for requests that ask for no change), DeepSeek, six dev plan and review tasks x 2:
+  plan 7.17 to 7.33, review 4.67 to 5.17, all 5.92 to 6.25. Within noise; stays off. The default's plans scored 7.17 here
+  against 5.25 in the comparison round: that weakness was mostly noise. TAZUNA_EXPLORER_STRICT (0.1.120's rule) stays as
+  an experiment for measuring delegation.
+

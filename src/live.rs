@@ -101,6 +101,9 @@ const HISTORY_RULE: &str = "Before you change a file, read why it is the way it 
 /// same judge, -17% cost, 40-58% faster (2026-11-03).
 const CALLERS_RULE: &str = "Before you change a function, type or option, find every place that uses it and every code path that reaches it (other commands and entry points too), and make your change cover all of them.";
 
+/// Experiment (TAZUNA_ANSWER_RULES): how to answer a request that asks for no change.
+const ANSWER_RULE: &str = "When the request asks for an answer, a review or a plan rather than a change, the rules about changing code do not apply. Base every claim on code you read, with file:line, and say what you did not check. In a review, look past the diff: callers, data and formats written before the change, error and retry paths, and what the change stops doing; call a blocker a blocker. In a plan, recommend the change that solves the reported problem with the least risk for this codebase, and weigh broader fixes as alternatives.";
+
 const COVER_ALL_RULE: &str = "Make your change, and its tests, cover every command, flag or API the task names, and each one's error cases, not only the main path: read the code behind each one before you change it.";
 
 const WRITE_TESTS_RULE: &str = "Add or update tests for the behavior you change, including its edge cases: tazuna's check only runs the tests, it does not write them.";
@@ -113,6 +116,8 @@ const FINISH_RULES: &str = "Finish only when the task is fully done: every requi
 /// the code yourself"): on Opus a two-file question waited 25 s on Haiku (52 s against stock Claude Code's 22 s). Now the
 /// main model reads what it can find itself and sends only broad searches: 12 dev tasks of the suite took 36% less time
 /// (24.5 to 15.8 min, level with Claude Code's 15.6) at 13% more cost (still 23% under Claude Code), judge 7.75 to 7.63.
+/// Experiment (TAZUNA_EXPLORER_STRICT): 0.1.120's rule, for measuring where delegating every lookup pays off (hard tasks).
+const EXPLORER_STRICT_RULE: &str = "Do not explore the code yourself: no Read, cat, sed, head, tail, grep, rg or find to look around. Send every question about the code to the explorer subagent (Task tool, subagent_type explorer); it reads and searches the repo and answers with file paths, line ranges and the lines that matter. Ask several questions in parallel when they are independent. Read a file yourself only right before you edit it, and only the part you edit.";
 const EXPLORER_RULE: &str = "Read the code yourself when you know where to look (a file or two, or a function you can find with one grep). Send broader questions, such as where something is used across the repo or how a flow runs through many files, to the explorer subagent (Task tool, subagent_type explorer), several in parallel when they are independent; it answers with file paths, line ranges and the lines that matter.";
 
 /// `--explorer MODEL@URL`: the same rule for the explore tool, a cheap model on tazuna's own loop (`tazuna explore-mcp`).
@@ -1452,6 +1457,13 @@ impl Live {
                 prompt.push_str("\n- ");
                 prompt.push_str(COVER_ALL_RULE);
             }
+            // experiment (TAZUNA_ANSWER_RULES, 2026-11-13): the rules above are written for a change; the suite's own-loop
+            // round scored tazuna lowest on plans (it called the maintainers' targeted fix a symptom fix, twice) and reviews
+            // (approved, missing defects outside the diff)
+            if std::env::var_os("TAZUNA_ANSWER_RULES").is_some() {
+                prompt.push_str("\n- ");
+                prompt.push_str(ANSWER_RULE);
+            }
             if self.project_instructions {
                 let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                 prompt.push_str(&text);
@@ -1538,7 +1550,9 @@ impl Live {
                         "env": {"TAZUNA_EXPLORER_COSTS": self.explorer_costs}}}});
                     cmd.arg("--mcp-config").arg(server.to_string());
                 }
-                let explore_rule = self.explorer_provider.as_ref().map(|_| EXPLORE_TOOL_RULE).or(self.explorer.as_ref().map(|_| EXPLORER_RULE));
+                let strict = std::env::var_os("TAZUNA_EXPLORER_STRICT").is_some();
+                let explore_rule = self.explorer_provider.as_ref().map(|_| EXPLORE_TOOL_RULE)
+                    .or(self.explorer.as_ref().map(|_| if strict { EXPLORER_STRICT_RULE } else { EXPLORER_RULE }));
                 // only where verify can test the repo: the rule tells claude that tazuna runs the tests at the end
                 let scoped = self.test_scope && verify::covers(&self.verify, &self.cwd);
                 let pick = if boss && self.boss_pick {
