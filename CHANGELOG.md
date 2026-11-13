@@ -16,6 +16,27 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.121 (2026-11-13): the explorer takes broad searches only; short lookups stay with the main model
+
+- The Claude path's explorer rule said "Do not explore the code yourself ... Send every question about the code to the
+  explorer subagent". On Opus a question about a two-file PR waited 25 s on the Haiku explorer and took 52 s, where
+  stock Claude Code took 22 s. The rule now keeps short lookups (a file or two, one grep) with the main model and sends
+  broad questions to the explorer, in parallel when independent.
+
+Claude Opus 5.5 high, tazuna as the user runs it (repo profile, no boss), 12 dev tasks of the suite (bench/suite: two
+each of review, question, investigate, plan, change, ops), one run each, the answer tasks judged together:
+
+| | judge (8 answers) | change + ops | time | cost (API prices) |
+|---|---|---|---|---|
+| 0.1.120 (every lookup to the explorer) | 7.75 | 4/4 pass | 24.5 min | $3.71 |
+| 0.1.121 (broad searches only) | 7.63 | 3/4 pass | 15.8 min | $4.20 |
+| no explorer | (first 6 only) 8.75 | 2/2 | 10.0 of 6 tasks | $2.26 of 6 |
+| stock Claude Code | 7.88 | 3/4 pass | 15.6 min | $5.44 |
+
+Time down 36% and level with Claude Code, at 13% more cost (23% under Claude Code); judge within noise. The one ops
+miss is ops-combine-prs: with the repo's CONTRIBUTING.md read, 0.1.121 and Claude Code both stopped to ask whether to
+combine PRs against its "keep PRs focused", where 0.1.120 (which left the reading to Haiku) went ahead.
+
 ## 0.1.120 (2026-11-13): no whole-monorepo test run in a JS workspace; reasoning sent on every turn when asked
 
 - In a JavaScript/TypeScript workspace root (npm/yarn `workspaces`, pnpm-workspace.yaml, lerna.json) tazuna's check no

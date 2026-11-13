@@ -109,8 +109,11 @@ const TEST_SCOPE_RULE: &str = "While working, run only the tests that cover your
 const FINISH_RULES: &str = "Finish only when the task is fully done: every requirement and acceptance criterion in the request is met and checked. Do not stop to ask for confirmation or leave steps for the user. Before relying on a name you have not read (a database column, function, field, API), read where it is defined.";
 
 /// `--explorer`: reading code is most of a run's cost (each turn re-reads everything read so far at the main model's
-/// rate), so a cheaper subagent reads and answers in short; the main model reads a file only right before editing it.
-const EXPLORER_RULE: &str = "Do not explore the code yourself: no Read, cat, sed, head, tail, grep, rg or find to look around. Send every question about the code to the explorer subagent (Task tool, subagent_type explorer); it reads and searches the repo and answers with file paths, line ranges and the lines that matter. Ask several questions in parallel when they are independent. Read a file yourself only right before you edit it, and only the part you edit.";
+/// rate), so a cheaper subagent answers broad questions in short. Until 0.1.121 every lookup went to it ("Do not explore
+/// the code yourself"): on Opus a two-file question waited 25 s on Haiku (52 s against stock Claude Code's 22 s). Now the
+/// main model reads what it can find itself and sends only broad searches: 12 dev tasks of the suite took 36% less time
+/// (24.5 to 15.8 min, level with Claude Code's 15.6) at 13% more cost (still 23% under Claude Code), judge 7.75 to 7.63.
+const EXPLORER_RULE: &str = "Read the code yourself when you know where to look (a file or two, or a function you can find with one grep). Send broader questions, such as where something is used across the repo or how a flow runs through many files, to the explorer subagent (Task tool, subagent_type explorer), several in parallel when they are independent; it answers with file paths, line ranges and the lines that matter.";
 
 /// `--explorer MODEL@URL`: the same rule for the explore tool, a cheap model on tazuna's own loop (`tazuna explore-mcp`).
 const EXPLORE_TOOL_RULE: &str = "Do not explore the code yourself: no Read, cat, sed, head, tail, grep, rg or find to look around. Send every question about the code to the explore tool (mcp__explore__explore); it searches and reads the repo and answers with file paths, line ranges and the lines that matter. Ask several questions in parallel when they are independent. Read a file yourself only right before you edit it, and only the part you edit.";

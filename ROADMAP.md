@@ -302,6 +302,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-13: the Claude path's explorer takes broad searches only (0.1.121); the main model reads what it can find
+  itself. "Send every question to the explorer" made each short ask wait on Haiku, and the suite showed tazuna at about
+  1.4x Claude Code's time; the lighter rule is level with it at 23% less cost. Also: benchmarks compare tazuna as the
+  user runs it (`--no-boss`): `--run` on Opus defaults to boss mode, which the interactive app never uses, and a first
+  batch measured that instead (1.8x Claude Code's time).
 - 2026-11-12: every bench run gets a Go build cache of its own. The hidden tests compiled into the shared one after each
   run, and DeepSeek agents (tazuna, pi, OMP) read their names out of it with `strings`; that round's flagged pairs are
   left out and the round runs again.
