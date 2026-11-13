@@ -16,6 +16,32 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.120 (2026-11-13): no whole-monorepo test run in a JS workspace; reasoning sent on every turn when asked
+
+- In a JavaScript/TypeScript workspace root (npm/yarn `workspaces`, pnpm-workspace.yaml, lerna.json) tazuna's check no
+  longer runs the test script: it runs every package, and even one package's can hold integration and network tests.
+  In Astro it sent a fonts test that needs the network back as the agent's failure, and the own loop spent 44 of a run's
+  49 minutes on it after fixing the task in 4. The model runs the tests that cover its change; the type check stays
+  (new errors only). Other JS repos keep `npm test`.
+- SubRouter's DeepSeek began refusing a history in which some assistant turns lacked `reasoning_content` ("Return
+  reasoning_content from every previous assistant message when using tools"); tazuna sent it only where there was
+  reasoning, then answered the refusal by dropping it altogether, and every run ended at about 25 turns. Every assistant
+  turn now carries the field (empty where there was none), and a demand for it never drops it.
+
+Own loop, DeepSeek V4.1 Flash high on SubRouter, the suite's four dev change tasks (Astro bug fixes, hidden PR tests),
+one run each:
+
+| task | 0.1.115-0.1.119 | 0.1.120 | OpenCode / pi / OMP (same round model) |
+|---|---|---|---|
+| change-astro-18376 | 2/2, 30-49 min | 2/2, 2.3 min | 2/2 each, 5-7 min |
+| change-astro-18500 | 1/1, 26-32 min | 1/1, 8.6 min | 1/1 each, 3-4 min |
+| change-astro-18651 | 2/7, 41 min | 1/7, 24 min | 2/7, setup error, 3/7 (9-20 min) |
+| change-astro-18565 | 1/1, 57 min | 1/1, 36 min | 1/1, 0/1, 1/1 (19-58 min) |
+| all four | 6/11 tests, 173 min | 5/11, 71 min | |
+
+Time per task down 59%; tests the same on three tasks, and 18651 (hard for every harness: 1-3 of 7) one test lower in
+one run, within its spread. $0.033 for the four runs.
+
 ## 0.1.119 (2026-11-13): an own-loop session resumes with its history; headless runs take a second message
 
 - `tazuna -c` / `--resume` on an own-loop model (SubRouter, Mortera, OpenRouter, Mistral, Kenari) started with an empty

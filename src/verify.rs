@@ -75,6 +75,13 @@ fn detect(cwd: &Path, changed: &[String]) -> Option<String> {
         );
     }
     if JS.iter().any(|e| has(e)) {
+        // a workspace root (a monorepo): its test script runs every package, and even one package's can hold integration
+        // and network tests. Astro's sent a fonts test that needs the network back as the agent's failure, and the own
+        // loop spent 44 of a run's 49 minutes on it after fixing the task in 4 (suite run, 2026-11-13). The model runs the
+        // tests that cover its change; tazuna's check keeps the type check, which reports only new errors.
+        if js_workspace(cwd) {
+            return None;
+        }
         if npm_script(cwd, "test").is_some_and(|s| !s.contains("no test specified")) {
             return Some("npm test --silent".into());
         }
@@ -91,6 +98,14 @@ fn detect(cwd: &Path, changed: &[String]) -> Option<String> {
         return (!pkgs.is_empty()).then(|| pkgs.iter().map(|d| format!("npm --prefix {d} test --silent")).collect::<Vec<_>>().join(" && "));
     }
     None
+}
+
+/// A JavaScript workspace root: npm or yarn `workspaces`, pnpm-workspace.yaml, or lerna.json.
+fn js_workspace(cwd: &Path) -> bool {
+    cwd.join("pnpm-workspace.yaml").exists()
+        || cwd.join("lerna.json").exists()
+        || std::fs::read_to_string(cwd.join("package.json")).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .is_some_and(|v| !v["workspaces"].is_null())
 }
 
 const JS: [&str; 6] = [".ts", ".tsx", ".js", ".jsx", ".mts", ".cts"];
@@ -175,7 +190,7 @@ pub fn covers(mode: &Mode, cwd: &Path) -> bool {
     match mode {
         Mode::Off => false,
         Mode::Command(_) => true,
-        Mode::Auto => ["go.mod", "go.work", "Cargo.toml"].iter().any(|f| cwd.join(f).exists()) || has_python_tests(cwd) || js_tests(cwd, 3),
+        Mode::Auto => ["go.mod", "go.work", "Cargo.toml"].iter().any(|f| cwd.join(f).exists()) || has_python_tests(cwd) || (!js_workspace(cwd) && js_tests(cwd, 3)),
     }
 }
 
@@ -456,6 +471,15 @@ mod tests {
         assert!(!covers(&Mode::Auto, &dir), "npm's placeholder is no test");
         std::fs::write(dir.join("packages/web/package.json"), r#"{"scripts":{"test":"vitest run"}}"#).unwrap();
         assert!(covers(&Mode::Auto, &dir), "a package's own tests");
+        std::fs::write(dir.join("packages/web/a.ts"), "").unwrap();
+        assert_eq!(detect(&dir, &["packages/web/a.ts".into()]).as_deref(), Some("npm --prefix packages/web test --silent"));
+        // a workspace root: no test run of tazuna's (the whole monorepo, or a package's integration suites)
+        std::fs::write(dir.join("package.json"), r#"{"workspaces":["packages/*"],"scripts":{"test":"turbo run test"}}"#).unwrap();
+        assert_eq!(detect(&dir, &["packages/web/a.ts".into()]), None, "npm workspaces");
+        assert!(!covers(&Mode::Auto, &dir));
+        std::fs::write(dir.join("package.json"), r#"{"scripts":{"test":"turbo run test"}}"#).unwrap();
+        std::fs::write(dir.join("pnpm-workspace.yaml"), "packages: ['packages/*']").unwrap();
+        assert_eq!(detect(&dir, &["packages/web/a.ts".into()]), None, "pnpm workspace");
         std::fs::remove_dir_all(&dir).unwrap();
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("go.mod"), "module x").unwrap();

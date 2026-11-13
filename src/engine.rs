@@ -659,8 +659,17 @@ impl Loop {
     /// The history for Chat Completions: assistant turns without their `reasoning_content` (0.1.0), or with it when a
     /// provider demands it or with TAZUNA_SEND_REASONING.
     fn chat_messages(&self) -> Value {
+        // every assistant turn carries the field then, empty where the model gave no reasoning: SubRouter's DeepSeek refused
+        // a history where some turns lacked it ("Return reasoning_content from every previous assistant message when
+        // using tools", 2026-11-13; every run of a round ended on it at about 25 turns)
         if self.send_reasoning {
-            return json!(self.msgs);
+            return json!(self.msgs.iter().map(|m| if m["role"] == "assistant" && m.get("reasoning_content").is_none() {
+                let mut m = m.clone();
+                m["reasoning_content"] = json!("");
+                m
+            } else {
+                m.clone()
+            }).collect::<Vec<_>>());
         }
         json!(self.msgs.iter().map(|m| match m.get("reasoning_content") {
             Some(_) => {
@@ -672,7 +681,6 @@ impl Loop {
         }).collect::<Vec<_>>())
     }
 
-    /// One user message: model calls and tool runs until the model answers without tools, or a cap or interrupt ends it.
     /// The history after a run, for `--resume` (the system prompt is rebuilt at start, so a Chat history leaves it out).
     fn save(&self) {
         let Some(p) = &self.saved else { return };
@@ -683,6 +691,7 @@ impl Loop {
         let _ = std::fs::write(p, json!({"api": format!("{:?}", self.api), "msgs": &self.msgs[skip..]}).to_string());
     }
 
+    /// One user message: model calls and tool runs until the model answers without tools, or a cap or interrupt ends it.
     fn run(&mut self, content: &Value, followup: bool, rx: &Receiver<Value>) {
         self.msgs.push(json!({"role": "user", "content": text_of(content)}));
         if !followup {
@@ -841,9 +850,11 @@ impl Loop {
                 // either way round: a provider that demands the reasoning back gets it, one that refuses the field gets
                 // the history without it (once each per route)
                 Err(e) if self.api == Api::Chat && format!("{e:#}").contains("reasoning_content") => {
-                    let subtype = if self.send_reasoning { "reasoning_dropped" } else { "reasoning_resent" };
+                    // a demand for the field is never answered by dropping it (the flip did that, and the run ended)
+                    let demanded = ["reasoning_content_required", "Return reasoning_content"].iter().any(|d| format!("{e:#}").contains(d));
+                    let subtype = if self.send_reasoning && !demanded { "reasoning_dropped" } else { "reasoning_resent" };
                     (self.out)(&json!({"type": "system", "subtype": subtype, "message": format!("{e:#}")}));
-                    self.send_reasoning = !self.send_reasoning;
+                    self.send_reasoning = demanded || !self.send_reasoning;
                     body["messages"] = self.chat_messages();
                     match (self.call)(&body) {
                         Ok(r) => r,
@@ -2273,6 +2284,10 @@ session: "s".into(),
         assert!(sent[1]["messages"].as_array().unwrap().iter().all(|m| m.get("reasoning_content").is_none()), "not sent by default");
         assert_eq!(sent[2]["messages"][2]["reasoning_content"], "look at a");
         assert!(l.send_reasoning, "kept on for the rest of the run");
+        l.msgs.push(json!({"role": "assistant", "content": "no reasoning on this turn"}));
+        let m = l.chat_messages();
+        assert!(m.as_array().unwrap().iter().filter(|m| m["role"] == "assistant").all(|m| m.get("reasoning_content").is_some()),
+                "once sent, every assistant turn carries the field (empty where there was none)");
         std::fs::remove_dir_all(&dir).ok();
     }
     #[test]
