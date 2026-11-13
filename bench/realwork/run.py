@@ -450,9 +450,14 @@ def setup_workdir(task, w):
         sh(["git", "add", "-A"], w); sh(["git", *GIT_ID, "commit", "-qm", g.get("pr_title", "the pull request under review")], w)
     sh(["git", "tag", "bench-start"], w)  # what the agent changes is measured from here (for a review, after the PR)
     # the setup fetches the base's modules into the task's own cache (the agent then runs with GOPROXY=off)
-    r = sh(g["setup"], w, shell=True, env={**os.environ, **cur_go_env(), "GOPROXY": os.environ.get("GOPROXY", "https://proxy.golang.org,direct")})
+    # tried three times: eight runs installing at once (pnpm, one store) failed one setup with no message (2026-11-13)
+    for attempt in range(3):
+        r = sh(g["setup"], w, shell=True, env={**os.environ, **cur_go_env(), "GOPROXY": os.environ.get("GOPROXY", "https://proxy.golang.org,direct")})
+        if not r.returncode:
+            break
+        time.sleep(20 * (attempt + 1))
     if r.returncode:
-        raise RuntimeError("setup failed: " + r.stderr[-500:])
+        raise RuntimeError("setup failed: " + (r.stderr or r.stdout)[-500:])
 
 
 def capture_diff(w):
