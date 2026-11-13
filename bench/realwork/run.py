@@ -730,7 +730,16 @@ def pi_entry(model):
     return {k: v for k, v in e.items() if k not in ("provider", "type", "baseUrl")} | {"id": model, "name": model}
 
 
-def run_pi_sub(h, w, prompt):
+def both_replies(results):
+    """A follow-up task's two CLI calls as one run: usage summed, both replies kept for the judge."""
+    if len(results) == 1:
+        return results[0]
+    out = {k: sum(r.get(k, 0) for r in results) for k in ("inp", "cache_w", "cache_r", "out", "turns", "reported_cost")}
+    out["final"] = "\n\n".join(f"[reply {i + 1}]\n{r.get('final', '')}" for i, r in enumerate(results))
+    return out
+
+
+def run_pi_sub(h, w, prompt, then=None):
     """Stock pi on SubRouter: pi's own catalog entry for the model (API, thinking format and levels, compat) with only
     SubRouter's URL and model id changed, in a fresh agent dir (HOME is the bench home: no user settings, extensions or
     skills). Only the SubRouter key goes out (checked against a local stub, 2026-10-28)."""
@@ -747,15 +756,17 @@ def run_pi_sub(h, w, prompt):
     # lost three runs to SubRouter 503s (CPU overload, upstream quota) at 27-45 min on 2026-10-28
     (agent / "settings.json").write_text(json.dumps({"retry": {"enabled": True, "maxRetries": 11, "baseDelayMs": 2000, "maxAgentDelayMs": 120000}}))
     env = only_keys(env_for("pi-sub", PI_TELEMETRY="0", PI_CODING_AGENT_DIR=str(agent)))
+    # a follow-up task: the session is kept (in the run's own agent dir) and the second message continues it (-c)
+    call = lambda text, more: sh(["pi", "-p", text, "--mode", "json", *(more or (["--no-session"] if not then else [])), "--thinking", effort,
+                                  "--provider", "subrouter", "--model", model], w, timeout=TIMEOUT, env=env)
     try:
-        r = sh(["pi", "-p", prompt, "--mode", "json", "--no-session", "--thinking", effort, "--provider", "subrouter", "--model", model],
-               w, timeout=TIMEOUT, env=env)
+        rs = [call(prompt, [])] + ([call(then, ["-c"])] if then else [])
     finally:
         shutil.rmtree(agent, ignore_errors=True)
     t = BENCH_HOMES / "pi-sub" / "transcripts"  # where leakscan.py looks
     t.mkdir(parents=True, exist_ok=True)
-    (t / f"{w.name}.jsonl").write_text(r.stdout)
-    return parse_pi_events(r.stdout, r.stderr, r.returncode)
+    (t / f"{w.name}.jsonl").write_text("".join(r.stdout for r in rs))
+    return both_replies([parse_pi_events(r.stdout, r.stderr, r.returncode) for r in rs])
 
 
 KIMI = Path.home() / "bench-homes/kimi-code-bin/node_modules/.bin/kimi"
@@ -1156,7 +1167,7 @@ def run_opencode(h, w, prompt):
     return parse_opencode(r)
 
 
-def run_opencode_sub(h, w, prompt):
+def run_opencode_sub(h, w, prompt, then=None):
     """Stock OpenCode on SubRouter: an OpenAI-compatible provider through the relay (the CLI holds a dummy key), its config
     inline (OPENCODE_CONFIG_CONTENT, one per run), the run's effort as reasoningEffort, its own bench HOME (its sessions
     there, read by leakscan)."""
@@ -1169,14 +1180,17 @@ def run_opencode_sub(h, w, prompt):
     data = Path(tempfile.mkdtemp(prefix="rw-opencode-"))
     env = only_keys(env_for("opencode-sub", OPENCODE_CONFIG_CONTENT=json.dumps(cfg), OPENCODE_DISABLE_AUTOUPDATE="1",
                             XDG_DATA_HOME=str(data), BENCH_JAIL_ALSO=str(data)))
+    # a follow-up task: the second message continues the session the first left in the run's data folder (-c)
+    call = lambda text, more: sh(["opencode", "run", "--standalone", "--auto", "--format", "json", "-m", f"subrouter/{model}", *more, text],
+                                 w, timeout=TIMEOUT, env=env)
     try:
-        r = sh(["opencode", "run", "--standalone", "--auto", "--format", "json", "-m", f"subrouter/{model}", prompt], w, timeout=TIMEOUT, env=env)
+        rs = [call(prompt, [])] + ([call(then, ["-c"])] if then else [])
     finally:
         shutil.rmtree(data, ignore_errors=True)
     t = BENCH_HOMES / "opencode-sub" / "transcripts"  # where leakscan.py looks
     t.mkdir(parents=True, exist_ok=True)
-    (t / f"{w.name}.jsonl").write_text(r.stdout)
-    return parse_opencode(r)
+    (t / f"{w.name}.jsonl").write_text("".join(r.stdout for r in rs))
+    return both_replies([parse_opencode(r) for r in rs])
 
 
 def run_cmd_sub(h, w, prompt):
@@ -1215,7 +1229,7 @@ def run_cmd_sub(h, w, prompt):
                 out=u.get("outputTokens", 0), turns=turns, reported_cost=0.0, final=res.get("finalText") or "")
 
 
-def run_omp_sub(h, w, prompt):
+def run_omp_sub(h, w, prompt, then=None):
     """Stock oh-my-pi (omp) on SubRouter: pi's catalog entry for the model with omp's thinking format ("openai"; omp has no
     "deepseek" one), through the relay, in a fresh agent dir per run (PI_CODING_AGENT_DIR, rw-: closed to other runs). Its
     JSON events are pi's."""
@@ -1227,15 +1241,17 @@ def run_omp_sub(h, w, prompt):
     url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]) + "/v1"
     (agent / "models.yml").write_text(json.dumps({"providers": {"subrouter": {"baseUrl": url, "apiKey": "relay", "api": "openai-completions", "models": [entry]}}}))
     env = only_keys(env_for("omp-sub", PI_CODING_AGENT_DIR=str(agent), BENCH_JAIL_ALSO=str(agent)))
+    # a follow-up task: the session is kept (in the run's own agent dir) and the second message continues it (-c)
+    call = lambda text, more: sh(["omp", "-p", "--mode", "json", *(more or (["--no-session"] if not then else [])), "--thinking", effort,
+                                  "--model", f"subrouter/{model}", "--approval-mode", "yolo", text], w, timeout=TIMEOUT, env=env)
     try:
-        r = sh(["omp", "-p", "--mode", "json", "--no-session", "--thinking", effort, "--model", f"subrouter/{model}", "--approval-mode", "yolo", prompt],
-               w, timeout=TIMEOUT, env=env)
+        rs = [call(prompt, [])] + ([call(then, ["-c"])] if then else [])
     finally:
         shutil.rmtree(agent, ignore_errors=True)
     t = BENCH_HOMES / "omp-sub" / "transcripts"  # where leakscan.py looks
     t.mkdir(parents=True, exist_ok=True)
-    (t / f"{w.name}.jsonl").write_text(r.stdout)
-    return parse_pi_events(r.stdout, r.stderr, r.returncode)
+    (t / f"{w.name}.jsonl").write_text("".join(r.stdout for r in rs))
+    return both_replies([parse_pi_events(r.stdout, r.stderr, r.returncode) for r in rs])
 
 
 def parse_opencode(r):
@@ -1529,8 +1545,9 @@ def _run_job(task, h, i):
             try:
                 setup_workdir(task, w)
                 t0 = time.time()
-                # a follow-up task's second message goes to harnesses that can hold a session over two messages (ours
-                # for now); another raises TypeError, so the run fails rather than answering only the first
+                # a follow-up task's second message goes to harnesses that can hold a session over two messages (ours,
+                # OpenCode, pi and OMP on SubRouter); another raises TypeError, so the run fails rather than answering only
+                # the first
                 then = (task / "followup.txt").read_text() if (task / "followup.txt").exists() else None
                 r = runner(h)(h, w, (task / "prompt.txt").read_text(), **({"then": then} if then else {}))
                 r["secs"] = round(time.time() - t0, 1)
