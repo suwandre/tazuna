@@ -228,3 +228,16 @@ each) in an empty repo, one run each, Fable 5.2 high judging all six answers per
   architecture tasks' word limits, the bare model least.
 - For the desktop app's general chat: a chat mode without the coding rules and tools, and limits in the request kept.
 
+### General set, two levers and the judge's own spread (2026-11-14, night)
+
+- Without the cover-all rule (TAZUNA_NO_COVER_ALL): 8.06, the same as tazuna's default in that judging (writing 7.62 to
+  8.12, guidance 7.88 to 7.50).
+- With a direct-answers rule (TAZUNA_DIRECT_ANSWERS: no file, tool or repository remarks on requests that are not about
+  the code; keep the asked length and form): 8.08 against 8.14. Writing rose to the model alone's level (8.12 to 8.62),
+  the 13 math/science/law/formulas/architecture tasks fell (8.00 to 7.69). Off; not a fix.
+- The same tazuna answers scored 7.83, 8.00, 8.06 and 8.14 in four judgings with different company; Claude Code 8.33 to
+  8.39 and Opus alone 8.42 to 8.56. A one-run gap of 0.3 sits inside the judge's own spread: tazuna is lower in every
+  judging, but by how much needs repeated runs, not one.
+- ERNIE 5.5 Flash (free on Mortera) as an own-loop model: all three smoke runs (a question, a rebase, a small change) sent
+  only keep-alive pings for 300 s and never started; tazuna's stall limit ended them. Not usable for benchmarks today.
+

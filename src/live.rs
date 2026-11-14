@@ -101,6 +101,11 @@ const HISTORY_RULE: &str = "Before you change a file, read why it is the way it 
 /// same judge, -17% cost, 40-58% faster (2026-11-03).
 const CALLERS_RULE: &str = "Before you change a function, type or option, find every place that uses it and every code path that reaches it (other commands and entry points too), and make your change cover all of them.";
 
+/// Experiment (TAZUNA_DIRECT_ANSWERS, 2026-11-14): on the general set (math, writing, guidance...) tazuna trailed Claude
+/// Code by 0.3 and the model alone by 0.5, the judge citing remarks no other harness made ("not touching a repository"
+/// above a recipe, "did not run code or change files" under a spreadsheet answer, a word-count footer on an essay).
+const DIRECT_RULE: &str = "When a request is not about this repository's code, answer it directly: no remarks about files, tools, the repository or what you did or did not run, and keep to any length or form the request sets.";
+
 /// Experiment (TAZUNA_ANSWER_RULES): how to answer a request that asks for no change.
 const ANSWER_RULE: &str = "When the request asks for an answer, a review or a plan rather than a change, the rules about changing code do not apply. Base every claim on code you read, with file:line, and say what you did not check. In a review, look past the diff: callers, data and formats written before the change, error and retry paths, and what the change stops doing; call a blocker a blocker. In a plan, recommend the change that solves the reported problem with the least risk for this codebase, and weigh broader fixes as alternatives.";
 
@@ -1460,6 +1465,10 @@ impl Live {
             // experiment (TAZUNA_ANSWER_RULES, 2026-11-13): the rules above are written for a change; the suite's own-loop
             // round scored tazuna lowest on plans (it called the maintainers' targeted fix a symptom fix, twice) and reviews
             // (approved, missing defects outside the diff)
+            if std::env::var_os("TAZUNA_DIRECT_ANSWERS").is_some() {
+                prompt.push_str("\n- ");
+                prompt.push_str(DIRECT_RULE);
+            }
             if std::env::var_os("TAZUNA_ANSWER_RULES").is_some() {
                 prompt.push_str("\n- ");
                 prompt.push_str(ANSWER_RULE);
@@ -1573,7 +1582,8 @@ impl Live {
                 // six tasks at Opus medium: judge 6.67 like Claude Code's (6.39 before), cost +9%, still 25% under Claude
                 // Code's (2026-11-11). TAZUNA_NO_COVER_ALL turns it off (bench baselines)
                 let cover_all = std::env::var_os("TAZUNA_NO_COVER_ALL").is_none().then_some(COVER_ALL_RULE);
-                let append: Vec<&str> = [callers, self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), write_tests, cover_all, lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
+                let direct = std::env::var_os("TAZUNA_DIRECT_ANSWERS").is_some().then_some(DIRECT_RULE);
+                let append: Vec<&str> = [direct, callers, self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), write_tests, cover_all, lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
                     .into_iter()
                     .flatten()
                     .collect();
