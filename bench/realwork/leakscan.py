@@ -256,6 +256,13 @@ def main(sets=()):
                 hits.add("hidden-tests")
             if hits:
                 found.setdefault((m.group(1), m.group(2)), set()).update(hits)
+    # a harness without a transcript (OMP runs with --no-session) can still say it searched: Anthropic's server-side web
+    # search got past the jail until run.py's relay dropped web tools; OMP found two held-out tasks' fixes (2026-11-14).
+    # Over every stored answer only those runs say so.
+    said = re.compile(r"\bweb[- ]search|searched the web|found (?:it )?online", re.I)
+    for f in HERE.glob("runs*/*/*.final.txt"):
+        if said.search(f.read_text(errors="replace")):
+            found.setdefault((f.parent.name, f.name.rsplit("-r", 1)[0].replace("~", ":")), set()).add("web-said")
     with open(HERE / "leaks.jsonl", "w") as out:
         for (t, h), ch in sorted(found.items()):
             out.write(json.dumps({"task": t, "harness": h, "channels": sorted(ch)}) + "\n")

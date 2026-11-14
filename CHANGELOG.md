@@ -16,6 +16,30 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.122 (2026-11-14): narrow checks where tazuna's own test run does not cover the repo
+
+- In a JS workspace (and any repo verify cannot test) nothing kept the agent's own checks narrow: on the suite's Astro
+  change tasks 74% of tazuna's time went to its shell commands (a repo-wide `pnpm lint:ai` of 224 s, a biome run of
+  213 s, full rebuilds, the whole unit suite, stashing the fix to rebuild and watch a test fail first). Claude Code does
+  the same. A rule now asks for the test files that cover the change, lint or type checks on the changed files, builds
+  only for what those tests need. `TAZUNA_WIDE_CHECKS` turns it off.
+- Benchmarks: `TAZUNA_NO_WEB` passes `--disallowedTools WebSearch,WebFetch` to claude. Claude's web search runs on
+  Anthropic's servers, past the bench's network jail; OMP found two held-out tasks' fix PRs with its own web search.
+  tazuna never searched in any bench run (0 of 774 sessions).
+
+Claude Opus 5.5 high, no boss, both arms side by side (same machine load), 3 runs each:
+
+| | dev change tasks (5) | held-out change tasks (2) |
+|---|---|---|
+| time, 0.1.121 | 499 s | 542 s |
+| time, 0.1.122 | 366 s (-27%) | 355 s (-35%) |
+| cost | $0.65 to $0.64 | $0.69 to $0.64 |
+| hidden tests fully passed | 12/15 and 12/15 | 5/6 and 4/6 |
+
+Every one of the 7 tasks was faster. The one fewer pass is change-astro-18511, which every harness fails about a third
+of the time (tazuna, Claude Code and OMP each 1 of 3 in the held-out round); its failing runs in both arms took larger
+fixes (96-111 changed lines against 34-54). Answer tasks were not rerun (the rule only concerns checks).
+
 ## 0.1.121 (2026-11-13): the explorer takes broad searches only; short lookups stay with the main model
 
 - The Claude path's explorer rule said "Do not explore the code yourself ... Send every question about the code to the

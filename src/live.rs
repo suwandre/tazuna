@@ -114,6 +114,13 @@ const COVER_ALL_RULE: &str = "Make your change, and its tests, cover every comma
 const WRITE_TESTS_RULE: &str = "Add or update tests for the behavior you change, including its edge cases: tazuna's check only runs the tests, it does not write them.";
 
 const TEST_SCOPE_RULE: &str = "While working, run only the tests that cover your change (in Go: `go test -run 'TestA|TestB' ./pkg/`), not whole packages or the whole repository: when you finish, tazuna runs the changed packages' tests and sends you any failure.";
+/// Where verify does not cover the repo (JS workspaces since 0.1.120), no rule kept the agent's own checks narrow: on the
+/// suite's Astro change tasks 74% of tazuna's time was its shell commands (a repo-wide `pnpm lint:ai` of 224 s, a biome
+/// run of 213 s, full rebuilds, the whole unit suite, stashing the fix to rebuild and watch a test fail first), as with
+/// Claude Code. With this rule (0.1.122): 27% less time on 5 dev change tasks and 35% on the 2 held-out ones, same
+/// cost, hidden tests 16/21 against 17/21 (the miss on a task every harness fails a third of the time).
+/// TAZUNA_WIDE_CHECKS turns it off (bench baselines).
+const NARROW_CHECKS_RULE: &str = "Keep your checks narrow: run the test files that cover your change, and lint or type-check only the files you changed. Build only what those tests need. Do not run the whole test suite, a repository-wide lint or format check, or extra builds just to watch a test fail before your fix.";
 const FINISH_RULES: &str = "Finish only when the task is fully done: every requirement and acceptance criterion in the request is met and checked. Do not stop to ask for confirmation or leave steps for the user. Before relying on a name you have not read (a database column, function, field, API), read where it is defined.";
 
 /// `--explorer`: reading code is most of a run's cost (each turn re-reads everything read so far at the main model's
@@ -1532,6 +1539,11 @@ impl Live {
             // claude asks tazuna (stdio) instead of a terminal it does not have; "auto" never asks
             .args(["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions", "--permission-mode", &self.permission_mode])
             .args(["--setting-sources", self.setting_sources()]);
+        // benchmarks (TAZUNA_NO_WEB): Claude's web search runs on Anthropic's servers, past any local network jail; OMP
+        // found a held-out task's fix PR with it (2026-11-14)
+        if std::env::var_os("TAZUNA_NO_WEB").is_some() {
+            cmd.args(["--disallowedTools", "WebSearch,WebFetch"]);
+        }
         // `--connectors` lets them in (2026-11-06): Claude Code now defers MCP tools (names only until one is used), and
         // the user's set (Jira, Slack, Claude Docs, 8 waiting for a login) measured 22.3k tokens a call against 18.3k
         if self.profile != Profile::Lean && !self.user_settings && !self.connectors {
@@ -1583,7 +1595,8 @@ impl Live {
                 // Code's (2026-11-11). TAZUNA_NO_COVER_ALL turns it off (bench baselines)
                 let cover_all = std::env::var_os("TAZUNA_NO_COVER_ALL").is_none().then_some(COVER_ALL_RULE);
                 let direct = std::env::var_os("TAZUNA_DIRECT_ANSWERS").is_some().then_some(DIRECT_RULE);
-                let append: Vec<&str> = [direct, callers, self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), write_tests, cover_all, lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
+                let narrow = (!scoped && std::env::var_os("TAZUNA_WIDE_CHECKS").is_none()).then_some(NARROW_CHECKS_RULE);
+                let append: Vec<&str> = [direct, callers, self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), narrow, write_tests, cover_all, lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
                     .into_iter()
                     .flatten()
                     .collect();
