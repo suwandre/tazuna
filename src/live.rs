@@ -121,6 +121,11 @@ const TEST_SCOPE_RULE: &str = "While working, run only the tests that cover your
 /// cost, hidden tests 16/21 against 17/21 (the miss on a task every harness fails a third of the time).
 /// TAZUNA_WIDE_CHECKS turns it off (bench baselines).
 const NARROW_CHECKS_RULE: &str = "Keep your checks narrow: run the test files that cover your change, and lint or type-check only the files you changed. Build only what those tests need. Do not run the whole test suite, a repository-wide lint or format check, or extra builds just to watch a test fail before your fix.";
+/// Experiment (TAZUNA_QUICK_BUILD, 2026-11-14): with narrow checks, full builds were still 47% of tazuna's time on the
+/// Astro change tasks (3.3 a run, 169 s): `pnpm build` there also runs `tsc -b` and astro-check, where the unit tests
+/// need only the transpile (`build:ci`). OMP, whose shell could not start pnpm, called the transpile step directly and
+/// took 59-107 s on three tasks tazuna took 212-385 s on, with the same hidden tests passing.
+const QUICK_BUILD_RULE: &str = "When a test needs compiled output, build with the package's quickest script that produces it (a transpile-only or CI build, if there is one) while you work; run the full build or type check once, at the end.";
 const FINISH_RULES: &str = "Finish only when the task is fully done: every requirement and acceptance criterion in the request is met and checked. Do not stop to ask for confirmation or leave steps for the user. Before relying on a name you have not read (a database column, function, field, API), read where it is defined.";
 
 /// `--explorer`: reading code is most of a run's cost (each turn re-reads everything read so far at the main model's
@@ -1596,7 +1601,8 @@ impl Live {
                 let cover_all = std::env::var_os("TAZUNA_NO_COVER_ALL").is_none().then_some(COVER_ALL_RULE);
                 let direct = std::env::var_os("TAZUNA_DIRECT_ANSWERS").is_some().then_some(DIRECT_RULE);
                 let narrow = (!scoped && std::env::var_os("TAZUNA_WIDE_CHECKS").is_none()).then_some(NARROW_CHECKS_RULE);
-                let append: Vec<&str> = [direct, callers, self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), narrow, write_tests, cover_all, lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
+                let quick = (!scoped && std::env::var_os("TAZUNA_QUICK_BUILD").is_some()).then_some(QUICK_BUILD_RULE);
+                let append: Vec<&str> = [direct, callers, self.self_review.then_some(FINISH_RULES), boss.then_some(BOSS_RULE), pick.as_deref(), explore_rule.filter(|_| !boss), self.tester.as_ref().filter(|_| !boss).map(|_| TESTER_RULE), self.batch_calls.then_some(BATCH_RULE), scoped.then_some(TEST_SCOPE_RULE), narrow, quick, write_tests, cover_all, lessons.as_deref(), (self.history && has_history(&self.cwd)).then_some(HISTORY_RULE)]
                     .into_iter()
                     .flatten()
                     .collect();
