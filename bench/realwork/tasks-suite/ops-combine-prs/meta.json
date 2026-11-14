@@ -3,5 +3,6 @@
   "lang": "git",
   "split": "dev",
   "difficulty": "easy",
-  "source": "scripted scenario on TanStack Query with a gh stand-in"
+  "source": "scripted scenario on TanStack Query with a gh stand-in",
+  "revised": "2026-11-14: both PRs about the retry delay cap (was paired with an unrelated gcTime doc line)"
 }
