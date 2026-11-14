@@ -1,6 +1,6 @@
 from opslib import *
 s, log = started(), gh_log()
-B = "feat/retry-jitter"
+B = "docs/retry-delay"
 creates = [c for c in log if c["args"][:2] == ["pr", "create"]]
 c = creates[0] if creates else {"args": []}
 a = c["args"]
@@ -12,6 +12,6 @@ report(dict(
     branch_pushed=s["head"] in remote("rev-list", B).split(),
     one_pr_created=len(creates) == 1,
     pr_from_the_branch_to_main=head == B and base == "main",
-    description_says_what_changes="jitter" in text and "retry" in text,
+    description_says_what_changes="retr" in text and any(w in text for w in ("delay", "cap", "30")),
     main_untouched=remote("rev-parse", "main") == s["main"],
 ))

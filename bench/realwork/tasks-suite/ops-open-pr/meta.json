@@ -3,5 +3,6 @@
   "lang": "git",
   "split": "held-out",
   "difficulty": "easy",
-  "source": "scripted scenario on TanStack Query with a gh stand-in"
+  "source": "scripted scenario on TanStack Query with a gh stand-in",
+  "revised": "2026-11-14: a docs-only branch on the retry delay (was a jitter change that broke an existing test and lacked a changeset); gh auth status answered"
 }

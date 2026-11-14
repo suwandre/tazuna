@@ -284,3 +284,25 @@ third runs, v1164-v1168, were 0.1.120 with the strict explorer rule and are left
   guard probes the meter only every 10 minutes when no agent writes a fresh one) and the plan ran on extra usage for
   about a minute before the guard stopped everything. The rest was judged after the reset with a fresh meter probe
   before every judge call.
+
+## Held-out check of 0.1.121 (2026-11-14)
+
+The 8 held-out tasks, first time on the Claude path: tazuna 0.1.121 without boss against stock Claude Code, Opus 5.5
+high, 3 runs each (v1176; ops-open-pr rerun as v1177 after its fix below), Fable 5.2 high judging each answer task's six
+answers together.
+
+| | answer tasks (judge, 5 tasks) | hidden checks fully passed (3 tasks) | mean time | mean cost |
+|---|---|---|---|---|
+| stock Claude Code | 7.00 | 8/9 | 203 s | $0.62 |
+| tazuna | 7.27 | 8/9 | 209 s | $0.48 |
+
+- Judge gap +0.27 (0.00 .. +0.80): level or slightly ahead; investigations 8.17 both, questions 7.50 both, the plan task
+  5.00 against 3.67 (both weak on it). Time level (+3%), cost -22%. The held-out set agrees with the dev set (+0.12,
+  level time, -18% cost): 0.1.115-0.1.121 did not fit the dev tasks at the held-out ones' expense.
+- change-astro-18511 failed in the same run slot for both harnesses (run 1, 920 s and 777 s against 240-580 s for the
+  others): likely the build under load, not the agents.
+- ops-open-pr as first built was unfair, like ops-combine-prs: the scripted branch added jitter to defaultRetryDelay,
+  which breaks an existing exact-delay test, and had no changeset, which CONTRIBUTING.md asks for; 5 of 6 runs stopped to
+  ask (2/5 checks). It is now a clean docs-only branch on the retry delay, and the gh stand-in answers `gh auth status` in
+  every ops scenario (a 404 there read as "not logged in"). Rerun: 6 of 6 runs 5/5, about 25 s and $0.16-0.21 each.
+- Usage: the round took the 5-hour window to 30% and the week to 4%; no extra usage.

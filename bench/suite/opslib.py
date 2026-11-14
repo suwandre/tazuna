@@ -69,7 +69,9 @@ def pr_entries(prs, next_number):
               dict(match=["pr", "comment", n], text=f"{p['url']}#issuecomment-1")]
     e += [dict(match=["pr", "create"], text=f"https://github.com/{REPO}/pull/{next_number}"),
           dict(match=["pr", "view"], json=prs[0], text="no pull requests found for the current branch", exit=1),
-          dict(match=["repo", "view"], json=dict(nameWithOwner=REPO, defaultBranchRef=dict(name="main")), text=f"{REPO}\nTanStack Query fork")]
+          dict(match=["repo", "view"], json=dict(nameWithOwner=REPO, defaultBranchRef=dict(name="main")), text=f"{REPO}\nTanStack Query fork"),
+          # agents often check the login first; a 404 here read as "not logged in" and some stopped (2026-11-14)
+          dict(match=["auth", "status"], text="github.com\n  ✓ Logged in to github.com account dev (keyring)\n  - Active account: true")]
     return e
 
 
