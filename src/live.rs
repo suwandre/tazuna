@@ -124,7 +124,9 @@ const NARROW_CHECKS_RULE: &str = "Keep your checks narrow: run the test files th
 /// Experiment (TAZUNA_QUICK_BUILD, 2026-11-14): with narrow checks, full builds were still 47% of tazuna's time on the
 /// Astro change tasks (3.3 a run, 169 s): `pnpm build` there also runs `tsc -b` and astro-check, where the unit tests
 /// need only the transpile (`build:ci`). OMP, whose shell could not start pnpm, called the transpile step directly and
-/// took 59-107 s on three tasks tazuna took 212-385 s on, with the same hidden tests passing.
+/// took 59-107 s on three tasks tazuna took 212-385 s on, with the same hidden tests passing. Measured (5 dev change
+/// tasks x 3, side by side): full builds 140 to 23 s a run, but quick builds took 44 s, turns +3, output +19%; time
+/// 314 to 330 s (one run's 480 s of hanging repro scripts), cost +16%, hidden tests 12/15 both. Stays off.
 const QUICK_BUILD_RULE: &str = "When a test needs compiled output, build with the package's quickest script that produces it (a transpile-only or CI build, if there is one) while you work; run the full build or type check once, at the end.";
 const FINISH_RULES: &str = "Finish only when the task is fully done: every requirement and acceptance criterion in the request is met and checked. Do not stop to ask for confirmation or leave steps for the user. Before relying on a name you have not read (a database column, function, field, API), read where it is defined.";
 

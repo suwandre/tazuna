@@ -335,3 +335,13 @@ answers together.
   hidden tests 16/21 against 17/21. On the held-out change tasks that puts tazuna at about 167 s mean over all 8 tasks
   (estimated from the two rounds), still behind OMP's 133 s.
 - Usage for the afternoon: the 5-hour window to 63%, the week to 11%; no extra usage.
+- Where OMP's change-task speed came from (OMP on the 5 dev change tasks with its event stream kept; the held-out ones
+  stay unread): its shell could not start pnpm (its bench home had no corepack cache, and corepack's download is
+  blocked), so it called Astro's transpile step (`astro-scripts build`) directly and never ran `pnpm build`, which there
+  adds `tsc -b` and astro-check. tazuna's full builds were 45-47% of its change-task time (2.7-3.3 a run). Every
+  harness home now has the pnpm cache, so OMP's earlier change times were partly this accident.
+- TAZUNA_QUICK_BUILD (transpile-only builds while working, one full build at the end), side by side with 0.1.122, 5 dev
+  change tasks x 3: full-build time 140 to 23 s a run, but the quick builds took 44 s, turns +3, output +19%; time 314 to
+  330 s (one run spent 480 s in hanging repro scripts), cost +16%, hidden tests 12/15 both. Off. The same 0.1.122 arm
+  took 314 s here against 366 s an hour earlier: load alone moves change-task times by ~15%, so only side-by-side arms
+  count.
