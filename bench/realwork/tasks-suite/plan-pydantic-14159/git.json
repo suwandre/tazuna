@@ -1,0 +1,6 @@
+{
+  "repo": "/Users/suwandre/bench-repos/pydantic",
+  "pr": "https://github.com/pydantic/pydantic/pull/14159",
+  "setup": "true",
+  "base": "69e9ca4658a6471cadae5216b44ebfb4fde040f3"
+}

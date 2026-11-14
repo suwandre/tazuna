@@ -1,0 +1,10 @@
+{
+  "kind": "investigate",
+  "lang": "python",
+  "split": "dev",
+  "size": 127,
+  "files": 3,
+  "merged_at": "2026-10-22T09:37:05Z",
+  "source": "issue 14034 + fix PR 14051",
+  "difficulty": "medium"
+}

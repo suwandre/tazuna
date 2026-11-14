@@ -1,0 +1,81 @@
+A bug report came in for this repository:
+
+Title: JSON Schema of function arguments is wrong for `**kwargs: Unpack[TypedDict]`
+
+### Initial Checks
+
+- [x] I confirm that I'm using Pydantic V2
+
+### Description
+
+When the variadic keyword parameter of a function is annotated with an unpacked `TypedDict`, validation treats the items of the typed dictionary as individual keyword arguments, but the JSON Schema generated for the function arguments puts the whole typed dictionary under `additionalProperties`, as if the annotation were `**kwargs: Options`.
+
+For the example below the schema is:
+
+```python
+{
+    '$defs': {
+        'Options': {
+            'properties': {
+                'timeout': {'title': 'Timeout', 'type': 'integer'},
+                'label': {'title': 'Label', 'type': 'string'},
+            },
+            'required': ['timeout'],
+            'title': 'Options',
+            'type': 'object',
+        }
+    },
+    'additionalProperties': {'$ref': '#/$defs/Options'},
+    'properties': {'name': {'default': 'job', 'title': 'Name', 'type': 'string'}},
+    'type': 'object',
+}
+```
+
+So the schema and the validator disagree in both directions:
+
+| keyword arguments | validation | JSON Schema |
+|---|---|---|
+| `{'name': 'x', 'timeout': 5}` | accepted | invalid (`5 is not of type 'object'`) |
+| `{'name': 'x'}` | rejected (`missing`) | valid |
+| `{'anything': {'timeout': 5}}` | rejected (`missing`) | valid |
+
+I would expect `timeout` and `label` to be listed in `properties` (and `timeout` in `required`), with `additionalProperties` following the typed dictionary (`closed` / `extra_items`).
+
+`GenerateJsonSchema.arguments_schema()` forwards `var_kwargs_schema` to `kw_arguments_schema()` without checking `var_kwargs_mode`, so `'unpacked-typed-dict'` is handled like `'uniform'` (`pydantic/json_schema.py`, `arguments_schema()` / `kw_arguments_schema()`). `arguments_v3_schema()` does distinguish the two modes. The validation side was added in #10416, which did not change `json_schema.py`.
+
+I searched issues, PRs and discussions for `Unpack TypedDict kwargs json schema`, `var_kwargs_mode`, `unpacked-typed-dict` and `kw_arguments_schema` and did not find this reported; #11571 and #11572 extended the validation side and the experimental arguments schema without touching `json_schema.py`.
+
+I have a small fix with tests ready and can open a PR if this is confirmed.
+
+### Example Code
+
+```Python
+from typing_extensions import NotRequired, TypedDict, Unpack
+
+from pydantic import TypeAdapter
+
+
+class Options(TypedDict):
+    timeout: int
+    label: NotRequired[str]
+
+
+def run(name: str = 'job', **kwargs: Unpack[Options]): ...
+
+
+print(TypeAdapter(run).json_schema())
+```
+
+### Python, Pydantic & OS Version
+
+```Text
+             pydantic version: 2.14.0b2
+        pydantic-core version: 2.49.0
+          pydantic-core build: profile=release pgo=false
+               python version: 3.12.12 (main, Apr  7 2026, 00:00:00) [GCC 14.3.1 20250617 (Red Hat 14.3.1-2)]
+                     platform: Linux-6.12.0-124.52.1.el10_1.x86_64-x86_64-with-glibc2.39
+             related packages: email-validator-2.3.0 typing_extensions-4.16.0
+                       commit: 1e6cc758a
+```
+
+How should we fix this? Give the options you see, their trade-offs, and the one you recommend for this codebase, with the files it would touch. Do not change any files.

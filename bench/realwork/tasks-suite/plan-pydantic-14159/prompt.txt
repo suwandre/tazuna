@@ -1,0 +1,47 @@
+A bug report came in for this repository:
+
+Title: Fields marked as `Final` with a default value shouldn't be considered as class variables
+
+### Initial Checks
+
+- [X] I confirm that I'm using Pydantic V2
+
+### Description
+
+Currently:
+
+```python
+from typing import Final
+
+from pydantic import BaseModel
+
+class Model(BaseModel):
+    a: Final[int]
+    b: Final[int] = 1
+
+Model.model_fields.keys()
+#> dict_keys(['a'])
+Model.__class_vars__
+#> {'b'}
+```
+
+Instead, we should follow [the typing specification update from this year](https://github.com/python/typing/pull/1669), i.e. final fields with a default value are still considered as fields, and not as class variables. I'll also note that the behavior is broken when using `Annotated` (i.e. using `Annotated[Final[int], ...] = 1` is not considered a class variable).
+
+TODO:
+- [x] Add a deprecation/user warning when a final field with a default value is used. The warning should tell the user to explicitly use `ClassVar`.
+  - https://github.com/pydantic/pydantic/pull/11168 
+- [x] In V3, change the behavior, and update the mypy plugin as necessary. There's also a TODO in `FieldInfo.from_annotated_attribute()`: if the `Final` qualifier is used as is (without an explicit type), we should try our best to infer the type from the default (if any). If the assignment is _not_ a `FieldInfo` instance, it is the default value and we can simply do `type(assignment)`. Else, if the final `FieldInfo` instance has a `default`, apply the same. If it has a `default_factory`, we should try our best but let's not complicate things to much: if the default factory is a type (e.g. `dict`, `list`, that when called results in an "empty" instance), use it as the type. Else, infer the type as `Any`.
+
+crossref https://github.com/pydantic/pydantic/issues/10474#issuecomment-2478666651, https://github.com/pydantic/pydantic/pull/2768#issuecomment-2027592572, https://github.com/pydantic/pydantic/issues/9904.
+
+### Example Code
+
+_No response_
+
+### Python, Pydantic & OS Version
+
+```Text
+2.10
+```
+
+How should we fix this? Give the options you see, their trade-offs, and the one you recommend for this codebase, with the files it would touch. Do not change any files.

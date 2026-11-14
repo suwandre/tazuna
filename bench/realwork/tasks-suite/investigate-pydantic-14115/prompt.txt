@@ -1,0 +1,47 @@
+A bug report came in for this repository:
+
+Title: copy.copy() of a defer_build model's __pydantic_validator__ raises RecursionError
+
+### Initial Checks
+
+- [x] I confirm that I'm using Pydantic V2
+
+### Description
+
+Copying or unpickling the `MockValSer` placeholder that a `defer_build=True` model holds raises `RecursionError`. The new instance has no slots set yet, and `copy`/`pickle` look up `__setstate__` on it. That lookup falls through to `MockValSer.__getattr__`, which reads `self._attempt_rebuild`; reading the unset slot calls `__getattr__` again, until the recursion limit.
+
+We hit it in Ray Serve when cloudpickle ships a model class by value (ray-project/ray#52211). Raising `AttributeError` for the slot names (or underscore names) in `__getattr__` before reading `self._attempt_rebuild` would fix copy and unpickle.
+
+### Example Code
+
+```Python
+import copy
+
+from pydantic import BaseModel, ConfigDict
+
+
+class Model(BaseModel):
+    model_config = ConfigDict(defer_build=True)
+
+    x: int
+
+
+copy.copy(Model.__pydantic_validator__)
+```
+
+### Python, Pydantic & OS Version
+
+```Text
+pydantic version: 2.14.1
+        pydantic-core version: 2.50.1
+          pydantic-core build: profile=release pgo=false
+               python version: 3.12.14 | packaged by Anaconda, Inc. | (main, Aug 27 2026, 14:46:43) [GCC 14.3.0]
+                     platform: Linux-5.15.0-1081-aws-x86_64-with-glibc2.31
+             related packages: typing_extensions-4.16.0 fastapi-0.141.1 pyright-1.1.408 mypy-1.7.0 pydantic-settings-2.16.0
+                       commit: unknown
+
+
+Also reproduces on 2.12.3
+```
+
+Find the root cause: what in the code makes this happen, with file:line, and why. Do not fix it or change any files.

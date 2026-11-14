@@ -1,0 +1,10 @@
+{
+  "kind": "plan",
+  "lang": "python",
+  "split": "dev",
+  "size": 121,
+  "files": 4,
+  "merged_at": "2026-10-31T14:38:27Z",
+  "source": "issue 11119 + fix PR 14159",
+  "difficulty": "medium"
+}
