@@ -356,3 +356,26 @@ answers together.
   On the same footing the time gap is gone: OMP's earlier speed was the missing pnpm. tazuna costs 28% less; the hidden
   tests are mixed (OMP passes more of change-astro-18651's seven, misses one run of 18565). The Claude path now leads or
   matches OMP and Claude Code on quality, time and cost in every measured kind.
+
+## Held-out check of the own loop, 0.1.122 (2026-11-14, evening)
+
+tazuna's own loop on DeepSeek V4.1 Flash (SubRouter, high), the 8 held-out tasks x 3 runs (v1186), against its earlier
+held-out runs (v1162 after the js_workspace fix's predecessor round, v1157 before 0.1.115) and OMP, OpenCode and pi on
+DeepSeek (v1159), one run each; the 5 answer tasks judged with all eight answers together. SubRouter spend $0.155.
+
+| | answer tasks (judge) | change tasks fully passed | mean time | cost per run |
+|---|---|---|---|---|
+| own loop 0.1.122 (3 runs) | 6.27 | 6/6 | 324 s | $0.009 |
+| own loop v1162 (1 run) | 7.14 | 2/2 | 782 s | $0.009 |
+| own loop v1157 (1 run) | 6.00 | 1/2 | 1130 s | $0.019 |
+| OpenCode on DeepSeek (1 run) | 7.00 | 2/2 | 826 s | not recorded |
+| OMP on DeepSeek (1 run) | 6.50 | 2/2 | 794 s | $0.122 |
+| pi on DeepSeek (1 run) | 6.38 | 2/2 | 502 s | $0.113 |
+
+- Time down 59% against the last held-out own-loop round at the same cost (change-astro-18511: 1805 to 584 s), every
+  change and ops run passing; the own loop is now the fastest and cheapest DeepSeek harness here by far.
+- The judge gap is one task: investigate-pydantic-14247 scored 7, 2, 2 (two runs blamed allocator retention of a
+  transient parse tree, contradicting the report) against v1162's single 6. Without it 0.1.122 scores 6.92 against 6.75.
+  The comparators are single runs, so this is a watch item, not a regression: the next own-loop round should repeat
+  that task.
+- leakscan flagged two pairs, both "-blocked" only (reads the jail refused), which do not count.
