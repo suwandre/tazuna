@@ -886,8 +886,9 @@ def run_pi_family(h, w, prompt):
     if base_name(h) == "omp":
         # its model traffic goes through the relay; its built-in web search (an Anthropic call of its own, with
         # web_search_20250305) took the CONNECT proxy, which allows anthropic.com for the claude CLI, and found two held-out
-        # tasks' fix PRs (2026-11-14). Without the proxy nothing but localhost is reachable from the jail.
-        env = {k: v for k, v in env.items() if k.lower() not in ("https_proxy", "http_proxy", "all_proxy")}
+        # tasks' fix PRs (2026-11-14). NO_PROXY=* sends it direct, and from the jail only localhost answers (the jail itself
+        # still reads HTTPS_PROXY to bridge the proxy in, so that stays set).
+        env = {**env, "NO_PROXY": "*", "no_proxy": "*"}
     r = sh(cmd, w, timeout=TIMEOUT, env=env)
     return parse_pi_events(r.stdout, r.stderr, r.returncode)
 

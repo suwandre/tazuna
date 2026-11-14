@@ -306,3 +306,32 @@ answers together.
   ask (2/5 checks). It is now a clean docs-only branch on the retry delay, and the gh stand-in answers `gh auth status` in
   every ops scenario (a 404 there read as "not logged in"). Rerun: 6 of 6 runs 5/5, about 25 s and $0.16-0.21 each.
 - Usage: the round took the 5-hour window to 30% and the week to 4%; no extra usage.
+
+### OMP on the held-out tasks, a web-search leak, and narrow checks (2026-11-14, afternoon)
+
+- OMP (stock, its own Anthropic login), same 8 tasks, 3 runs. Its first runs scored 7.73 on the answer tasks against
+  tazuna 6.53 and Claude Code 6.40, all of the lead from the two pydantic tasks: OMP's built-in web search (an Anthropic
+  call of its own with web_search_20250305, sent through the bench's CONNECT proxy, which allows anthropic.com for the
+  claude CLI) found both fix PRs, and said so in 4 of 6 answers. Judged together, those answers also pulled the others
+  down (tazuna's investigation from 8, 7, 7 to 3, 3, 4). Claude's server-side web search gets past any local jail.
+- Fixes in run.py: Claude Code runs with `--disallowedTools WebSearch,WebFetch`, tazuna with TAZUNA_NO_WEB (the same
+  flag through tazuna, 0.1.122), the relay strips server-side web tools from request bodies, and OMP runs with
+  NO_PROXY=* (only localhost answers from the jail). The relay strip alone did not stop OMP (v1179 still searched).
+  leakscan flags answers that say they searched the web; over every stored answer only these OMP runs do. tazuna never
+  searched in any bench run (0 of 774 sessions); Claude Code keeps no transcript here, and none of its answers mention it.
+- With web blocked (OMP v1181 on the two pydantic tasks, judged again with tazuna's and Claude Code's answers):
+
+| held-out, Claude Opus 5.5 high, 3 runs | tazuna 0.1.121 | Claude Code | OMP |
+|---|---|---|---|
+| answer tasks (judge, 5) | 7.40 | 7.13 | 6.60 |
+| hidden checks fully passed (3 tasks) | 8/9 | 8/9 | 8/9 |
+| mean time | 209 s | 203 s | 133 s |
+| mean cost | $0.48 | $0.62 | $0.63 |
+
+  OMP is the fastest (86 s on change-astro-18544 against 515 and 370; it skips the long lint and builds) and the
+  weakest on the answers; tazuna leads on quality and cost.
+- Narrow checks (0.1.122, CHANGELOG): where tazuna's verify does not cover the repo, a rule keeps the agent's own checks
+  to the covering tests and the changed files. 5 dev change tasks: 499 to 366 s; 2 held-out: 542 to 355 s; same cost;
+  hidden tests 16/21 against 17/21. On the held-out change tasks that puts tazuna at about 167 s mean over all 8 tasks
+  (estimated from the two rounds), still behind OMP's 133 s.
+- Usage for the afternoon: the 5-hour window to 63%, the week to 11%; no extra usage.
