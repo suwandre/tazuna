@@ -360,7 +360,7 @@ answers together.
 ## Held-out check of the own loop, 0.1.122 (2026-11-14, evening)
 
 tazuna's own loop on DeepSeek V4.1 Flash (SubRouter, high), the 8 held-out tasks x 3 runs (v1186), against its earlier
-held-out runs (v1162 after the js_workspace fix's predecessor round, v1157 before 0.1.115) and OMP, OpenCode and pi on
+held-out runs (v1162 and v1157, from before 0.1.120) and OMP, OpenCode and pi on
 DeepSeek (v1159), one run each; the 5 answer tasks judged with all eight answers together. SubRouter spend $0.155.
 
 | | answer tasks (judge) | change tasks fully passed | mean time | cost per run |
