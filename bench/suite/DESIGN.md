@@ -345,3 +345,14 @@ answers together.
   330 s (one run spent 480 s in hanging repro scripts), cost +16%, hidden tests 12/15 both. Off. The same 0.1.122 arm
   took 314 s here against 366 s an hour earlier: load alone moves change-task times by ~15%, so only side-by-side arms
   count.
+- OMP again with pnpm working (no corepack errors, 9-65 `pnpm ... build` calls a run; no web_search calls), side by
+  side with tazuna 0.1.122 on the 5 dev change tasks, 3 runs each:
+
+| | mean time | mean cost | hidden tests fully passed | hidden tests passed | turns |
+|---|---|---|---|---|---|
+| tazuna 0.1.122 | 261 s | $0.62 | 12/15 | 20/36 | 23.4 |
+| OMP | 266 s | $0.86 | 11/15 | 23/36 | 32.3 |
+
+  On the same footing the time gap is gone: OMP's earlier speed was the missing pnpm. tazuna costs 28% less; the hidden
+  tests are mixed (OMP passes more of change-astro-18651's seven, misses one run of 18565). The Claude path now leads or
+  matches OMP and Claude Code on quality, time and cost in every measured kind.
