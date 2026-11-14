@@ -241,3 +241,46 @@ each) in an empty repo, one run each, Fable 5.2 high judging all six answers per
 - ERNIE 5.5 Flash (free on Mortera) as an own-loop model: all three smoke runs (a question, a rebase, a small change) sent
   only keep-alive pings for 300 s and never started; tazuna's stall limit ended them. Not usable for benchmarks today.
 
+
+## Repeats: three runs each (2026-11-14)
+
+General set, 36 tasks x 3 runs for each of the six setups (648 answers), Fable 5.2 high judging all 18 answers of a task
+together. Mean judge score, and the tazuna gaps with 95% bootstrap intervals over tasks:
+
+| | judge | mean time | mean cost per answer (API prices) |
+|---|---|---|---|
+| Opus 5.5 alone | 8.46 | 10.9 s | $0.020 |
+| stock Claude Code | 8.24 | 11.4 s | $0.067 |
+| OMP | 8.26 | 11.1 s | $0.028 |
+| tazuna (Claude path, 0.1.121, no boss) | 8.30 | 11.4 s | $0.025 |
+| DeepSeek V4.1 Flash alone | 7.73 | 7.6 s | ~$0 |
+| tazuna (own loop, DeepSeek) | 7.46 | 13.9 s | ~$0 |
+
+- tazuna - Claude Code +0.06 (-0.15 .. +0.28); tazuna - OMP +0.04 (-0.20 .. +0.28); tazuna - Opus alone -0.17
+  (-0.47 .. +0.09); Claude Code - Opus alone -0.22 (-0.56 .. +0.07). With repeats the single-run gap (tazuna lowest by up
+  to 0.5) is gone: the three Claude harnesses are level, all a little under the bare model, at a third of Claude Code's cost.
+- The same setup's three answers to one task differ by 0.6 to 1.4 judge points on average (max 3 to 5): one run per task
+  cannot rank harnesses this close.
+- The own loop trails DeepSeek alone by 0.27 (-0.64 .. +0.08), most on practical guidance (6.58 against 7.58). It still
+  works like a coding agent in an empty repo: 2.7 turns on average, and on asks such as a running plan it writes the
+  answer into a new file and edits README.md, then summarises. Next lever: the own loop with TAZUNA_DIRECT_ANSWERS.
+
+Coding, the 12 dev tasks, tazuna 0.1.121 (no boss) against stock Claude Code on Opus 5.5 high, two runs each (v1174; the
+third runs, v1164-v1168, were 0.1.120 with the strict explorer rule and are left out):
+
+| | answer tasks (judge, 8 tasks) | hidden checks fully passed (4 tasks) | mean time | mean cost |
+|---|---|---|---|---|
+| stock Claude Code | 7.56 | 6/8 | 80.9 s | $0.42 |
+| tazuna | 7.69 | 7/8 | 83.1 s | $0.35 |
+
+- Judge gap +0.12 (-0.50 .. +0.88): level. Plans 8.75 against 7.75, investigations 8.25 against 8.75, questions and
+  reviews equal. The reviews swing most (one setup's two runs scored 3 and 8 on the same review task).
+- Same time, 18% cheaper. 0.1.120's strict explorer rule had cost tazuna 50-70 s more per answer task; 0.1.121 removed it.
+- ops-combine-prs is not a fair check: TanStack Query's CONTRIBUTING.md says PRs combining unrelated changes get closed,
+  and the two scripted PRs are unrelated (a retryer refactor, a docs line). Claude Code stopped to ask in both runs (1/9),
+  tazuna once (1/9) and combined them once (9/9). The task needs two related PRs, or a check that also accepts "stopped
+  and named the rule".
+- Usage: the judge round overran the 5-hour window to 106% (one 18-answer judge call between two meter readings; the
+  guard probes the meter only every 10 minutes when no agent writes a fresh one) and the plan ran on extra usage for
+  about a minute before the guard stopped everything. The rest was judged after the reset with a fresh meter probe
+  before every judge call.
