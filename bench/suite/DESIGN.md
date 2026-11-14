@@ -393,3 +393,11 @@ DeepSeek (v1159), one run each; the 5 answer tasks judged with all eight answers
   two harnesses that score higher write about 60% more output (DeepSeek's reasoning included) at the same "high"
   effort; pi, at the own loop's output, scores close to it. Next: on dev answer tasks only, compare what each sends
   (reasoning effort, max tokens) and how deep each reads. leakscan's three flags were "peer-listed" only.
+- Why (dev tasks only; 6 dev answer tasks, 1 run each of the own loop and OpenCode, $0.03): the requests are the same
+  (`reasoning_effort: high`; OpenCode adds `max_completion_tokens: 32000`, the own loop sends no cap); so is the work: 29
+  against 28 tool calls, 66k against 80k characters of tool output, 11.5k against ~10.5k generated tokens. The own loop
+  reads through bash (cat, sed, grep), OpenCode through its read/grep/glob tools, and the own loop called its `fetch`
+  tool (blocked) in 3 of 6 runs. Judged as pairs, the own loop scored 8.33 against OpenCode's 8.00 (9, 8, 8, 9, 8, 8
+  against 9, 7, 8, 6, 9, 9): no gap on dev. The held-out gap sits in three Python tasks (pydantic) and one Astro
+  investigation; the dev split has only two Python tasks (a question and a review), so a Python weakness can be neither
+  shown nor ruled out without more Python dev tasks. run.py logs a harness's request settings with BENCH_RELAY_LOG.

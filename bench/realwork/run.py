@@ -174,6 +174,17 @@ def relay(target, key, add=None, force=None, drop=()):
             def do_POST(self):
                 body = self.rfile.read(int(self.headers.get("content-length", 0)))
                 body = no_web_tools(body)
+                if os.environ.get("BENCH_RELAY_LOG") and body:  # what a harness asks the model for (diagnostics, 2026-11-15)
+                    try:
+                        b = json.loads(body)
+                        if isinstance(b, dict) and "model" in b:
+                            keys = ("reasoning_effort", "reasoning", "thinking", "max_tokens", "max_completion_tokens", "temperature",
+                                    "top_p", "stream", "parallel_tool_calls", "tool_choice", "extra_body")
+                            with open(os.environ["BENCH_RELAY_LOG"], "a") as f:
+                                f.write(json.dumps({"t": time.time(), "path": self.path, "model": b["model"], **{k: b[k] for k in keys if k in b},
+                                                    "msgs": len(b.get("messages") or []), "tools": len(b.get("tools") or []), "bytes": len(body)}) + "\n")
+                    except (ValueError, OSError):
+                        pass
                 if (add or force or drop) and body:
                     try:
                         b = json.loads(body)
