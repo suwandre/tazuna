@@ -379,3 +379,17 @@ DeepSeek (v1159), one run each; the 5 answer tasks judged with all eight answers
   The comparators are single runs, so this is a watch item, not a regression: the next own-loop round should repeat
   that task.
 - leakscan flagged two pairs, both "-blocked" only (reads the jail refused), which do not count.
+- The same 5 held-out answer tasks with 3 fresh runs each of OMP, OpenCode and pi on DeepSeek (v1187; OMP without the
+  proxy too), judged with the own loop's 3 runs, 12 answers per call (SubRouter $0.45):
+
+| | judge | own loop minus it (95% CI) | mean time | output tokens a run |
+|---|---|---|---|---|
+| own loop 0.1.122 | 5.93 | | 345 s | 26k |
+| OpenCode | 6.80 | -0.87 (-1.60 .. -0.20) | 524 s | 42k |
+| OMP | 6.40 | -0.47 (-1.27 .. +0.47) | 384 s | 42k |
+| pi | 6.27 | -0.33 (-0.73 .. +0.07) | 360 s | 25k |
+
+  A real gap on answer tasks, largest against OpenCode, not a regression against the own loop's own history. The
+  two harnesses that score higher write about 60% more output (DeepSeek's reasoning included) at the same "high"
+  effort; pi, at the own loop's output, scores close to it. Next: on dev answer tasks only, compare what each sends
+  (reasoning effort, max tokens) and how deep each reads. leakscan's three flags were "peer-listed" only.

@@ -1303,6 +1303,8 @@ def run_omp_sub(h, w, prompt, then=None):
     url = relay("https://subrouter.ai", os.environ[os.environ.get("SUBROUTER_X_KEYENV", "SUBROUTER_MODELS_KEY")]) + "/v1"
     (agent / "models.yml").write_text(json.dumps({"providers": {"subrouter": {"baseUrl": url, "apiKey": "relay", "api": "openai-completions", "models": [entry]}}}))
     env = only_keys(env_for("omp-sub", PI_CODING_AGENT_DIR=str(agent), BENCH_JAIL_ALSO=str(agent)))
+    # like OMP on its own login: no proxy (its built-in web search would take it), only the relay (2026-11-14)
+    env = {k: v for k, v in env.items() if k.lower() not in ("https_proxy", "http_proxy", "all_proxy", "no_proxy")}
     # a follow-up task: the session is kept (in the run's own agent dir) and the second message continues it (-c)
     call = lambda text, more: sh(["omp", "-p", "--mode", "json", *(more or (["--no-session"] if not then else [])), "--thinking", effort,
                                   "--model", f"subrouter/{model}", "--approval-mode", "yolo", text], w, timeout=TIMEOUT, env=env)
