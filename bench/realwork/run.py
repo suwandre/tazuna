@@ -383,11 +383,10 @@ def bwrap_jail(cwd, env, cmd):
             fresh.mkdir(parents=True)
             args += ["--bind", str(fresh), str(real)]
             back.append((fresh, real))
-    port = env["HTTPS_PROXY"].rsplit(":", 1)[1]
-    sock = _PROXY_SOCK[0]
-    # the proxy, then every relay of this bench process (pi's model file, Command Code's providers file and OpenCode's
-    # inline config name theirs where the environment does not show them)
-    bridges = [(port, sock), *[(str(p), s) for p, s in _RELAY_SOCKS.items()]]
+    # the proxy (not for a harness given none: OMP), then every relay of this bench process (pi's model file, Command
+    # Code's providers file and OpenCode's inline config name theirs where the environment does not show them)
+    px = env.get("HTTPS_PROXY")
+    bridges = [*([(px.rsplit(":", 1)[1], _PROXY_SOCK[0])] if px else []), *[(str(p), s) for p, s in _RELAY_SOCKS.items()]]
     for _, s_ in bridges:
         args += ["--ro-bind", s_, s_]
     # the bridge's code goes in as -c: bench/ (where netbridge.py lives) is masked inside the jail
@@ -886,9 +885,9 @@ def run_pi_family(h, w, prompt):
     if base_name(h) == "omp":
         # its model traffic goes through the relay; its built-in web search (an Anthropic call of its own, with
         # web_search_20250305) took the CONNECT proxy, which allows anthropic.com for the claude CLI, and found two held-out
-        # tasks' fix PRs (2026-11-14). NO_PROXY=* sends it direct, and from the jail only localhost answers (the jail itself
-        # still reads HTTPS_PROXY to bridge the proxy in, so that stays set).
-        env = {**env, "NO_PROXY": "*", "no_proxy": "*"}
+        # tasks' fix PRs (2026-11-14). No proxy variables, and the Linux jail then bridges no proxy in: only the relays
+        # answer, whatever the client or a shell command does with NO_PROXY (NO_PROXY=* alone held only if honoured).
+        env = {k: v for k, v in env.items() if k.lower() not in ("https_proxy", "http_proxy", "all_proxy", "no_proxy")}
     r = sh(cmd, w, timeout=TIMEOUT, env=env)
     return parse_pi_events(r.stdout, r.stderr, r.returncode)
 
