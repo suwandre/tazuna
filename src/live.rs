@@ -620,6 +620,11 @@ impl Live {
         self.t0.elapsed().as_secs_f64() * 1000.0
     }
 
+    /// The claude session this conversation is (None before claude's first reply, and on the own loop's engine).
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
+    }
+
     /// Continue an earlier claude session (`--continue`, `--resume`): the first message resumes it instead of starting fresh.
     pub fn resume(&mut self, session_id: &str) {
         self.session_id = Some(session_id.to_string());

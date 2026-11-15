@@ -986,22 +986,30 @@ fn app_server(a: &Args) -> Result<()> {
     let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
     let stdin_tx = tx.clone();
     std::thread::spawn(move || {
+        // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
+        // skip the checks a send goes through
+        const OPS: [&str; 11] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "quit"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
-            if let Ok(v) = serde_json::from_str(&line) && stdin_tx.send(v).is_err() {
+            let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+            if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
+                continue;
+            }
+            if stdin_tx.send(v).is_err() {
                 return;
             }
         }
         let _ = stdin_tx.send(json!({"op": "quit"}));
     });
     let out = std::io::stdout();
-    let emit = |s: &Session, untrusted: &Option<String>| {
+    let emit = |s: &Session, untrusted: &Option<String>, sid: Option<&str>| {
         let mut v = s.view();
         v["untrusted"] = json!(untrusted);
+        v["session_id"] = json!(sid);
         let mut o = out.lock();
         let _ = writeln!(o, "{v}");
         let _ = o.flush();
     };
-    emit(&s, &untrusted);
+    emit(&s, &untrusted, live.session_id());
     let mut last_reply = String::new();
     let (mut changed, mut last) = (false, Instant::now());
     loop {
@@ -1040,13 +1048,38 @@ fn app_server(a: &Args) -> Result<()> {
                                 s.apply(&e, t);
                             }
                         }
-                        Some("new") => match live.restart(None) {
-                            Ok((t, e)) => {
-                                s = s.fresh();
-                                s.apply(&e, t);
+                        Some("new") => {
+                            if let Err(e) = restart_session(&mut live, &mut s, None) {
+                                info(&mut s, format!("{e:#}"));
                             }
-                            Err(e) => info(&mut s, format!("{e:#}")),
-                        },
+                        }
+                        // the sessions of some folders (this one when none named), newest first, as a `sessions` line: the
+                        // terminal's /resume list, for the sidebar
+                        Some("sessions") => {
+                            let base = labels::dir()?;
+                            let dirs: Vec<PathBuf> = match cmd["dirs"].as_array() {
+                                Some(ds) => ds.iter().filter_map(|d| d.as_str().map(PathBuf::from)).take(20).collect(),
+                                None => vec![cwd.clone()],
+                            };
+                            let found: Vec<serde_json::Value> = dirs.iter().map(|d| json!({"dir": d, "list": sessions_of(&base, d).iter().take(30).map(|e| json!({
+                                "id": e.id, "first": e.first.chars().take(120).collect::<String>(), "last_at": e.last_at, "messages": e.messages,
+                            })).collect::<Vec<_>>()})).collect();
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{}", json!({"type": "sessions", "dirs": found}));
+                            let _ = o.flush();
+                        }
+                        // an earlier conversation of this folder, continued (claude only, as /resume)
+                        Some("resume") => {
+                            let id = cmd["id"].as_str().unwrap_or_default();
+                            match sessions_of(&labels::dir()?, &cwd).into_iter().find(|e| e.id == id) {
+                                Some(e) => {
+                                    if let Err(err) = restart_session(&mut live, &mut s, Some(&e)) {
+                                        info(&mut s, format!("{err:#}"));
+                                    }
+                                }
+                                None => info(&mut s, format!("no session {id} in this folder")),
+                            }
+                        }
                         Some("profile") => {
                             let p = match cmd["name"].as_str() {
                                 Some("repo") => Some(route::Profile::Repo),
@@ -1068,7 +1101,9 @@ fn app_server(a: &Args) -> Result<()> {
                         }
                         Some("routed") => {
                             let text = cmd["text"].as_str().unwrap_or_default().to_string();
-                            if cmd["general"] == true && live.idle() {
+                            if let Some(why) = untrusted_in_use(&live) {
+                                info(&mut s, why);
+                            } else if cmd["general"] == true && live.idle() {
                                 let (t, u) = live.note(json!({"type": "harness_user", "text": text}));
                                 s.apply(&u, t);
                                 s.apply(&json!({"type": "harness_info", "text": "answered as a chat: not about this project"}), at);
@@ -1144,7 +1179,7 @@ fn app_server(a: &Args) -> Result<()> {
             changed = true;
         }
         if changed && last.elapsed() >= Duration::from_millis(50) {
-            emit(&s, &untrusted);
+            emit(&s, &untrusted, live.session_id());
             (changed, last) = (false, Instant::now());
         }
         std::thread::sleep(Duration::from_millis(15));
@@ -1659,29 +1694,36 @@ fn conversation<'a>(events: &'a [(f64, serde_json::Value)], id: &str) -> Vec<Vec
 /// `/new` (None) or `/resume`: the next message starts a fresh conversation or continues `earlier` on claude. The screen
 /// starts over: an earlier session's recordings are replayed into it, so what was said before shows again.
 fn new_conversation(live: &mut live::Live, s: &mut Session, v: &mut View, earlier: Option<&Earlier>) {
-    match live.restart(earlier.map(|e| e.id.clone())) {
-        Ok((t, notice)) => {
-            *s = s.fresh();
-            if let Some(e) = earlier {
-                for p in &e.recordings {
-                    if let Ok(mut r) = Replay::load(p, false) {
-                        for part in conversation(r.take(usize::MAX), &e.id) {
-                            for (t, ev) in &part {
-                                s.apply(ev, *t);
-                            }
-                            // its costs are final: without this, the next part's restart at $0 read as a stopped turn
-                            s.apply(&json!({"type": "harness_process_end"}), part.last().map_or(0.0, |e| e.0));
-                        }
-                    }
-                }
-                s.model = live.model.clone();
-            }
-            s.apply(&notice, t);
+    match restart_session(live, s, earlier) {
+        Ok(()) => {
             v.open.clear();
             (v.hover, v.scroll, v.since_ms) = (None, 0, live.elapsed_ms());
         }
         Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
     }
+}
+
+/// `/new` and `/resume` (the terminal's and the app's): a fresh conversation, or an earlier one continued with its
+/// messages replayed from the recordings.
+fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earlier>) -> Result<()> {
+    let (t, notice) = live.restart(earlier.map(|e| e.id.clone()))?;
+    *s = s.fresh();
+    if let Some(e) = earlier {
+        for p in &e.recordings {
+            if let Ok(mut r) = Replay::load(p, false) {
+                for part in conversation(r.take(usize::MAX), &e.id) {
+                    for (t, ev) in &part {
+                        s.apply(ev, *t);
+                    }
+                    // its costs are final: without this, the next part's restart at $0 read as a stopped turn
+                    s.apply(&json!({"type": "harness_process_end"}), part.last().map_or(0.0, |e| e.0));
+                }
+            }
+        }
+        s.model = live.model.clone();
+    }
+    s.apply(&notice, t);
+    Ok(())
 }
 
 fn previous_session(base: &std::path::Path, cwd: &std::path::Path, id: Option<&str>) -> Option<(String, Option<std::path::PathBuf>)> {

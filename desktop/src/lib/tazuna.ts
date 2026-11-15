@@ -19,7 +19,11 @@ export type View = {
   cost: number; usage: Usage; turns: number; context: number; context_window?: number; limits?: [number, number]; balance?: number;
   /** what an untrusted folder's config would run (it runs lean until trusted) */
   untrusted?: string | null;
+  /** the claude session of this conversation (null before the first reply, and on the own loop) */
+  session_id?: string | null;
 };
+export type SessionRow = { id: string; first: string; last_at: number; messages: number };
+export type Sessions = { dirs: { dir: string; list: SessionRow[] }[] };
 
 export type ModelChoice = {
   model: string; label: string; place: string; provider: string; url: string | null; key_env: string | null;
@@ -28,7 +32,11 @@ export type ModelChoice = {
 export type Models = { choices: ModelChoice[]; rebuild: string | null };
 
 export const core = {
-  start: (cwd?: string, profile?: string) => invoke("start", { cwd, profile }),
+  /** resolves to the folder the core runs in */
+  start: (cwd?: string, profile?: string) => invoke<string>("start", { cwd, profile }),
+  sessions: (dirs: string[]) => invoke("op", { msg: { op: "sessions", dirs } }),
+  resume: (id: string) => invoke("op", { msg: { op: "resume", id } }),
+  onSessions: (cb: (s: Sessions) => void) => listen<Sessions>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "sessions") cb(e.payload); }),
   send: (text: string, agent = false) => invoke("send", { text, agent }),
   trust: () => invoke("trust"),
   pickFolder: () => invoke<string | null>("pick_folder"),

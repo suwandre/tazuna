@@ -46,7 +46,7 @@ export const builtInWidgets: Widget[] = [
       {u.planWeek != null && <><div className="mb-2 mt-3 text-[11.5px] font-medium text-faint">Plan · week</div><Bar pct={u.planWeek} /><div className={small}>{u.planWeek}% used</div></>}</> },
   { id: "thread", title: "This thread", render: (u) => <>
       <div className="text-[22px] font-semibold tracking-[-0.02em]">{usd(u.threadCost)}</div>
-      <div className={small}>{u.threadTurns} turns · {u.cachedPct}% cached{u.saved > 0 && ` · saved $${u.saved.toFixed(2)}`}</div></> },
+      <div className={small}>{u.threadTurns} {u.threadTurns === 1 ? "turn" : "turns"} · {u.cachedPct}% cached{u.saved > 0 && ` · saved $${u.saved.toFixed(2)}`}</div></> },
   { id: "today", title: "Today", render: (u) => u.todaySeries.length < 2 ? null : <><Spark series={u.todaySeries} /><div className={small}>${u.today.toFixed(2)} · {u.todayTurns} turns</div></> },
 ];
 

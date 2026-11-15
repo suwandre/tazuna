@@ -7,7 +7,8 @@ it (JSON lines: the window's commands in, Session::view snapshots out); New chat
 Open folder (a project, recent ones in the sidebar); inside a project the router answers general questions as a chat,
 tagged, with "send to agent"; a folder whose settings run code runs lean until the user trusts it; tool steps, markdown
 answers, cost per turn and thread, context and plan usage; the model picker (the /model catalog by provider, searchable, with
-what a locked row needs) and the effort menu. Next: sessions listed and shared with the CLI, permission mode and approvals, per-turn diff and undo, Cmd-K.
+what a locked row needs) and the effort menu; saved conversations in the sidebar (chats and each project's, the CLI's
+/resume list: either side opens the other's). Next: permission mode and approvals, per-turn diff and undo, Cmd-K.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

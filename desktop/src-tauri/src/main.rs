@@ -36,7 +36,7 @@ fn login_path() -> Option<String> {
 /// Starts (or restarts) the core in `cwd` (a project) or the home folder (a chat). Async: stopping the old core waits for
 /// it, off the main thread.
 #[tauri::command]
-async fn start(app: AppHandle, core: State<'_, Core>, cwd: Option<String>, profile: Option<String>) -> Result<(), String> {
+async fn start(app: AppHandle, core: State<'_, Core>, cwd: Option<String>, profile: Option<String>) -> Result<String, String> {
     stop_child(&core);
     let dir = cwd.or_else(|| std::env::var("HOME").ok()).unwrap_or_else(|| ".".into());
     let mut cmd = Command::new(tazuna_bin());
@@ -64,7 +64,7 @@ async fn start(app: AppHandle, core: State<'_, Core>, cwd: Option<String>, profi
         }
     });
     *core.child.lock().unwrap() = Some((child, stdin));
-    Ok(())
+    Ok(dir)
 }
 
 fn write(core: &State<Core>, v: serde_json::Value) -> Result<(), String> {
@@ -100,9 +100,13 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
     app.dialog().file().blocking_pick_folder().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
-/// Any other command for the core as is ({"op":"models"}, {"op":"model",...}, {"op":"effort",...}).
+/// The picker's and the sidebar's commands for the core ({"op":"models"}, "model", "effort", "sessions", "resume");
+/// nothing else passes (the core drops other lines too).
 #[tauri::command]
 fn op(core: State<Core>, msg: serde_json::Value) -> Result<(), String> {
+    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume")) {
+        return Err(format!("not a command the window sends: {msg}"));
+    }
     write(&core, msg)
 }
 

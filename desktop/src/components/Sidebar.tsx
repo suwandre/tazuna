@@ -7,9 +7,9 @@ function Kbd({ children }: { children: string }) {
   return <kbd className="ml-auto rounded-[5px] border border-line px-[5px] py-px font-mono text-[11px] text-faint">{children}</kbd>;
 }
 
-function ThreadRow({ t, active, sub }: { t: Thread; active: boolean; sub?: boolean }) {
+function ThreadRow({ t, active, sub, onClick }: { t: Thread; active: boolean; sub?: boolean; onClick?: () => void }) {
   return (
-    <a className={`flex items-center gap-2 truncate rounded-md px-[9px] py-1.5 text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
+    <a onClick={onClick} title={t.title} className={`flex items-center gap-2 truncate rounded-md px-[9px] py-1.5 text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
       {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-accent shadow-[0_0_0_3px_var(--accent-soft)]" : "bg-faint"}`} />}
       <span className="truncate">{t.title}</span>
     </a>
@@ -22,9 +22,11 @@ const macOverlay = "__TAURI_INTERNALS__" in window && navigator.userAgent.includ
 type Props = {
   chats: Thread[]; projects: Project[]; active: string; planLeft: string;
   onNewChat?: () => void; onOpenFolder?: () => void; onOpenProject?: (p: Project) => void;
+  /** a saved conversation: a chat (no project) or one of a project's */
+  onOpenThread?: (t: Thread, p?: Project) => void;
 };
 
-export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject }: Props) {
+export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread }: Props) {
   return (
     <aside className="flex flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
       {macOverlay && <div data-tauri-drag-region className="-mx-2.5 -mt-3.5 h-[38px] flex-none" />}
@@ -42,7 +44,8 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
         <FolderOpen {...icon} /><span>Open folder</span><Kbd>⌘O</Kbd>
       </button>
       {chats.length > 0 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Chats</div>}
-      {chats.map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} />)}
+      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+      {chats.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} onClick={() => onOpenThread?.(t)} />)}
       {projects.length > 0 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Projects</div>}
       {projects.map((p) => (
         <div key={p.path ?? p.name}>
@@ -52,9 +55,10 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
             <span className="flex-1 truncate">{p.name}</span>
             {p.pending ? <span className="rounded-full bg-accent px-1.5 text-[10.5px] font-semibold leading-[17px] text-on-accent">{p.pending}</span> : null}
           </a>
-          {p.open && p.threads.map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} sub />)}
+          {p.open && p.threads.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} sub onClick={() => onOpenThread?.(t, p)} />)}
         </div>
       ))}
+      </div>
       <div className="mt-auto flex items-center gap-2 border-t border-line px-2 pt-2.5 text-muted">
         <span className="grid size-[22px] place-items-center rounded-full border border-line bg-field text-[11px] text-ink-2">S</span>
         <span>Settings</span>
