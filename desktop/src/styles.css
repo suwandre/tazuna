@@ -1,0 +1,55 @@
+@import "tailwindcss";
+@import "@fontsource-variable/source-serif-4/opsz.css";
+
+/* fonts are bundled (DESIGN.md: no network fonts) */
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2") format("woff2"); font-weight: 400; font-display: swap; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Medium.woff2") format("woff2"); font-weight: 500; font-display: swap; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-SemiBold.woff2") format("woff2"); font-weight: 600; font-display: swap; }
+@font-face { font-family: "Geist Mono"; src: url("../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; font-display: swap; }
+
+/* DESIGN.md tokens: light by default, dark under .dark (follows the system unless the user picks) */
+:root {
+  --canvas: #f6f4ef; --main: #fbfaf7; --sidebar: #f3f0e9; --card: #fffefb; --field: #efebe3; --hover: #ebe7dd; --selected: #e6e1f2;
+  --ink: #23221e; --ink-2: #3f3c35; --muted: #6f6a60; --faint: #9b958a;
+  --line: #e3ded3; --line-soft: #ece8df; --line-strong: #d8d2c5;
+  --accent: #3d4aa8; --accent-ink: #2f3a8f; --accent-soft: #e7e8f6; --on-accent: #ffffff;
+  --ok: #3b7d4f; --bad: #b4473a; --warn: #a76a14;
+  --shadow-composer: 0 1px 2px #2321190d, 0 4px 14px #23211908;
+  color-scheme: light;
+}
+.dark {
+  --canvas: #171613; --main: #1b1a17; --sidebar: #151411; --card: #211f1b; --field: #2a2823; --hover: #2a2823; --selected: #2b2c45;
+  --ink: #ece8df; --ink-2: #d2cdc2; --muted: #a19b8f; --faint: #77726a;
+  --line: #2f2c27; --line-soft: #25231f; --line-strong: #3a3731;
+  --accent: #8f9bf0; --accent-ink: #aab3f5; --accent-soft: #272a44; --on-accent: #14152a;
+  --ok: #7cc08f; --bad: #e08b7f; --warn: #e0b46a;
+  --shadow-composer: none;
+  color-scheme: dark;
+}
+
+@theme {
+  --color-canvas: var(--canvas); --color-main: var(--main); --color-sidebar: var(--sidebar); --color-card: var(--card);
+  --color-field: var(--field); --color-hover: var(--hover); --color-selected: var(--selected);
+  --color-ink: var(--ink); --color-ink-2: var(--ink-2); --color-muted: var(--muted); --color-faint: var(--faint);
+  --color-line: var(--line); --color-line-soft: var(--line-soft); --color-line-strong: var(--line-strong);
+  --color-accent: var(--accent); --color-accent-ink: var(--accent-ink); --color-accent-soft: var(--accent-soft); --color-on-accent: var(--on-accent);
+  --color-ok: var(--ok); --color-bad: var(--bad); --color-warn: var(--warn);
+  --font-ui: "Geist", system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+  --font-prose: "Source Serif 4 Variable", Georgia, serif;
+  --radius-sm: 6px; --radius-md: 7px; --radius-lg: 10px; --radius-xl: 14px;
+  --shadow-composer: var(--shadow-composer);
+  --ease-calm: cubic-bezier(0.2, 0, 0, 1);
+}
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0; background: var(--canvas); color: var(--ink);
+  font: 13.5px/1.5 var(--font-ui); -webkit-font-smoothing: antialiased;
+  user-select: none; cursor: default;
+}
+input, textarea, [contenteditable] { user-select: text; cursor: text; }
+.prose-answer { font-family: var(--font-prose); font-size: 15.5px; line-height: 1.62; user-select: text; }
+.prose-answer p { margin: 0 0 10px; }
+code { font-family: var(--font-mono); font-size: 0.92em; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
