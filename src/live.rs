@@ -117,6 +117,9 @@ const ANSWER_RULE: &str = "When the request asks for an answer, a review or a pl
 /// (6.9 to 7.6), plans down (plan-astro-18399 8.0 to 5.5); 10% cheaper, 15% less output. Stays off.
 const PRECISE_ANSWER_RULE: &str = "When the request asks for an answer rather than a change: state as fact only what you read in the code or saw a command print, with file:line; call anything else (library internals, behaviour you did not run) unverified, or leave it out. For a cause, follow the chain to its start: say why each step happens, not only where. Keep to the length the request asks for.";
 
+/// The chat profile's whole prompt: the model alone, as the general set's baselines ran it (plus the date).
+const CHAT_PROMPT: &str = "You are a helpful assistant.";
+
 const COVER_ALL_RULE: &str = "Make your change, and its tests, cover every command, flag or API the task names, and each one's error cases, not only the main path: read the code behind each one before you change it.";
 
 const WRITE_TESTS_RULE: &str = "Add or update tests for the behavior you change, including its edge cases: tazuna's check only runs the tests, it does not write them.";
@@ -1433,14 +1436,18 @@ impl Live {
 
     fn setting_sources(&self) -> &'static str {
         match (self.profile, self.user_settings) {
-            (Profile::Lean, _) => "",
+            (Profile::Lean | Profile::Chat, _) => "",
             (Profile::Repo | Profile::RepoLean, false) => "project,local",
             (Profile::Repo | Profile::RepoLean, true) => "user,project,local",
         }
     }
 
+    fn today(&self) -> String {
+        crate::platform::shell("date +%Y-%m-%d", &[]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default()
+    }
+
     fn mid_prompt(&self) -> String {
-        let date = crate::platform::shell("date +%Y-%m-%d", &[]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+        let date = self.today();
         let mut p = MID_PROMPT.replace("{cwd}", &self.cwd.to_string_lossy()).replace("{date}", &date);
         if self.self_review {
             p.push_str("\n- ");
@@ -1460,6 +1467,25 @@ impl Live {
             // bash cap (2026-10-24)
             // with --search-tools the prompt must say the same as the tools (it said "grep in bash" through the whole
             // 2026-11-04 test of those tools)
+            if self.profile == Profile::Chat {
+                let prompt = format!("{CHAT_PROMPT} Today is {}.", self.today());
+                let mut cmd = Command::new(std::env::current_exe().context("locating the tazuna binary")?);
+                cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--permission-mode", &self.permission_mode])
+                    .env("TAZUNA_SYSTEM_PROMPT", &prompt)
+                    .env("TAZUNA_NO_TOOLS", "1");
+                if let Some(p) = &self.price {
+                    cmd.env("TAZUNA_PRICE", p);
+                }
+                if std::env::var_os(&key_env).is_none() && let Some(k) = crate::models::key(&key_env) {
+                    cmd.env(&key_env, k);
+                }
+                // no TAZUNA_HEADLESS: its nudge after a turn without a change made the own loop write general-set
+                // answers into files
+                if let Some(id) = &self.session_id {
+                    cmd.args(["--resume", id]);
+                }
+                return self.start(cmd);
+            }
             let search = if std::env::var_os("TAZUNA_SEARCH_TOOLS").is_some() { "Search with the grep and glob tools, not in bash; read files with read." } else { "Search with grep -rn in bash; read whole files with read." };
             let mut prompt = self.mid_prompt().replace("Use Grep/Glob to search.", search);
             prompt.push_str(if std::env::var_os("TAZUNA_API_SCOPE").is_some() { API_SCOPE_RULE } else { API_RULE });
@@ -1565,7 +1591,7 @@ impl Live {
         }
         // `--connectors` lets them in (2026-11-06): Claude Code now defers MCP tools (names only until one is used), and
         // the user's set (Jira, Slack, Claude Docs, 8 waiting for a login) measured 22.3k tokens a call against 18.3k
-        if self.profile != Profile::Lean && !self.user_settings && !self.connectors {
+        if !matches!(self.profile, Profile::Lean | Profile::Chat) && !self.user_settings && !self.connectors {
             // MCP servers from the repo's .mcp.json only: without this, the user's claude.ai connectors (they come with the
             // account, not a settings file) load too, ~40k tokens of tool schemas per turn in a personal setup
             cmd.arg("--strict-mcp-config");
@@ -1647,6 +1673,12 @@ impl Live {
                 let tools = if self.connectors { "Bash,Read,Edit,Write,Grep,Glob,Skill,ToolSearch" } else { "Bash,Read,Edit,Write,Grep,Glob,Skill" };
                 cmd.arg("--system-prompt-file").arg(prompt_file(&prompt)?).args(["--tools", tools]);
             }
+            Profile::Chat => {
+                // the general set's "Opus alone": a one-line prompt, no tools, no settings, MCP or skills
+                cmd.args(["--strict-mcp-config", "--disable-slash-commands", "--tools", ""])
+                    .arg("--system-prompt")
+                    .arg(format!("{CHAT_PROMPT} Today is {}.", self.today()));
+            }
             Profile::Lean => {
                 let mut prompt = self.mid_prompt();
                 if self.project_instructions {
@@ -1676,7 +1708,7 @@ impl Live {
             cmd.arg("--mcp-config").arg(c);
         }
         let mut settings = json!({});
-        if self.diagnostics {
+        if self.diagnostics && self.profile != Profile::Chat {
             if self.diag_dir.is_none() {
                 self.diag_dir = Some(diag::prepare(&self.cwd)?);
             }
@@ -1688,7 +1720,7 @@ impl Live {
             let q = crate::platform::sh_quote(&exe);
             settings["hooks"]["PreToolUse"] = json!([{"matcher": "", "hooks": [{"type": "command", "command": format!("{q} boss-hook")}]}]);
         }
-        if self.rtk && self.profile != Profile::Lean {
+        if self.rtk && !matches!(self.profile, Profile::Lean | Profile::Chat) {
             // the hook rtk's own `rtk init` installs for Claude Code: it rewrites a Bash command to run through rtk
             let mut pre = settings["hooks"]["PreToolUse"].as_array().cloned().unwrap_or_default();
             pre.push(json!({"matcher": "Bash", "hooks": [{"type": "command", "command": "rtk hook claude"}]}));

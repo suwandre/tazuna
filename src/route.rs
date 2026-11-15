@@ -29,6 +29,10 @@ pub enum Profile {
     /// The lean prompt with Claude Code's own tools and the repo's settings, hooks, skills and CLAUDE.md: the repo's
     /// rules at close to lean cost. (Hooks match Claude's tool names, so the lean MCP tools would never trigger them.)
     RepoLean,
+    /// A plain chat (2026-11-15): a short prompt, no tools, no repo context or checks. Outside coding every harness scored
+    /// under the model alone (general set: Opus alone 8.46 against tazuna's 8.30; DeepSeek alone 7.73 against the own
+    /// loop's 7.46, which wrote answers into files); this is the model alone.
+    Chat,
 }
 
 impl Profile {
@@ -37,6 +41,7 @@ impl Profile {
             Profile::Repo => "repo",
             Profile::Lean => "lean",
             Profile::RepoLean => "repo-lean",
+            Profile::Chat => "chat",
         }
     }
 }

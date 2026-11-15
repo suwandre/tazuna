@@ -418,7 +418,8 @@ fn parse(argv: Vec<String>) -> Result<Args> {
                     "repo" => route::Profile::Repo,
                     "lean" => route::Profile::Lean,
                     "repo-lean" => route::Profile::RepoLean,
-                    p => bail!("--profile repo|repo-lean|lean, not {p}"),
+                    "chat" => route::Profile::Chat,
+                    p => bail!("--profile repo|repo-lean|lean|chat, not {p}"),
                 })
             }
             "--trust" => a.trust = true,

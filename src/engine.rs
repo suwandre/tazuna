@@ -246,6 +246,10 @@ pub fn serve(args: &[String]) -> Result<()> {
     // the user's MCP servers (`/mcp on`, 0.1.80): one tool for all of them, the same all session
     let hub = std::env::var_os("TAZUNA_MCP").is_some().then(crate::mcpc::Hub::connect);
     fns.extend(hub.as_ref().and_then(|h| h.tool()));
+    // the chat profile (TAZUNA_NO_TOOLS): the model alone, as a chat app sends it
+    if std::env::var_os("TAZUNA_NO_TOOLS").is_some() {
+        fns.clear();
+    }
     let names: Vec<Value> = fns.iter().map(|t| t["function"]["name"].clone()).collect();
     // the model's prices, so the screen's running cost is this model's and not Claude's list prices (a Luna turn read
     // ~$3 while it ran and $0.007 at its end, 2026-11-06)
@@ -801,6 +805,10 @@ impl Loop {
                     b
                 }
             };
+            // no tools (the chat profile): no "tools" field, which some APIs refuse empty
+            if self.tools.is_empty() && let Some(o) = body.as_object_mut() {
+                o.remove("tools");
+            }
             let t0 = std::time::Instant::now();
             let mut reply = match (self.call)(&body) {
                 Ok(r) => r,
@@ -2119,6 +2127,52 @@ session: "s".into(),
         assert!(reasoning_back("https://api.deepseek.com/v1", "deepseek-chat"), "on by default for DeepSeek's own API");
         assert!(reasoning_back("https://subrouter.ai/v1", "deepseek-v4.1-flash-1017") && !reasoning_back("https://subrouter.ai/v1", "minimax-m3.1-flash"),
             "on SubRouter for DeepSeek only: MiniMax kept and billed it past its context limit");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_chat_without_tools_sends_no_tools_field() {
+        // the chat profile (TAZUNA_NO_TOOLS): the request carries no "tools", which some APIs refuse empty
+        fn none(_: &str, _: &str, _: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, Api, Price)> {
+            anyhow::bail!("no other route")
+        }
+        let dir = std::env::temp_dir().join(format!("tazuna-chat-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let sent = Rc::new(RefCell::new(vec![]));
+        let s = sent.clone();
+        let mut l = Loop {
+            call: Box::new(move |b: &Value| {
+                s.borrow_mut().push(b.clone());
+                Ok(json!({"choices": [{"message": {"role": "assistant", "content": "Hello."}}], "usage": {}}))
+            }),
+            api: Api::Chat,
+            system: "You are a helpful assistant.".into(),
+            model: "deepseek-v4.1-flash-1017".into(),
+            effort: Some("high".into()),
+            price: (1e-6, 1e-7, 4e-6),
+            tools: vec![],
+            msgs: vec![json!({"role": "system", "content": "You are a helpful assistant."})],
+            saved: None,
+            server: crate::mcp::Server::new(dir.clone()),
+            hub: None,
+            session: "s".into(),
+            cost: 0.0,
+            task: (std::time::Instant::now(), 0.0),
+            queued: VecDeque::new(),
+            mode: "bypassPermissions".into(),
+            asked: 0,
+            send_reasoning: false,
+            cache_key: true,
+            routes: VecDeque::new(),
+            route_calls: vec![],
+            connector: none,
+            out: Box::new(|_: &Value| {}),
+        };
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("hi"), false, &rx);
+        let sent = sent.borrow();
+        assert_eq!(sent.len(), 1, "one call: nothing to run");
+        assert!(sent[0].get("tools").is_none() && sent[0]["reasoning_effort"] == "high");
         std::fs::remove_dir_all(&dir).ok();
     }
 
