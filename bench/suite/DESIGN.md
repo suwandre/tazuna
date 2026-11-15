@@ -401,3 +401,8 @@ DeepSeek (v1159), one run each; the 5 answer tasks judged with all eight answers
   against 9, 7, 8, 6, 9, 9): no gap on dev. The held-out gap sits in three Python tasks (pydantic) and one Astro
   investigation; the dev split has only two Python tasks (a question and a review), so a Python weakness can be neither
   shown nor ruled out without more Python dev tasks. run.py logs a harness's request settings with BENCH_RELAY_LOG.
+- Four Python dev answer tasks (build_python.py: pydantic investigate 14115, 14051; plan 14159, 13953) plus
+  question-pydantic-14253, own loop against OpenCode on DeepSeek, 2 runs each ($0.07): 8.20 against 8.00, 175 against
+  156 s. No Python weakness: over 11 dev answer tasks the own loop is level or ahead. The held-out gap sits on its two
+  hardest tasks (3-5 for every harness), where OpenCode also ran far longer (4378 against 1017 s on the investigation,
+  different rounds): next, whether the own loop stops too early on hard tasks.
