@@ -2444,6 +2444,45 @@ fn run_live(
                     }
                     continue;
                 }
+                // /profile NAME (repo, repo-lean, lean, chat) and /chat (a plain chat, or back to the profile before it): as
+                // --profile at start, for the rest of the session. To or from chat starts a fresh conversation.
+                if text == "/chat" || text == "/profile" || text.starts_with("/profile ") {
+                    use route::Profile;
+                    let at = live.elapsed_ms();
+                    let want = if text == "/chat" {
+                        Some(if live.profile == Profile::Chat { live.prev_profile.filter(|p| *p != Profile::Chat).unwrap_or(Profile::Repo) } else { Profile::Chat })
+                    } else {
+                        match text["/profile".len()..].trim() {
+                            "" => None,
+                            "repo" => Some(Profile::Repo),
+                            "repo-lean" => Some(Profile::RepoLean),
+                            "lean" => Some(Profile::Lean),
+                            "chat" => Some(Profile::Chat),
+                            other => {
+                                s.apply(&json!({"type": "harness_info", "text": format!("no profile {other}: repo, repo-lean, lean or chat")}), at);
+                                continue;
+                            }
+                        }
+                    };
+                    let Some(p) = want else {
+                        s.apply(&json!({"type": "harness_info", "text": format!("profile: {} · /profile repo | repo-lean | lean | chat · /chat for a plain chat and back", live.profile.name())}), at);
+                        continue;
+                    };
+                    let fresh = (p == Profile::Chat) != (live.profile == Profile::Chat);
+                    match live.set_profile(p) {
+                        Ok((t, e)) => {
+                            if fresh {
+                                new_conversation(live, &mut s, &mut v, None);
+                                git_start = runlog::git_snapshot(&std::env::current_dir()?);
+                                v.changed.clear();
+                                ctx_hint = 0;
+                            }
+                            s.apply(&e, t);
+                        }
+                        Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), at),
+                    }
+                    continue;
+                }
                 // /mcp: the user's MCP servers for every model (0.1.80); on and off remembered across sessions
                 // /connectors (0.1.79) by habit: say its new name instead of sending it to the model
                 if text == "/connectors" {

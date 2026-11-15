@@ -486,6 +486,8 @@ pub struct Live {
     /// Add the repo's CLAUDE.md / AGENTS.md to the system prompt (lean profile; the repo profile lets Claude Code load them).
     pub project_instructions: bool,
     pub profile: Profile,
+    /// The profile before the last `/profile` or `/chat` switch: where `/chat` goes back to.
+    pub prev_profile: Option<Profile>,
     /// Also load the user's personal ~/.claude settings (repo profile).
     pub user_settings: bool,
     /// `--connectors`: the user's MCP servers and claude.ai connectors without the rest of ~/.claude (repo profile).
@@ -589,6 +591,7 @@ impl Live {
             diag_dir: None,
             project_instructions: true,
             profile: Profile::Lean,
+            prev_profile: None,
             user_settings: false,
             connectors: false,
             instructions_used: (0, Vec::new()),
@@ -776,6 +779,34 @@ impl Live {
             None => format!("boss mode off: {} works itself again (the conversation goes on)", self.model.trim_start_matches("claude-")),
         };
         Ok(self.record(json!({"type": "harness_info", "text": text})))
+    }
+
+    /// `/profile NAME` and `/chat`: the rest of the session in another profile (as `--profile` at start). Between the coding
+    /// profiles the conversation goes on (claude resumes it with the new prompt and tools); the caller starts a fresh one
+    /// when switching to or from chat, which shares no context with the repo.
+    pub fn set_profile(&mut self, p: Profile) -> Result<(f64, Value)> {
+        if !self.idle() {
+            bail!("wait until the run has finished (or stop it with esc)");
+        }
+        if p == self.profile {
+            return Ok(self.record(json!({"type": "harness_profile", "profile": p.name(), "text": format!("already in the {} profile", p.name())})));
+        }
+        let mut note = "";
+        if self.boss.is_some() && p != Profile::Repo {
+            self.boss = None;
+            note = " (boss mode off: it needs the repo profile)";
+        }
+        self.prev_profile = Some(self.profile);
+        self.profile = p;
+        self.respawn(self.model.clone(), self.effort.clone());
+        let what = match p {
+            Profile::Chat => "a plain chat for questions that are not about code: no tools, no repo context (/chat again goes back)",
+            Profile::Repo => "Claude Code's prompt and tools with the repo's settings, hooks, skills and CLAUDE.md",
+            Profile::RepoLean => "tazuna's lean prompt with Claude Code's tools and the repo's settings",
+            Profile::Lean => "tazuna's lean prompt and tools, no settings",
+        };
+        let own = if self.provider.is_some() && p != Profile::Chat { " (on the own loop the coding profiles are one agent)" } else { "" };
+        Ok(self.record(json!({"type": "harness_profile", "profile": p.name(), "text": format!("{} profile: {what}{own}{note}", p.name())})))
     }
 
     /// `/mcp on|off`: the user's MCP servers (tazuna's list, ~/.config/tazuna/mcp.json) for every model, and on claude
@@ -1993,6 +2024,21 @@ mod tests {
         }
         live.provider = Some(("https://api.example".into(), "KEY".into()));
         assert!(live.set_connectors(true).is_ok() && live.connectors, "the own loop too");
+    }
+
+    #[test]
+    fn profile_switches_and_remembers_where_chat_came_from() {
+        let mut live = Live::new("", "").unwrap();
+        live.profile = Profile::Repo;
+        live.boss = Some("haiku".into());
+        let (_, e) = live.set_profile(Profile::Chat).unwrap();
+        assert_eq!(e["profile"], "chat");
+        assert!(live.profile == Profile::Chat && live.prev_profile == Some(Profile::Repo));
+        assert!(live.boss.is_none() && e["text"].as_str().unwrap().contains("boss mode off"), "boss needs the repo profile");
+        let (_, again) = live.set_profile(Profile::Chat).unwrap();
+        assert!(again["text"].as_str().unwrap().starts_with("already"));
+        live.set_profile(Profile::Lean).unwrap();
+        assert!(live.profile == Profile::Lean && live.prev_profile == Some(Profile::Chat));
     }
 
     #[test]
