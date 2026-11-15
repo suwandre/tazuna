@@ -224,3 +224,64 @@ mod tests {
         std::fs::remove_dir_all(&dir).ok();
     }
 }
+
+/// Signs that a message is about the code or the project (2026-11-15): any one keeps the message on the coding agent;
+/// only a message with none may be answered as a chat. A general question answered by the agent is a little worse; a
+/// coding request answered without tools fails, so these lean towards the agent.
+pub fn code_signals(text: &str, cwd: &Path) -> Vec<String> {
+    const EXT: [&str; 34] = ["rs", "ts", "tsx", "js", "jsx", "mjs", "py", "go", "java", "kt", "rb", "php", "c", "h", "cpp", "cs", "swift",
+        "json", "yaml", "yml", "toml", "md", "sql", "sh", "css", "scss", "html", "vue", "svelte", "lock", "env", "ini", "xml", "proto"];
+    const WORDS: [&str; 78] = ["repo", "repository", "codebase", "project", "code", "function", "functions", "method", "class", "variable",
+        "test", "tests", "bug", "bugs", "error", "errors", "exception", "stacktrace", "traceback", "crash", "crashes", "build", "compile",
+        "lint", "deploy", "commit", "commits", "branch", "pr", "prs", "merge", "rebase", "push", "diff", "file", "files", "module",
+        "package", "dependency", "dependencies", "refactor", "implement", "fix", "debug", "endpoint", "cli", "flag", "config", "script",
+        "readme", "npm", "pnpm", "yarn", "cargo", "pip", "git", "docker", "migration", "schema", "database", "app", "server",
+        "frontend", "backend", "component", "feature", "issue", "ticket", "review", "release", "bump", "pipeline", "ci", "page",
+        "login", "startup", "crashing", "failing"];
+    let mut out = vec![];
+    if text.contains("```") || text.matches('`').count() >= 2 {
+        out.push("code quote".into());
+    }
+    // a message that points back at the conversation ("what we did", "the same for") goes on with the agent's work
+    let lower_text = text.to_lowercase();
+    for back in ["we did", "you did", "so far", "the same for", "same thing", "your last", "you just", "earlier", "above", "as before", "undo", "revert", "continue", "go on"] {
+        if lower_text.contains(back) {
+            out.push(format!("refers back: {back}"));
+        }
+    }
+    // the repo's own file names (with an extension, so not plain words like "tools" or "docs")
+    let names: Vec<String> = std::fs::read_dir(cwd).map(|d| d.flatten().filter_map(|e| e.file_name().into_string().ok())
+        .map(|n| n.to_lowercase()).filter(|n| n.contains('.') && !n.starts_with('.')).collect()).unwrap_or_default();
+    for raw in text.split_whitespace() {
+        let tok = raw.trim_matches(|c: char| ",.;:!?\"'()[]{}<>".contains(c));
+        if tok.is_empty() {
+            continue;
+        }
+        let lower = tok.to_lowercase();
+        let word = lower.trim_end_matches("'s");
+        if WORDS.contains(&word) {
+            out.push(format!("word {word}"));
+        } else if tok.starts_with("--") && tok.len() > 3 {
+            out.push(format!("flag {tok}"));
+        } else if tok.contains('/') && tok.split('/').filter(|p| p.len() >= 2).count() >= 2 && !tok.starts_with("http") {
+            out.push(format!("path {tok}"));
+        } else if let Some((stem, ext)) = tok.rsplit_once('.') && !stem.is_empty() && EXT.contains(&ext.to_lowercase().as_str()) {
+            out.push(format!("file {tok}"));
+        } else if raw.contains('(') && raw.contains(')') && tok.chars().next().is_some_and(|c| c.is_alphabetic()) && raw.find('(').is_some_and(|i| i > 0 && raw[..i].chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.')) {
+            out.push(format!("call {tok}"));
+        } else if tok.contains("::") || tok.contains("->") || tok.contains("=>") {
+            out.push(format!("syntax {tok}"));
+        } else if tok.len() > 3 && tok.chars().next().is_some_and(|c| c.is_lowercase()) && tok.chars().any(|c| c.is_uppercase()) && tok.chars().all(|c| c.is_alphanumeric()) {
+            out.push(format!("identifier {tok}"));
+        } else if tok.contains('_') && tok.split('_').filter(|p| !p.is_empty()).count() >= 2 && tok.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            out.push(format!("identifier {tok}"));
+        } else if tok.starts_with('E') && tok.len() > 4 && tok.chars().all(|c| c.is_ascii_uppercase()) {
+            out.push(format!("errno {tok}"));
+        } else if tok.ends_with("Error") || tok.ends_with("Exception") {
+            out.push(format!("error {tok}"));
+        } else if names.iter().any(|n| n == word) {
+            out.push(format!("repo name {word}"));
+        }
+    }
+    out
+}

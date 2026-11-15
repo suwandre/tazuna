@@ -460,3 +460,12 @@ price-to-performance rule (docs/WORKING.md; a bad answer about code costs $6.67 
   4.5x the cost. Both stay off; on DeepSeek more thinking does not buy better plans.
 - The two n8n reviews finished no run: at xhigh on Mistral each hit tazuna's $1 task stop (SubRouter's token counts
   had put them at $0.31). The round stopped at its spend cap: $7.71 at list prices, ~$11.6 billed.
+
+## Routing general questions inside a project (2026-11-15)
+
+0.1.127 sends a message with no code signals (route::code_signals) past a model check, and a GENERAL verdict to a
+one-off chat. Test set: 77 messages (route-messages.jsonl): 20 suite prompts and 15 typed coding requests, 8 coding
+follow-ups and 4 general ones after a coding reply, 20 general-set questions, 10 ambiguous. Rules alone kept all 45
+coding messages on the agent; with the check on DeepSeek (own loop) and on Haiku (claude path), 0 of 45 went to chat and
+23 of 25 general questions did (ambiguous: 4-5 of 7). With the instruction only in the system prompt, DeepSeek through
+SubRouter answered the messages instead of classifying them (8 of 25).

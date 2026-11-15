@@ -134,6 +134,8 @@ struct Args {
     model: Option<String>,
     effort: Option<String>,
     allow_non_git: bool,
+    /// `--no-route`: every message to the agent, none answered as a chat (`/route off` in a session).
+    no_route: bool,
     run: Option<PathBuf>,
     /// `--then FILE` (repeatable, with --run): later messages of the same session, each sent when the last reply is in
     /// (the suite's follow-up tasks: "go ahead", "same PR", "so X, right?").
@@ -263,6 +265,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         model: None,
         effort: None,
         allow_non_git: false,
+        no_route: false,
         run: None,
         log: None,
         verify: verify::Mode::Auto,
@@ -320,6 +323,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--model" => a.model = Some(val()?),
             "--effort" => a.effort = Some(val()?),
             "--allow-non-git" => a.allow_non_git = true,
+            "--no-route" => a.no_route = true,
             "--run" => a.run = Some(val()?.into()),
             "--then" => a.then.push(val()?.into()),
             "--verify" => a.verify = verify::Mode::Command(val()?),
@@ -471,6 +475,30 @@ fn main() -> Result<()> {
     }
     if std::env::args().nth(1).as_deref() == Some("explore-mcp") {
         return engine::explore_serve(&std::env::args().skip(2).collect::<Vec<_>>());
+    }
+    if std::env::args().nth(1).as_deref() == Some("route-check") {
+        // `tazuna route-check < messages.jsonl`: each message's code signals (bench/suite/route-messages.jsonl)
+        let cwd = std::env::current_dir()?;
+        for line in std::io::stdin().lines() {
+            let v: serde_json::Value = serde_json::from_str(&line?)?;
+            let text = v["text"].as_str().unwrap_or_default();
+            let signals = route::code_signals(text, &cwd);
+            // TAZUNA_ROUTE_CHECK=claude (Haiku through claude) or URL|KEY_ENV|MODEL (the own loop's): the model check too,
+            // on messages without signals, with the "last" field as the last reply
+            let general = match std::env::var("TAZUNA_ROUTE_CHECK").ok().filter(|_| signals.is_empty()) {
+                None => None,
+                Some(how) => {
+                    let mut parts = how.splitn(3, '|');
+                    let c = match (parts.next(), parts.next(), parts.next()) {
+                        (Some(u), Some(k), Some(m)) => RouteCtx { model: m.into(), effort: "high".into(), provider: Some((u.into(), k.into())), price: None },
+                        _ => RouteCtx { model: String::new(), effort: String::new(), provider: None, price: None },
+                    };
+                    Some(route_general(&c, v["last"].as_str().unwrap_or_default(), text))
+                }
+            };
+            println!("{}", json!({"want": v["want"], "src": v["src"], "signals": signals, "general": general}));
+        }
+        return Ok(());
     }
     if std::env::args().nth(1).as_deref() == Some("map") {
         // `tazuna map <task-file>`: the repo map --repo-map would send, for checking it by eye
@@ -702,6 +730,112 @@ fn set_explorer(live: &mut live::Live, a: &Args) {
         }
         None => live.explorer = a.explorer.clone(),
     }
+}
+
+/// What the per-message router (2026-11-15) needs from the session, owned, for its threads.
+#[derive(Clone)]
+struct RouteCtx {
+    model: String,
+    effort: String,
+    provider: Option<(String, String)>,
+    price: Option<String>,
+}
+
+impl RouteCtx {
+    fn of(live: &live::Live) -> Self {
+        RouteCtx { model: live.model.clone(), effort: live.effort.clone(), provider: live.provider.clone(), price: live.price.clone() }
+    }
+}
+
+/// The router's check for a message with no code signals (route::code_signals). 0 of 45 coding messages and follow-ups
+/// went to chat with it, 22 of 24 general questions did (bench/suite/route-messages.jsonl, DeepSeek, 2026-11-15).
+const ROUTE_SYSTEM: &str = "You route messages in a coding assistant that works in the user's software project. Reply with one word. CODE: the \
+message is about the project, its code, files, tools or errors, or it continues the conversation's work (a follow-up, a correction, a yes or \
+no). GENERAL: a self-contained question or request unrelated to the project (general knowledge, writing, math, advice, everyday life). If unsure, CODE.";
+
+/// True when the model check calls the message GENERAL; any failure keeps it on the agent. The own loop asks its own model
+/// (no reasoning, five tokens); claude asks Haiku through the official CLI.
+fn route_general(c: &RouteCtx, last: &str, msg: &str) -> bool {
+    let last: String = last.chars().take(600).collect();
+    // the instruction in the user turn too, and the message in tags: some providers' models answered the message itself
+    // ("Every evening, Elias climbed…") with the instruction only in the system prompt
+    let user = format!("Classify the new message below; do not answer it. Reply with exactly one word: CODE or GENERAL.\n\n<last_assistant_message>{}</last_assistant_message>\n\n<new_message>{msg}</new_message>",
+        if last.is_empty() { "(none: this is the first message)" } else { &last });
+    let answer = match &c.provider {
+        Some((url, key_env)) => {
+            let Some(key) = std::env::var(key_env).ok().or_else(|| models::key(key_env)) else { return false };
+            let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(20))).build().into();
+            let ask = |body: serde_json::Value| -> Option<String> {
+                let r = http.post(&format!("{}/chat/completions", url.trim_end_matches('/'))).header("Authorization", format!("Bearer {}", key.trim())).header("Content-Type", "application/json").send(body.to_string());
+                let text = r.map_err(|e| e.to_string()).and_then(|mut r| r.body_mut().read_to_string().map_err(|e| e.to_string()));
+                if std::env::var_os("TAZUNA_ROUTE_DEBUG").is_some() {
+                    eprintln!("route check: {}", match &text { Ok(t) => t.chars().take(300).collect::<String>(), Err(e) => e.clone() });
+                }
+                let v: serde_json::Value = serde_json::from_str(&text.ok()?).ok()?;
+                v["choices"][0]["message"]["content"].as_str().map(String::from)
+            };
+            let msgs = json!([{"role": "system", "content": ROUTE_SYSTEM}, {"role": "user", "content": user}]);
+            // a model that refuses "none" answers with its own default thinking (and more room for it)
+            ask(json!({"model": c.model, "reasoning_effort": "none", "max_tokens": 5, "messages": msgs}))
+                .or_else(|| ask(json!({"model": c.model, "max_tokens": 4000, "messages": msgs})))
+        }
+        None => std::process::Command::new("claude")
+            .args(["-p", &user, "--model", "claude-haiku-5-5", "--system-prompt", ROUTE_SYSTEM, "--tools", "", "--setting-sources", "",
+                "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence"])
+            .stdin(std::process::Stdio::null()).output().ok().filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned()),
+    };
+    answer.is_some_and(|a| a.trim().to_uppercase().starts_with("GEN"))
+}
+
+/// A general question asked inside a project, answered as the chat profile would (one-line prompt, no tools) in a one-off
+/// process beside the agent's, whose conversation it leaves alone. Its events go to the screen through `tx`.
+fn chat_turn(c: RouteCtx, text: String, tx: std::sync::mpsc::Sender<serde_json::Value>) {
+    use std::io::{BufRead, Write};
+    std::thread::spawn(move || {
+        let date = platform::shell("date +%Y-%m-%d", &[]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
+        let prompt = format!("You are a helpful assistant. Today is {date}.");
+        let mut cmd = match &c.provider {
+            None => {
+                let mut k = std::process::Command::new("claude");
+                k.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
+                    "--model", &c.model, "--effort", &c.effort, "--system-prompt", &prompt, "--tools", "", "--setting-sources", "",
+                    "--strict-mcp-config", "--disable-slash-commands", "--no-session-persistence"]);
+                k
+            }
+            Some((url, key_env)) => {
+                let Ok(exe) = std::env::current_exe() else { return };
+                let mut k = std::process::Command::new(exe);
+                k.args(["engine", "--url", url, "--key-env", key_env, "--model", &c.model, "--effort", &c.effort, "--permission-mode", "bypassPermissions"])
+                    .env("TAZUNA_SYSTEM_PROMPT", &prompt)
+                    .env("TAZUNA_NO_TOOLS", "1");
+                if std::env::var_os(key_env).is_none() && let Some(key) = models::key(key_env) {
+                    k.env(key_env, key);
+                }
+                if let Some(p) = &c.price {
+                    k.env("TAZUNA_PRICE", p);
+                }
+                k
+            }
+        };
+        let child = cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn();
+        let Ok(mut child) = child else {
+            let _ = tx.send(json!({"type": "tazuna_chat_event", "e": {"type": "harness_notice", "text": "could not start the chat answer", "error": true}}));
+            return;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = writeln!(stdin, "{}", json!({"type": "user", "message": {"role": "user", "content": text}}));
+        }
+        if let Some(out) = child.stdout.take() {
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                // the chat's own start-up event would replace the session's model and tools on the screen
+                if let Ok(e) = serde_json::from_str::<serde_json::Value>(&line) && e["type"] != "system" {
+                    let _ = tx.send(json!({"type": "tazuna_chat_event", "e": e}));
+                }
+            }
+        }
+        let _ = child.wait();
+    });
 }
 
 /// Under `trusted` (the default, or `/data trusted` mid-session), a provider in use that is not on the trusted list: the
@@ -1400,6 +1534,9 @@ fn run_live(
         (s.limits, s.limits_at) = (Some((h5, d7)), Some(at));
     }
     let (status_tx, status_rx) = std::sync::mpsc::channel::<serde_json::Value>();
+    // the per-message router (`/route on|off`, `--no-route`) and the last reply it shows the model check
+    let mut route_on = !a.no_route;
+    let mut last_reply = String::new();
     fetch_balance(&status_tx);
     // no reading in any session yet (a new install, or a machine that only ran other providers) showed no plan line at
     // all (the Windows PC, 2026-11-08): one short Haiku call reads it, as /usage does, and is recorded for the next start.
@@ -1622,6 +1759,9 @@ fn run_live(
         last = Instant::now();
         for (t, e) in live.poll() {
             s.apply(&e, t);
+            if e["type"] == "result" && let Some(r) = e["result"].as_str() {
+                last_reply = r.to_string();
+            }
             if e["type"] == "result" && e["tazuna_paid"] == true {
                 fetch_balance(&status_tx); // a run on SubRouter spent some of it
             }
@@ -1647,6 +1787,26 @@ fn run_live(
         }
         while let Ok(e) = status_rx.try_recv() {
             match e["type"].as_str() {
+                // the router's verdict on a message without code signals
+                Some("tazuna_route") => {
+                    let text = e["text"].as_str().unwrap_or_default().to_string();
+                    if e["general"] == true && live.idle() {
+                        let at = live.elapsed_ms();
+                        let (t, u) = live.note(json!({"type": "harness_user", "text": text}));
+                        s.apply(&u, t);
+                        s.apply(&json!({"type": "harness_info", "text": "answered as a chat: not about this project (/agent TEXT sends it to the agent, /route off stops this)"}), at);
+                        chat_turn(RouteCtx::of(live), text, status_tx.clone());
+                    } else {
+                        match live.send_typed(&text) {
+                            Ok((t, e)) => s.apply(&e, t),
+                            Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),
+                        }
+                    }
+                }
+                Some("tazuna_chat_event") => {
+                    let (t, ev) = live.note(e["e"].clone());
+                    s.apply(&ev, t);
+                }
                 Some("tazuna_balance") => s.balance = e["usd"].as_f64(),
                 Some("tazuna_update") => s.apply(&json!({"type": "harness_info", "text": e["text"]}), live.elapsed_ms()),
                 // a server added or logged in: it joins at once while MCP is on (claude restarts with it, the own loop
@@ -2466,6 +2626,17 @@ fn run_live(
                     }
                     continue;
                 }
+                // /route on|off: whether a message with no sign of the code may be answered as a chat
+                if text == "/route" || text.starts_with("/route ") {
+                    let at = live.elapsed_ms();
+                    match text["/route".len()..].trim() {
+                        "on" => route_on = true,
+                        "off" => route_on = false,
+                        _ => {}
+                    }
+                    s.apply(&json!({"type": "harness_info", "text": format!("route: {} · general questions inside a project are answered as a chat when on (/route on, /route off; /agent TEXT always goes to the agent)", if route_on { "on" } else { "off" })}), at);
+                    continue;
+                }
                 // /explorer [on|off|MODEL], /verify [on|off], /review [on|off|MODEL]: as their flags at start, for the rest of
                 // the session (claude restarts with them and resumes the conversation)
                 if ["/explorer", "/verify", "/review"].iter().any(|c| text == *c || text.starts_with(&format!("{c} "))) {
@@ -2577,6 +2748,18 @@ fn run_live(
                         s.apply(&json!({"type": "harness_info", "text": format!("profile: {} · /profile repo | repo-lean | lean | chat · /chat for a plain chat and back", live.profile.name())}), at);
                         continue;
                     };
+                    // the repo and repo-lean profiles load the repo's settings, hooks and skills, which can run code: the trust
+                    // question at start guards them, and so must a switch (/profile repo after a lean start for an untrusted
+                    // repo, or after starting as a chat outside a project, skipped it until 0.1.127)
+                    if matches!(p, Profile::Repo | Profile::RepoLean) {
+                        let cwd = std::env::current_dir()?;
+                        let config = route::RepoConfig::read(&cwd);
+                        if config.runs_code() && !a.trust && !labels::dir().is_ok_and(|b| trust::is_trusted(&b, &cwd)) {
+                            s.apply(&json!({"type": "harness_info", "text": format!("this repo's config runs code ({}) and it is not trusted: \
+                                /profile lean works without it; to trust it, start tazuna here again and answer yes (or pass --trust)", config.summary())}), at);
+                            continue;
+                        }
+                    }
                     let fresh = (p == Profile::Chat) != (live.profile == Profile::Chat);
                     match live.set_profile(p) {
                         Ok((t, e)) => {
@@ -2781,6 +2964,24 @@ fn run_live(
                 normal = false; // the next message starts in insert mode
                 if let Some(why) = untrusted_in_use(live) {
                     s.apply(&json!({"type": "harness_notice", "text": why, "error": true}), live.elapsed_ms());
+                    continue;
+                }
+                // `/agent TEXT`: to the agent, past the router
+                let (text, forced) = match text.strip_prefix("/agent ") {
+                    Some(rest) => (rest.trim().to_string(), true),
+                    None => (text, false),
+                };
+                // a message with no sign of the code, while the agent is idle, may be a general question: the model check
+                // decides off the screen's thread, and its verdict comes back as tazuna_route (2026-11-15)
+                if route_on && !forced && typed && live.idle() && live.profile != route::Profile::Chat
+                    && route::code_signals(&text, &std::env::current_dir()?).is_empty()
+                {
+                    let (c, tx, last, msg) = (RouteCtx::of(live), status_tx.clone(), last_reply.clone(), text.clone());
+                    std::thread::spawn(move || {
+                        let general = route_general(&c, &last, &msg);
+                        let _ = tx.send(json!({"type": "tazuna_route", "general": general, "text": msg}));
+                    });
+                    v.scroll = 0;
                     continue;
                 }
                 match if typed { live.send_typed(&text) } else { live.send(&text) } {

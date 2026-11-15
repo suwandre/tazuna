@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.127 (2026-11-15): general questions inside a project are answered as a chat, by themselves
+
+- A message with no sign of the code (no file, path, code quote, identifier, error or coding word, and nothing that
+  points back at the work) goes to a quick check: the own loop's model (no reasoning, five tokens) or Haiku through
+  claude, shown the last reply. GENERAL is answered by a one-off chat (the chat profile's setup) beside the agent, whose
+  conversation it leaves alone, marked "answered as a chat"; anything else, or any failure, goes to the agent as before.
+  `/agent TEXT` always goes to the agent; `/route off` (or `--no-route`) turns it off.
+- 77 test messages (bench/suite/route-messages.jsonl: suite prompts, typed coding requests, follow-ups after coding
+  work, general-set questions, ambiguous ones): no coding request or follow-up went to chat (0 of 45) on either path;
+  23 of 25 general questions did on both. The instruction sits in the user turn too: with it only in the system prompt,
+  some SubRouter providers' models answered the message instead (8 of 25).
+- Security: `/profile repo` and `/profile repo-lean` now ask for the repo's trust like the start does (they skipped it
+  since 0.1.124, so a repo whose config runs code could load its hooks after a lean or chat start).
+
 ## 0.1.126 (2026-11-15): outside a project, tazuna starts as a chat
 
 - Started outside a git repo (your home folder, any plain folder), the live session is a plain chat (the chat profile:
