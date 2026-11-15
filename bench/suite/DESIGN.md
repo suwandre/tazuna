@@ -443,3 +443,20 @@ paths, judged per path with the repeats' model-alone and agent-mode runs (8 answ
 alone 7.92, agent 8.00), DeepSeek 7.92 (model alone 7.53, own loop as agent 7.33). It closes the non-coding gap by
 construction; the own loop drops from 3.1 turns and 17.8 s an answer to 1.0 and 10.7 s. How a user gets it: the flag
 today; the desktop app's chats without a folder later.
+
+## More thinking on the weak kinds (2026-11-15)
+
+Own loop on DeepSeek V4.1 Flash via Mistral, 5 dev plans (xhigh from v1192, 2 runs each) against max effort (9 runs)
+and xhigh plus an answer-review turn (TAZUNA_ANSWER_REVIEW, 5 runs before the spend stop), scored by the
+price-to-performance rule (docs/WORKING.md; a bad answer about code costs $6.67 of the user's time):
+
+| plans | judge | acceptable (7+) | billed per plan | time | effective cost |
+|---|---|---|---|---|---|
+| xhigh (default) | 7.10 | 80% | $0.21 | 353 s | $1.54 |
+| max effort | 6.22 | 56% | $0.77 | 432 s | $3.73 |
+| xhigh + answer review | 7.40 | 60% | $0.93 | 487 s | $3.60 |
+
+- Max effort is worse on every count: lower judge, 3.7x the cost. The review turn's +0.30 (5 runs) does not pay for
+  4.5x the cost. Both stay off; on DeepSeek more thinking does not buy better plans.
+- The two n8n reviews finished no run: at xhigh on Mistral each hit tazuna's $1 task stop (SubRouter's token counts
+  had put them at $0.31). The round stopped at its spend cap: $7.71 at list prices, ~$11.6 billed.

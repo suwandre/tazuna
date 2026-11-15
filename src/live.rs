@@ -122,7 +122,8 @@ const CHAT_PROMPT: &str = "You are a helpful assistant.";
 
 /// Experiment (TAZUNA_ANSWER_REVIEW, 2026-11-15): the self-review turn (`--self-review`) runs only after a change, so a plan
 /// or a review (the weakest kinds: 3-7 against 8-9 for questions) never got one. This turn follows an answer that changed
-/// nothing.
+/// nothing. Measured on Mistral's DeepSeek (5 dev plans): judge 7.10 to 7.40 (5 runs), acceptable 80% to 60%, billed
+/// $0.21 to $0.93 a plan; effective cost $1.54 to $3.60 (docs/WORKING.md). Stays off.
 const ANSWER_REVIEW: &str = "Before you finish, check your answer against the code: re-open the places you cite and confirm each claim, look for what you missed (callers, other code paths, data written before, error and retry cases, a simpler or safer fix), and correct anything wrong. Then give your final answer in full, as the reply to the original request, not as a list of changes to the earlier one.";
 
 const COVER_ALL_RULE: &str = "Make your change, and its tests, cover every command, flag or API the task names, and each one's error cases, not only the main path: read the code behind each one before you change it.";
