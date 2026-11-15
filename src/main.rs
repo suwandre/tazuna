@@ -653,6 +653,11 @@ fn lane(a: &Args, interactive: bool) -> Result<(route::Lane, Option<String>)> {
     if let Some(p) = a.profile {
         lane.profile = p;
         lane.reason.push_str(&format!("; --profile {}", p.name()));
+    } else if interactive && !a.allow_non_git && !live::in_git_repo() {
+        // not in a project (2026-11-15): a plain chat, which answers general questions better than the coding agent
+        // (0.1.123); /profile repo turns the agent on here, --allow-non-git starts with it
+        lane.profile = route::Profile::Chat;
+        lane.reason.push_str("; not in a project: chat (/profile repo for the coding agent)");
     } else if boss.is_some() {
         lane.profile = route::Profile::Repo;
     }

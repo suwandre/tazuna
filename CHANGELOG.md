@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.126 (2026-11-15): outside a project, tazuna starts as a chat
+
+- Started outside a git repo (your home folder, any plain folder), the live session is a plain chat (the chat profile:
+  no tools, no repo context), which answers general questions better than the coding agent (0.1.123). Inside a
+  project nothing changes. `/profile repo` turns the agent on there; `--allow-non-git` starts with it, as before.
+- Experiment `TAZUNA_ANSWER_REVIEW` (off): a review turn after an answer that changed nothing. On plans it cost 4.5x
+  for +0.30 judge (5 runs); max effort cost 3.7x for -0.88. Neither pays (bench/suite/DESIGN.md).
+
 ## 0.1.125 (2026-11-15): under `trusted`, nothing goes to an untrusted provider
 
 - `/data trusted` while the model in use (or the explore tool or reviewer) is on a provider off the trusted list only
