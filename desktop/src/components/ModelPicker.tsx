@@ -53,21 +53,28 @@ export function ModelPicker({ models, onPick, onClose }: { models: Models | null
   );
 }
 
-/** The current model's effort levels, as a small menu. */
-export function EffortMenu({ efforts, current, onPick, onClose }: { efforts: string[]; current: string; onPick: (e: string) => void; onClose: () => void }) {
+/** A small menu over the composer that closes on a click outside or Esc. */
+export function Menu({ children, onClose, width = 240 }: { children: React.ReactNode; onClose: () => void; width?: number }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) onClose(); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("mousedown", away);
-    return () => document.removeEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
   }, [onClose]);
+  return <div ref={box} style={{ width }} className="absolute bottom-full left-0 z-10 mb-2 rounded-xl border border-line-strong bg-card py-1 shadow-composer">{children}</div>;
+}
+
+/** The current model's effort levels. */
+export function EffortMenu({ efforts, current, onPick, onClose }: { efforts: string[]; current: string; onPick: (e: string) => void; onClose: () => void }) {
   return (
-    <div ref={box} className="absolute bottom-full left-0 z-10 mb-2 w-[160px] rounded-xl border border-line-strong bg-card py-1 shadow-composer">
+    <Menu onClose={onClose} width={160}>
       {efforts.map((e) => (
         <button key={e} onClick={() => onPick(e)} className="flex w-full items-center gap-2 px-3 py-[5px] text-left hover:bg-hover">
           <span className="w-3.5 text-accent">{e === current && <Check size={14} strokeWidth={1.75} />}</span>{e}
         </button>
       ))}
-    </div>
+    </Menu>
   );
 }

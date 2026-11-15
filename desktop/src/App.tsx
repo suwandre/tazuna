@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Approval } from "./components/Approval";
 import { Composer } from "./components/Composer";
 import { Rail, builtInWidgets } from "./components/Rail";
 import { Sidebar } from "./components/Sidebar";
@@ -110,7 +111,7 @@ export default function App() {
             {session.branch && <span className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2">{session.branch} · {session.changed} changed</span>}
           </div>
         </header>
-        <Transcript messages={messages} busy={busy} activity={view?.activity} onSendToAgent={(text) => core.send(text, true)} />
+        <Transcript messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)} />
         {view?.untrusted && (
           <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
             <span className="flex-1">This folder's settings run code ({view.untrusted}). tazuna works here without them until you trust it.</span>
@@ -118,10 +119,12 @@ export default function App() {
           </div>
         )}
         {error && <div className="mx-auto mb-2 max-w-[700px] px-7 text-[12.5px] text-bad">{error}</div>}
+        {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
         <Composer session={session} threadCost={usage.threadCost} busy={busy}
           onSend={(text) => core.send(text).catch((e) => console.error(e))} onStop={() => core.interrupt()}
           models={models} onModels={inTauri ? () => core.models() : undefined}
-          onPickModel={inTauri ? (c) => core.setModel(c) : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined} />
+          onPickModel={inTauri ? (c) => core.setModel(c) : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
+          onMode={inTauri ? (m) => core.setMode(m) : undefined} />
       </main>
       <Rail usage={usage} widgets={builtInWidgets} />
     </div>

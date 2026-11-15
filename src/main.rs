@@ -978,6 +978,10 @@ fn app_server(a: &Args) -> Result<()> {
     let mut s = Session::new("", &live.effort);
     s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     s.apply(&route.1, route.0);
+    // the permission mode as in the terminal: --mode (auto by default), and ask outside git, where nothing can be undone
+    let mode = if a.mode == "bypassPermissions" && !live::in_git_repo() { "default" } else { a.mode.as_str() };
+    let (t, e) = live.set_mode(mode);
+    s.apply(&e, t);
     let cwd = std::env::current_dir()?;
     let config = route::RepoConfig::read(&cwd);
     let mut untrusted = (config.runs_code() && !a.trust && !labels::dir().is_ok_and(|b| trust::is_trusted(&b, &cwd))).then(|| config.summary());
@@ -988,7 +992,7 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 11] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "quit"];
+        const OPS: [&str; 13] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "quit"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1001,15 +1005,20 @@ fn app_server(a: &Args) -> Result<()> {
         let _ = stdin_tx.send(json!({"op": "quit"}));
     });
     let out = std::io::stdout();
-    let emit = |s: &Session, untrusted: &Option<String>, sid: Option<&str>| {
+    let emit = |s: &Session, untrusted: &Option<String>, live: &live::Live| {
         let mut v = s.view();
         v["untrusted"] = json!(untrusted);
-        v["session_id"] = json!(sid);
+        v["session_id"] = json!(live.session_id());
+        // the oldest open permission question, as the terminal shows it (text made safe), and how many wait behind it
+        v["asking"] = live.pending.front().map_or(json!(null), |req| json!({
+            "text": question(req), "tool": session::shown(req["request"]["tool_name"].as_str().unwrap_or_default(), 60),
+            "once": req["request"]["from_text"] == true, "queued": live.pending.len() - 1,
+        }));
         let mut o = out.lock();
         let _ = writeln!(o, "{v}");
         let _ = o.flush();
     };
-    emit(&s, &untrusted, live.session_id());
+    emit(&s, &untrusted, &live);
     let mut last_reply = String::new();
     let (mut changed, mut last) = (false, Instant::now());
     loop {
@@ -1041,6 +1050,30 @@ fn app_server(a: &Args) -> Result<()> {
                                     Ok((t, e)) => s.apply(&e, t),
                                     Err(e) => info(&mut s, format!("{e:#}")),
                                 }
+                            }
+                        }
+                        // the permission mode: auto, ask, edits or plan (the own loop has no plan)
+                        Some("mode") => {
+                            let mode = match cmd["mode"].as_str() {
+                                Some("auto") => Some("bypassPermissions"),
+                                Some("ask") => Some("default"),
+                                Some("edits") => Some("acceptEdits"),
+                                Some("plan") => Some("plan"),
+                                _ => None,
+                            };
+                            match mode {
+                                Some(m) => {
+                                    let (t, e) = live.set_mode(m);
+                                    s.apply(&e, t);
+                                }
+                                None => info(&mut s, "mode: auto, ask, edits or plan".into()),
+                            }
+                        }
+                        // the user's answer to the oldest permission question; "always" only where the question offers it
+                        Some("answer") => {
+                            let once = live.pending.front().is_some_and(|r| r["request"]["from_text"] == true);
+                            if let Some((t, e)) = live.answer(cmd["allow"] == true, cmd["always"] == true && !once) {
+                                s.apply(&e, t);
                             }
                         }
                         Some("interrupt") => {
@@ -1179,7 +1212,7 @@ fn app_server(a: &Args) -> Result<()> {
             changed = true;
         }
         if changed && last.elapsed() >= Duration::from_millis(50) {
-            emit(&s, &untrusted, live.session_id());
+            emit(&s, &untrusted, &live);
             (changed, last) = (false, Instant::now());
         }
         std::thread::sleep(Duration::from_millis(15));

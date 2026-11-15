@@ -21,6 +21,8 @@ export type View = {
   untrusted?: string | null;
   /** the claude session of this conversation (null before the first reply, and on the own loop) */
   session_id?: string | null;
+  /** the oldest open permission question (text made safe by the core) */
+  asking?: { text: string; tool: string; once: boolean; queued: number } | null;
 };
 export type SessionRow = { id: string; first: string; last_at: number; messages: number };
 export type Sessions = { dirs: { dir: string; list: SessionRow[] }[] };
@@ -34,6 +36,8 @@ export type Models = { choices: ModelChoice[]; rebuild: string | null };
 export const core = {
   /** resolves to the folder the core runs in */
   start: (cwd?: string, profile?: string) => invoke<string>("start", { cwd, profile }),
+  setMode: (mode: string) => invoke("op", { msg: { op: "mode", mode } }),
+  answer: (allow: boolean, always = false) => invoke("op", { msg: { op: "answer", allow, always } }),
   sessions: (dirs: string[]) => invoke("op", { msg: { op: "sessions", dirs } }),
   resume: (id: string) => invoke("op", { msg: { op: "resume", id } }),
   onSessions: (cb: (s: Sessions) => void) => listen<Sessions>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "sessions") cb(e.payload); }),

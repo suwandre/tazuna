@@ -1,20 +1,30 @@
-import { ArrowUp, Gauge, Paperclip, Shield, Square, Zap } from "lucide-react";
+import { ArrowUp, Check, Gauge, Paperclip, Shield, Square, Zap } from "lucide-react";
 import { useState } from "react";
 import type { ModelChoice, Models } from "../lib/tazuna";
 import { usd, type Session } from "../lib/types";
-import { EffortMenu, ModelPicker } from "./ModelPicker";
+import { EffortMenu, Menu, ModelPicker } from "./ModelPicker";
 
 type Props = {
   session: Session; threadCost: number; busy?: boolean; onSend?: (text: string) => void; onStop?: () => void;
   /** the model catalog (null until asked for); onModels asks for it when the picker opens */
   models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void; onPickEffort?: (e: string) => void;
+  onMode?: (mode: string) => void;
 };
+
+// the permission modes in tazuna's words, in the order shift-tab steps through them (as in the terminal)
+const MODES: [string, string][] = [
+  ["auto", "runs commands and edits without asking"],
+  ["ask", "asks before each command and edit"],
+  ["edits", "edits freely, asks before commands"],
+  ["plan", "plans first, asks before starting (Claude only)"],
+];
 
 const pill = "inline-flex items-center gap-1.5 rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2";
 
-export function Composer({ session, threadCost, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort }: Props) {
+export function Composer({ session, threadCost, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode }: Props) {
   const [text, setText] = useState("");
-  const [menu, setMenu] = useState<"model" | "effort" | null>(null);
+  const [menu, setMenu] = useState<"model" | "effort" | "mode" | null>(null);
+  const nextMode = () => { const i = MODES.findIndex(([m]) => m === session.mode); onMode?.(MODES[(i + 1) % MODES.length][0]); };
   const current = models?.choices.find((c) => c.current);
   const efforts = current?.efforts ?? [];
   const send = () => { const t = text.trim(); if (!t || busy) return; onSend?.(t); setText(""); };
@@ -22,10 +32,24 @@ export function Composer({ session, threadCost, busy, onSend, onStop, models, on
     <footer className="px-7 pb-[22px] pt-2.5">
       <div className="mx-auto max-w-[700px] rounded-xl border border-line-strong bg-card py-2 pl-4 pr-3 pt-3 shadow-composer">
         <textarea rows={1} autoFocus value={text} onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
+          onKeyDown={(e) => { if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
           placeholder="Ask anything, or describe a change…" className="w-full resize-none bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
         <div className="flex items-center gap-1.5">
-          <span className={pill}><Shield size={14} strokeWidth={1.5} />{session.mode}</span>
+          <span className="relative">
+            <button disabled={!onMode} onClick={() => setMenu(menu === "mode" ? null : "mode")} title="Permission mode (shift-tab)" className={`${pill} hover:bg-hover`}>
+              <Shield size={14} strokeWidth={1.5} />{session.mode}
+            </button>
+            {menu === "mode" && (
+              <Menu onClose={() => setMenu(null)}>
+                {MODES.map(([m, about]) => (
+                  <button key={m} onClick={() => { setMenu(null); onMode?.(m); }} className="flex w-full items-start gap-2 px-3 py-[6px] text-left hover:bg-hover">
+                    <span className="mt-0.5 w-3.5 flex-none text-accent">{m === session.mode && <Check size={14} strokeWidth={1.75} />}</span>
+                    <span><span className="block text-ink">{m}</span><span className="block text-[11.5px] text-faint">{about}</span></span>
+                  </button>
+                ))}
+              </Menu>
+            )}
+          </span>
           <span className="relative">
             <button disabled={busy || !onPickModel} onClick={() => { onModels?.(); setMenu(menu === "model" ? null : "model"); }} title="Model" className={`${pill} hover:bg-hover`}>
               <Zap size={14} strokeWidth={1.5} />{current?.label ?? session.model}
