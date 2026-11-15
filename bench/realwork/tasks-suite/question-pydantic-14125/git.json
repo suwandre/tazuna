@@ -1,0 +1,8 @@
+{
+  "repo": "/Users/suwandre/bench-repos/pydantic",
+  "pr": "https://github.com/pydantic/pydantic/pull/14125",
+  "setup": "true",
+  "base": "664d165c895d520123fa0b2f4bf3609fe47016b3",
+  "pr_head": "2c445e45a51a8f261beaef1f9a4a35558bb1e2fc",
+  "pr_title": "Stream one level of simple nested JSON models (#14125)"
+}

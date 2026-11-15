@@ -1,0 +1,79 @@
+A bug report came in for this repository:
+
+Title: Picture emits duplicate 1x candidates in source srcset when densities includes 1
+
+### Astro Info
+
+```text
+Astro                    v7.4.2
+Node                     v24.22.1
+System                   macOS (arm64)
+Package Manager          pnpm
+Output                   static
+Adapter                  none
+Integrations             none
+```
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+The duplicate candidates are already present in the built HTML. The images render correctly in the reproduction.
+
+### Describe the Bug
+
+In Astro 7.4.2, `<Picture>` emits duplicate `1x` candidates in its `<source>` element's `srcset` when `densities` includes `1`, even when the input values are unique.
+
+Using an imported 1200 × 840 PNG:
+
+```astro
+---
+import { Picture } from 'astro:assets';
+import fixture from '../assets/fixture.png';
+---
+
+<Picture
+  src={fixture}
+  width={400}
+  height={280}
+  densities={[1, 2]}
+  formats={['webp']}
+  loading="eager"
+  alt="Generated gradient and checkerboard fixture"
+/>
+```
+
+After `astro build`, the `<source>` has the following `srcset` (generated filenames shortened):
+
+```html
+<source
+  srcset="fixture-400.webp, fixture-400.webp 1x, fixture-800.webp 2x"
+  type="image/webp"
+/>
+```
+
+The first candidate has no descriptor, which is equivalent to `1x`. The next candidate explicitly specifies `1x` and points to the same URL.
+
+The reproduction also includes `[2]` as a control:
+
+| `densities` | `<source>` `srcset` entries | Fallback `<img>` `srcset` entries |
+| --- | --- | --- |
+| `[1, 2]` | No descriptor (= `1x`), `1x`, `2x` | `1x`, `2x` |
+| `[2]` (control) | No descriptor (= `1x`), `2x` | `2x` |
+
+### What's the expected result?
+
+Each pixel density should appear only once in a `<source>` element's `srcset`. A descriptorless candidate and an explicit `1x` candidate should not both be emitted for the same density.
+
+When only `[2]` is supplied, the existing descriptorless base candidate should remain, preserving the current `1x` fallback behavior.
+
+The [HTML standard](https://html.spec.whatwg.org/multipage/images.html#srcset-attributes) treats a candidate without a descriptor as `1x` and disallows duplicate pixel density values.
+
+### Link to Minimal Reproducible Example
+
+- [Source repository](https://github.com/Yusaku01/astro-picture-densities-repro)
+- [Live reproduction on GitHub Pages](https://yusaku01.github.io/astro-picture-densities-repro/)
+
+### Participation
+
+- [x] I am willing to submit a pull request for this issue.
+
+Find the root cause: what in the code makes this happen, with file:line, and why. Do not fix it or change any files.

@@ -1,0 +1,8 @@
+{
+  "repo": "/Users/suwandre/bench-repos/n8n",
+  "pr": "https://github.com/n8n-io/n8n/pull/43360",
+  "setup": "true",
+  "base": "989975ce2b29392c24ca9bbe8187e4ab6a8368b9",
+  "pr_head": "b110abb47e9286c57c0452746de8ccb2b35e0f29",
+  "pr_title": "fix(core): Keep expression transfers working after built-in replacements (backport to release-candidate/2.47.x) (#43360)"
+}

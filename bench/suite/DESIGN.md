@@ -413,3 +413,17 @@ DeepSeek (v1159), one run each; the 5 answer tasks judged with all eight answers
   rounds were not reproduced side by side. Over 14 dev answer tasks the own loop is level with or ahead of OpenCode;
   the held-out gap (4 of 5 tasks lower) has no explanation on dev. Either it is variance on the held-out set's hardest
   tasks, or it needs the held-out answers read, which would spend those tasks as a check.
+
+### The held-out answer notes, read (2026-11-15)
+
+Read to explain the own loop's held-out gap (5.93 against OpenCode's 6.80); those five tasks and ops-open-pr (rebuilt
+on 2026-11-14) are dev from now on (meta.json `was_held_out`). The notes show one pattern, not reading depth:
+- the own loop states unverified things as fact ("invents a story" for a PR's why, "unsupported claims", "states
+  jiter-internal behaviour as fact with no caveat", "speculative encoder internals") where OpenCode's are "honest about
+  limits", "hedged", "nothing invented"; precision 3-4 against 4-5;
+- it leaves causal chains short: in investigate-astro-18430 all three runs named the right line but none said why the
+  store is dirty on every sync (the unconditional meta writes), which every OpenCode run explained;
+- the hard pydantic plan and investigation were weak for every harness (mean 3-6).
+Experiment TAZUNA_PRECISE_ANSWERS (own loop): fact only from code read or command output, with file:line; anything else
+called unverified or left out; a cause followed to its start; the asked length kept. Five new held-out answer tasks
+(build_heldout2.py, seeded, built blind: 2 investigate, 1 plan, 2 question, two of them pydantic) replace the read ones.

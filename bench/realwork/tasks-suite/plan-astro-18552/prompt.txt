@@ -1,0 +1,106 @@
+A bug report came in for this repository:
+
+Title: `@astrojs/cloudflare`: frontmatter dep scan hoists `import:` object keys (e.g. `import.meta.glob({ import: "default" })`), breaking dependency pre-bundling
+
+### Astro Info
+
+```
+Astro                    v7.4.4
+Node                     v24.22.1
+System                   macOS (arm64)
+Package Manager          pnpm
+Output                   static
+Adapter                  @astrojs/cloudflare (v14.4.3)
+Integrations             none
+```
+
+Also seen in real projects on `@astrojs/cloudflare` 14.4.0 and 14.4.2. The plugin code is the same on `main`.
+
+### If this issue only occurs in one browser, which browser is a problem?
+
+_No response_
+
+### Describe the Bug
+
+In dev, the Cloudflare adapter's frontmatter dependency-scan plugin (`rolldown-plugin-astro-frontmatter.ts`) treats an object key named `import` as a static import statement when the key starts a line. This happens most often with `import.meta.glob`'s `import` option:
+
+```astro
+---
+const tokens = import.meta.glob("./tokens.css", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+
+const label = "done";
+---
+```
+
+`IMPORT_STMT_RE` (`/^\s*import\b…/m`) matches `  import: "default",` because `\b` matches between `import` and `:`. `isImportExpression()` only excludes `import.` and `import(` (added in #18145), so the match is kept. The lazy `[\s\S]*?` then runs to the next line that ends with a quoted string, and `wrapFrontmatter()` hoists all of that above `async function __astro__()`:
+
+```js
+import: "default",
+  eager: true,
+});
+
+const label = "done";
+async function __astro__() {
+
+const tokens = import.meta.glob("./tokens.css", {
+  query: "?raw",
+
+}
+```
+
+Rolldown then fails to parse the file, and Vite skips dependency pre-bundling for the whole SSR environment:
+
+```
+(!) Failed to run dependency scan. Skipping dependency pre-bundling. Error:   Failed to scan for dependencies from entries:
+  src/pages/index.astro
+
+  Build failed with 1 error:
+
+[PARSE_ERROR] Expected `from` but found `:`
+   ╭─[ src/pages/index.astro:1:7 ]
+   │
+ 1 │ import: "default",
+   │       ┬
+   │       ╰── `from` expected
+───╯
+```
+
+The scan only runs when Vite's deps cache is empty or stale, so the error shows on a fresh start (or after `rm -rf node_modules/.vite`) rather than on every `astro dev`.
+
+Whether a file breaks depends on whether some later frontmatter line ends with a quoted string. That makes it look intermittent: in one of our projects, 3 of the 7 files using this option failed.
+
+It's easy to see by calling `wrapFrontmatter()` directly:
+
+```js
+import { wrapFrontmatter } from "./node_modules/@astrojs/cloudflare/dist/rolldown-plugin-astro-frontmatter.js";
+
+console.log(wrapFrontmatter(`const tokens = import.meta.glob("./tokens.css", {
+  query: "?raw",
+  import: "default",
+  eager: true,
+});
+
+const label = "done";`));
+```
+
+A possible fix is to also treat `:` as "not a static import" in `isImportExpression()`, since a declaration is never followed by a colon. A stricter version would only accept a static import when the next non-whitespace, non-comment character is `{`, `*`, a quote, or the start of an identifier that isn't followed by `:`.
+
+### What's the expected result?
+
+Object keys named `import` stay where they are, the frontmatter parses, and the dependency scan and pre-bundling succeed.
+
+### Link to Minimal Reproducible Example
+
+https://github.com/thomas-callahan-collibra/astro-cloudflare-import-key-repro
+
+`pnpm install && rm -rf node_modules/.vite && pnpm dev`. The page renders, and the dev server logs the scan error above.
+
+### Participation
+
+- [ ] I am willing to submit a pull request for this issue.
+
+How should we fix this? Give the options you see, their trade-offs, and the one you recommend for this codebase, with the files it would touch. Do not change any files.

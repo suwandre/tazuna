@@ -1,10 +1,11 @@
 {
   "kind": "investigate",
   "lang": "python",
-  "split": "held-out",
+  "split": "dev",
   "size": 6,
   "files": 2,
   "merged_at": "2026-11-06T21:09:19Z",
   "source": "issue 14234 + fix PR 14247",
-  "difficulty": "medium"
+  "difficulty": "medium",
+  "was_held_out": "read 2026-11-15 (judge notes and answers, or rebuilt): no longer a held-out check"
 }

@@ -1,10 +1,11 @@
 {
   "kind": "question",
   "lang": "typescript",
-  "split": "held-out",
+  "split": "dev",
   "size": 385,
   "files": 6,
   "merged_at": "2026-11-06T19:34:01Z",
   "source": "PR 18647",
-  "difficulty": "easy"
+  "difficulty": "easy",
+  "was_held_out": "read 2026-11-15 (judge notes and answers, or rebuilt): no longer a held-out check"
 }

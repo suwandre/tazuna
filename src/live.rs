@@ -109,6 +109,12 @@ const DIRECT_RULE: &str = "When a request is not about this repository's code, a
 /// Experiment (TAZUNA_ANSWER_RULES): how to answer a request that asks for no change.
 const ANSWER_RULE: &str = "When the request asks for an answer, a review or a plan rather than a change, the rules about changing code do not apply. Base every claim on code you read, with file:line, and say what you did not check. In a review, look past the diff: callers, data and formats written before the change, error and retry paths, and what the change stops doing; call a blocker a blocker. In a plan, recommend the change that solves the reported problem with the least risk for this codebase, and weigh broader fixes as alternatives.";
 
+/// Experiment (TAZUNA_PRECISE_ANSWERS, 2026-11-15): the held-out answer tasks, read after the own loop trailed OpenCode
+/// there (5.93 against 6.80): its notes said "invents a story", "unsupported claims", "states jiter-internal behaviour as
+/// fact with no caveat", "never identifies why the store is dirty". OpenCode's: "honest about limits", "nothing
+/// invented". Same effort and reading; the own loop asserted more and traced less.
+const PRECISE_ANSWER_RULE: &str = "When the request asks for an answer rather than a change: state as fact only what you read in the code or saw a command print, with file:line; call anything else (library internals, behaviour you did not run) unverified, or leave it out. For a cause, follow the chain to its start: say why each step happens, not only where. Keep to the length the request asks for.";
+
 const COVER_ALL_RULE: &str = "Make your change, and its tests, cover every command, flag or API the task names, and each one's error cases, not only the main path: read the code behind each one before you change it.";
 
 const WRITE_TESTS_RULE: &str = "Add or update tests for the behavior you change, including its edge cases: tazuna's check only runs the tests, it does not write them.";
@@ -1486,6 +1492,10 @@ impl Live {
             if std::env::var_os("TAZUNA_ANSWER_RULES").is_some() {
                 prompt.push_str("\n- ");
                 prompt.push_str(ANSWER_RULE);
+            }
+            if std::env::var_os("TAZUNA_PRECISE_ANSWERS").is_some() {
+                prompt.push_str("\n- ");
+                prompt.push_str(PRECISE_ANSWER_RULE);
             }
             if self.project_instructions {
                 let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);

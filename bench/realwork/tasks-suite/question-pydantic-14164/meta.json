@@ -1,10 +1,11 @@
 {
   "kind": "question",
   "lang": "python",
-  "split": "held-out",
+  "split": "dev",
   "size": 121,
   "files": 10,
   "merged_at": "2026-10-31T21:17:19Z",
   "source": "PR 14164",
-  "difficulty": "easy"
+  "difficulty": "easy",
+  "was_held_out": "read 2026-11-15 (judge notes and answers, or rebuilt): no longer a held-out check"
 }

@@ -1,0 +1,70 @@
+A bug report came in for this repository:
+
+Title: Nested class attribute docstrings overwrite outer field descriptions
+
+### Initial Checks
+
+- [x] I confirm that I'm using Pydantic V2
+
+### Description
+
+With use_attribute_docstrings=True, a nested class’s field docstring overwrites the outer class’s field description when both fields have the same name.
+
+Defining the classes at module level produces the correct descriptions.
+
+### Example Code
+
+```Python
+import json
+
+from pydantic import BaseModel, ConfigDict
+
+
+class Outer(BaseModel):
+    model_config = ConfigDict(use_attribute_docstrings=True)
+
+    x: int
+    """Outer field."""
+
+    inner: Inner
+
+class Inner(BaseModel):
+    model_config = ConfigDict(use_attribute_docstrings=True)
+
+    x: str
+    """Inner field."""
+
+
+class OuterWrong(BaseModel):
+    model_config = ConfigDict(use_attribute_docstrings=True)
+
+    x: int
+    """Outer field."""
+
+    inner: InnerWrong
+
+    class InnerWrong(BaseModel):
+        model_config = ConfigDict(use_attribute_docstrings=True)
+
+        x: str
+        """Inner field."""
+
+
+
+print("CORRECT:\n", json.dumps(Outer.model_json_schema(), indent=2))
+print("WRONG - outer field x has the inner field's description:\n", json.dumps(OuterWrong.model_json_schema(), indent=2))
+```
+
+### Python, Pydantic & OS Version
+
+```Text
+pydantic version: 2.14.1
+        pydantic-core version: 2.50.1
+          pydantic-core build: profile=release pgo=false
+               python version: 3.14.4 (main, Aug 20 2026, 10:41:58) [GCC 15.2.0]
+                     platform: Linux-7.0.0-34-generic-x86_64-with-glibc2.43
+             related packages: typing_extensions-4.16.0 email-validator-2.3.0 pydantic-extra-types-2.11.1 pydantic-settings-2.15.0 fastapi-0.143.0 pyright-1.1.414
+                       commit: unknown
+```
+
+Find the root cause: what in the code makes this happen, with file:line, and why. Do not fix it or change any files.
