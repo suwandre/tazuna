@@ -112,7 +112,9 @@ const ANSWER_RULE: &str = "When the request asks for an answer, a review or a pl
 /// Experiment (TAZUNA_PRECISE_ANSWERS, 2026-11-15): the held-out answer tasks, read after the own loop trailed OpenCode
 /// there (5.93 against 6.80): its notes said "invents a story", "unsupported claims", "states jiter-internal behaviour as
 /// fact with no caveat", "never identifies why the store is dirty". OpenCode's: "honest about limits", "nothing
-/// invented". Same effort and reading; the own loop asserted more and traced less.
+/// invented". Same effort and reading; the own loop asserted more and traced less. Measured on Mistral (xhigh), 15 dev
+/// answer tasks x 2 per arm: judge 7.67 to 7.60 (-0.07, CI -0.60 .. +0.33), precision 3.83 to 4.07, questions up
+/// (6.9 to 7.6), plans down (plan-astro-18399 8.0 to 5.5); 10% cheaper, 15% less output. Stays off.
 const PRECISE_ANSWER_RULE: &str = "When the request asks for an answer rather than a change: state as fact only what you read in the code or saw a command print, with file:line; call anything else (library internals, behaviour you did not run) unverified, or leave it out. For a cause, follow the chain to its start: say why each step happens, not only where. Keep to the length the request asks for.";
 
 const COVER_ALL_RULE: &str = "Make your change, and its tests, cover every command, flag or API the task names, and each one's error cases, not only the main path: read the code behind each one before you change it.";

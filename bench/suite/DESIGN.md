@@ -427,3 +427,11 @@ on 2026-11-14) are dev from now on (meta.json `was_held_out`). The notes show on
 Experiment TAZUNA_PRECISE_ANSWERS (own loop): fact only from code read or command output, with file:line; anything else
 called unverified or left out; a cause followed to its start; the asked length kept. Five new held-out answer tasks
 (build_heldout2.py, seeded, built blind: 2 investigate, 1 plan, 2 question, two of them pydantic) replace the read ones.
+- TAZUNA_PRECISE_ANSWERS against the default, own loop on DeepSeek V4.1 Flash via Mistral (xhigh), 16 dev answer tasks
+  x 2 runs per arm, side by side ($5.62 at list prices, ~$8.4 billed: Mistral bills ~1.5x its list, cached input at
+  ~$0.03-0.04/M): judge 7.67 against 7.60 (precise minus default -0.07, 95% CI -0.60 .. +0.33, 15 tasks). The judge's
+  precision score rose (3.83 to 4.07) and questions gained (6.9 to 7.6), but plans lost (plan-astro-18399 8.0 to 5.5,
+  plan-pydantic-14054 5.0 to 3.5); 10% cheaper, 9% faster, 15% less output. Off: no quality gain. investigate-pydantic-
+  14247 broke both arms (two runs hit the 90-minute limit, one tazuna's $1 task stop; one finished, scoring 2): at xhigh
+  DeepSeek can circle that task for over an hour. The held-out gap stays unexplained; the new held-out answer tasks
+  stay unused until a change is worth checking.
