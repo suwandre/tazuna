@@ -476,6 +476,9 @@ fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("explore-mcp") {
         return engine::explore_serve(&std::env::args().skip(2).collect::<Vec<_>>());
     }
+    if std::env::args().nth(1).as_deref() == Some("app-server") {
+        return app_server(&parse(std::env::args().skip(2).collect())?);
+    }
     if std::env::args().nth(1).as_deref() == Some("route-check") {
         // `tazuna route-check < messages.jsonl`: each message's code signals (bench/suite/route-messages.jsonl)
         let cwd = std::env::current_dir()?;
@@ -932,6 +935,108 @@ fn login_save(l: &models::Login, typed: &str) -> Result<String> {
 
 fn host_of(url: &str) -> String {
     url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or_default().to_string()
+}
+
+/// `tazuna app-server [flags]` (2026-11-15): tazuna's core behind the desktop app (docs/DESKTOP.md). Commands come as JSON
+/// lines on stdin: {"op":"send","text":...}, {"op":"interrupt"}, {"op":"new"}, {"op":"profile","name":...}; the session
+/// goes out as JSON lines on stdout, a `view` (Session::view) after each change, at most every 50 ms. Run in the folder
+/// the window opened (a project) or anywhere (a chat).
+fn app_server(a: &Args) -> Result<()> {
+    use std::io::{BufRead, Write};
+    let mut live = live::Live::new("", "")?;
+    live.user_settings = a.user_settings;
+    live.connectors = a.connectors || labels::dir().is_ok_and(|d| d.join("connectors").exists());
+    let (lane, _) = lane(a, false)?;
+    let route = live.set_lane(lane);
+    live.verify = a.verify.clone();
+    live.diagnostics = a.diagnostics;
+    live.test_scope = a.test_scope;
+    live.provider = a.provider.clone();
+    live.project_instructions = a.project_instructions;
+    live.data_any = a.data_any;
+    set_explorer(&mut live, a);
+    let mut s = Session::new("", &live.effort);
+    s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
+    s.apply(&route.1, route.0);
+    let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lock().lines().map_while(Result::ok) {
+            if let Ok(v) = serde_json::from_str(&line) && tx.send(v).is_err() {
+                break;
+            }
+        }
+    });
+    let out = std::io::stdout();
+    let emit = |s: &Session| {
+        let mut o = out.lock();
+        let _ = writeln!(o, "{}", s.view());
+        let _ = o.flush();
+    };
+    emit(&s);
+    let (mut changed, mut last) = (false, Instant::now());
+    loop {
+        loop {
+            match rx.try_recv() {
+                Ok(cmd) => {
+                    let at = live.elapsed_ms();
+                    let info = |s: &mut Session, text: String| s.apply(&json!({"type": "harness_notice", "text": text, "error": true}), at);
+                    match cmd["op"].as_str() {
+                        Some("send") => {
+                            let text = cmd["text"].as_str().unwrap_or_default();
+                            if let Some(why) = untrusted_in_use(&live) {
+                                info(&mut s, why);
+                            } else {
+                                match live.send_typed(text) {
+                                    Ok((t, e)) => s.apply(&e, t),
+                                    Err(e) => info(&mut s, format!("{e:#}")),
+                                }
+                            }
+                        }
+                        Some("interrupt") => {
+                            if let Some((t, e)) = live.interrupt() {
+                                s.apply(&e, t);
+                            }
+                        }
+                        Some("new") => match live.restart(None) {
+                            Ok((t, e)) => {
+                                s = s.fresh();
+                                s.apply(&e, t);
+                            }
+                            Err(e) => info(&mut s, format!("{e:#}")),
+                        },
+                        Some("profile") => {
+                            let p = match cmd["name"].as_str() {
+                                Some("repo") => Some(route::Profile::Repo),
+                                Some("repo-lean") => Some(route::Profile::RepoLean),
+                                Some("lean") => Some(route::Profile::Lean),
+                                Some("chat") => Some(route::Profile::Chat),
+                                _ => None,
+                            };
+                            match p.map(|p| live.set_profile(p)) {
+                                Some(Ok((t, e))) => s.apply(&e, t),
+                                Some(Err(e)) => info(&mut s, format!("{e:#}")),
+                                None => info(&mut s, "profile: repo, repo-lean, lean or chat".into()),
+                            }
+                        }
+                        Some("quit") => return Ok(()),
+                        _ => info(&mut s, format!("unknown command: {cmd}")),
+                    }
+                    changed = true;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => return Ok(()), // the window closed
+            }
+        }
+        for (t, e) in live.poll() {
+            s.apply(&e, t);
+            changed = true;
+        }
+        if changed && last.elapsed() >= Duration::from_millis(50) {
+            emit(&s);
+            (changed, last) = (false, Instant::now());
+        }
+        std::thread::sleep(Duration::from_millis(15));
+    }
 }
 
 fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {

@@ -2,8 +2,9 @@ import type { ReactNode } from "react";
 import type { Usage } from "../lib/types";
 
 // The right rail is a slot of widgets (docs/DESKTOP.md "Customization"): tazuna's own panels are widgets too, so the
-// widget API that users and creator mode build on is the one these use.
-export type Widget = { id: string; title: string; render: (u: Usage) => ReactNode };
+// widget API that users and creator mode build on is the one these use. A widget with nothing real to show returns null
+// and its card is left out (DESIGN.md: real numbers only).
+export type Widget = { id: string; title: string; render: (u: Usage) => ReactNode | null };
 
 function Card({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -40,19 +41,19 @@ const small = "mt-1.5 text-[11.5px] text-muted";
 
 export const builtInWidgets: Widget[] = [
   { id: "context", title: "Context", render: (u) => <><Ring pct={u.contextPct} /><div className={small}>{u.contextUsed} of {u.contextMax}</div></> },
-  { id: "plan", title: "Plan · 5 hours", render: (u) => <>
-      <Bar pct={u.plan5h} /><div className={small}>{u.plan5h}% used · resets {u.plan5hReset}</div>
-      <div className="mb-2 mt-3 text-[11.5px] font-medium text-faint">Plan · week</div><Bar pct={u.planWeek} /><div className={small}>{u.planWeek}% used</div></> },
+  { id: "plan", title: "Plan · 5 hours", render: (u) => u.plan5h == null ? null : <>
+      <Bar pct={u.plan5h} /><div className={small}>{u.plan5h}% used{u.plan5hReset && ` · resets ${u.plan5hReset}`}</div>
+      {u.planWeek != null && <><div className="mb-2 mt-3 text-[11.5px] font-medium text-faint">Plan · week</div><Bar pct={u.planWeek} /><div className={small}>{u.planWeek}% used</div></>}</> },
   { id: "thread", title: "This thread", render: (u) => <>
       <div className="text-[22px] font-semibold tracking-[-0.02em]">${u.threadCost.toFixed(3)}</div>
-      <div className={small}>{u.threadTurns} turns · {u.cachedPct}% cached · saved ${u.saved.toFixed(2)}</div></> },
-  { id: "today", title: "Today", render: (u) => <><Spark series={u.todaySeries} /><div className={small}>${u.today.toFixed(2)} · {u.todayTurns} turns</div></> },
+      <div className={small}>{u.threadTurns} turns · {u.cachedPct}% cached{u.saved > 0 && ` · saved $${u.saved.toFixed(2)}`}</div></> },
+  { id: "today", title: "Today", render: (u) => u.todaySeries.length < 2 ? null : <><Spark series={u.todaySeries} /><div className={small}>${u.today.toFixed(2)} · {u.todayTurns} turns</div></> },
 ];
 
 export function Rail({ usage, widgets }: { usage: Usage; widgets: Widget[] }) {
   return (
     <aside className="flex flex-col gap-3 border-l border-line bg-sidebar px-3.5 py-4">
-      {widgets.map((w) => <Card key={w.id} title={w.title}>{w.render(usage)}</Card>)}
+      {widgets.map((w) => { const body = w.render(usage); return body == null ? null : <Card key={w.id} title={w.title}>{body}</Card>; })}
     </aside>
   );
 }

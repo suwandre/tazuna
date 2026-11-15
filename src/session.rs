@@ -110,7 +110,7 @@ impl Usage {
 }
 
 /// What the agent is doing right now (drives the status bar and spinners).
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Activity {
     /// Live mode, waiting for the user's next message.
     Ready,
@@ -367,6 +367,32 @@ impl Session {
         self.cost_base = self.exact_cost.unwrap_or(self.cost_base);
         (self.paid_base, self.plan_base) = (self.paid_base + self.paid_now, self.plan_base + self.plan_now);
         (self.paid_now, self.plan_now) = (0.0, 0.0);
+    }
+
+    /// The session as the desktop app draws it (`tazuna app-server`, 2026-11-15): blocks and the numbers around them,
+    /// from the same state the terminal UI renders. An explicit shape rather than serde on the internals, so the app's
+    /// protocol stays stable when this struct changes. ponytail: a full snapshot each time; diffs when long threads lag.
+    pub fn view(&self) -> Value {
+        fn usage(u: &Usage) -> Value {
+            json!({"input": u.input, "cache_write": u.cache_write, "cache_read": u.cache_read, "output": u.output})
+        }
+        fn cut(t: &str, n: usize) -> String {
+            if t.chars().count() > n { format!("{}…", t.chars().take(n).collect::<String>()) } else { t.to_string() }
+        }
+        let blocks: Vec<Value> = self.blocks.iter().map(|b| match b {
+            Block::Prompt(text) => json!({"kind": "prompt", "text": text}),
+            Block::Text { text, live } => json!({"kind": "text", "text": text, "live": live}),
+            Block::Thinking { tokens, live, exact } => json!({"kind": "thinking", "tokens": tokens, "live": live, "exact": exact}),
+            Block::Tool(t) => json!({"kind": "tool", "id": t.id, "name": t.name, "input": t.input, "result": t.result.as_deref().map(|r| cut(r, 4000)),
+                "error": t.error, "secs": t.secs(), "running": t.done_ms.is_none(), "sub": t.sub.as_ref().map(|(n, last)| json!({"calls": n, "last": last}))}),
+            Block::Done(d) => json!({"kind": "done", "ok": d.ok, "secs": d.secs, "turns": d.turns, "cost": d.cost, "usage": usage(&d.usage), "stopped": d.stopped}),
+            Block::Notice { text, error } => json!({"kind": "notice", "text": text, "error": error}),
+            Block::Verify(v) => json!({"kind": "verify", "cmd": v.cmd, "ok": v.ok, "secs": v.secs, "round": v.round, "no_tests": v.no_tests,
+                "timed_out": v.timed_out, "output": cut(&v.output, 4000)}),
+        }).collect();
+        json!({"type": "view", "blocks": blocks, "model": self.model, "effort": self.effort, "cwd": self.cwd, "profile": self.profile,
+            "mode": self.mode, "activity": format!("{:?}", self.activity), "cost": self.cost(), "usage": usage(&self.usage), "turns": self.turns,
+            "context": self.context, "context_window": self.context_window, "limits": self.limits, "balance": self.balance})
     }
 
     /// Exact cost so far plus an estimate for tokens used since the last reported result.

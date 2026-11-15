@@ -51,5 +51,11 @@ body {
 input, textarea, [contenteditable] { user-select: text; cursor: text; }
 .prose-answer { font-family: var(--font-prose); font-size: 15.5px; line-height: 1.62; user-select: text; }
 .prose-answer p { margin: 0 0 10px; }
+.prose-answer :not(pre) > code { font-size: 0.84em; background: var(--field); border-radius: 4px; padding: 1px 4px; }
+.prose-answer pre { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--card);
+  font-size: 12.5px; line-height: 1.55; overflow-x: auto; }
+.prose-answer ul, .prose-answer ol { margin: 0 0 10px; padding-left: 22px; }
+.prose-answer ul { list-style: disc; } .prose-answer ol { list-style: decimal; }
+.prose-answer li { margin: 2px 0; }
 code { font-family: var(--font-mono); font-size: 0.92em; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }

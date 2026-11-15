@@ -18,3 +18,6 @@ __pycache__/
 /bench/**/*.out
 /bench/realwork/*.groups
 /bench/realwork/*.tried
+# one-off rendered previews and the pages behind them
+/out/
+.DS_Store
