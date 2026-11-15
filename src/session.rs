@@ -289,7 +289,7 @@ impl Session {
             results: 0,
             profile: String::new(),
             mode: "auto".into(),
-            commands: vec!["bad".into(), "boss".into(), "chat".into(), "diff".into(), "effort".into(), "good".into(), "jira".into(), "keys".into(), "login".into(), "loop".into(), "mcp".into(), "model".into(), "new".into(), "profile".into(), "resume".into(), "rewind".into(), "usage".into(), "vim".into()],
+            commands: vec!["bad".into(), "boss".into(), "chat".into(), "data".into(), "diff".into(), "effort".into(), "explorer".into(), "good".into(), "jira".into(), "keys".into(), "login".into(), "loop".into(), "mcp".into(), "model".into(), "new".into(), "preset".into(), "profile".into(), "resume".into(), "review".into(), "rewind".into(), "usage".into(), "verify".into(), "vim".into()],
             todos: Vec::new(),
             last_prompt: String::new(),
             streamed: false,
@@ -446,7 +446,7 @@ impl Session {
                 self.price_m = e["price_per_m"].as_array().filter(|p| p.len() == 3).map(|p| (p[0].as_f64().unwrap_or(0.0), p[1].as_f64().unwrap_or(0.0), p[2].as_f64().unwrap_or(0.0)));
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
-                cmds.extend(["good", "bad", "boss", "chat", "diff", "effort", "jira", "keys", "login", "loop", "mcp", "model", "new", "profile", "resume", "rewind", "usage", "vim"].map(String::from));
+                cmds.extend(["good", "bad", "boss", "chat", "data", "diff", "effort", "explorer", "jira", "keys", "login", "loop", "mcp", "model", "new", "preset", "profile", "resume", "review", "verify", "rewind", "usage", "vim"].map(String::from));
                 cmds.sort();
                 cmds.dedup();
                 self.commands = cmds;

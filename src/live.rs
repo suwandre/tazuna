@@ -488,6 +488,8 @@ pub struct Live {
     pub profile: Profile,
     /// The profile before the last `/profile` or `/chat` switch: where `/chat` goes back to.
     pub prev_profile: Option<Profile>,
+    /// `--data any` or `/data any`: providers off the trusted list may see the code (the model picker allows them).
+    pub data_any: bool,
     /// Also load the user's personal ~/.claude settings (repo profile).
     pub user_settings: bool,
     /// `--connectors`: the user's MCP servers and claude.ai connectors without the rest of ~/.claude (repo profile).
@@ -592,6 +594,7 @@ impl Live {
             project_instructions: true,
             profile: Profile::Lean,
             prev_profile: None,
+            data_any: false,
             user_settings: false,
             connectors: false,
             instructions_used: (0, Vec::new()),
@@ -779,6 +782,16 @@ impl Live {
             None => format!("boss mode off: {} works itself again (the conversation goes on)", self.model.trim_start_matches("claude-")),
         };
         Ok(self.record(json!({"type": "harness_info", "text": text})))
+    }
+
+    /// `/explorer`, `/verify`, `/review`: a setting the caller changed, for the rest of the session as its flag at start.
+    /// claude restarts with it and resumes the conversation (the own loop's engine resumes its history).
+    pub fn restart_with(&mut self, text: String) -> Result<(f64, Value)> {
+        if !self.idle() {
+            bail!("wait until the run has finished (or stop it with esc)");
+        }
+        self.respawn(self.model.clone(), self.effort.clone());
+        Ok(self.record(json!({"type": "harness_info", "text": format!("{text} (the conversation goes on)")})))
     }
 
     /// `/profile NAME` and `/chat`: the rest of the session in another profile (as `--profile` at start). Between the coding

@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.124 (2026-11-15): settings switch inside tazuna, not only at launch
+
+- `/chat` (a plain chat, and back to the profile before it) and `/profile repo | repo-lean | lean | chat`. Between the
+  coding profiles the conversation goes on; to or from chat starts a fresh one. Boss mode turns off outside repo.
+- `/explorer on | off | MODEL`, `/verify on | off`, `/review on | off | MODEL` (self-review turn, or a reviewer model):
+  as their flags, for the rest of the session; claude restarts with them and resumes the conversation.
+- `/data trusted | any`: which providers may see the code. `any` takes `/data any confirm`, and then `/model` may pick
+  providers off the trusted list.
+- `/preset default | boss | max | reviewed`: a preset's model, boss mode and reviewer for the rest of the session.
+- No measured metric changes: the flags still work as before, for scripts and benchmarks.
+
 ## 0.1.123 (2026-11-15): a chat profile for asks that are not about code
 
 - `--profile chat`: the model alone, as a chat app sends it: a one-line prompt ("You are a helpful assistant." and the

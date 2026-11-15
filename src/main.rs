@@ -593,6 +593,8 @@ fn main() -> Result<()> {
             live.cache_ttl = a.cache_ttl.clone();
             live.repo_map = a.repo_map;
             set_explorer(&mut live, &a);
+    live.data_any = a.data_any;
+            live.data_any = a.data_any;
             live.tester = a.tester.clone();
             live.boss = boss;
             live.boss_effort = a.boss_effort.clone();
@@ -2034,9 +2036,12 @@ fn run_live(
             if let Some((c, effort)) = chosen {
                 // the model in use, on the same provider: only its effort changes, and the conversation goes on
                 let same = c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1));
-                let msg = if same && !matches!(c.state, models::State::NoKey | models::State::Untrusted | models::State::NotOnKey) {
+                let blocked = matches!(c.state, models::State::NoKey | models::State::NotOnKey) || (c.state == models::State::Untrusted && !live.data_any);
+                let msg = if same && !blocked {
                     live.set_effort(effort.unwrap_or_else(|| live.effort.clone()))
                 } else { match c.state {
+                    // `/data any`: the user allowed providers off the trusted list for this session
+                    models::State::Untrusted if live.data_any => live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()),
                     models::State::NoKey | models::State::Untrusted | models::State::NotOnKey =>
                         Err(anyhow::anyhow!("{}: {}", c.label, models::why_not(&c).unwrap_or_default())),
                     // a model without levels (the API ignores them) keeps the session's
@@ -2442,6 +2447,93 @@ fn run_live(
                         Ok((t, e)) => s.apply(&e, t),
                         Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
                     }
+                    continue;
+                }
+                // /explorer [on|off|MODEL], /verify [on|off], /review [on|off|MODEL]: as their flags at start, for the rest of
+                // the session (claude restarts with them and resumes the conversation)
+                if ["/explorer", "/verify", "/review"].iter().any(|c| text == *c || text.starts_with(&format!("{c} "))) {
+                    let (cmd, arg) = text.split_once(' ').map_or((text.as_str(), ""), |(c, a)| (c, a.trim()));
+                    let at = live.elapsed_ms();
+                    let text = match (cmd, arg) {
+                        ("/explorer", "") => Err(format!("explorer: {} · /explorer on (haiku), off, or a model", live.explorer.as_deref().unwrap_or("off"))),
+                        ("/explorer", "off") => { live.explorer = None; Ok("explorer off: the main model does its own searching".to_string()) }
+                        ("/explorer", m) => {
+                            let m = if m == "on" { "haiku" } else { m };
+                            live.explorer = Some(m.to_string());
+                            Ok(format!("explorer on: broad searches go to a {m} subagent (repo profile on claude)"))
+                        }
+                        ("/verify", "") => Err(format!("verify: {} · /verify on, off", if matches!(live.verify, verify::Mode::Off) { "off" } else { "on" })),
+                        ("/verify", "off") => { live.verify = verify::Mode::Off; Ok("verify off: tazuna no longer runs the tests after a change".to_string()) }
+                        ("/verify", "on") => { live.verify = verify::Mode::Auto; Ok("verify on: tazuna runs the changed packages' tests after a change and sends back failures".to_string()) }
+                        ("/review", "") => Err(format!("review: self-review {}, reviewer {} · /review on, off, or a reviewer model",
+                            if live.self_review { "on" } else { "off" }, live.review_model.as_ref().map_or("none", |r| r.0.as_str()))),
+                        ("/review", "off") => { live.self_review = false; live.review_model = None; Ok("review off: no self-review turn, no reviewer".to_string()) }
+                        ("/review", "on") => { live.self_review = true; Ok("review on: one self-review turn at the end of each run".to_string()) }
+                        ("/review", m) => { live.review_model = Some((m.to_string(), "medium".into())); Ok(format!("reviewer: {m} reads each finished change and sends back what it finds")) }
+                        (c, a) => Err(format!("{c} {a}: not a setting")),
+                    };
+                    match text {
+                        Err(info) => s.apply(&json!({"type": "harness_info", "text": info}), at),
+                        Ok(t) => match live.restart_with(t) {
+                            Ok((t, e)) => s.apply(&e, t),
+                            Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), at),
+                        },
+                    }
+                    continue;
+                }
+                // /data trusted|any: which providers may see the code. Going to `any` needs `/data any confirm`: a work repo's code
+                // could otherwise go to a provider that stores or trains on it by one command
+                if text == "/data" || text.starts_with("/data ") {
+                    let at = live.elapsed_ms();
+                    let info = match text["/data".len()..].trim() {
+                        "" => format!("data: {} · /data trusted (only providers on the trusted list) or /data any", if live.data_any { "any" } else { "trusted" }),
+                        "trusted" => {
+                            live.data_any = false;
+                            let untrusted = live.provider.as_ref().is_some_and(|p| check_data(&p.0, false).is_err());
+                            format!("data: trusted · only providers on the trusted list may see the code{}", if untrusted { ". The model in use is not on it: switch with /model" } else { "" })
+                        }
+                        "any" => "/data any lets the code go to providers off the trusted list, which may store it or train on it. \
+                            For a work repo that may not be allowed. Type /data any confirm to allow it for this session.".to_string(),
+                        "any confirm" => { live.data_any = true; "data: any · for this session /model may pick providers off the trusted list".to_string() }
+                        other => format!("/data {other}: trusted or any"),
+                    };
+                    s.apply(&json!({"type": "harness_info", "text": info}), at);
+                    continue;
+                }
+                // /preset NAME: a preset's settings for the rest of the session, as --preset at start
+                if text == "/preset" || text.starts_with("/preset ") {
+                    let at = live.elapsed_ms();
+                    let name = text["/preset".len()..].trim();
+                    let Some((_, flags)) = PRESETS.iter().find(|(n, _)| *n == name) else {
+                        let names: Vec<&str> = PRESETS.iter().map(|p| p.0).collect();
+                        s.apply(&json!({"type": "harness_info", "text": format!("/preset {}", names.join(" | "))}), at);
+                        continue;
+                    };
+                    let f: Vec<&str> = flags.split_whitespace().collect();
+                    let get = |k: &str| f.iter().position(|x| *x == k).and_then(|i| f.get(i + 1)).map(|v| v.to_string());
+                    let mut done = vec![];
+                    if let Some(m) = get("--model") {
+                        let effort = get("--effort").unwrap_or_else(|| live.effort.clone());
+                        let route = get("--provider").map(|u| (u, get("--key-env").unwrap_or_default(), get("--price").unwrap_or_default()));
+                        let allowed = route.as_ref().map_or(Ok(()), |r| check_data(&r.0, live.data_any));
+                        match allowed.and_then(|_| live.switch(m, effort, route)) {
+                            Ok((t, e)) => s.apply(&e, t),
+                            Err(err) => {
+                                s.apply(&json!({"type": "harness_info", "text": format!("/preset {name}: {err:#}")}), at);
+                                continue;
+                            }
+                        }
+                    }
+                    let boss = get("--boss");
+                    if boss.is_some() || live.boss.is_some() {
+                        match live.set_boss(boss) {
+                            Ok((t, e)) => s.apply(&e, t),
+                            Err(err) => done.push(format!("{err:#}")),
+                        }
+                    }
+                    live.review_model = get("--review-model").map(|m| (m, "medium".into()));
+                    done.push(match &live.review_model { Some(r) => format!("reviewer {}", r.0), None => "no reviewer".into() });
+                    s.apply(&json!({"type": "harness_info", "text": format!("preset {name}: {}", done.join(" · "))}), at);
                     continue;
                 }
                 // /profile NAME (repo, repo-lean, lean, chat) and /chat (a plain chat, or back to the profile before it): as
