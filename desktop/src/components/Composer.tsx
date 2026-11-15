@@ -1,6 +1,6 @@
 import { ArrowUp, Paperclip, Shield, Square, Zap } from "lucide-react";
 import { useState } from "react";
-import type { Session } from "../lib/types";
+import { usd, type Session } from "../lib/types";
 
 type Props = { session: Session; threadCost: number; busy?: boolean; onSend?: (text: string) => void; onStop?: () => void };
 
@@ -18,7 +18,7 @@ export function Composer({ session, threadCost, busy, onSend, onStop }: Props) {
           <span className="inline-flex items-center gap-1.5 rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2"><Zap size={14} strokeWidth={1.5} />{session.model} · {session.effort}</span>
           <button className="rounded-full px-2 py-[3px] text-muted"><Paperclip size={14} strokeWidth={1.5} /></button>
           <span className="flex-1" />
-          <span className="mr-1.5 font-mono text-[11.5px] text-faint">last ${session.lastCost.toFixed(3)} · thread ${threadCost.toFixed(3)}</span>
+          <span className="mr-1.5 font-mono text-[11.5px] text-faint">last {usd(session.lastCost)} · thread {usd(threadCost)}</span>
           {busy
             ? <button onClick={onStop} title="Stop (Esc)" className="grid size-[30px] place-items-center rounded-full bg-ink text-canvas"><Square size={12} strokeWidth={2} fill="currentColor" /></button>
             : <button onClick={send} title="Send (Enter)" disabled={!text.trim()} className="grid size-[30px] place-items-center rounded-full bg-accent text-on-accent disabled:opacity-40"><ArrowUp size={16} strokeWidth={1.75} /></button>}

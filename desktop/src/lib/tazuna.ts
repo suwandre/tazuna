@@ -17,11 +17,15 @@ type Usage = { input: number; cache_write: number; cache_read: number; output: n
 export type View = {
   blocks: ViewBlock[]; model: string; effort: string; cwd: string; profile: string; mode: string; activity: string;
   cost: number; usage: Usage; turns: number; context: number; context_window?: number; limits?: [number, number]; balance?: number;
+  /** what an untrusted folder's config would run (it runs lean until trusted) */
+  untrusted?: string | null;
 };
 
 export const core = {
   start: (cwd?: string, profile?: string) => invoke("start", { cwd, profile }),
-  send: (text: string) => invoke("send", { text }),
+  send: (text: string, agent = false) => invoke("send", { text, agent }),
+  trust: () => invoke("trust"),
+  pickFolder: () => invoke<string | null>("pick_folder"),
   interrupt: () => invoke("interrupt"),
   newChat: () => invoke("new_chat"),
   setProfile: (name: string) => invoke("set_profile", { name }),

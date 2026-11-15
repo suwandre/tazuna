@@ -1,7 +1,7 @@
 import { Check, Circle, FileText, MessageCircle } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { Markdown } from "../lib/markdown";
-import type { Message } from "../lib/types";
+import { usd, type Message } from "../lib/types";
 
 function inlineCode(text: string) {
   return text.split(/(`[^`]+`)/).map((part, i) => part.startsWith("`") ? <code key={i}>{part.slice(1, -1)}</code> : part);
@@ -9,12 +9,14 @@ function inlineCode(text: string) {
 
 function meta(m: { cost: number; tokens: number; cachedPct?: number; secs: number }) {
   const tokens = m.tokens >= 1000 ? `${(m.tokens / 1000).toFixed(1)}k` : `${m.tokens}`;
-  return [`$${m.cost.toFixed(3)}`, `${tokens} tokens`, m.cachedPct != null ? `${m.cachedPct}% cached` : null, `${m.secs} s`].filter(Boolean).join(" · ");
+  return [usd(m.cost), `${tokens} tokens`, m.cachedPct != null ? `${m.cachedPct}% cached` : null, `${m.secs} s`].filter(Boolean).join(" · ");
 }
 
 const doing: Record<string, string> = { Starting: "starting", Waiting: "waiting for the model", Thinking: "thinking", Writing: "writing", Tool: "working", Verifying: "running the checks" };
 
-export function Transcript({ messages, busy, activity }: { messages: Message[]; busy?: boolean; activity?: string }) {
+type Props = { messages: Message[]; busy?: boolean; activity?: string; onSendToAgent?: (text: string) => void };
+
+export function Transcript({ messages, busy, activity, onSendToAgent }: Props) {
   // follow new output while the reader is at the bottom; stay put once they scroll up
   const box = useRef<HTMLElement>(null), stick = useRef(true);
   useEffect(() => { if (stick.current && box.current) box.current.scrollTop = box.current.scrollHeight; });
@@ -34,7 +36,7 @@ export function Transcript({ messages, busy, activity }: { messages: Message[]; 
                 tazuna
                 {m.routedChat && (
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2 py-px text-[11.5px] font-normal text-muted">
-                    <MessageCircle size={13} strokeWidth={1.5} /> answered as a chat · <button className="font-medium text-accent-ink">send to agent</button>
+                    <MessageCircle size={13} strokeWidth={1.5} /> answered as a chat · <button disabled={busy} onClick={() => m.ask && onSendToAgent?.(m.ask)} className="font-medium text-accent-ink disabled:opacity-50">send to agent</button>
                   </span>
                 )}
               </div>

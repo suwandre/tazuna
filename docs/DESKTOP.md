@@ -1,7 +1,13 @@
-# tazuna desktop: plan for discussion (draft, 2026-11-15)
+# tazuna desktop: plan (2026-11-15)
 
-Nothing is built. This is the proposal to agree on before any code: what the app is for, what each version contains,
-how it should look, and what we take from the other harnesses.
+What the app is for, what each version contains, how it should look, and what we take from the other harnesses.
+
+Built so far (v0.1 in progress, `desktop/`): the window in design A (DESIGN.md); `tazuna app-server` runs the core behind
+it (JSON lines: the window's commands in, Session::view snapshots out); New chat (a plain chat in the home folder) and
+Open folder (a project, recent ones in the sidebar); inside a project the router answers general questions as a chat,
+tagged, with "send to agent"; a folder whose settings run code runs lean until the user trusts it; tool steps, markdown
+answers, cost per turn and thread, context and plan usage. Next: model and effort picker, sessions listed and shared with
+the CLI, permission mode and approvals, per-turn diff and undo, Cmd-K.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

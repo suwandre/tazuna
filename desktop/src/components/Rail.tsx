@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Usage } from "../lib/types";
+import { usd, type Usage } from "../lib/types";
 
 // The right rail is a slot of widgets (docs/DESKTOP.md "Customization"): tazuna's own panels are widgets too, so the
 // widget API that users and creator mode build on is the one these use. A widget with nothing real to show returns null
@@ -24,7 +24,7 @@ function Ring({ pct }: { pct: number }) {
     <div className="relative my-0.5 mb-1.5 size-16">
       <svg viewBox="0 0 36 36" className="size-16 -rotate-90">
         <circle cx="18" cy="18" r="15.9" fill="none" strokeWidth="3.2" stroke="var(--line)" />
-        <circle cx="18" cy="18" r="15.9" fill="none" strokeWidth="3.2" stroke="var(--accent)" strokeLinecap="round" strokeDasharray={`${pct} 100`} />
+        <circle cx="18" cy="18" r="15.9" fill="none" strokeWidth="3.2" stroke="var(--accent)" strokeLinecap="round" strokeDasharray={`${pct} 100`} opacity={pct > 0 ? 1 : 0} />
       </svg>
       <span className="absolute inset-0 grid place-items-center text-[14px] font-semibold">{pct}%</span>
     </div>
@@ -45,7 +45,7 @@ export const builtInWidgets: Widget[] = [
       <Bar pct={u.plan5h} /><div className={small}>{u.plan5h}% used{u.plan5hReset && ` · resets ${u.plan5hReset}`}</div>
       {u.planWeek != null && <><div className="mb-2 mt-3 text-[11.5px] font-medium text-faint">Plan · week</div><Bar pct={u.planWeek} /><div className={small}>{u.planWeek}% used</div></>}</> },
   { id: "thread", title: "This thread", render: (u) => <>
-      <div className="text-[22px] font-semibold tracking-[-0.02em]">${u.threadCost.toFixed(3)}</div>
+      <div className="text-[22px] font-semibold tracking-[-0.02em]">{usd(u.threadCost)}</div>
       <div className={small}>{u.threadTurns} turns · {u.cachedPct}% cached{u.saved > 0 && ` · saved $${u.saved.toFixed(2)}`}</div></> },
   { id: "today", title: "Today", render: (u) => u.todaySeries.length < 2 ? null : <><Spark series={u.todaySeries} /><div className={small}>${u.today.toFixed(2)} · {u.todayTurns} turns</div></> },
 ];

@@ -33,9 +33,10 @@ fn login_path() -> Option<String> {
     String::from_utf8(out.stdout).ok()?.lines().last().map(str::to_string).filter(|p| !p.is_empty())
 }
 
-/// Starts (or restarts) the core in `cwd` (a project) or the home folder (a chat).
+/// Starts (or restarts) the core in `cwd` (a project) or the home folder (a chat). Async: stopping the old core waits for
+/// it, off the main thread.
 #[tauri::command]
-fn start(app: AppHandle, core: State<Core>, cwd: Option<String>, profile: Option<String>) -> Result<(), String> {
+async fn start(app: AppHandle, core: State<'_, Core>, cwd: Option<String>, profile: Option<String>) -> Result<(), String> {
     stop_child(&core);
     let dir = cwd.or_else(|| std::env::var("HOME").ok()).unwrap_or_else(|| ".".into());
     let mut cmd = Command::new(tazuna_bin());
@@ -80,9 +81,23 @@ fn stop_child(core: &State<Core>) {
     }
 }
 
+/// `agent`: past the router, straight to the agent ("send to agent" on a message answered as a chat).
 #[tauri::command]
-fn send(core: State<Core>, text: String) -> Result<(), String> {
-    write(&core, serde_json::json!({"op": "send", "text": text}))
+fn send(core: State<Core>, text: String, agent: bool) -> Result<(), String> {
+    write(&core, serde_json::json!({"op": "send", "text": text, "agent": agent}))
+}
+
+/// The user's yes to trusting the open folder's settings (hooks, skills); the window starts the core again after it.
+#[tauri::command]
+fn trust(core: State<Core>) -> Result<(), String> {
+    write(&core, serde_json::json!({"op": "trust"}))
+}
+
+/// The native folder picker; async so it does not block the main thread it needs.
+#[tauri::command]
+async fn pick_folder(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog().file().blocking_pick_folder().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -102,8 +117,9 @@ fn set_profile(core: State<Core>, name: String) -> Result<(), String> {
 
 fn main() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, send, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, send, trust, pick_folder, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 stop_child(&w.state::<Core>());

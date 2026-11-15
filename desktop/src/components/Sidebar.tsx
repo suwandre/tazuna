@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, Plus, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderOpen, Plus, Search } from "lucide-react";
 import type { Project, Thread } from "../lib/types";
 
 const icon = { size: 16, strokeWidth: 1.5 };
@@ -19,7 +19,12 @@ function ThreadRow({ t, active, sub }: { t: Thread; active: boolean; sub?: boole
 // in the Tauri window on macOS the title bar is an overlay: the traffic lights sit over the sidebar's top
 const macOverlay = "__TAURI_INTERNALS__" in window && navigator.userAgent.includes("Mac");
 
-export function Sidebar({ chats, projects, active, planLeft }: { chats: Thread[]; projects: Project[]; active: string; planLeft: string }) {
+type Props = {
+  chats: Thread[]; projects: Project[]; active: string; planLeft: string;
+  onNewChat?: () => void; onOpenFolder?: () => void; onOpenProject?: (p: Project) => void;
+};
+
+export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject }: Props) {
   return (
     <aside className="flex flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
       {macOverlay && <div data-tauri-drag-region className="-mx-2.5 -mt-3.5 h-[38px] flex-none" />}
@@ -30,16 +35,20 @@ export function Sidebar({ chats, projects, active, planLeft }: { chats: Thread[]
       <div className="mb-1 flex items-center gap-2 rounded-md border border-line bg-field px-[9px] py-[7px] text-muted">
         <Search {...icon} /><span>Search</span><Kbd>⌘K</Kbd>
       </div>
-      <button className="flex items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
+      <button onClick={onNewChat} className="flex items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
         <Plus {...icon} /><span>New chat</span><Kbd>⌘N</Kbd>
       </button>
-      <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Chats</div>
+      <button onClick={onOpenFolder} className="flex items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
+        <FolderOpen {...icon} /><span>Open folder</span><Kbd>⌘O</Kbd>
+      </button>
+      {chats.length > 0 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Chats</div>}
       {chats.map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} />)}
-      <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Projects</div>
+      {projects.length > 0 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Projects</div>}
       {projects.map((p) => (
-        <div key={p.name}>
-          <a className="flex items-center gap-2 rounded-md px-[9px] py-1.5 text-ink-2 hover:bg-hover">
-            {p.open ? <ChevronDown size={14} strokeWidth={1.5} /> : <ChevronRight size={14} strokeWidth={1.5} />}
+        <div key={p.path ?? p.name}>
+          <a onClick={() => onOpenProject?.(p)} title={p.path}
+            className={`flex items-center gap-2 rounded-md px-[9px] py-1.5 text-ink-2 hover:bg-hover ${p.path && p.path === active ? "bg-selected text-ink" : ""}`}>
+            {p.threads.length > 0 && (p.open ? <ChevronDown size={14} strokeWidth={1.5} /> : <ChevronRight size={14} strokeWidth={1.5} />)}
             <span className="flex-1 truncate">{p.name}</span>
             {p.pending ? <span className="rounded-full bg-accent px-1.5 text-[10.5px] font-semibold leading-[17px] text-on-accent">{p.pending}</span> : null}
           </a>

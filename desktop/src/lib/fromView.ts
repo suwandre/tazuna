@@ -18,10 +18,12 @@ function verb(name: string): string {
 
 export function messages(v: View): Message[] {
   const out: Message[] = [];
-  let agent: Extract<Message, { role: "agent" }> | null = null;
+  let agent: Extract<Message, { role: "agent" }> | null = null, ask = "";
   const current = () => (agent ??= (out.push({ role: "agent", prose: [], tools: [] }), out[out.length - 1] as Extract<Message, { role: "agent" }>));
   for (const b of v.blocks) {
-    if (b.kind === "prompt") { out.push({ role: "user", text: b.text }); agent = null; }
+    if (b.kind === "prompt") { out.push({ role: "user", text: b.text }); agent = null; ask = b.text; }
+    // the router answered it as a chat (app server, 0.1.127's router): the reply carries the tag and the ask, for "send to agent"
+    else if (b.kind === "notice" && b.text.startsWith("answered as a chat")) { Object.assign(current(), { routedChat: true, ask }); }
     else if (b.kind === "text") { if (b.text.trim()) current().prose.push(b.text); }
     else if (b.kind === "tool") {
       const t: ToolStep = { verb: verb(b.name), target: target(b.input ?? {}), secs: b.secs ?? 0, ok: !b.error, running: b.running };

@@ -956,6 +956,11 @@ fn untrusted_switch(p: route::Profile, a: &Args) -> Result<Option<String>> {
 /// lines on stdin: {"op":"send","text":...}, {"op":"interrupt"}, {"op":"new"}, {"op":"profile","name":...}; the session
 /// goes out as JSON lines on stdout, a `view` (Session::view) after each change, at most every 50 ms. Run in the folder
 /// the window opened (a project) or anywhere (a chat).
+///
+/// As in the terminal, a message with no code signals inside a project goes past the router's check, and a general
+/// question is answered as a chat beside the agent (send with "agent": true to skip that). A folder whose config runs code
+/// and is not trusted runs lean, and each view says so (`untrusted`: what runs); {"op":"trust"} records the user's yes,
+/// and the window starts the server again.
 fn app_server(a: &Args) -> Result<()> {
     use std::io::{BufRead, Write};
     let mut live = live::Live::new("", "")?;
@@ -973,21 +978,31 @@ fn app_server(a: &Args) -> Result<()> {
     let mut s = Session::new("", &live.effort);
     s.cwd = std::env::current_dir()?.to_string_lossy().into_owned();
     s.apply(&route.1, route.0);
+    let cwd = std::env::current_dir()?;
+    let config = route::RepoConfig::read(&cwd);
+    let mut untrusted = (config.runs_code() && !a.trust && !labels::dir().is_ok_and(|b| trust::is_trusted(&b, &cwd))).then(|| config.summary());
+    // one channel for the window's commands and this process's own (the router's verdicts, chat answers); the window
+    // closing stdin arrives as a quit, since the router's sender keeps the channel open
     let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
+    let stdin_tx = tx.clone();
     std::thread::spawn(move || {
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
-            if let Ok(v) = serde_json::from_str(&line) && tx.send(v).is_err() {
-                break;
+            if let Ok(v) = serde_json::from_str(&line) && stdin_tx.send(v).is_err() {
+                return;
             }
         }
+        let _ = stdin_tx.send(json!({"op": "quit"}));
     });
     let out = std::io::stdout();
-    let emit = |s: &Session| {
+    let emit = |s: &Session, untrusted: &Option<String>| {
+        let mut v = s.view();
+        v["untrusted"] = json!(untrusted);
         let mut o = out.lock();
-        let _ = writeln!(o, "{}", s.view());
+        let _ = writeln!(o, "{v}");
         let _ = o.flush();
     };
-    emit(&s);
+    emit(&s, &untrusted);
+    let mut last_reply = String::new();
     let (mut changed, mut last) = (false, Instant::now());
     loop {
         loop {
@@ -995,11 +1010,24 @@ fn app_server(a: &Args) -> Result<()> {
                 Ok(cmd) => {
                     let at = live.elapsed_ms();
                     let info = |s: &mut Session, text: String| s.apply(&json!({"type": "harness_notice", "text": text, "error": true}), at);
-                    match cmd["op"].as_str() {
+                    // the window's commands carry "op"; chat_turn's events carry their own "type"
+                    match cmd["op"].as_str().or(cmd["type"].as_str()) {
                         Some("send") => {
                             let text = cmd["text"].as_str().unwrap_or_default();
+                            let (text, forced) = match text.strip_prefix("/agent ") {
+                                Some(rest) => (rest.trim(), true),
+                                None => (text, cmd["agent"] == true),
+                            };
                             if let Some(why) = untrusted_in_use(&live) {
                                 info(&mut s, why);
+                            } else if !forced && live.idle() && live.profile != route::Profile::Chat && route::code_signals(text, &cwd).is_empty() {
+                                // no sign of the code: the router's check decides, off this thread (the terminal's flow)
+                                let (c, tx, last, msg) = (RouteCtx::of(&live), tx.clone(), last_reply.clone(), text.to_string());
+                                std::thread::spawn(move || {
+                                    let general = route_general(&c, &last, &msg);
+                                    let _ = tx.send(json!({"op": "routed", "general": general, "text": msg}));
+                                });
+                                s.activity = session::Activity::Waiting;
                             } else {
                                 match live.send_typed(text) {
                                     Ok((t, e)) => s.apply(&e, t),
@@ -1038,6 +1066,29 @@ fn app_server(a: &Args) -> Result<()> {
                                 None => info(&mut s, "profile: repo, repo-lean, lean or chat".into()),
                             }
                         }
+                        Some("routed") => {
+                            let text = cmd["text"].as_str().unwrap_or_default().to_string();
+                            if cmd["general"] == true && live.idle() {
+                                let (t, u) = live.note(json!({"type": "harness_user", "text": text}));
+                                s.apply(&u, t);
+                                s.apply(&json!({"type": "harness_info", "text": "answered as a chat: not about this project"}), at);
+                                chat_turn(RouteCtx::of(&live), text, tx.clone());
+                            } else {
+                                match live.send_typed(&text) {
+                                    Ok((t, e)) => s.apply(&e, t),
+                                    Err(e) => info(&mut s, format!("{e:#}")),
+                                }
+                            }
+                        }
+                        Some("tazuna_chat_event") => {
+                            let (t, ev) = live.note(cmd["e"].clone());
+                            s.apply(&ev, t);
+                        }
+                        // the user's yes to the trust question, for this folder; the window then starts the server again
+                        Some("trust") => match labels::dir().and_then(|b| trust::trust(&b, &cwd)) {
+                            Ok(()) => untrusted = None,
+                            Err(e) => info(&mut s, format!("{e:#}")),
+                        },
                         Some("quit") => return Ok(()),
                         _ => info(&mut s, format!("unknown command: {cmd}")),
                     }
@@ -1048,11 +1099,14 @@ fn app_server(a: &Args) -> Result<()> {
             }
         }
         for (t, e) in live.poll() {
+            if e["type"] == "result" && let Some(r) = e["result"].as_str() {
+                last_reply = r.to_string();
+            }
             s.apply(&e, t);
             changed = true;
         }
         if changed && last.elapsed() >= Duration::from_millis(50) {
-            emit(&s);
+            emit(&s, &untrusted);
             (changed, last) = (false, Instant::now());
         }
         std::thread::sleep(Duration::from_millis(15));
