@@ -469,3 +469,12 @@ follow-ups and 4 general ones after a coding reply, 20 general-set questions, 10
 coding messages on the agent; with the check on DeepSeek (own loop) and on Haiku (claude path), 0 of 45 went to chat and
 23 of 25 general questions did (ambiguous: 4-5 of 7). With the instruction only in the system prompt, DeepSeek through
 SubRouter answered the messages instead of classifying them (8 of 25).
+
+## Real use, scored (2026-11-15)
+
+bench/realuse.py reads tazuna's data folder (runs.jsonl, the session recordings, labels.jsonl) and scores each live run
+from what followed, with no labels: strong (stopped, rewound, error or crash, change discarded in git, a next message
+that says it failed, the same question again) and soft (pushback such as "wait, ...", or "progress?"). Against 390 runs
+labelled by hand it caught 12 of 14 bad ones and flagged 4 of 231 good ones (clarifications, now soft). The user's runs:
+Claude 5% strong (Opus 4% over 278), the own loop 23% (mostly errors and hangs of cheap or free models; DeepSeek 15%,
+ERNIE 58%). Per version there are too few live runs since 0.1.100 to compare yet; the totals stay private (prompts).
