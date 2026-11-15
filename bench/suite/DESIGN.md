@@ -406,3 +406,10 @@ DeepSeek (v1159), one run each; the 5 answer tasks judged with all eight answers
   156 s. No Python weakness: over 11 dev answer tasks the own loop is level or ahead. The held-out gap sits on its two
   hardest tasks (3-5 for every harness), where OpenCode also ran far longer (4378 against 1017 s on the investigation,
   different rounds): next, whether the own loop stops too early on hard tasks.
+- Does the own loop stop too early on hard tasks? The 3 hardest dev answer tasks (two n8n reviews, plan-astro-18399),
+  own loop against OpenCode on DeepSeek, 2 runs each, run side by side ($0.18): the own loop scored 5.67 against 5.00
+  (plan 5, 9 against 6, 9; entity-rename 4, 4 against 4, 4; resume-limit 5, 7 against 3, 4) and did more, not less:
+  92 against 81 tool calls, 259k against 225k characters read, 456 against 379 s. OpenCode's longer times in earlier
+  rounds were not reproduced side by side. Over 14 dev answer tasks the own loop is level with or ahead of OpenCode;
+  the held-out gap (4 of 5 tasks lower) has no explanation on dev. Either it is variance on the held-out set's hardest
+  tasks, or it needs the held-out answers read, which would spend those tasks as a check.
