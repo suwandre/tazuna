@@ -699,6 +699,18 @@ fn set_explorer(live: &mut live::Live, a: &Args) {
     }
 }
 
+/// Under `trusted` (the default, or `/data trusted` mid-session), a provider in use that is not on the trusted list: the
+/// model's, the explore tool's or the reviewer's. Sending is refused until the user switches (`/data trusted` used to
+/// only warn, and the next message still went to the untrusted provider).
+fn untrusted_in_use(live: &live::Live) -> Option<String> {
+    if live.data_any {
+        return None;
+    }
+    let urls = [live.provider.as_ref().map(|p| p.0.clone()), live.explorer_provider.as_ref().map(|e| e.0.clone()),
+        live.review_model.as_ref().and_then(|r| r.0.split_once('@').map(|(_, u)| u.to_string()))];
+    urls.into_iter().flatten().find_map(|u| check_data(&u, false).err().map(|e| format!("not sent: {e:#}. Switch with /model (or /explorer, /review), or /data any confirm")))
+}
+
 fn check_data(url: &str, any: bool) -> Result<()> {
     if any {
         return Ok(());
@@ -2490,7 +2502,7 @@ fn run_live(
                         "trusted" => {
                             live.data_any = false;
                             let untrusted = live.provider.as_ref().is_some_and(|p| check_data(&p.0, false).is_err());
-                            format!("data: trusted · only providers on the trusted list may see the code{}", if untrusted { ". The model in use is not on it: switch with /model" } else { "" })
+                            format!("data: trusted · only providers on the trusted list may see the code{}", if untrusted { ". The model in use is not on it: nothing is sent until you switch with /model" } else { "" })
                         }
                         "any" => "/data any lets the code go to providers off the trusted list, which may store it or train on it. \
                             For a work repo that may not be allowed. Type /data any confirm to allow it for this session.".to_string(),
@@ -2701,6 +2713,10 @@ fn run_live(
                         let flags = looprun::flags(rest);
                         match () {
                             _ if looprun::open_items(&std::fs::read_to_string("TODO.md").unwrap_or_default()).is_empty() => {
+                                if let Some(why) = untrusted_in_use(live) {
+                                    s.apply(&json!({"type": "harness_notice", "text": why, "error": true}), live.elapsed_ms());
+                                    continue;
+                                }
                                 match live.send(looprun::PLAN) {
                                     Ok((t, e)) => s.apply(&e, t),
                                     Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),
@@ -2758,6 +2774,10 @@ fn run_live(
                     None => text,
                 };
                 normal = false; // the next message starts in insert mode
+                if let Some(why) = untrusted_in_use(live) {
+                    s.apply(&json!({"type": "harness_notice", "text": why, "error": true}), live.elapsed_ms());
+                    continue;
+                }
                 match if typed { live.send_typed(&text) } else { live.send(&text) } {
                     Ok((t, e)) => s.apply(&e, t),
                     Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),
@@ -2918,6 +2938,19 @@ fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nothing_goes_to_an_untrusted_provider_under_trusted() {
+        let mut live = crate::live::Live::new("", "").unwrap();
+        live.provider = Some(("https://untrusted-provider.invalid/v1".into(), "KEY".into()));
+        assert!(super::untrusted_in_use(&live).is_some_and(|w| w.starts_with("not sent")), "/data trusted with the model on it: blocked");
+        live.data_any = true;
+        assert!(super::untrusted_in_use(&live).is_none(), "/data any confirm allows it");
+        live.data_any = false;
+        live.provider = None;
+        live.review_model = Some(("m@https://untrusted-provider.invalid/v1".into(), "medium".into()));
+        assert!(super::untrusted_in_use(&live).is_some(), "the reviewer counts too");
+    }
+
     #[test]
     fn a_typo_is_one_letter_or_two_from_its_command() {
         assert_eq!((super::edit_distance("nwe", "new"), super::edit_distance("modle", "model"), super::edit_distance("zzzz", "new")), (2, 2, 4));

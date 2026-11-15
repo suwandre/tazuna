@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.125 (2026-11-15): under `trusted`, nothing goes to an untrusted provider
+
+- `/data trusted` while the model in use (or the explore tool or reviewer) is on a provider off the trusted list only
+  warned in 0.1.124, and the next message still went there. Now tazuna refuses to send until you switch with `/model`
+  (or `/explorer`, `/review`), or allow it with `/data any confirm`.
+
 ## 0.1.124 (2026-11-15): settings switch inside tazuna, not only at launch
 
 - `/chat` (a plain chat, and back to the profile before it) and `/profile repo | repo-lean | lean | chat`. Between the
