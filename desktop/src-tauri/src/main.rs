@@ -100,6 +100,12 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
     app.dialog().file().blocking_pick_folder().and_then(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Any other command for the core as is ({"op":"models"}, {"op":"model",...}, {"op":"effort",...}).
+#[tauri::command]
+fn op(core: State<Core>, msg: serde_json::Value) -> Result<(), String> {
+    write(&core, msg)
+}
+
 #[tauri::command]
 fn interrupt(core: State<Core>) -> Result<(), String> {
     write(&core, serde_json::json!({"op": "interrupt"}))
@@ -119,7 +125,7 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, send, trust, pick_folder, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, send, op, trust, pick_folder, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 stop_child(&w.state::<Core>());

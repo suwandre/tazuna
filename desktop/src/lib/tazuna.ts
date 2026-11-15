@@ -21,6 +21,12 @@ export type View = {
   untrusted?: string | null;
 };
 
+export type ModelChoice = {
+  model: string; label: string; place: string; provider: string; url: string | null; key_env: string | null;
+  efforts: string[]; effort: string | null; price: string; bench: string; why_not: string | null; current: boolean;
+};
+export type Models = { choices: ModelChoice[]; rebuild: string | null };
+
 export const core = {
   start: (cwd?: string, profile?: string) => invoke("start", { cwd, profile }),
   send: (text: string, agent = false) => invoke("send", { text, agent }),
@@ -29,6 +35,10 @@ export const core = {
   interrupt: () => invoke("interrupt"),
   newChat: () => invoke("new_chat"),
   setProfile: (name: string) => invoke("set_profile", { name }),
+  models: () => invoke("op", { msg: { op: "models" } }),
+  setModel: (c: ModelChoice, effort?: string) => invoke("op", { msg: { op: "model", model: c.model, url: c.url, key_env: c.key_env, effort } }),
+  setEffort: (effort: string) => invoke("op", { msg: { op: "effort", effort } }),
+  onModels: (cb: (m: Models) => void) => listen<Models>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "models") cb(e.payload); }),
   onExit: (cb: () => void) => listen("tazuna-exit", () => cb()),
   onView: (cb: (v: View) => void) => listen<View>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "view") cb(e.payload); }),
 };

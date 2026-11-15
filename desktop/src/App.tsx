@@ -5,7 +5,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import * as demo from "./lib/demo";
 import { messages as viewMessages, usage as viewUsage } from "./lib/fromView";
-import { core, inTauri, type View } from "./lib/tazuna";
+import { core, inTauri, type Models, type View } from "./lib/tazuna";
 
 const RECENT = "tazuna.projects";
 const recent = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT) ?? "[]"); } catch { return []; } };
@@ -17,6 +17,7 @@ function useCore() {
   const [error, setError] = useState<string | null>(null);
   const [folder, setFolder] = useState<string | null>(null);
   const [projects, setProjects] = useState<string[]>(recent);
+  const [models, setModels] = useState<Models | null>(null);
   const open = (path: string | null) => {
     setFolder(path); setView(null); setError(null);
     if (path) setProjects((p) => { const next = [path, ...p.filter((x) => x !== path)].slice(0, 12); localStorage.setItem(RECENT, JSON.stringify(next)); return next; });
@@ -27,6 +28,7 @@ function useCore() {
     const offs = [
       core.onExit(() => setError("tazuna stopped. The app needs tazuna 0.1.128 or later on the PATH (or TAZUNA_BIN).")),
       core.onView((v) => { setError(null); setView(v); }),
+      core.onModels(setModels),
     ];
     Promise.all(offs).then(() => open(null)).catch((e) => setError(String(e)));
     return () => offs.forEach((p) => p.then((off) => off()));
@@ -42,7 +44,10 @@ function useCore() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
-  return { view, error, folder, projects, open, pick };
+  // the catalog for the picker and the model's name: again after each switch, so the current row is right
+  const model = view ? `${view.model}|${view.effort}` : "";
+  useEffect(() => { if (inTauri && model) core.models().catch(() => {}); }, [model]);
+  return { view, error, folder, projects, open, pick, models };
 }
 
 function useTheme() {
@@ -64,7 +69,7 @@ function useTheme() {
 
 export default function App() {
   useTheme();
-  const { view, error, folder, projects, open, pick } = useCore();
+  const { view, error, folder, projects, open, pick, models } = useCore();
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
   const usage = view ? viewUsage(view) : demo.usage;
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
@@ -83,7 +88,7 @@ export default function App() {
         <header data-tauri-drag-region className="flex items-center justify-between border-b border-line-soft px-7 py-3">
           <div className="flex items-center gap-2 font-medium"><span className="text-muted">{place}</span><span className="text-faint">/</span><span className="truncate">{title}</span></div>
           <div className="flex gap-1.5">
-            <span className="rounded-full border border-line bg-field px-2.5 py-1 text-[12px] text-ink-2">{session.model} · {session.effort}</span>
+            <span className="rounded-full border border-line bg-field px-2.5 py-1 text-[12px] text-ink-2">{models?.choices.find((c) => c.current)?.label ?? session.model}{session.effort && ` · ${session.effort}`}</span>
             {session.branch && <span className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2">{session.branch} · {session.changed} changed</span>}
           </div>
         </header>
@@ -96,7 +101,9 @@ export default function App() {
         )}
         {error && <div className="mx-auto mb-2 max-w-[700px] px-7 text-[12.5px] text-bad">{error}</div>}
         <Composer session={session} threadCost={usage.threadCost} busy={busy}
-          onSend={(text) => core.send(text).catch((e) => console.error(e))} onStop={() => core.interrupt()} />
+          onSend={(text) => core.send(text).catch((e) => console.error(e))} onStop={() => core.interrupt()}
+          models={models} onModels={inTauri ? () => core.models() : undefined}
+          onPickModel={inTauri ? (c) => core.setModel(c) : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined} />
       </main>
       <Rail usage={usage} widgets={builtInWidgets} />
     </div>

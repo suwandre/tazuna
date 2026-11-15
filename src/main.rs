@@ -1084,6 +1084,44 @@ fn app_server(a: &Args) -> Result<()> {
                             let (t, ev) = live.note(cmd["e"].clone());
                             s.apply(&ev, t);
                         }
+                        // the model picker: the catalog as the terminal's /model shows it, answered as a `models` line
+                        Some("models") => {
+                            let cs = app_catalog()?;
+                            let rows: Vec<serde_json::Value> = cs.iter().map(|c| json!({
+                                "model": c.model, "label": c.label, "place": c.place, "provider": models::provider_of(c),
+                                "url": c.route.as_ref().map(|r| &r.0), "key_env": c.route.as_ref().map(|r| &r.1),
+                                "efforts": c.efforts, "effort": c.efforts.get(models::start_effort(c, &live.model, &live.effort)),
+                                "price": c.price, "bench": c.bench, "why_not": models::why_not(c).filter(|_| !live.data_any || c.state != models::State::Untrusted),
+                                "current": c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)),
+                            })).collect();
+                            // a Claude switch in a long conversation re-reads it without the cache: said before the user picks
+                            let rebuild = rebuild_text(&s).filter(|_| live.provider.is_none());
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{}", json!({"type": "models", "choices": rows, "rebuild": rebuild}));
+                            let _ = o.flush();
+                        }
+                        // a model picked: {"op":"model","model":..,"url":..,"key_env":..,"effort":..} (url and key_env null for
+                        // claude); the effort defaults as in the terminal's picker
+                        Some("model") => {
+                            let cs = app_catalog()?;
+                            let want = (cmd["url"].as_str(), cmd["key_env"].as_str());
+                            match cs.iter().find(|c| c.model == cmd["model"].as_str().unwrap_or_default()
+                                && (c.route.as_ref().map(|r| r.0.as_str()), c.route.as_ref().map(|r| r.1.as_str())) == want) {
+                                Some(c) => {
+                                    let effort = cmd["effort"].as_str().filter(|e| c.efforts.iter().any(|x| x == e)).map(String::from)
+                                        .or_else(|| c.efforts.get(models::start_effort(c, &live.model, &live.effort)).cloned());
+                                    match apply_choice(&mut live, c, effort) {
+                                        Ok((t, e)) => s.apply(&e, t),
+                                        Err(e) => info(&mut s, format!("{e:#}")),
+                                    }
+                                }
+                                None => info(&mut s, format!("no model {} in the catalog", cmd["model"])),
+                            }
+                        }
+                        Some("effort") => match live.set_effort(cmd["effort"].as_str().unwrap_or_default().to_string()) {
+                            Ok((t, e)) => s.apply(&e, t),
+                            Err(e) => info(&mut s, format!("{e:#}")),
+                        },
                         // the user's yes to the trust question, for this folder; the window then starts the server again
                         Some("trust") => match labels::dir().and_then(|b| trust::trust(&b, &cwd)) {
                             Ok(()) => untrusted = None,
@@ -2390,31 +2428,7 @@ fn run_live(
                 }
             }
             if let Some((c, effort)) = chosen {
-                // the model in use, on the same provider: only its effort changes, and the conversation goes on
-                let same = c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1));
-                let blocked = matches!(c.state, models::State::NoKey | models::State::NotOnKey) || (c.state == models::State::Untrusted && !live.data_any);
-                let msg = if same && !blocked {
-                    live.set_effort(effort.unwrap_or_else(|| live.effort.clone()))
-                } else { match c.state {
-                    // `/data any`: the user allowed providers off the trusted list for this session
-                    models::State::Untrusted if live.data_any => live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()),
-                    models::State::NoKey | models::State::Untrusted | models::State::NotOnKey =>
-                        Err(anyhow::anyhow!("{}: {}", c.label, models::why_not(&c).unwrap_or_default())),
-                    // a model without levels (the API ignores them) keeps the session's
-                    // a checked SubRouter model on the user's own key: its providers are the key's, not the checked ones
-                    models::State::Ready if c.route.as_ref().is_some_and(|r| r.1 == "SUBROUTER_API_KEY") && !models::key_is_managed() =>
-                        live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()).map(|(t, e)| {
-                            let text = format!("{} · on your own SubRouter key, whose settings choose the providers (tazuna subrouter \
-                                --apply pins the checked ones on it; --manage makes a key with them)", e["text"].as_str().unwrap_or_default());
-                            (t, json!({"type": "harness_switch", "model": e["model"], "effort": e["effort"], "text": text}))
-                        }),
-                    models::State::Ready => live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()),
-                    models::State::Unchecked => live.switch(c.model.clone(), effort.unwrap_or_else(|| live.effort.clone()), c.route.clone()).map(|(t, e)| {
-                        let text = format!("{} · unchecked route: SubRouter picks the provider, so cache, price and quality are unknown \
-                            (bench/routes.py refresh {} checks it)", e["text"].as_str().unwrap_or_default(), c.model);
-                        (t, json!({"type": "harness_switch", "model": e["model"], "effort": e["effort"], "text": text}))
-                    }),
-                } };
+                let msg = apply_choice(live, &c, effort);
                 match msg {
                     Ok((t, e)) => s.apply(&e, t),
                     Err(err) => s.apply(&json!({"type": "harness_info", "text": format!("{err:#}")}), live.elapsed_ms()),
@@ -3243,6 +3257,44 @@ impl Picker {
     /// The provider selected on the left (None: All models).
     fn group(&self) -> Option<String> {
         self.psel.checked_sub(1).and_then(|i| models::providers(&self.cs).get(i).map(|(n, _)| n.clone()))
+    }
+}
+
+/// The model catalog for the app's picker (the terminal's /model list, without a SubRouter key's model list: those rows
+/// show as usable and a refusal comes from SubRouter).
+fn app_catalog() -> Result<Vec<models::Choice>> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    Ok(models::catalog(&labels::dir()?.join("routes.json"), trusted_host, &models::KeyModels::new(), now))
+}
+
+/// A model picked (the terminal's /model picker, the app's): the switch, or only the effort when it is the model in use on
+/// the same provider; refused, with what to do, when its key is missing or its provider is not trusted.
+fn apply_choice(live: &mut live::Live, c: &models::Choice, effort: Option<String>) -> Result<(f64, serde_json::Value)> {
+    // the model in use, on the same provider: only its effort changes, and the conversation goes on
+    let same = c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1));
+    let blocked = matches!(c.state, models::State::NoKey | models::State::NotOnKey) || (c.state == models::State::Untrusted && !live.data_any);
+    let effort = effort.unwrap_or_else(|| live.effort.clone());
+    if same && !blocked {
+        return live.set_effort(effort);
+    }
+    match c.state {
+        // `/data any`: the user allowed providers off the trusted list for this session
+        models::State::Untrusted if live.data_any => live.switch(c.model.clone(), effort, c.route.clone()),
+        models::State::NoKey | models::State::Untrusted | models::State::NotOnKey =>
+            Err(anyhow::anyhow!("{}: {}", c.label, models::why_not(c).unwrap_or_default())),
+        // a checked SubRouter model on the user's own key: its providers are the key's, not the checked ones
+        models::State::Ready if c.route.as_ref().is_some_and(|r| r.1 == "SUBROUTER_API_KEY") && !models::key_is_managed() =>
+            live.switch(c.model.clone(), effort, c.route.clone()).map(|(t, e)| {
+                let text = format!("{} · on your own SubRouter key, whose settings choose the providers (tazuna subrouter \
+                    --apply pins the checked ones on it; --manage makes a key with them)", e["text"].as_str().unwrap_or_default());
+                (t, json!({"type": "harness_switch", "model": e["model"], "effort": e["effort"], "text": text}))
+            }),
+        models::State::Ready => live.switch(c.model.clone(), effort, c.route.clone()),
+        models::State::Unchecked => live.switch(c.model.clone(), effort, c.route.clone()).map(|(t, e)| {
+            let text = format!("{} · unchecked route: SubRouter picks the provider, so cache, price and quality are unknown \
+                (bench/routes.py refresh {} checks it)", e["text"].as_str().unwrap_or_default(), c.model);
+            (t, json!({"type": "harness_switch", "model": e["model"], "effort": e["effort"], "text": text}))
+        }),
     }
 }
 
