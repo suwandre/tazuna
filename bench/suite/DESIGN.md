@@ -435,3 +435,11 @@ called unverified or left out; a cause followed to its start; the asked length k
   14247 broke both arms (two runs hit the 90-minute limit, one tazuna's $1 task stop; one finished, scoring 2): at xhigh
   DeepSeek can circle that task for over an hour. The held-out gap stays unexplained; the new held-out answer tasks
   stay unused until a change is worth checking.
+
+## Chat profile (2026-11-15)
+
+tazuna 0.1.123's `--profile chat` (one-line prompt, no tools, no repo context) on 12 general-set tasks x 2 runs, both
+paths, judged per path with the repeats' model-alone and agent-mode runs (8 answers a call, 24 calls): Opus 8.25 (model
+alone 7.92, agent 8.00), DeepSeek 7.92 (model alone 7.53, own loop as agent 7.33). It closes the non-coding gap by
+construction; the own loop drops from 3.1 turns and 17.8 s an answer to 1.0 and 10.7 s. How a user gets it: the flag
+today; the desktop app's chats without a folder later.

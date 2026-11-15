@@ -16,6 +16,27 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.123 (2026-11-15): a chat profile for asks that are not about code
+
+- `--profile chat`: the model alone, as a chat app sends it: a one-line prompt ("You are a helpful assistant." and the
+  date), no tools, no repo context, settings, MCP, skills, checks or diagnostics. On the Claude path `claude -p` with
+  `--tools ""`; on the own loop a request with no tools (and without the headless no-change nudge, which made it write
+  general-set answers into files). For the planned desktop app's general chat; coding stays on the repo profile.
+
+12 general-set tasks (guidance, information, writing, math, law, architecture) x 2 runs, judged with the repeats'
+agent-mode and model-alone runs (3 each), Fable 5.2 high:
+
+| | chat profile | the model alone | agent mode (repo profile / own loop) |
+|---|---|---|---|
+| Opus 5.5 high: judge | 8.25 | 7.92 | 8.00 |
+| time, cost per answer | 13.1 s, $0.024 | 13.1 s, $0.024 | 13.5 s, $0.028 |
+| DeepSeek V4.1 Flash high: judge | 7.92 | 7.53 | 7.33 |
+| time, turns per answer | 10.7 s, 1.0 | 9.6 s, 1.0 | 17.8 s, 3.1 |
+
+The chat profile scores at least the model alone (Claude +0.33, CI +0.03 .. +0.69; DeepSeek +0.39, CI -0.11 .. +0.89:
+the same setup, so the lead is the judge's spread) and above agent mode (Claude +0.25, DeepSeek +0.58, CI -0.08 ..
++1.19), at 14% less cost on Claude and 40% less time on the own loop.
+
 ## 0.1.122 (2026-11-14): narrow checks where tazuna's own test run does not cover the repo
 
 - In a JS workspace (and any repo verify cannot test) nothing kept the agent's own checks narrow: on the suite's Astro
