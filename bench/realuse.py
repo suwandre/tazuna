@@ -7,8 +7,8 @@ user's prompts).
   bench/realuse.py [--since 0.1.100] [--rows FILE]
 
 Per run, from the session recording and the next message the user sent:
-  strong  the run was stopped or rewound, ended in an error or crash, git shows its change discarded, the next message
-          says it failed ("doesn't work", "wrong", "CI failed", "has an error", "don't ...") or asks the same again
+  strong  the run was stopped or rewound, ended in an error or crash, git shows its change discarded, the router's chat
+          answer was sent to the agent after all (`/agent`), the next message says it failed ("doesn't work", "wrong", "CI failed", "has an error", "don't ...") or asks the same again
   soft    pushback or waiting: "wait, ...", "why create ...?", "can't we ...", "progress?"
 Checked against 390 runs labelled by hand (2026-11-12): strong and soft together caught 12 of the 14 bad runs; 4 of
 231 good runs were flagged (all "wait - ..." clarifications, now soft).
@@ -64,6 +64,8 @@ def signals(r):
     if r["stop"] in ("error", "crashed"): strong.append(r["stop"])
     if r["verdict"] == "discarded": strong.append("discarded")
     head = (r["next"] or "").strip()[:240]
+    # 0.1.127's router answered it as a chat and the user sent it to the agent after all
+    if head.startswith("/agent "): strong.append("misrouted")
     if head and (NEG_START.search(head) or NEG_ANY.search(head)): strong.append("correction")
     if head and r["gap"] is not None and r["gap"] < 1800:
         a, b = words(r["prompt"]), words(head)
