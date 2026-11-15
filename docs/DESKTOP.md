@@ -3,6 +3,13 @@
 Nothing is built. This is the proposal to agree on before any code: what the app is for, what each version contains,
 how it should look, and what we take from the other harnesses.
 
+## Decided (2026-11-15)
+- macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
+- Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
+- Design: five directions as mockups in `desktop/mockups/` (index.html; `python3 build.py` rebuilds them). We each pick,
+  then the first direction goes into DESIGN.md.
+- User customization from the start (see below).
+
 ## What it is for
 
 One app for both kinds of asks: work in a project (the coding agent) and everyday questions (a plain chat), picked by
@@ -131,9 +138,25 @@ zinc with rounded-xl and default Lucide; many accents or status colours as decor
 shimmer on everything; two-sided chat bubbles; web habits in a desktop app (selectable chrome, pointer cursors
 everywhere, no keyboard flow); dark mode as an afterthought; numbers that are not real.
 
+## Customization: users shape their own window
+
+DeepSeek Harness's "creator mode" lets a user describe a change ("a detailed context and usage panel on the right") and
+its agent builds it as a plugin that stays. Nobody waits for a release. tazuna should have the same, built safely:
+- Slots: sidebar, header, the right rail, the composer bar, under each message. tazuna's own panels (context ring, plan
+  usage, thread cost) are widgets in those slots too, so the widget API is proven by our own use from v0.1.
+- A widget is a small folder in the user's config (`~/.config/tazuna/desktop/widgets/NAME/`): a manifest (slot, size,
+  permissions) and its code, using a small widget SDK on top of our components and design tokens, so it looks native.
+- Data comes from a read-only API: the session's events, cost and usage, context, plan windows, the model, git status.
+  Actions (send a message, run a slash command, open a file) only when the manifest asks and the user allows it once.
+- Each widget runs sandboxed (its own frame, no network or files unless granted): a broken or shared widget cannot touch
+  keys, code or the rest of the app, and a crash shows as an empty card, not a dead window.
+- Creator mode: "/create ..." in any chat; tazuna's own agent writes the widget against the SDK's docs, shows it live,
+  and keeps it on accept; "/create" on an existing widget edits it. Themes are tokens a user (or creator mode) can
+  change too.
+- The widget API is versioned, so updates do not break what users built; widgets can be exported and shared.
+- Order: slots and the API in v0.1 (our panels use them); user widgets and creator mode in v0.5; sharing and a gallery
+  in v1; behaviour plugins (hooks, tools, routing rules) in v2.
+
 ## Open questions
-1. macOS first for the MVP, or macOS and Windows together?
-2. React (the shadcn ecosystem) or a lighter framework (Svelte or Solid, fewer ready components)? Proposal: React.
-3. Same repo as a workspace crate, or a separate repo? Proposal: same repo, `desktop/`.
-4. Direction A, B or C; accent colour; name and icon.
-5. Which v0.1 items could wait, and is anything missing that you would need on day one?
+1. Which design direction first (mockups A-E)?
+2. Accent colour, name and icon once the direction is chosen.

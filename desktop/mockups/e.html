@@ -1,0 +1,157 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><title>tazuna · Nordic Calm</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,400;6..72,500&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font:var(--fs)/1.5 var(--ui);-webkit-font-smoothing:antialiased;user-select:none;cursor:default}
+.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:var(--stroke,1.5);stroke-linecap:round;stroke-linejoin:round;flex:none}
+.i.s{width:14px;height:14px}
+.i.ok{color:var(--ok)}
+kbd{font:500 11px var(--mono);color:var(--faint);margin-left:auto;padding:1px 5px;border:1px solid var(--line);border-radius:5px}
+code,.path{font-family:var(--mono);font-size:.92em}
+.app{display:grid;grid-template-columns:var(--side-w,248px) 1fr var(--rail-w,232px);height:100vh}
+.side{background:var(--side);border-right:1px solid var(--line);padding:14px 10px;display:flex;flex-direction:column;gap:2px;overflow:hidden}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;padding:2px 8px 12px;letter-spacing:var(--brand-ls,-.01em)}
+.mark{display:grid;place-items:center;width:22px;height:22px;border-radius:var(--r-sm);background:var(--accent);color:var(--on-accent);font:700 12px var(--ui)}
+.search,.new{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:var(--r);color:var(--muted);font:inherit;background:none;border:none;text-align:left}
+.search{background:var(--field);border:1px solid var(--line);margin-bottom:4px}
+.new{color:var(--ink)}
+.new:hover,.item:hover,.proj:hover{background:var(--hover)}
+.group{font:var(--group-font);color:var(--faint);padding:14px 9px 4px;letter-spacing:var(--group-ls,0);text-transform:var(--group-tt,none)}
+.item,.proj{display:flex;align-items:center;gap:8px;padding:6px 9px;border-radius:var(--r);color:var(--ink2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.item.sub{padding-left:28px}
+.item.active{background:var(--sel);color:var(--ink)}
+.proj span:first-of-type{flex:1}
+.badge{font:600 10.5px var(--ui);background:var(--accent);color:var(--on-accent);border-radius:9px;padding:0 6px;line-height:17px}
+.dot{width:6px;height:6px;border-radius:50%;background:var(--faint);flex:none}
+.dot.run{background:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.side-foot{margin-top:auto;display:flex;align-items:center;gap:8px;padding:10px 8px 2px;border-top:1px solid var(--line);color:var(--muted)}
+.avatar{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;background:var(--field);border:1px solid var(--line);font-size:11px;color:var(--ink2)}
+.plan{margin-left:auto;font-size:11.5px;color:var(--faint)}
+.main{display:flex;flex-direction:column;min-width:0;background:var(--main)}
+.top{display:flex;align-items:center;justify-content:space-between;padding:12px 28px;border-bottom:1px solid var(--line-soft)}
+.crumb{display:flex;gap:8px;align-items:center;font-weight:500}
+.muted{color:var(--muted)}.sep{color:var(--faint)}
+.chips{display:flex;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:var(--r-pill);border:1px solid var(--line);background:var(--field);font-size:12px;color:var(--ink2)}
+.chip.ghost{background:none}
+.transcript{flex:1;overflow:auto;padding:28px 0 12px}
+.msg{max-width:var(--read,720px);margin:0 auto 22px;padding:0 28px}
+.who{font:var(--who-font);color:var(--faint);margin-bottom:6px;display:flex;align-items:center;gap:10px;letter-spacing:var(--who-ls,0);text-transform:var(--who-tt,none)}
+.msg.user .text{background:var(--user-bg);border:1px solid var(--user-line);padding:10px 14px;border-radius:var(--r-lg);color:var(--ink);display:inline-block;max-width:100%}
+.tools{display:flex;flex-direction:column;gap:2px;margin:2px 0 10px;padding-left:var(--tools-pad,0);border-left:var(--tools-line,none)}
+.tool{display:flex;align-items:center;gap:8px;font:var(--tool-font);color:var(--muted);padding:2px 0}
+.tool .path{color:var(--ink2)}
+.tool .t{margin-left:auto;color:var(--faint);font-family:var(--mono);font-size:11px}
+.prose{font:var(--prose-font);color:var(--ink)}
+.prose p{margin:0 0 10px}
+.diff{display:flex;align-items:center;gap:10px;border:1px solid var(--line);background:var(--card);border-radius:var(--r-lg);padding:9px 12px;margin-top:4px;font-size:12.5px}
+.diff .file{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;color:var(--ink2);flex:1}
+.add{color:var(--ok);font:600 12px var(--mono)}.del{color:var(--bad);font:600 12px var(--mono)}
+.btn{padding:4px 10px;border-radius:var(--r);background:var(--ink);color:var(--bg);font-size:12px;font-weight:500}
+.btn.ghost{background:none;color:var(--muted);border:1px solid var(--line)}
+.meta{margin-top:8px;font:11.5px var(--mono);color:var(--faint)}
+.routed{display:inline-flex;align-items:center;gap:5px;font:400 11.5px var(--ui);color:var(--muted);letter-spacing:0;text-transform:none;padding:1px 8px;border-radius:var(--r-pill);background:var(--accent-soft)}
+.routed u{text-decoration:none;color:var(--accent-ink);font-weight:500}
+.composer{padding:10px 28px 22px}
+.box{max-width:var(--read,720px);margin:0 auto;border:1px solid var(--line-strong);background:var(--card);border-radius:var(--r-xl);padding:12px 12px 8px 16px;box-shadow:var(--shadow)}
+.ph{color:var(--faint);padding:2px 0 14px}
+.bar{display:flex;align-items:center;gap:6px}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink2);padding:3px 9px;border-radius:var(--r-pill);background:var(--field);border:1px solid var(--line)}
+.pill.ghost{background:none;border-color:transparent;color:var(--muted)}
+.grow{flex:1}
+.cost{font:11.5px var(--mono);color:var(--faint);margin-right:6px}
+.send{width:30px;height:30px;border-radius:var(--r-pill);display:grid;place-items:center;background:var(--accent);color:var(--on-accent)}
+.rail{border-left:1px solid var(--line);background:var(--side);padding:16px 14px;display:flex;flex-direction:column;gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);padding:12px 14px}
+.label{font:var(--group-font);color:var(--faint);letter-spacing:var(--group-ls,0);text-transform:var(--group-tt,none);margin-bottom:8px}
+.label.mt{margin-top:12px}
+.ring{position:relative;width:64px;height:64px;margin:2px 0 6px}
+.ring svg{width:64px;height:64px;transform:rotate(-90deg)}
+.ring circle{fill:none;stroke-width:3.2}.ring .bg{stroke:var(--line)}.ring .fg{stroke:var(--accent);stroke-linecap:round}
+.ring span{position:absolute;inset:0;display:grid;place-items:center;font:600 14px var(--ui)}
+.card .bar{height:6px;border-radius:4px;background:var(--line);overflow:hidden}
+.card .bar i{display:block;height:100%;background:var(--accent);border-radius:4px}
+.small{font-size:11.5px;color:var(--muted);margin-top:6px}
+.big{font:600 22px var(--num-font,var(--ui));letter-spacing:-.02em}
+.spark svg{width:100%;height:34px}.sp{fill:none;stroke:var(--accent);stroke-width:1.6}
+.switch{position:fixed;right:12px;bottom:12px;display:flex;gap:6px;font:12px system-ui;z-index:9}
+.switch a,.switch button{padding:6px 10px;border-radius:8px;border:1px solid #8884;background:#fffd;color:#222;text-decoration:none;cursor:pointer}
+
+:root{--ui:'Inter',system-ui,sans-serif;--mono:'JetBrains Mono',ui-monospace,monospace;--fs:13.5px;
+--bg:#eef1f2;--main:#f6f8f8;--side:#e9edee;--card:#fff;--field:#e4e9ea;--hover:#e1e7e8;--sel:#dbe6de;
+--ink:#1f2a2e;--ink2:#3a474c;--muted:#66757a;--faint:#94a1a5;--line:#dce3e4;--line-soft:#e6ebec;--line-strong:#d0d9da;
+--accent:#4f7d65;--accent-ink:#3f6b54;--accent-soft:#e1ece5;--on-accent:#fff;--ok:#4f7d65;--bad:#b3574a;
+--user-bg:#e3eef0;--user-line:transparent;--r-sm:7px;--r:9px;--r-lg:12px;--r-xl:18px;--r-pill:999px;--shadow:0 6px 24px #1f2a2e0f;
+--group-font:600 11.5px var(--ui);--who-font:500 12px var(--ui);--tool-font:12.5px var(--ui);
+--prose-font:400 16px/1.62 'Newsreader',Georgia,serif;--read:700px}
+.dark{--bg:#151a1c;--main:#182022;--side:#131819;--card:#1d2528;--field:#232c2f;--hover:#232c2f;--sel:#20302a;
+--ink:#e3eaec;--ink2:#c3ced1;--muted:#93a2a6;--faint:#66767a;--line:#273134;--line-soft:#1f282a;--line-strong:#313c3f;--accent:#8fc1a3;--accent-ink:#a6d1b7;--accent-soft:#1f2f28;--on-accent:#10201a;--ok:#8fc1a3;--bad:#e59486;--user-bg:#20303a;--shadow:none}
+</style></head><body>
+<div class="app">
+  <aside class="side">
+    <div class="brand"><span class="mark">綱</span><span>tazuna</span></div>
+    <div class="search"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg><span>Search</span><kbd>⌘K</kbd></div>
+    <button class="new"><svg class="i" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg><span>New chat</span><kbd>⌘N</kbd></button>
+    <div class="group">Chats</div>
+    <a class="item">Names for a grey cat</a>
+    <a class="item">Train ticket refund (DE)</a>
+    <div class="group">Projects</div>
+    <a class="proj open"><svg class="i s" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg><span>api-gateway</span><span class="badge">1</span></a>
+    <a class="item sub active"><span class="dot run"></span>Retry test fails on CI</a>
+    <a class="item sub"><span class="dot"></span>Speed up the build</a>
+    <a class="item sub"><span class="dot"></span>Review PR #1468</a>
+    <a class="proj"><svg class="i s" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><span>billing-ui</span></a>
+    <a class="proj"><svg class="i s" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg><span>infra</span></a>
+    <div class="side-foot"><span class="avatar">S</span><span>Settings</span><span class="plan">Max · 62% left</span></div>
+  </aside>
+  <main class="main">
+    <header class="top">
+      <div class="crumb"><span class="muted">api-gateway</span><span class="sep">/</span><span>Retry test fails on CI</span></div>
+      <div class="chips"><span class="chip"><svg class="i s" viewBox="0 0 24 24"><path d="M13 3L4 14h7l-1 7 9-11h-7z"/></svg> Opus 5.5 · high</span><span class="chip ghost">main · 2 changed</span></div>
+    </header>
+    <section class="transcript">
+      <div class="msg user"><div class="who">You</div><div class="text">Why does <code>retry.test.ts</code> fail on CI but pass locally?</div></div>
+      <div class="msg agent">
+        <div class="who">tazuna</div>
+        <div class="tools">
+          <div class="tool"><svg class="i s ok" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg> Read <span class="path">src/client/retry.ts</span><span class="t">0.8 s</span></div>
+          <div class="tool"><svg class="i s ok" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg> Searched <span class="path">“maxDelay”</span> · 4 files<span class="t">0.3 s</span></div>
+          <div class="tool"><svg class="i s ok" viewBox="0 0 24 24"><path d="M5 12l5 5 9-10"/></svg> Ran <span class="path">pnpm test retry</span> · 1 failed<span class="t">6.1 s</span></div>
+        </div>
+        <div class="prose">
+          <p>The test uses real timers. CI runners are slower, so the third retry fires after the test's 5 s timeout: the
+          delay doubles from 1 s (1, 2, 4 s) and the cap of 30 s never kicks in.</p>
+          <p>I switched the test to fake timers and advanced them explicitly. The code itself is fine.</p>
+        </div>
+        <div class="diff"><span class="file"><svg class="i s" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg> src/client/retry.test.ts</span><span class="add">+12</span><span class="del">−3</span><span class="btn">View diff</span><span class="btn ghost">Undo</span></div>
+        <div class="meta">$0.042 · 18.4k tokens · 94% cached · 31 s</div>
+      </div>
+      <div class="msg user"><div class="who">You</div><div class="text">thanks! btw how long should I boil an egg for a runny yolk?</div></div>
+      <div class="msg agent chat">
+        <div class="who">tazuna <span class="routed"><svg class="i s" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.4A8 8 0 1 1 21 12z"/></svg> answered as a chat · <u>send to agent</u></span></div>
+        <div class="prose"><p>About 6 minutes from boiling water for a large egg, then straight into cold water. 6½ minutes
+        gives a jammy yolk; 9 minutes a firm one.</p></div>
+        <div class="meta">$0.003 · 0.9k tokens · 4 s</div>
+      </div>
+    </section>
+    <footer class="composer">
+      <div class="box">
+        <div class="ph">Ask anything, or describe a change…</div>
+        <div class="bar">
+          <span class="pill"><svg class="i s" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z"/></svg> auto</span><span class="pill"><svg class="i s" viewBox="0 0 24 24"><path d="M13 3L4 14h7l-1 7 9-11h-7z"/></svg> Opus 5.5 · high</span><span class="pill ghost"><svg class="i s" viewBox="0 0 24 24"><path d="M21 11l-8.5 8.5a5 5 0 0 1-7-7L14 4a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4L15.5 7"/></svg></span>
+          <span class="grow"></span><span class="cost">last $0.003 · thread $0.045</span><span class="send"><svg class="i" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></span>
+        </div>
+      </div>
+    </footer>
+  </main>
+  <aside class="rail">
+    <div class="card"><div class="label">Context</div><div class="ring"><svg viewBox="0 0 36 36"><circle class="bg" cx="18" cy="18" r="15.9"/><circle class="fg" cx="18" cy="18" r="15.9" stroke-dasharray="34 100"/></svg><span>34%</span></div><div class="small">68k of 200k</div></div>
+    <div class="card"><div class="label">Plan · 5 hours</div><div class="bar"><i style="width:38%"></i></div><div class="small">38% used · resets 18:40</div>
+      <div class="label mt">Plan · week</div><div class="bar"><i style="width:21%"></i></div><div class="small">21% used</div></div>
+    <div class="card"><div class="label">This thread</div><div class="big">$0.045</div><div class="small">2 turns · 94% cached · saved $0.31</div></div>
+    <div class="card"><div class="label">Today</div><div class="spark"><svg viewBox="0 0 120 32" preserveAspectRatio="none"><path class="sp" d="M0 26 L12 22 L24 24 L36 15 L48 18 L60 9 L72 14 L84 11 L96 17 L108 6 L120 10"/></svg></div><div class="small">$1.82 · 37 turns</div></div>
+  </aside>
+</div>
+<div class="switch"><a href="index.html">All designs</a><button onclick="document.documentElement.classList.toggle('dark')">Light / dark</button></div>
+</body></html>
