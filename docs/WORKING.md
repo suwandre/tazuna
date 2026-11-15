@@ -31,6 +31,14 @@ work.
 - SubRouter's usage counter is account-wide: a second round's spend counts against the first round's guard. Raise the
   running round's limit first.
 - Judge changes by quality per dollar: a judge drop within noise for a clear saving is a win.
+- Price-to-performance (2026-11-15; the user left the numbers to us): two figures per setup, not cost divided by score
+  (that rewards cheap junk, treats judge points as quantities, and ignores the user's time).
+  - Acceptable rate: answers judged 7 or more; changes and ops with every hidden test or check passing.
+  - Effective cost per task = cost (billed; API-equivalent on the Claude plan) + (1 - acceptable rate) x the cost of a
+    bad result, the user's time to notice and redo it at $40/h: code changes and ops 15 min ($10), answers about code
+    10 min ($6.67), general chat 5 min ($3.33). Lower is better.
+  - Deciding a change: quality within noise, take the cheaper; quality better beyond noise, keep it when its extra cost
+    is under the bad results it saves (the drop in the bad rate x the cost of a bad result).
 - Free models ($0) run without the "N calls without an edit" stop; only the time limit and the hang stop.
 
 ## Models and effort

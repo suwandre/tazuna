@@ -120,6 +120,11 @@ const PRECISE_ANSWER_RULE: &str = "When the request asks for an answer rather th
 /// The chat profile's whole prompt: the model alone, as the general set's baselines ran it (plus the date).
 const CHAT_PROMPT: &str = "You are a helpful assistant.";
 
+/// Experiment (TAZUNA_ANSWER_REVIEW, 2026-11-15): the self-review turn (`--self-review`) runs only after a change, so a plan
+/// or a review (the weakest kinds: 3-7 against 8-9 for questions) never got one. This turn follows an answer that changed
+/// nothing.
+const ANSWER_REVIEW: &str = "Before you finish, check your answer against the code: re-open the places you cite and confirm each claim, look for what you missed (callers, other code paths, data written before, error and retry cases, a simpler or safer fix), and correct anything wrong. Then give your final answer in full, as the reply to the original request, not as a list of changes to the earlier one.";
+
 const COVER_ALL_RULE: &str = "Make your change, and its tests, cover every command, flag or API the task names, and each one's error cases, not only the main path: read the code behind each one before you change it.";
 
 const WRITE_TESTS_RULE: &str = "Add or update tests for the behavior you change, including its edge cases: tazuna's check only runs the tests, it does not write them.";
@@ -1268,6 +1273,17 @@ impl Live {
             return self.finish_front();
         }
         let changed = run.changed_files(&self.cwd);
+        if std::env::var_os("TAZUNA_ANSWER_REVIEW").is_some() && !run.reviewed && changed.is_empty() && self.profile != Profile::Chat {
+            run.reviewed = true;
+            return match self.write_user(ANSWER_REVIEW) {
+                Ok(()) => vec![self.record(json!({"type": "harness_review"}))],
+                Err(e) => {
+                    let mut out = vec![self.record(json!({"type": "harness_notice", "text": format!("could not send the answer review: {e:#}"), "error": true}))];
+                    out.extend(self.finish_front());
+                    out
+                }
+            };
+        }
         if self.self_review && !run.reviewed && !changed.is_empty() {
             // review before verification: its fixes get tested too
             run.reviewed = true;
