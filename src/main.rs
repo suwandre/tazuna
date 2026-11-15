@@ -937,6 +937,21 @@ fn host_of(url: &str) -> String {
     url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or_default().to_string()
 }
 
+/// A switch to the repo or repo-lean profile mid-session (/profile, the app's profile command): those load the repo's
+/// settings, hooks and skills, which can run code, so the trust question at start guards them and so must a switch.
+/// Some(why) refuses it. Skipped by /profile until 0.1.127 and by the app server until 2026-11-15.
+fn untrusted_switch(p: route::Profile, a: &Args) -> Result<Option<String>> {
+    if !matches!(p, route::Profile::Repo | route::Profile::RepoLean) {
+        return Ok(None);
+    }
+    let cwd = std::env::current_dir()?;
+    let config = route::RepoConfig::read(&cwd);
+    Ok((config.runs_code() && !a.trust && !labels::dir().is_ok_and(|b| trust::is_trusted(&b, &cwd))).then(|| {
+        format!("this repo's config runs code ({}) and it is not trusted: the lean profile works without it; to trust it, \
+            start tazuna here again and answer yes (or pass --trust)", config.summary())
+    }))
+}
+
 /// `tazuna app-server [flags]` (2026-11-15): tazuna's core behind the desktop app (docs/DESKTOP.md). Commands come as JSON
 /// lines on stdin: {"op":"send","text":...}, {"op":"interrupt"}, {"op":"new"}, {"op":"profile","name":...}; the session
 /// goes out as JSON lines on stdout, a `view` (Session::view) after each change, at most every 50 ms. Run in the folder
@@ -1012,6 +1027,11 @@ fn app_server(a: &Args) -> Result<()> {
                                 Some("chat") => Some(route::Profile::Chat),
                                 _ => None,
                             };
+                            if let Some(why) = p.map(|p| untrusted_switch(p, a)).transpose()?.flatten() {
+                                info(&mut s, why);
+                                changed = true;
+                                continue;
+                            }
                             match p.map(|p| live.set_profile(p)) {
                                 Some(Ok((t, e))) => s.apply(&e, t),
                                 Some(Err(e)) => info(&mut s, format!("{e:#}")),
@@ -2856,14 +2876,9 @@ fn run_live(
                     // the repo and repo-lean profiles load the repo's settings, hooks and skills, which can run code: the trust
                     // question at start guards them, and so must a switch (/profile repo after a lean start for an untrusted
                     // repo, or after starting as a chat outside a project, skipped it until 0.1.127)
-                    if matches!(p, Profile::Repo | Profile::RepoLean) {
-                        let cwd = std::env::current_dir()?;
-                        let config = route::RepoConfig::read(&cwd);
-                        if config.runs_code() && !a.trust && !labels::dir().is_ok_and(|b| trust::is_trusted(&b, &cwd)) {
-                            s.apply(&json!({"type": "harness_info", "text": format!("this repo's config runs code ({}) and it is not trusted: \
-                                /profile lean works without it; to trust it, start tazuna here again and answer yes (or pass --trust)", config.summary())}), at);
-                            continue;
-                        }
+                    if let Some(why) = untrusted_switch(p, a)? {
+                        s.apply(&json!({"type": "harness_info", "text": why}), at);
+                        continue;
                     }
                     let fresh = (p == Profile::Chat) != (live.profile == Profile::Chat);
                     match live.set_profile(p) {
