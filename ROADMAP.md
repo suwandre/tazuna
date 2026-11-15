@@ -302,6 +302,13 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-15: tazuna picks chat or agent by itself. Outside coding every harness scored under the model alone and the
+  own loop wrote answers into files; the chat profile (0.1.123, the model alone) closed that, so it became the start mode
+  outside a project (0.1.126) and the answer to general questions inside one (0.1.127: rules, then a quick model check;
+  0 of 45 coding messages misrouted). Settings switch inside tazuna, not only at launch (`/chat`, `/profile`, `/explorer`,
+  `/verify`, `/review`, `/data`, `/preset`; 0.1.124). Comparisons use a price-to-performance rule (acceptable rate and
+  effective cost with the user's time, docs/WORKING.md), not cost over score. More thinking on DeepSeek (max effort, an
+  answer-review turn) cost 3.7-4.5x on plans without paying: off.
 - 2026-11-13: the Claude path's explorer takes broad searches only (0.1.121); the main model reads what it can find
   itself. "Send every question to the explorer" made each short ask wait on Haiku, and the suite showed tazuna at about
   1.4x Claude Code's time; the lighter rule is level with it at 23% less cost. Also: benchmarks compare tazuna as the
