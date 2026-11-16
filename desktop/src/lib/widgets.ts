@@ -1,10 +1,15 @@
-// The user's panels (docs/WIDGETS.md): the list from their folder, the data they receive (API 1), the tokens that make
+// The user's panels and plugins (docs/PLUGINS.md): the list from their folder, the data they receive (API 1), the tokens that make
 // them look like tazuna, and creator mode's message to the agent that builds or changes one.
 import { invoke } from "@tauri-apps/api/core";
-import spec from "../../../docs/WIDGETS.md?raw";
+import spec from "../../../docs/PLUGINS.md?raw";
+import { slots } from "./slots";
 import type { View } from "./tazuna";
 
-export type UserWidget = { id: string; title: string; slot: string };
+export type UserWidget = {
+  id: string; title: string; kind: "panel" | "plugin"; slot?: string;
+  /** a plugin's: enabled (this exact code), changed (enabled, code changed since), new; its code's fingerprint; what it says it does */
+  state?: "enabled" | "changed" | "new"; print?: string; about?: string;
+};
 
 export const widgets = {
   list: () => invoke<UserWidget[]>("widgets_list"),
@@ -12,6 +17,8 @@ export const widgets = {
   create: (id: string) => invoke<string>("widgets_new", { id }),
   path: (id: string) => invoke<string>("widgets_path", { id }),
   remove: (id: string) => invoke("widgets_remove", { id }),
+  /** a plugin on (for the code it had when listed) or off */
+  enable: (id: string, print: string, on: boolean) => invoke("plugins_enable", { id, print, on }),
 };
 
 /** Where a panel's page is served (the tzwidget: scheme; Windows' webview reaches custom schemes over http). */
@@ -52,12 +59,18 @@ export function widgetData(v: View | null) {
   };
 }
 
-/** Creator mode's message: build a new panel, or change one, in the folder the conversation runs in. */
+/** Creator mode's message: build a panel or plugin, or change one, in the folder the conversation runs in. It carries the
+ * specification and a map of the window as it is now (every spot, the ids in it, and what provides each), so the agent
+ * can name tazuna's own parts to replace or hide. */
 export const creatorMessage = (ask: string, change: boolean) =>
-  `${change ? "Change the tazuna desktop panel in this folder (manifest.json, index.html)" : "Build a tazuna desktop panel in this folder: write manifest.json and index.html here"}, following this specification exactly. Write only these two files, in this folder; nothing else on the machine. Keep it small and self-contained (no external URLs, libraries or fonts). When done, say in one line what the panel shows.
+  `${change ? "Change the tazuna desktop panel or plugin in this folder" : "Build a tazuna desktop panel or plugin in this folder"}, following this specification exactly: a panel (manifest.json, index.html) when showing information in the right column is enough; a plugin (manifest.json, plugin.js) when the change touches the window itself (another spot, replacing or hiding tazuna's own parts, styling, Cmd-K actions) or must act. Write only in this folder; nothing else on the machine. One self-contained file of code (no imports, external URLs, libraries or fonts). When done, say in one line what it does and where it shows. tazuna then loads it and tells you if it failed or showed nowhere.
 
 <specification>
 ${spec}
 </specification>
+
+<window_now>
+${JSON.stringify(slots.map(), null, 1)}
+</window_now>
 
 What the user wants: ${ask}`;

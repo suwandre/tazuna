@@ -5,6 +5,7 @@ import { DiffView } from "./components/DiffView";
 import { ReviewView } from "./components/ReviewView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
 import { creatorMessage, widgetData, widgetId, widgets, type UserWidget } from "./lib/widgets";
+import { footprint, load, onPaletteChange, pluginActions, safeMode, setActions, setData, unload } from "./lib/plugins";
 import { SettingsView } from "./components/SettingsView";
 import { Rail, UserPanel } from "./components/Rail";
 import { Slot, slots } from "./lib/slots";
@@ -182,16 +183,73 @@ export default function App() {
   useEffect(() => setEditing(null), [active]);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
   const [userWidgets, setUserWidgets] = useState<UserWidget[]>([]);
+  const [, setPluginTick] = useState(0);
+  const loadedIds = useRef<string[]>([]);
+  const [paletteTick, setPaletteTick] = useState(0);
+  useEffect(() => onPaletteChange(() => setPaletteTick((n) => n + 1)), []);
   const allTurns = threads.map((t) => t.view?.turns ?? 0).join(",");
-  useEffect(() => { if (inTauri) widgets.list().then((w) => setUserWidgets(w ?? [])).catch(() => {}); }, [allTurns]);
+  const reloadWidgets = () => widgets.list().then((w) => setUserWidgets(w ?? [])).catch(() => {});
+  useEffect(() => { if (inTauri) reloadWidgets(); }, [allTurns]);
+  // enabled plugins run (each reloaded when its code changes, taken back when turned off or removed); none in safe mode
+  useEffect(() => {
+    if (!inTauri || safeMode()) return;
+    const on = userWidgets.filter((w) => w.kind === "plugin" && w.state === "enabled");
+    on.forEach((w) => { load(w.id, w.print!).then(() => setPluginTick((n) => n + 1)); });
+    loadedIds.current.forEach((id) => { if (!on.some((w) => w.id === id)) unload(id); });
+    loadedIds.current = on.map((w) => w.id);
+  }, [userWidgets]);
+  // plugins read the conversation's data and act through these
+  useEffect(() => { setData(data); });
+  useEffect(() => setActions({
+    send: (text) => core.send(text).catch(() => {}), newChat: () => open(null), setMode: (m) => core.setMode(m).catch(() => {}),
+    notify: (title, body) => core.notify(title, body).catch(() => {}), openLink: (url) => core.openLink(url).catch(() => {}),
+    review: (scope) => setReviewing({ scope }),
+  }), []);
   // each user panel is an entry of the rail spot, after tazuna's own cards
   useEffect(() => {
-    const offs = userWidgets.map((w, i) => slots.register({ id: `panel:${w.id}`, slot: w.slot === "rail" ? "rail" : w.slot, order: 1000 + i, source: `panel:${w.id}`,
+    const offs = userWidgets.filter((w) => w.kind === "panel").map((w, i) => slots.register({ id: `panel:${w.id}`, slot: w.slot ?? "rail", order: 1000 + i, source: `panel:${w.id}`,
       render: ({ data }: { data: unknown }) => <UserPanel w={w} data={data} onEdit={() => editPanel(w.id)}
         onRemove={() => widgets.remove(w.id).then(() => widgets.list().then((w) => setUserWidgets(w ?? []))).catch(() => {})} /> }));
     return () => offs.forEach((off) => off());
   }, [userWidgets]);
-  /** A new panel: its folder, a conversation in it (edits allowed there), the request with the panel specification. */
+  // creator mode checks its work: when a creator conversation finishes a turn, tazuna loads what it wrote (enabling a
+  // plugin it made: the user asked for it) and, if it failed or showed nowhere, says so in that conversation, up to two
+  // rounds (DeepSeek Harness's creator reports "done" for plugins that never loaded)
+  const creatorRuns = useRef<Record<string, { state: string; rounds: number }>>({});
+  const verifyCreation = async (t: Thread, run: { rounds: number }) => {
+    const id = t.folder?.split(/[\\/]/).pop();
+    if (!id) return;
+    const list = (await widgets.list().catch(() => [])) ?? [];
+    setUserWidgets(list);
+    const w = list.find((x) => x.id === id);
+    let problem: string | null = null;
+    if (!w) problem = "Nothing is in the folder that tazuna can load: no index.html (a panel) and no plugin.js (a plugin), or the files are empty.";
+    else if (w.kind === "plugin" && !safeMode()) {
+      if (w.state !== "enabled") await widgets.enable(id, w.print!, true).catch(() => {});
+      const since = Date.now();
+      await load(id, w.print!);
+      await new Promise((r) => setTimeout(r, 900));
+      const f = footprint(id, since);
+      if (f.loadError) problem = `It failed to load: ${f.loadError}`;
+      else if (f.errors.length) problem = `A part it registered threw an error: ${f.errors.slice(-3).join("; ")}`;
+      else if (!f.entries.length && !f.actions && !f.effects) problem = "It loaded but put nothing into the window: no spot entry, no Cmd-K action, no style and no hidden part. Check the spot names against the specification.";
+      reloadWidgets();
+    }
+    if (problem && run.rounds < 2) {
+      run.rounds++;
+      core.sendIn(t.tid, `tazuna loaded what you wrote and checked it. ${problem} Fix it in this folder.`).catch(() => {});
+    }
+  };
+  useEffect(() => {
+    for (const t of threads) {
+      if (!t.creator || !t.view) continue;
+      const st = busyView(t.view) || t.view.asking ? "working" : "idle";
+      const run = (creatorRuns.current[t.tid] ??= { state: "idle", rounds: 0 });
+      if (run.state === "working" && st === "idle") verifyCreation(t, run);
+      run.state = st;
+    }
+  }, [threads]);
+  /** A new panel or plugin: its folder, a conversation in it (writes inside allowed), the request with the specification. */
   const createPanel = (ask: string) => {
     widgets.create(widgetId(ask)).then((path) => open(path, undefined, { creator: "new",
       then: (tid) => { core.allowRootIn(tid, path).then(() => core.sendIn(tid, creatorMessage(ask, false))).catch(() => {}); } })).catch(() => {});
@@ -233,6 +291,8 @@ export default function App() {
     a.push({ id: "create-panel", group: "Creator mode", label: "Create a panel…", hint: "/create what it should show", keywords: "widget creator customize",
         run: () => setDraft({ text: "/create ", n: Date.now() }) },
       ...userWidgets.map((w) => ({ id: `edit-panel:${w.id}`, group: "Creator mode", label: `Change the panel "${w.title}"`, keywords: "widget edit", run: () => editPanel(w.id) })));
+    void paletteTick;
+    a.push(...pluginActions().map((p) => ({ id: p.id, group: "Plugins", label: p.label, hint: p.hint, run: p.run })));
     a.push({ id: "theme", group: "Window", label: "Light or dark", keys: "⌘⇧L", run: flipTheme },
       { id: "keys", group: "Window", label: "Keyboard shortcuts", keys: "⌘/", run: () => setTimeout(() => setOverlay("shortcuts")) },
       { id: "settings", group: "Window", label: "Settings: provider keys, data policy, router", keys: "⌘,", run: () => setTimeout(() => setOverlay("settings")) });
@@ -279,6 +339,9 @@ export default function App() {
           </div>
         )}
         {error && <div className="mx-auto mb-2 max-w-[700px] px-7 text-[12.5px] text-bad">{error}</div>}
+        {inTauri && safeMode() && userWidgets.some((w) => w.kind === "plugin") && (
+          <div className="mx-auto mb-2 max-w-[700px] px-7 text-[12.5px] text-muted">Safe mode: plugins are off (Settings turns them back on).</div>
+        )}
         {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
         <Composer session={session} threadCost={usage.threadCost} busy={busy}
           onSend={(text) => {
@@ -307,7 +370,9 @@ export default function App() {
       <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
-      {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} />}
+      {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} items={userWidgets} onEdit={editPanel}
+        onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
+        onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} />}
     </div>
   );
 }

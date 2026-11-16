@@ -154,10 +154,34 @@ fn ui_log(msg: String) {
     eprintln!("tazuna desktop (page): {}", msg.chars().take(500).collect::<String>());
 }
 
-/// The panels' folder (docs/WIDGETS.md): ~/.config/tazuna/desktop/widgets, under the user's profile on Windows.
-fn widgets_dir() -> std::path::PathBuf {
+/// The desktop app's own folder: ~/.config/tazuna/desktop (under the user's profile on Windows).
+fn desktop_dir() -> std::path::PathBuf {
     let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| ".".into());
-    std::path::Path::new(&home).join(".config/tazuna/desktop/widgets")
+    std::path::Path::new(&home).join(".config/tazuna/desktop")
+}
+
+/// The user's panels and plugins (docs/PLUGINS.md), one folder each: a panel has index.html, a plugin plugin.js.
+fn widgets_dir() -> std::path::PathBuf {
+    desktop_dir().join("plugins")
+}
+
+/// A plugin's code, fingerprinted: approval holds for this exact code (a change made outside creator mode asks again).
+/// Not a cryptographic hash: whoever can write the plugin can also write the approvals file.
+fn code_print(code: &[u8]) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    code.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+/// plugins.json: {"<id>": "<fingerprint of the code the user enabled>"}.
+fn approvals() -> serde_json::Map<String, serde_json::Value> {
+    std::fs::read_to_string(desktop_dir().join("plugins.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+fn save_approvals(a: &serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    std::fs::create_dir_all(desktop_dir()).map_err(|e| e.to_string())?;
+    std::fs::write(desktop_dir().join("plugins.json"), serde_json::to_string_pretty(a).unwrap_or_default()).map_err(|e| e.to_string())
 }
 
 /// A panel's id as a folder name: lowercase letters, digits and "-" only (nothing that leaves the folder).
@@ -165,17 +189,31 @@ fn widget_id_ok(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
 }
 
-/// The user's panels: each folder's id and manifest (its page is served by the tzwidget: scheme, not sent here).
+/// The user's panels and plugins: each folder's id, kind (panel: index.html; plugin: plugin.js), manifest fields, and for
+/// a plugin its state: "enabled" (the user enabled this exact code), "changed" (enabled, but the code changed since) or
+/// "new". Code is served by the tzwidget: and tzplugin: schemes, not sent here.
 #[tauri::command]
 fn widgets_list() -> Vec<serde_json::Value> {
     let Ok(rd) = std::fs::read_dir(widgets_dir()) else { return vec![] };
+    let ok = approvals();
     let mut out: Vec<serde_json::Value> = rd.flatten().filter_map(|e| {
         let id = e.file_name().into_string().ok().filter(|i| widget_id_ok(i))?;
-        e.path().join("index.html").is_file().then_some(())?;
         let manifest: serde_json::Value = std::fs::read_to_string(e.path().join("manifest.json")).ok()
             .and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| serde_json::json!({}));
-        Some(serde_json::json!({"id": id, "title": manifest["title"].as_str().unwrap_or(&id).chars().take(60).collect::<String>(),
-            "slot": manifest["slot"].as_str().unwrap_or("rail")}))
+        let title = manifest["title"].as_str().unwrap_or(&id).chars().take(60).collect::<String>();
+        let code = std::fs::read(e.path().join("plugin.js")).ok().filter(|c| c.len() <= 1 << 20);
+        if let Some(code) = code {
+            let print = code_print(&code);
+            let state = match ok.get(&id).and_then(|v| v.as_str()) {
+                Some(p) if p == print => "enabled",
+                Some(_) => "changed",
+                None => "new",
+            };
+            return Some(serde_json::json!({"id": id, "kind": "plugin", "title": title, "state": state, "print": print,
+                "about": manifest["description"].as_str().unwrap_or_default().chars().take(200).collect::<String>()}));
+        }
+        e.path().join("index.html").is_file().then_some(())?;
+        Some(serde_json::json!({"id": id, "kind": "panel", "title": title, "slot": manifest["slot"].as_str().unwrap_or("rail")}))
     }).collect();
     out.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
     out
@@ -190,6 +228,25 @@ fn widgets_new(id: String) -> Result<String, String> {
     let dir = widgets_dir().join(&id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     Ok(dir.to_string_lossy().into_owned())
+}
+
+/// Enables plugin `id` for its code as it is now (`print` from the list: what the user saw); off with `on` false.
+#[tauri::command]
+fn plugins_enable(id: String, print: String, on: bool) -> Result<(), String> {
+    if !widget_id_ok(&id) {
+        return Err(format!("not a plugin id: {id}"));
+    }
+    let mut a = approvals();
+    if on {
+        let code = std::fs::read(widgets_dir().join(&id).join("plugin.js")).map_err(|e| e.to_string())?;
+        if code_print(&code) != print {
+            return Err("the plugin changed since it was listed: look at it again".into());
+        }
+        a.insert(id, serde_json::json!(print));
+    } else {
+        a.remove(&id);
+    }
+    save_approvals(&a)
 }
 
 /// A panel's folder (for editing it with tazuna).
@@ -208,6 +265,20 @@ fn widgets_remove(id: String) -> Result<(), String> {
     std::fs::create_dir_all(&gone).map_err(|e| e.to_string())?;
     let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     std::fs::rename(widgets_dir().join(&id), gone.join(format!("{id}-{stamp}"))).map_err(|e| e.to_string())
+}
+
+/// The code tzplugin://localhost/<id> serves: plugin.js, only while the user has enabled exactly this code (the window
+/// imports it as a module, which runs inside the window; docs/PLUGINS.md).
+fn plugin_code(path: &str) -> (u16, String) {
+    let id = path.trim_matches('/');
+    if !widget_id_ok(id) {
+        return (404, String::new());
+    }
+    let Ok(code) = std::fs::read(widgets_dir().join(id).join("plugin.js")) else { return (404, String::new()) };
+    if code.len() > 1 << 20 || approvals().get(id).and_then(|v| v.as_str()) != Some(&code_print(&code)) {
+        return (403, String::new());
+    }
+    (200, String::from_utf8_lossy(&code).into_owned())
 }
 
 /// The page tzwidget://localhost/<id> serves: the panel's index.html after a small preamble (the design tokens, filled
@@ -321,6 +392,15 @@ fn main() {
                 .header("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:")
                 .body(body.into_bytes()).unwrap_or_default()
         })
+        .register_uri_scheme_protocol("tzplugin", |_ctx, req| {
+            let (status, body) = plugin_code(req.uri().path());
+            tauri::http::Response::builder().status(status)
+                .header("Content-Type", "text/javascript; charset=utf-8")
+                // the window imports it from its own origin
+                .header("Access-Control-Allow-Origin", "*")
+                .header("Cache-Control", "no-store")
+                .body(body.into_bytes()).unwrap_or_default()
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
@@ -336,7 +416,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 let core = w.state::<Core>();

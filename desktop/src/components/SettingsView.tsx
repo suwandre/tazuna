@@ -1,10 +1,16 @@
 import { ExternalLink, X } from "lucide-react";
 import { useEffect, useState } from "react";
+import { safeMode } from "../lib/plugins";
 import { core, type Settings } from "../lib/tazuna";
+import type { UserWidget } from "../lib/widgets";
 
 // Settings: provider keys (saved by tazuna, never shown again), the data policy for this session, the router. The
 // terminal's /login, /data and /route in one page.
-export function SettingsView({ onClose }: { onClose: () => void }) {
+type PluginProps = {
+  items?: UserWidget[]; onEnable?: (w: UserWidget, on: boolean) => void; onEdit?: (id: string) => void; onRemove?: (id: string) => void;
+};
+
+export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }: { onClose: () => void } & PluginProps) {
   const [st, setSt] = useState<Settings | null>(null);
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [askAny, setAskAny] = useState(false);
@@ -63,6 +69,28 @@ export function SettingsView({ onClose }: { onClose: () => void }) {
             <div className={label}>Chat or agent</div>
             <label className="flex items-start gap-2 py-1"><input type="checkbox" checked={st.route} onChange={(e) => core.setRoute(e.target.checked).then(refresh)} className="mt-1" />
               <span><span className="text-ink">Answer general questions inside a project as a chat</span><span className="block text-[12px] text-muted">Off: everything you send in a project goes to the agent.</span></span></label>
+
+            <div className={label}>Panels and plugins</div>
+            <div className="mb-2 text-[12px] text-muted">Panels are sandboxed: they only show the conversation's numbers. Plugins run inside tazuna's
+              window with the same reach: they can change any part of it and send messages to the agent, which can act on your files.
+              Enable only plugins you made or trust. <code>/create …</code> builds either.</div>
+            {items.length === 0 && <div className="py-1 text-[12.5px] text-faint">None yet.</div>}
+            {items.map((w) => (
+              <div key={w.id} className="flex items-center gap-2 border-b border-line-soft py-2 last:border-b-0">
+                <span className="min-w-0 flex-1"><span className="block truncate text-ink">{w.title}</span>
+                  <span className="block truncate text-[11.5px] text-faint">{w.kind === "panel" ? "panel · sandboxed" : w.state === "enabled" ? "plugin · on"
+                    : w.state === "changed" ? "plugin · its code changed since you enabled it: look before enabling again" : "plugin · off"}{w.about ? ` · ${w.about}` : ""}</span></span>
+                {w.kind === "plugin" && <button onClick={() => onEnable?.(w, w.state !== "enabled")}
+                  className={`rounded-md border px-2.5 py-1 text-[12px] hover:bg-hover ${w.state === "enabled" ? "border-line text-ink-2" : "border-line-strong text-ink"}`}>{w.state === "enabled" ? "Turn off" : "Enable"}</button>}
+                <button onClick={() => { onClose(); onEdit?.(w.id); }} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Change with tazuna</button>
+                <button onClick={() => onRemove?.(w.id)} title="Remove (its folder moves to .removed)" className="rounded p-1 text-muted hover:bg-hover"><X size={14} strokeWidth={1.5} /></button>
+              </div>
+            ))}
+            <label className="mt-3 flex items-start gap-2 py-1"><input type="checkbox" checked={safeMode()} onChange={(e) => {
+              if (e.target.checked) localStorage.setItem("tazuna.safe", "1"); else localStorage.removeItem("tazuna.safe");
+              location.reload();
+            }} className="mt-1" />
+              <span><span className="text-ink">Safe mode: start without plugins</span><span className="block text-[12px] text-muted">For when a plugin breaks the window. Panels stay.</span></span></label>
 
             <div className="mt-5 text-[11.5px] text-faint">tazuna {st.version}</div>
           </>}

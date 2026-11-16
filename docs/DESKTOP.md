@@ -174,22 +174,25 @@ everywhere, no keyboard flow); dark mode as an afterthought; numbers that are no
 
 ## Customization: users shape their own window
 
-DeepSeek Harness's "creator mode" lets a user describe a change ("a detailed context and usage panel on the right") and
-its agent builds it as a plugin that stays. Nobody waits for a release. tazuna should have the same, built safely:
-- Slots: sidebar, header, the right rail, the composer bar, under each message. tazuna's own panels (context ring, plan
-  usage, thread cost) are widgets in those slots too, so the widget API is proven by our own use from 0.1.
-- A widget is a small folder in the user's config (`~/.config/tazuna/desktop/widgets/NAME/`): a manifest (slot, size,
-  permissions) and its code, using a small widget SDK on top of our components and design tokens, so it looks native.
-- Data comes from a read-only API: the session's events, cost and usage, context, plan windows, the model, git status.
-  Actions (send a message, run a slash command, open a file) only when the manifest asks and the user allows it once.
-- Each widget runs sandboxed (its own frame, no network or files unless granted): a broken or shared widget cannot touch
-  keys, code or the rest of the app, and a crash shows as an empty card, not a dead window.
-- Creator mode: "/create ..." in any chat; tazuna's own agent writes the widget against the SDK's docs, shows it live,
-  and keeps it on accept; "/create" on an existing widget edits it. Themes are tokens a user (or creator mode) can
-  change too.
-- The widget API is versioned, so updates do not break what users built; widgets can be exported and shared.
-- Order: slots and the API in 0.1 (our panels use them); user widgets and creator mode in 0.2; sharing and a gallery
-  by 1.0; behaviour plugins (hooks, tools, routing rules) in 1.1.
+DeepSeek Harness's creator mode (studied 2026-11-16: memory and the research behind it) builds the whole app from
+plugins and lets its agent write more, in-process and unsandboxed, in ~60 spots that can also replace built-in parts.
+tazuna takes the reach and keeps a safe default:
+
+- **Spots everywhere** (desktop/src/lib/slots.tsx, docs/PLUGINS.md): rail, header.actions, composer.dock,
+  composer.pills, sidebar.top, sidebar.footer, message.user, message.text, message.after, tool.view, overlay.
+  tazuna's own parts register there the same way (src/builtins.tsx), so a plugin can add, replace by id, or hide, and a
+  part that works well can move into the app as it is.
+- **Two kinds**, one folder each in ~/.config/tazuna/desktop/plugins/<id>/: a **panel** (index.html) is sandboxed and
+  read-only (no permission needed); a **plugin** (plugin.js) runs in the window with its reach (spots, styling, Cmd-K
+  actions, sending messages) and runs only once the user enables that exact code (Settings; a change outside creator
+  mode asks again). Safe mode starts without plugins. Behaviour beyond the window (tools, commands) goes through what
+  tazuna already has (MCP servers, skills, commands), not a plugin system in the core.
+- **Creator mode** (`/create ...`, Cmd-K): a conversation in a new folder with the specification and a live map of the
+  window; writes inside that folder need no question (the core decides on the real, resolved path); when the turn ends
+  tazuna loads what was written and sends a failure or "shows nowhere" back into the conversation (two rounds), where
+  DeepSeek's creator reports done for plugins that never loaded.
+- Next: sharing and a gallery by 1.0; more spots as needs show (settings sections, the sidebar's lists); behaviour
+  plugins in 1.1.
 
 ## Open questions
 1. Which design direction first (mockups A-E)?

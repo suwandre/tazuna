@@ -82,7 +82,7 @@ export function Slot<P>({ name, props, only }: { name: string; props: P; only?: 
 export const SLOT_NAMES: Record<string, string> = {
   "rail": "the right column's cards. props: { usage, data }",
   "header.actions": "the chips and buttons at the right of the header. props: { data, folder }",
-  "composer.dock": "above the message box (a bar, a dashboard). props: { data }",
+  "composer.dock": "above the message box (a bar, a dashboard). props: {} (the data: ctx.useData())",
   "composer.pills": "the controls under the message box (mode, model, effort, attach). props: { composer }",
   "sidebar.top": "the sidebar's actions under the search (New chat, Open folder). props: {}",
   "sidebar.footer": "the sidebar's bottom row (Settings). props: { planLeft }",
@@ -92,3 +92,20 @@ export const SLOT_NAMES: Record<string, string> = {
   "tool.view": "how a tool step is drawn (one entry: replace 'tool.view.default'). props: { step }",
   "overlay": "anything drawn over the window (fixed position). props: { data }",
 };
+
+/** A check of replace, restore and hide: `npx tsx -e 'import("./src/lib/slots.tsx").then(m => m.demo())'`. */
+export function demo() {
+  const ids = (s: string) => slots.entries(s).map((e) => `${e.id}:${e.source}`).join(",");
+  slots.register({ id: "t.a", slot: "t", order: 10, render: () => null, source: "tazuna" });
+  slots.register({ id: "t.b", slot: "t", order: 20, render: () => null, source: "tazuna" });
+  const off = slots.register({ id: "t.a", slot: "t", order: 10, render: () => null, source: "plugin:x" });
+  const replaced = ids("t");
+  off();
+  const restored = ids("t");
+  const show = slots.hide("t.b");
+  const hiddenOne = ids("t");
+  show();
+  const ok = replaced === "t.a:plugin:x,t.b:tazuna" && restored === "t.a:tazuna,t.b:tazuna" && hiddenOne === "t.a:tazuna" && ids("t") === restored;
+  if (!ok) throw new Error(`slots: ${replaced} | ${restored} | ${hiddenOne}`);
+  console.log("slots ok");
+}
