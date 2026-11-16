@@ -144,6 +144,14 @@ fn open_link(url: String) -> Result<(), String> {
     r.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// A system notification (a conversation in the background finished or asks): plain text, shown by the system.
+#[tauri::command]
+fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
+    use tauri_plugin_notification::NotificationExt;
+    app.notification().builder().title(title.chars().take(80).collect::<String>()).body(body.chars().take(200).collect::<String>())
+        .show().map_err(|e| e.to_string())
+}
+
 /// The native file picker for attachments (images go to the model as images, other files as their paths).
 #[tauri::command]
 async fn pick_files(app: AppHandle) -> Vec<String> {
@@ -217,6 +225,7 @@ fn menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -230,7 +239,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 let core = w.state::<Core>();

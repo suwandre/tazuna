@@ -66,6 +66,8 @@ export const core = {
   setData: (policy: "trusted" | "any", confirm = false) => to("op", { msg: { op: "data", policy, confirm } }),
   setRoute: (on: boolean) => to("op", { msg: { op: "route", on } }),
   openKeyPage: (url: string) => invoke("open_key_page", { url }),
+  /** a system notification */
+  notify: (title: string, body: string) => invoke("notify", { title, body }),
   /** a link in an answer, in the browser (http and https only) */
   openLink: (url: string) => invoke("open_link", { url }),
   onSettings: (cb: (s: Settings) => void) => on<Settings>("settings", cb),

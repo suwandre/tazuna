@@ -37,6 +37,16 @@ function useCore() {
   activeRef.current = active;
   const patch = (tid: string, p: Partial<Thread>) => setThreads((t) => (t[tid] ? { ...t, [tid]: { ...t[tid], ...p } } : t));
   const show = (tid: string) => { core.use(tid); setActiveTid(tid); setModels(null); patch(tid, { used: Date.now() }); };
+  // a conversation out of sight that finishes or asks for an answer says so with a system notification
+  const was = useRef<Record<string, string>>({});
+  const tell = (tid: string, v: View) => {
+    const now = v.asking ? "asking" : busyView(v) ? "working" : "idle", before = was.current[tid];
+    was.current[tid] = now;
+    if (now === before || (tid === activeRef.current && document.hasFocus())) return;
+    const title = (v.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] ?? "A conversation";
+    if (now === "asking") core.notify("tazuna asks", `${title}: ${v.asking!.tool.replace(/^mcp__lean__/, "")} ${v.asking!.what}`).catch(() => {});
+    else if (now === "idle" && before === "working") core.notify("tazuna is done", title).catch(() => {});
+  };
   /** Too many idle conversations open: the oldest idle ones close (not the one on screen, nothing working or asking). */
   const trim = (keep: string) => {
     const idle = Object.values(live.current).filter((t) => t.tid !== keep && !busyView(t.view) && !t.view?.asking).sort((a, b) => b.used - a.used);
@@ -65,7 +75,7 @@ function useCore() {
     if (!inTauri) return;
     const offs = [
       core.onExit((tid) => patch(tid, { error: "tazuna stopped. The app needs tazuna 0.1.128 or later (it carries its own; TAZUNA_BIN overrides)." })),
-      core.onView((v, tid) => patch(tid, { view: v, error: null })),
+      core.onView((v, tid) => { tell(tid, v); patch(tid, { view: v, error: null }); }),
       core.onModels((m, tid) => { if (tid === activeRef.current) setModels(m); }),
       core.onDiff(setDiff),
       core.onSessions((s) => setSessions((old) => ({ ...old, ...Object.fromEntries(s.dirs.map((d) => [d.dir, d.list])) }))),
