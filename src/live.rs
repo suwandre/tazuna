@@ -346,6 +346,24 @@ fn starts_turn(e: &Value) -> bool {
     (e["type"] == "stream_event" && e["event"]["type"] == "message_start") || e["type"] == "assistant"
 }
 
+/// The cap on paid API spend (the own loop) in live sessions, in dollars per 24 hours: ~/.config/tazuna/spend-cap, "off"
+/// for none, $1 when the file is missing or unreadable. Free models spend nothing against it.
+pub fn spend_cap() -> Option<f64> {
+    let text = crate::platform::home().and_then(|h| std::fs::read_to_string(h.join(".config/tazuna/spend-cap")).ok());
+    match text.as_deref().map(str::trim) {
+        Some("off") => None,
+        Some(t) => Some(t.parse::<f64>().ok().filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(1.0)),
+        None => Some(1.0),
+    }
+}
+
+/// Paid spend in the run log since `since` (seconds): the own loop's runs, whose log entry says claude_version null.
+pub fn paid_since(log: &str, since: u64) -> f64 {
+    log.lines().filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter(|r| r["ts"].as_u64().is_some_and(|t| t >= since) && r["meta"].get("claude_version").is_some_and(Value::is_null))
+        .filter_map(|r| r["cost_usd"].as_f64()).sum()
+}
+
 /// A message the user sent, as a point /rewind can go back to.
 #[derive(Clone)]
 pub struct Checkpoint {
@@ -671,7 +689,24 @@ impl Live {
         self.send_message(text, true)
     }
 
+    /// The own loop's model costs nothing: its price (the catalog's route, or --price) is 0 for input and output.
+    fn free(&self) -> bool {
+        let p = self.price.clone().or_else(|| std::env::var("TAZUNA_PRICE").ok()).unwrap_or_default();
+        let v: Vec<f64> = p.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+        v.len() == 3 && v[0] == 0.0 && v[2] == 0.0
+    }
+
     fn send_message(&mut self, text: &str, attach: bool) -> Result<(f64, Value)> {
+        // a paid model (the own loop) in a live session stops at the user's cap; benchmarks have the usage guard instead
+        if self.provider.is_some() && self.mode != "headless" && !self.free() && let Some(cap) = spend_cap() {
+            let log = crate::labels::dir().map(|d| std::fs::read_to_string(d.join("runs.jsonl")).unwrap_or_default()).unwrap_or_default();
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            let spent = paid_since(&log, now.saturating_sub(86_400));
+            if spent >= cap {
+                bail!("API spend in the last 24 hours is ${spent:.2}, at your cap of ${cap:.2}: not sent. Raise the cap in the desktop's \
+                    Settings or ~/.config/tazuna/spend-cap (\"off\" for none), or switch to a Claude model on your plan (/model)");
+            }
+        }
         if self.verifying {
             self.held.push_back((text.to_string(), attach));
         } else {

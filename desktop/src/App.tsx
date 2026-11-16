@@ -10,6 +10,9 @@ import { SettingsView } from "./components/SettingsView";
 import { SideChat } from "./components/SideChat";
 import { UsageView } from "./components/UsageView";
 import { checkUpdate, watchUpdates } from "./lib/update";
+import { routeLine } from "./lib/route";
+import type { Row } from "./lib/usage";
+import { usd } from "./lib/types";
 import { Rail, UserPanel } from "./components/Rail";
 import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
@@ -340,6 +343,24 @@ export default function App() {
       open(path, undefined, { creator: "edit", then: (tid) => { core.allowRootIn(tid, path).catch(() => {}); } });
     }).catch(() => {});
   };
+  // where a message goes and what it costs (lib/route.ts), from the catalog and the run log's last 90 days
+  const [rows, setRows] = useState<Row[] | null>(null);
+  useEffect(() => { if (!inTauri) return; const off = core.onUsage((u) => setRows(u.rows)); return () => { off.then((f) => f()); }; }, []);
+  const choice = models?.choices.find((c) => c.current);
+  useEffect(() => { if (inTauri && view) core.usage().catch(() => {}); }, [choice?.model, choice?.url, allTurns]);
+  const line = inTauri ? routeLine(choice, view, rows, models?.choices ?? []) : null;
+  // the first message to a paid model asks once (per model; the cap in Settings holds after that)
+  const [paidAsk, setPaidAsk] = useState<string | null>(null);
+  const paidKey = choice ? `tazuna.paid-ok.${choice.model}|${choice.url}` : "";
+  /** A message on its way: /create, a creator conversation's first, an edit from an earlier message, or a plain one. */
+  const sendNow = (text: string) => {
+    if (text.startsWith("/create ")) { createPanel(text.slice(8).trim()); return; }
+    if (creator === "edit" && !view?.blocks.some((b) => b.kind === "prompt")) { core.send(creatorMessage(text, true), true).catch(() => {}); return; }
+    if (!editing) { core.send(text).catch((e) => console.error(e)); return; }
+    const { cp, keep } = editing;
+    setEditing(null);
+    core.rewind(cp, keep).then(() => core.send(text)).catch((e) => console.error(e));
+  };
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
   const usage = view ? viewUsage(view) : demo.usage;
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
@@ -439,15 +460,24 @@ export default function App() {
         {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
         <Composer key={active} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
           onSend={(text) => {
-            if (text.startsWith("/create ")) { createPanel(text.slice(8).trim()); return; }
-            if (creator === "edit" && !view?.blocks.some((b) => b.kind === "prompt")) { core.send(creatorMessage(text, true), true).catch(() => {}); return; }
-            if (!editing) { core.send(text).catch((e) => console.error(e)); return; }
-            const { cp, keep } = editing;
-            setEditing(null);
-            core.rewind(cp, keep).then(() => core.send(text)).catch((e) => console.error(e));
+            if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk(text); return; }
+            sendNow(text);
           }}
+          below={line && (
+            <div className={`flex items-center gap-2 text-[11.5px] ${line.low ? "text-warn" : "text-faint"}`}>
+              <span className="truncate" title="Where your next message goes and what it costs">→ {line.text}</span>
+              {line.low && <span>{line.low}</span>}
+              {line.offer && <button onClick={() => core.setModel(line.offer!)} className="font-medium text-accent-ink">Switch to {line.offer.label}</button>}
+            </div>
+          )}
           draft={draft}
-          above={editing && (
+          above={paidAsk != null ? (
+            <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
+              <span className="flex-1">This goes to <span className="text-ink">{choice?.label}</span> on {choice?.provider}, a paid API{line?.est != null ? `: about ${usd(line.est)} a message` : ""}. Paid spend stops at your cap per 24 hours (Settings).</span>
+              <button onClick={() => { localStorage.setItem(paidKey, "1"); const t = paidAsk; setPaidAsk(null); sendNow(t); }} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Send</button>
+              <button onClick={() => { setDraft({ text: paidAsk, n: Date.now() }); setPaidAsk(null); }} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">Cancel</button>
+            </div>
+          ) : editing && (
             <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
               <span className="flex-1">Editing an earlier message: sending it goes back to before it, and the messages after it leave the conversation.
                 {editing.files > 0 && <label className="mt-1 flex items-center gap-2 text-ink"><input type="checkbox" checked={editing.keep} onChange={(e) => setEditing({ ...editing, keep: e.target.checked })} />

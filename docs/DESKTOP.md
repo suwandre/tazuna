@@ -48,7 +48,11 @@ tags desktop-vX.Y.Z; CI builds the three systems, signs the update packages and 
 desktop-latest release, which the apps read. The signature is tazuna's own updater key (free, not Apple's or a Windows
 certificate): the private half is ~/.tauri/tazuna-updater.key on the Mac and the GitHub secret TAURI_SIGNING_PRIVATE_KEY,
 the public half in tauri.conf.json. Losing it means one manual reinstall with a new key. Linux updates the AppImage
-(.deb and .rpm through the package manager).
+(.deb and .rpm through the package manager). 0.1.21 (with tazuna 0.1.142), routing that explains itself: a line under the
+message box says where the next message goes and what it costs (Claude on your plan with the 5-hour window's use; a free
+model; a paid one with about what a message cost on it in your own use, else its price per million tokens). When the
+plan's 5 hours pass 90%, it offers the own-loop model you used most in the last 30 days. The first message to a paid
+model asks once; paid spend stops at a cap per 24 hours ($1 by default, Settings), enforced in the core.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

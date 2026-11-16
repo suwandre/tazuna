@@ -16,6 +16,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
   const [askAny, setAskAny] = useState(false);
   const [keysNow, setKeysNow] = useState(() => localStorage.getItem(HOTKEY) ?? defaultHotkey);
   const [hotkeyNote, setHotkeyNote] = useState("");
+  const [cap, setCap] = useState<string | null>(null);
   const saveHotkey = () => core.hotkey(keysNow.trim())
     .then(() => { localStorage.setItem(HOTKEY, keysNow.trim()); setHotkeyNote(keysNow.trim() ? "Saved." : "Off."); })
     .catch((e) => setHotkeyNote(`Not set: ${e}. Another app may hold it.`));
@@ -77,6 +78,19 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
             <div className={label}>Chat or agent</div>
             <label className="flex items-start gap-2 py-1"><input type="checkbox" checked={st.route} onChange={(e) => core.setRoute(e.target.checked).then(refresh)} className="mt-1" />
               <span><span className="text-ink">Answer general questions inside a project as a chat</span><span className="block text-[12px] text-muted">Off: everything you send in a project goes to the agent.</span></span></label>
+
+            <div className={label}>Paid API spend</div>
+            <div className="mb-1.5 text-[12px] text-muted">Models on a provider's API cost money (Claude on your plan does not). tazuna sends nothing to them once the last 24 hours reach this cap.
+              Last 24 hours: <span className="font-mono text-ink">${(st.spent_24h ?? 0).toFixed(2)}</span>.</div>
+            <div className="flex items-center gap-2 py-1">
+              <span className="text-ink-2">$</span>
+              <input value={cap ?? (st.spend_cap == null ? "" : String(st.spend_cap))} onChange={(e) => setCap(e.target.value)} placeholder="no cap" inputMode="decimal"
+                className="w-24 rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none" />
+              <span className="text-[12px] text-muted">per 24 hours</span>
+              <button disabled={cap == null || (cap.trim() !== "" && !(Number(cap) >= 0))} onClick={() => core.setSpendCap(cap!.trim() === "" ? null : Number(cap)).then(() => { setCap(null); refresh(); })}
+                className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-40">Save</button>
+              <span className="text-[11.5px] text-faint">empty: no cap</span>
+            </div>
 
             <div className={label}>Quick chat from anywhere</div>
             <div className="flex items-center gap-2 py-1">

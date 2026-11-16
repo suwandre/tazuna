@@ -998,8 +998,8 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 28] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
-            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage"];
+        const OPS: [&str; 29] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1408,8 +1408,10 @@ fn app_server(a: &Args) -> Result<()> {
                                 "key": models::key_source(l.vars), "trusted": trusted_host(l.host),
                             })).collect();
                             let mut o = out.lock();
+                            let log = std::fs::read_to_string(labels::dir()?.join("runs.jsonl")).unwrap_or_default();
+                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
                             let _ = writeln!(o, "{}", json!({"type": "settings", "providers": providers, "data_any": live.data_any, "route": route_on,
-                                "version": env!("CARGO_PKG_VERSION")}));
+                                "version": env!("CARGO_PKG_VERSION"), "spend_cap": live::spend_cap(), "spent_24h": live::paid_since(&log, now.saturating_sub(86_400))}));
                             let _ = o.flush();
                         }
                         // a provider's key from the settings page: saved and its host trusted, as /login does
@@ -1438,6 +1440,19 @@ fn app_server(a: &Args) -> Result<()> {
                                 _ => "data: trusted, or any with confirm".to_string(),
                             };
                             s.apply(&json!({"type": "harness_notice", "text": text, "error": false}), at);
+                        }
+                        // the cap on paid API spend per 24 hours (a number of dollars, or null for none): ~/.config/tazuna/spend-cap
+                        Some("spend_cap") => {
+                            let value = match cmd["value"].as_f64() {
+                                Some(v) if v.is_finite() && v >= 0.0 => format!("{v}"),
+                                Some(_) => String::new(),
+                                None => "off".into(),
+                            };
+                            let file = platform::home().map(|h| h.join(".config/tazuna/spend-cap"));
+                            match file.filter(|_| !value.is_empty()).map(|f| f.parent().map(std::fs::create_dir_all).transpose().and_then(|_| std::fs::write(&f, &value))) {
+                                Some(Ok(())) => s.apply(&json!({"type": "harness_notice", "text": if value == "off" { "API spend: no cap".to_string() } else { format!("API spend: capped at ${value} per 24 hours") }, "error": false}), at),
+                                _ => info(&mut s, "the cap was not saved".into()),
+                            }
                         }
                         Some("route") => {
                             route_on = cmd["on"] == true;
@@ -3916,6 +3931,17 @@ mod tests {
             price: String::new(), note: String::new(), stale: false, state: models::State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
         let _ = super::apply_choice(&mut live, &c, Some("high".into()));
         assert!(live.escalation().is_none(), "the user's pick stands: no redo on another model");
+    }
+
+    #[test]
+    fn paid_spend_counts_only_the_own_loop_in_the_window() {
+        let log = r#"{"ts": 100, "meta": {"claude_version": null}, "cost_usd": 0.4}
+{"ts": 200, "meta": {"claude_version": null}, "cost_usd": 0.5}
+{"ts": 200, "meta": {"claude_version": "2.1"}, "cost_usd": 9.0}
+{"ts": 200, "meta": {}, "cost_usd": 7.0}
+broken"#;
+        assert!((crate::live::paid_since(log, 150) - 0.5).abs() < 1e-9, "the plan's runs and older ones do not count");
+        assert!((crate::live::paid_since(log, 0) - 0.9).abs() < 1e-9);
     }
 
     #[test]

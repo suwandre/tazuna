@@ -24,6 +24,8 @@ type Props = {
   draft?: { text: string; n: number };
   /** shown above the box (the edit banner) */
   above?: React.ReactNode;
+  /** shown under the box (where a message goes and what it costs) */
+  below?: React.ReactNode;
   /** where the box's text is kept (the conversation's id, or "new:<folder>" before it has one): it comes back after a
    * restart, and goes along when the conversation gets its id */
   draftKey?: string;
@@ -41,7 +43,7 @@ const MODES: [string, string][] = [
 
 const pill = "inline-flex items-center gap-1.5 rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2";
 
-export function Composer({ session, threadCost, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, draftKey }: Props) {
+export function Composer({ session, threadCost, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   const box = useRef<HTMLTextAreaElement>(null);
   // draft recovery: what is in the box is saved as it changes, under the conversation's key
@@ -83,6 +85,7 @@ export function Composer({ session, threadCost, busy, onSend, onStop, models, on
             : <button onClick={send} title={busy ? "Send after this reply (Enter)" : "Send (Enter)"} disabled={!text.trim()} className="grid size-[30px] place-items-center rounded-full bg-accent text-on-accent disabled:opacity-40"><ArrowUp size={16} strokeWidth={1.75} /></button>}
         </div>
       </div>
+      {below && <div className="mx-auto mt-1.5 max-w-[700px] px-1">{below}</div>}
     </footer>
   );
 }

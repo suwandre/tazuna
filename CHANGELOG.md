@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.142 (2026-11-16): a cap on paid API spend
+
+- A typed message to a paid model (the own loop) in a live session, terminal or desktop, is not sent once the last 24
+  hours of paid spend in the run log reach the cap: $1 by default, ~/.config/tazuna/spend-cap to change it ("off" for
+  none), or the desktop's Settings. The message says what was spent and how to go on. Claude on the plan and free models
+  spend nothing against it and are never stopped by it; benchmarks (headless) keep the usage guard instead. Follow-ups inside a task (test fixes)
+  are not stopped mid-task.
+- The app server's settings carry the cap and the last 24 hours' spend, and `{"op": "spend_cap", "value": ...}` sets it.
+- No other metric moves; 178 tests.
+
 ## 0.1.141 (2026-11-16): the own loop resumes, edits from an earlier message, forks and has plan mode
 
 - The engine saves where each typed message begins in its history (`marks` beside `msgs`). `--resume ID --resume-before
