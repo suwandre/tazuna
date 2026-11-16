@@ -302,6 +302,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-16: a desktop app beside the CLI (`desktop/`, docs/DESKTOP.md): Tauri and React in design A, over `tazuna
+  app-server` (0.1.128), so the CLI and the app share one core and one data folder. 0.1.0 has chats and projects, the
+  router, models, saved conversations, approvals, per-turn diff and undo, Cmd-K; 0.1.1 carries its own tazuna and CI
+  builds it for macOS, Linux and Windows. Not signed: the app is for the user's own use (Apple's $99 a year and a Windows
+  certificate wait until others use it). The app keeps its own semantic version.
 - 2026-11-15: tazuna picks chat or agent by itself. Outside coding every harness scored under the model alone and the
   own loop wrote answers into files; the chat profile (0.1.123, the model alone) closed that, so it became the start mode
   outside a project (0.1.126) and the answer to general questions inside one (0.1.127: rules, then a quick model check;
