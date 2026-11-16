@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.135 (2026-11-16): creator mode's folder rule, hardened
+
+- The check that lets a creator conversation write inside its folder without asking reads the path from the field the
+  tool uses (`file_path` for claude's Write, Edit, MultiEdit; `path` for tazuna's write and edit) and refuses a request
+  carrying the other too; resolves a relative path where the tools run; refuses an existing file that is a link
+  (dangling or not), not a plain file, or has a second hard link; judges a new file by its folder only when the file
+  truly does not exist (security review). The test covers each case.
+- No other metric moves; 174 tests.
+
 ## 0.1.134 (2026-11-16): creator mode's folder, decided in the core
 
 - `tazuna app-server` takes {"op":"allow_root","path":..}: a write or edit whose real path, resolved (links and `..`

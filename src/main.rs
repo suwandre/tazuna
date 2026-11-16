@@ -1425,7 +1425,7 @@ fn app_server(a: &Args) -> Result<()> {
             changed = true;
         }
         // creator mode: the oldest question, if it is a write or edit inside the allowed folder, is answered yes
-        if let Some(root) = &allow_root && let Some(req) = live.pending.front() && inside_root(req, root) {
+        if let Some(root) = &allow_root && let Some(req) = live.pending.front() && inside_root(req, root, &cwd) {
             if let Some((t, e)) = live.answer(true, false) {
                 s.apply(&e, t);
                 changed = true;
@@ -3601,26 +3601,50 @@ impl Picker {
     }
 }
 
-/// A permission question for a file write or edit whose real path, resolved (its folder's links and `..` included),
-/// lies inside `root`. A path whose folder does not exist yet, or any other tool, is not.
-fn inside_root(req: &serde_json::Value, root: &std::path::Path) -> bool {
+/// A permission question for a file write or edit whose real path, resolved, lies inside `root`. The path is read from
+/// the field the tool itself uses (`file_path` for claude's Write, Edit and MultiEdit; `path` for tazuna's write and
+/// edit), and a request that also carries the other field is refused; a relative path is resolved against `cwd`, where
+/// the tools run. An existing file must be a plain file with one link (not a link to elsewhere, dangling or not); a new
+/// file is judged by its folder, which must exist. Anything else asks as usual (security reviews, 2026-11-16).
+fn inside_root(req: &serde_json::Value, root: &std::path::Path, cwd: &std::path::Path) -> bool {
     let r = &req["request"];
-    let tool = r["tool_name"].as_str().unwrap_or_default();
-    if !matches!(tool, "Write" | "Edit" | "MultiEdit" | "mcp__lean__write" | "mcp__lean__edit") || r["from_text"] == true {
+    if r["from_text"] == true {
         return false;
     }
-    let Some(p) = r["input"]["file_path"].as_str().or(r["input"]["path"].as_str()).map(std::path::Path::new) else { return false };
+    let (field, other) = match r["tool_name"].as_str().unwrap_or_default() {
+        "Write" | "Edit" | "MultiEdit" => ("file_path", "path"),
+        "mcp__lean__write" | "mcp__lean__edit" => ("path", "file_path"),
+        _ => return false,
+    };
+    let input = &r["input"];
+    if !input[other].is_null() {
+        return false;
+    }
+    let Some(raw) = input[field].as_str().filter(|p| !p.is_empty()) else { return false };
+    let p = if std::path::Path::new(raw).is_absolute() { std::path::PathBuf::from(raw) } else { cwd.join(raw) };
     let (Some(dir), Some(name)) = (p.parent(), p.file_name()) else { return false };
     if name == ".." || name == "." {
         return false;
     }
-    // the file itself may be new; if it exists it may be a link, which resolves too
-    let real = match p.canonicalize() {
-        Ok(full) => full,
-        Err(_) => match dir.canonicalize() {
+    let real = match std::fs::symlink_metadata(&p) {
+        Ok(m) => {
+            #[cfg(unix)]
+            let one_link = std::os::unix::fs::MetadataExt::nlink(&m) == 1;
+            #[cfg(not(unix))]
+            let one_link = true;
+            if !m.file_type().is_file() || !one_link {
+                return false;
+            }
+            match p.canonicalize() {
+                Ok(full) => full,
+                Err(_) => return false,
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => match dir.canonicalize() {
             Ok(d) => d.join(name),
             Err(_) => return false,
         },
+        Err(_) => return false,
     };
     real.starts_with(root)
 }
@@ -3787,17 +3811,29 @@ mod tests {
         let root = base.join("panel");
         std::fs::create_dir_all(&root).unwrap();
         let root = root.canonicalize().unwrap();
-        let q = |tool: &str, path: String| json!({"request": {"tool_name": tool, "input": {"file_path": path}}});
-        assert!(super::inside_root(&q("Write", format!("{}/index.html", root.display())), &root));
-        assert!(super::inside_root(&q("mcp__lean__write", format!("{}/manifest.json", root.display())), &root));
-        assert!(!super::inside_root(&q("Write", format!("{}/../evil.sh", root.display())), &root), "climbs out");
-        assert!(!super::inside_root(&q("Write", format!("{}/{}/../../x", root.display(), "a".repeat(500))), &root), "a long path that climbs out");
-        assert!(!super::inside_root(&q("Bash", format!("{}/x", root.display())), &root), "not a write tool");
-        assert!(!super::inside_root(&q("Write", "/etc/passwd".into()), &root));
+        let q = |tool: &str, path: String| {
+            let key = if tool.starts_with("mcp__lean__") { "path" } else { "file_path" };
+            json!({"request": {"tool_name": tool, "input": {key: path}}})
+        };
+        let ok = |req: serde_json::Value| super::inside_root(&req, &root, &root);
+        assert!(ok(q("Write", format!("{}/index.html", root.display()))));
+        assert!(ok(q("mcp__lean__write", format!("{}/manifest.json", root.display()))));
+        assert!(ok(q("mcp__lean__write", "plugin.js".into())), "relative: against the folder the tools run in");
+        assert!(!ok(q("Write", format!("{}/../evil.sh", root.display()))), "climbs out");
+        assert!(!ok(q("Write", format!("{}/{}/../../x", root.display(), "a".repeat(500)))), "a long path that climbs out");
+        assert!(!ok(q("Bash", format!("{}/x", root.display()))), "not a write tool");
+        assert!(!ok(q("Write", "/etc/passwd".into())));
+        assert!(!ok(json!({"request": {"tool_name": "mcp__lean__write", "input": {"path": format!("{}/a", root.display()), "file_path": "/etc/x"}}})), "both fields");
+        assert!(!ok(json!({"request": {"tool_name": "mcp__lean__write", "input": {"file_path": format!("{}/a", root.display())}}})), "the field the tool does not use");
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink("/tmp", root.join("out")).unwrap();
-            assert!(!super::inside_root(&q("Write", format!("{}/out/x", root.display())), &root), "through a link");
+            assert!(!ok(q("Write", format!("{}/out/x", root.display()))), "through a link to a folder");
+            std::os::unix::fs::symlink("/tmp/tazuna-root-dangling-target", root.join("dangling")).unwrap();
+            assert!(!ok(q("Write", format!("{}/dangling", root.display()))), "a dangling link");
+            std::fs::write(base.join("outside.txt"), "x").unwrap();
+            std::fs::hard_link(base.join("outside.txt"), root.join("hard.txt")).unwrap();
+            assert!(!ok(q("Write", format!("{}/hard.txt", root.display()))), "a second hard link to a file outside");
         }
         let _ = std::fs::remove_dir_all(&base);
     }
