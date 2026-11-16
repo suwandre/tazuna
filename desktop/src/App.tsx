@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { Approval } from "./components/Approval";
 import { Composer } from "./components/Composer";
+import { DiffView } from "./components/DiffView";
 import { Rail, builtInWidgets } from "./components/Rail";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import * as demo from "./lib/demo";
 import { messages as viewMessages, usage as viewUsage } from "./lib/fromView";
-import { core, inTauri, type Models, type SessionRow, type View } from "./lib/tazuna";
+import { core, inTauri, type Diff, type Models, type SessionRow, type View } from "./lib/tazuna";
 
 const RECENT = "tazuna.projects";
 const recent = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT) ?? "[]"); } catch { return []; } };
@@ -19,6 +20,7 @@ function useCore() {
   const [folder, setFolder] = useState<string | null>(null);
   const [projects, setProjects] = useState<string[]>(recent);
   const [models, setModels] = useState<Models | null>(null);
+  const [diff, setDiff] = useState<Diff | null>(null);
   // saved conversations per folder (the home folder's are the chats), as the terminal's /resume lists them
   const [sessions, setSessions] = useState<Record<string, SessionRow[]>>({});
   const [home, setHome] = useState<string | null>(null);
@@ -39,6 +41,7 @@ function useCore() {
       core.onExit(() => setError("tazuna stopped. The app needs tazuna 0.1.128 or later on the PATH (or TAZUNA_BIN).")),
       core.onView((v) => { setError(null); setView(v); }),
       core.onModels(setModels),
+      core.onDiff(setDiff),
       core.onSessions((s) => setSessions((old) => ({ ...old, ...Object.fromEntries(s.dirs.map((d) => [d.dir, d.list])) }))),
     ];
     Promise.all(offs).then(() => open(null)).catch((e) => setError(String(e)));
@@ -64,7 +67,7 @@ function useCore() {
     const dirs = [home, ...projects].filter((d): d is string => !!d);
     if (inTauri && view && dirs.length) core.sessions(dirs).catch(() => {});
   }, [turns, folder, home, projects.length]);
-  return { view, error, folder, projects, open, pick, models, sessions, home };
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff };
 }
 
 function useTheme() {
@@ -86,7 +89,7 @@ function useTheme() {
 
 export default function App() {
   useTheme();
-  const { view, error, folder, projects, open, pick, models, sessions, home } = useCore();
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff } = useCore();
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
   const usage = view ? viewUsage(view) : demo.usage;
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
@@ -111,7 +114,9 @@ export default function App() {
             {session.branch && <span className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2">{session.branch} · {session.changed} changed</span>}
           </div>
         </header>
-        <Transcript messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)} />
+        <Transcript messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)}
+          onDiff={(turn, path) => core.diff(turn, path)} onUndo={(turn) => core.undo(turn)} />
+        {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {view?.untrusted && (
           <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
             <span className="flex-1">This folder's settings run code ({view.untrusted}). tazuna works here without them until you trust it.</span>

@@ -2,7 +2,9 @@
 export type Thread = { id: string; title: string; project?: string; running?: boolean };
 export type Project = { name: string; path?: string; open: boolean; pending?: number; threads: Thread[] };
 export type ToolStep = { verb: string; target: string; detail?: string; secs: number; ok: boolean; running?: boolean };
-export type Change = { file: string; added: number; removed: number };
+export type ChangedFile = { path: string; added: number | null; removed: number | null; status: string };
+/** What one turn changed (the core's git snapshots before and after it). */
+export type Change = { turn: number; files: ChangedFile[]; undone: boolean; canUndo: boolean };
 export type Meta = { cost: number; tokens: number; cachedPct?: number; secs: number };
 export type Message =
   | { role: "user"; text: string }

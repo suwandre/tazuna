@@ -96,6 +96,7 @@ mod runlog;
 mod select;
 mod session;
 mod trust;
+mod turns;
 mod ui;
 mod verify;
 mod versions;
@@ -992,7 +993,7 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 13] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "quit"];
+        const OPS: [&str; 15] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo", "quit"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1005,8 +1006,13 @@ fn app_server(a: &Args) -> Result<()> {
         let _ = stdin_tx.send(json!({"op": "quit"}));
     });
     let out = std::io::stdout();
-    let emit = |s: &Session, untrusted: &Option<String>, live: &live::Live| {
+    let emit = |s: &Session, untrusted: &Option<String>, live: &live::Live, done_turns: &[AppTurn]| {
         let mut v = s.view();
+        let last_undoable = done_turns.iter().rposition(|t| !t.undone);
+        v["changes"] = json!(done_turns.iter().enumerate().map(|(i, t)| json!({
+            "turn": i, "at_block": t.at_block, "undone": t.undone, "can_undo": Some(i) == last_undoable,
+            "files": t.files.iter().map(|f| json!({"path": f.path, "added": f.added, "removed": f.removed, "status": f.status.to_string()})).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>());
         v["untrusted"] = json!(untrusted);
         v["session_id"] = json!(live.session_id());
         // the oldest open permission question, as the terminal shows it (text made safe), and how many wait behind it
@@ -1018,7 +1024,12 @@ fn app_server(a: &Args) -> Result<()> {
         let _ = writeln!(o, "{v}");
         let _ = o.flush();
     };
-    emit(&s, &untrusted, &live);
+    // each turn's changes (src/turns.rs): the tree before the turn on the agent, whether its result came, the finished
+    // turns with their files, and the note the next message carries after an undo
+    let mut turn: Option<(String, bool)> = None;
+    let mut done_turns: Vec<AppTurn> = vec![];
+    let mut undo_note: Option<String> = None;
+    emit(&s, &untrusted, &live, &done_turns);
     let mut last_reply = String::new();
     let (mut changed, mut last) = (false, Instant::now());
     loop {
@@ -1046,10 +1057,7 @@ fn app_server(a: &Args) -> Result<()> {
                                 });
                                 s.activity = session::Activity::Waiting;
                             } else {
-                                match live.send_typed(text) {
-                                    Ok((t, e)) => s.apply(&e, t),
-                                    Err(e) => info(&mut s, format!("{e:#}")),
-                                }
+                                agent_send(&mut live, &mut s, text, &cwd, &mut turn, &mut undo_note);
                             }
                         }
                         // the permission mode: auto, ask, edits or plan (the own loop has no plan)
@@ -1085,6 +1093,8 @@ fn app_server(a: &Args) -> Result<()> {
                             if let Err(e) = restart_session(&mut live, &mut s, None) {
                                 info(&mut s, format!("{e:#}"));
                             }
+                            (turn, undo_note) = (None, None);
+                            done_turns.clear();
                         }
                         // the sessions of some folders (this one when none named), newest first, as a `sessions` line: the
                         // terminal's /resume list, for the sidebar
@@ -1109,6 +1119,8 @@ fn app_server(a: &Args) -> Result<()> {
                                     if let Err(err) = restart_session(&mut live, &mut s, Some(&e)) {
                                         info(&mut s, format!("{err:#}"));
                                     }
+                                    (turn, undo_note) = (None, None);
+                                    done_turns.clear();
                                 }
                                 None => info(&mut s, format!("no session {id} in this folder")),
                             }
@@ -1142,10 +1154,7 @@ fn app_server(a: &Args) -> Result<()> {
                                 s.apply(&json!({"type": "harness_info", "text": "answered as a chat: not about this project"}), at);
                                 chat_turn(RouteCtx::of(&live), text, tx.clone());
                             } else {
-                                match live.send_typed(&text) {
-                                    Ok((t, e)) => s.apply(&e, t),
-                                    Err(e) => info(&mut s, format!("{e:#}")),
-                                }
+                                agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note);
                             }
                         }
                         Some("tazuna_chat_event") => {
@@ -1190,6 +1199,34 @@ fn app_server(a: &Args) -> Result<()> {
                             Ok((t, e)) => s.apply(&e, t),
                             Err(e) => info(&mut s, format!("{e:#}")),
                         },
+                        // one file's diff in a turn, answered as a `diff` line
+                        Some("diff") => {
+                            let (i, path) = (cmd["turn"].as_u64().unwrap_or(u64::MAX) as usize, cmd["path"].as_str().unwrap_or_default());
+                            if let Some(t) = done_turns.get(i).filter(|t| t.files.iter().any(|f| f.path == path)) {
+                                let text = turns::diff(&cwd, &t.before, &t.after, path, 400_000);
+                                let mut o = out.lock();
+                                let _ = writeln!(o, "{}", json!({"type": "diff", "turn": i, "path": path, "text": text}));
+                                let _ = o.flush();
+                            }
+                        }
+                        // the last turn's files back as they were before it; the next message tells the model
+                        Some("undo") => {
+                            let i = cmd["turn"].as_u64().unwrap_or(u64::MAX) as usize;
+                            let last = done_turns.iter().rposition(|t| !t.undone);
+                            match done_turns.get_mut(i) {
+                                _ if !live.idle() || turn.is_some() => info(&mut s, "wait until the run has finished (or stop it), then undo".into()),
+                                Some(t) if Some(i) == last => match turns::undo(&cwd, &t.before, &t.after, &t.files) {
+                                    Ok(()) => {
+                                        t.undone = true;
+                                        let paths: Vec<&str> = t.files.iter().map(|f| f.path.as_str()).collect();
+                                        undo_note = Some(format!("[tazuna: the user undid the file changes of your previous turn; these files are back as they were before it: {}]", paths.join(", ")));
+                                        s.apply(&json!({"type": "harness_notice", "text": format!("undone: {} file{} back as before the turn", paths.len(), if paths.len() == 1 { "" } else { "s" }), "error": false}), at);
+                                    }
+                                    Err(e) => info(&mut s, format!("{e:#}")),
+                                },
+                                _ => info(&mut s, "only the last turn's changes can be undone".into()),
+                            }
+                        }
                         // the user's yes to the trust question, for this folder; the window then starts the server again
                         Some("trust") => match labels::dir().and_then(|b| trust::trust(&b, &cwd)) {
                             Ok(()) => untrusted = None,
@@ -1208,11 +1245,25 @@ fn app_server(a: &Args) -> Result<()> {
             if e["type"] == "result" && let Some(r) = e["result"].as_str() {
                 last_reply = r.to_string();
             }
+            if e["type"] == "result" && let Some(t) = turn.as_mut() {
+                t.1 = true;
+            }
             s.apply(&e, t);
             changed = true;
         }
+        // a turn is over once its result came and nothing runs (checks and fix rounds included): what did it change?
+        if turn.as_ref().is_some_and(|t| t.1) && live.idle() && let Some((before, _)) = turn.take()
+            && let Some(after) = turns::snapshot(&cwd)
+        {
+            let files = turns::files(&cwd, &before, &after);
+            if !files.is_empty() {
+                let at_block = s.blocks.iter().rposition(|b| matches!(b, session::Block::Done(_))).unwrap_or(0);
+                done_turns.push(AppTurn { before, after, files, at_block, undone: false });
+                changed = true;
+            }
+        }
         if changed && last.elapsed() >= Duration::from_millis(50) {
-            emit(&s, &untrusted, &live);
+            emit(&s, &untrusted, &live, &done_turns);
             (changed, last) = (false, Instant::now());
         }
         std::thread::sleep(Duration::from_millis(15));
@@ -3340,6 +3391,36 @@ impl Picker {
     /// The provider selected on the left (None: All models).
     fn group(&self) -> Option<String> {
         self.psel.checked_sub(1).and_then(|i| models::providers(&self.cs).get(i).map(|(n, _)| n.clone()))
+    }
+}
+
+/// A finished turn on the agent that changed files (the app's change card).
+struct AppTurn {
+    before: String,
+    after: String,
+    files: Vec<turns::File>,
+    /// Its `done` block in the session, where the card goes.
+    at_block: usize,
+    undone: bool,
+}
+
+/// A message for the agent from the app: the tree before it is kept (the first message of a turn), and after an undo the
+/// message carries the note that tells the model its last changes are gone. ponytail: the snapshot runs on the server's
+/// one thread (git add -A on a large repo takes a moment); off it if that shows.
+fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::path::Path, turn: &mut Option<(String, bool)>, undo_note: &mut Option<String>) {
+    if turn.is_none() {
+        *turn = turns::snapshot(cwd).map(|b| (b, false));
+    }
+    let text = match undo_note.take() {
+        Some(n) => format!("{n}\n\n{text}"),
+        None => text.to_string(),
+    };
+    match live.send_typed(&text) {
+        Ok((t, e)) => s.apply(&e, t),
+        Err(e) => {
+            *turn = None;
+            s.apply(&json!({"type": "harness_notice", "text": format!("{e:#}"), "error": true}), live.elapsed_ms());
+        }
     }
 }
 

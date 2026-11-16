@@ -101,11 +101,11 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
 }
 
 /// The picker's, the sidebar's and the composer's commands for the core ({"op":"models"}, "model", "effort", "sessions",
-/// "resume", "mode", "answer");
+/// "resume", "mode", "answer", "diff", "undo");
 /// nothing else passes (the core drops other lines too).
 #[tauri::command]
 fn op(core: State<Core>, msg: serde_json::Value) -> Result<(), String> {
-    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer")) {
+    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo")) {
         return Err(format!("not a command the window sends: {msg}"));
     }
     write(&core, msg)

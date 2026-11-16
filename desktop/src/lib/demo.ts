@@ -27,7 +27,7 @@ export const messages: Message[] = [
       "The test uses real timers. CI runners are slower, so the third retry fires after the test's 5 s timeout: the delay doubles from 1 s (1, 2, 4 s) and the cap of 30 s never kicks in.",
       "I switched the test to fake timers and advanced them explicitly. The code itself is fine.",
     ],
-    change: { file: "src/client/retry.test.ts", added: 12, removed: 3 },
+    change: { turn: 0, files: [{ path: "src/client/retry.test.ts", added: 12, removed: 3, status: "M" }], undone: false, canUndo: true },
     meta: { cost: 0.042, tokens: 18400, cachedPct: 94, secs: 31 } },
   { role: "user", text: "thanks! btw how long should I boil an egg for a runny yolk?" },
   { role: "agent", routedChat: true,

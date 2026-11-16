@@ -20,7 +20,8 @@ export function messages(v: View): Message[] {
   const out: Message[] = [];
   let agent: Extract<Message, { role: "agent" }> | null = null, ask = "";
   const current = () => (agent ??= (out.push({ role: "agent", prose: [], tools: [] }), out[out.length - 1] as Extract<Message, { role: "agent" }>));
-  for (const b of v.blocks) {
+  const changeAt = new Map((v.changes ?? []).map((c) => [c.at_block, c]));
+  for (const [k, b] of v.blocks.entries()) {
     if (b.kind === "prompt") { out.push({ role: "user", text: b.text }); agent = null; ask = b.text; }
     // the router answered it as a chat (app server, 0.1.127's router): the reply carries the tag and the ask, for "send to agent"
     else if (b.kind === "notice" && b.text.startsWith("answered as a chat")) { Object.assign(current(), { routedChat: true, ask }); }
@@ -32,6 +33,8 @@ export function messages(v: View): Message[] {
     else if (b.kind === "done") {
       const u = b.usage, total = u.input + u.cache_write + u.cache_read + u.output, read = u.input + u.cache_write + u.cache_read;
       current().meta = { cost: b.cost, tokens: total, cachedPct: read ? Math.round((100 * u.cache_read) / read) : undefined, secs: Math.round(b.secs) };
+      const c = changeAt.get(k);
+      if (c) current().change = { turn: c.turn, files: c.files, undone: c.undone, canUndo: c.can_undo };
       agent = null;
     }
     else if (b.kind === "notice" && b.error) { current().prose.push(`⚠ ${b.text}`); }

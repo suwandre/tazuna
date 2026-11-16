@@ -23,7 +23,10 @@ export type View = {
   session_id?: string | null;
   /** the oldest open permission question (text made safe by the core) */
   asking?: { tool: string; what: string; note: string; once: boolean; queued: number } | null;
+  /** the turns that changed files: where their card goes (`at_block`, a done block) and what they changed */
+  changes?: { turn: number; at_block: number; undone: boolean; can_undo: boolean; files: { path: string; added: number | null; removed: number | null; status: string }[] }[];
 };
+export type Diff = { turn: number; path: string; text: string };
 export type SessionRow = { id: string; first: string; last_at: number; messages: number };
 export type Sessions = { dirs: { dir: string; list: SessionRow[] }[] };
 
@@ -38,6 +41,9 @@ export const core = {
   start: (cwd?: string, profile?: string) => invoke<string>("start", { cwd, profile }),
   setMode: (mode: string) => invoke("op", { msg: { op: "mode", mode } }),
   answer: (allow: boolean, always = false) => invoke("op", { msg: { op: "answer", allow, always } }),
+  diff: (turn: number, path: string) => invoke("op", { msg: { op: "diff", turn, path } }),
+  undo: (turn: number) => invoke("op", { msg: { op: "undo", turn } }),
+  onDiff: (cb: (d: Diff) => void) => listen<Diff>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "diff") cb(e.payload); }),
   sessions: (dirs: string[]) => invoke("op", { msg: { op: "sessions", dirs } }),
   resume: (id: string) => invoke("op", { msg: { op: "resume", id } }),
   onSessions: (cb: (s: Sessions) => void) => listen<Sessions>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "sessions") cb(e.payload); }),
