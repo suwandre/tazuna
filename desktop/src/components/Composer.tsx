@@ -24,7 +24,12 @@ type Props = {
   draft?: { text: string; n: number };
   /** shown above the box (the edit banner) */
   above?: React.ReactNode;
+  /** where the box's text is kept (the conversation's id, or "new:<folder>" before it has one): it comes back after a
+   * restart, and goes along when the conversation gets its id */
+  draftKey?: string;
 };
+
+export const DRAFT = "tazuna.draft.";
 
 // the permission modes in tazuna's words, in the order shift-tab steps through them (as in the terminal)
 const MODES: [string, string][] = [
@@ -36,10 +41,20 @@ const MODES: [string, string][] = [
 
 const pill = "inline-flex items-center gap-1.5 rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2";
 
-export function Composer({ session, threadCost, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above }: Props) {
-  const [text, setText] = useState("");
+export function Composer({ session, threadCost, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, draftKey }: Props) {
+  const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   const box = useRef<HTMLTextAreaElement>(null);
-  useEffect(() => { if (draft) { setText(draft.text); box.current?.focus(); } }, [draft?.n]);
+  // draft recovery: what is in the box is saved as it changes, under the conversation's key
+  const savedAt = useRef(draftKey);
+  useEffect(() => {
+    if (!draftKey) return;
+    if (savedAt.current && savedAt.current !== draftKey) localStorage.removeItem(DRAFT + savedAt.current);
+    savedAt.current = draftKey;
+    if (text) localStorage.setItem(DRAFT + draftKey, text); else localStorage.removeItem(DRAFT + draftKey);
+  }, [text, draftKey]);
+  // a draft from outside applies when it is new (not again when the box of another conversation mounts)
+  const seen = useRef(draft?.n);
+  useEffect(() => { if (draft && draft.n !== seen.current) { seen.current = draft.n; setText(draft.text); box.current?.focus(); } }, [draft?.n]);
   // attachments go into the message as paths (quoted when they hold a space): the core sends images as images
   const attach = (paths: string[]) => paths.length && setText((t) => `${t}${t && !/\s$/.test(t) ? " " : ""}${paths.map(quotePath).join(" ")} `);
   useEffect(() => {

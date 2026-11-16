@@ -1,7 +1,7 @@
 import { ExternalLink, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { safeMode } from "../lib/plugins";
-import { core, type Settings } from "../lib/tazuna";
+import { HOTKEY, core, defaultHotkey, type Settings } from "../lib/tazuna";
 import type { UserWidget } from "../lib/widgets";
 
 // Settings: provider keys (saved by tazuna, never shown again), the data policy for this session, the router. The
@@ -14,6 +14,11 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
   const [st, setSt] = useState<Settings | null>(null);
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [askAny, setAskAny] = useState(false);
+  const [keysNow, setKeysNow] = useState(() => localStorage.getItem(HOTKEY) ?? defaultHotkey);
+  const [hotkeyNote, setHotkeyNote] = useState("");
+  const saveHotkey = () => core.hotkey(keysNow.trim())
+    .then(() => { localStorage.setItem(HOTKEY, keysNow.trim()); setHotkeyNote(keysNow.trim() ? "Saved." : "Off."); })
+    .catch((e) => setHotkeyNote(`Not set: ${e}. Another app may hold it.`));
   const refresh = () => core.settings().catch(() => {});
   useEffect(() => {
     const off = core.onSettings(setSt);
@@ -69,6 +74,14 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
             <div className={label}>Chat or agent</div>
             <label className="flex items-start gap-2 py-1"><input type="checkbox" checked={st.route} onChange={(e) => core.setRoute(e.target.checked).then(refresh)} className="mt-1" />
               <span><span className="text-ink">Answer general questions inside a project as a chat</span><span className="block text-[12px] text-muted">Off: everything you send in a project goes to the agent.</span></span></label>
+
+            <div className={label}>Quick chat from anywhere</div>
+            <div className="flex items-center gap-2 py-1">
+              <input value={keysNow} onChange={(e) => setKeysNow(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") saveHotkey(); }}
+                placeholder="none" spellCheck={false} className="w-44 rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none" />
+              <button onClick={saveHotkey} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover">Save</button>
+              <span className="text-[12px] text-muted">{hotkeyNote || "brings tazuna up with a new chat. Like Alt+Space or CmdOrCtrl+Shift+K; empty: off."}</span>
+            </div>
 
             <div className={label}>Panels and plugins</div>
             <div className="mb-2 text-[12px] text-muted">Panels are sandboxed: they only show the conversation's numbers. Plugins run inside tazuna's

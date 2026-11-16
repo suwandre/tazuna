@@ -2,7 +2,7 @@ import { Pencil, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Slot } from "../lib/slots";
 import { tokens, widgetUrl, type UserWidget } from "../lib/widgets";
-import { usd, type Usage } from "../lib/types";
+import { usd, type Message, type Usage } from "../lib/types";
 
 // The right rail is a slot of widgets (docs/DESKTOP.md "Customization"): tazuna's own panels are widgets too, so the
 // widget API that users and creator mode build on is the one these use. A widget with nothing real to show returns null
@@ -55,6 +55,22 @@ export const builtInWidgets: Widget[] = [
   { id: "today", title: "Today", render: (u) => u.todaySeries.length < 2 ? null : <><Spark series={u.todaySeries} /><div className={small}>${u.today.toFixed(2)} · {u.todayTurns} turns</div></> },
 ];
 
+/** Your messages in this conversation, newest last: a click scrolls the transcript to one (the prompt timeline). */
+export function Timeline({ messages }: { messages: Message[] }) {
+  const mine = messages.flatMap((m, i) => m.role === "user" && !m.queued ? [{ i, text: m.text.replace(/^\[tazuna: [^\]]*\]\n\n/, "").split("\n")[0] }] : []);
+  if (mine.length < 2) return null;
+  return (
+    <Card title={`Your messages · ${mine.length}`}>
+      <div className="-mx-1 flex max-h-56 flex-col overflow-y-auto">
+        {mine.map((m) => (
+          <button key={m.i} title={m.text} onClick={() => window.dispatchEvent(new CustomEvent("tazuna-jump", { detail: m.i }))}
+            className="truncate rounded px-1 py-[3px] text-left text-[12px] text-ink-2 hover:bg-hover">{m.text || "(attachment)"}</button>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
 /** A user's panel: its page from the tzwidget: scheme in a sandboxed frame (no same origin: it cannot reach tazuna), the
  * data posted in on every change, its height as it asks (40-600 px). */
 export function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: unknown; onEdit?: () => void; onRemove?: () => void }) {
@@ -90,10 +106,10 @@ export function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: 
 }
 
 /** The right column: the `rail` spot (tazuna's cards and the user's panels and plugins). */
-export function Rail({ usage, data }: { usage: Usage; data?: unknown }) {
+export function Rail({ usage, data, messages }: { usage: Usage; data?: unknown; messages: Message[] }) {
   return (
     <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto border-l border-line bg-sidebar px-3.5 py-4">
-      <Slot name="rail" props={{ usage, data }} />
+      <Slot name="rail" props={{ usage, data, messages }} />
     </aside>
   );
 }

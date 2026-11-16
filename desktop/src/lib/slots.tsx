@@ -80,7 +80,7 @@ export function Slot<P>({ name, props, only }: { name: string; props: P; only?: 
 
 /** The spots and what each receives (docs/PLUGINS.md lists the same). */
 export const SLOT_NAMES: Record<string, string> = {
-  "rail": "the right column's cards. props: { usage, data }",
+  "rail": "the right column's cards. props: { usage, data, messages }",
   "header.actions": "the chips and buttons at the right of the header. props: { data, folder }",
   "composer.dock": "above the message box (a bar, a dashboard). props: {} (the data: ctx.useData())",
   "composer.pills": "the controls under the message box (mode, model, effort, attach). props: { composer }",

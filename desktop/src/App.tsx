@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Approval } from "./components/Approval";
-import { Composer } from "./components/Composer";
+import { Composer, DRAFT } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
 import { ReviewView } from "./components/ReviewView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
@@ -12,14 +12,19 @@ import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import * as demo from "./lib/demo";
-import { messages as viewMessages, usage as viewUsage } from "./lib/fromView";
-import { core, inTauri, menuKeys, type Diff, type Models, type SessionRow, type View } from "./lib/tazuna";
+import { messages as viewMessages, queued, usage as viewUsage } from "./lib/fromView";
+import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Diff, type Models, type SessionRow, type View } from "./lib/tazuna";
+import { listen } from "@tauri-apps/api/event";
 
 const RECENT = "tazuna.projects";
 const recent = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT) ?? "[]"); } catch { return []; } };
+// messages queued behind a reply, per conversation, until the core takes them: after a restart they come back in the box
+const QUEUE = "tazuna.queued.";
 
 /** An open conversation: its own core, folder (null: a chat) and latest view. */
 export type Thread = { tid: string; folder: string | null; view: View | null; error: string | null; used: number;
+  /** the saved conversation it continues */
+  resume?: string;
   /** creator mode: this conversation builds ("new") or changes ("edit") a panel in its folder */
   creator?: "new" | "edit" };
 const busyView = (v: View | null) => !!v && !["Ready", "Done"].includes(v.activity);
@@ -53,6 +58,16 @@ function useCore() {
     if (now === "asking") core.notify("tazuna asks", `${title}: ${v.asking!.tool.replace(/^mcp__lean__/, "")} ${v.asking!.what}`).catch(() => {});
     else if (now === "idle" && before === "working") core.notify("tazuna is done", title).catch(() => {});
   };
+  // the queue as it stands, saved while it holds anything; dropped once it empties in this window (not on a first view)
+  const queuedN = useRef<Record<string, number>>({});
+  const keepQueue = (tid: string, v: View) => {
+    const sid = v.session_id;
+    if (!sid) return;
+    const q = busyView(v) ? queued(v) : [];
+    if (q.length) localStorage.setItem(QUEUE + sid, JSON.stringify(q));
+    else if (queuedN.current[tid]) localStorage.removeItem(QUEUE + sid);
+    queuedN.current[tid] = q.length;
+  };
   /** Too many idle conversations open: the oldest idle ones close (not the one on screen, nothing working or asking). */
   const trim = (keep: string) => {
     const idle = Object.values(live.current).filter((t) => t.tid !== keep && !busyView(t.view) && !t.view?.asking).sort((a, b) => b.used - a.used);
@@ -69,9 +84,15 @@ function useCore() {
     const already = !opts.creator && Object.values(live.current).find((t) => resume ? t.view?.session_id === resume
       : t.folder === path && !t.creator && !t.view?.blocks.some((b) => b.kind === "prompt") && !t.error);
     if (already) { show(already.tid); return; }
+    // messages it had queued when the window last closed were never sent: they go back in its box
+    const lost = resume && localStorage.getItem(QUEUE + resume);
+    if (lost) {
+      try { localStorage.setItem(DRAFT + resume, [localStorage.getItem(DRAFT + resume), ...JSON.parse(lost)].filter(Boolean).join("\n\n")); } catch { /* a broken entry is dropped */ }
+      localStorage.removeItem(QUEUE + resume);
+    }
     // randomUUID needs a secure page, which some WebKit builds do not count the app's own pages as
     const tid = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    setThreads((t) => ({ ...t, [tid]: { tid, folder: path, view: null, error: null, used: Date.now(), creator: opts.creator } }));
+    setThreads((t) => ({ ...t, [tid]: { tid, folder: path, view: null, error: null, used: Date.now(), creator: opts.creator, resume } }));
     show(tid);
     core.start(tid, path ?? undefined, path ? undefined : "chat")
       .then((dir) => { if (!path) setHome(dir); if (resume) return core.resumeIn(tid, resume); opts.then?.(tid); })
@@ -82,12 +103,15 @@ function useCore() {
     if (!inTauri) return;
     const offs = [
       core.onExit((tid) => patch(tid, { error: "tazuna stopped. The app needs tazuna 0.1.128 or later (it carries its own; TAZUNA_BIN overrides)." })),
-      core.onView((v, tid) => { tell(tid, v); patch(tid, { view: v, error: null }); }),
+      core.onView((v, tid) => { tell(tid, v); keepQueue(tid, v); patch(tid, { view: v, error: null }); }),
+      // the quick-chat shortcut brought the window up: a new chat, its box focused
+      listen("quick-chat", () => { open(null); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>("footer textarea")?.focus()); }),
       core.onModels((m, tid) => { if (tid === activeRef.current) setModels(m); }),
       core.onDiff(setDiff),
       core.onSessions((s) => setSessions((old) => ({ ...old, ...Object.fromEntries(s.dirs.map((d) => [d.dir, d.list])) }))),
     ];
     Promise.all(offs).then(() => open(null)).catch(() => {});
+    core.hotkey(localStorage.getItem(HOTKEY) ?? defaultHotkey).catch((e) => console.error(`quick-chat shortcut: ${e}`));
     return () => offs.forEach((p) => p.then((off) => off()));
   }, []);
   const pick = () => core.pickFolder().then((p) => p && open(p)).catch(() => {});
@@ -121,7 +145,9 @@ function useCore() {
     patch(t.tid, { view: null, error: null });
     core.start(t.tid, t.folder ?? undefined, t.folder ? undefined : "chat").catch((e) => patch(t.tid, { error: String(e) }));
   };
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator };
+  // where the box's draft is kept: the conversation's id once known (a resumed one's from the start), else its folder's
+  const draftKey = cur ? view?.session_id ?? cur.resume ?? `new:${folder ?? "chat"}` : undefined;
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey };
 }
 
 function useTheme() {
@@ -179,7 +205,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator } = useCore();
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey } = useCore();
   useEffect(() => setEditing(null), [active]);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
   const [userWidgets, setUserWidgets] = useState<UserWidget[]>([]);
@@ -272,8 +298,9 @@ export default function App() {
   /** A panel changed with tazuna: a conversation in its folder; the first message carries the specification. */
   const editPanel = (id: string) => {
     widgets.path(id).then((path) => {
+      // the new conversation's box starts with this (its draft, before it has an id)
+      localStorage.setItem(`${DRAFT}new:${path}`, "Change this panel: ");
       open(path, undefined, { creator: "edit", then: (tid) => { core.allowRootIn(tid, path).catch(() => {}); } });
-      setDraft({ text: "Change this panel: ", n: Date.now() });
     }).catch(() => {});
   };
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
@@ -368,7 +395,7 @@ export default function App() {
         )}
         {codeView && <DiffView diff={{ turn: 0, path: `${codeView.title} · plugin.js`, text: codeView.text }} plain onClose={() => setCodeView(null)} />}
         {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
-        <Composer session={session} threadCost={usage.threadCost} busy={busy}
+        <Composer key={active} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
           onSend={(text) => {
             if (text.startsWith("/create ")) { createPanel(text.slice(8).trim()); return; }
             if (creator === "edit" && !view?.blocks.some((b) => b.kind === "prompt")) { core.send(creatorMessage(text, true), true).catch(() => {}); return; }
@@ -391,7 +418,7 @@ export default function App() {
           onMode={inTauri ? (m) => core.setMode(m) : undefined}
           onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined} />
       </main>
-      <Rail usage={usage} data={data} />
+      <Rail usage={usage} data={data} messages={messages} />
       <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}

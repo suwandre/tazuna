@@ -1,7 +1,7 @@
 // tazuna's own parts, registered in the window's spots the same way a plugin registers (docs/PLUGINS.md): a plugin can
 // replace any of them by registering its id, or hide it. Imported once by main.tsx.
 import { AttachButton, EffortPill, ModelPill, ModePill } from "./components/Composer";
-import { Card, builtInWidgets } from "./components/Rail";
+import { Card, Timeline, builtInWidgets } from "./components/Rail";
 import { NewChatButton, OpenFolderButton, SettingsRow } from "./components/Sidebar";
 import { Step } from "./components/Step";
 import { MessageChange, MessageMeta, UserMessage } from "./components/Transcript";
@@ -13,6 +13,8 @@ const own = "tazuna";
 
 builtInWidgets.forEach((w, i) => slots.register({ id: `rail.${w.id}`, slot: "rail", order: i * 10, source: own,
   render: ({ usage }: { usage: Usage }) => { const body = w.render(usage); return body == null ? null : <Card title={w.title}>{body}</Card>; } }));
+
+slots.register({ id: "rail.timeline", slot: "rail", order: 50, source: own, render: Timeline });
 
 slots.register({ id: "composer.mode", slot: "composer.pills", order: 10, source: own, render: ModePill });
 slots.register({ id: "composer.model", slot: "composer.pills", order: 20, source: own, render: ModelPill });

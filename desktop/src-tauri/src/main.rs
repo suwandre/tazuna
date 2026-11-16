@@ -372,6 +372,30 @@ var r=document.documentElement.style;for(var k in d.tokens)r.setProperty(k,d.tok
 {body}"))
 }
 
+/// The quick-chat shortcut from anywhere (Settings; empty: none): the window comes to the front and opens a new chat. A
+/// chord another app holds, or one that is not a chord, fails here and Settings says so.
+#[tauri::command]
+fn hotkey(app: AppHandle, keys: String) -> Result<(), String> {
+    use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+    let gs = app.global_shortcut();
+    gs.unregister_all().map_err(|e| e.to_string())?;
+    if keys.trim().is_empty() {
+        return Ok(());
+    }
+    gs.on_shortcut(keys.trim(), |app, _, e| {
+        if e.state == ShortcutState::Pressed {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = (w.unminimize(), w.show(), w.set_focus());
+            }
+            let _ = app.emit("quick-chat", ());
+        }
+    })
+    .map_err(|e| {
+        eprintln!("tazuna desktop: the quick-chat shortcut {keys}: {e}");
+        e.to_string()
+    })
+}
+
 /// A system notification (a conversation in the background finished or asks): plain text, shown by the system.
 #[tauri::command]
 fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
@@ -480,6 +504,7 @@ fn main() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -493,7 +518,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, hotkey, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 let core = w.state::<Core>();

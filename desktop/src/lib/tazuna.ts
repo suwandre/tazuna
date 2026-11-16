@@ -99,6 +99,8 @@ export const core = {
   send: (text: string, agent = false) => to("send", { text, agent }),
   trust: () => to("trust"),
   pickFolder: () => invoke<string | null>("pick_folder"),
+  /** the quick-chat shortcut from anywhere ("Alt+Space"; empty: none); fails when another app holds it */
+  hotkey: (keys: string) => invoke("hotkey", { keys }),
   pickFiles: () => invoke<string[]>("pick_files"),
   /** files dropped on the window, as paths */
   onDrop: (cb: (paths: string[]) => void) => import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
@@ -129,6 +131,10 @@ export const core = {
 
 /** A path as the core reads it in a message: quoted when it has a space (src/live.rs words). */
 export const quotePath = (p: string) => (/\s/.test(p) ? `"${p}"` : p);
+
+/** The quick-chat shortcut from anywhere, as Settings saved it (empty: none). */
+export const HOTKEY = "tazuna.hotkey";
+export const defaultHotkey = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac") ? "Alt+Space" : "Ctrl+Alt+Space";
 
 /** On macOS in the app the menu bar owns the shortcuts (its items send `menu`); elsewhere the window's key handlers do. */
 export const menuKeys = inTauri && navigator.userAgent.includes("Mac");

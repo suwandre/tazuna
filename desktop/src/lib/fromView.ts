@@ -59,6 +59,9 @@ export function messages(v: View): Message[] {
   return out;
 }
 
+/** The messages waiting behind the reply now running (sent during it; the core holds them until it ends). */
+export const queued = (v: View) => messages(v).flatMap((m) => (m.role === "user" && m.queued ? [m.text] : []));
+
 export function usage(v: View): Usage {
   const win = v.context_window ?? 200000;
   const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);

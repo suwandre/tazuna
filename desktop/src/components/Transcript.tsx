@@ -71,6 +71,15 @@ export function Transcript({ messages, activity, ...rest }: Props) {
   const [limit, setLimit] = useState(40);
   const hidden = Math.max(0, messages.length - limit);
   useEffect(() => { if (stick.current && box.current) box.current.scrollTop = box.current.scrollHeight; });
+  // the rail's list of your messages (or a plugin) asks for message i with a "tazuna-jump" event: drawn if it was not, then
+  // scrolled to
+  const [jump, setJump] = useState<number | null>(null);
+  useEffect(() => {
+    const on = (e: Event) => { const i = Number((e as CustomEvent).detail); if (!(i >= 0)) return; stick.current = false; setLimit((l) => Math.max(l, messages.length - i)); setJump(i); };
+    window.addEventListener("tazuna-jump", on);
+    return () => window.removeEventListener("tazuna-jump", on);
+  }, [messages.length]);
+  useEffect(() => { if (jump == null) return; box.current?.querySelector(`[data-msg="${jump}"]`)?.scrollIntoView({ block: "start" }); setJump(null); }, [jump]);
   return (
     <TranscriptCtx.Provider value={rest}>
     <section ref={box} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}
@@ -83,7 +92,7 @@ export function Transcript({ messages, activity, ...rest }: Props) {
         </div>
       )}
       {messages.slice(hidden).map((m, i, shown) => (
-        <div key={hidden + i} className={`group mx-auto mb-[22px] max-w-[700px] px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
+        <div key={hidden + i} data-msg={hidden + i} className={`group mx-auto mb-[22px] max-w-[700px] px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
           {m.role === "user" ? <Slot name="message.user" props={{ message: m, index: hidden + i }} only /> : (
             <>
               <div className="mb-1.5 flex items-center gap-2.5 text-[12px] font-medium text-faint">

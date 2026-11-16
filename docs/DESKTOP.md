@@ -29,7 +29,10 @@ to the box, the rest fades, and sending goes back to before it, with the files t
 changes, the branch against its base, or one turn, file by file and piece by piece; each piece staged or reverted; a click
 on a line leaves a comment, and the comments go to the agent in one message. CI opens the app on all three systems on each run; on Linux it needed a D-Bus
 session under Xvfb (a desktop has one), not a change to the app. 0.1.8: the notification plugin's own permission check is
-allowed (its script was refused, so notifications could stay silent), and tazuna asks for the permission once.
+allowed (its script was refused, so notifications could stay silent), and tazuna asks for the permission once. 0.1.15:
+each conversation keeps its own draft in the box, through a restart; messages queued behind a reply when the window closed
+come back in that conversation's box; "Your messages" in the rail lists what you sent and scrolls to it; a shortcut from
+anywhere (Option-Space on macOS, Ctrl-Alt-Space elsewhere; Settings changes or clears it) brings the window up with a new chat.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
