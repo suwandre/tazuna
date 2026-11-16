@@ -17,8 +17,8 @@ export const widgets = {
   create: (id: string) => invoke<string>("widgets_new", { id }),
   path: (id: string) => invoke<string>("widgets_path", { id }),
   remove: (id: string) => invoke("widgets_remove", { id }),
-  /** a plugin's code as text (to read before enabling it) */
-  code: (id: string) => invoke<string>("plugins_code", { id }),
+  /** a plugin's code as text with the fingerprint of those bytes (Enable turns on exactly what was read) */
+  code: (id: string) => invoke<{ code: string; print: string }>("plugins_code", { id }),
   /** a plugin on (for the code it had when listed) or off */
   enable: (id: string, print: string, on: boolean) => invoke("plugins_enable", { id, print, on }),
 };
@@ -87,9 +87,14 @@ export function dryRun(id: string): Promise<DryRun> {
     frame.sandbox.add("allow-scripts");
     frame.style.display = "none";
     const finish = (r: DryRun) => { window.removeEventListener("message", on); clearTimeout(timer); frame.remove(); resolve(r); };
+    // the first well-formed result only; it is what the plugin's own page reports (the plugin runs there too)
+    const list = (v: unknown) => Array.isArray(v) ? v.slice(0, 50) : [];
     const on = (e: MessageEvent) => {
-      if (e.source !== frame.contentWindow || e.data?.type !== "tazuna-dryrun" || e.data.id !== id) return;
-      finish({ error: e.data.error ?? null, rec: e.data.rec });
+      const d = e.data;
+      if (e.source !== frame.contentWindow || d?.type !== "tazuna-dryrun" || d.id !== id || typeof d.rec !== "object" || !d.rec) return;
+      const rec = { slots: list(d.rec.slots).filter((x: unknown) => Array.isArray(x) && x.length === 2).map((x: unknown[]) => [String(x[0]), String(x[1])] as [string, string]),
+        hidden: list(d.rec.hidden).map(String), palette: list(d.rec.palette).map(String), theme: Number(d.rec.theme) || 0, css: Number(d.rec.css) || 0 };
+      finish({ error: d.error == null ? null : String(d.error).slice(0, 500), rec });
     };
     const timer = setTimeout(() => finish({ error: "it did not finish within 5 s", rec: { slots: [], hidden: [], palette: [], theme: 0, css: 0 } }), 5000);
     window.addEventListener("message", on);

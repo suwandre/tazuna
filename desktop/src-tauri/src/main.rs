@@ -249,13 +249,15 @@ fn plugins_enable(id: String, print: String, on: bool) -> Result<(), String> {
     save_approvals(&a)
 }
 
-/// A plugin's code as text, to read before enabling it.
+/// A plugin's code as text with the fingerprint of those same bytes: what the user reads is what Enable turns on
+/// (plugins_enable refuses if the file changed since).
 #[tauri::command]
-fn plugins_code(id: String) -> Result<String, String> {
+fn plugins_code(id: String) -> Result<serde_json::Value, String> {
     if !widget_id_ok(&id) {
         return Err(format!("not a plugin id: {id}"));
     }
-    std::fs::read_to_string(widgets_dir().join(&id).join("plugin.js")).map_err(|e| e.to_string())
+    let bytes = std::fs::read(widgets_dir().join(&id).join("plugin.js")).map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({"code": String::from_utf8_lossy(&bytes), "print": code_print(&bytes)}))
 }
 
 /// A panel's folder (for editing it with tazuna).
@@ -295,31 +297,40 @@ fn plugin_code(path: &str) -> (u16, String) {
 /// Creator mode's check, before the user enables anything (security review: agent-written code must not run in the
 /// window unseen). The default export is found by turning `export default` into an assignment.
 fn dry_run_page(id: &str) -> (u16, String) {
+    if !widget_id_ok(id) || !widgets_dir().join(id).join("plugin.js").is_file() {
+        return (404, String::new());
+    }
+    // the stand-in ctx records into a closure; the plugin's code loads from its own address (never pasted into this
+    // page); the result is posted once. The plugin runs in this same page, so what it registers is self-reported: the
+    // window says so and points to the code.
+    let page = r#"<!doctype html><meta charset="utf-8"><script>
+(function(){var rec={slots:[],hidden:[],palette:[],theme:0,css:0},sent=false,noop=function(){},
+h=function(){return null},R={createElement:h,useState:function(v){return[v,noop]},useEffect:noop,useMemo:function(f){return f()},useRef:function(v){return{current:v}},useCallback:function(f){return f},Fragment:"f"};
+window.__ctx={api:1,id:ID,React:R,h:h,useData:function(){return null},
+slots:{register:function(s,e){rec.slots.push([String(s),String(e&&e.id)]);},hide:function(i){rec.hidden.push(String(i))},map:function(){return{}}},
+actions:{send:noop,newChat:noop,setMode:noop,notify:noop,openLink:noop,review:noop},
+theme:{set:function(){rec.theme++},css:function(){rec.css++}},palette:{add:function(a){rec.palette.push(String(a&&a.id))}},storage:{get:function(){return null},set:noop}};
+var post=parent.postMessage.bind(parent);
+window.__done=function(err){if(sent)return;sent=true;post({type:"tazuna-dryrun",id:ID,error:err,rec:JSON.parse(JSON.stringify(rec))},"*")};
+window.addEventListener("error",function(e){window.__done(String(e.message||e))});})();
+</script><script src="../__dryrun-code/IDRAW"></script><script>
+try{if(typeof window.__plugin!=="function")throw new Error("plugin.js has no default export function(ctx)");var r=window.__plugin(window.__ctx);
+Promise.resolve(r).then(function(){window.__done(null)},function(e){window.__done(String(e&&e.message||e))});}catch(e){window.__done(String(e&&e.message||e))}
+</script>"#;
+    (200, page.replace("IDRAW", id).replace("ID", &serde_json::json!(id).to_string()))
+}
+
+/// tzwidget://localhost/__dryrun-code/<id>: a plugin's code for its dry run, as a classic script whose default export
+/// becomes window.__plugin.
+fn dry_run_code(path: &str) -> (u16, String) {
+    let id = path.trim_matches('/').trim_start_matches("__dryrun-code/");
     if !widget_id_ok(id) {
         return (404, String::new());
     }
-    let Ok(code) = std::fs::read_to_string(widgets_dir().join(id).join("plugin.js")) else { return (404, String::new()) };
-    if code.len() > 1 << 20 {
-        return (413, String::new());
+    match std::fs::read_to_string(widgets_dir().join(id).join("plugin.js")) {
+        Ok(code) if code.len() <= 1 << 20 => (200, code.replacen("export default", "window.__plugin =", 1)),
+        _ => (404, String::new()),
     }
-    let body = code.replacen("export default", "window.__plugin =", 1).replace("</script", "<\\/script");
-    let harness = r#"<!doctype html><meta charset="utf-8"><script>
-var rec={slots:[],hidden:[],palette:[],theme:0,css:0},noop=function(){},
-h=function(){return null},R={createElement:h,useState:function(v){return[v,noop]},useEffect:noop,useMemo:function(f){return f()},useRef:function(v){return{current:v}},useCallback:function(f){return f},Fragment:"f"};
-var ctx={api:1,id:ID,React:R,h:h,useData:function(){return null},
-slots:{register:function(s,e){rec.slots.push([s,e&&e.id]);},hide:function(i){rec.hidden.push(i)},map:function(){return{}}},
-actions:{send:noop,newChat:noop,setMode:noop,notify:noop,openLink:noop,review:noop},
-theme:{set:function(){rec.theme++},css:function(){rec.css++}},palette:{add:function(a){rec.palette.push(a&&a.id)}},storage:{get:function(){return null},set:noop}};
-function done(err){parent.postMessage({type:"tazuna-dryrun",id:ID,error:err,rec:rec},"*")}
-window.addEventListener("error",function(e){done(String(e.message||e))});
-</script><script>
-"#;
-    let tail = r#"
-</script><script>
-try{if(typeof window.__plugin!=="function")throw new Error("plugin.js has no default export function(ctx)");var r=window.__plugin(ctx);
-Promise.resolve(r).then(function(){done(null)},function(e){done(String(e&&e.message||e))});}catch(e){done(String(e&&e.message||e))}
-</script>"#;
-    (200, format!("{}{body}{tail}", harness.replace("ID", &serde_json::json!(id).to_string())))
 }
 
 /// The page tzwidget://localhost/<id> serves: the panel's index.html after a small preamble (the design tokens, filled
@@ -328,6 +339,9 @@ Promise.resolve(r).then(function(){done(null)},function(e){done(String(e&&e.mess
 fn widget_page(path: &str) -> (u16, String) {
     if let Some(id) = path.trim_matches('/').strip_prefix("__dryrun/") {
         return dry_run_page(id);
+    }
+    if path.trim_matches('/').starts_with("__dryrun-code/") {
+        return (404, String::new()); // served as JavaScript by widget_response
     }
     let id = path.trim_matches('/');
     if !widget_id_ok(id) {
@@ -430,10 +444,20 @@ fn menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 fn main() {
     tauri::Builder::default()
         .register_uri_scheme_protocol("tzwidget", |_ctx, req| {
-            let (status, body) = widget_page(req.uri().path());
-            tauri::http::Response::builder().status(status)
-                .header("Content-Type", "text/html; charset=utf-8")
-                .header("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:")
+            let path = req.uri().path().to_string();
+            let p = path.trim_matches('/');
+            // a plugin's code for its dry run is JavaScript; the dry-run page may load it from this scheme; panels may not
+            let (status, body, kind, csp) = if p.starts_with("__dryrun-code/") {
+                let (st, b) = dry_run_code(&path);
+                (st, b, "text/javascript; charset=utf-8", "default-src 'none'")
+            } else if p.starts_with("__dryrun/") {
+                let (st, b) = widget_page(&path);
+                (st, b, "text/html; charset=utf-8", "default-src 'none'; script-src 'unsafe-inline' tzwidget: http://tzwidget.localhost")
+            } else {
+                let (st, b) = widget_page(&path);
+                (st, b, "text/html; charset=utf-8", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:")
+            };
+            tauri::http::Response::builder().status(status).header("Content-Type", kind).header("Content-Security-Policy", csp)
                 .body(body.into_bytes()).unwrap_or_default()
         })
         .register_uri_scheme_protocol("tzplugin", |_ctx, req| {
@@ -488,7 +512,8 @@ mod tests {
         unsafe { std::env::set_var("HOME", &home) };
         let (status, html) = super::dry_run_page("demo");
         assert_eq!(status, 200);
-        assert!(html.contains("window.__plugin =") && !html.contains("export default"), "{html}");
+        assert!(html.contains(r#"<script src="../__dryrun-code/demo">"#) && !html.contains("ctx.slots.register('composer.dock'"), "the code is not pasted in: {html}");
+        assert!(super::dry_run_code("/__dryrun-code/demo").1.starts_with("window.__plugin ="));
         assert_eq!(super::dry_run_page("../etc").0, 404);
         if let Ok(out) = std::env::var("TAZUNA_DRYRUN_OUT") {
             std::fs::write(out, &html).unwrap();

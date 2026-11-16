@@ -217,7 +217,7 @@ export default function App() {
   // nowhere" back to the agent, up to two rounds (DeepSeek Harness's creator reports done for plugins that never loaded).
   // A plugin that passes waits for the user: what it would do, its code, and Enable.
   const creatorRuns = useRef<Record<string, { state: string; rounds: number }>>({});
-  const [ready, setReady] = useState<Record<string, { id: string; title: string; print: string; summary: string } | null>>({});
+  const [ready, setReady] = useState<Record<string, { id: string; title: string; print: string; code: string; summary: string } | null>>({});
   const [codeView, setCodeView] = useState<{ title: string; text: string } | null>(null);
   const verifyCreation = async (t: Thread, run: { rounds: number }) => {
     const id = t.folder?.split(/[\\/]/).pop();
@@ -228,11 +228,13 @@ export default function App() {
     let problem: string | null = null;
     if (!w) problem = "Nothing is in the folder that tazuna can load: no index.html (a panel) and no plugin.js (a plugin), or the files are empty.";
     else if (w.kind === "plugin") {
+      // the code and its fingerprint from one read: what the user reads is what Enable turns on
+      const read = await widgets.code(id).catch(() => null);
       const r = await dryRun(id);
       const said = summary(r.rec);
       if (r.error) problem = `It failed when run: ${r.error}`;
       else if (!said) problem = "It ran but registers nothing: no spot entry, no Cmd-K action, no style and no hidden part. Check the spot names against the specification.";
-      else if (w.state !== "enabled") setReady((m) => ({ ...m, [t.tid]: { id, title: w.title, print: w.print!, summary: said } }));
+      else if (read && (w.state !== "enabled" || w.print !== read.print)) setReady((m) => ({ ...m, [t.tid]: { id, title: w.title, print: read.print, code: read.code, summary: said } }));
     }
     if (problem && run.rounds < 2) {
       run.rounds++;
@@ -357,9 +359,9 @@ export default function App() {
         )}
         {ready[active] && (
           <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] text-ink-2">
-            <span className="flex-1"><span className="font-medium text-ink">{ready[active]!.title}</span> is ready: it {ready[active]!.summary}.
-              <span className="block text-[12px] text-muted">A plugin runs inside tazuna's window and can send messages to the agent: enable it if you want it.</span></span>
-            <button onClick={() => widgets.code(ready[active]!.id).then((text) => setCodeView({ title: ready[active]!.title, text })).catch(() => {})}
+            <span className="flex-1"><span className="font-medium text-ink">{ready[active]!.title}</span> is ready. Its own code says it {ready[active]!.summary}.
+              <span className="block text-[12px] text-muted">That is self-reported: read the code to be sure. A plugin runs inside tazuna's window and can send messages to the agent.</span></span>
+            <button onClick={() => setCodeView({ title: ready[active]!.title, text: ready[active]!.code })}
               className="rounded-md border border-line px-2.5 py-1 text-ink-2 hover:bg-hover">Code</button>
             <button onClick={() => enableReady(active)} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Enable</button>
           </div>
