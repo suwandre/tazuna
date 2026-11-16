@@ -3,10 +3,17 @@ export type Pr = {
   none?: boolean; error?: string; branch?: string;
   number?: number; title?: string; state: string; url?: string; isDraft?: boolean; headRefName?: string; baseRefName?: string; reviewDecision?: string;
   statusCheckRollup?: { __typename?: string; name?: string; context?: string; status?: string; conclusion?: string; state?: string; detailsUrl?: string; targetUrl?: string }[];
-  reviews?: { author?: { login: string }; state: string; body: string }[];
-  comments?: { author?: { login: string }; body: string }[];
-  inline?: { author?: string; path: string; line?: number; body: string }[];
+  reviews?: { author?: { login: string }; authorAssociation?: string; state: string; body: string }[];
+  comments?: { author?: { login: string }; authorAssociation?: string; body: string }[];
+  inline?: { author?: string; association?: string; path: string; line?: number; body: string }[];
 };
+
+/** People with write access to the repository: only their comments go to the agent (anyone can comment on a public PR,
+ * and a comment could carry instructions; security review). */
+export const fromCollaborator = (association?: string) => ["OWNER", "MEMBER", "COLLABORATOR"].includes((association ?? "").toUpperCase());
+
+/** A name from GitHub put in a message: one line, short. */
+export const oneLine = (s: string, n = 80) => s.replace(/[\r\n]+/g, " ").slice(0, n);
 
 export type Check = { name: string; state: "passed" | "failed" | "running" | "skipped"; url?: string };
 

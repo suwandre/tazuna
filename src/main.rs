@@ -1463,17 +1463,21 @@ fn app_server(a: &Args) -> Result<()> {
                             s.apply(&json!({"type": "harness_notice", "text": text, "error": false}), at);
                         }
                         // a new worktree of this project for a conversation of its own (worktree.rs). The project's setup
-                        // script runs only when the window says so ("run_setup": the user's answer; null: ask first)
+                        // script runs only in a trusted project (it counts as code that needs trust, route.rs) and when the
+                        // window says the user agreed after seeing it ("run_setup"; null: ask first, with the script's start)
                         Some("worktree_new") => {
                             let base = labels::dir()?;
                             let has_setup = cwd.join(".tazuna/setup.sh").is_file();
-                            if has_setup && cmd["run_setup"].is_null() {
+                            let trusted = untrusted.is_none();
+                            if has_setup && trusted && cmd["run_setup"].is_null() {
+                                let script: String = std::fs::read_to_string(cwd.join(".tazuna/setup.sh")).unwrap_or_default().lines().take(20)
+                                    .collect::<Vec<_>>().join("\n").chars().take(2000).collect();
                                 let mut o = out.lock();
-                                let _ = writeln!(o, "{}", json!({"type": "worktree", "ask_setup": true}));
+                                let _ = writeln!(o, "{}", json!({"type": "worktree", "ask_setup": true, "script": script}));
                                 let _ = o.flush();
                                 continue;
                             }
-                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
                             let name = format!("wt-{}", radix36(now));
                             let reply = match worktree::create(&cwd, &worktree::root(&base), &name) {
                                 Ok(wt) => {
@@ -1481,9 +1485,10 @@ fn app_server(a: &Args) -> Result<()> {
                                     if trust::is_trusted(&base, &cwd) {
                                         let _ = trust::trust(&base, &wt.path);
                                     }
-                                    let setup = (cmd["run_setup"] == true).then(|| worktree::setup(&cwd, &wt)).flatten();
+                                    let setup = (trusted && cmd["run_setup"] == true).then(|| worktree::setup(&cwd, &wt)).flatten();
                                     json!({"type": "worktree", "path": wt.path, "branch": wt.branch, "port": wt.port, "copied": wt.copied,
-                                        "setup": setup.map(|(ok, tail)| json!({"ok": ok, "tail": tail}))})
+                                        "setup": setup.map(|(ok, tail)| json!({"ok": ok, "tail": tail})),
+                                        "setup_skipped": (has_setup && !trusted).then_some("the project is not trusted, so its .tazuna/setup.sh did not run (trust the folder first)")})
                                 }
                                 Err(e) => json!({"type": "worktree", "error": format!("{e:#}")}),
                             };

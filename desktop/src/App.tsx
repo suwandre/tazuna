@@ -365,18 +365,19 @@ export default function App() {
   useEffect(() => { if (inTauri && folder && view) core.prIn(active).catch(() => {}); }, [active, folder, !!view, replies]);
   const pr = prs[active];
   // worktrees (src/worktree.rs): a new conversation in a worktree of this project; its setup script runs on the user's word
-  const [wt, setWt] = useState<{ ask?: boolean; error?: string; remove?: { path: string; dirty?: string } } | null>(null);
+  const [wt, setWt] = useState<{ ask?: boolean; script?: string; error?: string; remove?: { path: string; dirty?: string } } | null>(null);
   const [wtNotes, setWtNotes] = useState<Record<string, string>>({});
   const inWorktree = !!folder && isWorktree(folder);
   useEffect(() => {
     if (!inTauri) return;
     const offs = [
       core.onWorktree((w) => {
-        if (w.ask_setup) { setWt({ ask: true }); return; }
+        if (w.ask_setup) { setWt({ ask: true, script: w.script }); return; }
         if (w.error || !w.path) { setWt({ error: w.error ?? "no worktree made" }); return; }
         setWt(null);
         const parts = [`Branch ${w.branch}`, `ports ${w.port}-${(w.port ?? 0) + 9} (TAZUNA_PORT)`, w.copied?.length ? `copied ${w.copied.join(", ")}` : "no local files to copy"];
         if (w.setup) parts.push(w.setup.ok ? "setup ran" : `setup failed: ${w.setup.tail.split("\n").slice(-2).join(" ")}`);
+        if (w.setup_skipped) parts.push(w.setup_skipped);
         setWtNotes((m) => ({ ...m, [w.path!]: parts.join(" · ") }));
         open(w.path);
       }),
@@ -495,7 +496,8 @@ export default function App() {
         )}
         {wt && (
           <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
-            {wt.ask && <><span className="flex-1">This project has <span className="font-mono">.tazuna/setup.sh</span>. Run it in the new worktree (installs and the like)?</span>
+            {wt.ask && <><span className="flex-1">This project has <span className="font-mono">.tazuna/setup.sh</span>. Run it in the new worktree (installs and the like)?
+              {wt.script && <pre className="mt-1.5 max-h-40 overflow-auto rounded bg-field px-2 py-1.5 font-mono text-[11.5px] text-ink">{wt.script}</pre>}</span>
               <button onClick={() => core.worktreeNew(true).catch(() => {})} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Run it</button>
               <button onClick={() => core.worktreeNew(false).catch(() => {})} className="rounded-md border border-line px-2.5 py-1 text-ink-2 hover:bg-hover">Skip</button></>}
             {wt.error && <span className="flex-1 text-bad">The worktree was not made: {wt.error}</span>}

@@ -58,6 +58,8 @@ pub struct RepoConfig {
     pub mcp: bool,
     /// Anything else under a `.claude/` directory (hook scripts, output styles, ...): unknown, so it needs trust.
     pub other: usize,
+    /// `.tazuna/setup.sh`: the desktop runs it in a new worktree (worktree.rs), so it needs trust like a hook.
+    pub setup: bool,
 }
 
 impl RepoConfig {
@@ -95,6 +97,7 @@ impl RepoConfig {
         self.commands += count(".claude/commands");
         self.agents += count(".claude/agents");
         self.mcp |= file(".mcp.json");
+        self.setup |= file(".tazuna/setup.sh");
         let known = ["CLAUDE.md", "settings.json", "settings.local.json", "skills", "commands", "agents"];
         self.other += std::fs::read_dir(dir.join(".claude"))
             .map(|r| r.flatten().filter(|e| !known.contains(&e.file_name().to_string_lossy().as_ref())).count())
@@ -108,7 +111,7 @@ impl RepoConfig {
     /// Fail closed: any settings file can run code (hooks, apiKeyHelper, statusLine, env, plugins, ...), and so can skills
     /// (they ship scripts), commands, subagent definitions and MCP servers. Only plain instruction files are inert.
     pub fn runs_code(&self) -> bool {
-        self.settings || self.skills > 0 || self.commands > 0 || self.agents > 0 || self.mcp || self.other > 0
+        self.settings || self.skills > 0 || self.commands > 0 || self.agents > 0 || self.mcp || self.other > 0 || self.setup
     }
 
     pub fn summary(&self) -> String {
@@ -132,6 +135,9 @@ impl RepoConfig {
         }
         if self.other > 0 {
             parts.push(format!("{} other .claude entries", self.other));
+        }
+        if self.setup {
+            parts.push("a worktree setup script".into());
         }
         parts.join(", ")
     }
@@ -218,6 +224,11 @@ mod tests {
         std::fs::create_dir_all(dir.join(".claude/hooks")).unwrap();
         assert!(RepoConfig::read(&dir).runs_code(), "unknown .claude entries (hook scripts) need trust");
         std::fs::remove_dir_all(dir.join(".claude/hooks")).unwrap();
+        std::fs::create_dir_all(dir.join(".tazuna")).unwrap();
+        std::fs::write(dir.join(".tazuna/setup.sh"), "npm install\n").unwrap();
+        let c = RepoConfig::read(&dir);
+        assert!(c.runs_code() && c.summary().ends_with("a worktree setup script"), "the desktop runs it in a new worktree: it needs trust");
+        std::fs::remove_dir_all(dir.join(".tazuna")).unwrap();
         std::fs::write(dir.join(".claude/settings.json"), "{}").unwrap();
         std::fs::create_dir_all(dir.join("pkg/sub")).unwrap();
         assert!(RepoConfig::read(&dir.join("pkg/sub")).runs_code(), "config in a parent directory of the repo counts");

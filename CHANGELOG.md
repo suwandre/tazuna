@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.144 (2026-11-16): worktrees, hardened (security review)
+
+- A project's `.tazuna/setup.sh` counts as code that needs trust (the untrusted banner names it), and the app server
+  runs it in a new worktree only when the project is trusted and the window brings the user's yes; the question shows the
+  script's first lines. An untrusted project's worktree is made without it, with a note why. Before, the window's yes
+  alone ran it. Checked: untrusted, even a forged yes ran nothing; trusted, it asked with the script and ran on yes.
+- Files copied into a new worktree are read and written inside their trees only: the source a plain file whose real
+  path is in the project, the target's folder real and in the worktree, the target new. A repository's tracked link to a
+  folder outside (say ~/.ssh) had made source and target one file, which the copy truncated (test).
+- Worktree names carry milliseconds (two made in one second collided), and removing a repository's last worktree takes
+  its folder under the data folder along.
+- The desktop's PR panel sends the agent only comments from people with write access (owner, member, collaborator),
+  quoted between markers as data, not instructions; check names go in as one short line.
+- No other metric moves; 180 tests.
+
 ## 0.1.143 (2026-11-16): worktrees, pull requests, and CheaperInference as a provider
 
 - src/worktree.rs and app-server ops for the desktop: `worktree_new` makes branch `tazuna/wt-<time>` off the project's

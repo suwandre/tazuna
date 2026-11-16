@@ -47,6 +47,27 @@ fn local_files(project: &Path) -> Vec<String> {
     out
 }
 
+/// Copies `rel` from the project into the worktree, both ends inside their trees: the source a plain file (not a link)
+/// whose real path is in the project, the target's folder real and in the worktree, the target new (security review: a
+/// repository's tracked link to a folder outside, say ~/.ssh, made source and target one file, and the copy truncated it).
+fn copy_inside(top: &Path, wt: &Path, rel: &str) -> Result<()> {
+    let (top_real, wt_real) = (top.canonicalize()?, wt.canonicalize()?);
+    let src = top.join(rel);
+    if !std::fs::symlink_metadata(&src)?.file_type().is_file() || !src.canonicalize()?.starts_with(&top_real) {
+        bail!("{rel}: not a plain file inside the project");
+    }
+    let to = wt.join(rel);
+    let dir = to.parent().context("no folder")?;
+    std::fs::create_dir_all(dir)?;
+    if !dir.canonicalize()?.starts_with(&wt_real) {
+        bail!("{rel}: its folder leads out of the worktree");
+    }
+    let data = std::fs::read(&src)?;
+    // create_new: an existing file or link at the target is never written through
+    std::io::Write::write_all(&mut std::fs::OpenOptions::new().write(true).create_new(true).open(&to)?, &data)?;
+    Ok(())
+}
+
 pub struct Made {
     pub path: PathBuf,
     pub branch: String,
@@ -68,11 +89,7 @@ pub fn create(project: &Path, root: &Path, name: &str) -> Result<Made> {
     git(&top, &["worktree", "add", "-b", &branch, &path.to_string_lossy(), "HEAD"])?;
     let mut copied = vec![];
     for f in local_files(&top) {
-        let to = path.join(&f);
-        if let Some(d) = to.parent() {
-            let _ = std::fs::create_dir_all(d);
-        }
-        if std::fs::copy(top.join(&f), &to).is_ok() {
+        if copy_inside(&top, &path, &f).is_ok() {
             copied.push(f);
         }
     }
@@ -122,7 +139,12 @@ pub fn remove(project: &Path, root: &Path, path: &Path, force: bool) -> Result<(
     }
     let p = real.to_string_lossy();
     let args: Vec<&str> = if force { vec!["worktree", "remove", "--force", &p] } else { vec!["worktree", "remove", &p] };
-    git(project, &args).map(|_| ())
+    git(project, &args)?;
+    // the repository's folder under the root goes with its last worktree
+    if let Some(parent) = real.parent().filter(|p| *p != root) {
+        let _ = std::fs::remove_dir(parent);
+    }
+    Ok(())
 }
 
 /// The pull request of the branch checked out in `dir`, as `gh` sees it: number, title, state, checks, reviews and
@@ -143,7 +165,8 @@ pub fn pr(dir: &Path) -> Value {
     let inline = Command::new("gh").args(["api", &format!("repos/{{owner}}/{{repo}}/pulls/{n}/comments"), "--paginate"]).current_dir(dir).output()
         .ok().filter(|o| o.status.success()).and_then(|o| serde_json::from_slice::<Value>(&o.stdout).ok()).unwrap_or(json!([]));
     v["inline"] = json!(inline.as_array().into_iter().flatten().take(100).map(|c| json!({
-        "author": c["user"]["login"], "path": c["path"], "line": c["line"].as_u64().or(c["original_line"].as_u64()), "body": c["body"], "url": c["html_url"],
+        "author": c["user"]["login"], "association": c["author_association"], "path": c["path"], "line": c["line"].as_u64().or(c["original_line"].as_u64()),
+        "body": c["body"], "url": c["html_url"],
     })).collect::<Vec<_>>());
     v
 }
@@ -178,6 +201,21 @@ mod tests {
         assert_eq!(std::fs::read_to_string(wt.path.join(".env")).unwrap(), "KEY=1\n");
         assert!(wt.path.join("a.txt").exists() && (4100..8100).contains(&wt.port));
         assert!(super::create(&repo, &root, "one").is_err(), "the same name twice");
+        // a tracked link to a folder outside: a file named through it is neither read nor written
+        #[cfg(unix)]
+        {
+            let outside = base.join("outside");
+            std::fs::create_dir_all(&outside).unwrap();
+            std::fs::write(outside.join("config"), "keep me\n").unwrap();
+            std::os::unix::fs::symlink(&outside, repo.join("linked")).unwrap();
+            run(&["add", "linked"]);
+            run(&["commit", "-qm", "link"]);
+            std::fs::write(repo.join(".worktreeinclude"), "linked/config\n").unwrap();
+            let two = super::create(&repo, &root, "two").unwrap();
+            assert!(!two.copied.iter().any(|c| c.starts_with("linked")), "{:?}", two.copied);
+            assert_eq!(std::fs::read_to_string(outside.join("config")).unwrap(), "keep me\n", "the file outside is untouched");
+            super::remove(&repo, &root, &two.path, true).unwrap();
+        }
         let list = super::list(&repo, &root);
         assert_eq!((list.len(), list[0]["branch"].as_str(), list[0]["dirty"].as_bool()), (1, Some("tazuna/one"), Some(false)));
         std::fs::write(wt.path.join("a.txt"), "changed\n").unwrap();
@@ -185,6 +223,7 @@ mod tests {
         assert!(super::remove(&repo, &root, &repo, true).is_err(), "only tazuna's worktrees");
         super::remove(&repo, &root, &wt.path, true).unwrap();
         assert!(!wt.path.exists() && super::list(&repo, &root).is_empty());
+        assert!(!wt.path.parent().unwrap().exists(), "the repository's folder goes with its last worktree");
         let _ = std::fs::remove_dir_all(&base);
     }
 }
