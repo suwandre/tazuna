@@ -59,6 +59,10 @@ export const core = {
   stop: (tid: string) => invoke("stop", { tid }),
   /** Resumes a conversation in thread `tid` (right after its start, before it is the current one). */
   resumeIn: (tid: string, id: string) => invoke("op", { tid, msg: { op: "resume", id } }),
+  /** A message to thread `tid` whether or not it is on screen (creator mode's first message). */
+  sendIn: (tid: string, text: string) => invoke("send", { tid, text, agent: true }),
+  modeIn: (tid: string, mode: string) => invoke("op", { tid, msg: { op: "mode", mode } }),
+  answerIn: (tid: string, allow: boolean) => invoke("op", { tid, msg: { op: "answer", allow, always: false } }),
   setMode: (mode: string) => to("op", { msg: { op: "mode", mode } }),
   answer: (allow: boolean, always = false) => to("op", { msg: { op: "answer", allow, always } }),
   diff: (turn: number, path: string) => to("op", { msg: { op: "diff", turn, path } }),

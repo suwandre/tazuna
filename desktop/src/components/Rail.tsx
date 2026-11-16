@@ -1,4 +1,6 @@
-import type { ReactNode } from "react";
+import { Pencil, X } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { tokens, widgetUrl, type UserWidget } from "../lib/widgets";
 import { usd, type Usage } from "../lib/types";
 
 // The right rail is a slot of widgets (docs/DESKTOP.md "Customization"): tazuna's own panels are widgets too, so the
@@ -52,10 +54,49 @@ export const builtInWidgets: Widget[] = [
   { id: "today", title: "Today", render: (u) => u.todaySeries.length < 2 ? null : <><Spark series={u.todaySeries} /><div className={small}>${u.today.toFixed(2)} · {u.todayTurns} turns</div></> },
 ];
 
-export function Rail({ usage, widgets }: { usage: Usage; widgets: Widget[] }) {
+/** A user's panel: its page from the tzwidget: scheme in a sandboxed frame (no same origin: it cannot reach tazuna), the
+ * data posted in on every change, its height as it asks (40-600 px). */
+function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: unknown; onEdit?: () => void; onRemove?: () => void }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(160);
+  const [sure, setSure] = useState(false);
+  const post = () => frame.current?.contentWindow?.postMessage({ type: "tazuna", data, tokens: tokens() }, "*");
+  useEffect(post, [data]);
+  useEffect(() => {
+    const on = (e: MessageEvent) => {
+      if (e.source !== frame.current?.contentWindow || e.data?.type !== "tazuna-height") return;
+      const h = Number(e.data.height);
+      if (Number.isFinite(h)) setHeight(Math.max(40, Math.min(600, Math.round(h))));
+    };
+    window.addEventListener("message", on);
+    return () => window.removeEventListener("message", on);
+  }, []);
+  return (
+    <div className="group rounded-lg border border-line bg-card px-3.5 py-3">
+      <div className="mb-2 flex items-center gap-1 text-[11.5px] font-medium text-faint">
+        <span className="flex-1 truncate">{w.title}</span>
+        {sure ? <>
+          <button onClick={onRemove} className="text-bad">Remove</button><button onClick={() => setSure(false)} className="ml-1.5">Keep</button>
+        </> : <span className="hidden gap-0.5 group-hover:flex">
+          {onEdit && <button title="Change this panel with tazuna" onClick={onEdit} className="rounded p-0.5 hover:bg-hover hover:text-ink"><Pencil size={12} strokeWidth={1.5} /></button>}
+          {onRemove && <button title="Remove this panel (its folder moves to .removed)" onClick={() => setSure(true)} className="rounded p-0.5 hover:bg-hover hover:text-ink"><X size={12} strokeWidth={1.5} /></button>}
+        </span>}
+      </div>
+      <iframe ref={frame} src={widgetUrl(w.id)} sandbox="allow-scripts" title={w.title} onLoad={post}
+        style={{ height }} className="block w-full border-0 bg-transparent" />
+    </div>
+  );
+}
+
+export function Rail({ usage, widgets, user = [], data, onEdit, onRemove }: {
+  usage: Usage; widgets: Widget[]; user?: UserWidget[]; data?: unknown; onEdit?: (id: string) => void; onRemove?: (id: string) => void;
+}) {
   return (
     <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto border-l border-line bg-sidebar px-3.5 py-4">
       {widgets.map((w) => { const body = w.render(usage); return body == null ? null : <Card key={w.id} title={w.title}>{body}</Card>; })}
+      {user.filter((w) => w.slot === "rail").map((w) => (
+        <UserPanel key={w.id} w={w} data={data} onEdit={onEdit && (() => onEdit(w.id))} onRemove={onRemove && (() => onRemove(w.id))} />
+      ))}
     </aside>
   );
 }

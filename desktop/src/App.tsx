@@ -4,6 +4,7 @@ import { Composer } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
 import { ReviewView } from "./components/ReviewView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
+import { creatorMessage, widgetData, widgetId, widgets, type UserWidget } from "./lib/widgets";
 import { SettingsView } from "./components/SettingsView";
 import { Rail, builtInWidgets } from "./components/Rail";
 import { Sidebar } from "./components/Sidebar";
@@ -16,7 +17,9 @@ const RECENT = "tazuna.projects";
 const recent = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT) ?? "[]"); } catch { return []; } };
 
 /** An open conversation: its own core, folder (null: a chat) and latest view. */
-export type Thread = { tid: string; folder: string | null; view: View | null; error: string | null; used: number };
+export type Thread = { tid: string; folder: string | null; view: View | null; error: string | null; used: number;
+  /** creator mode: this conversation builds ("new") or changes ("edit") a panel in its folder */
+  creator?: "new" | "edit" };
 const busyView = (v: View | null) => !!v && !["Ready", "Done"].includes(v.activity);
 // idle open conversations kept running (each holds a claude process): more close, oldest first; they stay resumable
 const KEEP_OPEN = 4;
@@ -48,6 +51,18 @@ function useCore() {
     if (now === "asking") core.notify("tazuna asks", `${title}: ${v.asking!.tool.replace(/^mcp__lean__/, "")} ${v.asking!.what}`).catch(() => {});
     else if (now === "idle" && before === "working") core.notify("tazuna is done", title).catch(() => {});
   };
+  // creator mode: a write or edit of a file inside the conversation's own panel folder is allowed without asking (the
+  // user asked for that panel); anything else still asks
+  const answered = useRef<Record<string, string>>({});
+  const allowCreatorWrite = (tid: string, v: View) => {
+    const th = live.current[tid], q = v.asking;
+    if (!th?.creator || !th.folder || !q || answered.current[tid] === q.what) return;
+    const inside = q.what === th.folder || q.what.startsWith(th.folder.replace(/\/?$/, "/")) || q.what.startsWith(`/private${th.folder}/`);
+    if (inside && /(^|__)(write|edit|Write|Edit|MultiEdit)$/.test(q.tool) && !q.what.includes("..")) {
+      answered.current[tid] = q.what;
+      core.answerIn(tid, true).catch(() => {});
+    }
+  };
   /** Too many idle conversations open: the oldest idle ones close (not the one on screen, nothing working or asking). */
   const trim = (keep: string) => {
     const idle = Object.values(live.current).filter((t) => t.tid !== keep && !busyView(t.view) && !t.view?.asking).sort((a, b) => b.used - a.used);
@@ -59,17 +74,17 @@ function useCore() {
   };
   /** A new conversation in a folder (null: a chat), or `resume` an earlier one: on screen at once, in a thread of its
    * own; an earlier conversation already open is shown, not opened twice. */
-  const open = (path: string | null, resume?: string) => {
-    if (path) setProjects((p) => { const next = [path, ...p.filter((x) => x !== path)].slice(0, 12); localStorage.setItem(RECENT, JSON.stringify(next)); return next; });
-    const already = Object.values(live.current).find((t) => resume ? t.view?.session_id === resume
-      : t.folder === path && !t.view?.blocks.some((b) => b.kind === "prompt") && !t.error);
+  const open = (path: string | null, resume?: string, opts: { creator?: "new" | "edit"; then?: (tid: string) => void } = {}) => {
+    if (path && !opts.creator) setProjects((p) => { const next = [path, ...p.filter((x) => x !== path)].slice(0, 12); localStorage.setItem(RECENT, JSON.stringify(next)); return next; });
+    const already = !opts.creator && Object.values(live.current).find((t) => resume ? t.view?.session_id === resume
+      : t.folder === path && !t.creator && !t.view?.blocks.some((b) => b.kind === "prompt") && !t.error);
     if (already) { show(already.tid); return; }
     // randomUUID needs a secure page, which some WebKit builds do not count the app's own pages as
     const tid = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-    setThreads((t) => ({ ...t, [tid]: { tid, folder: path, view: null, error: null, used: Date.now() } }));
+    setThreads((t) => ({ ...t, [tid]: { tid, folder: path, view: null, error: null, used: Date.now(), creator: opts.creator } }));
     show(tid);
     core.start(tid, path ?? undefined, path ? undefined : "chat")
-      .then((dir) => { if (!path) setHome(dir); if (resume) return core.resumeIn(tid, resume); })
+      .then((dir) => { if (!path) setHome(dir); if (resume) return core.resumeIn(tid, resume); opts.then?.(tid); })
       .catch((e) => patch(tid, { error: String(e) }));
     trim(tid);
   };
@@ -77,7 +92,7 @@ function useCore() {
     if (!inTauri) return;
     const offs = [
       core.onExit((tid) => patch(tid, { error: "tazuna stopped. The app needs tazuna 0.1.128 or later (it carries its own; TAZUNA_BIN overrides)." })),
-      core.onView((v, tid) => { tell(tid, v); patch(tid, { view: v, error: null }); }),
+      core.onView((v, tid) => { tell(tid, v); allowCreatorWrite(tid, v); patch(tid, { view: v, error: null }); }),
       core.onModels((m, tid) => { if (tid === activeRef.current) setModels(m); }),
       core.onDiff(setDiff),
       core.onSessions((s) => setSessions((old) => ({ ...old, ...Object.fromEntries(s.dirs.map((d) => [d.dir, d.list])) }))),
@@ -116,7 +131,7 @@ function useCore() {
     patch(t.tid, { view: null, error: null });
     core.start(t.tid, t.folder ?? undefined, t.folder ? undefined : "chat").catch((e) => patch(t.tid, { error: String(e) }));
   };
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart };
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator };
 }
 
 function useTheme() {
@@ -174,8 +189,24 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart } = useCore();
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator } = useCore();
   useEffect(() => setEditing(null), [active]);
+  // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
+  const [userWidgets, setUserWidgets] = useState<UserWidget[]>([]);
+  const allTurns = threads.map((t) => t.view?.turns ?? 0).join(",");
+  useEffect(() => { if (inTauri) widgets.list().then(setUserWidgets).catch(() => {}); }, [allTurns]);
+  /** A new panel: its folder, a conversation in it (edits allowed there), the request with the panel specification. */
+  const createPanel = (ask: string) => {
+    widgets.create(widgetId(ask)).then((path) => open(path, undefined, { creator: "new",
+      then: (tid) => { core.modeIn(tid, "edits").then(() => core.sendIn(tid, creatorMessage(ask, false))).catch(() => {}); } })).catch(() => {});
+  };
+  /** A panel changed with tazuna: a conversation in its folder; the first message carries the specification. */
+  const editPanel = (id: string) => {
+    widgets.path(id).then((path) => {
+      open(path, undefined, { creator: "edit", then: (tid) => { core.modeIn(tid, "edits").catch(() => {}); } });
+      setDraft({ text: "Change this panel: ", n: Date.now() });
+    }).catch(() => {});
+  };
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
   const usage = view ? viewUsage(view) : demo.usage;
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
@@ -203,6 +234,9 @@ export default function App() {
       a.push(...(cur?.efforts ?? []).map((e) => ({ id: `e:${e}`, group: "Effort", label: e, hint: e === view.effort ? "current" : undefined, keywords: "effort thinking", run: () => core.setEffort(e) })));
       a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: c.label, hint: c.current ? "current" : c.place, keywords: `model ${c.provider}`, run: () => core.setModel(c) })));
     }
+    a.push({ id: "create-panel", group: "Creator mode", label: "Create a panel…", hint: "/create what it should show", keywords: "widget creator customize",
+        run: () => setDraft({ text: "/create ", n: Date.now() }) },
+      ...userWidgets.map((w) => ({ id: `edit-panel:${w.id}`, group: "Creator mode", label: `Change the panel "${w.title}"`, keywords: "widget edit", run: () => editPanel(w.id) })));
     a.push({ id: "theme", group: "Window", label: "Light or dark", keys: "⌘⇧L", run: flipTheme },
       { id: "keys", group: "Window", label: "Keyboard shortcuts", keys: "⌘/", run: () => setTimeout(() => setOverlay("shortcuts")) },
       { id: "settings", group: "Window", label: "Settings: provider keys, data policy, router", keys: "⌘,", run: () => setTimeout(() => setOverlay("settings")) });
@@ -250,6 +284,8 @@ export default function App() {
         {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
         <Composer session={session} threadCost={usage.threadCost} busy={busy}
           onSend={(text) => {
+            if (text.startsWith("/create ")) { createPanel(text.slice(8).trim()); return; }
+            if (creator === "edit" && !view?.blocks.some((b) => b.kind === "prompt")) { core.send(creatorMessage(text, true), true).catch(() => {}); return; }
             if (!editing) { core.send(text).catch((e) => console.error(e)); return; }
             const { cp, keep } = editing;
             setEditing(null);
@@ -269,7 +305,8 @@ export default function App() {
           onMode={inTauri ? (m) => core.setMode(m) : undefined}
           onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined} />
       </main>
-      <Rail usage={usage} widgets={builtInWidgets} />
+      <Rail usage={usage} widgets={builtInWidgets} user={inTauri ? userWidgets : []} data={widgetData(view)}
+        onEdit={editPanel} onRemove={(id) => widgets.remove(id).then(() => widgets.list().then(setUserWidgets)).catch(() => {})} />
       {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
       {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} />}

@@ -154,6 +154,86 @@ fn ui_log(msg: String) {
     eprintln!("tazuna desktop (page): {}", msg.chars().take(500).collect::<String>());
 }
 
+/// The panels' folder (docs/WIDGETS.md): ~/.config/tazuna/desktop/widgets, under the user's profile on Windows.
+fn widgets_dir() -> std::path::PathBuf {
+    let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).unwrap_or_else(|_| ".".into());
+    std::path::Path::new(&home).join(".config/tazuna/desktop/widgets")
+}
+
+/// A panel's id as a folder name: lowercase letters, digits and "-" only (nothing that leaves the folder).
+fn widget_id_ok(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// The user's panels: each folder's id and manifest (its page is served by the tzwidget: scheme, not sent here).
+#[tauri::command]
+fn widgets_list() -> Vec<serde_json::Value> {
+    let Ok(rd) = std::fs::read_dir(widgets_dir()) else { return vec![] };
+    let mut out: Vec<serde_json::Value> = rd.flatten().filter_map(|e| {
+        let id = e.file_name().into_string().ok().filter(|i| widget_id_ok(i))?;
+        e.path().join("index.html").is_file().then_some(())?;
+        let manifest: serde_json::Value = std::fs::read_to_string(e.path().join("manifest.json")).ok()
+            .and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| serde_json::json!({}));
+        Some(serde_json::json!({"id": id, "title": manifest["title"].as_str().unwrap_or(&id).chars().take(60).collect::<String>(),
+            "slot": manifest["slot"].as_str().unwrap_or("rail")}))
+    }).collect();
+    out.sort_by(|a, b| a["id"].as_str().cmp(&b["id"].as_str()));
+    out
+}
+
+/// A new panel's folder (creator mode works in it), created empty; its path.
+#[tauri::command]
+fn widgets_new(id: String) -> Result<String, String> {
+    if !widget_id_ok(&id) {
+        return Err(format!("not a panel id: {id}"));
+    }
+    let dir = widgets_dir().join(&id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir.to_string_lossy().into_owned())
+}
+
+/// A panel's folder (for editing it with tazuna).
+#[tauri::command]
+fn widgets_path(id: String) -> Result<String, String> {
+    widget_id_ok(&id).then(|| widgets_dir().join(&id).to_string_lossy().into_owned()).ok_or(format!("not a panel id: {id}"))
+}
+
+/// A panel off the window: its folder moves to widgets/.removed/ (kept, not deleted).
+#[tauri::command]
+fn widgets_remove(id: String) -> Result<(), String> {
+    if !widget_id_ok(&id) {
+        return Err(format!("not a panel id: {id}"));
+    }
+    let gone = widgets_dir().join(".removed");
+    std::fs::create_dir_all(&gone).map_err(|e| e.to_string())?;
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    std::fs::rename(widgets_dir().join(&id), gone.join(format!("{id}-{stamp}"))).map_err(|e| e.to_string())
+}
+
+/// The page tzwidget://localhost/<id> serves: the panel's index.html after a small preamble (the design tokens, filled
+/// in by the window's first message), under its own policy: scripts and styles inline only, images and fonts from data:
+/// URLs, no network. The window frames it sandboxed (no same origin), so it cannot reach tazuna either.
+fn widget_page(path: &str) -> (u16, String) {
+    let id = path.trim_matches('/');
+    if !widget_id_ok(id) {
+        return (404, String::new());
+    }
+    let file = widgets_dir().join(id).join("index.html");
+    match std::fs::metadata(&file) {
+        Ok(m) if m.len() <= 1 << 20 => {}
+        _ => return (404, String::new()),
+    }
+    let body = std::fs::read_to_string(file).unwrap_or_default();
+    let pre = r#"<!doctype html><meta charset="utf-8"><style>
+html,body{margin:0;background:transparent;color:var(--ink);font:12.5px/1.5 var(--font-ui,system-ui,sans-serif);overflow:hidden}
+</style><script>
+window.addEventListener("message",function(e){var d=e.data;if(!d||d.type!=="tazuna"||!d.tokens)return;
+var r=document.documentElement.style;for(var k in d.tokens)r.setProperty(k,d.tokens[k]);});
+</script>"#;
+    (200, format!("{pre}
+{body}"))
+}
+
 /// A system notification (a conversation in the background finished or asks): plain text, shown by the system.
 #[tauri::command]
 fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
@@ -234,6 +314,13 @@ fn menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
 
 fn main() {
     tauri::Builder::default()
+        .register_uri_scheme_protocol("tzwidget", |_ctx, req| {
+            let (status, body) = widget_page(req.uri().path());
+            tauri::http::Response::builder().status(status)
+                .header("Content-Type", "text/html; charset=utf-8")
+                .header("Content-Security-Policy", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:")
+                .body(body.into_bytes()).unwrap_or_default()
+        })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .setup(|app| {
@@ -249,7 +336,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 let core = w.state::<Core>();

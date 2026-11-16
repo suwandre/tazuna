@@ -6,7 +6,8 @@ import tailwindcss from "@tailwindcss/vite";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   clearScreen: false,
-  server: { port: 1420, strictPort: true },
+  // the dev server may read docs/WIDGETS.md (creator mode sends it to the agent) from the repository above
+  server: { port: 1420, strictPort: true, fs: { allow: [".."] } },
   envPrefix: ["VITE_", "TAURI_ENV_"],
   build: { target: "es2022", outDir: "dist" },
 });
