@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.148 (2026-11-16): tok/s counts from the first token again on models that stream their reasoning
+
+- Since 0.1.137 a call whose output mostly did not stream counted its speed from the call's start (for ERNIE, whose
+  reasoning is kept back). The streamed share left out streamed reasoning, so DeepSeek V4.1 Flash calls, which stream
+  their thinking, took that path too: on the user's chat (Mortera, 1017-fast) 3 of 4 calls showed 51-88 tok/s for
+  160-217, about 100 overall for about 180. Streamed thinking now counts; the speed is output over the time after the
+  first token, as before, and from the call's start only when the reasoning really was kept back. Test with the chat's
+  first call (451 tokens, first after 2.4 s, 5.1 s in all: 167 tok/s, not 88).
+- No other metric moves; 182 tests.
+
 ## 0.1.147 (2026-11-16): real use as a score in the core
 
 - src/realuse.rs ports bench/realuse.py: each of the user's own live runs (not benchmark or test folders, probes,

@@ -827,7 +827,10 @@ impl Session {
                 let d = &ev["delta"];
                 self.first_token.get_or_insert(self.now_ms);
                 self.waiting_note = None;
-                self.call_est += d["text"].as_str().or(d["partial_json"].as_str()).map_or(0, str::len) as f64 / 4.0;
+                // reasoning that streams (DeepSeek's thinking) is output as well: without it, a call whose reasoning was
+                // shown read as reasoning kept back, and its speed counted the wait before the first token (0.1.137-0.1.147:
+                // 88 tok/s shown for 169 on a DeepSeek V4.1 Flash call, 2026-11-16)
+                self.call_est += d["text"].as_str().or(d["partial_json"].as_str()).or(d["thinking"].as_str()).map_or(0, str::len) as f64 / 4.0;
                 if let (Some("text_delta"), Some(Block::Text { text, .. })) = (d["type"].as_str(), self.live_block()) {
                     text.push_str(d["text"].as_str().unwrap_or_default());
                 }
@@ -1084,6 +1087,18 @@ mod tests {
         h.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 102}})), 20_053.0);
         assert_eq!(h.calls, [CallTime { ttft_ms: Some(20_000.0), gen_ms: 20_053.0, out: 102 }]);
         assert_eq!(speed(&h.calls).1.map(|r| r.round()), Some(5.0), "102 tokens over 20 s");
+        // reasoning that streams counts as output: the speed is output over the time after the first token
+        let mut d = Session::new("", "high");
+        d.model = "deepseek-v4.1-flash-1017-fast".into();
+        d.apply(&json!({"type": "harness_user", "text": "go"}), 0.0);
+        d.apply(&ev(json!({"type": "message_start"})), 0.0);
+        d.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "thinking"}})), 2_400.0);
+        d.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "t".repeat(1023)}})), 2_400.0);
+        d.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 4_000.0);
+        d.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(892)}})), 4_000.0);
+        d.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 451}})), 5_100.0);
+        assert_eq!(d.calls, [CallTime { ttft_ms: Some(2_400.0), gen_ms: 2_700.0, out: 451 }]);
+        assert_eq!(speed(&d.calls).1.map(|r| r.round()), Some(167.0), "451 tokens over the 2.7 s after the first one, not 88 over 5.1 s");
         // the cache's life from what the call wrote, renewed by each call; the last call's cached share
         let mut k = Session::new("", "medium");
         k.apply(&ev(json!({"type": "message_start"})), 0.0);
