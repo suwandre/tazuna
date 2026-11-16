@@ -21,3 +21,4 @@ __pycache__/
 # one-off rendered previews and the pages behind them
 /out/
 .DS_Store
+docs/STUDIO.md
