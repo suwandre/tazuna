@@ -41,7 +41,7 @@ export type Provider = { name: string; host: string; page: string; place: string
 export type Settings = { providers: Provider[]; data_any: boolean; route: boolean; version: string;
   /** dollars of paid API spend allowed per 24 hours (null: no cap), and what was spent */
   spend_cap?: number | null; spent_24h?: number };
-export type WorktreeMade = { ask_setup?: boolean; script?: string; setup_skipped?: string; error?: string; path?: string; branch?: string; port?: number; copied?: string[]; setup?: { ok: boolean; tail: string } | null };
+export type WorktreeMade = { ask_setup?: boolean; script?: string; print?: string; setup_skipped?: string; error?: string; path?: string; branch?: string; port?: number; copied?: string[]; setup?: { ok: boolean; tail: string } | null };
 export type Review = { scope: string; turn?: number | null; base?: string | null; text: string };
 export type Diff = { turn: number; path: string; text: string };
 export type SessionRow = { id: string; first: string; last_at: number; messages: number };
@@ -87,7 +87,7 @@ export const core = {
   setData: (policy: "trusted" | "any", confirm = false) => to("op", { msg: { op: "data", policy, confirm } }),
   setRoute: (on: boolean) => to("op", { msg: { op: "route", on } }),
   /** a new worktree of this project (src/worktree.rs); runSetup: the user's answer about .tazuna/setup.sh (null: ask) */
-  worktreeNew: (runSetup: boolean | null) => to("op", { msg: { op: "worktree_new", run_setup: runSetup } }),
+  worktreeNew: (runSetup: boolean | null, print?: string) => to("op", { msg: { op: "worktree_new", run_setup: runSetup, print } }),
   /** one of tazuna's worktrees removed (its branch stays); force: with uncommitted changes */
   worktreeRemove: (path: string, force = false) => to("op", { msg: { op: "worktree_remove", path, force } }),
   onWorktree: (cb: (w: WorktreeMade, tid: string) => void) => on<WorktreeMade>("worktree", cb),

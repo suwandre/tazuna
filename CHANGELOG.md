@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.145 (2026-11-16): a worktree's setup script runs only as the user saw it
+
+- The question shows the whole `.tazuna/setup.sh` (up to 20,000 bytes; a longer one never runs) with its fingerprint;
+  the user's yes brings the fingerprint back, and `sh` runs exactly those bytes from stdin. A yes without it, or a file
+  changed after the question, runs nothing and says why (security review: 0.1.144 showed the first 20 lines and ran
+  the file as it was at the time). Checked through the app server: a line added after the question did not run, nor did a
+  yes without the fingerprint; the seen script ran.
+- No other metric moves; 180 tests.
+
 ## 0.1.144 (2026-11-16): worktrees, hardened (security review)
 
 - A project's `.tazuna/setup.sh` counts as code that needs trust (the untrusted banner names it), and the app server

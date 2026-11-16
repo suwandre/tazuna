@@ -96,22 +96,37 @@ pub fn create(project: &Path, root: &Path, name: &str) -> Result<Made> {
     Ok(Made { path, branch, port: port(name), copied })
 }
 
-/// The project's `.tazuna/setup.sh` run in the new worktree (install dependencies and the like), with TAZUNA_PORT set:
-/// None when there is none, else its outcome and the end of its output.
-pub fn setup(project: &Path, wt: &Made) -> Option<(bool, String)> {
-    let script = project.join(".tazuna/setup.sh");
-    if !script.is_file() {
-        return None;
-    }
-    let o = Command::new("sh").arg(&script).current_dir(&wt.path).env("TAZUNA_PORT", wt.port.to_string()).output();
-    Some(match o {
+/// The largest setup script shown and run (the user reads all of it before it runs).
+pub const SETUP_MAX: usize = 20_000;
+
+/// A setup script's fingerprint: the user's yes names the text they read, and only that text runs.
+pub fn print(bytes: &[u8]) -> String {
+    use std::hash::Hasher;
+    let mut h = std::hash::DefaultHasher::new();
+    h.write(bytes);
+    format!("{:016x}", h.finish())
+}
+
+/// The setup script `script` (the exact bytes the user saw) run by `sh` in the new worktree (install dependencies and
+/// the like), with TAZUNA_PORT set: its outcome and the end of its output.
+pub fn setup(script: &[u8], wt: &Made) -> (bool, String) {
+    use std::io::Write;
+    let child = Command::new("sh").arg("-s").current_dir(&wt.path).env("TAZUNA_PORT", wt.port.to_string())
+        .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn();
+    let o = child.and_then(|mut c| {
+        if let Some(mut i) = c.stdin.take() {
+            i.write_all(script)?;
+        }
+        c.wait_with_output()
+    });
+    match o {
         Ok(o) => {
             let text = String::from_utf8_lossy(&o.stdout).into_owned() + &String::from_utf8_lossy(&o.stderr);
             let tail: Vec<&str> = text.lines().rev().take(8).collect::<Vec<_>>().into_iter().rev().collect();
             (o.status.success(), tail.join("\n"))
         }
         Err(e) => (false, e.to_string()),
-    })
+    }
 }
 
 /// tazuna's worktrees of the repository at `project`: path, branch, and whether it has uncommitted changes.
