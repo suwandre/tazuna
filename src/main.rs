@@ -3905,15 +3905,17 @@ not json"#;
             json!({"request": {"tool_name": tool, "input": {key: path}}})
         };
         let ok = |req: serde_json::Value| super::inside_root(&req, &root);
-        assert!(ok(q("Write", format!("{}/index.html", root.display()))));
-        assert!(ok(q("mcp__lean__write", format!("{}/manifest.json", root.display()))));
+        // paths joined by the system's own separator: on Windows the canonical root is \\?\C:\..., where "/" is no separator
+        let at = |parts: &[&str]| parts.iter().fold(root.clone(), |p, x| p.join(x)).display().to_string();
+        assert!(ok(q("Write", at(&["index.html"]))));
+        assert!(ok(q("mcp__lean__write", at(&["manifest.json"]))));
         assert!(!ok(q("mcp__lean__write", "plugin.js".into())), "relative: the tool server's folder follows cd");
-        assert!(!ok(q("Write", format!("{}/../evil.sh", root.display()))), "climbs out");
-        assert!(!ok(q("Write", format!("{}/{}/../../x", root.display(), "a".repeat(500)))), "a long path that climbs out");
-        assert!(!ok(q("Bash", format!("{}/x", root.display()))), "not a write tool");
+        assert!(!ok(q("Write", at(&["..", "evil.sh"]))), "climbs out");
+        assert!(!ok(q("Write", at(&[&"a".repeat(500), "..", "..", "x"]))), "a long path that climbs out");
+        assert!(!ok(q("Bash", at(&["x"]))), "not a write tool");
         assert!(!ok(q("Write", "/etc/passwd".into())));
-        assert!(!ok(json!({"request": {"tool_name": "mcp__lean__write", "input": {"path": format!("{}/a", root.display()), "file_path": "/etc/x"}}})), "both fields");
-        assert!(!ok(json!({"request": {"tool_name": "mcp__lean__write", "input": {"file_path": format!("{}/a", root.display())}}})), "the field the tool does not use");
+        assert!(!ok(json!({"request": {"tool_name": "mcp__lean__write", "input": {"path": at(&["a"]), "file_path": "/etc/x"}}})), "both fields");
+        assert!(!ok(json!({"request": {"tool_name": "mcp__lean__write", "input": {"file_path": at(&["a"])}}})), "the field the tool does not use");
         #[cfg(unix)]
         {
             std::os::unix::fs::symlink("/tmp", root.join("out")).unwrap();

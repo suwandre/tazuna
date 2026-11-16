@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.140 (2026-11-16): the Windows build is released again
+
+- 0.1.135 to 0.1.139 released no Windows build: two tests failed there, both test faults. The creator folder test wrote
+  paths as `root + "/x"`, and Windows' canonical root is `\\?\C:\...`, where "/" is no separator (the check refused
+  them, the safe direction); the review test's repo took the runner's `core.autocrlf`, so the reverted file came back with
+  CRLF, as git should write it there. Paths are now joined by the system's separator and the test repo keeps its files as
+  written.
+- No other metric moves; 176 tests.
+
 ## 0.1.139 (2026-11-16): the usage rows tell plan runs from API runs right
 
 - A run counts as the plan's (the claude CLI) unless its log entry says `claude_version: null` (the own loop); runs from

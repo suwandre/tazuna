@@ -188,6 +188,8 @@ mod tests {
         run(&["init", "-q"]);
         run(&["config", "user.email", "t@t"]);
         run(&["config", "user.name", "t"]);
+        // the files as written (a Windows runner's git turns on autocrlf, and git apply then writes CRLF, as it should there)
+        run(&["config", "core.autocrlf", "false"]);
         std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
         std::fs::write(dir.join("gone.txt"), "x\n").unwrap();
         std::fs::write(dir.join(".gitignore"), "ignored/\n").unwrap();
