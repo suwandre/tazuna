@@ -22,6 +22,8 @@ type Props = {
   onEdit?: (edit: { cp: number; block: number }, text: string) => void;
   /** the checkpoint being edited: that message and everything after it fade */
   editFrom?: number;
+  /** follows the rail's "tazuna-jump" (not the side chat's transcript) */
+  jumps?: boolean;
 };
 
 const STATUS: Record<string, string> = { A: "added", D: "deleted", M: "changed" };
@@ -63,7 +65,7 @@ function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change
 export const TranscriptCtx = createContext<Omit<Props, "messages" | "activity">>({});
 export const useTranscript = () => useContext(TranscriptCtx);
 
-export function Transcript({ messages, activity, ...rest }: Props) {
+export function Transcript({ messages, activity, jumps = true, ...rest }: Props) {
   const { busy, editFrom } = rest;
   // follow new output while the reader is at the bottom; stay put once they scroll up
   const box = useRef<HTMLElement>(null), stick = useRef(true);
@@ -75,10 +77,11 @@ export function Transcript({ messages, activity, ...rest }: Props) {
   // scrolled to
   const [jump, setJump] = useState<number | null>(null);
   useEffect(() => {
+    if (!jumps) return;
     const on = (e: Event) => { const i = Number((e as CustomEvent).detail); if (!(i >= 0)) return; stick.current = false; setLimit((l) => Math.max(l, messages.length - i)); setJump(i); };
     window.addEventListener("tazuna-jump", on);
     return () => window.removeEventListener("tazuna-jump", on);
-  }, [messages.length]);
+  }, [messages.length, jumps]);
   useEffect(() => { if (jump == null) return; box.current?.querySelector(`[data-msg="${jump}"]`)?.scrollIntoView({ block: "start" }); setJump(null); }, [jump]);
   return (
     <TranscriptCtx.Provider value={rest}>

@@ -998,8 +998,8 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 26] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
-            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit"];
+        const OPS: [&str; 27] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1166,6 +1166,33 @@ fn app_server(a: &Args) -> Result<()> {
                                     done_turns.clear();
                                 }
                                 None => info(&mut s, format!("no session {id} in this folder")),
+                            }
+                        }
+                        // a side chat (the window's): conversation `id` continued in a fork on its model and effort, so its
+                        // cache is the original's; the original is never written to. Its earlier messages are not shown.
+                        Some("fork") => {
+                            let id = cmd["id"].as_str().unwrap_or_default();
+                            let word = arg_word;
+                            if !word(id) {
+                                info(&mut s, "no such conversation".into());
+                            } else {
+                                if let Some(m) = cmd["model"].as_str().filter(|m| word(m) && live.provider.is_none()) {
+                                    live.model = m.to_string();
+                                }
+                                if let Some(e) = cmd["effort"].as_str().filter(|e| word(e)) {
+                                    live.effort = e.to_string();
+                                }
+                                match live.restart(Some(id.to_string())) {
+                                    Ok((t, _)) => {
+                                        live.fork_next = true;
+                                        s = s.fresh();
+                                        (s.model, s.effort) = (live.model.clone(), live.effort.clone());
+                                        s.apply(&json!({"type": "harness_notice", "text": "── side chat: it reads the conversation, nothing goes back ──", "error": false}), t);
+                                        (turn, undo_note) = (None, None);
+                                        done_turns.clear();
+                                    }
+                                    Err(err) => info(&mut s, format!("{err:#}")),
+                                }
                             }
                         }
                         Some("profile") => {
@@ -2000,6 +2027,11 @@ fn new_conversation(live: &mut live::Live, s: &mut Session, v: &mut View, earlie
 
 /// `/new` and `/resume` (the terminal's and the app's): a fresh conversation, or an earlier one continued with its
 /// messages replayed from the recordings.
+/// A value the window may put after a claude flag (a session id, a model, an effort): one plain word, never a flag.
+fn arg_word(w: &str) -> bool {
+    !w.is_empty() && w.len() <= 80 && !w.starts_with('-') && w.chars().all(|c| c.is_ascii_alphanumeric() || "-._:[]".contains(c))
+}
+
 fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earlier>) -> Result<()> {
     let (t, notice) = live.restart(earlier.map(|e| e.id.clone()))?;
     *s = s.fresh();
@@ -3809,6 +3841,16 @@ fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn side_chat_values_are_plain_words() {
+        for ok in ["def2a71b-970e-412e-ba99-c8ae21c1064a", "claude-haiku-5-5", "opus[1m]", "high"] {
+            assert!(super::arg_word(ok), "{ok}");
+        }
+        for bad in ["", "--dangerously-skip-permissions", "-x", "a b", "a;b", "a/b", &"x".repeat(81)] {
+            assert!(!super::arg_word(bad), "{bad}");
+        }
+    }
+
     #[test]
     fn creator_writes_are_allowed_only_inside_the_folder() {
         let base = std::env::temp_dir().join(format!("tazuna-root-{}", std::process::id()));

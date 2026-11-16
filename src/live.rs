@@ -499,6 +499,8 @@ pub struct Live {
     pending_resume: Option<Option<String>>,
     /// The next spawn resumes the session at this message (`--resume-session-at`, in a fork).
     resume_at: Option<String>,
+    /// The next spawn continues `session_id` in a fork (a side chat: the original stays as it was).
+    pub fork_next: bool,
     /// When the last of `tasks` finished.
     tasks_done: Option<Instant>,
     /// Independent reviewer: model and effort (`--review-model`, `--review-effort`).
@@ -615,6 +617,7 @@ impl Live {
             last_assistant: None,
             pending_resume: None,
             resume_at: None,
+            fork_next: false,
             permission_mode: "bypassPermissions".into(),
             pending: VecDeque::new(),
             outbox: Vec::new(),
@@ -1828,6 +1831,8 @@ impl Live {
             // after a conversation rewind: the session up to that reply, as a fork (the original stays as it was)
             if let Some(at) = self.resume_at.take() {
                 cmd.args(["--resume-session-at", &at, "--fork-session"]);
+            } else if std::mem::take(&mut self.fork_next) {
+                cmd.arg("--fork-session");
             }
         }
         if self.mode != "headless" {

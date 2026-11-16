@@ -5,7 +5,8 @@ import type { View } from "../lib/tazuna";
 // tazuna's permission question over the composer: allow once, always (this command or tool, for the session), or
 // decline. y / a / n answer from the keyboard; nothing answers in the first 600 ms, so a key meant for something else
 // cannot approve a question that just appeared (the terminal's ANSWER_DELAY_MS).
-export function Approval({ asking, onAnswer }: { asking: NonNullable<View["asking"]>; onAnswer: (allow: boolean, always: boolean) => void }) {
+export function Approval({ asking, onAnswer, keys = true }: { asking: NonNullable<View["asking"]>; onAnswer: (allow: boolean, always: boolean) => void;
+  /** y / a / n answer it (the side chat's question takes clicks only, so keys stay the conversation's) */ keys?: boolean }) {
   const [ready, setReady] = useState(false);
   useEffect(() => {
     setReady(false);
@@ -13,16 +14,17 @@ export function Approval({ asking, onAnswer }: { asking: NonNullable<View["askin
     return () => clearTimeout(t);
   }, [asking.what, asking.tool]);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !keys) return;
     const key = (e: KeyboardEvent) => {
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // typing in the side chat answers nothing
+      if (e.metaKey || e.ctrlKey || e.altKey || (e.target as HTMLElement)?.closest?.("[data-side]")) return;
       const k = e.key.toLowerCase();
       const pick = k === "y" ? [true, false] : k === "a" && !asking.once ? [true, true] : k === "n" || k === "escape" ? [false, false] : null;
       if (pick) { e.preventDefault(); onAnswer(pick[0], pick[1]); }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [ready, asking, onAnswer]);
+  }, [ready, asking, onAnswer, keys]);
   // the core sends the tool, what it would do and the note apart (each made safe): shown as they come, nothing cut
   const tool = asking.tool.replace(/^mcp__lean__/, "");
   const what = asking.what;

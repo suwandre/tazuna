@@ -62,6 +62,9 @@ export const core = {
   /** A message to thread `tid` whether or not it is on screen (creator mode's first message). */
   sendIn: (tid: string, text: string) => invoke("send", { tid, text, agent: true }),
   modeIn: (tid: string, mode: string) => invoke("op", { tid, msg: { op: "mode", mode } }),
+  /** any of the window's ops to thread `tid` (the side chat's) */
+  opIn: (tid: string, msg: Record<string, unknown>) => invoke("op", { tid, msg }),
+  interruptIn: (tid: string) => invoke("interrupt", { tid }),
   /** creator mode: writes inside this folder (a panel's or plugin's own) need no question; the core checks the real path */
   allowRootIn: (tid: string, path: string) => invoke("op", { tid, msg: { op: "allow_root", path } }),
   setMode: (mode: string) => to("op", { msg: { op: "mode", mode } }),

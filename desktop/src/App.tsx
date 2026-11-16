@@ -7,6 +7,7 @@ import { Palette, Shortcuts, type Action } from "./components/Palette";
 import { creatorMessage, dryRun, summary, widgetData, widgetId, widgets, type UserWidget } from "./lib/widgets";
 import { footprint, load, onPaletteChange, pluginActions, safeMode, setActions, setData, unload } from "./lib/plugins";
 import { SettingsView } from "./components/SettingsView";
+import { SideChat } from "./components/SideChat";
 import { Rail, UserPanel } from "./components/Rail";
 import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
@@ -25,6 +26,8 @@ const QUEUE = "tazuna.queued.";
 export type Thread = { tid: string; folder: string | null; view: View | null; error: string | null; used: number;
   /** the saved conversation it continues */
   resume?: string;
+  /** a side chat: the thread it sits beside (not listed, closed with it) */
+  side?: string;
   /** creator mode: this conversation builds ("new") or changes ("edit") a panel in its folder */
   creator?: "new" | "edit" };
 const busyView = (v: View | null) => !!v && !["Ready", "Done"].includes(v.activity);
@@ -51,6 +54,7 @@ function useCore() {
   // a conversation out of sight that finishes or asks for an answer says so with a system notification
   const was = useRef<Record<string, string>>({});
   const tell = (tid: string, v: View) => {
+    if (live.current[tid]?.side) return;
     const now = v.asking ? "asking" : busyView(v) ? "working" : "idle", before = was.current[tid];
     was.current[tid] = now;
     if (now === before || (tid === activeRef.current && document.hasFocus())) return;
@@ -70,12 +74,37 @@ function useCore() {
   };
   /** Too many idle conversations open: the oldest idle ones close (not the one on screen, nothing working or asking). */
   const trim = (keep: string) => {
-    const idle = Object.values(live.current).filter((t) => t.tid !== keep && !busyView(t.view) && !t.view?.asking).sort((a, b) => b.used - a.used);
+    const idle = Object.values(live.current).filter((t) => t.tid !== keep && !t.side && !busyView(t.view) && !t.view?.asking).sort((a, b) => b.used - a.used);
     for (const t of idle.slice(KEEP_OPEN - 1)) close(t.tid);
   };
   const close = (tid: string) => {
+    const side = Object.values(live.current).find((t) => t.side === tid);
+    if (side) close(side.tid);
     core.stop(tid).catch(() => {});
     setThreads((t) => { const { [tid]: _, ...rest } = t; return rest; });
+  };
+  /** A side chat beside thread `of`: its own core in the same folder, the conversation forked on the same model (its
+   * cache is the conversation's), plan mode. Claude conversations only (the own loop cannot resume yet). */
+  const openSide = (of: string) => {
+    const p = live.current[of], id = p?.view?.session_id;
+    if (!p || !id || Object.values(live.current).some((t) => t.side === of)) return;
+    const tid = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    setThreads((t) => ({ ...t, [tid]: { tid, folder: p.folder, view: null, error: null, used: Date.now(), side: of } }));
+    core.start(tid, p.folder ?? undefined, p.folder ? undefined : "chat")
+      .then(() => core.opIn(tid, { op: "fork", id, model: p.view!.model, effort: p.view!.effort }))
+      .then(() => core.modeIn(tid, "plan"))
+      .catch((e) => patch(tid, { error: String(e) }));
+  };
+  /** Closes thread `of`'s side chat; its fork leaves the saved lists (it was hidden when it got its id). */
+  const closeSide = (of: string) => { const s = Object.values(live.current).find((t) => t.side === of); if (s) close(s.tid); };
+  // a side chat's fork stays out of the saved lists: hidden as soon as it has its own id
+  const hiddenForks = useRef(new Set<string>());
+  const hideFork = (tid: string, v: View) => {
+    const t = live.current[tid], parent = t?.side ? live.current[t.side] : undefined;
+    const id = v.session_id;
+    if (!parent || !id || id === parent.view?.session_id || hiddenForks.current.has(id)) return;
+    hiddenForks.current.add(id);
+    core.opIn(parent.tid, { op: "hide", id }).catch(() => {});
   };
   /** A new conversation in a folder (null: a chat), or `resume` an earlier one: on screen at once, in a thread of its
    * own; an earlier conversation already open is shown, not opened twice. */
@@ -103,7 +132,7 @@ function useCore() {
     if (!inTauri) return;
     const offs = [
       core.onExit((tid) => patch(tid, { error: "tazuna stopped. The app needs tazuna 0.1.128 or later (it carries its own; TAZUNA_BIN overrides)." })),
-      core.onView((v, tid) => { tell(tid, v); keepQueue(tid, v); patch(tid, { view: v, error: null }); }),
+      core.onView((v, tid) => { tell(tid, v); keepQueue(tid, v); hideFork(tid, v); patch(tid, { view: v, error: null }); }),
       // the quick-chat shortcut brought the window up: a new chat, its box focused
       listen("quick-chat", () => { open(null); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>("footer textarea")?.focus()); }),
       core.onModels((m, tid) => { if (tid === activeRef.current) setModels(m); }),
@@ -137,7 +166,8 @@ function useCore() {
     if (inTauri && dirs.length) core.sessions(dirs).catch(() => {});
   };
   useEffect(() => { if (view) refreshSessions(); }, [turns, folder, home, projects.length]);
-  const list = Object.values(threads).sort((a, b) => b.used - a.used);
+  const list = Object.values(threads).filter((t) => !t.side).sort((a, b) => b.used - a.used);
+  const side = Object.values(threads).find((t) => t.side === active);
   /** The thread on screen started again in its folder (after trusting the folder: its settings load at start). */
   const restart = () => {
     const t = live.current[activeRef.current];
@@ -147,7 +177,7 @@ function useCore() {
   };
   // where the box's draft is kept: the conversation's id once known (a resumed one's from the start), else its folder's
   const draftKey = cur ? view?.session_id ?? cur.resume ?? `new:${folder ?? "chat"}` : undefined;
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey };
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, side, openSide, closeSide };
 }
 
 function useTheme() {
@@ -205,7 +235,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey } = useCore();
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, side, openSide, closeSide } = useCore();
   useEffect(() => setEditing(null), [active]);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
   const [userWidgets, setUserWidgets] = useState<UserWidget[]>([]);
@@ -321,6 +351,8 @@ export default function App() {
     if (busy) a.unshift({ id: "stop", group: "This conversation", label: "Stop the reply", keys: "Esc", run: () => core.interrupt() });
     const undo = view?.changes?.find((c) => c.can_undo);
     if (undo && !busy) a.push({ id: "undo", group: "This conversation", label: `Undo the last turn's changes`, hint: `${undo.files.length} file${undo.files.length === 1 ? "" : "s"}`, run: () => core.undo(undo.turn) });
+    if (view?.session_id && !side) a.push({ id: "side", group: "This conversation", label: "Side chat", hint: "ask about it; nothing goes back", keywords: "btw aside question fork", run: () => openSide(active) });
+    if (side) a.push({ id: "side-close", group: "This conversation", label: "Close the side chat", run: () => closeSide(active) });
     if (view && folder) a.push(
       { id: "review-uncommitted", group: "Review", label: "Review uncommitted changes", keywords: "diff stage revert hunk", run: () => setReviewing({ scope: "uncommitted" }) },
       { id: "review-branch", group: "Review", label: "Review the branch against its base", keywords: "diff pr", run: () => setReviewing({ scope: "branch" }) });
@@ -343,7 +375,7 @@ export default function App() {
   const data = widgetData(view);
   const title = view ? (view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.slice(0, 60) ?? "New chat" : "Retry test fails on CI";
   return (
-    <div className="grid h-screen grid-cols-[248px_1fr_232px] overflow-hidden">
+    <div className={`grid h-screen overflow-hidden ${side ? "grid-cols-[248px_1fr_380px]" : "grid-cols-[248px_1fr_232px]"}`}>
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
         chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
         projects={inTauri ? projects.map((p) => ({ name: base(p), path: p, open: p === folder, threads: rowsOf(sessions[p]) })) : demo.projects}
@@ -360,7 +392,8 @@ export default function App() {
           <div className="flex items-center gap-2 font-medium"><span className="text-muted">{place}</span><span className="text-faint">/</span><span className="truncate">{title}</span></div>
           <div className="flex gap-1.5">
             <HeaderCtx.Provider value={{ modelLabel: models?.choices.find((c) => c.current)?.label ?? session.model, effort: session.effort,
-              branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined }}>
+              branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
+              side: inTauri && view?.session_id ? () => (side ? closeSide(active) : openSide(active)) : undefined, sideOpen: !!side }}>
               <Slot name="header.actions" props={{ data, folder }} />
             </HeaderCtx.Provider>
           </div>
@@ -418,7 +451,9 @@ export default function App() {
           onMode={inTauri ? (m) => core.setMode(m) : undefined}
           onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined} />
       </main>
-      <Rail usage={usage} data={data} messages={messages} />
+      {side ? <SideChat key={side.tid} view={side.view} onClose={() => closeSide(active)} onStop={() => core.interruptIn(side.tid)}
+          onSend={(text) => core.sendIn(side.tid, text).catch(() => {})} onAnswer={(allow, always) => core.opIn(side.tid, { op: "answer", allow, always })} />
+        : <Rail usage={usage} data={data} messages={messages} />}
       <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
@@ -443,7 +478,7 @@ const rowsOf = (rows?: SessionRow[]) => (rows ?? []).map((r) => ({ id: r.id, tit
 const titleOf = (t: Thread) => (t.view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] || "New conversation";
 
 /** The header's built-in chips read this (and a plugin replacing one can too). */
-export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
+export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void; side?: () => void; sideOpen?: boolean }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
 
 function ModelChip() {
   const h = useContext(HeaderCtx);
@@ -457,6 +492,12 @@ function ReviewChip() {
   const h = useContext(HeaderCtx);
   return h.review ? <button onClick={h.review} className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Review</button> : null;
 }
+function SideChip() {
+  const h = useContext(HeaderCtx);
+  return h.side ? <button onClick={h.side} title="A chat beside this conversation that knows it: nothing in it goes back"
+    className={`rounded-full border px-2.5 py-1 text-[12px] hover:bg-hover ${h.sideOpen ? "border-line-strong bg-selected text-ink" : "border-line text-ink-2"}`}>Side chat</button> : null;
+}
+slots.register({ id: "header.side", slot: "header.actions", order: 40, source: "tazuna", render: SideChip });
 slots.register({ id: "header.model", slot: "header.actions", order: 10, source: "tazuna", render: ModelChip });
 slots.register({ id: "header.branch", slot: "header.actions", order: 20, source: "tazuna", render: BranchChip });
 slots.register({ id: "header.review", slot: "header.actions", order: 30, source: "tazuna", render: ReviewChip });

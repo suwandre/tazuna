@@ -32,7 +32,10 @@ session under Xvfb (a desktop has one), not a change to the app. 0.1.8: the noti
 allowed (its script was refused, so notifications could stay silent), and tazuna asks for the permission once. 0.1.15:
 each conversation keeps its own draft in the box, through a restart; messages queued behind a reply when the window closed
 come back in that conversation's box; "Your messages" in the rail lists what you sent and scrolls to it; a shortcut from
-anywhere (Option-Space on macOS, Ctrl-Alt-Space elsewhere; Settings changes or clears it) brings the window up with a new chat.
+anywhere (Option-Space on macOS, Ctrl-Alt-Space elsewhere; Settings changes or clears it) brings the window up with a new chat. 0.1.16: a side chat (header, Cmd-K) beside a
+Claude conversation: a fork of it on the same model (so the cache is the conversation's), in plan mode, in place of the
+rail; nothing in it goes back, its fork stays out of the saved lists, and its questions take clicks only (y / n stay the
+conversation's).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

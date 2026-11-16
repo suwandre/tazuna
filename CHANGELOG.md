@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.137 (2026-11-16): the app server forks a conversation for a side chat
+
+- `{"op": "fork", "id": ..., "model": ..., "effort": ...}`: the conversation continues in a fork (`--resume ID
+  --fork-session`) on the given model and effort, so the fork reads the original's prompt cache; its earlier messages are
+  not shown, and the original's session file is not written to (checked: 22 lines before and after a forked turn, and
+  the fork recalled a word from the original). Values that go after a claude flag must be one plain word, never a flag.
+- No other metric moves; 175 tests.
+
 ## 0.1.136 (2026-11-16): creator mode's folder rule refuses relative paths
 
 - A relative path in a write or edit asks as usual: tazuna's tool server keeps a working folder that `cd` in its
