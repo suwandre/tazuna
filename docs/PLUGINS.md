@@ -55,7 +55,7 @@ and its error shows in Settings.
 | Spot | What it is, and its props | tazuna's own parts there (ids) |
 |---|---|---|
 | `rail` | the right column's cards. props: { usage, data, messages } | rail.context, rail.plan, rail.thread, rail.balance, rail.today, rail.timeline (your messages; `window.dispatchEvent(new CustomEvent("tazuna-jump", {detail: i}))` scrolls to message i) |
-| `header.actions` | the chips and buttons at the right of the header. props: { data, folder } | header.model, header.branch, header.review, header.side |
+| `header.actions` | the chips and buttons at the right of the header. props: { data, folder } | header.model, header.branch, header.review, header.pr, header.side |
 | `composer.dock` | above the message box (a bar, a dashboard). props: {} (the data: ctx.useData()) | (empty) |
 | `composer.pills` | the controls under the message box (mode, model, effort, attach). props: { composer } | composer.mode, composer.model, composer.effort, composer.attach |
 | `sidebar.top` | the sidebar's actions under the search (New chat, Open folder). props: {} | sidebar.new-chat, sidebar.open-folder |

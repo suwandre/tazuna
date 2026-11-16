@@ -100,6 +100,7 @@ mod turns;
 mod ui;
 mod verify;
 mod versions;
+mod worktree;
 
 use anyhow::{Context, Result, bail};
 use ratatui::{
@@ -912,8 +913,8 @@ fn login_save(l: &models::Login, typed: &str) -> Result<String> {
             p = models::save_key(var, typed)?;
         }
         said.push(format!("logged in to {}: key saved in {} (readable by you only)", l.name, p.display()));
-        if l.host == "mortera.cloud" {
-            // ponytail: on the UI thread, ~1 s (15 s at most) once; Mortera's models come from its list, which needs the key
+        if l.host == "mortera.cloud" || l.host == "api.cheaperinference.com" {
+            // ponytail: on the UI thread, ~1 s (15 s at most) once; their models come from their lists, which need the key
             models::refresh_mortera();
         }
     } else if l.vars.iter().all(|v| models::key(v).is_none()) {
@@ -964,6 +965,15 @@ fn untrusted_switch(p: route::Profile, a: &Args) -> Result<Option<String>> {
 /// and the window starts the server again.
 fn app_server(a: &Args) -> Result<()> {
     use std::io::{BufRead, Write};
+    // a conversation in one of tazuna's worktrees: its own ports for dev servers and tests (TAZUNA_PORT and the nine after)
+    if let (Ok(base), Ok(here)) = (labels::dir(), std::env::current_dir())
+        && let Ok(root) = worktree::root(&base).canonicalize()
+        && here.canonicalize().is_ok_and(|h| h.starts_with(&root))
+        && let Some(name) = here.file_name()
+    {
+        // SAFETY: before this process starts any thread; the agent's commands inherit it
+        unsafe { std::env::set_var("TAZUNA_PORT", worktree::port(&name.to_string_lossy()).to_string()) };
+    }
     let mut live = live::Live::new("", "")?;
     live.user_settings = a.user_settings;
     live.connectors = a.connectors || labels::dir().is_ok_and(|d| d.join("connectors").exists());
@@ -995,11 +1005,22 @@ fn app_server(a: &Args) -> Result<()> {
     let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
     let stdin_tx = tx.clone();
     fetch_balance(&tx);
+    // the providers' model lists for the picker (the terminal refreshes them at its start): at most once an hour, since
+    // each open conversation of the desktop runs a server of its own
+    let stale = labels::dir().ok().and_then(|d| std::fs::metadata(d.join("openrouter-models.json")).and_then(|m| m.modified()).ok())
+        .is_none_or(|t| t.elapsed().is_ok_and(|e| e.as_secs() > 3600));
+    if stale {
+        std::thread::spawn(|| {
+            models::refresh_mortera();
+            models::refresh_openrouter();
+        });
+    }
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 29] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
-            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap"];
+        const OPS: [&str; 33] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
+            "worktree_new", "worktrees", "worktree_remove", "pr"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1440,6 +1461,65 @@ fn app_server(a: &Args) -> Result<()> {
                                 _ => "data: trusted, or any with confirm".to_string(),
                             };
                             s.apply(&json!({"type": "harness_notice", "text": text, "error": false}), at);
+                        }
+                        // a new worktree of this project for a conversation of its own (worktree.rs). The project's setup
+                        // script runs only when the window says so ("run_setup": the user's answer; null: ask first)
+                        Some("worktree_new") => {
+                            let base = labels::dir()?;
+                            let has_setup = cwd.join(".tazuna/setup.sh").is_file();
+                            if has_setup && cmd["run_setup"].is_null() {
+                                let mut o = out.lock();
+                                let _ = writeln!(o, "{}", json!({"type": "worktree", "ask_setup": true}));
+                                let _ = o.flush();
+                                continue;
+                            }
+                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                            let name = format!("wt-{}", radix36(now));
+                            let reply = match worktree::create(&cwd, &worktree::root(&base), &name) {
+                                Ok(wt) => {
+                                    // the same files as the trusted project: its settings load there too
+                                    if trust::is_trusted(&base, &cwd) {
+                                        let _ = trust::trust(&base, &wt.path);
+                                    }
+                                    let setup = (cmd["run_setup"] == true).then(|| worktree::setup(&cwd, &wt)).flatten();
+                                    json!({"type": "worktree", "path": wt.path, "branch": wt.branch, "port": wt.port, "copied": wt.copied,
+                                        "setup": setup.map(|(ok, tail)| json!({"ok": ok, "tail": tail}))})
+                                }
+                                Err(e) => json!({"type": "worktree", "error": format!("{e:#}")}),
+                            };
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{reply}");
+                            let _ = o.flush();
+                        }
+                        Some("worktrees") => {
+                            let list = worktree::list(&cwd, &worktree::root(&labels::dir()?));
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{}", json!({"type": "worktrees", "dir": cwd, "list": list}));
+                            let _ = o.flush();
+                        }
+                        // one of tazuna's worktrees removed (its branch stays); run from any of the repository's folders
+                        Some("worktree_remove") => {
+                            let path = PathBuf::from(cmd["path"].as_str().unwrap_or_default());
+                            let main = std::process::Command::new("git").args(["rev-parse", "--path-format=absolute", "--git-common-dir"]).current_dir(&path).output()
+                                .ok().map(|o| PathBuf::from(String::from_utf8_lossy(&o.stdout).trim())).and_then(|d| d.parent().map(PathBuf::from));
+                            let r = main.context("not a git worktree").and_then(|m| worktree::remove(&m, &worktree::root(&labels::dir()?), &path, cmd["force"] == true));
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{}", match r {
+                                Ok(()) => json!({"type": "worktree_removed", "path": path}),
+                                Err(e) => json!({"type": "worktree_removed", "path": path, "error": format!("{e:#}")}),
+                            });
+                            let _ = o.flush();
+                        }
+                        // the pull request of this folder's branch (gh), off this thread: gh goes to GitHub
+                        Some("pr") => {
+                            let dir = cwd.clone();
+                            std::thread::spawn(move || {
+                                let mut v = worktree::pr(&dir);
+                                v["type"] = json!("pr");
+                                let mut o = std::io::stdout().lock();
+                                let _ = writeln!(o, "{v}");
+                                let _ = o.flush();
+                            });
                         }
                         // the cap on paid API spend per 24 hours (a number of dollars, or null for none): ~/.config/tazuna/spend-cap
                         Some("spend_cap") => {
@@ -2088,6 +2168,18 @@ fn usage_rows(log: &str, since: u64) -> Vec<serde_json::Value> {
         json!([r["ts"], m["model"], m["version"], plan, r["cost_usd"], t["input"], t["cache_write"], t["cache_read"],
             t["output"], r["stop"], r["verify"]["status"], m["cache_ttl"], m["mode"]])
     }).collect()
+}
+
+/// A number in base 36 (a worktree's short name from the time).
+fn radix36(mut n: u64) -> String {
+    let digits = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    let mut out = vec![];
+    while n > 0 || out.is_empty() {
+        out.push(digits[(n % 36) as usize]);
+        n /= 36;
+    }
+    out.reverse();
+    String::from_utf8(out).unwrap_or_default()
 }
 
 /// A value the window may put after a claude flag (a session id, a model, an effort): one plain word, never a flag.

@@ -9,6 +9,8 @@ import { footprint, load, onPaletteChange, pluginActions, safeMode, setActions, 
 import { SettingsView } from "./components/SettingsView";
 import { SideChat } from "./components/SideChat";
 import { UsageView } from "./components/UsageView";
+import { PrView } from "./components/PrView";
+import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
 import type { Row } from "./lib/usage";
@@ -101,6 +103,8 @@ function useCore() {
       .then(() => core.opIn(tid, { op: "fork", id, model: p.view!.model, effort: p.view!.effort, url: route?.url ?? null, key_env: route?.key_env ?? null }))
       .catch((e) => patch(tid, { error: String(e) }));
   };
+  /** A folder leaves the recent projects (a removed worktree). */
+  const forget = (path: string) => setProjects((p) => { const next = p.filter((x) => x !== path); localStorage.setItem(RECENT, JSON.stringify(next)); return next; });
   /** Closes thread `of`'s side chat; its fork leaves the saved lists (it was hidden when it got its id). */
   const closeSide = (of: string) => { const s = Object.values(live.current).find((t) => t.side === of); if (s) close(s.tid); };
   // a side chat's fork stays out of the saved lists: hidden as soon as it has its own id
@@ -183,7 +187,7 @@ function useCore() {
   };
   // where the box's draft is kept: the conversation's id once known (a resumed one's from the start), else its folder's
   const draftKey = cur ? view?.session_id ?? cur.resume ?? `new:${folder ?? "chat"}` : undefined;
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, side, openSide, closeSide };
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, side, openSide, closeSide, forget };
 }
 
 function useTheme() {
@@ -244,7 +248,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, side, openSide, closeSide } = useCore();
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, side, openSide, closeSide, forget } = useCore();
   useEffect(() => setEditing(null), [active]);
   useEffect(watchUpdates, []);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
@@ -352,6 +356,41 @@ export default function App() {
   // the first message to a paid model asks once (per model; the cap in Settings holds after that)
   const [paidAsk, setPaidAsk] = useState<string | null>(null);
   const paidKey = choice ? `tazuna.paid-ok.${choice.model}|${choice.url}` : "";
+  // the pull request of the conversation's branch (gh, through the core): asked when a folder's conversation shows and
+  // after each finished reply; the header chip and the PR panel read it
+  const [prs, setPrs] = useState<Record<string, Pr>>({});
+  const [showPr, setShowPr] = useState(false);
+  useEffect(() => { if (!inTauri) return; const off = core.onPr((p, tid) => setPrs((m) => ({ ...m, [tid]: p }))); return () => { off.then((f) => f()); }; }, []);
+  const replies = view ? view.blocks.reduce((n, b) => n + (b.kind === "done" ? 1 : 0), 0) : 0;
+  useEffect(() => { if (inTauri && folder && view) core.prIn(active).catch(() => {}); }, [active, folder, !!view, replies]);
+  const pr = prs[active];
+  // worktrees (src/worktree.rs): a new conversation in a worktree of this project; its setup script runs on the user's word
+  const [wt, setWt] = useState<{ ask?: boolean; error?: string; remove?: { path: string; dirty?: string } } | null>(null);
+  const [wtNotes, setWtNotes] = useState<Record<string, string>>({});
+  const inWorktree = !!folder && isWorktree(folder);
+  useEffect(() => {
+    if (!inTauri) return;
+    const offs = [
+      core.onWorktree((w) => {
+        if (w.ask_setup) { setWt({ ask: true }); return; }
+        if (w.error || !w.path) { setWt({ error: w.error ?? "no worktree made" }); return; }
+        setWt(null);
+        const parts = [`Branch ${w.branch}`, `ports ${w.port}-${(w.port ?? 0) + 9} (TAZUNA_PORT)`, w.copied?.length ? `copied ${w.copied.join(", ")}` : "no local files to copy"];
+        if (w.setup) parts.push(w.setup.ok ? "setup ran" : `setup failed: ${w.setup.tail.split("\n").slice(-2).join(" ")}`);
+        setWtNotes((m) => ({ ...m, [w.path!]: parts.join(" · ") }));
+        open(w.path);
+      }),
+      core.onWorktreeRemoved((r) => {
+        if (r.error) { setWt({ remove: { path: r.path, dirty: r.error } }); return; }
+        setWt(null);
+        for (const t of threadsRef.current) if (t.folder === r.path) close(t.tid);
+        forget(r.path);
+      }),
+    ];
+    return () => offs.forEach((p) => p.then((off) => off()));
+  }, []);
+  const threadsRef = useRef(threads);
+  threadsRef.current = threads;
   /** A message on its way: /create, a creator conversation's first, an edit from an earlier message, or a plain one. */
   const sendNow = (text: string) => {
     if (text.startsWith("/create ")) { createPanel(text.slice(8).trim()); return; }
@@ -379,6 +418,9 @@ export default function App() {
     if (busy) a.unshift({ id: "stop", group: "This conversation", label: "Stop the reply", keys: "Esc", run: () => core.interrupt() });
     const undo = view?.changes?.find((c) => c.can_undo);
     if (undo && !busy) a.push({ id: "undo", group: "This conversation", label: `Undo the last turn's changes`, hint: `${undo.files.length} file${undo.files.length === 1 ? "" : "s"}`, run: () => core.undo(undo.turn) });
+    if (view && folder) a.push({ id: "worktree", group: "This project", label: "New conversation in a worktree", hint: "a branch and folder of its own", keywords: "worktree branch parallel", run: () => core.worktreeNew(null).catch(() => {}) },
+      { id: "pr", group: "This project", label: "Pull request: checks and reviews", keywords: "pr github gh checks ci", run: () => setShowPr(true) });
+    if (inWorktree) a.push({ id: "worktree-remove", group: "This project", label: "Remove this worktree", hint: "its branch stays", run: () => setWt({ remove: { path: folder! } }) });
     if (view?.session_id && !side) a.push({ id: "side", group: "This conversation", label: "Side chat", hint: "ask about it; nothing goes back", keywords: "btw aside question fork", run: () => openSide(active) });
     if (side) a.push({ id: "side-close", group: "This conversation", label: "Close the side chat", run: () => closeSide(active) });
     if (view && folder) a.push(
@@ -408,7 +450,7 @@ export default function App() {
     <div className={`grid h-screen overflow-hidden ${side ? "grid-cols-[248px_1fr_380px]" : "grid-cols-[248px_1fr_232px]"}`}>
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
         chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
-        projects={inTauri ? projects.map((p) => ({ name: base(p), path: p, open: p === folder, threads: rowsOf(sessions[p]) })) : demo.projects}
+        projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p]) })) : demo.projects}
         onNewChat={() => open(null)} onOpenFolder={pick} onOpenProject={(p) => p.path && open(p.path)}
         onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")} onSettings={() => setOverlay("settings")}
         open={inTauri ? threads.map((t) => ({ tid: t.tid, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
@@ -423,7 +465,8 @@ export default function App() {
           <div className="flex gap-1.5">
             <HeaderCtx.Provider value={{ modelLabel: models?.choices.find((c) => c.current)?.label ?? session.model, effort: session.effort,
               branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
-              side: inTauri && view?.session_id ? () => (side ? closeSide(active) : openSide(active)) : undefined, sideOpen: !!side }}>
+              side: inTauri && view?.session_id ? () => (side ? closeSide(active) : openSide(active)) : undefined, sideOpen: !!side,
+              pr: pr ? prChip(pr) : null, openPr: () => setShowPr(true) }}>
               <Slot name="header.actions" props={{ data, folder }} />
             </HeaderCtx.Provider>
           </div>
@@ -444,6 +487,23 @@ export default function App() {
           </div>
         )}
         {error && <div className="mx-auto mb-2 max-w-[700px] px-7 text-[12.5px] text-bad">{error}</div>}
+        {folder && wtNotes[folder] && (
+          <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
+            <span className="flex-1">Worktree ready. {wtNotes[folder]}.</span>
+            <button onClick={() => setWtNotes((m) => { const { [folder]: _, ...rest } = m; return rest; })} className="text-muted hover:text-ink">Dismiss</button>
+          </div>
+        )}
+        {wt && (
+          <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
+            {wt.ask && <><span className="flex-1">This project has <span className="font-mono">.tazuna/setup.sh</span>. Run it in the new worktree (installs and the like)?</span>
+              <button onClick={() => core.worktreeNew(true).catch(() => {})} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Run it</button>
+              <button onClick={() => core.worktreeNew(false).catch(() => {})} className="rounded-md border border-line px-2.5 py-1 text-ink-2 hover:bg-hover">Skip</button></>}
+            {wt.error && <span className="flex-1 text-bad">The worktree was not made: {wt.error}</span>}
+            {wt.remove && <><span className="flex-1">{wt.remove.dirty ? `It has changes that are not committed: ${wt.remove.dirty.slice(0, 160)}` : "Remove this worktree? Its folder goes; its branch and commits stay."}</span>
+              <button onClick={() => core.worktreeRemove(wt.remove!.path, !!wt.remove!.dirty).catch(() => {})} className="rounded-md border border-line-strong px-2.5 py-1 font-medium text-bad hover:bg-hover">{wt.remove.dirty ? "Remove anyway" : "Remove"}</button></>}
+            <button onClick={() => setWt(null)} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">{wt.ask ? "Cancel" : "Close"}</button>
+          </div>
+        )}
         {inTauri && safeMode() && userWidgets.some((w) => w.kind === "plugin") && (
           <div className="mx-auto mb-2 max-w-[700px] px-7 text-[12.5px] text-muted">Safe mode: plugins are off (Settings turns them back on).</div>
         )}
@@ -496,6 +556,8 @@ export default function App() {
       <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
+      {showPr && inTauri && <PrView pr={pr ?? null} worktree={inWorktree} onClose={() => setShowPr(false)} onRefresh={() => core.prIn(active).catch(() => {})}
+        onSend={(text) => { setShowPr(false); core.send(text, true).catch(() => {}); }} onRemoveWorktree={() => { setShowPr(false); setWt({ remove: { path: folder! } }); }} />}
       {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} />}
       {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} items={userWidgets} onEdit={editPanel}
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
@@ -512,13 +574,17 @@ function lastCost(v: View): number {
 
 const base = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
+/** One of tazuna's worktrees (src/worktree.rs: <data>/worktrees/<repository>/wt-<name>). */
+const isWorktree = (path: string) => /[\\/]worktrees[\\/][^\\/]+[\\/]wt-[a-z0-9]+$/.test(path);
+
 const rowsOf = (rows?: SessionRow[]) => (rows ?? []).map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)" }));
 
 /** An open conversation's name: its first message, else a new one's. */
 const titleOf = (t: Thread) => (t.view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] || "New conversation";
 
 /** The header's built-in chips read this (and a plugin replacing one can too). */
-export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void; side?: () => void; sideOpen?: boolean }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
+export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void; side?: () => void; sideOpen?: boolean;
+  pr?: string | null; openPr?: () => void }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
 
 function ModelChip() {
   const h = useContext(HeaderCtx);
@@ -538,6 +604,11 @@ function SideChip() {
     className={`rounded-full border px-2.5 py-1 text-[12px] hover:bg-hover ${h.sideOpen ? "border-line-strong bg-selected text-ink" : "border-line text-ink-2"}`}>Side chat</button> : null;
 }
 slots.register({ id: "header.side", slot: "header.actions", order: 40, source: "tazuna", render: SideChip });
+function PrChip() {
+  const h = useContext(HeaderCtx);
+  return h.pr ? <button onClick={h.openPr} title="The pull request: checks and reviews" className={`rounded-full border px-2.5 py-1 text-[12px] hover:bg-hover ${h.pr.includes("✗") ? "border-bad/40 text-bad" : "border-line text-ink-2"}`}>{h.pr}</button> : null;
+}
+slots.register({ id: "header.pr", slot: "header.actions", order: 35, source: "tazuna", render: PrChip });
 slots.register({ id: "header.model", slot: "header.actions", order: 10, source: "tazuna", render: ModelChip });
 slots.register({ id: "header.branch", slot: "header.actions", order: 20, source: "tazuna", render: BranchChip });
 slots.register({ id: "header.review", slot: "header.actions", order: 30, source: "tazuna", render: ReviewChip });

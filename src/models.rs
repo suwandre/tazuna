@@ -348,6 +348,10 @@ pub fn catalog(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels, 
     if let Some(list) = routes.parent().and_then(|d| std::fs::read_to_string(d.join("kenari-models.json")).ok()) {
         out.extend(kenari_choices(&serde_json::from_str(&list).unwrap_or_default(), &file, &trusted));
     }
+    // CheaperInference's list (2026-11-16), kept like Mortera's (it needs the key)
+    if let Some(list) = routes.parent().and_then(|d| std::fs::read_to_string(d.join("cheaperinference-models.json")).ok()) {
+        out.extend(cheaper_choices(&serde_json::from_str(&list).unwrap_or_default(), &file, &trusted));
+    }
     // every other SubRouter model with a public score (the list also holds image and video models), best first. One model
     // once: SubRouter lists some under two spellings ("claude-opus-5.5" beside the subscription's "claude-opus-5-5",
     // "DeepSeek-V4-Flash-0731" beside "deepseek-v4-flash-0731"), and a pick of the copy ran Opus through SubRouter instead
@@ -525,6 +529,45 @@ fn kenari_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) -
     rows.into_iter().map(|(_, c)| c).collect()
 }
 
+/// CheaperInference's text models that take tools, as picker rows (a gateway: 266 of its 573 models on 2026-11-16), by
+/// name, without Claude (it runs on the subscription). Prices from its list, USD per million (strings); each model with
+/// reasoning gets the effort levels. Free ones say so.
+fn cheaper_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) -> Vec<Choice> {
+    let mut rows: Vec<Choice> = list["data"].as_array().into_iter().flatten().filter_map(|m| {
+        let id = m["id"].as_str()?;
+        let tools = m["features"].as_array().is_some_and(|f| f.iter().any(|x| x == "tool-use"));
+        if m["type"] != "text" || !tools || id.starts_with("claude-") {
+            return None;
+        }
+        let p = &m["pricing"];
+        let usd = |k: &str| p[k].as_str().and_then(|v| v.parse::<f64>().ok()).or(p[k].as_f64());
+        let (input, output) = (usd("input_per_million")?, usd("output_per_million")?);
+        let free = m["is_free"] == true || (input == 0.0 && output == 0.0);
+        Some(Choice {
+            model: id.to_string(),
+            label: id.to_string(),
+            route: Some(("https://api.cheaperinference.com/v1".into(), "CHEAPER_INFERENCE_API_KEY".into(), route_price(input, output, usd("cache_read_input_per_million")))),
+            place: format!("CheaperInference · {}", m["provider"].as_str().unwrap_or("")).trim_end_matches(" · ").to_string(),
+            efforts: if m["capabilities"]["reasoning"] == true { LEVELS.iter().map(|e| e.to_string()).collect() } else { vec![] },
+            price: if free { "free".into() } else { format!("{} / {}", per_m(input), per_m(output)) },
+            note: "not checked yet: prices from CheaperInference's list; effort levels, cache and quality not measured".into(),
+            stale: false,
+            state: if key("CHEAPER_INFERENCE_API_KEY").is_none() {
+                State::NoKey
+            } else if !trusted("api.cheaperinference.com") {
+                State::Untrusted
+            } else {
+                State::Ready
+            },
+            bench: scores(file, id).0,
+            aa: scores(file, id).1,
+            pins: vec![],
+        })
+    }).collect();
+    rows.sort_by(|a, b| a.model.cmp(&b.model));
+    rows
+}
+
 /// At start: OpenRouter's and kenari's model lists and SubRouter's price list (public, no key needed) into the data
 /// folder, where `/model` reads them (a slow or absent answer leaves the last copy). SubRouter's came only with a
 /// release until 0.1.118: a model it added, or a provider's new price, waited for the next tazuna.
@@ -544,18 +587,21 @@ pub fn refresh_openrouter() {
     }
 }
 
-/// At start, with MORTERA_API_KEY set: Mortera's model list into the data folder, where `/model` reads it (a slow or
-/// absent answer leaves the last copy).
+/// At start, for each provider whose list needs its key and has one set (Mortera, CheaperInference): its model list into
+/// the data folder, where `/model` reads it (a slow or absent answer leaves the last copy).
 pub fn refresh_mortera() {
-    let Some(k) = key("MORTERA_API_KEY") else { return };
-    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
-    let Ok(mut r) = http.get("https://mortera.cloud/v1/models").header("Authorization", format!("Bearer {}", k.trim())).call() else { return };
-    let Ok(body) = r.body_mut().with_config().limit(20 << 20).read_to_string() else { return };
-    let ok = serde_json::from_str::<Value>(&body).is_ok_and(|v| v["data"].as_array().is_some_and(|d| !d.is_empty()));
-    if let (true, Ok(dir)) = (ok, crate::labels::dir()) {
-        let tmp = dir.join("mortera-models.json.tmp");
-        if std::fs::write(&tmp, body).is_ok() {
-            let _ = std::fs::rename(&tmp, dir.join("mortera-models.json"));
+    for (var, url, name) in [("MORTERA_API_KEY", "https://mortera.cloud/v1/models", "mortera-models.json"),
+                             ("CHEAPER_INFERENCE_API_KEY", "https://api.cheaperinference.com/v1/models", "cheaperinference-models.json")] {
+        let Some(k) = key(var) else { continue };
+        let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
+        let Ok(mut r) = http.get(url).header("Authorization", format!("Bearer {}", k.trim())).call() else { continue };
+        let Ok(body) = r.body_mut().with_config().limit(20 << 20).read_to_string() else { continue };
+        let ok = serde_json::from_str::<Value>(&body).is_ok_and(|v| v["data"].as_array().is_some_and(|d| !d.is_empty()));
+        if let (true, Ok(dir)) = (ok, crate::labels::dir()) {
+            let tmp = dir.join(format!("{name}.tmp"));
+            if std::fs::write(&tmp, body).is_ok() {
+                let _ = std::fs::rename(&tmp, dir.join(name));
+            }
         }
     }
 }
@@ -666,7 +712,7 @@ pub struct Login {
     pub example: &'static str,
 }
 
-pub const LOGINS: [Login; 5] = [
+pub const LOGINS: [Login; 6] = [
     Login { name: "SubRouter", vars: &["SUBROUTER_API_KEY"], host: "subrouter.ai", page: "https://subrouter.ai/console/keys",
             place: "SubRouter's console", example: "sk-..." },
     Login { name: "Mortera", vars: &["MORTERA_API_KEY"], host: "mortera.cloud", page: "https://mortera.cloud",
@@ -678,6 +724,9 @@ pub const LOGINS: [Login; 5] = [
             place: "your kenari dashboard (Keys)", example: "" },
     Login { name: "Mistral", vars: &["MISTRAL_API_KEY", "MISTRAL_VIBE_API_KEY"], host: "api.mistral.ai", page: "https://console.mistral.ai/api-keys",
             place: "Mistral's console (or Code › Vibe CLI)", example: "" },
+    // the own loop's first provider (2026-10-09); its list needs the key, so its models show once one is saved (2026-11-16)
+    Login { name: "CheaperInference", vars: &["CHEAPER_INFERENCE_API_KEY"], host: "api.cheaperinference.com",
+            page: "https://platform.cheaperinference.com/dashboard", place: "your CheaperInference dashboard (API keys)", example: "" },
 ];
 
 /// Where a provider's key comes from, for `/login`'s list; empty: none.
@@ -953,6 +1002,22 @@ mod tests {
     fn catalog_claude_row() -> Choice {
         Choice { model: "claude-opus-5-5".into(), label: "Opus 5.5".into(), route: None, place: "Claude · subscription".into(), efforts: vec![],
                  price: "plan".into(), note: String::new(), stale: false, state: State::Ready, bench: String::new(), aa: String::new(), pins: vec![] }
+    }
+
+    #[test]
+    fn cheaperinference_rows_are_its_text_models_with_tools() {
+        let list = serde_json::json!({"data": [
+            {"id": "deepseek-v4.1-flash", "type": "text", "provider": "DeepSeek", "features": ["reasoning", "tool-use"], "capabilities": {"reasoning": true},
+             "pricing": {"input_per_million": "0.150000", "cache_read_input_per_million": "0.003", "output_per_million": "0.600000"}},
+            {"id": "no-tools", "type": "text", "features": ["reasoning"], "capabilities": {}, "pricing": {"input_per_million": "1", "output_per_million": "2"}},
+            {"id": "claude-opus-5-5", "type": "text", "features": ["tool-use"], "capabilities": {}, "pricing": {"input_per_million": "5", "output_per_million": "25"}},
+            {"id": "an-embedder", "type": "embedding", "features": ["tool-use"], "capabilities": {}, "pricing": {"input_per_million": "0.01", "output_per_million": "0"}},
+            {"id": "glyph-cluster", "type": "text", "is_free": true, "features": ["tool-use"], "capabilities": {}, "pricing": {"input_per_million": "0", "output_per_million": "0"}}]});
+        let rows = cheaper_choices(&list, &serde_json::json!({}), &|h: &str| h == "api.cheaperinference.com");
+        assert_eq!(rows.iter().map(|c| c.model.as_str()).collect::<Vec<_>>(), ["deepseek-v4.1-flash", "glyph-cluster"], "text models with tools, no Claude");
+        let r = &rows[0];
+        assert_eq!((r.route.as_ref().unwrap().0.as_str(), r.route.as_ref().unwrap().2.as_str()), ("https://api.cheaperinference.com/v1", "0.15,0.003,0.6"));
+        assert_eq!((r.place.as_str(), r.efforts.len(), rows[1].price.as_str(), rows[1].efforts.len()), ("CheaperInference · DeepSeek", 5, "free", 0));
     }
 
     #[test]

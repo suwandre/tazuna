@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.143 (2026-11-16): worktrees, pull requests, and CheaperInference as a provider
+
+- src/worktree.rs and app-server ops for the desktop: `worktree_new` makes branch `tazuna/wt-<time>` off the project's
+  HEAD, checked out under the data folder's `worktrees/<repository>/`, with the project's ignored `.env*` files and the
+  paths in `.worktreeinclude` copied in (inside the project only); the project's `.tazuna/setup.sh` runs there only when
+  the window says the user agreed. A trusted project's worktree is trusted too. `worktrees` lists tazuna's worktrees,
+  `worktree_remove` removes one (refused with uncommitted changes unless forced, refused for any other folder; the
+  branch stays). A server started in one sets TAZUNA_PORT (ten ports from 4100-8090, from its name) for the agent's
+  commands. `pr` returns the branch's pull request through gh (checks, reviews, comments, inline review comments).
+- CheaperInference in /login and the desktop's Settings (`CHEAPER_INFERENCE_API_KEY`); with a key, its model list loads
+  at start and its text models that take tools (266 on 2026-11-16, Claude left out) are in /model with their prices.
+- The desktop's servers load the providers' model lists at start, at most once an hour (only the terminal did).
+- No other metric moves; 180 tests.
+
 ## 0.1.142 (2026-11-16): a cap on paid API spend
 
 - A typed message to a paid model (the own loop) in a live session, terminal or desktop, is not sent once the last 24

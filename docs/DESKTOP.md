@@ -52,7 +52,13 @@ the public half in tauri.conf.json. Losing it means one manual reinstall with a 
 message box says where the next message goes and what it costs (Claude on your plan with the 5-hour window's use; a free
 model; a paid one with about what a message cost on it in your own use, else its price per million tokens). When the
 plan's 5 hours pass 90%, it offers the own-loop model you used most in the last 30 days. The first message to a paid
-model asks once; paid spend stops at a cap per 24 hours ($1 by default, Settings), enforced in the core.
+model asks once; paid spend stops at a cap per 24 hours ($1 by default, Settings), enforced in the core. 0.1.22 (with
+tazuna 0.1.143): a conversation in a worktree of its own (Cmd-K "New conversation in a worktree"): branch
+`tazuna/wt-...`, the folder under tazuna's data folder, `.env*` files and `.worktreeinclude` paths copied in, the
+project's `.tazuna/setup.sh` run if you say so, ten ports in TAZUNA_PORT; it shows in the sidebar as "project · wt-...",
+and Cmd-K removes it (its branch stays). The PR panel (header chip, Cmd-K): the branch's pull request through gh, its
+checks and reviews; a failing check or the review comments go to the agent in one click, no PR yet asks tazuna to
+open one, a merged worktree offers its removal. CheaperInference joins the providers in Settings.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

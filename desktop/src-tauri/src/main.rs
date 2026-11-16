@@ -119,7 +119,7 @@ fn trust(core: State<Core>, tid: String) -> Result<(), String> {
 /// A provider's page for making a key, in the browser: only https pages of the providers tazuna knows.
 #[tauri::command]
 fn open_key_page(url: String) -> Result<(), String> {
-    const HOSTS: [&str; 5] = ["subrouter.ai", "mortera.cloud", "openrouter.ai", "kenari.id", "console.mistral.ai"];
+    const HOSTS: [&str; 6] = ["subrouter.ai", "mortera.cloud", "openrouter.ai", "kenari.id", "console.mistral.ai", "platform.cheaperinference.com"];
     let host = url.strip_prefix("https://").and_then(|r| r.split(['/', '?', '#']).next()).unwrap_or_default();
     if !HOSTS.contains(&host) || url.chars().any(|c| c.is_whitespace() || c == '"') {
         return Err(format!("not a provider page: {url}"));
@@ -458,7 +458,7 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
 /// nothing else passes (the core drops other lines too).
 #[tauri::command]
 fn op(core: State<Core>, tid: String, msg: serde_json::Value) -> Result<(), String> {
-    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap")) {
+    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr")) {
         return Err(format!("not a command the window sends: {msg}"));
     }
     write(&core, &tid, msg)
