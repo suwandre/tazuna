@@ -18,7 +18,7 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
   close.current = onClose;
   useEffect(() => {
     const off = core.onUsage((u) => setRows(u.rows));
-    core.usage().catch(() => setRows([]));
+    core.usage(true).catch(() => setRows([]));
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close.current(); };
     window.addEventListener("keydown", esc);
     return () => { off.then((f) => f()); window.removeEventListener("keydown", esc); };
@@ -59,16 +59,20 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
                 ))}</tbody></table>
             )}
 
-            <div className={label}>Trouble per version and model (your own runs, not benchmarks)</div>
-            <div className="mb-1.5 text-[12px] text-muted">Runs you stopped, that ended in an error, or whose checks failed. Corrections and rewinds (bench/realuse.py) are not counted here yet.</div>
-            {s.byVersion.length === 0 ? <div className="text-[12.5px] text-faint">No runs in these days.</div> : (
+            <div className={label}>How your own runs went (real use, not benchmarks)</div>
+            <div className="mb-1.5 text-[12px] text-muted">Read from what happened next, with nothing for you to label. A clear miss: you stopped or rewound it, it ended
+              in an error, its change was thrown away, or your next message corrected it or asked the same again. Pushback: "wait, …", "why …?", "progress?".</div>
+            {s.lanes.length > 0 && <div className="mb-2 flex gap-5 text-[12.5px]">{s.lanes.map((l) => (
+              <span key={l.lane}><span className="text-ink-2">{l.lane}</span> <span className="font-mono">{l.missPct}%</span> <span className="text-muted">clear misses, {l.softPct}% pushback · {l.runs} runs</span></span>
+            ))}</div>}
+            {s.byVersion.length === 0 ? <div className="text-[12.5px] text-faint">No runs of your own in these days.</div> : (
               <table className="w-full text-[12.5px]"><thead><tr className="border-b border-line-soft"><th className={th}>Version</th><th className={th}>Model</th>
-                <th className={`${th} text-right`}>Runs</th><th className={`${th} text-right`}>Stopped</th><th className={`${th} text-right`}>Errors</th>
-                <th className={`${th} text-right`}>Checks failed</th><th className={`${th} text-right`}>Trouble</th></tr></thead>
+                <th className={`${th} text-right`}>Runs</th><th className={`${th} text-right`}>Clear misses</th><th className={`${th} text-right`}>Pushback</th>
+                <th className={th}>Mostly</th></tr></thead>
                 <tbody>{s.byVersion.slice(0, 20).map((v) => (
                   <tr key={`${v.version}${v.model}`} className="border-b border-line-soft last:border-0"><td className={`${td} font-mono text-[12px]`}>{v.version}</td>
-                    <td className={`${td} font-mono text-[12px] text-ink-2`}>{v.model}</td><td className={num}>{v.runs}</td><td className={num}>{v.stopped}</td>
-                    <td className={num}>{v.errors}</td><td className={num}>{v.checksFailed}</td><td className={num}>{v.troublePct}%</td></tr>
+                    <td className={`${td} font-mono text-[12px] text-ink-2`}>{v.model}</td><td className={num}>{v.runs}</td><td className={num}>{v.missPct}%</td>
+                    <td className={num}>{v.softPct}%</td><td className={`${td} text-[12px] text-muted`}>{v.top}</td></tr>
                 ))}</tbody></table>
             )}
           </>}

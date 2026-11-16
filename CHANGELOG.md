@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.147 (2026-11-16): real use as a score in the core
+
+- src/realuse.rs ports bench/realuse.py: each of the user's own live runs (not benchmark or test folders, probes,
+  wake-ups, commands or starts that never reached a model) gets its strong signals (stopped, rewound, error, crashed,
+  discarded, misrouted, correction, re-ask) and soft ones (pushback, waited) from its recording and the next message.
+  `{"op": "usage", "signals": true}` adds them to the usage rows, reading only the lines that matter of the recordings the
+  window's runs name (0.16 s for 90 days, 865 runs). Over the same window it matches the script exactly: 21 runs with
+  strong signals, 12 with soft only, every signal's count the same. Test.
+- No other metric moves; 182 tests.
+
 ## 0.1.146 (2026-11-16): the setup script that runs is the one shown
 
 - The app server keeps the bytes of the setup script it showed, under the question's id, and a yes with that id runs

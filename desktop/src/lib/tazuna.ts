@@ -114,7 +114,7 @@ export const core = {
   resume: (id: string) => to("op", { msg: { op: "resume", id } }),
   onSessions: (cb: (s: Sessions) => void) => on<Sessions>("sessions", cb),
   /** the run log's last 90 days for the usage page (src/lib/usage.ts reads the rows) */
-  usage: () => to("op", { msg: { op: "usage" } }),
+  usage: (signals = false) => to("op", { msg: { op: "usage", signals } }),
   onUsage: (cb: (u: { rows: import("./usage").Row[] }) => void) => on<{ rows: import("./usage").Row[] }>("usage", cb),
   send: (text: string, agent = false) => to("send", { text, agent }),
   trust: () => to("trust"),

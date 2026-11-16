@@ -13,6 +13,7 @@ Per run, from the session recording and the next message the user sent:
   probes  checks on the model ("what is your model name", "test"): no signals, counted apart per lane
 Checked against 390 runs labelled by hand (2026-11-12): strong and soft together caught 12 of the 14 bad runs; 4 of
 231 good runs were flagged (all "wait - ..." clarifications, now soft).
+The desktop's usage page runs the same rules in the core (src/realuse.rs, 0.1.147): change both together.
 """
 import argparse, collections, glob, json, os, re, statistics
 

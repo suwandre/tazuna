@@ -99,6 +99,7 @@ mod trust;
 mod turns;
 mod ui;
 mod verify;
+mod realuse;
 mod versions;
 mod worktree;
 
@@ -1166,9 +1167,11 @@ fn app_server(a: &Args) -> Result<()> {
                         }
                         // the usage page: the run log's last 90 days, one compact row per run (the window groups them)
                         Some("usage") => {
-                            let log = std::fs::read_to_string(labels::dir()?.join("runs.jsonl")).unwrap_or_default();
+                            let base = labels::dir()?;
+                            let log = std::fs::read_to_string(base.join("runs.jsonl")).unwrap_or_default();
+                            let labels_text = std::fs::read_to_string(base.join("labels.jsonl")).unwrap_or_default();
                             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
-                            let rows = usage_rows(&log, now.saturating_sub(90 * 86_400));
+                            let rows = usage_rows(&log, now.saturating_sub(90 * 86_400), &labels_text, cmd["signals"] == true);
                             let mut o = out.lock();
                             let _ = writeln!(o, "{}", json!({"type": "usage", "rows": rows}));
                             let _ = o.flush();
@@ -2185,14 +2188,29 @@ fn new_conversation(live: &mut live::Live, s: &mut Session, v: &mut View, earlie
 }
 
 /// The run log's runs since `since` (seconds), each as [ts, model, version, on the claude CLI (the plan), cost, input,
-/// cache write, cache read, output, stop, verify, cache ttl, mode]: the usage page's rows. Prompts stay out.
-fn usage_rows(log: &str, since: u64) -> Vec<serde_json::Value> {
-    log.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter(|r| r["ts"].as_u64().is_some_and(|t| t >= since)).map(|r| {
+/// cache write, cache read, output, stop, verify, cache ttl, mode, real use, strong signals, soft signals]: the usage
+/// page's rows. Prompts stay out. "Real use" is the user's own work (live, outside benchmark and test folders, not a
+/// probe, a wake-up, a command or a start that never reached a model), with its signals (realuse.rs) from the
+/// recordings when `recordings` is set.
+fn usage_rows(log: &str, since: u64, labels: &str, recordings: bool) -> Vec<serde_json::Value> {
+    let runs: Vec<serde_json::Value> = log.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter(|r| r["ts"].as_u64().is_some_and(|t| t >= since)).collect();
+    let paths: std::collections::HashSet<String> = if recordings { runs.iter().filter_map(|r| r["meta"]["recording"].as_str().map(String::from)).collect() } else { Default::default() };
+    let mut msgs = realuse::messages(&paths);
+    let verdicts: std::collections::HashMap<String, String> = labels.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .filter_map(|d| Some((d["run"].as_str()?.to_string(), d["verdict"].as_str()?.to_string()))).collect();
+    runs.iter().map(|r| {
         let (m, t) = (&r["meta"], &r["tokens"]);
         // the own loop records claude_version as null; runs before 0.0.3 have no such key and all ran on claude
         let plan = m.get("claude_version").is_none_or(|v| !v.is_null());
+        let prompt = r["prompt"].as_str().unwrap_or_default();
+        let key = (m["recording"].as_str().unwrap_or_default().to_string(), prompt.lines().next().unwrap_or_default().chars().take(200).collect::<String>());
+        let msg = msgs.get_mut(&key).and_then(|q| q.pop_front());
+        let (strong, soft) = realuse::signals(prompt, msg.as_ref(), r["stop"].as_str().unwrap_or_default(), r["id"].as_str().and_then(|id| verdicts.get(id)).map(String::as_str));
+        let nothing = r["secs"].as_f64().unwrap_or(0.0) < 3.0 && r["cost_usd"].as_f64().unwrap_or(0.0) == 0.0 && strong.is_empty();
+        let real = m["mode"] == "live" && !realuse::skipped_folder(m["cwd"].as_str().unwrap_or_default()) && !realuse::probe(prompt) && !nothing
+            && !prompt.starts_with("(claude continued") && !(prompt.starts_with('/') && prompt.split_whitespace().count() <= 2);
         json!([r["ts"], m["model"], m["version"], plan, r["cost_usd"], t["input"], t["cache_write"], t["cache_read"],
-            t["output"], r["stop"], r["verify"]["status"], m["cache_ttl"], m["mode"]])
+            t["output"], r["stop"], r["verify"]["status"], m["cache_ttl"], m["mode"], real, strong, soft])
     }).collect()
 }
 
@@ -4069,7 +4087,7 @@ broken"#;
 {"ts": 70, "meta": {"model": "deepseek", "claude_version": null}}
 {"ts": 80, "meta": {"model": "claude-haiku-4-5"}}
 not json"#;
-        let rows = super::usage_rows(log, 60);
+        let rows = super::usage_rows(log, 60, "", false);
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0][0], 100);
         assert_eq!((&rows[0][3], &rows[1][3], &rows[2][3]), (&json!(true), &json!(false), &json!(true)), "plan, own loop, before claude_version");
