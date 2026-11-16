@@ -998,8 +998,8 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 25] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
-            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "quit"];
+        const OPS: [&str; 26] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1054,6 +1054,9 @@ fn app_server(a: &Args) -> Result<()> {
     let mut last_reply = String::new();
     // the router: on as in the terminal; the settings page turns it off (the terminal's /route off)
     let mut route_on = !a.no_route;
+    // creator mode: writes and edits inside this folder (a panel's or plugin's own, under the desktop app's folder) are
+    // allowed without asking. Decided here on the call's real path, resolved, never on the question's display text.
+    let mut allow_root: Option<PathBuf> = None;
     let (mut changed, mut last) = (false, Instant::now());
     loop {
         loop {
@@ -1384,6 +1387,14 @@ fn app_server(a: &Args) -> Result<()> {
                                 if route_on { "are answered as a chat" } else { "go to the agent" });
                             s.apply(&json!({"type": "harness_notice", "text": text, "error": false}), at);
                         }
+                        Some("allow_root") => {
+                            let desk = platform::home().map(|h| h.join(".config/tazuna/desktop")).and_then(|d| d.canonicalize().ok());
+                            let want = cmd["path"].as_str().and_then(|p| std::path::Path::new(p).canonicalize().ok());
+                            match (desk, want) {
+                                (Some(d), Some(p)) if p.starts_with(&d) && p != d => allow_root = Some(p),
+                                _ => info(&mut s, "creator mode: that folder is not under the desktop app's own folder".into()),
+                            }
+                        }
                         // the user's yes to the trust question, for this folder; the window then starts the server again
                         Some("trust") => match labels::dir().and_then(|b| trust::trust(&b, &cwd)) {
                             Ok(()) => untrusted = None,
@@ -1412,6 +1423,13 @@ fn app_server(a: &Args) -> Result<()> {
             }
             s.apply(&e, t);
             changed = true;
+        }
+        // creator mode: the oldest question, if it is a write or edit inside the allowed folder, is answered yes
+        if let Some(root) = &allow_root && let Some(req) = live.pending.front() && inside_root(req, root) {
+            if let Some((t, e)) = live.answer(true, false) {
+                s.apply(&e, t);
+                changed = true;
+            }
         }
         // a turn is over once its result came and nothing runs (checks and fix rounds included): what did it change?
         if turn.as_ref().is_some_and(|t| t.1) && live.idle() && let Some((before, _)) = turn.take()
@@ -3583,6 +3601,30 @@ impl Picker {
     }
 }
 
+/// A permission question for a file write or edit whose real path, resolved (its folder's links and `..` included),
+/// lies inside `root`. A path whose folder does not exist yet, or any other tool, is not.
+fn inside_root(req: &serde_json::Value, root: &std::path::Path) -> bool {
+    let r = &req["request"];
+    let tool = r["tool_name"].as_str().unwrap_or_default();
+    if !matches!(tool, "Write" | "Edit" | "MultiEdit" | "mcp__lean__write" | "mcp__lean__edit") || r["from_text"] == true {
+        return false;
+    }
+    let Some(p) = r["input"]["file_path"].as_str().or(r["input"]["path"].as_str()).map(std::path::Path::new) else { return false };
+    let (Some(dir), Some(name)) = (p.parent(), p.file_name()) else { return false };
+    if name == ".." || name == "." {
+        return false;
+    }
+    // the file itself may be new; if it exists it may be a link, which resolves too
+    let real = match p.canonicalize() {
+        Ok(full) => full,
+        Err(_) => match dir.canonicalize() {
+            Ok(d) => d.join(name),
+            Err(_) => return false,
+        },
+    };
+    real.starts_with(root)
+}
+
 /// The prompt block of each of claude's checkpoints (the messages /rewind can go back to), in order: matched by text,
 /// since a message answered as a chat has a prompt and no checkpoint.
 fn edit_points(s: &Session, live: &live::Live) -> Vec<usize> {
@@ -3739,6 +3781,27 @@ fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn creator_writes_are_allowed_only_inside_the_folder() {
+        let base = std::env::temp_dir().join(format!("tazuna-root-{}", std::process::id()));
+        let root = base.join("panel");
+        std::fs::create_dir_all(&root).unwrap();
+        let root = root.canonicalize().unwrap();
+        let q = |tool: &str, path: String| json!({"request": {"tool_name": tool, "input": {"file_path": path}}});
+        assert!(super::inside_root(&q("Write", format!("{}/index.html", root.display())), &root));
+        assert!(super::inside_root(&q("mcp__lean__write", format!("{}/manifest.json", root.display())), &root));
+        assert!(!super::inside_root(&q("Write", format!("{}/../evil.sh", root.display())), &root), "climbs out");
+        assert!(!super::inside_root(&q("Write", format!("{}/{}/../../x", root.display(), "a".repeat(500))), &root), "a long path that climbs out");
+        assert!(!super::inside_root(&q("Bash", format!("{}/x", root.display())), &root), "not a write tool");
+        assert!(!super::inside_root(&q("Write", "/etc/passwd".into()), &root));
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink("/tmp", root.join("out")).unwrap();
+            assert!(!super::inside_root(&q("Write", format!("{}/out/x", root.display())), &root), "through a link");
+        }
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
     #[test]
     fn nothing_goes_to_an_untrusted_provider_under_trusted() {
         let mut live = crate::live::Live::new("", "").unwrap();

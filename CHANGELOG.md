@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.134 (2026-11-16): creator mode's folder, decided in the core
+
+- `tazuna app-server` takes {"op":"allow_root","path":..}: a write or edit whose real path, resolved (links and `..`
+  included), lies inside that folder is allowed without asking; the folder must be under the desktop app's own
+  (~/.config/tazuna/desktop). Desktop 0.1.9 decided this in the window on the question's display text, which is cut at
+  400 characters, so a long path could hide a `..` past the cut (security review). A test covers climbing out, a long
+  path, another tool and a link; live, a write inside went through and one to /tmp still asked.
+- No other metric moves; 174 tests.
+
 ## 0.1.133 (2026-11-16): a review the desktop app goes through piece by piece
 
 - `tazuna app-server` takes {"op":"review","scope":"uncommitted"|"branch"|"turn"}: the work tree against HEAD (new

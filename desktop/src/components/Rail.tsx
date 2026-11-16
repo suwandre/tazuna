@@ -1,5 +1,6 @@
 import { Pencil, X } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Slot } from "../lib/slots";
 import { tokens, widgetUrl, type UserWidget } from "../lib/widgets";
 import { usd, type Usage } from "../lib/types";
 
@@ -8,7 +9,7 @@ import { usd, type Usage } from "../lib/types";
 // and its card is left out (DESIGN.md: real numbers only).
 export type Widget = { id: string; title: string; render: (u: Usage) => ReactNode | null };
 
-function Card({ title, children }: { title: string; children: ReactNode }) {
+export function Card({ title, children }: { title: string; children: ReactNode }) {
   return (
     <div className="rounded-lg border border-line bg-card px-3.5 py-3">
       <div className="mb-2 text-[11.5px] font-medium text-faint">{title}</div>
@@ -56,7 +57,7 @@ export const builtInWidgets: Widget[] = [
 
 /** A user's panel: its page from the tzwidget: scheme in a sandboxed frame (no same origin: it cannot reach tazuna), the
  * data posted in on every change, its height as it asks (40-600 px). */
-function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: unknown; onEdit?: () => void; onRemove?: () => void }) {
+export function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: unknown; onEdit?: () => void; onRemove?: () => void }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(160);
   const [sure, setSure] = useState(false);
@@ -88,15 +89,11 @@ function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: unknown
   );
 }
 
-export function Rail({ usage, widgets, user = [], data, onEdit, onRemove }: {
-  usage: Usage; widgets: Widget[]; user?: UserWidget[]; data?: unknown; onEdit?: (id: string) => void; onRemove?: (id: string) => void;
-}) {
+/** The right column: the `rail` spot (tazuna's cards and the user's panels and plugins). */
+export function Rail({ usage, data }: { usage: Usage; data?: unknown }) {
   return (
     <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto border-l border-line bg-sidebar px-3.5 py-4">
-      {widgets.map((w) => { const body = w.render(usage); return body == null ? null : <Card key={w.id} title={w.title}>{body}</Card>; })}
-      {user.filter((w) => w.slot === "rail").map((w) => (
-        <UserPanel key={w.id} w={w} data={data} onEdit={onEdit && (() => onEdit(w.id))} onRemove={onRemove && (() => onRemove(w.id))} />
-      ))}
+      <Slot name="rail" props={{ usage, data }} />
     </aside>
   );
 }

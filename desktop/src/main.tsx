@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import "./builtins";
 import { inTauri } from "./lib/tazuna";
 import "./styles.css";
 

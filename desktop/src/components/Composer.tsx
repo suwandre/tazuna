@@ -2,7 +2,15 @@ import { ArrowUp, Check, Gauge, Paperclip, Shield, Square, Zap } from "lucide-re
 import { useEffect, useRef, useState } from "react";
 import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
 import { usd, type Session } from "../lib/types";
+import { Slot } from "../lib/slots";
 import { EffortMenu, Menu, ModelPicker } from "./ModelPicker";
+
+/** What the controls under the message box get (the `composer.pills` spot's props): the session, the catalog and the
+ * calls they make, and `attach` to put file paths into the box. */
+export type ComposerBag = {
+  session: Session; busy?: boolean; models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void;
+  onPickEffort?: (e: string) => void; onMode?: (mode: string) => void; onPickFiles?: () => Promise<string[]>; attach: (paths: string[]) => void;
+};
 
 type Props = {
   session: Session; threadCost: number; busy?: boolean; onSend?: (text: string) => void; onStop?: () => void;
@@ -30,7 +38,6 @@ const pill = "inline-flex items-center gap-1.5 rounded-full border border-line b
 
 export function Composer({ session, threadCost, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above }: Props) {
   const [text, setText] = useState("");
-  const [menu, setMenu] = useState<"model" | "effort" | "mode" | null>(null);
   const box = useRef<HTMLTextAreaElement>(null);
   useEffect(() => { if (draft) { setText(draft.text); box.current?.focus(); } }, [draft?.n]);
   // attachments go into the message as paths (quoted when they hold a space): the core sends images as images
@@ -41,49 +48,19 @@ export function Composer({ session, threadCost, busy, onSend, onStop, models, on
     return () => { off.then((f) => f()); };
   }, [onDrop]);
   const nextMode = () => { const i = MODES.findIndex(([m]) => m === session.mode); onMode?.(MODES[(i + 1) % MODES.length][0]); };
-  const current = models?.choices.find((c) => c.current);
-  const efforts = current?.efforts ?? [];
+  const bag: ComposerBag = { session, busy, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, attach: (p) => { attach(p); } };
   // a message sent during a reply waits behind it (the core queues it, as the terminal does)
   const send = () => { const t = text.trim(); if (!t) return; onSend?.(t); setText(""); };
   return (
     <footer className="px-7 pb-[22px] pt-2.5">
+      <div className="mx-auto max-w-[700px]"><Slot name="composer.dock" props={{}} /></div>
       {above}
       <div className="mx-auto max-w-[700px] rounded-xl border border-line-strong bg-card py-2 pl-4 pr-3 pt-3 shadow-composer">
         <textarea ref={box} rows={1} autoFocus value={text} onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
           placeholder={busy ? "Type your next message: it goes after this reply" : "Ask anything, or describe a change…"} className="w-full resize-none bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
         <div className="flex items-center gap-1.5">
-          <span className="relative">
-            <button disabled={!onMode} onClick={() => setMenu(menu === "mode" ? null : "mode")} title="Permission mode (shift-tab)" className={`${pill} hover:bg-hover`}>
-              <Shield size={14} strokeWidth={1.5} />{session.mode}
-            </button>
-            {menu === "mode" && (
-              <Menu onClose={() => setMenu(null)}>
-                {MODES.map(([m, about]) => (
-                  <button key={m} onClick={() => { setMenu(null); onMode?.(m); }} className="flex w-full items-start gap-2 px-3 py-[6px] text-left hover:bg-hover">
-                    <span className="mt-0.5 w-3.5 flex-none text-accent">{m === session.mode && <Check size={14} strokeWidth={1.75} />}</span>
-                    <span><span className="block text-ink">{m}</span><span className="block text-[11.5px] text-faint">{about}</span></span>
-                  </button>
-                ))}
-              </Menu>
-            )}
-          </span>
-          <span className="relative">
-            <button disabled={busy || !onPickModel} onClick={() => { onModels?.(); setMenu(menu === "model" ? null : "model"); }} title="Model" className={`${pill} hover:bg-hover`}>
-              <Zap size={14} strokeWidth={1.5} />{current?.label ?? session.model}
-            </button>
-            {menu === "model" && <ModelPicker models={models ?? null} onClose={() => setMenu(null)} onPick={(c) => { setMenu(null); onPickModel?.(c); }} />}
-          </span>
-          {session.effort && (
-            <span className="relative">
-              <button disabled={busy || !onPickEffort || efforts.length < 2} onClick={() => { onModels?.(); setMenu(menu === "effort" ? null : "effort"); }} title="Effort" className={`${pill} hover:bg-hover`}>
-                <Gauge size={14} strokeWidth={1.5} />{session.effort}
-              </button>
-              {menu === "effort" && <EffortMenu efforts={efforts} current={session.effort} onClose={() => setMenu(null)} onPick={(e) => { setMenu(null); onPickEffort?.(e); }} />}
-            </span>
-          )}
-          <button disabled={!onPickFiles} onClick={() => onPickFiles?.().then(attach)} title="Attach files or images (or drop them on the window)"
-            className="rounded-full px-2 py-[3px] text-muted hover:bg-hover disabled:opacity-40"><Paperclip size={14} strokeWidth={1.5} /></button>
+          <Slot name="composer.pills" props={{ composer: bag }} />
           <span className="flex-1" />
           <span className="mr-1.5 font-mono text-[11.5px] text-faint">last {usd(session.lastCost)} · thread {usd(threadCost)}</span>
           {busy && !text.trim()
@@ -92,5 +69,62 @@ export function Composer({ session, threadCost, busy, onSend, onStop, models, on
         </div>
       </div>
     </footer>
+  );
+}
+
+// tazuna's own controls under the message box, registered in the composer.pills spot (src/builtins.tsx)
+
+export function ModePill({ composer: c }: { composer: ComposerBag }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative">
+      <button disabled={!c.onMode} onClick={() => setOpen(!open)} title="Permission mode (shift-tab)" className={`${pill} hover:bg-hover`}>
+        <Shield size={14} strokeWidth={1.5} />{c.session.mode}
+      </button>
+      {open && (
+        <Menu onClose={() => setOpen(false)}>
+          {MODES.map(([m, about]) => (
+            <button key={m} onClick={() => { setOpen(false); c.onMode?.(m); }} className="flex w-full items-start gap-2 px-3 py-[6px] text-left hover:bg-hover">
+              <span className="mt-0.5 w-3.5 flex-none text-accent">{m === c.session.mode && <Check size={14} strokeWidth={1.75} />}</span>
+              <span><span className="block text-ink">{m}</span><span className="block text-[11.5px] text-faint">{about}</span></span>
+            </button>
+          ))}
+        </Menu>
+      )}
+    </span>
+  );
+}
+
+export function ModelPill({ composer: c }: { composer: ComposerBag }) {
+  const [open, setOpen] = useState(false);
+  const current = c.models?.choices.find((m) => m.current);
+  return (
+    <span className="relative">
+      <button disabled={c.busy || !c.onPickModel} onClick={() => { c.onModels?.(); setOpen(!open); }} title="Model" className={`${pill} hover:bg-hover`}>
+        <Zap size={14} strokeWidth={1.5} />{current?.label ?? c.session.model}
+      </button>
+      {open && <ModelPicker models={c.models ?? null} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }} />}
+    </span>
+  );
+}
+
+export function EffortPill({ composer: c }: { composer: ComposerBag }) {
+  const [open, setOpen] = useState(false);
+  const efforts = c.models?.choices.find((m) => m.current)?.efforts ?? [];
+  if (!c.session.effort) return null;
+  return (
+    <span className="relative">
+      <button disabled={c.busy || !c.onPickEffort || efforts.length < 2} onClick={() => { c.onModels?.(); setOpen(!open); }} title="Effort" className={`${pill} hover:bg-hover`}>
+        <Gauge size={14} strokeWidth={1.5} />{c.session.effort}
+      </button>
+      {open && <EffortMenu efforts={efforts} current={c.session.effort} onClose={() => setOpen(false)} onPick={(e) => { setOpen(false); c.onPickEffort?.(e); }} />}
+    </span>
+  );
+}
+
+export function AttachButton({ composer: c }: { composer: ComposerBag }) {
+  return (
+    <button disabled={!c.onPickFiles} onClick={() => c.onPickFiles?.().then(c.attach)} title="Attach files or images (or drop them on the window)"
+      className="rounded-full px-2 py-[3px] text-muted hover:bg-hover disabled:opacity-40"><Paperclip size={14} strokeWidth={1.5} /></button>
   );
 }

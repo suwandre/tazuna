@@ -1,7 +1,6 @@
 import { FileText, MessageCircle, Pencil } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import { Markdown } from "../lib/markdown";
-import { Step } from "./Step";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { Slot } from "../lib/slots";
 import { usd, type Change, type Message } from "../lib/types";
 
 function inlineCode(text: string) {
@@ -59,7 +58,13 @@ function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change
   );
 }
 
-export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, onUndo, onReview, onEdit, editFrom }: Props) {
+/** What the transcript's built-in parts need besides their slot props (callbacks, the busy state, the message being
+ * edited): one context for the parts, so a plugin replacing one can use the same through `useTranscript`. */
+export const TranscriptCtx = createContext<Omit<Props, "messages" | "activity">>({});
+export const useTranscript = () => useContext(TranscriptCtx);
+
+export function Transcript({ messages, activity, ...rest }: Props) {
+  const { busy, editFrom } = rest;
   // follow new output while the reader is at the bottom; stay put once they scroll up
   const box = useRef<HTMLElement>(null), stick = useRef(true);
   // a long conversation draws its latest messages; earlier ones on request (a three-day session is ~1,900 blocks)
@@ -67,6 +72,7 @@ export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, on
   const hidden = Math.max(0, messages.length - limit);
   useEffect(() => { if (stick.current && box.current) box.current.scrollTop = box.current.scrollHeight; });
   return (
+    <TranscriptCtx.Provider value={rest}>
     <section ref={box} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}
       className="min-h-0 flex-1 overflow-auto pb-3 pt-7">
       {hidden > 0 && (
@@ -78,41 +84,23 @@ export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, on
       )}
       {messages.slice(hidden).map((m, i, shown) => (
         <div key={hidden + i} className={`group mx-auto mb-[22px] max-w-[700px] px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
-          {m.role === "user" ? (
-            <>
-              <div className="mb-1.5 flex items-center gap-2 text-[12px] font-medium text-faint">You{m.queued && <span className="font-normal">· queued, goes after this reply</span>}
-                {m.edit && onEdit && !busy && (
-                  <button onClick={() => onEdit(m.edit!, m.text.replace(/^\[tazuna: [^\]]*\]\n\n/, ""))} title="Edit and send again from here: the conversation goes back to before this message"
-                    className="hidden items-center gap-1 rounded px-1.5 py-0.5 font-normal text-muted hover:bg-hover hover:text-ink group-hover:inline-flex"><Pencil size={12} strokeWidth={1.5} /> Edit</button>
-                )}</div>
-              {(() => {
-                // the note tazuna adds after an undo ("[tazuna: ...]") is shown as what it is, apart from the message
-                const note = m.text.match(/^\[tazuna: ([^\]]*)\]\n\n/);
-                const text = note ? m.text.slice(note[0].length) : m.text;
-                return <>
-                  {note && <div className="mb-1 text-[11.5px] text-faint">told the model: {note[1]}</div>}
-                  <div className="inline-block max-w-full select-text rounded-lg bg-field px-3.5 py-2.5 text-ink">{inlineCode(text)}</div>
-                </>;
-              })()}
-            </>
-          ) : (
+          {m.role === "user" ? <Slot name="message.user" props={{ message: m, index: hidden + i }} only /> : (
             <>
               <div className="mb-1.5 flex items-center gap-2.5 text-[12px] font-medium text-faint">
                 tazuna
                 {m.routedChat && (
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2 py-px text-[11.5px] font-normal text-muted">
-                    <MessageCircle size={13} strokeWidth={1.5} /> answered as a chat · <button disabled={busy} onClick={() => m.ask && onSendToAgent?.(m.ask)} className="font-medium text-accent-ink disabled:opacity-50">send to agent</button>
+                    <MessageCircle size={13} strokeWidth={1.5} /> answered as a chat · <button disabled={busy} onClick={() => m.ask && rest.onSendToAgent?.(m.ask)} className="font-medium text-accent-ink disabled:opacity-50">send to agent</button>
                   </span>
                 )}
               </div>
-              {m.tools && (
+              {m.tools && m.tools.length > 0 && (
                 <div className="mb-2.5 mt-0.5 flex flex-col gap-0.5">
-                  {m.tools.map((t, j) => <Step key={j} t={t} />)}
+                  {m.tools.map((t, j) => <Slot key={j} name="tool.view" props={{ step: t }} only />)}
                 </div>
               )}
-              <div className="prose-answer text-ink">{m.prose.map((p, j) => <Markdown key={j} text={p} />)}</div>
-              {m.change && <ChangeCard change={m.change} busy={busy} onDiff={onDiff} onUndo={onUndo} onReview={onReview} />}
-              {m.meta && <div className="mt-2 font-mono text-[11.5px] text-faint">{meta(m.meta)}</div>}
+              <div className="prose-answer text-ink">{m.prose.map((p, j) => <Slot key={j} name="message.text" props={{ text: p }} only />)}</div>
+              <Slot name="message.after" props={{ message: m, index: hidden + i }} />
             </>
           )}
         </div>
@@ -121,5 +109,36 @@ export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, on
         <div className="mx-auto max-w-[700px] px-7 font-mono text-[11.5px] text-faint">{doing[activity]}…</div>
       )}
     </section>
+    </TranscriptCtx.Provider>
   );
+}
+
+// tazuna's own parts of a message, registered in their spots (src/builtins.tsx)
+
+export function UserMessage({ message: m }: { message: Message }) {
+  const { busy, onEdit } = useTranscript();
+  if (m.role !== "user") return null;
+  // the note tazuna adds after an undo ("[tazuna: ...]") is shown as what it is, apart from the message
+  const note = m.text.match(/^\[tazuna: ([^\]]*)\]\n\n/);
+  const text = note ? m.text.slice(note[0].length) : m.text;
+  return (
+    <>
+      <div className="mb-1.5 flex items-center gap-2 text-[12px] font-medium text-faint">You{m.queued && <span className="font-normal">· queued, goes after this reply</span>}
+        {m.edit && onEdit && !busy && (
+          <button onClick={() => onEdit(m.edit!, text)} title="Edit and send again from here: the conversation goes back to before this message"
+            className="hidden items-center gap-1 rounded px-1.5 py-0.5 font-normal text-muted hover:bg-hover hover:text-ink group-hover:inline-flex"><Pencil size={12} strokeWidth={1.5} /> Edit</button>
+        )}</div>
+      {note && <div className="mb-1 text-[11.5px] text-faint">told the model: {note[1]}</div>}
+      <div className="inline-block max-w-full select-text rounded-lg bg-field px-3.5 py-2.5 text-ink">{inlineCode(text)}</div>
+    </>
+  );
+}
+
+export function MessageChange({ message: m }: { message: Message }) {
+  const { busy, onDiff, onUndo, onReview } = useTranscript();
+  return m.role === "agent" && m.change ? <ChangeCard change={m.change} busy={busy} onDiff={onDiff} onUndo={onUndo} onReview={onReview} /> : null;
+}
+
+export function MessageMeta({ message: m }: { message: Message }) {
+  return m.role === "agent" && m.meta ? <div className="mt-2 font-mono text-[11.5px] text-faint">{meta(m.meta)}</div> : null;
 }

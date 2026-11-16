@@ -1,5 +1,6 @@
 import { ChevronDown, ChevronRight, FolderOpen, Pencil, Plus, Search, X } from "lucide-react";
-import { useState } from "react";
+import { createContext, useContext, useState } from "react";
+import { Slot } from "../lib/slots";
 import type { Project, Thread } from "../lib/types";
 
 const icon = { size: 16, strokeWidth: 1.5 };
@@ -79,12 +80,8 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
       <button onClick={onSearch} className="mb-1 flex items-center gap-2 rounded-md border border-line bg-field px-[9px] py-[7px] text-left text-muted hover:bg-hover">
         <Search {...icon} /><span>Search</span><Kbd>⌘K</Kbd>
       </button>
-      <button onClick={onNewChat} className="flex items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
-        <Plus {...icon} /><span>New chat</span><Kbd>⌘N</Kbd>
-      </button>
-      <button onClick={onOpenFolder} className="flex items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
-        <FolderOpen {...icon} /><span>Open folder</span><Kbd>⌘O</Kbd>
-      </button>
+      <SidebarCtx.Provider value={{ onNewChat, onOpenFolder, onSettings, planLeft }}>
+      <Slot name="sidebar.top" props={{}} />
       {chats.length > 0 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Chats</div>}
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
       {open.length > 1 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Open now</div>}
@@ -114,11 +111,34 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
         </div>
       ))}
       </div>
-      <button onClick={onSettings} className="mt-auto flex items-center gap-2 border-t border-line px-2 pt-2.5 text-left text-muted hover:text-ink">
-        <span className="grid size-[22px] place-items-center rounded-full border border-line bg-field text-[11px] text-ink-2">S</span>
-        <span>Settings</span>
-        <span className="ml-auto text-[11.5px] text-faint">{planLeft}</span>
-      </button>
+      <div className="mt-auto"><Slot name="sidebar.footer" props={{ planLeft }} /></div>
+      </SidebarCtx.Provider>
     </aside>
+  );
+}
+
+/** The sidebar's actions for its built-in parts (and a plugin that replaces one). */
+export const SidebarCtx = createContext<{ onNewChat?: () => void; onOpenFolder?: () => void; onSettings?: () => void; planLeft?: string }>({});
+
+export function NewChatButton() {
+  const { onNewChat } = useContext(SidebarCtx);
+  return <button onClick={onNewChat} className="flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
+    <Plus {...icon} /><span>New chat</span><Kbd>⌘N</Kbd></button>;
+}
+
+export function OpenFolderButton() {
+  const { onOpenFolder } = useContext(SidebarCtx);
+  return <button onClick={onOpenFolder} className="flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
+    <FolderOpen {...icon} /><span>Open folder</span><Kbd>⌘O</Kbd></button>;
+}
+
+export function SettingsRow() {
+  const { onSettings, planLeft } = useContext(SidebarCtx);
+  return (
+    <button onClick={onSettings} className="flex w-full items-center gap-2 border-t border-line px-2 pt-2.5 text-left text-muted hover:text-ink">
+      <span className="grid size-[22px] place-items-center rounded-full border border-line bg-field text-[11px] text-ink-2">S</span>
+      <span>Settings</span>
+      <span className="ml-auto text-[11.5px] text-faint">{planLeft}</span>
+    </button>
   );
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Approval } from "./components/Approval";
 import { Composer } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
@@ -6,7 +6,8 @@ import { ReviewView } from "./components/ReviewView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
 import { creatorMessage, widgetData, widgetId, widgets, type UserWidget } from "./lib/widgets";
 import { SettingsView } from "./components/SettingsView";
-import { Rail, builtInWidgets } from "./components/Rail";
+import { Rail, UserPanel } from "./components/Rail";
+import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import * as demo from "./lib/demo";
@@ -51,18 +52,6 @@ function useCore() {
     if (now === "asking") core.notify("tazuna asks", `${title}: ${v.asking!.tool.replace(/^mcp__lean__/, "")} ${v.asking!.what}`).catch(() => {});
     else if (now === "idle" && before === "working") core.notify("tazuna is done", title).catch(() => {});
   };
-  // creator mode: a write or edit of a file inside the conversation's own panel folder is allowed without asking (the
-  // user asked for that panel); anything else still asks
-  const answered = useRef<Record<string, string>>({});
-  const allowCreatorWrite = (tid: string, v: View) => {
-    const th = live.current[tid], q = v.asking;
-    if (!th?.creator || !th.folder || !q || answered.current[tid] === q.what) return;
-    const inside = q.what === th.folder || q.what.startsWith(th.folder.replace(/\/?$/, "/")) || q.what.startsWith(`/private${th.folder}/`);
-    if (inside && /(^|__)(write|edit|Write|Edit|MultiEdit)$/.test(q.tool) && !q.what.includes("..")) {
-      answered.current[tid] = q.what;
-      core.answerIn(tid, true).catch(() => {});
-    }
-  };
   /** Too many idle conversations open: the oldest idle ones close (not the one on screen, nothing working or asking). */
   const trim = (keep: string) => {
     const idle = Object.values(live.current).filter((t) => t.tid !== keep && !busyView(t.view) && !t.view?.asking).sort((a, b) => b.used - a.used);
@@ -92,7 +81,7 @@ function useCore() {
     if (!inTauri) return;
     const offs = [
       core.onExit((tid) => patch(tid, { error: "tazuna stopped. The app needs tazuna 0.1.128 or later (it carries its own; TAZUNA_BIN overrides)." })),
-      core.onView((v, tid) => { tell(tid, v); allowCreatorWrite(tid, v); patch(tid, { view: v, error: null }); }),
+      core.onView((v, tid) => { tell(tid, v); patch(tid, { view: v, error: null }); }),
       core.onModels((m, tid) => { if (tid === activeRef.current) setModels(m); }),
       core.onDiff(setDiff),
       core.onSessions((s) => setSessions((old) => ({ ...old, ...Object.fromEntries(s.dirs.map((d) => [d.dir, d.list])) }))),
@@ -194,16 +183,23 @@ export default function App() {
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
   const [userWidgets, setUserWidgets] = useState<UserWidget[]>([]);
   const allTurns = threads.map((t) => t.view?.turns ?? 0).join(",");
-  useEffect(() => { if (inTauri) widgets.list().then(setUserWidgets).catch(() => {}); }, [allTurns]);
+  useEffect(() => { if (inTauri) widgets.list().then((w) => setUserWidgets(w ?? [])).catch(() => {}); }, [allTurns]);
+  // each user panel is an entry of the rail spot, after tazuna's own cards
+  useEffect(() => {
+    const offs = userWidgets.map((w, i) => slots.register({ id: `panel:${w.id}`, slot: w.slot === "rail" ? "rail" : w.slot, order: 1000 + i, source: `panel:${w.id}`,
+      render: ({ data }: { data: unknown }) => <UserPanel w={w} data={data} onEdit={() => editPanel(w.id)}
+        onRemove={() => widgets.remove(w.id).then(() => widgets.list().then((w) => setUserWidgets(w ?? []))).catch(() => {})} /> }));
+    return () => offs.forEach((off) => off());
+  }, [userWidgets]);
   /** A new panel: its folder, a conversation in it (edits allowed there), the request with the panel specification. */
   const createPanel = (ask: string) => {
     widgets.create(widgetId(ask)).then((path) => open(path, undefined, { creator: "new",
-      then: (tid) => { core.modeIn(tid, "edits").then(() => core.sendIn(tid, creatorMessage(ask, false))).catch(() => {}); } })).catch(() => {});
+      then: (tid) => { core.allowRootIn(tid, path).then(() => core.sendIn(tid, creatorMessage(ask, false))).catch(() => {}); } })).catch(() => {});
   };
   /** A panel changed with tazuna: a conversation in its folder; the first message carries the specification. */
   const editPanel = (id: string) => {
     widgets.path(id).then((path) => {
-      open(path, undefined, { creator: "edit", then: (tid) => { core.modeIn(tid, "edits").catch(() => {}); } });
+      open(path, undefined, { creator: "edit", then: (tid) => { core.allowRootIn(tid, path).catch(() => {}); } });
       setDraft({ text: "Change this panel: ", n: Date.now() });
     }).catch(() => {});
   };
@@ -242,6 +238,7 @@ export default function App() {
       { id: "settings", group: "Window", label: "Settings: provider keys, data policy, router", keys: "⌘,", run: () => setTimeout(() => setOverlay("settings")) });
     return a;
   };
+  const data = widgetData(view);
   const title = view ? (view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.slice(0, 60) ?? "New chat" : "Retry test fails on CI";
   return (
     <div className="grid h-screen grid-cols-[248px_1fr_232px] overflow-hidden">
@@ -260,9 +257,10 @@ export default function App() {
         <header data-tauri-drag-region className="flex items-center justify-between border-b border-line-soft px-7 py-3">
           <div className="flex items-center gap-2 font-medium"><span className="text-muted">{place}</span><span className="text-faint">/</span><span className="truncate">{title}</span></div>
           <div className="flex gap-1.5">
-            <span className="rounded-full border border-line bg-field px-2.5 py-1 text-[12px] text-ink-2">{models?.choices.find((c) => c.current)?.label ?? session.model}{session.effort && ` · ${session.effort}`}</span>
-            {session.branch && <span className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2">{session.branch} · {session.changed} changed</span>}
-            {inTauri && folder && <button onClick={() => setReviewing({ scope: "uncommitted" })} className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Review</button>}
+            <HeaderCtx.Provider value={{ modelLabel: models?.choices.find((c) => c.current)?.label ?? session.model, effort: session.effort,
+              branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined }}>
+              <Slot name="header.actions" props={{ data, folder }} />
+            </HeaderCtx.Provider>
           </div>
         </header>
         <Transcript key={`${active}:${view?.session_id ?? ""}`} messages={messages} editFrom={editing?.cp}
@@ -305,8 +303,8 @@ export default function App() {
           onMode={inTauri ? (m) => core.setMode(m) : undefined}
           onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined} />
       </main>
-      <Rail usage={usage} widgets={builtInWidgets} user={inTauri ? userWidgets : []} data={widgetData(view)}
-        onEdit={editPanel} onRemove={(id) => widgets.remove(id).then(() => widgets.list().then(setUserWidgets)).catch(() => {})} />
+      <Rail usage={usage} data={data} />
+      <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
       {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} />}
@@ -326,3 +324,22 @@ const rowsOf = (rows?: SessionRow[]) => (rows ?? []).map((r) => ({ id: r.id, tit
 
 /** An open conversation's name: its first message, else a new one's. */
 const titleOf = (t: Thread) => (t.view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] || "New conversation";
+
+/** The header's built-in chips read this (and a plugin replacing one can too). */
+export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
+
+function ModelChip() {
+  const h = useContext(HeaderCtx);
+  return <span className="rounded-full border border-line bg-field px-2.5 py-1 text-[12px] text-ink-2">{h.modelLabel}{h.effort && ` · ${h.effort}`}</span>;
+}
+function BranchChip() {
+  const h = useContext(HeaderCtx);
+  return h.branch ? <span className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2">{h.branch} · {h.changed} changed</span> : null;
+}
+function ReviewChip() {
+  const h = useContext(HeaderCtx);
+  return h.review ? <button onClick={h.review} className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Review</button> : null;
+}
+slots.register({ id: "header.model", slot: "header.actions", order: 10, source: "tazuna", render: ModelChip });
+slots.register({ id: "header.branch", slot: "header.actions", order: 20, source: "tazuna", render: BranchChip });
+slots.register({ id: "header.review", slot: "header.actions", order: 30, source: "tazuna", render: ReviewChip });
