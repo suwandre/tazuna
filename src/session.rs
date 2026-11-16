@@ -73,17 +73,24 @@ pub struct CallTime {
     pub ttft_ms: Option<f64>,
     pub gen_ms: f64,
     pub out: u64,
+    /// The whole call, from its input being ready to its end: what end to end counts (the wait included).
+    pub total_ms: f64,
 }
 
-/// (mean time to first token in ms, output tokens a second while generating) over `calls`; None where unknown. The speed
-/// is the output over the time after the first token, of the calls where that can be measured (`gen_ms` > 0).
-pub fn speed(calls: &[CallTime]) -> (Option<f64>, Option<f64>) {
+/// (mean time to first token in ms, output tokens a second while writing, output tokens a second end to end) over
+/// `calls`; None where unknown. Writing: the output over the time after the first token, of the calls where that can be
+/// measured (`gen_ms` > 0). End to end: all output over all the calls' whole time, the wait included (how fast answers
+/// reach you; every call has it).
+pub fn speed(calls: &[CallTime]) -> (Option<f64>, Option<f64>, Option<f64>) {
     let firsts: Vec<f64> = calls.iter().filter_map(|c| c.ttft_ms).collect();
     let ttft = (!firsts.is_empty()).then(|| firsts.iter().sum::<f64>() / firsts.len() as f64);
-    let timed = calls.iter().filter(|c| c.gen_ms > 0.0);
-    let gen_ms: f64 = timed.clone().map(|c| c.gen_ms).sum();
-    let tps = (gen_ms > 0.0).then(|| timed.map(|c| c.out).sum::<u64>() as f64 / gen_ms * 1000.0);
-    (ttft, tps)
+    let rate = |cs: Vec<&CallTime>, ms: fn(&CallTime) -> f64| {
+        let t: f64 = cs.iter().map(|c| ms(c)).sum();
+        (t > 0.0).then(|| cs.iter().map(|c| c.out).sum::<u64>() as f64 / t * 1000.0)
+    };
+    let tps = rate(calls.iter().filter(|c| c.gen_ms > 0.0).collect(), |c| c.gen_ms);
+    let e2e = rate(calls.iter().filter(|c| c.total_ms > 0.0 && c.out > 0).collect(), |c| c.total_ms);
+    (ttft, tps, e2e)
 }
 
 #[derive(Default, Clone, Copy)]
@@ -898,7 +905,8 @@ impl Session {
                     let kept_back = !self.model.starts_with("claude-") && self.call_est < 0.5 * out;
                     let measured = first.is_some() && t.output >= 20 && self.call_deltas >= 5 && after >= 500.0 && !burst && !kept_back
                         && self.call_est <= 2.0 * out + 50.0;
-                    self.calls.push(CallTime { ttft_ms: first.filter(|_| !burst).map(|f| f - start), gen_ms: if measured { after } else { 0.0 }, out: t.output });
+                    self.calls.push(CallTime { ttft_ms: first.filter(|_| !burst).map(|f| f - start), gen_ms: if measured { after } else { 0.0 }, out: t.output,
+                        total_ms: self.now_ms - start });
                 }
                 if let Some(last) = self.turn_usage.last_mut() {
                     *last = t;
@@ -1128,9 +1136,10 @@ mod tests {
         c.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}]}}), 7900.0);
         c.apply(&ev(json!({"type": "message_start"})), 8000.0);
         c.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 10, "output_tokens": 100}})), 10100.0);
-        assert_eq!(c.calls, [CallTime { ttft_ms: Some(1400.0), gen_ms: 5000.0, out: 360 }, CallTime { ttft_ms: None, gen_ms: 0.0, out: 100 }]);
-        let (first, rate) = speed(&c.calls);
+        assert_eq!(c.calls, [CallTime { ttft_ms: Some(1400.0), gen_ms: 5000.0, out: 360, total_ms: 6400.0 }, CallTime { ttft_ms: None, gen_ms: 0.0, out: 100, total_ms: 2200.0 }]);
+        let (first, rate, e2e) = speed(&c.calls);
         assert_eq!((first, rate.map(|r| r.round())), (Some(1400.0), Some(72.0)), "360 tokens over the 5 s after the first; the unstreamed call has no speed");
+        assert_eq!(e2e.map(|r| r.round()), Some(53.0), "end to end: all 460 tokens over both calls' 8.6 s, the waits included");
         // a reply claude hands over in one burst: neither its first token's time nor its speed is known
         let mut b = Session::new("", "medium");
         b.model = "claude-opus-5-5".into();
@@ -1138,8 +1147,8 @@ mod tests {
         b.apply(&ev(json!({"type": "message_start"})), 3900.0);
         b.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x"}})), 3900.0);
         b.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 380}})), 3957.0);
-        assert_eq!(b.calls, [CallTime { ttft_ms: None, gen_ms: 0.0, out: 380 }]);
-        assert_eq!(speed(&b.calls), (None, None));
+        assert_eq!(b.calls, [CallTime { ttft_ms: None, gen_ms: 0.0, out: 380, total_ms: 3957.0 }]);
+        assert_eq!(speed(&b.calls).1, None);
         // reasoning a provider keeps back: 102 tokens, ~10 of them streamed in 53 ms after 20 s of nothing; no speed, not
         // "1933 tok/s", and handed over in a burst, so no time to first token either
         let mut h = Session::new("", "high");
@@ -1149,8 +1158,9 @@ mod tests {
         h.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 20_000.0);
         h.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(40)}})), 20_000.0);
         h.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 102}})), 20_053.0);
-        assert_eq!(h.calls, [CallTime { ttft_ms: None, gen_ms: 0.0, out: 102 }]);
-        assert_eq!(speed(&h.calls), (None, None));
+        assert_eq!(h.calls, [CallTime { ttft_ms: None, gen_ms: 0.0, out: 102, total_ms: 20_053.0 }]);
+        assert_eq!((speed(&h.calls).0, speed(&h.calls).1), (None, None));
+        assert_eq!(speed(&h.calls).2.map(|r| r.round()), Some(5.0), "end to end it is known: 102 tokens over 20 s");
         // kept back without a burst (a few visible tokens over a while): no speed; the wait to the first one stands
         let mut k2 = Session::new("", "high");
         k2.model = "deepseek-v4-1-flash-1017".into();
@@ -1158,7 +1168,7 @@ mod tests {
         k2.apply(&ev(json!({"type": "message_start"})), 0.0);
         k2.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(400)}})), 9_000.0);
         k2.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 900}})), 10_200.0);
-        assert_eq!(k2.calls, [CallTime { ttft_ms: Some(9_000.0), gen_ms: 0.0, out: 900 }], "750 tok/s on 100 visible tokens: reasoning kept back");
+        assert_eq!(k2.calls, [CallTime { ttft_ms: Some(9_000.0), gen_ms: 0.0, out: 900, total_ms: 10_200.0 }], "750 tok/s on 100 visible tokens: reasoning kept back");
         // two pieces over 0.1 s (Mistral, 2026-11-16: read 960 tok/s): too short to time, whatever the rate
         let mut sh = Session::new("", "high");
         sh.model = "deepseek-v4-1-flash-1017".into();
@@ -1182,7 +1192,7 @@ mod tests {
             d.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(446)}})), at);
         }
         d.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 451}})), 5_100.0);
-        assert_eq!(d.calls, [CallTime { ttft_ms: Some(2_400.0), gen_ms: 2_700.0, out: 451 }]);
+        assert_eq!(d.calls, [CallTime { ttft_ms: Some(2_400.0), gen_ms: 2_700.0, out: 451, total_ms: 5_100.0 }]);
         assert_eq!(speed(&d.calls).1.map(|r| r.round()), Some(167.0), "451 tokens over the 2.7 s after the first one, not 88 over 5.1 s");
         // Claude's thinking streams as a summary (a third of its output) while it thinks: timed from the first token
         let mut o = Session::new("", "high");
@@ -1193,7 +1203,7 @@ mod tests {
             o.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": format!("{kind}_delta"), kind: "x".repeat(n)}})), at);
         }
         o.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 900}})), 8_500.0);
-        assert_eq!(o.calls, [CallTime { ttft_ms: Some(1_500.0), gen_ms: 7_000.0, out: 900 }]);
+        assert_eq!(o.calls, [CallTime { ttft_ms: Some(1_500.0), gen_ms: 7_000.0, out: 900, total_ms: 8_500.0 }]);
         // too short to time, and a count that is not this call's (8 reported for ~1,500 streamed): no speed
         let mut q = Session::new("", "high");
         q.model = "claude-fable-5-2".into();

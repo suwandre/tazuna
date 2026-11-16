@@ -149,6 +149,19 @@ type Price = (f64, f64, f64);
 /// Room for a Claude model's thinking and answer in one turn (the Messages API requires a limit).
 const MAX_OUTPUT: u32 = 64000;
 
+/// A Chat Completions call's output cap: the model's own listed maximum, at most MAX_OUTPUT (None: the list names none,
+/// and no cap is sent, as before). Without one a gateway that holds the worst case before answering held the model's
+/// whole maximum: muse-ember on CheaperInference lists 1,048,576 output tokens, $0.40 held, and a $0.14 wallet answered
+/// 402 "insufficient balance" for a call costing under $0.0001 (2026-11-16).
+static CHAT_MAX_OUT: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+
+/// The model's maximum output from a provider's model list (CheaperInference and Mortera: `max_output_tokens`;
+/// OpenRouter: `top_provider.max_completion_tokens`), capped at MAX_OUTPUT.
+fn listed_max_out(m: &Value) -> Option<u32> {
+    [&m["max_output_tokens"], &m["top_provider"]["max_completion_tokens"], &m["max_completion_tokens"]].iter()
+        .find_map(|v| v.as_u64().filter(|n| *n > 0)).map(|n| n.min(MAX_OUTPUT as u64) as u32)
+}
+
 /// The API a model is called through.
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum Api {
@@ -275,6 +288,7 @@ pub fn serve(args: &[String]) -> Result<()> {
         msgs: if api == Api::Chat { vec![json!({"role": "system", "content": system})] } else { vec![] }.into_iter()
             .chain(resumed.map(|r| r.1.msgs).unwrap_or_default()).collect(),
         marks,
+        max_out: CHAT_MAX_OUT.get().copied(),
         saved: history_file(&session),
         server: crate::mcp::Server::new(cwd).with_read_dedupe(),
         hub,
@@ -362,6 +376,8 @@ struct Loop {
     msgs: Vec<Value>,
     /// Where each typed message begins in the saved history (`--resume-before`).
     marks: Vec<(String, usize)>,
+    /// A Chat Completions call's output cap (CHAT_MAX_OUT; set after a 402 for a call without one).
+    max_out: Option<u32>,
     /// Where the history goes after each run, for a later `--resume` (the session id it started with; a moved
     /// conversation's cache key changes `session`, not this).
     saved: Option<std::path::PathBuf>,
@@ -839,6 +855,9 @@ impl Loop {
                 }
                 Api::Chat => {
                     let mut b = json!({"model": self.model, "messages": self.chat_messages(), "tools": self.tools});
+                    if let Some(n) = self.max_out {
+                        b["max_tokens"] = json!(n);
+                    }
                     if let Some(e) = &self.effort {
                         b["reasoning_effort"] = json!(api_effort(e));
                     }
@@ -855,6 +874,17 @@ impl Loop {
                 // a thinking block's signature holds only on the upstream account that wrote it: a gateway that moves the
                 // conversation to another account mid-run (Mortera Cloud's failover) answers 400 "invalid" (Haiku 5.5
                 // after 39 calls); the same request without them goes through
+                // a gateway that holds the worst case before answering refused a call without an output cap as more than
+                // the wallet holds (402, muse-ember's 1,048,576 output tokens against $0.14): once more with the cap, and the
+                // cap kept for the session (a model picked from the catalog skips the list that names its maximum)
+                Err(e) if self.api == Api::Chat && body.get("max_tokens").is_none() && format!("{e:#}").contains("402") => {
+                    self.max_out = Some(MAX_OUTPUT);
+                    body["max_tokens"] = json!(MAX_OUTPUT);
+                    match (self.call)(&body) {
+                        Ok(r) => r,
+                        Err(e) => return end(self, "error_during_execution", format!("[provider error: {e:#}]"), turns, usage),
+                    }
+                }
                 Err(e) if self.api == Api::Messages && format!("{e:#}").contains("400") && drop_thinking(&mut self.msgs) => {
                     (self.out)(&json!({"type": "system", "subtype": "thinking_dropped", "message": format!("{e:#}")}));
                     body["messages"] = json!(self.msgs);
@@ -1272,6 +1302,7 @@ pub fn explore_serve(args: &[String]) -> Result<()> {
         tools,
         msgs: vec![],
         marks: vec![],
+            max_out: None,
         saved: None, // the reviewer's one-off loop keeps nothing
         server: crate::mcp::Server::new(cwd),
                 hub: None,
@@ -1951,6 +1982,9 @@ fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price
     let mut r = http.get(format!("{url}/models")).header("Authorization", format!("Bearer {key}")).call()?;
     let list: Value = serde_json::from_str(&r.body_mut().with_config().limit(50 << 20).read_to_string()?)?;
     let m = list["data"].as_array().into_iter().flatten().find(|m| m["id"] == model).with_context(|| format!("{model} is not in {url}/models"))?;
+    if let Some(n) = listed_max_out(m) {
+        let _ = CHAT_MAX_OUT.set(n);
+    }
     let (p, openai) = parse_price(m)?;
     Ok((p, api(openai)))
 }
@@ -1998,6 +2032,14 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_chat_call_caps_its_output_at_the_models_listed_maximum() {
+        use serde_json::json;
+        assert_eq!(super::listed_max_out(&json!({"id": "muse-ember", "max_output_tokens": 1_048_576})), Some(64_000), "at most 64,000");
+        assert_eq!(super::listed_max_out(&json!({"top_provider": {"max_completion_tokens": 8192}})), Some(8192), "OpenRouter's field");
+        assert_eq!(super::listed_max_out(&json!({"id": "x", "max_output_tokens": null})), None, "none listed: no cap sent");
+    }
+
     #[test]
     fn kenari_prices_are_micro_rupiah_per_million() {
         let m = serde_json::json!({"id": "deepseek-v4-1-flash", "pricing": {"unit": "micro_idr_per_1m_tokens", "free": false, "input": 3_260_000_000.0, "cache_read": null, "output": 6_520_000_000.0}});
@@ -2154,6 +2196,7 @@ mod tests {
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2206,6 +2249,7 @@ session: "s".into(),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "You are a helpful assistant."})],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
             hub: None,
@@ -2255,6 +2299,7 @@ session: "s".into(),
             msgs: vec![json!({"role": "user", "content": "fix it"}), json!({"type": "reasoning", "encrypted_content": "pool-50"}),
                        json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "plan: parser first"}]})],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2308,6 +2353,7 @@ session: "s1".into(),
             tools: vec![],
             msgs: vec![],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2372,6 +2418,7 @@ data: {\"choices\":[{\"delta\":{\"reasoning\":\"at a\"}}]}\n\n";
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2447,6 +2494,7 @@ session: "s".into(),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2549,6 +2597,7 @@ data: {\"type\":\"message_stop\"}\n";
             tools: vec![],
             msgs: vec![],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2854,6 +2903,7 @@ session: "s".into(),
                 json!({"role": "assistant", "content": [{"type": "thinking", "thinking": "hm", "signature": "x"}, {"type": "tool_use", "id": "t1", "name": "bash", "input": {}}]}),
                 json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]})],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(std::env::temp_dir()),
                         hub: None,
@@ -2899,6 +2949,7 @@ session: "s".into(),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(std::env::temp_dir()),
                         hub: None,
@@ -2999,6 +3050,7 @@ session: "s".into(),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -3050,6 +3102,7 @@ session: "s".into(),
             tools: vec![],
             msgs: vec![],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(std::env::temp_dir()),
                         hub: None,
@@ -3103,6 +3156,7 @@ session: "s".into(),
             tools: vec![],
             msgs: vec![],
             marks: vec![],
+            max_out: None,
             saved: None,
             server: crate::mcp::Server::new(dir.to_path_buf()),
                         hub: None,
@@ -3126,6 +3180,27 @@ session: "s".into(),
                 events.borrow_mut().push(e.clone());
             }),
         }
+    }
+
+    #[test]
+    fn a_402_without_a_cap_goes_once_more_with_one_and_keeps_it() {
+        let dir = std::env::temp_dir().join(format!("tazuna-402-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut l = asking_loop("bypassPermissions", &dir, Rc::new(RefCell::new(vec![])), None);
+        let seen = Rc::new(RefCell::new(vec![]));
+        let s2 = seen.clone();
+        l.call = Box::new(move |b: &Value| {
+            s2.borrow_mut().push(b.get("max_tokens").cloned());
+            if b.get("max_tokens").is_none() {
+                anyhow::bail!("HTTP 402: Insufficient wallet balance for this request.");
+            }
+            Ok(json!({"choices": [{"message": {"content": "done"}}], "usage": {}}))
+        });
+        let (_tx, rx) = std::sync::mpsc::channel();
+        l.run(&json!("hi"), false, &rx);
+        l.run(&json!("again"), false, &rx);
+        assert_eq!(*seen.borrow(), vec![None, Some(json!(64_000)), Some(json!(64_000))], "refused, then with the cap, and the next call with it at once");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

@@ -1763,7 +1763,7 @@ impl Fx {
 }
 
 fn view(design: Design, live: bool, speed: f64) -> View {
-    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }
+    View { design, expand_all: false, scroll: 0, clock_ms: 0.0, speed, paused: false, live, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }
 }
 
 fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) -> Result<()> {
@@ -2050,13 +2050,14 @@ fn model_calls(s: &Session) -> ui::ListPanel {
         let c = s.calls.get(i);
         let first = c.and_then(|c| c.ttft_ms).map_or("-".to_string(), |ms| format!("{:.1}s", ms / 1000.0));
         let rate = c.filter(|c| c.gen_ms > 0.0).map_or("-".to_string(), |c| format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0));
-        (format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}", i + 1, ui::human(u.input + u.cache_write), ui::human(u.cache_read), ui::human(u.output), first, rate), false)
+        let e2e = c.filter(|c| c.total_ms > 0.0 && c.out > 0).map_or("-".to_string(), |c| format!("{:.0}", c.out as f64 / c.total_ms * 1000.0));
+        (format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}  {:>6}", i + 1, ui::human(u.input + u.cache_write), ui::human(u.cache_read), ui::human(u.output), first, rate, e2e), false)
     }).collect();
     ui::ListPanel {
         title: format!("model calls · {}", s.turn_usage.len()),
         // "new in": what the call added (written into the cache, or sent uncached); one column, it was twice (new in
         // and cache writes showed the same numbers on Claude)
-        head: format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}", "#", "new in", "cached", "out", "first", "tok/s"),
+        head: format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}  {:>6}", "#", "new in", "cached", "out", "first", "tok/s", "e2e"),
         rows,
         scroll: 0,
         links: vec![],
@@ -2453,7 +2454,13 @@ fn run_live(
         }
         if v.input != ed.text || v.cursor != ed.cursor {
             let (start, token) = ed.token();
-            v.hints = editor::suggest(token, start == 0, &s.commands, &files);
+            // the box holds only `/...`: the command menu over it; anything else: the one-line hints (`@` files)
+            let menu = ed.text.strip_prefix('/').filter(|t| !t.contains(char::is_whitespace)).map(|t| editor::command_menu(t, &s.commands)).unwrap_or_default();
+            if menu.first().map(|m| &m.0) != v.menu.first().map(|m| &m.0) || menu.len() != v.menu.len() {
+                v.menu_sel = 0;
+            }
+            v.menu = menu;
+            v.hints = if v.menu.is_empty() { editor::suggest(token, start == 0, &s.commands, &files) } else { vec![] };
         }
         // from the press on (an empty range until the drag moves): the cursor cell is not drawn, so nothing shifts
         (v.input, v.cursor, v.select) = (ed.text.clone(), ed.cursor, ed.anchor.map(|a| (a.min(ed.cursor), a.max(ed.cursor))));
@@ -3306,6 +3313,13 @@ fn run_live(
                 if ed.text.trim().is_empty() {
                     continue;
                 }
+                // the command menu is open: its selected command runs (the first one unless the arrows moved)
+                if !v.menu.is_empty() {
+                    let pick = v.menu[v.menu_sel.min(v.menu.len() - 1)].0.clone();
+                    ed.clear();
+                    ed.insert(&pick);
+                    v.menu.clear();
+                }
                 let mut text = ed.take().trim().to_string();
                 // a command typed short ("/res") runs the first suggestion shown under the input, as in Claude Code
                 // (until 0.1.55 it stopped with "did you mean /resume?"; a user found that the wrong way round)
@@ -3767,6 +3781,14 @@ fn run_live(
                     Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),
                 }
                 v.scroll = 0;
+            }
+            // the command menu: up and down move, tab puts the command in the box, enter runs it
+            KeyCode::Up if !v.menu.is_empty() => v.menu_sel = v.menu_sel.checked_sub(1).unwrap_or(v.menu.len() - 1),
+            KeyCode::Down if !v.menu.is_empty() => v.menu_sel = (v.menu_sel + 1) % v.menu.len(),
+            KeyCode::Tab if !v.menu.is_empty() => {
+                let pick = v.menu[v.menu_sel.min(v.menu.len() - 1)].0.clone();
+                ed.clear();
+                ed.insert(&format!("{pick} "));
             }
             // tab takes the first suggestion; again, the next one
             KeyCode::Tab if !v.hints.is_empty() => {

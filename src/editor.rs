@@ -405,6 +405,57 @@ pub fn suggest(token: &str, at_start: bool, commands: &[String], files: &[String
     hits.into_iter().take(MAX).map(|(_, f)| format!("@{f}")).collect()
 }
 
+/// The slash commands whose names start with `prefix`, then those that hold it elsewhere, each with what it does: the
+/// list that opens over the message box when it holds only `/...` (OpenCode's command menu, the user's ask 2026-11-16).
+pub fn command_menu(prefix: &str, commands: &[String]) -> Vec<(String, String)> {
+    let p = prefix.to_lowercase();
+    let starts = commands.iter().filter(|c| c.starts_with(&p));
+    let inside = commands.iter().filter(|c| !c.starts_with(&p) && c.contains(&p));
+    starts.chain(inside).take(60).map(|c| (format!("/{c}"), describe(c).to_string())).collect()
+}
+
+/// What a slash command does, in a few words: tazuna's own, then claude's common ones; anything else is one of claude's
+/// commands or skills from the repo or the user.
+pub fn describe(cmd: &str) -> &'static str {
+    match cmd {
+        "agent" => "Send to the coding agent, past the chat router",
+        "good" | "bad" => "Rate the last run (kept on this machine)",
+        "boss" => "A lead model directs Haiku workers (on, off, or a model)",
+        "chat" => "A plain chat, or back to the profile before it",
+        "data" => "Which providers may see your code (trusted, any)",
+        "diff" => "What this conversation changed, file by file",
+        "effort" => "The model's effort level",
+        "explorer" => "The model that searches the repo for the main one",
+        "jira" => "A ticket's text as the message: /jira KEY [request]",
+        "keys" => "All keyboard shortcuts",
+        "login" => "Save a provider's API key",
+        "loop" => "Build TODO.md's items one run at a time (/loop stop)",
+        "mcp" => "Your MCP servers for every model (on, off, add)",
+        "model" => "Pick the model and its effort",
+        "new" => "A fresh conversation",
+        "preset" => "A preset's settings for the rest of the session",
+        "profile" => "How much of the repo's setup loads (repo, lean, chat)",
+        "resume" => "Continue an earlier conversation of this folder",
+        "review" => "A review of each finished change (on, off, a model)",
+        "route" => "Whether general questions may go to a chat (on, off)",
+        "verify" => "Tests and type checks after edits (on, off)",
+        "rewind" => "Go back to before an earlier message",
+        "usage" => "The plan's 5-hour and weekly use, the API balance",
+        "vim" => "Vim keys in the message box (on, off)",
+        "clear" => "Claude: clear the conversation",
+        "compact" => "Claude: summarise the conversation to free context",
+        "context" => "Claude: what fills the context",
+        "config" => "Claude: its settings",
+        "init" => "Claude: write a CLAUDE.md for this repository",
+        "security-review" => "Claude: a security review of the pending changes",
+        "agents" => "Claude: its subagents",
+        "rename" => "Claude: rename this conversation",
+        "fast" => "Claude: fast mode",
+        "output-style" => "Claude: how answers are written",
+        _ => "Claude command or skill",
+    }
+}
+
 /// Byte index of character column `col` in the line `start..end`, or the line's end if it is shorter.
 fn column(text: &str, start: usize, end: usize, col: usize) -> usize {
     text[start..end].char_indices().nth(col).map_or(end, |(i, _)| start + i)
@@ -412,6 +463,16 @@ fn column(text: &str, start: usize, end: usize, col: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_command_menu_lists_matches_with_what_they_do() {
+        let cmds: Vec<String> = ["compact", "diff", "model", "new", "review", "security-review", "my-skill"].map(String::from).to_vec();
+        let m = super::command_menu("re", &cmds);
+        assert_eq!(m.iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>(), ["/review", "/security-review"], "names that start with it first");
+        assert_eq!(m[0].1, "A review of each finished change (on, off, a model)");
+        assert_eq!(super::command_menu("", &cmds).len(), 7);
+        assert_eq!(super::command_menu("my", &cmds)[0].1, "Claude command or skill");
+    }
+
     #[test]
     fn a_selection_is_replaced_or_removed() {
         let mut e = super::Editor::default();

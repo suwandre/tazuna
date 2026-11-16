@@ -179,6 +179,7 @@ pub fn provider_of(c: &Choice) -> String {
         Some("openrouter.ai") => "OpenRouter".into(),
         Some("kenari.id") => "Kenari".into(),
         Some("api.mistral.ai") => "Mistral".into(),
+        Some("api.cheaperinference.com") => "Cheaper Inference".into(),
         // a machine of the user's (an address, not a name): the route's own name for it ("qwen3.8-flash-next@pc": pc)
         Some(h) if h == "localhost" || h.parse::<std::net::IpAddr>().is_ok() => c.label.rsplit_once(" · ").map_or(h.to_string(), |(_, n)| n.to_string()),
         Some(h) => h.to_string(),
@@ -196,7 +197,7 @@ pub fn providers(cs: &[Choice]) -> Vec<(String, Vec<usize>)> {
             None => out.push((p, vec![i])),
         }
     }
-    let rank = |n: &str| ["Claude", "SubRouter", "Mortera", "Mistral", "OpenRouter", "Kenari"].iter().position(|x| *x == n).unwrap_or(9);
+    let rank = |n: &str| ["Claude", "SubRouter", "Mortera", "Mistral", "OpenRouter", "Kenari", "Cheaper Inference"].iter().position(|x| *x == n).unwrap_or(9);
     out.sort_by_key(|(n, _)| rank(n));
     out
 }
@@ -547,10 +548,10 @@ fn cheaper_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) 
             model: id.to_string(),
             label: id.to_string(),
             route: Some(("https://api.cheaperinference.com/v1".into(), "CHEAPER_INFERENCE_API_KEY".into(), route_price(input, output, usd("cache_read_input_per_million")))),
-            place: format!("CheaperInference · {}", m["provider"].as_str().unwrap_or("")).trim_end_matches(" · ").to_string(),
+            place: format!("Cheaper Inference · {}", m["provider"].as_str().unwrap_or("")).trim_end_matches(" · ").to_string(),
             efforts: if m["capabilities"]["reasoning"] == true { LEVELS.iter().map(|e| e.to_string()).collect() } else { vec![] },
             price: if free { "free".into() } else { format!("{} / {}", per_m(input), per_m(output)) },
-            note: "not checked yet: prices from CheaperInference's list; effort levels, cache and quality not measured".into(),
+            note: "not checked yet: prices from Cheaper Inference's list; effort levels, cache and quality not measured".into(),
             stale: false,
             state: if key("CHEAPER_INFERENCE_API_KEY").is_none() {
                 State::NoKey
@@ -725,8 +726,8 @@ pub const LOGINS: [Login; 6] = [
     Login { name: "Mistral", vars: &["MISTRAL_API_KEY", "MISTRAL_VIBE_API_KEY"], host: "api.mistral.ai", page: "https://console.mistral.ai/api-keys",
             place: "Mistral's console (or Code › Vibe CLI)", example: "" },
     // the own loop's first provider (2026-10-09); its list needs the key, so its models show once one is saved (2026-11-16)
-    Login { name: "CheaperInference", vars: &["CHEAPER_INFERENCE_API_KEY"], host: "api.cheaperinference.com",
-            page: "https://platform.cheaperinference.com/dashboard", place: "your CheaperInference dashboard (API keys)", example: "" },
+    Login { name: "Cheaper Inference", vars: &["CHEAPER_INFERENCE_API_KEY"], host: "api.cheaperinference.com",
+            page: "https://platform.cheaperinference.com/dashboard", place: "your Cheaper Inference dashboard (API keys)", example: "" },
 ];
 
 /// Where a provider's key comes from, for `/login`'s list; empty: none.
@@ -1005,6 +1006,14 @@ mod tests {
     }
 
     #[test]
+    fn a_provider_shows_by_its_name_not_its_host() {
+        let row = |url: &str| Choice { model: "m".into(), label: "m".into(), route: Some((url.into(), "K".into(), "0,0,0".into())), place: String::new(),
+            efforts: vec![], price: String::new(), note: String::new(), stale: false, state: State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
+        assert_eq!(provider_of(&row("https://api.cheaperinference.com/v1")), "Cheaper Inference");
+        assert_eq!(provider_of(&row("https://kenari.id/v1")), "Kenari");
+    }
+
+    #[test]
     fn cheaperinference_rows_are_its_text_models_with_tools() {
         let list = serde_json::json!({"data": [
             {"id": "deepseek-v4.1-flash", "type": "text", "provider": "DeepSeek", "features": ["reasoning", "tool-use"], "capabilities": {"reasoning": true},
@@ -1017,7 +1026,7 @@ mod tests {
         assert_eq!(rows.iter().map(|c| c.model.as_str()).collect::<Vec<_>>(), ["deepseek-v4.1-flash", "glyph-cluster"], "text models with tools, no Claude");
         let r = &rows[0];
         assert_eq!((r.route.as_ref().unwrap().0.as_str(), r.route.as_ref().unwrap().2.as_str()), ("https://api.cheaperinference.com/v1", "0.15,0.003,0.6"));
-        assert_eq!((r.place.as_str(), r.efforts.len(), rows[1].price.as_str(), rows[1].efforts.len()), ("CheaperInference · DeepSeek", 5, "free", 0));
+        assert_eq!((r.place.as_str(), r.efforts.len(), rows[1].price.as_str(), rows[1].efforts.len()), ("Cheaper Inference · DeepSeek", 5, "free", 0));
     }
 
     #[test]

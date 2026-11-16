@@ -16,6 +16,23 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.150 (2026-11-17): a command menu, end-to-end speed, and Cheaper Inference that answers
+
+- Typing `/` opens a menu over the message box (OpenCode's): every matching command with what it does (tazuna's own,
+  Claude's common ones, the rest marked as Claude commands or skills), names that start with what is typed first; up
+  and down move, enter runs the selected one, tab puts it in the box. The one-line hints stay for `@` files.
+- Next to the writing speed, the end-to-end rate: all output over the calls' whole time, the waits included (how fast
+  answers reach you). Every call has it, also those whose writing speed cannot be measured: "173 tok/s writing · 114
+  end to end" on the user's DeepSeek chat; the model-calls list has both columns.
+- Cheaper Inference answers: its gateway holds a call's worst case before answering, and a call without an output cap
+  counts the model's whole listed maximum (muse-ember: 1,048,576 tokens, about $0.40), so a $0.14 wallet got 402
+  "insufficient balance" for a call costing under $0.0001. A Chat Completions call now carries the model's listed
+  maximum as `max_tokens`, at most 64,000 (when the engine reads the list), and a 402 for a call without a cap goes once
+  more with 64,000, kept for the session (a model picked from the catalog skips the list). Checked on the provider (no
+  cap: 402; 64,000, 8,000, 1,000: answered) and through tazuna (two messages, $0.00026). Tests.
+- The provider is "Cheaper Inference" in /model, /login and the desktop's Settings, not its host.
+- No other metric moves; 187 tests.
+
 ## 0.1.149 (2026-11-16): tok/s is the output over the time after the first token, or nothing
 
 - Audited on every recorded call of every model (4,927 calls, 25 models; `cargo test --release audit_speeds -- --ignored
