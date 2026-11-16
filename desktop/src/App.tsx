@@ -4,7 +4,7 @@ import { Composer } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
 import { ReviewView } from "./components/ReviewView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
-import { creatorMessage, widgetData, widgetId, widgets, type UserWidget } from "./lib/widgets";
+import { creatorMessage, dryRun, summary, widgetData, widgetId, widgets, type UserWidget } from "./lib/widgets";
 import { footprint, load, onPaletteChange, pluginActions, safeMode, setActions, setData, unload } from "./lib/plugins";
 import { SettingsView } from "./components/SettingsView";
 import { Rail, UserPanel } from "./components/Rail";
@@ -212,10 +212,13 @@ export default function App() {
         onRemove={() => widgets.remove(w.id).then(() => widgets.list().then((w) => setUserWidgets(w ?? []))).catch(() => {})} /> }));
     return () => offs.forEach((off) => off());
   }, [userWidgets]);
-  // creator mode checks its work: when a creator conversation finishes a turn, tazuna loads what it wrote (enabling a
-  // plugin it made: the user asked for it) and, if it failed or showed nowhere, says so in that conversation, up to two
-  // rounds (DeepSeek Harness's creator reports "done" for plugins that never loaded)
+  // creator mode checks its work: when a creator conversation finishes a turn, tazuna checks what it wrote without running
+  // it in the window (a plugin runs once, sandboxed, against a stand-in; security review) and sends a failure or "shows
+  // nowhere" back to the agent, up to two rounds (DeepSeek Harness's creator reports done for plugins that never loaded).
+  // A plugin that passes waits for the user: what it would do, its code, and Enable.
   const creatorRuns = useRef<Record<string, { state: string; rounds: number }>>({});
+  const [ready, setReady] = useState<Record<string, { id: string; title: string; print: string; summary: string } | null>>({});
+  const [codeView, setCodeView] = useState<{ title: string; text: string } | null>(null);
   const verifyCreation = async (t: Thread, run: { rounds: number }) => {
     const id = t.folder?.split(/[\\/]/).pop();
     if (!id) return;
@@ -224,21 +227,31 @@ export default function App() {
     const w = list.find((x) => x.id === id);
     let problem: string | null = null;
     if (!w) problem = "Nothing is in the folder that tazuna can load: no index.html (a panel) and no plugin.js (a plugin), or the files are empty.";
-    else if (w.kind === "plugin" && !safeMode()) {
-      if (w.state !== "enabled") await widgets.enable(id, w.print!, true).catch(() => {});
-      const since = Date.now();
-      await load(id, w.print!);
-      await new Promise((r) => setTimeout(r, 900));
-      const f = footprint(id, since);
-      if (f.loadError) problem = `It failed to load: ${f.loadError}`;
-      else if (f.errors.length) problem = `A part it registered threw an error: ${f.errors.slice(-3).join("; ")}`;
-      else if (!f.entries.length && !f.actions && !f.effects) problem = "It loaded but put nothing into the window: no spot entry, no Cmd-K action, no style and no hidden part. Check the spot names against the specification.";
-      reloadWidgets();
+    else if (w.kind === "plugin") {
+      const r = await dryRun(id);
+      const said = summary(r.rec);
+      if (r.error) problem = `It failed when run: ${r.error}`;
+      else if (!said) problem = "It ran but registers nothing: no spot entry, no Cmd-K action, no style and no hidden part. Check the spot names against the specification.";
+      else if (w.state !== "enabled") setReady((m) => ({ ...m, [t.tid]: { id, title: w.title, print: w.print!, summary: said } }));
     }
     if (problem && run.rounds < 2) {
       run.rounds++;
-      core.sendIn(t.tid, `tazuna loaded what you wrote and checked it. ${problem} Fix it in this folder.`).catch(() => {});
+      core.sendIn(t.tid, `tazuna checked what you wrote. ${problem} Fix it in this folder.`).catch(() => {});
     }
+  };
+  /** The user enables a plugin creator mode made: it loads; a part that throws when drawn goes back to the agent. */
+  const enableReady = async (tid: string) => {
+    const r = ready[tid];
+    if (!r) return;
+    setReady((m) => ({ ...m, [tid]: null }));
+    await widgets.enable(r.id, r.print, true).catch(() => {});
+    const since = Date.now();
+    await load(r.id, r.print);
+    reloadWidgets();
+    await new Promise((res) => setTimeout(res, 900));
+    const f = footprint(r.id, since);
+    const problem = f.loadError ? `It failed to load in the window: ${f.loadError}` : f.errors.length ? `A part it registered threw when drawn: ${f.errors.slice(-3).join("; ")}` : null;
+    if (problem) core.sendIn(tid, `The user enabled the plugin. ${problem} Fix it in this folder.`).catch(() => {});
   };
   useEffect(() => {
     for (const t of threads) {
@@ -342,6 +355,16 @@ export default function App() {
         {inTauri && safeMode() && userWidgets.some((w) => w.kind === "plugin") && (
           <div className="mx-auto mb-2 max-w-[700px] px-7 text-[12.5px] text-muted">Safe mode: plugins are off (Settings turns them back on).</div>
         )}
+        {ready[active] && (
+          <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] text-ink-2">
+            <span className="flex-1"><span className="font-medium text-ink">{ready[active]!.title}</span> is ready: it {ready[active]!.summary}.
+              <span className="block text-[12px] text-muted">A plugin runs inside tazuna's window and can send messages to the agent: enable it if you want it.</span></span>
+            <button onClick={() => widgets.code(ready[active]!.id).then((text) => setCodeView({ title: ready[active]!.title, text })).catch(() => {})}
+              className="rounded-md border border-line px-2.5 py-1 text-ink-2 hover:bg-hover">Code</button>
+            <button onClick={() => enableReady(active)} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Enable</button>
+          </div>
+        )}
+        {codeView && <DiffView diff={{ turn: 0, path: `${codeView.title} · plugin.js`, text: codeView.text }} plain onClose={() => setCodeView(null)} />}
         {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
         <Composer session={session} threadCost={usage.threadCost} busy={busy}
           onSend={(text) => {

@@ -189,8 +189,10 @@ tazuna takes the reach and keeps a safe default:
   tazuna already has (MCP servers, skills, commands), not a plugin system in the core.
 - **Creator mode** (`/create ...`, Cmd-K): a conversation in a new folder with the specification and a live map of the
   window; writes inside that folder need no question (the core decides on the real, resolved path); when the turn ends
-  tazuna loads what was written and sends a failure or "shows nowhere" back into the conversation (two rounds), where
-  DeepSeek's creator reports done for plugins that never loaded.
+  tazuna checks what was written without running it in the window (a plugin runs once in a sandboxed frame against a
+  stand-in that records what it would register) and sends a failure or "shows nowhere" back into the conversation (two
+  rounds), where DeepSeek's creator reports done for plugins that never loaded. A plugin that passes waits for the user:
+  what it would do, its code, and Enable; nothing agent-written runs in the window before that (security review).
 - Next: sharing and a gallery by 1.0; more spots as needs show (settings sections, the sidebar's lists); behaviour
   plugins in 1.1.
 

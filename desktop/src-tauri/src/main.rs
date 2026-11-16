@@ -249,6 +249,15 @@ fn plugins_enable(id: String, print: String, on: bool) -> Result<(), String> {
     save_approvals(&a)
 }
 
+/// A plugin's code as text, to read before enabling it.
+#[tauri::command]
+fn plugins_code(id: String) -> Result<String, String> {
+    if !widget_id_ok(&id) {
+        return Err(format!("not a plugin id: {id}"));
+    }
+    std::fs::read_to_string(widgets_dir().join(&id).join("plugin.js")).map_err(|e| e.to_string())
+}
+
 /// A panel's folder (for editing it with tazuna).
 #[tauri::command]
 fn widgets_path(id: String) -> Result<String, String> {
@@ -281,10 +290,45 @@ fn plugin_code(path: &str) -> (u16, String) {
     (200, String::from_utf8_lossy(&code).into_owned())
 }
 
+/// tzwidget://localhost/__dryrun/<id>: a plugin's code run once in the sandboxed frame (no tazuna, no network, no
+/// window), against a stand-in `ctx` that only records what it registers; the result goes to the window by message.
+/// Creator mode's check, before the user enables anything (security review: agent-written code must not run in the
+/// window unseen). The default export is found by turning `export default` into an assignment.
+fn dry_run_page(id: &str) -> (u16, String) {
+    if !widget_id_ok(id) {
+        return (404, String::new());
+    }
+    let Ok(code) = std::fs::read_to_string(widgets_dir().join(id).join("plugin.js")) else { return (404, String::new()) };
+    if code.len() > 1 << 20 {
+        return (413, String::new());
+    }
+    let body = code.replacen("export default", "window.__plugin =", 1).replace("</script", "<\\/script");
+    let harness = r#"<!doctype html><meta charset="utf-8"><script>
+var rec={slots:[],hidden:[],palette:[],theme:0,css:0},noop=function(){},
+h=function(){return null},R={createElement:h,useState:function(v){return[v,noop]},useEffect:noop,useMemo:function(f){return f()},useRef:function(v){return{current:v}},useCallback:function(f){return f},Fragment:"f"};
+var ctx={api:1,id:ID,React:R,h:h,useData:function(){return null},
+slots:{register:function(s,e){rec.slots.push([s,e&&e.id]);},hide:function(i){rec.hidden.push(i)},map:function(){return{}}},
+actions:{send:noop,newChat:noop,setMode:noop,notify:noop,openLink:noop,review:noop},
+theme:{set:function(){rec.theme++},css:function(){rec.css++}},palette:{add:function(a){rec.palette.push(a&&a.id)}},storage:{get:function(){return null},set:noop}};
+function done(err){parent.postMessage({type:"tazuna-dryrun",id:ID,error:err,rec:rec},"*")}
+window.addEventListener("error",function(e){done(String(e.message||e))});
+</script><script>
+"#;
+    let tail = r#"
+</script><script>
+try{if(typeof window.__plugin!=="function")throw new Error("plugin.js has no default export function(ctx)");var r=window.__plugin(ctx);
+Promise.resolve(r).then(function(){done(null)},function(e){done(String(e&&e.message||e))});}catch(e){done(String(e&&e.message||e))}
+</script>"#;
+    (200, format!("{}{body}{tail}", harness.replace("ID", &serde_json::json!(id).to_string())))
+}
+
 /// The page tzwidget://localhost/<id> serves: the panel's index.html after a small preamble (the design tokens, filled
 /// in by the window's first message), under its own policy: scripts and styles inline only, images and fonts from data:
 /// URLs, no network. The window frames it sandboxed (no same origin), so it cannot reach tazuna either.
 fn widget_page(path: &str) -> (u16, String) {
+    if let Some(id) = path.trim_matches('/').strip_prefix("__dryrun/") {
+        return dry_run_page(id);
+    }
     let id = path.trim_matches('/');
     if !widget_id_ok(id) {
         return (404, String::new());
@@ -416,7 +460,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 let core = w.state::<Core>();
@@ -428,4 +472,27 @@ fn main() {
         })
         .run(tauri::generate_context!())
         .expect("tazuna desktop failed to start");
+}
+
+#[cfg(test)]
+mod tests {
+    /// The dry run's page for a plugin, written to TAZUNA_DRYRUN_OUT for a browser to run (the window's own check).
+    #[test]
+    fn dry_run_page_wraps_the_plugin() {
+        let home = std::env::temp_dir().join(format!("tazuna-dry-{}", std::process::id()));
+        let dir = home.join(".config/tazuna/desktop/plugins/demo");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugin.js"), std::env::var("TAZUNA_DRYRUN_CODE").unwrap_or_else(|_|
+            "export default function (ctx) { ctx.slots.register('composer.dock', { id: 'bar', render: () => null }); ctx.slots.hide('rail.today'); }".into())).unwrap();
+        // SAFETY: one test sets HOME before reading it; nothing else runs in this test binary
+        unsafe { std::env::set_var("HOME", &home) };
+        let (status, html) = super::dry_run_page("demo");
+        assert_eq!(status, 200);
+        assert!(html.contains("window.__plugin =") && !html.contains("export default"), "{html}");
+        assert_eq!(super::dry_run_page("../etc").0, 404);
+        if let Ok(out) = std::env::var("TAZUNA_DRYRUN_OUT") {
+            std::fs::write(out, &html).unwrap();
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
 }

@@ -17,6 +17,8 @@ export const widgets = {
   create: (id: string) => invoke<string>("widgets_new", { id }),
   path: (id: string) => invoke<string>("widgets_path", { id }),
   remove: (id: string) => invoke("widgets_remove", { id }),
+  /** a plugin's code as text (to read before enabling it) */
+  code: (id: string) => invoke<string>("plugins_code", { id }),
   /** a plugin on (for the code it had when listed) or off */
   enable: (id: string, print: string, on: boolean) => invoke("plugins_enable", { id, print, on }),
 };
@@ -74,3 +76,34 @@ ${JSON.stringify(slots.map(), null, 1)}
 </window_now>
 
 What the user wants: ${ask}`;
+
+export type DryRun = { error: string | null; rec: { slots: [string, string][]; hidden: string[]; palette: string[]; theme: number; css: number } };
+
+/** A plugin's code run once in a sandboxed frame against a stand-in ctx (tzwidget://localhost/__dryrun/<id>): what it
+ * would register, or its error, without it running in the window. */
+export function dryRun(id: string): Promise<DryRun> {
+  return new Promise((resolve) => {
+    const frame = document.createElement("iframe");
+    frame.sandbox.add("allow-scripts");
+    frame.style.display = "none";
+    const finish = (r: DryRun) => { window.removeEventListener("message", on); clearTimeout(timer); frame.remove(); resolve(r); };
+    const on = (e: MessageEvent) => {
+      if (e.source !== frame.contentWindow || e.data?.type !== "tazuna-dryrun" || e.data.id !== id) return;
+      finish({ error: e.data.error ?? null, rec: e.data.rec });
+    };
+    const timer = setTimeout(() => finish({ error: "it did not finish within 5 s", rec: { slots: [], hidden: [], palette: [], theme: 0, css: 0 } }), 5000);
+    window.addEventListener("message", on);
+    frame.src = widgetUrl(`__dryrun/${id}`);
+    document.body.appendChild(frame);
+  });
+}
+
+/** What a dry run says the plugin would do, in a line. */
+export function summary(r: DryRun["rec"]): string {
+  const parts = [
+    ...r.slots.map(([slot, id]) => `adds ${id} in ${slot}`), ...r.hidden.map((id) => `hides ${id}`),
+    ...(r.palette.length ? [`adds ${r.palette.length} Cmd-K action${r.palette.length === 1 ? "" : "s"}`] : []),
+    ...(r.theme ? ["changes design tokens"] : []), ...(r.css ? ["adds styles"] : []),
+  ];
+  return parts.join("; ");
+}
