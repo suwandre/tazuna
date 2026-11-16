@@ -23,7 +23,7 @@ jobs:
         run: |
           v="${GITHUB_REF_NAME#desktop-v}"
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --prerelease \
-            --title "tazuna desktop $v" --notes "The desktop app $v (docs/DESKTOP.md). Not signed yet: macOS asks to confirm the first open (right-click, Open), Windows SmartScreen shows More info, Run anyway."
+            --title "tazuna desktop $v" --notes "The desktop app $v (docs/DESKTOP.md). Not signed yet: on macOS open it once, then System Settings, Privacy and Security, Open Anyway; on Windows SmartScreen shows More info, Run anyway."
   build:
     needs: release
     if: ${{ !failure() && !cancelled() }}
