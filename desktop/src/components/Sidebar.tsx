@@ -24,9 +24,10 @@ type Props = {
   onNewChat?: () => void; onOpenFolder?: () => void; onOpenProject?: (p: Project) => void;
   /** a saved conversation: a chat (no project) or one of a project's */
   onOpenThread?: (t: Thread, p?: Project) => void;
+  onSearch?: () => void;
 };
 
-export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread }: Props) {
+export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch }: Props) {
   return (
     <aside className="flex flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
       {macOverlay && <div data-tauri-drag-region className="-mx-2.5 -mt-3.5 h-[38px] flex-none" />}
@@ -34,9 +35,9 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
         <span className="grid size-[22px] place-items-center rounded-sm bg-accent text-[12px] font-bold text-on-accent">手</span>
         <span>tazuna</span>
       </div>
-      <div className="mb-1 flex items-center gap-2 rounded-md border border-line bg-field px-[9px] py-[7px] text-muted">
+      <button onClick={onSearch} className="mb-1 flex items-center gap-2 rounded-md border border-line bg-field px-[9px] py-[7px] text-left text-muted hover:bg-hover">
         <Search {...icon} /><span>Search</span><Kbd>⌘K</Kbd>
-      </div>
+      </button>
       <button onClick={onNewChat} className="flex items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
         <Plus {...icon} /><span>New chat</span><Kbd>⌘N</Kbd>
       </button>

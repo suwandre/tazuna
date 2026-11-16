@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Approval } from "./components/Approval";
 import { Composer } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
+import { Palette, Shortcuts, type Action } from "./components/Palette";
 import { Rail, builtInWidgets } from "./components/Rail";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
@@ -85,10 +86,27 @@ function useTheme() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
+  return () => setDark((d) => !d);
+}
+
+/** Cmd-K opens the palette, Cmd-/ the shortcuts. */
+function useOverlay() {
+  const [overlay, setOverlay] = useState<"palette" | "shortcuts" | null>(null);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey) return;
+      if (e.key === "k") { e.preventDefault(); setOverlay((o) => (o === "palette" ? null : "palette")); }
+      if (e.key === "/") { e.preventDefault(); setOverlay((o) => (o === "shortcuts" ? null : "shortcuts")); }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, []);
+  return [overlay, setOverlay] as const;
 }
 
 export default function App() {
-  useTheme();
+  const flipTheme = useTheme();
+  const [overlay, setOverlay] = useOverlay();
   const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff } = useCore();
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
   const usage = view ? viewUsage(view) : demo.usage;
@@ -97,6 +115,27 @@ export default function App() {
     ? { model: view.model || "default", effort: view.effort || "", mode: view.mode, branch: "", changed: 0, lastCost: lastCost(view) }
     : demo.session;
   const place = inTauri ? (folder ? base(folder) : "Chat") : "api-gateway";
+  const actions = (): Action[] => {
+    const a: Action[] = [
+      { id: "new", group: "Start", label: "New chat", keys: "⌘N", run: () => open(null) },
+      { id: "folder", group: "Start", label: "Open folder…", keys: "⌘O", run: pick },
+      ...projects.map((p) => ({ id: `p:${p}`, group: "Projects", label: base(p), hint: p, keywords: "open project folder", run: () => open(p) })),
+      ...[...(home ? (sessions[home] ?? []).map((r) => [r, null] as const) : []), ...projects.flatMap((p) => (sessions[p] ?? []).slice(0, 10).map((r) => [r, p] as const))]
+        .map(([r, dir]) => ({ id: `s:${r.id}`, group: "Conversations", label: r.first.split("\n")[0] || "(no message)", hint: dir ? base(dir) : "chat", keywords: "resume continue", run: () => open(dir, r.id) })),
+    ];
+    if (busy) a.unshift({ id: "stop", group: "This conversation", label: "Stop the reply", keys: "Esc", run: () => core.interrupt() });
+    const undo = view?.changes?.find((c) => c.can_undo);
+    if (undo && !busy) a.push({ id: "undo", group: "This conversation", label: `Undo the last turn's changes`, hint: `${undo.files.length} file${undo.files.length === 1 ? "" : "s"}`, run: () => core.undo(undo.turn) });
+    if (view) {
+      a.push(...["auto", "ask", "edits", "plan"].map((m) => ({ id: `m:${m}`, group: "Permission mode", label: m, hint: m === view.mode ? "current" : undefined, keywords: "mode permission", run: () => core.setMode(m) })));
+      const cur = models?.choices.find((c) => c.current);
+      a.push(...(cur?.efforts ?? []).map((e) => ({ id: `e:${e}`, group: "Effort", label: e, hint: e === view.effort ? "current" : undefined, keywords: "effort thinking", run: () => core.setEffort(e) })));
+      a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: c.label, hint: c.current ? "current" : c.place, keywords: `model ${c.provider}`, run: () => core.setModel(c) })));
+    }
+    a.push({ id: "theme", group: "Window", label: "Light or dark", keys: "⌘⇧L", run: flipTheme },
+      { id: "keys", group: "Window", label: "Keyboard shortcuts", keys: "⌘/", run: () => setTimeout(() => setOverlay("shortcuts")) });
+    return a;
+  };
   const title = view ? (view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.slice(0, 60) ?? "New chat" : "Retry test fails on CI";
   return (
     <div className="grid h-screen grid-cols-[248px_1fr_232px]">
@@ -104,7 +143,7 @@ export default function App() {
         chats={inTauri ? threads(home ? sessions[home] : undefined) : demo.chats}
         projects={inTauri ? projects.map((p) => ({ name: base(p), path: p, open: p === folder, threads: threads(sessions[p]) })) : demo.projects}
         onNewChat={() => open(null)} onOpenFolder={pick} onOpenProject={(p) => p.path && open(p.path)}
-        onOpenThread={(t, p) => open(p?.path ?? null, t.id)}
+        onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")}
         planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
       <main className="flex min-w-0 flex-col bg-main">
         <header data-tauri-drag-region className="flex items-center justify-between border-b border-line-soft px-7 py-3">
@@ -132,6 +171,8 @@ export default function App() {
           onMode={inTauri ? (m) => core.setMode(m) : undefined} />
       </main>
       <Rail usage={usage} widgets={builtInWidgets} />
+      {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
+      {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
     </div>
   );
 }
