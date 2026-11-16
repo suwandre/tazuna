@@ -62,6 +62,7 @@ jobs:
         run: |
           app=desktop/src-tauri/target/release/tazuna-desktop
           case "$RUNNER_OS" in
+            # two tries on Linux: as is, then without WebKitGTK's DMA-BUF renderer (a blank page in VMs and on some GPUs)
             Linux) (xvfb-run -a "$app" > app.log 2>&1 &) ;;
             Windows) (./"$app.exe" > app.log 2>&1 &) ;;
             macOS) ("$app" > app.log 2>&1 &) ;;
@@ -75,8 +76,15 @@ jobs:
             [ -n "$found" ] && break
             sleep 1
           done
+          if [ -z "$found" ] && [ "$RUNNER_OS" = Linux ]; then
+            echo "not started as is; again with WEBKIT_DISABLE_DMABUF_RENDERER=1"
+            pkill -f tazuna-desktop || true
+            (WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a "$app" > app2.log 2>&1 &)
+            for i in $(seq 1 30); do pgrep -f "tazuna app-server" > /dev/null && { found=dmabuf-off; break; }; sleep 1; done
+            cat app2.log || true
+          fi
           cat app.log || true
-          [ -n "$found" ] && echo "the app started its tazuna after ${i} s" || { echo "the app did not start its tazuna"; exit 1; }
+          [ -n "$found" ] && echo "the app started its tazuna after ${i} s (${found})" || { echo "the app did not start its tazuna"; exit 1; }
       - name: collect the installers
         shell: bash
         run: |
