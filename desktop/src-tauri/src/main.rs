@@ -37,6 +37,7 @@ fn tazuna_bin() -> String {
 #[cfg(unix)]
 fn login_path() -> Option<String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+    eprintln!("tazuna desktop: reading PATH from {shell}");
     let out = Command::new(shell).args(["-lic", "printf '\\n%s' \"$PATH\""]).stdin(Stdio::null()).stderr(Stdio::null()).output().ok()?;
     String::from_utf8(out.stdout).ok()?.lines().last().map(str::to_string).filter(|p| !p.is_empty())
 }
@@ -48,6 +49,8 @@ async fn start(app: AppHandle, core: State<'_, Core>, tid: String, cwd: Option<S
     stop_thread(&core, &tid);
     // a chat runs in the home folder: HOME, or USERPROFILE on Windows (which has no HOME, and "." is the app's own folder)
     let dir = cwd.or_else(|| std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()).unwrap_or_else(|| ".".into());
+    // one line each on stderr: where a start stops shows in a terminal or a CI log
+    eprintln!("tazuna desktop: starting {} app-server in {dir}", tazuna_bin());
     let mut cmd = Command::new(tazuna_bin());
     cmd.arg("app-server").arg("--allow-non-git").current_dir(&dir);
     #[cfg(unix)]
@@ -59,6 +62,7 @@ async fn start(app: AppHandle, core: State<'_, Core>, tid: String, cwd: Option<S
     }
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
         .map_err(|e| format!("could not start {} app-server: {e}", tazuna_bin()))?;
+    eprintln!("tazuna desktop: app-server running (pid {})", child.id());
     let stdin = child.stdin.take().ok_or("no stdin")?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let run = core.started.fetch_add(1, Ordering::SeqCst) + 1;
