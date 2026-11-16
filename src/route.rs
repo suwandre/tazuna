@@ -228,6 +228,13 @@ mod tests {
 /// Signs that a message is about the code or the project (2026-11-15): any one keeps the message on the coding agent;
 /// only a message with none may be answered as a chat. A general question answered by the agent is a little worse; a
 /// coding request answered without tools fails, so these lean towards the agent.
+/// A short message in a running conversation ("why?", "looks good", "no, revert that", "progress?"): a follow-up, which
+/// goes to the agent without the router's model check (1-5 s before the message even moved). All 6 such messages in
+/// bench/suite/route-messages.jsonl are the agent's.
+pub fn short_followup(text: &str, in_conversation: bool) -> bool {
+    in_conversation && text.split_whitespace().count() <= 3
+}
+
 pub fn code_signals(text: &str, cwd: &Path) -> Vec<String> {
     const EXT: [&str; 34] = ["rs", "ts", "tsx", "js", "jsx", "mjs", "py", "go", "java", "kt", "rb", "php", "c", "h", "cpp", "cs", "swift",
         "json", "yaml", "yml", "toml", "md", "sql", "sh", "css", "scss", "html", "vue", "svelte", "lock", "env", "ini", "xml", "proto"];

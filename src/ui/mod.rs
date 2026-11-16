@@ -982,11 +982,11 @@ pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Col
         // the turn is over, but claude's background work goes on: say so where "done" would be (ctrl-b lists it)
         Activity::Ready | Activity::Done if v.bg_running > 0 => (spin, format!("{} working in background · ctrl-b", v.bg_running), th.accent2),
         Activity::Ready => ("●", "ready".into(), th.dim),
-        Activity::Starting => (spin, "starting".into(), th.dim),
         // keep-alive pings and no output (the own loop's provider queueing it): said, so it does not look like tazuna hangs
         Activity::Waiting if s.waiting_note.is_some() => (spin, "provider still processing (no output yet)".into(), th.warn),
-        Activity::Waiting => (spin, "waiting for model".into(), th.dim),
-        Activity::Thinking => (spin, "thinking".into(), th.warn),
+        // from Enter to the first output it reads "thinking" throughout: "starting", "waiting for model" and then "thinking"
+        // a second or more later looked like three different hold-ups (2026-11-16)
+        Activity::Starting | Activity::Waiting | Activity::Thinking => (spin, "thinking".into(), th.warn),
         Activity::Writing => (spin, "writing".into(), th.accent),
         Activity::Tool => (spin, format!("running {}", last_tool_name(s)), th.accent2),
         Activity::Verifying => (spin, "verifying".into(), th.accent2),

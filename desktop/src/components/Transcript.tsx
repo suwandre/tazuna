@@ -12,7 +12,8 @@ function meta(m: { cost: number; tokens: number; cachedPct?: number; secs: numbe
   return [usd(m.cost), `${tokens} tokens`, m.cachedPct != null ? `${m.cachedPct}% cached` : null, `${m.secs} s`].filter(Boolean).join(" · ");
 }
 
-const doing: Record<string, string> = { Starting: "starting", Waiting: "waiting for the model", Thinking: "thinking", Writing: "writing", Tool: "working", Verifying: "running the checks" };
+// one "thinking" from send to the first output (no "starting", then "waiting", then "thinking")
+const doing: Record<string, string> = { Starting: "thinking", Waiting: "thinking", Thinking: "thinking", Writing: "writing", Tool: "working", Verifying: "running the checks" };
 
 type Props = {
   messages: Message[]; busy?: boolean; activity?: string; onSendToAgent?: (text: string) => void;

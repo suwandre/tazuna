@@ -1048,16 +1048,19 @@ fn app_server(a: &Args) -> Result<()> {
                             };
                             if let Some(why) = untrusted_in_use(&live) {
                                 info(&mut s, why);
-                            } else if !forced && live.idle() && live.profile != route::Profile::Chat && route::code_signals(text, &cwd).is_empty() {
-                                // no sign of the code: the router's check decides, off this thread (the terminal's flow)
+                            } else if !forced && live.idle() && live.profile != route::Profile::Chat && route::code_signals(text, &cwd).is_empty()
+                                && !route::short_followup(text, !s.last_prompt.is_empty())
+                            {
+                                // no sign of the code: the router's check decides, off this thread (the terminal's flow); the
+                                // message shows at once
+                                s.apply(&json!({"type": "harness_user", "text": text}), at);
                                 let (c, tx, last, msg) = (RouteCtx::of(&live), tx.clone(), last_reply.clone(), text.to_string());
                                 std::thread::spawn(move || {
                                     let general = route_general(&c, &last, &msg);
                                     let _ = tx.send(json!({"op": "routed", "general": general, "text": msg}));
                                 });
-                                s.activity = session::Activity::Waiting;
                             } else {
-                                agent_send(&mut live, &mut s, text, &cwd, &mut turn, &mut undo_note);
+                                agent_send(&mut live, &mut s, text, &cwd, &mut turn, &mut undo_note, true);
                             }
                         }
                         // the permission mode: auto, ask, edits or plan (the own loop has no plan)
@@ -1149,15 +1152,18 @@ fn app_server(a: &Args) -> Result<()> {
                             if let Some(why) = untrusted_in_use(&live) {
                                 info(&mut s, why);
                             } else if cmd["general"] == true && live.idle() {
-                                let (t, u) = live.note(json!({"type": "harness_user", "text": text}));
-                                s.apply(&u, t);
+                                // shown since the send: recorded now
+                                live.note(json!({"type": "harness_user", "text": text}));
                                 s.apply(&json!({"type": "harness_info", "text": "answered as a chat: not about this project"}), at);
                                 chat_turn(RouteCtx::of(&live), text, tx.clone());
                             } else {
-                                agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note);
+                                agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note, false);
                             }
                         }
                         Some("tazuna_chat_event") => {
+                            if cmd["e"]["type"] == "result" && let Some(r) = cmd["e"]["result"].as_str() {
+                                last_reply = r.to_string();
+                            }
                             let (t, ev) = live.note(cmd["e"].clone());
                             s.apply(&ev, t);
                         }
@@ -2141,20 +2147,21 @@ fn run_live(
                 // the router's verdict on a message without code signals
                 Some("tazuna_route") => {
                     let text = e["text"].as_str().unwrap_or_default().to_string();
+                    // the message is on screen since Enter: recorded now, not shown twice
                     if e["general"] == true && live.idle() {
                         let at = live.elapsed_ms();
-                        let (t, u) = live.note(json!({"type": "harness_user", "text": text}));
-                        s.apply(&u, t);
+                        live.note(json!({"type": "harness_user", "text": text}));
                         s.apply(&json!({"type": "harness_info", "text": "answered as a chat: not about this project (/agent TEXT sends it to the agent, /route off stops this)"}), at);
                         chat_turn(RouteCtx::of(live), text, status_tx.clone());
-                    } else {
-                        match live.send_typed(&text) {
-                            Ok((t, e)) => s.apply(&e, t),
-                            Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),
-                        }
+                    } else if let Err(err) = live.send_typed(&text) {
+                        s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms());
                     }
                 }
                 Some("tazuna_chat_event") => {
+                    // a chat answer is the last reply too, for the router's next check
+                    if e["e"]["type"] == "result" && let Some(r) = e["e"]["result"].as_str() {
+                        last_reply = r.to_string();
+                    }
                     let (t, ev) = live.note(e["e"].clone());
                     s.apply(&ev, t);
                 }
@@ -3296,8 +3303,11 @@ fn run_live(
                 // a message with no sign of the code, while the agent is idle, may be a general question: the model check
                 // decides off the screen's thread, and its verdict comes back as tazuna_route (2026-11-15)
                 if route_on && !forced && typed && live.idle() && live.profile != route::Profile::Chat
-                    && route::code_signals(&text, &std::env::current_dir()?).is_empty()
+                    && route::code_signals(&text, &std::env::current_dir()?).is_empty() && !route::short_followup(&text, !s.last_prompt.is_empty())
                 {
+                    // the message shows at once, as thinking; the check decides where it goes (until 0.1.129 it appeared only
+                    // after the check, 1-5 s later). The verdict's own message event is then not shown again.
+                    s.apply(&json!({"type": "harness_user", "text": text}), live.elapsed_ms());
                     let (c, tx, last, msg) = (RouteCtx::of(live), status_tx.clone(), last_reply.clone(), text.clone());
                     std::thread::spawn(move || {
                         let general = route_general(&c, &last, &msg);
@@ -3407,7 +3417,8 @@ struct AppTurn {
 /// A message for the agent from the app: the tree before it is kept (the first message of a turn), and after an undo the
 /// message carries the note that tells the model its last changes are gone. ponytail: the snapshot runs on the server's
 /// one thread (git add -A on a large repo takes a moment); off it if that shows.
-fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::path::Path, turn: &mut Option<(String, bool)>, undo_note: &mut Option<String>) {
+/// `show`: false when the message is on screen already (it waited for the router's check).
+fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::path::Path, turn: &mut Option<(String, bool)>, undo_note: &mut Option<String>, show: bool) {
     if turn.is_none() {
         *turn = turns::snapshot(cwd).map(|b| (b, false));
     }
@@ -3416,7 +3427,8 @@ fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::pat
         None => text.to_string(),
     };
     match live.send_typed(&text) {
-        Ok((t, e)) => s.apply(&e, t),
+        Ok((t, e)) if show => s.apply(&e, t),
+        Ok(_) => {}
         Err(e) => {
             *turn = None;
             s.apply(&json!({"type": "harness_notice", "text": format!("{e:#}"), "error": true}), live.elapsed_ms());

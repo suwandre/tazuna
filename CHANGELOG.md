@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.129 (2026-11-16): a message shows the moment it is sent
+
+- Inside a project, a message with no sign of the code waited for the router's check (Haiku through claude: 4.7 s
+  measured, three runs) before it even appeared. It now shows at once, as thinking, and the check decides where it goes
+  behind it: 3.3 s to 0.05 s from Enter to the message on screen (app server, a general question).
+- A short message in a running conversation (three words or fewer: "why?", "looks good", "no, revert that",
+  "progress?") goes to the agent without the check; all 6 such messages in bench/suite/route-messages.jsonl are the
+  agent's. A chat answer now counts as the last reply for the router's next check.
+- From Enter to the first output the status reads "thinking" throughout: it read "starting", "waiting for model" and
+  then "thinking" a second or more later, which looked like three separate hold-ups.
+- No other metric moves; 172 tests.
+
 ## 0.1.128 (2026-11-16): `tazuna app-server`, the core behind the desktop app
 
 - `tazuna app-server` runs tazuna's core for the desktop app (`desktop/`, docs/DESKTOP.md): the window's commands as JSON

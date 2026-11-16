@@ -207,7 +207,7 @@ pub struct Session {
     /// Claude's to-do list (TodoWrite): (status, text).
     pub todos: Vec<(String, String)>,
     /// The last thing the user sent, to tell what a command result belongs to.
-    last_prompt: String,
+    pub last_prompt: String,
     /// The current model message arrived as content blocks (claude streams them; the own loop sends whole messages).
     streamed: bool,
     /// This call's text came as a stream (its message then adds no text block of its own).
