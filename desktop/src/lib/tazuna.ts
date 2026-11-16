@@ -1,9 +1,18 @@
-// The bridge to tazuna's core (src-tauri/src/main.rs runs `tazuna app-server`). Outside the Tauri window (a plain
+// The bridge to tazuna's core (src-tauri/src/main.rs runs one `tazuna app-server` per open conversation, a "thread").
+// Commands go to the thread on screen (`use`); views come from every thread, tagged. Outside the Tauri window (a plain
 // browser preview) there is no core: the app shows its demo data instead.
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+/** The thread commands go to: the one on screen. */
+let current = "";
+const to = <T = unknown>(cmd: string, args: Record<string, unknown> = {}) => invoke<T>(cmd, { tid: current, ...args });
+/** A message from a thread's core, unwrapped: `type` says what it is (view, models, diff, settings, sessions). */
+type Tagged<T> = { tid: string; msg: T & { type?: string } };
+const on = <T,>(type: string, cb: (m: T, tid: string) => void) =>
+  listen<Tagged<T>>("tazuna-view", (e) => { if (e.payload.msg.type === type) cb(e.payload.msg, e.payload.tid); });
 
 export type ViewBlock =
   | { kind: "prompt"; text: string }
@@ -39,54 +48,59 @@ export type ModelChoice = {
 export type Models = { choices: ModelChoice[]; rebuild: string | null };
 
 export const core = {
-  /** resolves to the folder the core runs in */
-  start: (cwd?: string, profile?: string) => invoke<string>("start", { cwd, profile }),
-  setMode: (mode: string) => invoke("op", { msg: { op: "mode", mode } }),
-  answer: (allow: boolean, always = false) => invoke("op", { msg: { op: "answer", allow, always } }),
-  diff: (turn: number, path: string) => invoke("op", { msg: { op: "diff", turn, path } }),
-  undo: (turn: number) => invoke("op", { msg: { op: "undo", turn } }),
-  onDiff: (cb: (d: Diff) => void) => listen<Diff>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "diff") cb(e.payload); }),
-  settings: () => invoke("op", { msg: { op: "settings" } }),
-  login: (provider: string, key: string) => invoke("op", { msg: { op: "login", provider, key } }),
-  setData: (policy: "trusted" | "any", confirm = false) => invoke("op", { msg: { op: "data", policy, confirm } }),
-  setRoute: (on: boolean) => invoke("op", { msg: { op: "route", on } }),
+  /** Commands from now on go to thread `tid`. */
+  use: (tid: string) => { current = tid; },
+  /** Starts thread `tid`'s core; resolves to the folder it runs in. */
+  start: (tid: string, cwd?: string, profile?: string) => invoke<string>("start", { tid, cwd, profile }),
+  /** Ends thread `tid`'s core. */
+  stop: (tid: string) => invoke("stop", { tid }),
+  /** Resumes a conversation in thread `tid` (right after its start, before it is the current one). */
+  resumeIn: (tid: string, id: string) => invoke("op", { tid, msg: { op: "resume", id } }),
+  setMode: (mode: string) => to("op", { msg: { op: "mode", mode } }),
+  answer: (allow: boolean, always = false) => to("op", { msg: { op: "answer", allow, always } }),
+  diff: (turn: number, path: string) => to("op", { msg: { op: "diff", turn, path } }),
+  undo: (turn: number) => to("op", { msg: { op: "undo", turn } }),
+  onDiff: (cb: (d: Diff) => void) => on<Diff>("diff", cb),
+  settings: () => to("op", { msg: { op: "settings" } }),
+  login: (provider: string, key: string) => to("op", { msg: { op: "login", provider, key } }),
+  setData: (policy: "trusted" | "any", confirm = false) => to("op", { msg: { op: "data", policy, confirm } }),
+  setRoute: (on: boolean) => to("op", { msg: { op: "route", on } }),
   openKeyPage: (url: string) => invoke("open_key_page", { url }),
   /** a link in an answer, in the browser (http and https only) */
   openLink: (url: string) => invoke("open_link", { url }),
-  onSettings: (cb: (s: Settings) => void) => listen<Settings>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "settings") cb(e.payload); }),
-  rename: (id: string, title: string) => invoke("op", { msg: { op: "rename", id, title } }),
-  hide: (id: string) => invoke("op", { msg: { op: "hide", id } }),
-  sessions: (dirs: string[]) => invoke("op", { msg: { op: "sessions", dirs } }),
-  resume: (id: string) => invoke("op", { msg: { op: "resume", id } }),
-  onSessions: (cb: (s: Sessions) => void) => listen<Sessions>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "sessions") cb(e.payload); }),
-  send: (text: string, agent = false) => invoke("send", { text, agent }),
-  trust: () => invoke("trust"),
+  onSettings: (cb: (s: Settings) => void) => on<Settings>("settings", cb),
+  rename: (id: string, title: string) => to("op", { msg: { op: "rename", id, title } }),
+  hide: (id: string) => to("op", { msg: { op: "hide", id } }),
+  sessions: (dirs: string[]) => to("op", { msg: { op: "sessions", dirs } }),
+  resume: (id: string) => to("op", { msg: { op: "resume", id } }),
+  onSessions: (cb: (s: Sessions) => void) => on<Sessions>("sessions", cb),
+  send: (text: string, agent = false) => to("send", { text, agent }),
+  trust: () => to("trust"),
   pickFolder: () => invoke<string | null>("pick_folder"),
   pickFiles: () => invoke<string[]>("pick_files"),
   /** files dropped on the window, as paths */
   onDrop: (cb: (paths: string[]) => void) => import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
     getCurrentWebview().onDragDropEvent((e) => { if (e.payload.type === "drop") cb(e.payload.paths); })),
-  interrupt: () => invoke("interrupt"),
-  newChat: () => invoke("new_chat"),
-  setProfile: (name: string) => invoke("set_profile", { name }),
-  models: () => invoke("op", { msg: { op: "models" } }),
-  setModel: (c: ModelChoice, effort?: string) => invoke("op", { msg: { op: "model", model: c.model, url: c.url, key_env: c.key_env, effort } }),
-  setEffort: (effort: string) => invoke("op", { msg: { op: "effort", effort } }),
-  onModels: (cb: (m: Models) => void) => listen<Models>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "models") cb(e.payload); }),
+  interrupt: () => to("interrupt"),
+  newChat: () => to("new_chat"),
+  setProfile: (name: string) => to("set_profile", { name }),
+  models: () => to("op", { msg: { op: "models" } }),
+  setModel: (c: ModelChoice, effort?: string) => to("op", { msg: { op: "model", model: c.model, url: c.url, key_env: c.key_env, effort } }),
+  setEffort: (effort: string) => to("op", { msg: { op: "effort", effort } }),
+  onModels: (cb: (m: Models, tid: string) => void) => on<Models>("models", cb),
   /** a menu bar item (macOS): new-chat, open-folder, palette, shortcuts, theme */
   onMenu: (cb: (id: string) => void) => listen<string>("menu", (e) => cb(e.payload)),
-  onExit: (cb: () => void) => listen("tazuna-exit", () => cb()),
-  /** The session as the core sends it: each view carries the blocks from `from` on (the ones that changed), merged here
-   * with the ones kept from before. */
-  onView: (cb: (v: View) => void) => {
-    let blocks: ViewBlock[] = [];
-    return listen<View & { from?: number }>("tazuna-view", (e) => {
-      const p = e.payload;
-      if ((p as { type?: string }).type !== "view") return;
-      const from = p.from ?? 0;
-      if (from > blocks.length) { invoke("op", { msg: { op: "full" } }); return; }
-      blocks = blocks.slice(0, from).concat(p.blocks);
-      cb({ ...p, blocks });
+  onExit: (cb: (tid: string) => void) => listen<string>("tazuna-exit", (e) => cb(e.payload)),
+  /** Each thread's session as its core sends it: a view carries the blocks from `from` on (the ones that changed), merged
+   * here with that thread's blocks from before. */
+  onView: (cb: (v: View, tid: string) => void) => {
+    const blocks = new Map<string, ViewBlock[]>();
+    return on<View & { from?: number }>("view", (p, tid) => {
+      const old = blocks.get(tid) ?? [], from = p.from ?? 0;
+      if (from > old.length) { invoke("op", { tid, msg: { op: "full" } }); return; }
+      const merged = old.slice(0, from).concat(p.blocks);
+      blocks.set(tid, merged);
+      cb({ ...p, blocks: merged }, tid);
     });
   },
 };

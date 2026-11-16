@@ -1,21 +1,24 @@
-// tazuna desktop: the window around tazuna's own core. Each window runs `tazuna app-server` (the same session model the
-// terminal UI renders) and relays: the session's views to the frontend as `tazuna-view` events, the user's input back as
-// JSON lines. docs/DESKTOP.md.
+// tazuna desktop: the window around tazuna's own core. Each open conversation (a "thread", by an id the window picks)
+// runs its own `tazuna app-server` (the same session model the terminal UI renders), so one can keep working while
+// another is open. The relay: each session's views to the frontend as `tazuna-view` events tagged with their thread, the
+// user's input back as JSON lines. docs/DESKTOP.md.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 #[cfg(unix)]
 static PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
 
+/// The running cores by thread: each with the start it came from (a number bumped on every start, so a core that was
+/// replaced does not report its exit as its successor's), its process and its input.
 #[derive(Default)]
 struct Core {
-    child: Mutex<Option<(Child, ChildStdin)>>,
-    /// Bumped on each start, so an old core's exit is not reported as the new one's.
+    threads: Mutex<HashMap<String, (u64, Child, ChildStdin)>>,
     started: AtomicU64,
 }
 
@@ -38,11 +41,11 @@ fn login_path() -> Option<String> {
     String::from_utf8(out.stdout).ok()?.lines().last().map(str::to_string).filter(|p| !p.is_empty())
 }
 
-/// Starts (or restarts) the core in `cwd` (a project) or the home folder (a chat). Async: stopping the old core waits for
-/// it, off the main thread.
+/// Starts (or restarts) thread `tid`'s core in `cwd` (a project) or the home folder (a chat). Async: stopping an old
+/// core waits for it, off the main thread.
 #[tauri::command]
-async fn start(app: AppHandle, core: State<'_, Core>, cwd: Option<String>, profile: Option<String>) -> Result<String, String> {
-    stop_child(&core);
+async fn start(app: AppHandle, core: State<'_, Core>, tid: String, cwd: Option<String>, profile: Option<String>) -> Result<String, String> {
+    stop_thread(&core, &tid);
     // a chat runs in the home folder: HOME, or USERPROFILE on Windows (which has no HOME, and "." is the app's own folder)
     let dir = cwd.or_else(|| std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()).unwrap_or_else(|| ".".into());
     let mut cmd = Command::new(tazuna_bin());
@@ -59,28 +62,38 @@ async fn start(app: AppHandle, core: State<'_, Core>, cwd: Option<String>, profi
     let stdin = child.stdin.take().ok_or("no stdin")?;
     let stdout = child.stdout.take().ok_or("no stdout")?;
     let run = core.started.fetch_add(1, Ordering::SeqCst) + 1;
+    let t = tid.clone();
     std::thread::spawn(move || {
         for line in BufReader::new(stdout).lines().map_while(Result::ok) {
             if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
-                let _ = app.emit("tazuna-view", v);
+                let _ = app.emit("tazuna-view", serde_json::json!({"tid": t, "msg": v}));
             }
         }
-        if app.state::<Core>().started.load(Ordering::SeqCst) == run {
-            let _ = app.emit("tazuna-exit", ());
+        let mine = app.state::<Core>().threads.lock().unwrap().get(&t).is_some_and(|(r, ..)| *r == run);
+        if mine {
+            let _ = app.emit("tazuna-exit", &t);
         }
     });
-    *core.child.lock().unwrap() = Some((child, stdin));
+    core.threads.lock().unwrap().insert(tid, (run, child, stdin));
     Ok(dir)
 }
 
-fn write(core: &State<Core>, v: serde_json::Value) -> Result<(), String> {
-    let mut guard = core.child.lock().unwrap();
-    let (_, stdin) = guard.as_mut().ok_or("tazuna is not running")?;
+/// Ends thread `tid`'s core (its conversation stays in the lists, resumable).
+#[tauri::command]
+async fn stop(core: State<'_, Core>, tid: String) -> Result<(), String> {
+    stop_thread(&core, &tid);
+    Ok(())
+}
+
+fn write(core: &State<Core>, tid: &str, v: serde_json::Value) -> Result<(), String> {
+    let mut guard = core.threads.lock().unwrap();
+    let (_, _, stdin) = guard.get_mut(tid).ok_or("that conversation is not running")?;
     writeln!(stdin, "{v}").and_then(|_| stdin.flush()).map_err(|e| e.to_string())
 }
 
-fn stop_child(core: &State<Core>) {
-    if let Some((mut child, mut stdin)) = core.child.lock().unwrap().take() {
+fn stop_thread(core: &State<Core>, tid: &str) {
+    let gone = core.threads.lock().unwrap().remove(tid);
+    if let Some((_, mut child, mut stdin)) = gone {
         let _ = writeln!(stdin, "{}", serde_json::json!({"op": "quit"}));
         drop(stdin);
         let _ = child.wait();
@@ -89,14 +102,14 @@ fn stop_child(core: &State<Core>) {
 
 /// `agent`: past the router, straight to the agent ("send to agent" on a message answered as a chat).
 #[tauri::command]
-fn send(core: State<Core>, text: String, agent: bool) -> Result<(), String> {
-    write(&core, serde_json::json!({"op": "send", "text": text, "agent": agent}))
+fn send(core: State<Core>, tid: String, text: String, agent: bool) -> Result<(), String> {
+    write(&core, &tid, serde_json::json!({"op": "send", "text": text, "agent": agent}))
 }
 
 /// The user's yes to trusting the open folder's settings (hooks, skills); the window starts the core again after it.
 #[tauri::command]
-fn trust(core: State<Core>) -> Result<(), String> {
-    write(&core, serde_json::json!({"op": "trust"}))
+fn trust(core: State<Core>, tid: String) -> Result<(), String> {
+    write(&core, &tid, serde_json::json!({"op": "trust"}))
 }
 
 /// A provider's page for making a key, in the browser: only https pages of the providers tazuna knows.
@@ -150,26 +163,26 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
 /// "resume", "mode", "answer", "diff", "undo");
 /// nothing else passes (the core drops other lines too).
 #[tauri::command]
-fn op(core: State<Core>, msg: serde_json::Value) -> Result<(), String> {
+fn op(core: State<Core>, tid: String, msg: serde_json::Value) -> Result<(), String> {
     if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide")) {
         return Err(format!("not a command the window sends: {msg}"));
     }
-    write(&core, msg)
+    write(&core, &tid, msg)
 }
 
 #[tauri::command]
-fn interrupt(core: State<Core>) -> Result<(), String> {
-    write(&core, serde_json::json!({"op": "interrupt"}))
+fn interrupt(core: State<Core>, tid: String) -> Result<(), String> {
+    write(&core, &tid, serde_json::json!({"op": "interrupt"}))
 }
 
 #[tauri::command]
-fn new_chat(core: State<Core>) -> Result<(), String> {
-    write(&core, serde_json::json!({"op": "new"}))
+fn new_chat(core: State<Core>, tid: String) -> Result<(), String> {
+    write(&core, &tid, serde_json::json!({"op": "new"}))
 }
 
 #[tauri::command]
-fn set_profile(core: State<Core>, name: String) -> Result<(), String> {
-    write(&core, serde_json::json!({"op": "profile", "name": name}))
+fn set_profile(core: State<Core>, tid: String, name: String) -> Result<(), String> {
+    write(&core, &tid, serde_json::json!({"op": "profile", "name": name}))
 }
 
 /// The macOS menu bar: the system's own items (Quit, Hide, the Edit menu that copy and paste need) and tazuna's (new chat,
@@ -217,10 +230,14 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, send, op, trust, pick_folder, pick_files, open_key_page, open_link, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
-                stop_child(&w.state::<Core>());
+                let core = w.state::<Core>();
+                let tids: Vec<String> = core.threads.lock().unwrap().keys().cloned().collect();
+                for t in tids {
+                    stop_thread(&core, &t);
+                }
             }
         })
         .run(tauri::generate_context!())

@@ -19,7 +19,11 @@ queue behind it, attachments (paperclip and drop; images go as images), a macOS 
 the data policy, the router). 0.1.3: markdown tables, links (to the browser,
 http and https only), quotes and coloured code; long conversations send only what changed and draw their latest 40
 messages; conversations renamed or removed from the lists; the plan window's reset time and SubRouter's balance; CI opens
-the app once on macOS, Linux and Windows. 0.1 is complete; next is 0.2.
+the app once on macOS, Linux and Windows. 0.1 is complete.
+
+0.2 so far: 0.1.4 keeps each open conversation in a core of its own (`tazuna app-server` per thread): one works while
+another is on screen; "Open now" in the sidebar shows each with a dot (working, waiting for an answer, idle, stopped); at
+most four idle ones stay open (the oldest close; they stay resumable).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

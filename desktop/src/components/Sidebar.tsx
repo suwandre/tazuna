@@ -54,9 +54,21 @@ type Props = {
   onSettings?: () => void;
   onRename?: (t: Thread, title: string) => void;
   onHide?: (t: Thread) => void;
+  /** the conversations open now, each with its own core: working ones keep going while another is on screen */
+  open?: { tid: string; title: string; place: string; state: "working" | "asking" | "idle" | "stopped" }[];
+  activeTid?: string;
+  onSwitch?: (tid: string) => void;
+  onClose?: (tid: string) => void;
 };
 
-export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch, onSettings, onRename, onHide }: Props) {
+const STATE: Record<string, [string, string]> = {
+  working: ["bg-accent shadow-[0_0_0_3px_var(--accent-soft)]", "working"],
+  asking: ["bg-warn shadow-[0_0_0_3px_color-mix(in_srgb,var(--warn)_25%,transparent)]", "waiting for your answer"],
+  idle: ["bg-faint", "idle"],
+  stopped: ["bg-bad", "stopped"],
+};
+
+export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch, onSettings, onRename, onHide, open = [], activeTid, onSwitch, onClose }: Props) {
   return (
     <aside className="flex flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
       {macOverlay && <div data-tauri-drag-region className="-mx-2.5 -mt-3.5 h-[38px] flex-none" />}
@@ -75,6 +87,17 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
       </button>
       {chats.length > 0 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Chats</div>}
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+      {open.length > 1 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Open now</div>}
+      {open.length > 1 && open.map((o) => (
+        <a key={o.tid} onClick={() => onSwitch?.(o.tid)} title={`${o.title} (${STATE[o.state][1]})`}
+          className={`group flex items-center gap-2 rounded-md px-[9px] py-1.5 text-ink-2 hover:bg-hover ${o.tid === activeTid ? "bg-selected text-ink" : ""}`}>
+          <span className={`size-1.5 flex-none rounded-full ${STATE[o.state][0]}`} />
+          <span className="min-w-0 flex-1 truncate">{o.title}</span>
+          <span className="flex-none text-[11px] text-faint group-hover:hidden">{o.state === "asking" ? "asks" : o.place}</span>
+          <button title="Close (the conversation stays in the lists)" onClick={(e) => { e.stopPropagation(); onClose?.(o.tid); }}
+            className="hidden flex-none rounded p-0.5 text-faint hover:bg-hover hover:text-ink group-hover:block"><X size={12} strokeWidth={1.5} /></button>
+        </a>
+      ))}
       {chats.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} onClick={() => onOpenThread?.(t)}
         onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
       {projects.length > 0 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Projects</div>}

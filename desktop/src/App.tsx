@@ -14,42 +14,66 @@ import { core, inTauri, menuKeys, type Diff, type Models, type SessionRow, type 
 const RECENT = "tazuna.projects";
 const recent = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT) ?? "[]"); } catch { return []; } };
 
-/** The core's latest view, in the Tauri window; null in a plain browser (the demo data shows instead). `folder` null is a
- * plain chat (home folder, chat profile); a path is a project, where the router sends general questions to a chat. */
+/** An open conversation: its own core, folder (null: a chat) and latest view. */
+export type Thread = { tid: string; folder: string | null; view: View | null; error: string | null; used: number };
+const busyView = (v: View | null) => !!v && !["Ready", "Done"].includes(v.activity);
+// idle open conversations kept running (each holds a claude process): more close, oldest first; they stay resumable
+const KEEP_OPEN = 4;
+
+/** The open conversations (each its own core, so one can keep working while another is on screen) and the one on
+ * screen. Outside the Tauri window there is no core (the demo data shows instead). */
 function useCore() {
-  const [view, setView] = useState<View | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [folder, setFolder] = useState<string | null>(null);
+  const [threads, setThreads] = useState<Record<string, Thread>>({});
+  const [active, setActiveTid] = useState("");
   const [projects, setProjects] = useState<string[]>(recent);
   const [models, setModels] = useState<Models | null>(null);
   const [diff, setDiff] = useState<Diff | null>(null);
   // saved conversations per folder (the home folder's are the chats), as the terminal's /resume lists them
   const [sessions, setSessions] = useState<Record<string, SessionRow[]>>({});
   const [home, setHome] = useState<string | null>(null);
-  const running = useRef<string | null | undefined>(undefined); // the folder the core runs in (null: chat)
-  /** A folder (null: a chat) with a new conversation, or `resume` an earlier one; the core restarts only for another folder. */
+  const live = useRef<Record<string, Thread>>({});
+  live.current = threads;
+  const activeRef = useRef("");
+  activeRef.current = active;
+  const patch = (tid: string, p: Partial<Thread>) => setThreads((t) => (t[tid] ? { ...t, [tid]: { ...t[tid], ...p } } : t));
+  const show = (tid: string) => { core.use(tid); setActiveTid(tid); setModels(null); patch(tid, { used: Date.now() }); };
+  /** Too many idle conversations open: the oldest idle ones close (not the one on screen, nothing working or asking). */
+  const trim = (keep: string) => {
+    const idle = Object.values(live.current).filter((t) => t.tid !== keep && !busyView(t.view) && !t.view?.asking).sort((a, b) => b.used - a.used);
+    for (const t of idle.slice(KEEP_OPEN - 1)) close(t.tid);
+  };
+  const close = (tid: string) => {
+    core.stop(tid).catch(() => {});
+    setThreads((t) => { const { [tid]: _, ...rest } = t; return rest; });
+  };
+  /** A new conversation in a folder (null: a chat), or `resume` an earlier one: on screen at once, in a thread of its
+   * own; an earlier conversation already open is shown, not opened twice. */
   const open = (path: string | null, resume?: string) => {
-    setError(null);
     if (path) setProjects((p) => { const next = [path, ...p.filter((x) => x !== path)].slice(0, 12); localStorage.setItem(RECENT, JSON.stringify(next)); return next; });
-    if (running.current === path && resume) { core.resume(resume).catch((e) => setError(String(e))); return; }
-    setFolder(path); setView(null); running.current = path;
-    core.start(path ?? undefined, path ? undefined : "chat")
-      .then((dir) => { if (!path) setHome(dir); if (resume) return core.resume(resume); })
-      .catch((e) => setError(String(e)));
+    const already = Object.values(live.current).find((t) => resume ? t.view?.session_id === resume
+      : t.folder === path && !t.view?.blocks.some((b) => b.kind === "prompt") && !t.error);
+    if (already) { show(already.tid); return; }
+    const tid = crypto.randomUUID();
+    setThreads((t) => ({ ...t, [tid]: { tid, folder: path, view: null, error: null, used: Date.now() } }));
+    show(tid);
+    core.start(tid, path ?? undefined, path ? undefined : "chat")
+      .then((dir) => { if (!path) setHome(dir); if (resume) return core.resumeIn(tid, resume); })
+      .catch((e) => patch(tid, { error: String(e) }));
+    trim(tid);
   };
   useEffect(() => {
     if (!inTauri) return;
     const offs = [
-      core.onExit(() => setError("tazuna stopped. The app needs tazuna 0.1.128 or later on the PATH (or TAZUNA_BIN).")),
-      core.onView((v) => { setError(null); setView(v); }),
-      core.onModels(setModels),
+      core.onExit((tid) => patch(tid, { error: "tazuna stopped. The app needs tazuna 0.1.128 or later (it carries its own; TAZUNA_BIN overrides)." })),
+      core.onView((v, tid) => patch(tid, { view: v, error: null })),
+      core.onModels((m, tid) => { if (tid === activeRef.current) setModels(m); }),
       core.onDiff(setDiff),
       core.onSessions((s) => setSessions((old) => ({ ...old, ...Object.fromEntries(s.dirs.map((d) => [d.dir, d.list])) }))),
     ];
-    Promise.all(offs).then(() => open(null)).catch((e) => setError(String(e)));
+    Promise.all(offs).then(() => open(null)).catch(() => {});
     return () => offs.forEach((p) => p.then((off) => off()));
   }, []);
-  const pick = () => core.pickFolder().then((p) => p && open(p)).catch((e) => setError(String(e)));
+  const pick = () => core.pickFolder().then((p) => p && open(p)).catch(() => {});
   // Cmd-N a new chat, Cmd-O a folder
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -60,17 +84,27 @@ function useCore() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
+  const cur = threads[active];
+  const view = cur?.view ?? null, folder = cur?.folder ?? null, error = cur?.error ?? null;
   // the catalog for the picker and the model's name: again after each switch, so the current row is right
-  const model = view ? `${view.model}|${view.effort}` : "";
+  const model = view ? `${active}|${view.model}|${view.effort}` : "";
   useEffect(() => { if (inTauri && model) core.models().catch(() => {}); }, [model]);
-  // the lists again after each finished turn (the run log has the session then) and on another folder
-  const turns = view?.turns ?? -1;
+  // the lists again after any conversation finishes a turn (the run log has it then) and on another folder
+  const turns = Object.values(threads).map((t) => t.view?.turns ?? 0).join(",");
   const refreshSessions = () => {
     const dirs = [home, ...projects].filter((d): d is string => !!d);
     if (inTauri && dirs.length) core.sessions(dirs).catch(() => {});
   };
   useEffect(() => { if (view) refreshSessions(); }, [turns, folder, home, projects.length]);
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions };
+  const list = Object.values(threads).sort((a, b) => b.used - a.used);
+  /** The thread on screen started again in its folder (after trusting the folder: its settings load at start). */
+  const restart = () => {
+    const t = live.current[activeRef.current];
+    if (!t) return;
+    patch(t.tid, { view: null, error: null });
+    core.start(t.tid, t.folder ?? undefined, t.folder ? undefined : "chat").catch((e) => patch(t.tid, { error: String(e) }));
+  };
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart };
 }
 
 function useTheme() {
@@ -123,7 +157,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions } = useCore();
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart } = useCore();
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
   const usage = view ? viewUsage(view) : demo.usage;
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
@@ -157,10 +191,13 @@ export default function App() {
   return (
     <div className="grid h-screen grid-cols-[248px_1fr_232px] overflow-hidden">
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
-        chats={inTauri ? threads(home ? sessions[home] : undefined) : demo.chats}
-        projects={inTauri ? projects.map((p) => ({ name: base(p), path: p, open: p === folder, threads: threads(sessions[p]) })) : demo.projects}
+        chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
+        projects={inTauri ? projects.map((p) => ({ name: base(p), path: p, open: p === folder, threads: rowsOf(sessions[p]) })) : demo.projects}
         onNewChat={() => open(null)} onOpenFolder={pick} onOpenProject={(p) => p.path && open(p.path)}
         onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")} onSettings={() => setOverlay("settings")}
+        open={inTauri ? threads.map((t) => ({ tid: t.tid, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
+          state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
+        activeTid={active} onSwitch={show} onClose={close}
         onRename={inTauri ? (t, title) => core.rename(t.id, title).then(refreshSessions) : undefined}
         onHide={inTauri ? (t) => core.hide(t.id).then(refreshSessions) : undefined}
         planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
@@ -172,13 +209,13 @@ export default function App() {
             {session.branch && <span className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2">{session.branch} · {session.changed} changed</span>}
           </div>
         </header>
-        <Transcript key={view?.session_id ?? folder ?? "chat"} messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)}
+        <Transcript key={`${active}:${view?.session_id ?? ""}`} messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)}
           onDiff={(turn, path) => core.diff(turn, path)} onUndo={(turn) => core.undo(turn)} />
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {view?.untrusted && (
           <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
             <span className="flex-1">This folder's settings run code ({view.untrusted}). tazuna works here without them until you trust it.</span>
-            <button onClick={() => core.trust().then(() => open(folder))} className="rounded-md border border-line-strong px-2.5 py-1 font-medium text-ink hover:bg-hover">Trust folder</button>
+            <button onClick={() => core.trust().then(restart)} className="rounded-md border border-line-strong px-2.5 py-1 font-medium text-ink hover:bg-hover">Trust folder</button>
           </div>
         )}
         {error && <div className="mx-auto mb-2 max-w-[700px] px-7 text-[12.5px] text-bad">{error}</div>}
@@ -206,4 +243,7 @@ function lastCost(v: View): number {
 
 const base = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
-const threads = (rows?: SessionRow[]) => (rows ?? []).map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)" }));
+const rowsOf = (rows?: SessionRow[]) => (rows ?? []).map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)" }));
+
+/** An open conversation's name: its first message, else a new one's. */
+const titleOf = (t: Thread) => (t.view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] || "New conversation";
