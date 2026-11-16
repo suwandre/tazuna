@@ -99,12 +99,17 @@ pub fn create(project: &Path, root: &Path, name: &str) -> Result<Made> {
 /// The largest setup script shown and run (the user reads all of it before it runs).
 pub const SETUP_MAX: usize = 20_000;
 
-/// A setup script's fingerprint: the user's yes names the text they read, and only that text runs.
-pub fn print(bytes: &[u8]) -> String {
-    use std::hash::Hasher;
-    let mut h = std::hash::DefaultHasher::new();
-    h.write(bytes);
-    format!("{:016x}", h.finish())
+/// A setup script as the user will read it: valid UTF-8 without characters that would not show as what runs (controls
+/// other than tab, newline and carriage return; bidirectional overrides; zero-width ones). Anything else is refused, not
+/// shown (security review: what the window draws must be what `sh` reads).
+pub fn readable(bytes: &[u8]) -> Result<&str, String> {
+    let text = std::str::from_utf8(bytes).map_err(|_| "it is not plain UTF-8 text".to_string())?;
+    let hidden = |c: char| (c.is_control() && !matches!(c, '\n' | '\t' | '\r'))
+        || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{2064}' | '\u{2066}'..='\u{2069}' | '\u{061C}' | '\u{FEFF}');
+    match text.chars().find(|c| hidden(*c)) {
+        Some(c) => Err(format!("it holds a character that would not show (U+{:04X})", c as u32)),
+        None => Ok(text),
+    }
 }
 
 /// The setup script `script` (the exact bytes the user saw) run by `sh` in the new worktree (install dependencies and
@@ -188,6 +193,14 @@ pub fn pr(dir: &Path) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_setup_script_is_shown_only_as_what_runs() {
+        assert_eq!(super::readable(b"npm ci\n\techo done\r\n"), Ok("npm ci\n\techo done\r\n"));
+        for bad in ["echo a\u{202E}b".as_bytes(), "echo\u{200B}x".as_bytes(), b"echo \x1b[8mhidden", b"\xff\xfe", "x\u{FEFF}".as_bytes()] {
+            assert!(super::readable(bad).is_err(), "{bad:?}");
+        }
+    }
+
     #[test]
     fn a_worktree_gets_a_branch_the_local_files_and_goes_away_again() {
         let base = std::env::temp_dir().join(format!("tazuna-wt-{}", std::process::id()));

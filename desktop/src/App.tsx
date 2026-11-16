@@ -365,14 +365,14 @@ export default function App() {
   useEffect(() => { if (inTauri && folder && view) core.prIn(active).catch(() => {}); }, [active, folder, !!view, replies]);
   const pr = prs[active];
   // worktrees (src/worktree.rs): a new conversation in a worktree of this project; its setup script runs on the user's word
-  const [wt, setWt] = useState<{ ask?: boolean; script?: string; print?: string; error?: string; remove?: { path: string; dirty?: string } } | null>(null);
+  const [wt, setWt] = useState<{ ask?: boolean; script?: string; id?: string; error?: string; remove?: { path: string; dirty?: string } } | null>(null);
   const [wtNotes, setWtNotes] = useState<Record<string, string>>({});
   const inWorktree = !!folder && isWorktree(folder);
   useEffect(() => {
     if (!inTauri) return;
     const offs = [
       core.onWorktree((w) => {
-        if (w.ask_setup) { setWt({ ask: true, script: w.script, print: w.print }); return; }
+        if (w.ask_setup) { setWt({ ask: true, script: w.script, id: w.id }); return; }
         if (w.error || !w.path) { setWt({ error: w.error ?? "no worktree made" }); return; }
         setWt(null);
         const parts = [`Branch ${w.branch}`, `ports ${w.port}-${(w.port ?? 0) + 9} (TAZUNA_PORT)`, w.copied?.length ? `copied ${w.copied.join(", ")}` : "no local files to copy"];
@@ -499,7 +499,7 @@ export default function App() {
             {wt.ask && <><span className="flex-1">This project has <span className="font-mono">.tazuna/setup.sh</span>. Run it in the new worktree (installs and the like)?
               {wt.script != null && <pre className="mt-1.5 max-h-60 overflow-auto whitespace-pre-wrap rounded bg-field px-2 py-1.5 font-mono text-[11.5px] text-ink">{wt.script}</pre>}
               <span className="mt-1 block text-[11.5px] text-muted">This is the whole script; exactly this runs.</span></span>
-              <button onClick={() => core.worktreeNew(true, wt.print).catch(() => {})} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Run it</button>
+              <button onClick={() => core.worktreeNew(true, wt.id).catch(() => {})} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Run it</button>
               <button onClick={() => core.worktreeNew(false).catch(() => {})} className="rounded-md border border-line px-2.5 py-1 text-ink-2 hover:bg-hover">Skip</button></>}
             {wt.error && <span className="flex-1 text-bad">The worktree was not made: {wt.error}</span>}
             {wt.remove && <><span className="flex-1">{wt.remove.dirty ? `It has changes that are not committed: ${wt.remove.dirty.slice(0, 160)}` : "Remove this worktree? Its folder goes; its branch and commits stay."}</span>

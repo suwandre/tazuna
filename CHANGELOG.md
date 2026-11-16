@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.146 (2026-11-16): the setup script that runs is the one shown
+
+- The app server keeps the bytes of the setup script it showed, under the question's id, and a yes with that id runs
+  those bytes once; the file is never read again for it (0.1.145 compared a 64-bit non-cryptographic fingerprint of a
+  second read). A script that is not plain UTF-8 or holds a character that would not show (controls other than tab,
+  newline and carriage return; bidirectional overrides; zero-width ones) is not shown and never runs, with the reason.
+  Checked through the app server: a file swapped after the question left the seen bytes running and the new ones not;
+  the same yes twice ran once; a U+202E was refused (security review; test).
+- No other metric moves; 181 tests.
+
 ## 0.1.145 (2026-11-16): a worktree's setup script runs only as the user saw it
 
 - The question shows the whole `.tazuna/setup.sh` (up to 20,000 bytes; a longer one never runs) with its fingerprint;

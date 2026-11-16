@@ -1000,6 +1000,9 @@ fn app_server(a: &Args) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let config = route::RepoConfig::read(&cwd);
     let mut untrusted = (config.runs_code() && !a.trust && !labels::dir().is_ok_and(|b| trust::is_trusted(&b, &cwd))).then(|| config.summary());
+    // a worktree's setup script as last shown to the user (its question's id and bytes), and why one was not shown
+    let mut setup_asked: Option<(String, Vec<u8>)> = None;
+    let mut setup_refused: Option<String> = None;
     // one channel for the window's commands and this process's own (the router's verdicts, chat answers); the window
     // closing stdin arrives as a quit, since the router's sender keeps the channel open
     let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
@@ -1464,21 +1467,29 @@ fn app_server(a: &Args) -> Result<()> {
                         }
                         // a new worktree of this project for a conversation of its own (worktree.rs). The project's setup
                         // script runs only in a trusted project (it counts as code that needs trust, route.rs), after the
-                        // user saw all of it: the question carries the whole text and its fingerprint, the yes brings the
-                        // fingerprint back, and only those exact bytes run (security review: a preview of its start, or a
-                        // file changed after the question, ran unseen code)
+                        // user saw all of it: the question carries the whole text (plain, every character visible) and an
+                        // id; this process keeps those bytes, and a yes with that id runs them, never the file again
+                        // (security review: a preview of its start, a file changed after the question, or characters that
+                        // do not show ran unseen code)
                         Some("worktree_new") => {
                             let base = labels::dir()?;
                             let has_setup = cwd.join(".tazuna/setup.sh").is_file();
                             let trusted = untrusted.is_none();
-                            let script = std::fs::read(cwd.join(".tazuna/setup.sh")).ok().filter(|b| b.len() <= worktree::SETUP_MAX);
-                            if has_setup && trusted && cmd["run_setup"].is_null() && let Some(b) = &script {
-                                let mut o = out.lock();
-                                let _ = writeln!(o, "{}", json!({"type": "worktree", "ask_setup": true, "script": String::from_utf8_lossy(b), "print": worktree::print(b)}));
-                                let _ = o.flush();
-                                continue;
+                            if has_setup && trusted && cmd["run_setup"].is_null() {
+                                let bytes = std::fs::read(cwd.join(".tazuna/setup.sh")).unwrap_or_default();
+                                let shown = if bytes.len() > worktree::SETUP_MAX { Err("it is too long to show in full".to_string()) } else { worktree::readable(&bytes).map(String::from) };
+                                if let Ok(text) = shown {
+                                    let id = format!("{:x}-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos()), std::process::id());
+                                    setup_asked = Some((id.clone(), bytes));
+                                    let mut o = out.lock();
+                                    let _ = writeln!(o, "{}", json!({"type": "worktree", "ask_setup": true, "script": text, "id": id}));
+                                    let _ = o.flush();
+                                    continue;
+                                }
+                                setup_refused = shown.err();
                             }
-                            let seen = cmd["run_setup"] == true && script.as_ref().is_some_and(|b| cmd["print"].as_str() == Some(worktree::print(b).as_str()));
+                            // the bytes shown with this question, taken once
+                            let asked = setup_asked.take().filter(|(id, _)| cmd["run_setup"] == true && cmd["id"].as_str() == Some(id.as_str()));
                             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis() as u64);
                             let name = format!("wt-{}", radix36(now));
                             let reply = match worktree::create(&cwd, &worktree::root(&base), &name) {
@@ -1487,15 +1498,15 @@ fn app_server(a: &Args) -> Result<()> {
                                     if trust::is_trusted(&base, &cwd) {
                                         let _ = trust::trust(&base, &wt.path);
                                     }
-                                    let setup = (trusted && seen).then(|| script.as_deref().map(|b| worktree::setup(b, &wt))).flatten();
+                                    let setup = asked.filter(|_| trusted).map(|(_, b)| worktree::setup(&b, &wt));
                                     let skipped = if !has_setup || setup.is_some() || cmd["run_setup"] == false {
                                         None
                                     } else if !trusted {
-                                        Some("the project is not trusted, so its .tazuna/setup.sh did not run (trust the folder first)")
-                                    } else if script.is_none() {
-                                        Some(".tazuna/setup.sh is too long to show in full, so it did not run")
+                                        Some("the project is not trusted, so its .tazuna/setup.sh did not run (trust the folder first)".to_string())
+                                    } else if let Some(why) = setup_refused.take() {
+                                        Some(format!(".tazuna/setup.sh did not run: {why}"))
                                     } else {
-                                        Some(".tazuna/setup.sh changed after you saw it, so it did not run")
+                                        Some(".tazuna/setup.sh did not run: no yes to the question that showed it".to_string())
                                     };
                                     json!({"type": "worktree", "path": wt.path, "branch": wt.branch, "port": wt.port, "copied": wt.copied,
                                         "setup": setup.map(|(ok, tail)| json!({"ok": ok, "tail": tail})), "setup_skipped": skipped})
