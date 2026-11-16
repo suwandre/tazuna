@@ -320,6 +320,15 @@ Promise.resolve(r).then(function(){window.__done(null)},function(e){window.__don
     (200, page.replace("IDRAW", id).replace("ID", &serde_json::json!(id).to_string()))
 }
 
+/// The dry-run page's policy: its own inline harness and the one script at its plugin's code address, nothing else (no
+/// other address on the scheme, and on macOS and Linux no http://tzwidget.localhost, which is port 80 of this machine).
+/// Windows' webview reaches the scheme over http.
+fn dry_run_csp(id: &str) -> String {
+    let id = if widget_id_ok(id) { id } else { "-" };
+    let at = if cfg!(windows) { "http://tzwidget.localhost" } else { "tzwidget://localhost" };
+    format!("default-src 'none'; script-src 'unsafe-inline' {at}/__dryrun-code/{id}")
+}
+
 /// tzwidget://localhost/__dryrun-code/<id>: a plugin's code for its dry run, as a classic script whose default export
 /// becomes window.__plugin.
 fn dry_run_code(path: &str) -> (u16, String) {
@@ -449,13 +458,13 @@ fn main() {
             // a plugin's code for its dry run is JavaScript; the dry-run page may load it from this scheme; panels may not
             let (status, body, kind, csp) = if p.starts_with("__dryrun-code/") {
                 let (st, b) = dry_run_code(&path);
-                (st, b, "text/javascript; charset=utf-8", "default-src 'none'")
+                (st, b, "text/javascript; charset=utf-8", "default-src 'none'".into())
             } else if p.starts_with("__dryrun/") {
                 let (st, b) = widget_page(&path);
-                (st, b, "text/html; charset=utf-8", "default-src 'none'; script-src 'unsafe-inline' tzwidget: http://tzwidget.localhost")
+                (st, b, "text/html; charset=utf-8", dry_run_csp(p.trim_start_matches("__dryrun/")))
             } else {
                 let (st, b) = widget_page(&path);
-                (st, b, "text/html; charset=utf-8", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:")
+                (st, b, "text/html; charset=utf-8", "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; font-src data:".into())
             };
             tauri::http::Response::builder().status(status).header("Content-Type", kind).header("Content-Security-Policy", csp)
                 .body(body.into_bytes()).unwrap_or_default()
@@ -515,6 +524,8 @@ mod tests {
         assert!(html.contains(r#"<script src="../__dryrun-code/demo">"#) && !html.contains("ctx.slots.register('composer.dock'"), "the code is not pasted in: {html}");
         assert!(super::dry_run_code("/__dryrun-code/demo").1.starts_with("window.__plugin ="));
         assert_eq!(super::dry_run_page("../etc").0, 404);
+        assert!(super::dry_run_csp("demo").ends_with("script-src 'unsafe-inline' tzwidget://localhost/__dryrun-code/demo") || cfg!(windows));
+        assert!(super::dry_run_csp("a b; script-src *").ends_with("/__dryrun-code/-"), "an id that is not one stays out of the header");
         if let Ok(out) = std::env::var("TAZUNA_DRYRUN_OUT") {
             std::fs::write(out, &html).unwrap();
         }
