@@ -91,8 +91,19 @@ jobs:
             for i in $(seq 1 30); do pgrep -f "tazuna app-server" > /dev/null && { found=sandbox-off; break; }; sleep 1; done
             cat app3.log || true
           fi
+          # what the Linux window shows (a blank page or the app), kept with the run's artifacts
+          if [ -z "$found" ] && [ "$RUNNER_OS" = Linux ]; then
+            pkill -f tazuna-desktop || true
+            xvfb-run -a -s "-screen 0 1280x860x24" sh -c "\"$app\" > app4.log 2>&1 & sleep 15; import -window root linux-shot.png; cat app4.log" || true
+          fi
           cat app.log || true
           [ -n "$found" ] && echo "the app started its tazuna after ${i} s (${found})" || { echo "the app did not start its tazuna"; exit 1; }
+      - if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-smoke
+          path: linux-shot.png
+          retention-days: 3
       - name: collect the installers
         shell: bash
         run: |
