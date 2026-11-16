@@ -59,7 +59,7 @@ and its error shows in Settings.
 | `composer.dock` | above the message box (a bar, a dashboard). props: {} (the data: ctx.useData()) | (empty) |
 | `composer.pills` | the controls under the message box (mode, model, effort, attach). props: { composer } | composer.mode, composer.model, composer.effort, composer.attach |
 | `sidebar.top` | the sidebar's actions under the search (New chat, Open folder). props: {} | sidebar.new-chat, sidebar.open-folder |
-| `sidebar.footer` | the sidebar's bottom row (Settings). props: { planLeft } | sidebar.settings |
+| `sidebar.footer` | the sidebar's bottom row (Settings). props: { planLeft } | sidebar.update (a new version to install), sidebar.settings |
 | `message.user` | how one of your messages is drawn. props: { message, index } | message.user.default |
 | `message.text` | how an answer's text is drawn (one entry: replace 'message.text.markdown' to restyle answers). props: { text } | message.text.markdown |
 | `message.after` | under each answer (the change card, the cost line). props: { message, index } | message.change, message.meta |

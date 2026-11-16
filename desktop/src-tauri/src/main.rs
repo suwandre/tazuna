@@ -372,6 +372,40 @@ var r=document.documentElement.style;for(var k in d.tokens)r.setProperty(k,d.tok
 {body}"))
 }
 
+/// A newer tazuna desktop, from the desktop releases' latest.json (desktop.yml writes it): its version and notes, or
+/// null. Each build it names is signed with tazuna's updater key; the app checks that signature before installing.
+#[tauri::command]
+async fn update_check(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let u = match app.updater().map_err(|e| e.to_string()) {
+        Ok(up) => up.check().await.map_err(|e| e.to_string()),
+        Err(e) => Err(e),
+    };
+    eprintln!("tazuna desktop: update check: {}", match &u {
+        Ok(Some(u)) => format!("{} available", u.version),
+        Ok(None) => "up to date".into(),
+        Err(e) => format!("failed: {e}"),
+    });
+    let u = u?;
+    Ok(u.map(|u| serde_json::json!({"version": u.version, "notes": u.body})))
+}
+
+/// The update downloaded and its signature checked, then every conversation's core stopped (they stay resumable), the
+/// new version installed and started.
+#[tauri::command]
+async fn update_install(app: AppHandle, core: State<'_, Core>) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let u = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?.ok_or("no update to install")?;
+    let bytes = u.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    let tids: Vec<String> = core.threads.lock().unwrap().keys().cloned().collect();
+    for t in tids {
+        stop_thread(&core, &t);
+    }
+    eprintln!("tazuna desktop: installing {}", u.version);
+    u.install(bytes).map_err(|e| e.to_string())?;
+    app.restart()
+}
+
 /// The quick-chat shortcut from anywhere (Settings; empty: none): the window comes to the front and opens a new chat. A
 /// chord another app holds, or one that is not a chord, fails here and Settings says so.
 #[tauri::command]
@@ -455,7 +489,8 @@ fn menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
     let sep = || P::separator(app);
     Menu::with_items(app, &[
         &Submenu::with_items(app, "tazuna", true, &[
-            &P::about(app, None, None)?, &sep()?, &item("settings", "Settings…", "CmdOrCtrl+,")?, &sep()?, &P::services(app, None)?, &sep()?,
+            &P::about(app, None, None)?, &MenuItem::with_id(app, "update", "Check for Updates…", true, None::<&str>)?, &sep()?,
+            &item("settings", "Settings…", "CmdOrCtrl+,")?, &sep()?, &P::services(app, None)?, &sep()?,
             &P::hide(app, None)?, &P::hide_others(app, None)?, &P::show_all(app, None)?, &sep()?, &P::quit(app, None)?,
         ])?,
         &Submenu::with_items(app, "File", true, &[
@@ -505,6 +540,7 @@ fn main() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             {
@@ -518,7 +554,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, hotkey, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 let core = w.state::<Core>();

@@ -1,7 +1,9 @@
 # The desktop app (desktop/, docs/DESKTOP.md) for macOS, Linux and Windows, with the tazuna it carries built from the same
 # commit (desktop/scripts/sidecar.mjs). A tag desktop-vX.Y.Z (the version in desktop/src-tauri/tauri.conf.json) makes a
 # release with the installers; a run by hand (gh workflow run desktop.yml) or a pull request that touches the app builds
-# them as artifacts only. Not signed yet: macOS and Windows warn on first open.
+# them as artifacts only. Not code-signed: macOS and Windows warn on first open. A release's builds for the updater are
+# signed with tazuna's updater key (secret TAURI_SIGNING_PRIVATE_KEY; its public half is in tauri.conf.json), and the last
+# job writes latest.json onto the release and onto the desktop-latest release, which installed apps read.
 name: desktop
 on:
   push:
@@ -55,9 +57,17 @@ jobs:
       - name: build (the app and the tazuna it carries)
         working-directory: desktop
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
         run: |
           npm ci
-          npx tauri build
+          # a release also builds the signed update packages (.app.tar.gz, AppImage, setup .exe, each with its .sig)
+          if [ "${{ github.event_name }}" = push ]; then
+            npx tauri build --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          else
+            npx tauri build
+          fi
       # the app opened once on each system: it must start the tazuna it carries (an app server for a chat) within 30 s.
       # Linux runs under Xvfb with software rendering (no GPU on a runner), WebKit's GPU compositing off, 24-bit colour.
       - name: open the app (smoke)
@@ -94,7 +104,8 @@ jobs:
         run: |
           mkdir out
           b=desktop/src-tauri/target/release/bundle
-          for f in "$b"/dmg/*.dmg "$b"/deb/*.deb "$b"/rpm/*.rpm "$b"/appimage/*.AppImage "$b"/msi/*.msi "$b"/nsis/*.exe; do
+          for f in "$b"/dmg/*.dmg "$b"/deb/*.deb "$b"/rpm/*.rpm "$b"/appimage/*.AppImage "$b"/msi/*.msi "$b"/nsis/*.exe \
+                   "$b"/macos/*.app.tar.gz "$b"/*/*.sig; do
             [ -f "$f" ] && cp "$f" out/
           done
           ls -la out
@@ -110,3 +121,38 @@ jobs:
           name: tazuna-desktop-${{ matrix.name }}
           path: out/
           retention-days: 7
+  # the updater's manifest: each system's signed update package and its signature, on this release and on desktop-latest
+  # (a prerelease that only holds latest.json, so it never shows as the repository's latest release, which is the CLI's)
+  manifest:
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: write latest.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          mkdir sig && gh release download "$tag" -p '*.sig' -D sig
+          TAG="$tag" python3 - <<'PY'
+          import datetime, glob, json, os
+          tag, repo = os.environ["TAG"], os.environ["GH_REPO"]
+          base = f"https://github.com/{repo}/releases/download/{tag}/"
+          kinds = {".app.tar.gz": "darwin-aarch64", ".AppImage": "linux-x86_64", "-setup.exe": "windows-x86_64"}
+          platforms = {}
+          for sig in sorted(glob.glob("sig/*.sig")):
+              name = os.path.basename(sig)[:-4]
+              for end, key in kinds.items():
+                  if name.endswith(end):
+                      platforms[key] = {"signature": open(sig).read().strip(), "url": base + name}
+          assert len(platforms) == 3, f"expected macOS, Linux and Windows update packages, got {sorted(platforms)}"
+          v = tag.removeprefix("desktop-v")
+          now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          json.dump({"version": v, "notes": f"tazuna desktop {v}", "pub_date": now, "platforms": platforms}, open("latest.json", "w"), indent=1)
+          print(open("latest.json").read())
+          PY
+          gh release upload "$tag" latest.json --clobber
+          gh release view desktop-latest >/dev/null 2>&1 || gh release create desktop-latest --prerelease --latest=false \
+            --title "tazuna desktop: update manifest" --notes "Holds latest.json, which installed tazuna desktop apps read to find updates. The builds are on the desktop-v* releases."
+          gh release upload desktop-latest latest.json --clobber

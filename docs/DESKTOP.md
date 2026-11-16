@@ -41,7 +41,14 @@ share of input the cache served, the plan now; cost per day; by model; and per v
 trouble in your own runs (stopped, errors, failed checks). Not yet: the cache's saving in dollars (worked back from run
 costs the prices were too noisy to show) and real use's corrections and rewinds (bench/realuse.py reads recordings).
 0.1.19 (with tazuna 0.1.141): own-loop models get "edit from here", side chats (on the conversation's own provider),
-resume from the sidebar (moving to the model it ran on), and plan mode.
+resume from the sidebar (moving to the model it ran on), and plan mode. 0.1.20: the app updates itself. It looks at
+start and twice a day (and on Check for Updates in the tazuna menu or Cmd-K); a new version shows above Settings, and
+two clicks install it and restart (the conversations' cores stop and stay resumable). Releases: `desktop/release.sh`
+tags desktop-vX.Y.Z; CI builds the three systems, signs the update packages and writes latest.json onto the
+desktop-latest release, which the apps read. The signature is tazuna's own updater key (free, not Apple's or a Windows
+certificate): the private half is ~/.tauri/tazuna-updater.key on the Mac and the GitHub secret TAURI_SIGNING_PRIVATE_KEY,
+the public half in tauri.conf.json. Losing it means one manual reinstall with a new key. Linux updates the AppImage
+(.deb and .rpm through the package manager).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
@@ -50,7 +57,8 @@ resume from the sidebar (moving to the model it ran on), and plan mode.
   then the first direction goes into DESIGN.md.
 - User customization from the start (see below).
 - No code signing for now (2026-11-16): the app is for the user's own use; Apple's Developer Program ($99 a year) and a
-  Windows certificate (or SignPath's free open-source signing) wait until others use it.
+  Windows certificate (or SignPath's free open-source signing) wait until others use it. Updates are signed anyway, with
+  the updater's own free key (0.1.20).
 
 ## What it is for
 

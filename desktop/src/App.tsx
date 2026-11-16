@@ -9,6 +9,7 @@ import { footprint, load, onPaletteChange, pluginActions, safeMode, setActions, 
 import { SettingsView } from "./components/SettingsView";
 import { SideChat } from "./components/SideChat";
 import { UsageView } from "./components/UsageView";
+import { checkUpdate, watchUpdates } from "./lib/update";
 import { Rail, UserPanel } from "./components/Rail";
 import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
@@ -236,11 +237,13 @@ export default function App() {
       else if (id === "theme") flipTheme();
       else if (id === "settings") setOverlay("settings");
       else if (id === "usage") setOverlay("usage");
+      else if (id === "update") checkUpdate(true);
     });
     return () => { off.then((f) => f()); };
   }, []);
   const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, side, openSide, closeSide } = useCore();
   useEffect(() => setEditing(null), [active]);
+  useEffect(watchUpdates, []);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
   const [userWidgets, setUserWidgets] = useState<UserWidget[]>([]);
   const [, setPluginTick] = useState(0);
@@ -371,6 +374,7 @@ export default function App() {
       ...userWidgets.map((w) => ({ id: `edit-panel:${w.id}`, group: "Creator mode", label: `Change the panel "${w.title}"`, keywords: "widget edit", run: () => editPanel(w.id) })));
     void paletteTick;
     a.push(...pluginActions().map((p) => ({ id: p.id, group: "Plugins", label: p.label, hint: p.hint, run: p.run })));
+    a.push({ id: "update", group: "Window", label: "Check for updates", keywords: "upgrade version new", run: () => checkUpdate(true) });
     a.push({ id: "usage", group: "Window", label: "Usage: cost by day and model, cache, plan", keys: "⌘⇧U", keywords: "spend money tokens stats", run: () => setTimeout(() => setOverlay("usage")) });
     a.push({ id: "theme", group: "Window", label: "Light or dark", keys: "⌘⇧L", run: flipTheme },
       { id: "keys", group: "Window", label: "Keyboard shortcuts", keys: "⌘/", run: () => setTimeout(() => setOverlay("shortcuts")) },

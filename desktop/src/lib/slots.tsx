@@ -85,7 +85,7 @@ export const SLOT_NAMES: Record<string, string> = {
   "composer.dock": "above the message box (a bar, a dashboard). props: {} (the data: ctx.useData())",
   "composer.pills": "the controls under the message box (mode, model, effort, attach). props: { composer }",
   "sidebar.top": "the sidebar's actions under the search (New chat, Open folder). props: {}",
-  "sidebar.footer": "the sidebar's bottom row (Settings). props: { planLeft }",
+  "sidebar.footer": "the sidebar's bottom row (an update, Settings). props: { planLeft }",
   "message.user": "how one of your messages is drawn. props: { message, index }",
   "message.text": "how an answer's text is drawn (one entry: replace 'message.text.markdown' to restyle answers). props: { text }",
   "message.after": "under each answer (the change card, the cost line). props: { message, index }",

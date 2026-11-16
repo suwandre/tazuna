@@ -2,7 +2,7 @@
 // replace any of them by registering its id, or hide it. Imported once by main.tsx.
 import { AttachButton, EffortPill, ModelPill, ModePill } from "./components/Composer";
 import { Card, Timeline, builtInWidgets } from "./components/Rail";
-import { NewChatButton, OpenFolderButton, SettingsRow } from "./components/Sidebar";
+import { NewChatButton, OpenFolderButton, SettingsRow, UpdateRow } from "./components/Sidebar";
 import { Step } from "./components/Step";
 import { MessageChange, MessageMeta, UserMessage } from "./components/Transcript";
 import { Markdown } from "./lib/markdown";
@@ -23,6 +23,7 @@ slots.register({ id: "composer.attach", slot: "composer.pills", order: 40, sourc
 
 slots.register({ id: "sidebar.new-chat", slot: "sidebar.top", order: 10, source: own, render: NewChatButton });
 slots.register({ id: "sidebar.open-folder", slot: "sidebar.top", order: 20, source: own, render: OpenFolderButton });
+slots.register({ id: "sidebar.update", slot: "sidebar.footer", order: 5, source: own, render: UpdateRow });
 slots.register({ id: "sidebar.settings", slot: "sidebar.footer", order: 10, source: own, render: SettingsRow });
 
 slots.register({ id: "message.user.default", slot: "message.user", order: 10, source: own, render: UserMessage });
