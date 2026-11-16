@@ -27,7 +27,9 @@ most four idle ones stay open (the oldest close; they stay resumable). 0.1.5: a 
 answer says so with a system notification. 0.1.6: "edit from here" on your messages (claude path): the message comes back
 to the box, the rest fades, and sending goes back to before it, with the files tazuna changed since if you leave that on. 0.1.7: Review (header, change cards, Cmd-K): uncommitted
 changes, the branch against its base, or one turn, file by file and piece by piece; each piece staged or reverted; a click
-on a line leaves a comment, and the comments go to the agent in one message.
+on a line leaves a comment, and the comments go to the agent in one message. CI opens the app on all three systems on each run; on Linux it needed a D-Bus
+session under Xvfb (a desktop has one), not a change to the app. 0.1.8: the notification plugin's own permission check is
+allowed (its script was refused, so notifications could stay silent), and tazuna asks for the permission once.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

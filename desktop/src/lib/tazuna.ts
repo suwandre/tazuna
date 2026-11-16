@@ -77,7 +77,12 @@ export const core = {
   setRoute: (on: boolean) => to("op", { msg: { op: "route", on } }),
   openKeyPage: (url: string) => invoke("open_key_page", { url }),
   /** a system notification */
-  notify: (title: string, body: string) => invoke("notify", { title, body }),
+  notify: async (title: string, body: string) => {
+    // the system asks once whether tazuna may notify; until then nothing would show
+    const granted = await invoke<boolean | null>("plugin:notification|is_permission_granted").catch(() => null);
+    if (granted === false) await invoke("plugin:notification|request_permission").catch(() => {});
+    return invoke("notify", { title, body });
+  },
   /** a link in an answer, in the browser (http and https only) */
   openLink: (url: string) => invoke("open_link", { url }),
   onSettings: (cb: (s: Settings) => void) => on<Settings>("settings", cb),
