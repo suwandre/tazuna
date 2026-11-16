@@ -16,6 +16,20 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.130 (2026-11-16): a model that never answers is said; image paths with spaces attach
+
+- The own loop in a live session: a model that has not answered at all within its limit (180 s) is said ("gave no
+  answer ... try another model") instead of tried again at doubled limits. Real use showed free and preview models
+  waiting 3 to 26 minutes for nothing until stopped by hand. Headless runs keep retrying.
+- A typed message's image paths may hold spaces when quoted ("Screenshot 2026-11-16 at 10.00.png") or escaped
+  (Screenshot\ 2026...): before, a macOS screenshot path never attached. Windows paths keep their backslashes.
+- The own loop's reasoning text reaches the desktop app's thinking rows (claude's stream sends none).
+- `tazuna app-server` takes the desktop app's settings: provider keys (saved as /login saves them, never sent back),
+  the data policy (any only with its confirmation) and the router on or off.
+- bench/realuse.py counts checks on a model ("what is your model name", "test") apart: the own loop's 23% clear
+  misses were mostly those and free models that never answered; on real asks it misses 10%, DeepSeek about 1 in 25.
+- No other metric moves; 173 tests.
+
 ## 0.1.129 (2026-11-16): a message shows the moment it is sent
 
 - Inside a project, a message with no sign of the code waited for the router's check (Haiku through claude: 4.7 s

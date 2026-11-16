@@ -261,9 +261,9 @@ Then finish with a short summary of what changed.";
 /// Images a message names (a pasted or dragged-in path, `@shot.png`) go along as image blocks; plain text otherwise.
 fn user_content(text: &str, cwd: &Path) -> Value {
     const MAX_IMAGE: u64 = 5 * 1024 * 1024; // the API's limit per image
-    let images: Vec<Value> = text
-        .split_whitespace()
-        .map(|w| w.trim_start_matches('@').trim_matches(|c| c == '\'' || c == '"'))
+    let images: Vec<Value> = words(text)
+        .iter()
+        .map(|w| w.trim_start_matches('@'))
         .filter_map(|w| {
             let ext = w.rsplit('.').next()?.to_ascii_lowercase();
             let media = match ext.as_str() {
@@ -285,6 +285,31 @@ fn user_content(text: &str, cwd: &Path) -> Value {
     let mut parts = images;
     parts.push(json!({"type": "text", "text": text}));
     Value::Array(parts)
+}
+
+/// A message's words for finding the files it names: a quoted path ("Screenshot 2026-11-16 at 10.00.png", as the
+/// desktop app inserts one) or a terminal's escaped one (Screenshot\ 2026...png, as a drag into the terminal gives) is one
+/// word, spaces and all.
+fn words(text: &str) -> Vec<String> {
+    let (mut out, mut cur, mut quote, mut chars) = (vec![], String::new(), None, text.chars().peekable());
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (None, '"' | '\'') if cur.is_empty() || cur == "@" => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            // an escaped space only: a Windows path's backslashes stay
+            (None, '\\') if chars.peek().is_some_and(|n| n.is_whitespace()) => cur.extend(chars.next()),
+            (None, c) if c.is_whitespace() => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            (_, c) => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 fn base64(bytes: &[u8]) -> String {
@@ -1959,6 +1984,16 @@ fn identity(model: &str, url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use super::words;
+
+    #[test]
+    fn a_quoted_or_escaped_path_with_spaces_is_one_word() {
+        assert_eq!(words(r#"see "/tmp/Screenshot 2026 at 10.00.png" and @'/a b.jpg' please"#),
+            ["see", "/tmp/Screenshot 2026 at 10.00.png", "and", "@/a b.jpg", "please"]);
+        assert_eq!(words(r"look at ~/Desktop/Screenshot\ 1.png now"), ["look", "at", "~/Desktop/Screenshot 1.png", "now"]);
+        assert_eq!(words("it's fine, don't split"), ["it's", "fine,", "don't", "split"]);
+        assert_eq!(words(r"C:\Users\me\shot.png"), [r"C:\Users\me\shot.png"]);
+    }
 
     #[test]
     fn message_ids_are_version_4_uuids() {

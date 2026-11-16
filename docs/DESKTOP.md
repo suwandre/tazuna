@@ -13,7 +13,12 @@ and approvals inline (allow, always, decline; y / a / n); each turn's changes as
 undo of the last turn (git snapshots before and after, src/turns.rs; the next message tells the model); Cmd-K palette
 (chats, folders, conversations, model, effort, mode, undo, theme) and the Cmd-/ shortcut sheet. 0.1.1 carries its own tazuna (built
 from the same commit; TAZUNA_BIN still overrides it) and CI builds it for macOS, Linux and Windows (.github/workflows/
-desktop.yml, tags desktop-vX.Y.Z). Left for 0.1.x: a run by hand on Windows and Linux.
+desktop.yml, tags desktop-vX.Y.Z). 0.1.2: steps open to show what
+a call was given and what came back (edits as removed and added lines), thinking rows, messages typed during a reply
+queue behind it, attachments (paperclip and drop; images go as images), a macOS menu bar, and Settings (provider keys,
+the data policy, the router). Left for 0.1.x: markdown tables, links and code colours; long transcripts drawn in parts;
+renaming and deleting conversations; the plan window's reset time and the SubRouter balance; a run by hand on Windows
+and Linux.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

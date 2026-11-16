@@ -3,12 +3,13 @@ import { Approval } from "./components/Approval";
 import { Composer } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
+import { SettingsView } from "./components/SettingsView";
 import { Rail, builtInWidgets } from "./components/Rail";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import * as demo from "./lib/demo";
 import { messages as viewMessages, usage as viewUsage } from "./lib/fromView";
-import { core, inTauri, type Diff, type Models, type SessionRow, type View } from "./lib/tazuna";
+import { core, inTauri, menuKeys, type Diff, type Models, type SessionRow, type View } from "./lib/tazuna";
 
 const RECENT = "tazuna.projects";
 const recent = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT) ?? "[]"); } catch { return []; } };
@@ -52,7 +53,7 @@ function useCore() {
   // Cmd-N a new chat, Cmd-O a folder
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.shiftKey) return;
+      if (menuKeys || !(e.metaKey || e.ctrlKey) || e.shiftKey) return;
       if (e.key === "n") { e.preventDefault(); open(null); }
       if (e.key === "o") { e.preventDefault(); pick(); }
     };
@@ -82,7 +83,7 @@ function useTheme() {
   useEffect(() => { document.documentElement.classList.toggle("dark", dark); }, [dark]);
   // Cmd/Ctrl-Shift-L flips light and dark for this window
   useEffect(() => {
-    const key = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "l") setDark((d) => !d); };
+    const key = (e: KeyboardEvent) => { if (!menuKeys && (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "l") setDark((d) => !d); };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
@@ -91,12 +92,13 @@ function useTheme() {
 
 /** Cmd-K opens the palette, Cmd-/ the shortcuts. */
 function useOverlay() {
-  const [overlay, setOverlay] = useState<"palette" | "shortcuts" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "shortcuts" | "settings" | null>(null);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (!(e.metaKey || e.ctrlKey) || e.shiftKey) return;
+      if (menuKeys || !(e.metaKey || e.ctrlKey) || e.shiftKey) return;
       if (e.key === "k") { e.preventDefault(); setOverlay((o) => (o === "palette" ? null : "palette")); }
       if (e.key === "/") { e.preventDefault(); setOverlay((o) => (o === "shortcuts" ? null : "shortcuts")); }
+      if (e.key === ",") { e.preventDefault(); setOverlay((o) => (o === "settings" ? null : "settings")); }
     };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
@@ -107,6 +109,19 @@ function useOverlay() {
 export default function App() {
   const flipTheme = useTheme();
   const [overlay, setOverlay] = useOverlay();
+  // the menu bar's items (macOS)
+  useEffect(() => {
+    if (!menuKeys) return;
+    const off = core.onMenu((id) => {
+      if (id === "new-chat") open(null);
+      else if (id === "open-folder") pick();
+      else if (id === "palette") setOverlay((o) => (o === "palette" ? null : "palette"));
+      else if (id === "shortcuts") setOverlay((o) => (o === "shortcuts" ? null : "shortcuts"));
+      else if (id === "theme") flipTheme();
+      else if (id === "settings") setOverlay("settings");
+    });
+    return () => { off.then((f) => f()); };
+  }, []);
   const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff } = useCore();
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
   const usage = view ? viewUsage(view) : demo.usage;
@@ -133,19 +148,20 @@ export default function App() {
       a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: c.label, hint: c.current ? "current" : c.place, keywords: `model ${c.provider}`, run: () => core.setModel(c) })));
     }
     a.push({ id: "theme", group: "Window", label: "Light or dark", keys: "⌘⇧L", run: flipTheme },
-      { id: "keys", group: "Window", label: "Keyboard shortcuts", keys: "⌘/", run: () => setTimeout(() => setOverlay("shortcuts")) });
+      { id: "keys", group: "Window", label: "Keyboard shortcuts", keys: "⌘/", run: () => setTimeout(() => setOverlay("shortcuts")) },
+      { id: "settings", group: "Window", label: "Settings: provider keys, data policy, router", keys: "⌘,", run: () => setTimeout(() => setOverlay("settings")) });
     return a;
   };
   const title = view ? (view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.slice(0, 60) ?? "New chat" : "Retry test fails on CI";
   return (
-    <div className="grid h-screen grid-cols-[248px_1fr_232px]">
+    <div className="grid h-screen grid-cols-[248px_1fr_232px] overflow-hidden">
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
         chats={inTauri ? threads(home ? sessions[home] : undefined) : demo.chats}
         projects={inTauri ? projects.map((p) => ({ name: base(p), path: p, open: p === folder, threads: threads(sessions[p]) })) : demo.projects}
         onNewChat={() => open(null)} onOpenFolder={pick} onOpenProject={(p) => p.path && open(p.path)}
-        onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")}
+        onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")} onSettings={() => setOverlay("settings")}
         planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
-      <main className="flex min-w-0 flex-col bg-main">
+      <main className="flex min-h-0 min-w-0 flex-col bg-main">
         <header data-tauri-drag-region className="flex items-center justify-between border-b border-line-soft px-7 py-3">
           <div className="flex items-center gap-2 font-medium"><span className="text-muted">{place}</span><span className="text-faint">/</span><span className="truncate">{title}</span></div>
           <div className="flex gap-1.5">
@@ -168,11 +184,13 @@ export default function App() {
           onSend={(text) => core.send(text).catch((e) => console.error(e))} onStop={() => core.interrupt()}
           models={models} onModels={inTauri ? () => core.models() : undefined}
           onPickModel={inTauri ? (c) => core.setModel(c) : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
-          onMode={inTauri ? (m) => core.setMode(m) : undefined} />
+          onMode={inTauri ? (m) => core.setMode(m) : undefined}
+          onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined} />
       </main>
       <Rail usage={usage} widgets={builtInWidgets} />
       {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
+      {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} />}
     </div>
   );
 }

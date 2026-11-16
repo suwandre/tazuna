@@ -52,7 +52,7 @@ export const builtInWidgets: Widget[] = [
 
 export function Rail({ usage, widgets }: { usage: Usage; widgets: Widget[] }) {
   return (
-    <aside className="flex flex-col gap-3 border-l border-line bg-sidebar px-3.5 py-4">
+    <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto border-l border-line bg-sidebar px-3.5 py-4">
       {widgets.map((w) => { const body = w.render(usage); return body == null ? null : <Card key={w.id} title={w.title}>{body}</Card>; })}
     </aside>
   );

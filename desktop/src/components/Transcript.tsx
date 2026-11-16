@@ -1,6 +1,7 @@
-import { Check, Circle, FileText, MessageCircle } from "lucide-react";
+import { FileText, MessageCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Markdown } from "../lib/markdown";
+import { Step } from "./Step";
 import { usd, type Change, type Message } from "../lib/types";
 
 function inlineCode(text: string) {
@@ -58,12 +59,12 @@ export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, on
   useEffect(() => { if (stick.current && box.current) box.current.scrollTop = box.current.scrollHeight; });
   return (
     <section ref={box} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}
-      className="flex-1 overflow-auto pb-3 pt-7">
+      className="min-h-0 flex-1 overflow-auto pb-3 pt-7">
       {messages.map((m, i) => (
         <div key={i} className="mx-auto mb-[22px] max-w-[700px] px-7">
           {m.role === "user" ? (
             <>
-              <div className="mb-1.5 text-[12px] font-medium text-faint">You</div>
+              <div className="mb-1.5 text-[12px] font-medium text-faint">You{m.queued && <span className="ml-2 font-normal">· queued, goes after this reply</span>}</div>
               {(() => {
                 // the note tazuna adds after an undo ("[tazuna: ...]") is shown as what it is, apart from the message
                 const note = m.text.match(/^\[tazuna: ([^\]]*)\]\n\n/);
@@ -86,14 +87,7 @@ export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, on
               </div>
               {m.tools && (
                 <div className="mb-2.5 mt-0.5 flex flex-col gap-0.5">
-                  {m.tools.map((t, j) => (
-                    <div key={j} className="flex items-center gap-2 py-0.5 text-[12.5px] text-muted">
-                      {t.running ? <Circle size={10} strokeWidth={2} className="mx-0.5 text-accent" /> : <Check size={14} strokeWidth={1.5} className={t.ok ? "text-ok" : "text-bad"} />}
-                      {t.verb} <span className="font-mono text-[11.5px] text-ink-2">{t.target}</span>
-                      {t.detail && <span>· {t.detail}</span>}
-                      {!t.running && <span className="ml-auto font-mono text-[11px] text-faint">{t.secs.toFixed(1)} s</span>}
-                    </div>
-                  ))}
+                  {m.tools.map((t, j) => <Step key={j} t={t} />)}
                 </div>
               )}
               <div className="prose-answer text-ink">{m.prose.map((p, j) => <Markdown key={j} text={p} />)}</div>

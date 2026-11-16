@@ -54,7 +54,7 @@ export function Palette({ actions, onClose }: { actions: Action[]; onClose: () =
 }
 
 const SHORTCUTS: [string, string][] = [
-  ["⌘K", "Command palette"], ["⌘N", "New chat"], ["⌘O", "Open a folder"], ["⌘/", "These shortcuts"],
+  ["⌘K", "Command palette"], ["⌘N", "New chat"], ["⌘O", "Open a folder"], ["⌘/", "These shortcuts"], ["⌘,", "Settings"],
   ["Enter", "Send"], ["Shift Enter", "New line"], ["Esc", "Stop the reply"], ["Shift Tab", "Next permission mode"],
   ["y / a / n", "Allow, always, decline a question"], ["⌘⇧L", "Light or dark"],
 ];

@@ -49,6 +49,7 @@ body {
   user-select: none; cursor: default;
 }
 input, textarea, [contenteditable] { user-select: text; cursor: text; }
+input[type=radio], input[type=checkbox] { accent-color: var(--accent); cursor: default; }
 .prose-answer { font-family: var(--font-prose); font-size: 15.5px; line-height: 1.62; user-select: text; }
 .prose-answer p { margin: 0 0 10px; }
 .prose-answer :not(pre) > code { font-size: 0.84em; background: var(--field); border-radius: 4px; padding: 1px 4px; }

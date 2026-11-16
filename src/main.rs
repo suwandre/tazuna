@@ -993,7 +993,8 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 15] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo", "quit"];
+        const OPS: [&str; 19] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+            "settings", "login", "data", "route", "quit"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1031,6 +1032,8 @@ fn app_server(a: &Args) -> Result<()> {
     let mut undo_note: Option<String> = None;
     emit(&s, &untrusted, &live, &done_turns);
     let mut last_reply = String::new();
+    // the router: on as in the terminal; the settings page turns it off (the terminal's /route off)
+    let mut route_on = !a.no_route;
     let (mut changed, mut last) = (false, Instant::now());
     loop {
         loop {
@@ -1048,7 +1051,7 @@ fn app_server(a: &Args) -> Result<()> {
                             };
                             if let Some(why) = untrusted_in_use(&live) {
                                 info(&mut s, why);
-                            } else if !forced && live.idle() && live.profile != route::Profile::Chat && route::code_signals(text, &cwd).is_empty()
+                            } else if route_on && !forced && live.idle() && live.profile != route::Profile::Chat && route::code_signals(text, &cwd).is_empty()
                                 && !route::short_followup(text, !s.last_prompt.is_empty())
                             {
                                 // no sign of the code: the router's check decides, off this thread (the terminal's flow); the
@@ -1232,6 +1235,51 @@ fn app_server(a: &Args) -> Result<()> {
                                 },
                                 _ => info(&mut s, "only the last turn's changes can be undone".into()),
                             }
+                        }
+                        // the settings page: each provider's key state (never the key), the data policy, the router; a `settings`
+                        // line
+                        Some("settings") => {
+                            let providers: Vec<serde_json::Value> = models::LOGINS.iter().map(|l| json!({
+                                "name": l.name, "host": l.host, "page": l.page, "place": l.place, "example": l.example,
+                                "key": models::key_source(l.vars), "trusted": trusted_host(l.host),
+                            })).collect();
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{}", json!({"type": "settings", "providers": providers, "data_any": live.data_any, "route": route_on,
+                                "version": env!("CARGO_PKG_VERSION")}));
+                            let _ = o.flush();
+                        }
+                        // a provider's key from the settings page: saved and its host trusted, as /login does
+                        Some("login") => {
+                            let name = cmd["provider"].as_str().unwrap_or_default();
+                            match models::LOGINS.iter().find(|l| l.name == name) {
+                                Some(l) => match login_save(l, cmd["key"].as_str().unwrap_or_default()) {
+                                    Ok(said) => s.apply(&json!({"type": "harness_notice", "text": said, "error": false}), at),
+                                    Err(e) => info(&mut s, format!("{e:#}")),
+                                },
+                                None => info(&mut s, format!("no provider {name}")),
+                            }
+                        }
+                        // the data policy for this session: "any" comes only with the page's own confirmation (as /data any
+                        // confirm)
+                        Some("data") => {
+                            let text = match (cmd["policy"].as_str(), cmd["confirm"] == true) {
+                                (Some("trusted"), _) => {
+                                    live.data_any = false;
+                                    "data: trusted · only providers on the trusted list may see the code".to_string()
+                                }
+                                (Some("any"), true) => {
+                                    live.data_any = true;
+                                    "data: any · for this session the model picker may use providers off the trusted list".to_string()
+                                }
+                                _ => "data: trusted, or any with confirm".to_string(),
+                            };
+                            s.apply(&json!({"type": "harness_notice", "text": text, "error": false}), at);
+                        }
+                        Some("route") => {
+                            route_on = cmd["on"] == true;
+                            let text = format!("router {}: general questions inside a project {}", if route_on { "on" } else { "off" },
+                                if route_on { "are answered as a chat" } else { "go to the agent" });
+                            s.apply(&json!({"type": "harness_notice", "text": text, "error": false}), at);
                         }
                         // the user's yes to the trust question, for this folder; the window then starts the server again
                         Some("trust") => match labels::dir().and_then(|b| trust::trust(&b, &cwd)) {

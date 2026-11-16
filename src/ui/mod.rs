@@ -1410,7 +1410,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             }
             out
         }
-        Block::Thinking { tokens, live, exact } => {
+        Block::Thinking { tokens, live, exact, .. } => {
             let glyph = if *live { spinner(v.clock_ms) } else { "✻" };
             let mut spans = vec![Span::styled(format!("{glyph} "), st(th.warn)), Span::styled("thinking", st(th.dim).add_modifier(Modifier::ITALIC))];
             // claude reports thinking in steps of 50-200 tokens about once a second: while live, the count runs up to

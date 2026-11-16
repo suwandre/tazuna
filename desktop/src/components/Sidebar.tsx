@@ -25,9 +25,10 @@ type Props = {
   /** a saved conversation: a chat (no project) or one of a project's */
   onOpenThread?: (t: Thread, p?: Project) => void;
   onSearch?: () => void;
+  onSettings?: () => void;
 };
 
-export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch }: Props) {
+export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch, onSettings }: Props) {
   return (
     <aside className="flex flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
       {macOverlay && <div data-tauri-drag-region className="-mx-2.5 -mt-3.5 h-[38px] flex-none" />}
@@ -60,11 +61,11 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
         </div>
       ))}
       </div>
-      <div className="mt-auto flex items-center gap-2 border-t border-line px-2 pt-2.5 text-muted">
+      <button onClick={onSettings} className="mt-auto flex items-center gap-2 border-t border-line px-2 pt-2.5 text-left text-muted hover:text-ink">
         <span className="grid size-[22px] place-items-center rounded-full border border-line bg-field text-[11px] text-ink-2">S</span>
         <span>Settings</span>
         <span className="ml-auto text-[11.5px] text-faint">{planLeft}</span>
-      </div>
+      </button>
     </aside>
   );
 }

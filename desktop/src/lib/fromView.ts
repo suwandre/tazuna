@@ -19,16 +19,26 @@ function verb(name: string): string {
 export function messages(v: View): Message[] {
   const out: Message[] = [];
   let agent: Extract<Message, { role: "agent" }> | null = null, ask = "";
+  // a message sent during a reply waits in the core's queue: shown after that reply ends, not above it
+  let open = false;
+  const queue: string[] = [];
+  const prompt = (text: string) => { out.push({ role: "user", text }); agent = null; ask = text; open = true; };
   const current = () => (agent ??= (out.push({ role: "agent", prose: [], tools: [] }), out[out.length - 1] as Extract<Message, { role: "agent" }>));
   const changeAt = new Map((v.changes ?? []).map((c) => [c.at_block, c]));
   for (const [k, b] of v.blocks.entries()) {
-    if (b.kind === "prompt") { out.push({ role: "user", text: b.text }); agent = null; ask = b.text; }
+    if (b.kind === "prompt") { if (open) queue.push(b.text); else prompt(b.text); }
     // the router answered it as a chat (app server, 0.1.127's router): the reply carries the tag and the ask, for "send to agent"
     else if (b.kind === "notice" && b.text.startsWith("answered as a chat")) { Object.assign(current(), { routedChat: true, ask }); }
     else if (b.kind === "text") { if (b.text.trim()) current().prose.push(b.text); }
     else if (b.kind === "tool") {
-      const t: ToolStep = { verb: verb(b.name), target: target(b.input ?? {}), secs: b.secs ?? 0, ok: !b.error, running: b.running };
+      const t: ToolStep = { kind: "tool", name: b.name, verb: verb(b.name), target: target(b.input ?? {}), secs: b.secs ?? 0, ok: !b.error,
+        running: b.running, input: b.input, result: b.result };
       current().tools!.push(t);
+    }
+    else if (b.kind === "thinking") {
+      const tok = b.tokens >= 1000 ? `${(b.tokens / 1000).toFixed(1)}k` : `${b.tokens}`;
+      current().tools!.push({ kind: "thinking", verb: b.live ? "Thinking" : "Thought", target: "", detail: b.tokens ? `~${tok} tokens` : undefined,
+        secs: 0, ok: true, running: b.live, text: b.text });
     }
     else if (b.kind === "done") {
       const u = b.usage, total = u.input + u.cache_write + u.cache_read + u.output, read = u.input + u.cache_write + u.cache_read;
@@ -36,9 +46,13 @@ export function messages(v: View): Message[] {
       const c = changeAt.get(k);
       if (c) current().change = { turn: c.turn, files: c.files, undone: c.undone, canUndo: c.can_undo };
       agent = null;
+      open = false;
+      const next = queue.shift();
+      if (next !== undefined) prompt(next);
     }
     else if (b.kind === "notice" && b.error) { current().prose.push(`⚠ ${b.text}`); }
   }
+  for (const text of queue) out.push({ role: "user", text, queued: true });
   return out;
 }
 

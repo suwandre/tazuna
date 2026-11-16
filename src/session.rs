@@ -6,7 +6,8 @@ pub enum Block {
     Prompt(String),
     Text { text: String, live: bool },
     /// `exact`: the count claude reported when the call ended; before that (and in the own loop) an estimate.
-    Thinking { tokens: u64, live: bool, exact: bool },
+    /// `text`: the reasoning itself where the model shows it (the own loop's providers; claude's stream sends none).
+    Thinking { tokens: u64, live: bool, exact: bool, text: String },
     Tool(Tool),
     Done(Summary),
     /// Harness messages: stopped runs, process exits.
@@ -382,7 +383,7 @@ impl Session {
         let blocks: Vec<Value> = self.blocks.iter().map(|b| match b {
             Block::Prompt(text) => json!({"kind": "prompt", "text": text}),
             Block::Text { text, live } => json!({"kind": "text", "text": text, "live": live}),
-            Block::Thinking { tokens, live, exact } => json!({"kind": "thinking", "tokens": tokens, "live": live, "exact": exact}),
+            Block::Thinking { tokens, live, exact, text } => json!({"kind": "thinking", "tokens": tokens, "live": live, "exact": exact, "text": text.chars().take(20_000).collect::<String>()}),
             Block::Tool(t) => json!({"kind": "tool", "id": t.id, "name": t.name, "input": t.input, "result": t.result.as_deref().map(|r| cut(r, 4000)),
                 "error": t.error, "secs": t.secs(), "running": t.done_ms.is_none(), "sub": t.sub.as_ref().map(|(n, last)| json!({"calls": n, "last": last}))}),
             Block::Done(d) => json!({"kind": "done", "ok": d.ok, "secs": d.secs, "turns": d.turns, "cost": d.cost, "usage": usage(&d.usage), "stopped": d.stopped}),
@@ -605,7 +606,7 @@ impl Session {
             }
             (Some("harness_info"), _) => self.push_aside(Block::Notice { text: s(&e["text"]), error: false }),
             // the own loop's reasoning before a message: a thinking row like claude's, its size estimated (~4 characters a token)
-            (Some("reasoning"), _) => self.push(Block::Thinking { tokens: (s(&e["text"]).chars().count() / 4) as u64, live: false, exact: false }),
+            (Some("reasoning"), _) => self.push(Block::Thinking { tokens: (s(&e["text"]).chars().count() / 4) as u64, live: false, exact: false, text: s(&e["text"]) }),
             // claude's thinking estimate, about once a second (50-150 tokens, then the rest when it ends); the exact count
             // comes with the call's end. Its stream's thinking_delta carries the same steps rounded to 50.
             (Some("system"), Some("thinking_tokens")) => {
@@ -797,7 +798,7 @@ impl Session {
                         self.streamed_text = true;
                     }
                     Some("thinking") => {
-                        self.push(Block::Thinking { tokens: 0, live: true, exact: false });
+                        self.push(Block::Thinking { tokens: 0, live: true, exact: false, text: String::new() });
                         self.call_thinking.push(self.blocks.len() - 1);
                         self.activity = Activity::Thinking;
                     }
@@ -1021,7 +1022,7 @@ mod tests {
         s.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Hel"}})), 8.0);
         s.apply(&json!({"type": "harness_info", "text": "copied 3 chars"}), 9.0);
         s.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "lo"}})), 10.0);
-        let thinking = |s: &Session| s.blocks.iter().find_map(|b| if let Block::Thinking { tokens, live, exact } = b { Some((*tokens, *live, *exact)) } else { None });
+        let thinking = |s: &Session| s.blocks.iter().find_map(|b| if let Block::Thinking { tokens, live, exact, .. } = b { Some((*tokens, *live, *exact)) } else { None });
         assert_eq!(thinking(&s), Some((625, false, false)), "50+100+150+100+150+75, closed by its stop");
         // the call's end brings the exact count
         s.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 700, "output_tokens_details": {"thinking_tokens": 478}}})), 11.0);

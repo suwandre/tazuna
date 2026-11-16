@@ -98,6 +98,31 @@ fn trust(core: State<Core>) -> Result<(), String> {
     write(&core, serde_json::json!({"op": "trust"}))
 }
 
+/// A provider's page for making a key, in the browser: only https pages of the providers tazuna knows.
+#[tauri::command]
+fn open_key_page(url: String) -> Result<(), String> {
+    const HOSTS: [&str; 5] = ["subrouter.ai", "mortera.cloud", "openrouter.ai", "kenari.id", "console.mistral.ai"];
+    let host = url.strip_prefix("https://").and_then(|r| r.split(['/', '?', '#']).next()).unwrap_or_default();
+    if !HOSTS.contains(&host) || url.chars().any(|c| c.is_whitespace() || c == '"') {
+        return Err(format!("not a provider page: {url}"));
+    }
+    #[cfg(target_os = "macos")]
+    let r = Command::new("open").arg(&url).status();
+    #[cfg(target_os = "windows")]
+    let r = Command::new("explorer").arg(&url).status();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let r = Command::new("xdg-open").arg(&url).status();
+    r.map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// The native file picker for attachments (images go to the model as images, other files as their paths).
+#[tauri::command]
+async fn pick_files(app: AppHandle) -> Vec<String> {
+    use tauri_plugin_dialog::DialogExt;
+    app.dialog().file().blocking_pick_files().unwrap_or_default().into_iter()
+        .filter_map(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned()).collect()
+}
+
 /// The native folder picker; async so it does not block the main thread it needs.
 #[tauri::command]
 async fn pick_folder(app: AppHandle) -> Option<String> {
@@ -110,7 +135,7 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
 /// nothing else passes (the core drops other lines too).
 #[tauri::command]
 fn op(core: State<Core>, msg: serde_json::Value) -> Result<(), String> {
-    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo")) {
+    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route")) {
         return Err(format!("not a command the window sends: {msg}"));
     }
     write(&core, msg)
@@ -131,11 +156,52 @@ fn set_profile(core: State<Core>, name: String) -> Result<(), String> {
     write(&core, serde_json::json!({"op": "profile", "name": name}))
 }
 
+/// The macOS menu bar: the system's own items (Quit, Hide, the Edit menu that copy and paste need) and tazuna's (new chat,
+/// open folder, the palette, the shortcuts, light or dark). tazuna's send a `menu` event with their id; their shortcuts
+/// are the window's (docs/DESKTOP.md "Desktop habits").
+#[cfg(target_os = "macos")]
+fn menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
+    use tauri::menu::{Menu, MenuItem, PredefinedMenuItem as P, Submenu};
+    let item = |id: &str, text: &str, keys: &str| MenuItem::with_id(app, id, text, true, Some(keys));
+    let sep = || P::separator(app);
+    Menu::with_items(app, &[
+        &Submenu::with_items(app, "tazuna", true, &[
+            &P::about(app, None, None)?, &sep()?, &item("settings", "Settings…", "CmdOrCtrl+,")?, &sep()?, &P::services(app, None)?, &sep()?,
+            &P::hide(app, None)?, &P::hide_others(app, None)?, &P::show_all(app, None)?, &sep()?, &P::quit(app, None)?,
+        ])?,
+        &Submenu::with_items(app, "File", true, &[
+            &item("new-chat", "New Chat", "CmdOrCtrl+N")?, &item("open-folder", "Open Folder…", "CmdOrCtrl+O")?, &sep()?,
+            &P::close_window(app, None)?,
+        ])?,
+        &Submenu::with_items(app, "Edit", true, &[
+            &P::undo(app, None)?, &P::redo(app, None)?, &sep()?,
+            &P::cut(app, None)?, &P::copy(app, None)?, &P::paste(app, None)?, &P::select_all(app, None)?,
+        ])?,
+        &Submenu::with_items(app, "View", true, &[
+            &item("palette", "Command Palette", "CmdOrCtrl+K")?, &item("shortcuts", "Keyboard Shortcuts", "CmdOrCtrl+/")?,
+            &item("theme", "Light or Dark", "CmdOrCtrl+Shift+L")?, &sep()?, &P::fullscreen(app, None)?,
+        ])?,
+        &Submenu::with_items(app, "Window", true, &[&P::minimize(app, None)?, &P::maximize(app, None)?])?,
+    ])
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            {
+                let handle = app.handle().clone();
+                app.set_menu(menu(&handle)?)?;
+                app.on_menu_event(|app, e| {
+                    let _ = app.emit("menu", e.id().0.clone());
+                });
+            }
+            let _ = app;
+            Ok(())
+        })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, send, op, trust, pick_folder, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, send, op, trust, pick_folder, pick_files, open_key_page, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 stop_child(&w.state::<Core>());
