@@ -120,6 +120,61 @@ pub fn undo(cwd: &Path, before: &str, after: &str, changed: &[File]) -> Result<(
     Ok(())
 }
 
+/// The work tree against HEAD as one unified diff, new untracked files included (as added whole): what "uncommitted"
+/// shows in the app's review.
+pub fn worktree_diff(cwd: &Path, max: usize) -> String {
+    let mut d = git(cwd, &["diff", "--no-renames", "HEAD"], None).unwrap_or_default();
+    let untracked = git(cwd, &["ls-files", "--others", "--exclude-standard", "-z"], None).unwrap_or_default();
+    for p in untracked.split('\0').filter(|p| !p.is_empty()) {
+        // `git diff --no-index` exits 1 when the files differ, which they always do here
+        let o = Command::new("git").args(["diff", "--no-index", "--", "/dev/null", p]).current_dir(cwd).output();
+        if let Ok(o) = o {
+            d.push_str(&String::from_utf8_lossy(&o.stdout));
+        }
+        if d.len() > max {
+            break;
+        }
+    }
+    cut(d, max)
+}
+
+/// The branch against where it left the default branch (origin's, else main or master): (that base, the diff of the
+/// work tree against it).
+pub fn branch_diff(cwd: &Path, max: usize) -> Result<(String, String)> {
+    let base = ["origin/HEAD", "origin/main", "origin/master", "main", "master"].iter()
+        .find_map(|b| git(cwd, &["merge-base", "HEAD", b], None).ok().map(|m| (b.to_string(), m.trim().to_string())))
+        .context("no default branch to compare with (origin/HEAD, main or master)")?;
+    let d = git(cwd, &["diff", "--no-renames", &base.1], None)?;
+    Ok((base.0, cut(d, max)))
+}
+
+fn cut(mut d: String, max: usize) -> String {
+    if d.len() > max {
+        let mut c = max;
+        while !d.is_char_boundary(c) {
+            c -= 1;
+        }
+        d.truncate(c);
+        d.push_str("\n… (cut)\n");
+    }
+    d
+}
+
+/// One piece of a diff (a file's header and one hunk) applied: reversed in the work tree (`revert`), or added to the
+/// index (`stage`). git checks the piece still fits and refuses a path outside the repository.
+pub fn apply_piece(cwd: &Path, patch: &str, stage: bool) -> Result<()> {
+    use std::io::Write;
+    let args: &[&str] = if stage { &["apply", "--cached", "--recount", "-"] } else { &["apply", "-R", "--recount", "-"] };
+    let mut child = Command::new("git").args(args).current_dir(cwd).stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::piped()).spawn().context("running git apply")?;
+    child.stdin.take().context("git stdin")?.write_all(patch.as_bytes())?;
+    let o = child.wait_with_output()?;
+    if !o.status.success() {
+        bail!("git apply: {}", String::from_utf8_lossy(&o.stderr).trim());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -169,6 +224,22 @@ mod tests {
         assert_eq!(std::fs::read_to_string(dir.join("gone.txt")).unwrap(), "x\n");
         assert!(!dir.join("new.txt").exists());
         assert_eq!(snapshot(&dir).unwrap(), before);
+
+        // review: the uncommitted diff (an untracked file too), one piece reverted, one staged
+        std::fs::write(dir.join("a.txt"), "one\nTWO\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "n\n").unwrap();
+        let d = worktree_diff(&dir, 100_000);
+        assert!(d.contains("+TWO") && d.contains("+++ b/new.txt"), "{d}");
+        let piece = |path: &str| {
+            let start = d.find(&format!("diff --git a/{path}")).unwrap();
+            let end = d[start + 1..].find("diff --git").map_or(d.len(), |e| start + 1 + e);
+            d[start..end].to_string()
+        };
+        apply_piece(&dir, &piece("a.txt"), true).unwrap();
+        assert!(git(&dir, &["diff", "--cached", "--name-only"], None).unwrap().contains("a.txt"), "staged");
+        apply_piece(&dir, &piece("a.txt"), false).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "one\ntwo\n", "reverted in the work tree");
+        assert!(apply_piece(&dir, &piece("a.txt"), false).is_err(), "no longer fits");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

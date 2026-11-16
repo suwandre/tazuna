@@ -39,6 +39,7 @@ export type View = {
 };
 export type Provider = { name: string; host: string; page: string; place: string; example: string; key: string; trusted: boolean };
 export type Settings = { providers: Provider[]; data_any: boolean; route: boolean; version: string };
+export type Review = { scope: string; turn?: number | null; base?: string | null; text: string };
 export type Diff = { turn: number; path: string; text: string };
 export type SessionRow = { id: string; first: string; last_at: number; messages: number };
 export type Sessions = { dirs: { dir: string; list: SessionRow[] }[] };
@@ -64,6 +65,11 @@ export const core = {
   undo: (turn: number) => to("op", { msg: { op: "undo", turn } }),
   /** the conversation back to before checkpoint `cp` (and with `files`, what tazuna changed since) */
   rewind: (cp: number, files: boolean) => to("op", { msg: { op: "rewind", cp, files } }),
+  /** a diff to review: "uncommitted", "branch", or one "turn" */
+  review: (scope: string, turn?: number) => to("op", { msg: { op: "review", scope, turn } }),
+  /** one piece (a file's header and one hunk) reverted in the work tree, or staged */
+  piece: (patch: string, stage: boolean) => to("op", { msg: { op: "piece", patch, stage } }),
+  onReview: (cb: (r: Review) => void) => on<Review>("review", cb),
   onDiff: (cb: (d: Diff) => void) => on<Diff>("diff", cb),
   settings: () => to("op", { msg: { op: "settings" } }),
   login: (provider: string, key: string) => to("op", { msg: { op: "login", provider, key } }),

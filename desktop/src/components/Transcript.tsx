@@ -18,7 +18,7 @@ const doing: Record<string, string> = { Starting: "thinking", Waiting: "thinking
 
 type Props = {
   messages: Message[]; busy?: boolean; activity?: string; onSendToAgent?: (text: string) => void;
-  onDiff?: (turn: number, path: string) => void; onUndo?: (turn: number) => void;
+  onDiff?: (turn: number, path: string) => void; onUndo?: (turn: number) => void; onReview?: (turn: number) => void;
   /** "edit from here" on one of your messages */
   onEdit?: (edit: { cp: number; block: number }, text: string) => void;
   /** the checkpoint being edited: that message and everything after it fade */
@@ -28,7 +28,7 @@ type Props = {
 const STATUS: Record<string, string> = { A: "added", D: "deleted", M: "changed" };
 
 /** What a turn changed: each file with its lines added and removed and its diff; undo for the last turn. */
-function ChangeCard({ change, busy, onDiff, onUndo }: { change: Change; busy?: boolean; onDiff?: Props["onDiff"]; onUndo?: Props["onUndo"] }) {
+function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change; busy?: boolean; onDiff?: Props["onDiff"]; onUndo?: Props["onUndo"]; onReview?: Props["onReview"] }) {
   const [all, setAll] = useState(false);
   const files = all ? change.files : change.files.slice(0, 6);
   return (
@@ -49,6 +49,8 @@ function ChangeCard({ change, busy, onDiff, onUndo }: { change: Change; busy?: b
       <div className="flex items-center gap-2 px-3 py-[7px] text-[12px] text-muted">
         <span className="flex-1">{change.files.length} file{change.files.length === 1 ? "" : "s"} changed in this turn
           {change.files.length > 6 && !all && <button onClick={() => setAll(true)} className="ml-2 text-accent-ink">show all</button>}</span>
+        {!change.undone && onReview && <button onClick={() => onReview(change.turn)} title="Go through this turn's changes piece by piece"
+          className="rounded-md border border-line px-2.5 py-0.5 text-ink hover:bg-hover">Review</button>}
         {change.undone ? <span className="text-faint">undone</span>
           : change.canUndo && <button disabled={busy} onClick={() => onUndo?.(change.turn)} title="Put these files back as they were before this turn"
               className="rounded-md border border-line px-2.5 py-0.5 text-ink hover:bg-hover disabled:opacity-50">Undo</button>}
@@ -57,7 +59,7 @@ function ChangeCard({ change, busy, onDiff, onUndo }: { change: Change; busy?: b
   );
 }
 
-export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, onUndo, onEdit, editFrom }: Props) {
+export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, onUndo, onReview, onEdit, editFrom }: Props) {
   // follow new output while the reader is at the bottom; stay put once they scroll up
   const box = useRef<HTMLElement>(null), stick = useRef(true);
   // a long conversation draws its latest messages; earlier ones on request (a three-day session is ~1,900 blocks)
@@ -109,7 +111,7 @@ export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, on
                 </div>
               )}
               <div className="prose-answer text-ink">{m.prose.map((p, j) => <Markdown key={j} text={p} />)}</div>
-              {m.change && <ChangeCard change={m.change} busy={busy} onDiff={onDiff} onUndo={onUndo} />}
+              {m.change && <ChangeCard change={m.change} busy={busy} onDiff={onDiff} onUndo={onUndo} onReview={onReview} />}
               {m.meta && <div className="mt-2 font-mono text-[11.5px] text-faint">{meta(m.meta)}</div>}
             </>
           )}

@@ -25,7 +25,9 @@ the app once on macOS, Linux and Windows. 0.1 is complete.
 another is on screen; "Open now" in the sidebar shows each with a dot (working, waiting for an answer, idle, stopped); at
 most four idle ones stay open (the oldest close; they stay resumable). 0.1.5: a conversation out of sight that finishes or asks for an
 answer says so with a system notification. 0.1.6: "edit from here" on your messages (claude path): the message comes back
-to the box, the rest fades, and sending goes back to before it, with the files tazuna changed since if you leave that on.
+to the box, the rest fades, and sending goes back to before it, with the files tazuna changed since if you leave that on. 0.1.7: Review (header, change cards, Cmd-K): uncommitted
+changes, the branch against its base, or one turn, file by file and piece by piece; each piece staged or reverted; a click
+on a line leaves a comment, and the comments go to the agent in one message.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

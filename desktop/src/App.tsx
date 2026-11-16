@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Approval } from "./components/Approval";
 import { Composer } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
+import { ReviewView } from "./components/ReviewView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
 import { SettingsView } from "./components/SettingsView";
 import { Rail, builtInWidgets } from "./components/Rail";
@@ -159,6 +160,7 @@ export default function App() {
   // go back too) and the text put in the box
   const [editing, setEditing] = useState<{ cp: number; block: number; files: number; keep: boolean } | null>(null);
   const [draft, setDraft] = useState<{ text: string; n: number }>();
+  const [reviewing, setReviewing] = useState<{ scope: string; turn?: number } | null>(null);
   // the menu bar's items (macOS)
   useEffect(() => {
     if (!menuKeys) return;
@@ -192,6 +194,9 @@ export default function App() {
     if (busy) a.unshift({ id: "stop", group: "This conversation", label: "Stop the reply", keys: "Esc", run: () => core.interrupt() });
     const undo = view?.changes?.find((c) => c.can_undo);
     if (undo && !busy) a.push({ id: "undo", group: "This conversation", label: `Undo the last turn's changes`, hint: `${undo.files.length} file${undo.files.length === 1 ? "" : "s"}`, run: () => core.undo(undo.turn) });
+    if (view && folder) a.push(
+      { id: "review-uncommitted", group: "Review", label: "Review uncommitted changes", keywords: "diff stage revert hunk", run: () => setReviewing({ scope: "uncommitted" }) },
+      { id: "review-branch", group: "Review", label: "Review the branch against its base", keywords: "diff pr", run: () => setReviewing({ scope: "branch" }) });
     if (view) {
       a.push(...["auto", "ask", "edits", "plan"].map((m) => ({ id: `m:${m}`, group: "Permission mode", label: m, hint: m === view.mode ? "current" : undefined, keywords: "mode permission", run: () => core.setMode(m) })));
       const cur = models?.choices.find((c) => c.current);
@@ -223,6 +228,7 @@ export default function App() {
           <div className="flex gap-1.5">
             <span className="rounded-full border border-line bg-field px-2.5 py-1 text-[12px] text-ink-2">{models?.choices.find((c) => c.current)?.label ?? session.model}{session.effort && ` · ${session.effort}`}</span>
             {session.branch && <span className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2">{session.branch} · {session.changed} changed</span>}
+            {inTauri && folder && <button onClick={() => setReviewing({ scope: "uncommitted" })} className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Review</button>}
           </div>
         </header>
         <Transcript key={`${active}:${view?.session_id ?? ""}`} messages={messages} editFrom={editing?.cp}
@@ -230,8 +236,10 @@ export default function App() {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
           } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)}
-          onDiff={(turn, path) => core.diff(turn, path)} onUndo={(turn) => core.undo(turn)} />
+          onDiff={(turn, path) => core.diff(turn, path)} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
+        {reviewing && <ReviewView start={reviewing} turns={(view?.changes ?? []).filter((c) => !c.undone).map((c) => c.turn)}
+          onClose={() => setReviewing(null)} onSend={(text) => core.send(text, true)} />}
         {view?.untrusted && (
           <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
             <span className="flex-1">This folder's settings run code ({view.untrusted}). tazuna works here without them until you trust it.</span>

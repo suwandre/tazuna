@@ -998,8 +998,8 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 23] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
-            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "quit"];
+        const OPS: [&str; 25] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "quit"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1280,6 +1280,35 @@ fn app_server(a: &Args) -> Result<()> {
                                         Err(e) => info(&mut s, format!("{e:#}")),
                                     }
                                 }
+                            }
+                        }
+                        // the review: a diff to go through piece by piece, answered as a `review` line. "uncommitted": the
+                        // work tree against HEAD; "branch": against where it left the default branch; "turn": one turn's
+                        // changes (its git trees)
+                        Some("review") => {
+                            const MAX: usize = 2_000_000;
+                            let scope = cmd["scope"].as_str().unwrap_or("uncommitted");
+                            let (text, base) = match scope {
+                                "branch" => match turns::branch_diff(&cwd, MAX) {
+                                    Ok((b, d)) => (d, Some(b)),
+                                    Err(e) => (String::new(), Some(format!("{e:#}"))),
+                                },
+                                "turn" => {
+                                    let t = done_turns.get(cmd["turn"].as_u64().unwrap_or(u64::MAX) as usize);
+                                    (t.map(|t| t.files.iter().map(|f| turns::diff(&cwd, &t.before, &t.after, &f.path, MAX)).collect::<String>()).unwrap_or_default(), None)
+                                }
+                                _ => (turns::worktree_diff(&cwd, MAX), None),
+                            };
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{}", json!({"type": "review", "scope": scope, "turn": cmd["turn"], "base": base, "text": text}));
+                            let _ = o.flush();
+                        }
+                        // one piece of the review kept out (reverted in the work tree) or staged
+                        Some("piece") => {
+                            let stage = cmd["stage"] == true;
+                            match turns::apply_piece(&cwd, cmd["patch"].as_str().unwrap_or_default(), stage) {
+                                Ok(()) => s.apply(&json!({"type": "harness_notice", "text": if stage { "staged one piece" } else { "reverted one piece" }, "error": false}), at),
+                                Err(e) => info(&mut s, format!("{e:#}")),
                             }
                         }
                         // one file's diff in a turn, answered as a `diff` line

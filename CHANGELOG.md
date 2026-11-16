@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.133 (2026-11-16): a review the desktop app goes through piece by piece
+
+- `tazuna app-server` takes {"op":"review","scope":"uncommitted"|"branch"|"turn"}: the work tree against HEAD (new
+  untracked files included), the branch against where it left the default branch, or one turn's changes; and
+  {"op":"piece","patch":..,"stage":bool}: one piece reverted in the work tree or staged (`git apply`, which checks the
+  piece still fits and keeps to the repository). A test reverts and stages one piece of two.
+- No other metric moves; 173 tests.
+
 ## 0.1.132 (2026-11-16): "edit from here" in the app server
 
 - `tazuna app-server` takes {"op":"rewind","cp":N,"files":bool}: the conversation goes back to before message N (claude's
