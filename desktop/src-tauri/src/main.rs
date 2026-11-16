@@ -43,7 +43,8 @@ fn login_path() -> Option<String> {
 #[tauri::command]
 async fn start(app: AppHandle, core: State<'_, Core>, cwd: Option<String>, profile: Option<String>) -> Result<String, String> {
     stop_child(&core);
-    let dir = cwd.or_else(|| std::env::var("HOME").ok()).unwrap_or_else(|| ".".into());
+    // a chat runs in the home folder: HOME, or USERPROFILE on Windows (which has no HOME, and "." is the app's own folder)
+    let dir = cwd.or_else(|| std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok()).unwrap_or_else(|| ".".into());
     let mut cmd = Command::new(tazuna_bin());
     cmd.arg("app-server").arg("--allow-non-git").current_dir(&dir);
     #[cfg(unix)]
@@ -115,6 +116,21 @@ fn open_key_page(url: String) -> Result<(), String> {
     r.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// A link in an answer, in the browser: http and https only (an answer could hold any URL; a click is the user's).
+#[tauri::command]
+fn open_link(url: String) -> Result<(), String> {
+    if !(url.starts_with("https://") || url.starts_with("http://")) || url.chars().any(|c| c.is_whitespace() || c.is_control() || c == '"') {
+        return Err(format!("not a web link: {url}"));
+    }
+    #[cfg(target_os = "macos")]
+    let r = Command::new("open").arg(&url).status();
+    #[cfg(target_os = "windows")]
+    let r = Command::new("explorer").arg(&url).status();
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let r = Command::new("xdg-open").arg(&url).status();
+    r.map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// The native file picker for attachments (images go to the model as images, other files as their paths).
 #[tauri::command]
 async fn pick_files(app: AppHandle) -> Vec<String> {
@@ -135,7 +151,7 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
 /// nothing else passes (the core drops other lines too).
 #[tauri::command]
 fn op(core: State<Core>, msg: serde_json::Value) -> Result<(), String> {
-    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route")) {
+    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide")) {
         return Err(format!("not a command the window sends: {msg}"));
     }
     write(&core, msg)
@@ -201,7 +217,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, send, op, trust, pick_folder, pick_files, open_key_page, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, send, op, trust, pick_folder, pick_files, open_key_page, open_link, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 stop_child(&w.state::<Core>());

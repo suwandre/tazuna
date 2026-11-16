@@ -1,4 +1,5 @@
-import { ChevronDown, ChevronRight, FolderOpen, Plus, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, FolderOpen, Pencil, Plus, Search, X } from "lucide-react";
+import { useState } from "react";
 import type { Project, Thread } from "../lib/types";
 
 const icon = { size: 16, strokeWidth: 1.5 };
@@ -7,11 +8,36 @@ function Kbd({ children }: { children: string }) {
   return <kbd className="ml-auto rounded-[5px] border border-line px-[5px] py-px font-mono text-[11px] text-faint">{children}</kbd>;
 }
 
-function ThreadRow({ t, active, sub, onClick }: { t: Thread; active: boolean; sub?: boolean; onClick?: () => void }) {
+function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
+  t: Thread; active: boolean; sub?: boolean; onClick?: () => void; onRename?: (title: string) => void; onHide?: () => void;
+}) {
+  const [mode, setMode] = useState<"view" | "rename" | "hide">("view");
+  const [title, setTitle] = useState(t.title);
+  const icon = "rounded p-0.5 text-faint hover:bg-hover hover:text-ink";
+  if (mode === "rename") {
+    return (
+      <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onBlur={() => setMode("view")}
+        onKeyDown={(e) => { if (e.key === "Enter" && title.trim()) { onRename?.(title.trim()); setMode("view"); } if (e.key === "Escape") setMode("view"); }}
+        className={`mx-[2px] rounded-md border border-line-strong bg-card px-[7px] py-[5px] text-ink outline-none ${sub ? "ml-6" : ""}`} />
+    );
+  }
+  if (mode === "hide") {
+    return (
+      <div className={`flex items-center gap-2 rounded-md bg-field px-[9px] py-1.5 text-[12px] ${sub ? "pl-7" : ""}`}>
+        <span className="flex-1 truncate text-ink-2">Remove from the list?</span>
+        <button onClick={() => { onHide?.(); setMode("view"); }} className="font-medium text-bad">Remove</button>
+        <button onClick={() => setMode("view")} className="text-muted">Cancel</button>
+      </div>
+    );
+  }
   return (
-    <a onClick={onClick} title={t.title} className={`flex items-center gap-2 truncate rounded-md px-[9px] py-1.5 text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
+    <a onClick={onClick} title={t.title} className={`group flex items-center gap-2 truncate rounded-md px-[9px] py-1.5 text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
       {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-accent shadow-[0_0_0_3px_var(--accent-soft)]" : "bg-faint"}`} />}
-      <span className="truncate">{t.title}</span>
+      <span className="flex-1 truncate">{t.title}</span>
+      {onRename && <span className="hidden flex-none gap-0.5 group-hover:flex">
+        <button title="Rename" onClick={(e) => { e.stopPropagation(); setTitle(t.title); setMode("rename"); }} className={icon}><Pencil size={12} strokeWidth={1.5} /></button>
+        <button title="Remove from the list (its recording stays)" onClick={(e) => { e.stopPropagation(); setMode("hide"); }} className={icon}><X size={12} strokeWidth={1.5} /></button>
+      </span>}
     </a>
   );
 }
@@ -26,9 +52,11 @@ type Props = {
   onOpenThread?: (t: Thread, p?: Project) => void;
   onSearch?: () => void;
   onSettings?: () => void;
+  onRename?: (t: Thread, title: string) => void;
+  onHide?: (t: Thread) => void;
 };
 
-export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch, onSettings }: Props) {
+export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch, onSettings, onRename, onHide }: Props) {
   return (
     <aside className="flex flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
       {macOverlay && <div data-tauri-drag-region className="-mx-2.5 -mt-3.5 h-[38px] flex-none" />}
@@ -47,7 +75,8 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
       </button>
       {chats.length > 0 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Chats</div>}
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
-      {chats.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} onClick={() => onOpenThread?.(t)} />)}
+      {chats.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} onClick={() => onOpenThread?.(t)}
+        onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
       {projects.length > 0 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Projects</div>}
       {projects.map((p) => (
         <div key={p.path ?? p.name}>
@@ -57,7 +86,8 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
             <span className="flex-1 truncate">{p.name}</span>
             {p.pending ? <span className="rounded-full bg-accent px-1.5 text-[10.5px] font-semibold leading-[17px] text-on-accent">{p.pending}</span> : null}
           </a>
-          {p.open && p.threads.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} sub onClick={() => onOpenThread?.(t, p)} />)}
+          {p.open && p.threads.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} sub onClick={() => onOpenThread?.(t, p)}
+            onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
         </div>
       ))}
       </div>

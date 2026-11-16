@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.131 (2026-11-16): believable tok/s; the app server sends what changed
+
+- tok/s per model call: when most of a call's output never streamed (reasoning a provider keeps back), the speed now
+  counts from the call's start, a lower bound. ERNIE 5.5 Flash at high effort read "1933 tok/s" for 102 tokens that
+  arrived in 53 ms after 20 s of hidden reasoning (about 5 tok/s); the 351 tok/s average came from those calls. Claude's
+  one-burst replies kept their rule.
+- `tazuna app-server` sends each view's blocks from the first one that changed: a three-day session (1,920 blocks) went
+  out whole, 2 MB, up to 20 times a second while a reply streamed; now 2 MB once, then about 500 bytes an update.
+- Conversations can be renamed or taken off the lists (conversations.json in the data folder; the recordings stay); the
+  terminal's /resume list shows the same names.
+- The app server sends when the plan's 5-hour window resets and SubRouter's balance, as the terminal shows them.
+- No other metric moves; 173 tests.
+
 ## 0.1.130 (2026-11-16): a model that never answers is said; image paths with spaces attach
 
 - The own loop in a live session: a model that has not answered at all within its limit (180 s) is said ("gave no

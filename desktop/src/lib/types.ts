@@ -14,7 +14,9 @@ export type Message =
   | { role: "user"; text: string; queued?: boolean }
   | { role: "agent"; prose: string[]; tools?: ToolStep[]; change?: Change; meta?: Meta; routedChat?: boolean; ask?: string };
 export type Usage = { contextPct: number; contextUsed: string; contextMax: string; plan5h: number | null; plan5hReset: string; planWeek: number | null;
-  threadCost: number; threadTurns: number; cachedPct: number; saved: number; today: number; todayTurns: number; todaySeries: number[] };
+  threadCost: number; threadTurns: number; cachedPct: number; saved: number; today: number; todayTurns: number; todaySeries: number[];
+  /** SubRouter's balance in dollars, where a key is set */
+  balance?: number | null };
 export type Session = { model: string; effort: string; mode: string; branch: string; changed: number; lastCost: number };
 
 /** Dollars as tazuna shows them: three decimals, or two significant digits below a tenth of a cent ($0.00012), so a cheap

@@ -3,7 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-export const inTauri = "__TAURI_INTERNALS__" in window;
+export const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 export type ViewBlock =
   | { kind: "prompt"; text: string }
@@ -16,7 +16,7 @@ export type ViewBlock =
 type Usage = { input: number; cache_write: number; cache_read: number; output: number };
 export type View = {
   blocks: ViewBlock[]; model: string; effort: string; cwd: string; profile: string; mode: string; activity: string;
-  cost: number; usage: Usage; turns: number; context: number; context_window?: number; limits?: [number, number]; balance?: number;
+  cost: number; usage: Usage; turns: number; context: number; context_window?: number; limits?: [number, number]; limits_reset?: number | null; balance?: number | null;
   /** what an untrusted folder's config would run (it runs lean until trusted) */
   untrusted?: string | null;
   /** the claude session of this conversation (null before the first reply, and on the own loop) */
@@ -51,7 +51,11 @@ export const core = {
   setData: (policy: "trusted" | "any", confirm = false) => invoke("op", { msg: { op: "data", policy, confirm } }),
   setRoute: (on: boolean) => invoke("op", { msg: { op: "route", on } }),
   openKeyPage: (url: string) => invoke("open_key_page", { url }),
+  /** a link in an answer, in the browser (http and https only) */
+  openLink: (url: string) => invoke("open_link", { url }),
   onSettings: (cb: (s: Settings) => void) => listen<Settings>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "settings") cb(e.payload); }),
+  rename: (id: string, title: string) => invoke("op", { msg: { op: "rename", id, title } }),
+  hide: (id: string) => invoke("op", { msg: { op: "hide", id } }),
   sessions: (dirs: string[]) => invoke("op", { msg: { op: "sessions", dirs } }),
   resume: (id: string) => invoke("op", { msg: { op: "resume", id } }),
   onSessions: (cb: (s: Sessions) => void) => listen<Sessions>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "sessions") cb(e.payload); }),
@@ -72,7 +76,19 @@ export const core = {
   /** a menu bar item (macOS): new-chat, open-folder, palette, shortcuts, theme */
   onMenu: (cb: (id: string) => void) => listen<string>("menu", (e) => cb(e.payload)),
   onExit: (cb: () => void) => listen("tazuna-exit", () => cb()),
-  onView: (cb: (v: View) => void) => listen<View>("tazuna-view", (e) => { if ((e.payload as { type?: string }).type === "view") cb(e.payload); }),
+  /** The session as the core sends it: each view carries the blocks from `from` on (the ones that changed), merged here
+   * with the ones kept from before. */
+  onView: (cb: (v: View) => void) => {
+    let blocks: ViewBlock[] = [];
+    return listen<View & { from?: number }>("tazuna-view", (e) => {
+      const p = e.payload;
+      if ((p as { type?: string }).type !== "view") return;
+      const from = p.from ?? 0;
+      if (from > blocks.length) { invoke("op", { msg: { op: "full" } }); return; }
+      blocks = blocks.slice(0, from).concat(p.blocks);
+      cb({ ...p, blocks });
+    });
+  },
 };
 
 /** A path as the core reads it in a message: quoted when it has a space (src/live.rs words). */

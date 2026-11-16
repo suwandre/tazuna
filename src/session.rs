@@ -163,6 +163,8 @@ pub struct Session {
     /// When the plan windows were read (Unix seconds): claude reports them only now and then, so a session opens with the
     /// last reading of any earlier one.
     pub limits_at: Option<u64>,
+    /// When the 5-hour window resets (Unix seconds), as the last reading said.
+    pub limits_reset: Option<u64>,
     /// SubRouter's balance in USD, where a SubRouter key is set.
     pub balance: Option<f64>,
     /// Part of the cost is priced at list rates: a stopped turn reported $0.
@@ -220,8 +222,8 @@ pub fn unix_now() -> u64 {
 }
 
 /// The newest plan reading in the session recordings under `dir` (claude's rate_limit_event): (5-hour %, 7-day %, read
-/// at). A window whose reset time has passed since counts from 0.
-pub fn last_limits(dir: &std::path::Path) -> Option<(f64, f64, u64)> {
+/// at, when the 5-hour window resets). A window whose reset time has passed since counts from 0.
+pub fn last_limits(dir: &std::path::Path) -> Option<(f64, f64, u64, Option<u64>)> {
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir).ok()?.filter_map(|e| e.ok().map(|e| e.path())).collect();
     files.sort();
     let now = unix_now();
@@ -236,7 +238,8 @@ pub fn last_limits(dir: &std::path::Path) -> Option<(f64, f64, u64)> {
             let u = w[k]["utilization"].as_f64()? * 100.0;
             Some(if w[k]["resetsAt"].as_u64().is_some_and(|r| r < now) { 0.0 } else { u })
         };
-        return Some((pct("five_hour")?, pct("seven_day")?, began + d["t"].as_u64().unwrap_or(0) / 1000));
+        let reset = w["five_hour"]["resetsAt"].as_u64().filter(|r| *r >= now);
+        return Some((pct("five_hour")?, pct("seven_day")?, began + d["t"].as_u64().unwrap_or(0) / 1000, reset));
     }
     None
 }
@@ -269,6 +272,7 @@ impl Session {
             limits: None,
             limits_start: None,
             limits_at: None,
+            limits_reset: None,
             balance: None,
             estimated: false,
             busy_ms: 0.0,
@@ -393,7 +397,7 @@ impl Session {
         }).collect();
         json!({"type": "view", "blocks": blocks, "model": self.model, "effort": self.effort, "cwd": self.cwd, "profile": self.profile,
             "mode": self.mode, "activity": format!("{:?}", self.activity), "cost": self.cost(), "usage": usage(&self.usage), "turns": self.turns,
-            "context": self.context, "context_window": self.context_window, "limits": self.limits, "balance": self.balance})
+            "context": self.context, "context_window": self.context_window, "limits": self.limits, "limits_reset": self.limits_reset, "balance": self.balance})
     }
 
     /// Exact cost so far plus an estimate for tokens used since the last reported result.
@@ -639,6 +643,7 @@ impl Session {
                     self.limits = Some((h5 * 100.0, d7 * 100.0));
                     self.limits_start.get_or_insert((h5 * 100.0, d7 * 100.0));
                     self.limits_at = Some(unix_now());
+                    self.limits_reset = w["five_hour"]["resetsAt"].as_u64();
                 }
             }
             (Some("harness_notice"), _) => {
@@ -871,6 +876,12 @@ impl Session {
                     // unknown, and the speed counts from the call's start (a lower bound).
                     if self.model.starts_with("claude-") && c.gen_ms > 0.0 && c.out as f64 / c.gen_ms > 1.0 {
                         c = CallTime { ttft_ms: None, gen_ms: self.now_ms - start, out: t.output };
+                    } else if first.is_some() && self.call_est < 0.5 * t.output as f64 {
+                        // most of the output never streamed: reasoning the provider kept back (ERNIE at high effort: 102
+                        // tokens counted over the 53 ms after its first visible one, 20 s in, read as "1933 tok/s",
+                        // 2026-11-16). Those tokens were made before the first one shown, so the speed counts from the
+                        // call's start (a lower bound); the time to the first visible token stands.
+                        c.gen_ms = self.now_ms - start;
                     }
                     self.calls.push(c);
                 }
@@ -1044,6 +1055,7 @@ mod tests {
         c.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 2000.0);
         c.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "12345678"}})), 2000.0);
         assert_eq!(c.in_flight(), Some((600.0, Some(2000.0), 2.0)), "8 characters: ~2 tokens so far");
+        c.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(1432)}})), 6900.0);
         c.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 10, "output_tokens": 360}})), 7000.0);
         assert_eq!(c.in_flight(), None);
         // the own loop, unstreamed: its message_start goes out with the request, and no token streams
@@ -1061,6 +1073,17 @@ mod tests {
         b.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x"}})), 3900.0);
         b.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 380}})), 3957.0);
         assert_eq!(b.calls, [CallTime { ttft_ms: None, gen_ms: 3957.0, out: 380 }]);
+        // reasoning a provider keeps back: 102 tokens, ~10 of them streamed in 53 ms after 20 s of nothing; the speed
+        // counts from the call's start, not "1933 tok/s"
+        let mut h = Session::new("", "high");
+        h.model = "ernie-5-5-flash-preview".into();
+        h.apply(&json!({"type": "harness_user", "text": "go"}), 0.0);
+        h.apply(&ev(json!({"type": "message_start"})), 0.0);
+        h.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 20_000.0);
+        h.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(40)}})), 20_000.0);
+        h.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 102}})), 20_053.0);
+        assert_eq!(h.calls, [CallTime { ttft_ms: Some(20_000.0), gen_ms: 20_053.0, out: 102 }]);
+        assert_eq!(speed(&h.calls).1.map(|r| r.round()), Some(5.0), "102 tokens over 20 s");
         // the cache's life from what the call wrote, renewed by each call; the last call's cached share
         let mut k = Session::new("", "medium");
         k.apply(&ev(json!({"type": "message_start"})), 0.0);
@@ -1166,7 +1189,7 @@ mod tests {
         std::fs::write(dir.join(format!("{}-a-1.jsonl", now - 7200)), format!("{{}}\n{}\n", ev(0.5, now + 99))).unwrap();
         std::fs::write(dir.join(format!("{}-b-2.jsonl", now - 600)), format!("{{}}\n{}\n", ev(0.12, now - 1))).unwrap();
         std::fs::write(dir.join(format!("{}-c-3.jsonl", now - 60)), "{}\n").unwrap();
-        let (h5, d7, at) = last_limits(&dir).unwrap();
+        let (h5, d7, at, _) = last_limits(&dir).unwrap();
         assert_eq!((h5, (d7 * 10.0).round(), at), (0.0, 140.0, now - 600 + 5), "the newest reading; its 5-hour window has reset");
         std::fs::remove_dir_all(&dir).ok();
     }

@@ -56,12 +56,22 @@ function ChangeCard({ change, busy, onDiff, onUndo }: { change: Change; busy?: b
 export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, onUndo }: Props) {
   // follow new output while the reader is at the bottom; stay put once they scroll up
   const box = useRef<HTMLElement>(null), stick = useRef(true);
+  // a long conversation draws its latest messages; earlier ones on request (a three-day session is ~1,900 blocks)
+  const [limit, setLimit] = useState(40);
+  const hidden = Math.max(0, messages.length - limit);
   useEffect(() => { if (stick.current && box.current) box.current.scrollTop = box.current.scrollHeight; });
   return (
     <section ref={box} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}
       className="min-h-0 flex-1 overflow-auto pb-3 pt-7">
-      {messages.map((m, i) => (
-        <div key={i} className="mx-auto mb-[22px] max-w-[700px] px-7">
+      {hidden > 0 && (
+        <div className="mx-auto mb-5 max-w-[700px] px-7">
+          <button onClick={() => { stick.current = false; setLimit((l) => l + 40); }} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-muted hover:bg-hover">
+            Show {Math.min(40, hidden)} earlier messages <span className="text-faint">({hidden} not shown)</span>
+          </button>
+        </div>
+      )}
+      {messages.slice(hidden).map((m, i) => (
+        <div key={hidden + i} className="mx-auto mb-[22px] max-w-[700px] px-7">
           {m.role === "user" ? (
             <>
               <div className="mb-1.5 text-[12px] font-medium text-faint">You{m.queued && <span className="ml-2 font-normal">· queued, goes after this reply</span>}</div>

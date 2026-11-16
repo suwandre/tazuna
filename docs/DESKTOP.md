@@ -16,9 +16,10 @@ from the same commit; TAZUNA_BIN still overrides it) and CI builds it for macOS,
 desktop.yml, tags desktop-vX.Y.Z). 0.1.2: steps open to show what
 a call was given and what came back (edits as removed and added lines), thinking rows, messages typed during a reply
 queue behind it, attachments (paperclip and drop; images go as images), a macOS menu bar, and Settings (provider keys,
-the data policy, the router). Left for 0.1.x: markdown tables, links and code colours; long transcripts drawn in parts;
-renaming and deleting conversations; the plan window's reset time and the SubRouter balance; a run by hand on Windows
-and Linux.
+the data policy, the router). 0.1.3: markdown tables, links (to the browser,
+http and https only), quotes and coloured code; long conversations send only what changed and draw their latest 40
+messages; conversations renamed or removed from the lists; the plan window's reset time and SubRouter's balance; CI opens
+the app once on macOS, Linux and Windows. 0.1 is complete; next is 0.2.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

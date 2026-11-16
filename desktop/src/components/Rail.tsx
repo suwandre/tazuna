@@ -47,6 +47,8 @@ export const builtInWidgets: Widget[] = [
   { id: "thread", title: "This thread", render: (u) => <>
       <div className="text-[22px] font-semibold tracking-[-0.02em]">{usd(u.threadCost)}</div>
       <div className={small}>{u.threadTurns} {u.threadTurns === 1 ? "turn" : "turns"} · {u.cachedPct}% cached{u.saved > 0 && ` · saved $${u.saved.toFixed(2)}`}</div></> },
+  { id: "balance", title: "SubRouter", render: (u) => u.balance == null ? null : <>
+      <div className="text-[22px] font-semibold tracking-[-0.02em]">${u.balance.toFixed(2)}</div><div className={small}>balance left</div></> },
   { id: "today", title: "Today", render: (u) => u.todaySeries.length < 2 ? null : <><Spark series={u.todaySeries} /><div className={small}>${u.today.toFixed(2)} · {u.todayTurns} turns</div></> },
 ];
 

@@ -65,11 +65,12 @@ function useCore() {
   useEffect(() => { if (inTauri && model) core.models().catch(() => {}); }, [model]);
   // the lists again after each finished turn (the run log has the session then) and on another folder
   const turns = view?.turns ?? -1;
-  useEffect(() => {
+  const refreshSessions = () => {
     const dirs = [home, ...projects].filter((d): d is string => !!d);
-    if (inTauri && view && dirs.length) core.sessions(dirs).catch(() => {});
-  }, [turns, folder, home, projects.length]);
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff };
+    if (inTauri && dirs.length) core.sessions(dirs).catch(() => {});
+  };
+  useEffect(() => { if (view) refreshSessions(); }, [turns, folder, home, projects.length]);
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions };
 }
 
 function useTheme() {
@@ -122,7 +123,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff } = useCore();
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions } = useCore();
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
   const usage = view ? viewUsage(view) : demo.usage;
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
@@ -160,6 +161,8 @@ export default function App() {
         projects={inTauri ? projects.map((p) => ({ name: base(p), path: p, open: p === folder, threads: threads(sessions[p]) })) : demo.projects}
         onNewChat={() => open(null)} onOpenFolder={pick} onOpenProject={(p) => p.path && open(p.path)}
         onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")} onSettings={() => setOverlay("settings")}
+        onRename={inTauri ? (t, title) => core.rename(t.id, title).then(refreshSessions) : undefined}
+        onHide={inTauri ? (t) => core.hide(t.id).then(refreshSessions) : undefined}
         planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
       <main className="flex min-h-0 min-w-0 flex-col bg-main">
         <header data-tauri-drag-region className="flex items-center justify-between border-b border-line-soft px-7 py-3">
@@ -169,7 +172,7 @@ export default function App() {
             {session.branch && <span className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2">{session.branch} · {session.changed} changed</span>}
           </div>
         </header>
-        <Transcript messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)}
+        <Transcript key={view?.session_id ?? folder ?? "chat"} messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)}
           onDiff={(turn, path) => core.diff(turn, path)} onUndo={(turn) => core.undo(turn)} />
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {view?.untrusted && (

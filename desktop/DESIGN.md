@@ -78,6 +78,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - `accent` marks the one thing to act on or the live state: the send button, the running thread, progress fills, the
   context ring. Never decoration, never more than one accented control per area.
 - `ok` and `bad` only for results (diff counts, passed or failed checks). `warn` only for limits and risk.
+- Code in answers has its own four tokens (`code-keyword` = accent-ink, `code-string` ochre, `code-number` plum,
+  `code-comment` = faint, italic), so syntax never borrows the result colours.
 - Text levels: `ink` for content, `ink-2` for secondary content, `muted` for supporting text, `faint` for labels and
   metadata. No grey text on coloured backgrounds.
 - Light and dark are designed together from the same tokens; neither is derived by inverting the other.

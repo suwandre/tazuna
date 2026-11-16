@@ -983,6 +983,10 @@ fn app_server(a: &Args) -> Result<()> {
     let mode = if a.mode == "bypassPermissions" && !live::in_git_repo() { "default" } else { a.mode.as_str() };
     let (t, e) = live.set_mode(mode);
     s.apply(&e, t);
+    // the plan's windows as last read, and SubRouter's balance (on a thread), as the terminal starts
+    if let Some((h5, d7, at, reset)) = labels::dir().ok().and_then(|d| session::last_limits(&d.join("sessions"))) {
+        (s.limits, s.limits_at, s.limits_reset) = (Some((h5, d7)), Some(at), reset);
+    }
     let cwd = std::env::current_dir()?;
     let config = route::RepoConfig::read(&cwd);
     let mut untrusted = (config.runs_code() && !a.trust && !labels::dir().is_ok_and(|b| trust::is_trusted(&b, &cwd))).then(|| config.summary());
@@ -990,11 +994,12 @@ fn app_server(a: &Args) -> Result<()> {
     // closing stdin arrives as a quit, since the router's sender keeps the channel open
     let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
     let stdin_tx = tx.clone();
+    fetch_balance(&tx);
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 19] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
-            "settings", "login", "data", "route", "quit"];
+        const OPS: [&str; 22] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+            "settings", "login", "data", "route", "full", "rename", "hide", "quit"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1007,8 +1012,21 @@ fn app_server(a: &Args) -> Result<()> {
         let _ = stdin_tx.send(json!({"op": "quit"}));
     });
     let out = std::io::stdout();
+    // the blocks as last sent: a view carries only the blocks from the first one that changed (`from`; the window keeps
+    // the rest). A three-day session is ~1,900 blocks and 2 MB, which went out whole up to 20 times a second while a
+    // reply streamed (2026-11-16).
+    let sent = std::cell::RefCell::new(Vec::<String>::new());
     let emit = |s: &Session, untrusted: &Option<String>, live: &live::Live, done_turns: &[AppTurn]| {
         let mut v = s.view();
+        let blocks = v["blocks"].take();
+        let blocks = blocks.as_array().map(Vec::as_slice).unwrap_or_default();
+        let strs: Vec<String> = blocks.iter().map(|b| b.to_string()).collect();
+        let mut prev = sent.borrow_mut();
+        let from = prev.iter().zip(&strs).take_while(|(a, b)| a == b).count();
+        v["from"] = json!(from);
+        v["blocks"] = json!(blocks[from..]);
+        *prev = strs;
+        drop(prev);
         let last_undoable = done_turns.iter().rposition(|t| !t.undone);
         v["changes"] = json!(done_turns.iter().enumerate().map(|(i, t)| json!({
             "turn": i, "at_block": t.at_block, "undone": t.undone, "can_undo": Some(i) == last_undoable,
@@ -1117,6 +1135,20 @@ fn app_server(a: &Args) -> Result<()> {
                             let _ = writeln!(o, "{}", json!({"type": "sessions", "dirs": found}));
                             let _ = o.flush();
                         }
+                        // a conversation renamed or taken off the lists (the CLI's /resume list too)
+                        Some("rename") | Some("hide") => {
+                            let id = cmd["id"].as_str().unwrap_or_default();
+                            let (field, value) = if cmd["op"] == "rename" {
+                                ("title", json!(cmd["title"].as_str().unwrap_or_default().trim().chars().take(120).collect::<String>()))
+                            } else {
+                                ("hidden", json!(true))
+                            };
+                            if id.is_empty() || id.contains(['/', '\\']) {
+                                info(&mut s, "no such conversation".into());
+                            } else if let Err(e) = labels::dir().and_then(|b| name_conversation(&b, id, field, value)) {
+                                info(&mut s, format!("{e:#}"));
+                            }
+                        }
                         // an earlier conversation of this folder, continued (claude only, as /resume)
                         Some("resume") => {
                             let id = cmd["id"].as_str().unwrap_or_default();
@@ -1163,6 +1195,8 @@ fn app_server(a: &Args) -> Result<()> {
                                 agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note, false);
                             }
                         }
+                        // SubRouter's balance, read on a thread
+                        Some("tazuna_balance") => s.balance = cmd["usd"].as_f64(),
                         Some("tazuna_chat_event") => {
                             if cmd["e"]["type"] == "result" && let Some(r) = cmd["e"]["result"].as_str() {
                                 last_reply = r.to_string();
@@ -1286,6 +1320,8 @@ fn app_server(a: &Args) -> Result<()> {
                             Ok(()) => untrusted = None,
                             Err(e) => info(&mut s, format!("{e:#}")),
                         },
+                        // the window lost track of the blocks (a reload): the next view carries them all
+                        Some("full") => sent.borrow_mut().clear(),
                         Some("quit") => return Ok(()),
                         _ => info(&mut s, format!("unknown command: {cmd}")),
                     }
@@ -1301,6 +1337,9 @@ fn app_server(a: &Args) -> Result<()> {
             }
             if e["type"] == "result" && let Some(t) = turn.as_mut() {
                 t.1 = true;
+            }
+            if e["type"] == "result" && e["tazuna_paid"] == true {
+                fetch_balance(&tx); // a run on SubRouter spent some of it
             }
             s.apply(&e, t);
             changed = true;
@@ -1818,7 +1857,30 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
     }
     let mut both: Vec<(usize, Earlier)> = last_line.into_iter().zip(out).collect();
     both.sort_by_key(|(n, _)| std::cmp::Reverse(*n));
-    both.into_iter().map(|(_, e)| e).collect()
+    // names given and conversations taken off the list (the desktop app's rename and remove; the recordings stay)
+    let names = conversation_names(base);
+    both.into_iter().map(|(_, e)| e).filter(|e| names[&e.id]["hidden"] != true).map(|mut e| {
+        if let Some(t) = names[&e.id]["title"].as_str() {
+            e.first = t.to_string();
+        }
+        e
+    }).collect()
+}
+
+/// conversations.json in tazuna's data folder: {"<session id>": {"title": "...", "hidden": true}}.
+fn conversation_names(base: &std::path::Path) -> serde_json::Value {
+    std::fs::read_to_string(base.join("conversations.json")).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| json!({}))
+}
+
+/// A conversation renamed (`title`) or taken off the lists (`hidden`); the recording and the run log stay as they are.
+fn name_conversation(base: &std::path::Path, id: &str, field: &str, value: serde_json::Value) -> Result<()> {
+    let mut all = conversation_names(base);
+    if !all.is_object() {
+        all = json!({});
+    }
+    all[id][field] = value;
+    std::fs::write(base.join("conversations.json"), serde_json::to_string_pretty(&all)?)?;
+    Ok(())
 }
 
 /// The parts of a recording that are conversation `id`: a recording holds several when `/new` or `/resume` started another
@@ -1935,8 +1997,8 @@ fn run_live(
     }
     // the plan's windows as last read (claude reports them only now and then); SubRouter's balance, on a thread
     let last_read = labels::dir().ok().and_then(|d| session::last_limits(&d.join("sessions")));
-    if let Some((h5, d7, at)) = last_read {
-        (s.limits, s.limits_at) = (Some((h5, d7)), Some(at));
+    if let Some((h5, d7, at, reset)) = last_read {
+        (s.limits, s.limits_at, s.limits_reset) = (Some((h5, d7)), Some(at), reset);
     }
     let (status_tx, status_rx) = std::sync::mpsc::channel::<serde_json::Value>();
     // the per-message router (`/route on|off`, `--no-route`) and the last reply it shows the model check

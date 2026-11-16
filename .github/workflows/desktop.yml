@@ -56,6 +56,27 @@ jobs:
         run: |
           npm ci
           npx tauri build
+      # the app opened once on each system: it must start the tazuna it carries (an app server for a chat) within 20 s
+      - name: open the app (smoke)
+        shell: bash
+        run: |
+          app=desktop/src-tauri/target/release/tazuna-desktop
+          case "$RUNNER_OS" in
+            Linux) (xvfb-run -a "$app" > app.log 2>&1 &) ;;
+            Windows) (./"$app.exe" > app.log 2>&1 &) ;;
+            macOS) ("$app" > app.log 2>&1 &) ;;
+          esac
+          for i in $(seq 1 20); do
+            if [ "$RUNNER_OS" = Windows ]; then
+              tasklist //FI "IMAGENAME eq tazuna.exe" | grep -qi tazuna.exe && found=1
+            else
+              pgrep -f "tazuna app-server" > /dev/null && found=1
+            fi
+            [ -n "$found" ] && break
+            sleep 1
+          done
+          cat app.log || true
+          [ -n "$found" ] && echo "the app started its tazuna after ${i} s" || { echo "the app did not start its tazuna"; exit 1; }
       - name: collect the installers
         shell: bash
         run: |

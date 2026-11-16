@@ -61,6 +61,13 @@ export function usage(v: View): Usage {
   const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
   const u = v.usage, read = u.input + u.cache_write + u.cache_read;
   return { contextPct: Math.min(100, Math.round((100 * v.context) / win)), contextUsed: k(v.context), contextMax: k(win),
-    plan5h: v.limits ? Math.round(v.limits[0]) : null, plan5hReset: "", planWeek: v.limits ? Math.round(v.limits[1]) : null,
-    threadCost: v.cost, threadTurns: v.turns, cachedPct: read ? Math.round((100 * u.cache_read) / read) : 0, saved: 0, today: v.cost, todayTurns: v.turns, todaySeries: [] };
+    plan5h: v.limits ? Math.round(v.limits[0]) : null, plan5hReset: resetIn(v.limits_reset), planWeek: v.limits ? Math.round(v.limits[1]) : null,
+    threadCost: v.cost, threadTurns: v.turns, cachedPct: read ? Math.round((100 * u.cache_read) / read) : 0, saved: 0, today: v.cost, todayTurns: v.turns, todaySeries: [], balance: v.balance };
+}
+
+/** "in 2 h 14 min" until the plan's 5-hour window resets; empty when unknown or past. */
+export function resetIn(at?: number | null, now = Date.now() / 1000): string {
+  if (!at || at <= now) return "";
+  const m = Math.round((at - now) / 60), h = Math.floor(m / 60);
+  return h ? `in ${h} h ${m % 60} min` : `in ${m} min`;
 }
