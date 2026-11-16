@@ -497,7 +497,8 @@ pub struct Live {
     last_assistant: Option<String>,
     /// A conversation rewind waiting for the file rewind's answer: where to resume (None inside: start fresh).
     pending_resume: Option<Option<String>>,
-    /// The next spawn resumes the session at this message (`--resume-session-at`, in a fork).
+    /// The next spawn resumes the session at this message, in a fork: claude's reply (`--resume-session-at`), or the own
+    /// loop's typed message it goes back to before (`--resume-before`).
     resume_at: Option<String>,
     /// The next spawn continues `session_id` in a fork (a side chat: the original stays as it was).
     pub fork_next: bool,
@@ -701,8 +702,9 @@ impl Live {
             None
         };
         let sent = first.as_deref().unwrap_or(text);
-        // a typed message is a point /rewind can go back to (claude keeps the id we give it)
-        let uuid = (self.provider.is_none()).then(new_uuid);
+        // a typed message is a point /rewind can go back to (claude keeps the id we give it; the own loop marks where it
+        // begins in its saved history)
+        let uuid = Some(new_uuid());
         if let Some(u) = &uuid {
             self.checkpoints.push(Checkpoint { uuid: u.clone(), text: text.to_string(), before: self.last_assistant.clone() });
         }
@@ -763,9 +765,6 @@ impl Live {
     pub fn switch(&mut self, model: String, effort: String, route: Option<(String, String, String)>) -> Result<(f64, Value)> {
         if !self.idle() {
             bail!("wait until the run has finished (or stop it with esc), then switch");
-        }
-        if route.is_some() && self.permission_mode == "plan" {
-            bail!("the own loop has no plan mode yet: leave plan mode first (shift-tab)");
         }
         // claude resumes its session on the new model; the own loop starts its engine without one
         let goes_on = route.is_none() && self.provider.is_none();
@@ -894,8 +893,11 @@ impl Live {
         if !self.idle() {
             bail!("wait until the run has finished (or stop it with esc)");
         }
-        if resume.is_some() && self.provider.is_some() {
-            bail!("only claude can continue an earlier conversation: /model to a Claude model first");
+        // a conversation goes on where it ran: claude's on claude, the own loop's ("own-...") on the own loop
+        match (&resume, &self.provider) {
+            (Some(id), Some(_)) if !id.starts_with("own-") => bail!("this conversation ran on Claude: /model to a Claude model first"),
+            (Some(id), None) if id.starts_with("own-") => bail!("this conversation ran on the own loop: /model to the model it used first"),
+            _ => {}
         }
         self.respawn(self.model.clone(), self.effort.clone());
         self.checkpoints.clear();
@@ -911,6 +913,19 @@ impl Live {
     /// `--escalate MODEL[:EFFORT]`: fix rounds after failed tests run on MODEL (with `--provider`: on claude).
     pub fn set_escalate(&mut self, model: String, effort: String) {
         self.escalate = Some((model, effort));
+    }
+
+    /// A model the user picked (the /model picker, the app's): the lane's cascade to a stronger model no longer applies.
+    /// Before 0.1.141 an own-loop model picked in a tiny repo (the "small" lane) had every reply that changed no file, an
+    /// answer to a question too, done again on Opus.
+    pub fn picked(&mut self) {
+        self.escalate = None;
+    }
+
+    /// Where the run goes after a failed check or a cheap model giving up (None: nowhere).
+    #[cfg(test)]
+    pub fn escalation(&self) -> Option<&(String, String)> {
+        self.escalate.as_ref()
     }
 
     /// Nothing in flight: every run has ended and no message is waiting.
@@ -956,9 +971,6 @@ impl Live {
 
     /// Switches the permission mode (also mid-run). Before the process starts it only sets the starting mode.
     pub fn set_mode(&mut self, mode: &str) -> (f64, Value) {
-        if self.provider.is_some() && mode == "plan" {
-            return self.record(json!({"type": "harness_notice", "text": "the own loop (--provider) has no plan mode yet: auto, ask or edits", "error": true}));
-        }
         self.permission_mode = mode.to_string();
         if let Some(stdin) = self.stdin.as_mut() {
             self.requests_sent += 1;
@@ -972,8 +984,10 @@ impl Live {
     /// `rewind_files`) and/or the conversation from there on (`conversation`: claude resumes at the last reply before
     /// it, in a forked session). Only while idle and on claude; the own loop keeps no checkpoints.
     pub fn rewind(&mut self, i: usize, files: bool, conversation: bool) -> Result<(f64, Value)> {
-        if self.provider.is_some() {
-            bail!("rewind needs claude's checkpoints; the own loop (--provider) has none yet");
+        // the own loop keeps where each typed message begins in its saved history (the conversation goes back by that), but
+        // no file checkpoints: the desktop puts files back from tazuna's own turn snapshots
+        if self.provider.is_some() && files {
+            bail!("the own loop (--provider) can rewind the conversation, not files: claude keeps the file checkpoints");
         }
         if !self.idle() {
             bail!("wait until the run has finished (or stop it with esc), then rewind");
@@ -995,7 +1009,8 @@ impl Live {
         }
         if conversation {
             self.checkpoints.truncate(i);
-            self.pending_resume = Some(cp.before.clone());
+            // claude resumes at the reply before the message; the own loop's history is cut before the message itself
+            self.pending_resume = Some(if self.provider.is_some() { Some(cp.uuid.clone()) } else { cp.before.clone() });
             if !files {
                 self.resume_before();
             } // with files: once claude has answered the file rewind (its checkpoints live in that process)
@@ -1552,10 +1567,7 @@ impl Live {
 
     fn spawn(&mut self) -> Result<()> {
         if let Some((url, key_env)) = self.provider.clone() {
-            // the engine asks before commands (ask, edits) and edits (ask); it has no plan mode yet
-            if self.permission_mode == "plan" {
-                bail!("--provider has no plan mode yet (auto, ask or edits)");
-            }
+            // the engine asks before commands (ask, edits, plan) and edits (ask); plan refuses edits
             // the own loop: lean prompt and tools, the repo's instructions in the prompt
             // the own loop has no Grep/Glob tools: its runs searched with grep in bash anyway, and cut file reads at the
             // bash cap (2026-10-24)
@@ -1664,6 +1676,12 @@ impl Live {
             // saved (until 0.1.119 it was never passed, and an own-loop session always started empty)
             if let Some(id) = &self.session_id {
                 cmd.args(["--resume", id]);
+                // "edit from here": the history up to before that message, in a fork (the original stays as it was)
+                if let Some(at) = self.resume_at.take() {
+                    cmd.args(["--resume-before", &at, "--fork-session"]);
+                } else if std::mem::take(&mut self.fork_next) {
+                    cmd.arg("--fork-session"); // a side chat
+                }
             }
             return self.start(cmd);
         }

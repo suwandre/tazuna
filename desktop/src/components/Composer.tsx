@@ -36,7 +36,7 @@ const MODES: [string, string][] = [
   ["auto", "runs commands and edits without asking"],
   ["ask", "asks before each command and edit"],
   ["edits", "edits freely, asks before commands"],
-  ["plan", "plans first, asks before starting (Claude only)"],
+  ["plan", "reads only: no edits, asks before commands"],
 ];
 
 const pill = "inline-flex items-center gap-1.5 rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2";

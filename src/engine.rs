@@ -215,12 +215,19 @@ pub fn serve(args: &[String]) -> Result<()> {
     // `--resume ID` (tazuna -c / --resume): the history this session left on disk, when it was on the same API (until 0.1.119
     // the flag was ignored and a resumed own-loop session started empty, while a Claude one went on)
     let resume = flag("--resume");
-    let resumed: Option<(String, Vec<Value>)> = resume.as_deref().and_then(|id| Some((id.to_string(), load_history(id, api)?)));
+    let mut resumed: Option<(String, History)> = resume.as_deref().and_then(|id| Some((id.to_string(), load_history(id, api)?)));
     if resume.is_some() && resumed.is_none() {
         emit(&json!({"type": "system", "subtype": "resume_failed", "message": "this session left no history this model can read (an earlier tazuna, or another kind of provider): starting fresh"}));
     }
-    let session = resumed.as_ref().map(|r| r.0.clone()).unwrap_or_else(|| format!("own-{}-{:x}", std::process::id(),
+    // `--resume-before UUID` (the desktop's "edit from here"): the history up to before that typed message
+    if let (Some((_, h)), Some(at)) = (resumed.as_mut(), flag("--resume-before")) {
+        h.cut_before(&at);
+    }
+    // `--fork-session` (a rewind, a side chat): the conversation goes on under a new id, and the original's file stays as it was
+    let fork = args.iter().any(|a| a == "--fork-session");
+    let session = resumed.as_ref().filter(|_| !fork).map(|r| r.0.clone()).unwrap_or_else(|| format!("own-{}-{:x}", std::process::id(),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
+    let marks = resumed.as_ref().map(|r| r.1.marks.clone()).unwrap_or_default();
     let tools = crate::mcp::tools();
     // TAZUNA_SEARCH_TOOLS (`--search-tools`): grep and glob as tools of their own, as DeepSeek's own harness has: there
     // DeepSeek searched and read through them and ran bash 6 times a task; in the own loop it grepped, cat-ed and sed-ed
@@ -266,7 +273,8 @@ pub fn serve(args: &[String]) -> Result<()> {
         tools: fns,
         // Responses and Messages keep the system prompt outside the history
         msgs: if api == Api::Chat { vec![json!({"role": "system", "content": system})] } else { vec![] }.into_iter()
-            .chain(resumed.map(|r| r.1).unwrap_or_default()).collect(),
+            .chain(resumed.map(|r| r.1.msgs).unwrap_or_default()).collect(),
+        marks,
         saved: history_file(&session),
         server: crate::mcp::Server::new(cwd).with_read_dedupe(),
         hub,
@@ -294,6 +302,11 @@ pub fn serve(args: &[String]) -> Result<()> {
             },
         };
         if msg["type"] == "user" {
+            // a typed message (tazuna gives it an id) is a point the conversation can go back to
+            if msg["tazuna_followup"] != true && let Some(u) = msg["uuid"].as_str() {
+                let at = loop_.msgs.len() - loop_.skip();
+                loop_.marks.push((u.to_string(), at));
+            }
             loop_.run(&msg["message"]["content"], msg["tazuna_followup"] == true, &rx);
             loop_.save();
         }
@@ -310,10 +323,31 @@ fn history_file(session: &str) -> Option<std::path::PathBuf> {
     ours.then(|| crate::labels::dir().ok()).flatten().map(|d| d.join("own-sessions").join(format!("{session}.json")))
 }
 
+/// A saved conversation: its messages (without a Chat system prompt) and where each typed message begins in them.
+#[derive(Debug, PartialEq)]
+struct History {
+    msgs: Vec<Value>,
+    /// (the message's id from tazuna, its index in `msgs`)
+    marks: Vec<(String, usize)>,
+}
+
+impl History {
+    /// Back to before the typed message `uuid`; an id it never saw (a history from before 0.1.141) leaves it whole.
+    fn cut_before(&mut self, uuid: &str) {
+        if let Some(i) = self.marks.iter().position(|m| m.0 == uuid) {
+            self.msgs.truncate(self.marks[i].1);
+            self.marks.truncate(i);
+        }
+    }
+}
+
 /// A saved history, when it was written for the same API (a Chat history means nothing to Responses or Messages).
-fn load_history(session: &str, api: Api) -> Option<Vec<Value>> {
+fn load_history(session: &str, api: Api) -> Option<History> {
     let v: Value = serde_json::from_str(&std::fs::read_to_string(history_file(session)?).ok()?).ok()?;
-    (v["api"] == format!("{api:?}")).then(|| v["msgs"].as_array().cloned().unwrap_or_default())
+    let msgs = v["msgs"].as_array().cloned().unwrap_or_default();
+    let marks = v["marks"].as_array().into_iter().flatten()
+        .filter_map(|m| Some((m[0].as_str()?.to_string(), m[1].as_u64().filter(|&i| i as usize <= msgs.len())? as usize))).collect();
+    (v["api"] == format!("{api:?}")).then_some(History { msgs, marks })
 }
 
 struct Loop {
@@ -326,6 +360,8 @@ struct Loop {
     price: Price,
     tools: Vec<Value>,
     msgs: Vec<Value>,
+    /// Where each typed message begins in the saved history (`--resume-before`).
+    marks: Vec<(String, usize)>,
     /// Where the history goes after each run, for a later `--resume` (the session id it started with; a moved
     /// conversation's cache key changes `session`, not this).
     saved: Option<std::path::PathBuf>,
@@ -688,11 +724,15 @@ impl Loop {
     /// The history after a run, for `--resume` (the system prompt is rebuilt at start, so a Chat history leaves it out).
     fn save(&self) {
         let Some(p) = &self.saved else { return };
-        let skip = usize::from(self.api == Api::Chat).min(self.msgs.len());
         if let Some(d) = p.parent() {
             let _ = std::fs::create_dir_all(d);
         }
-        let _ = std::fs::write(p, json!({"api": format!("{:?}", self.api), "msgs": &self.msgs[skip..]}).to_string());
+        let _ = std::fs::write(p, json!({"api": format!("{:?}", self.api), "msgs": &self.msgs[self.skip()..], "marks": self.marks}).to_string());
+    }
+
+    /// The messages before the conversation in `msgs`: a Chat history's system prompt (not saved; rebuilt at start).
+    fn skip(&self) -> usize {
+        usize::from(self.api == Api::Chat).min(self.msgs.len())
     }
 
     /// One user message: model calls and tool runs until the model answers without tools, or a cap or interrupt ends it.
@@ -1231,6 +1271,7 @@ pub fn explore_serve(args: &[String]) -> Result<()> {
         price,
         tools,
         msgs: vec![],
+        marks: vec![],
         saved: None, // the reviewer's one-off loop keeps nothing
         server: crate::mcp::Server::new(cwd),
                 hub: None,
@@ -1342,13 +1383,17 @@ impl Loop {
                 _ => Permit::Deny("The explorer can only search, list and read.".into()),
             };
         }
+        // plan mode (and a side chat): reads only; edits are refused, commands ask as in "ask"
+        if self.mode == "plan" && matches!(tool, "write" | "edit") {
+            return Permit::Deny("Plan mode: nothing is changed here. Describe the change instead.".into());
+        }
         // fetch reaches the network like bash: a page's injected text could make it send data out (security review,
         // 2026-11-05), so it asks wherever bash asks
         let ask = from_text || match self.mode.as_str() {
-            "default" => matches!(tool, "bash" | "write" | "edit" | "fetch"),
+            "default" | "plan" => matches!(tool, "bash" | "write" | "edit" | "fetch"),
             "acceptEdits" => matches!(tool, "bash" | "fetch"),
             _ => false,
-        } || (matches!(self.mode.as_str(), "default" | "acceptEdits") && tool == "mcp" && self.hub.as_ref().is_some_and(|h| !h.reads_only(input)));
+        } || (matches!(self.mode.as_str(), "default" | "acceptEdits" | "plan") && tool == "mcp" && self.hub.as_ref().is_some_and(|h| !h.reads_only(input)));
         // an MCP tool can write (a comment, a ticket moved) where the service allows it: it asks where commands ask,
         // except for reading a tool's description
         if !ask {
@@ -2108,6 +2153,7 @@ mod tests {
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2159,6 +2205,7 @@ session: "s".into(),
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "You are a helpful assistant."})],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
             hub: None,
@@ -2207,6 +2254,7 @@ session: "s".into(),
             tools: vec![],
             msgs: vec![json!({"role": "user", "content": "fix it"}), json!({"type": "reasoning", "encrypted_content": "pool-50"}),
                        json!({"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "plan: parser first"}]})],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2259,6 +2307,7 @@ session: "s1".into(),
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2322,6 +2371,7 @@ data: {\"choices\":[{\"delta\":{\"reasoning\":\"at a\"}}]}\n\n";
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2396,6 +2446,7 @@ session: "s".into(),
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2497,6 +2548,7 @@ data: {\"type\":\"message_stop\"}\n";
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2801,6 +2853,7 @@ session: "s".into(),
             msgs: vec![json!({"role": "user", "content": "fix it"}),
                 json!({"role": "assistant", "content": [{"type": "thinking", "thinking": "hm", "signature": "x"}, {"type": "tool_use", "id": "t1", "name": "bash", "input": {}}]}),
                 json!({"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]})],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(std::env::temp_dir()),
                         hub: None,
@@ -2845,6 +2898,7 @@ session: "s".into(),
             price: (0.0, 0.0, 0.0),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(std::env::temp_dir()),
                         hub: None,
@@ -2876,12 +2930,23 @@ session: "s".into(),
         let id = format!("own-test-{}", std::process::id());
         let p = super::history_file(&id).unwrap();
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
-        let msgs = vec![json!({"role": "user", "content": "fix it"}), json!({"role": "assistant", "content": "done"})];
-        std::fs::write(&p, json!({"api": format!("{:?}", super::Api::Chat), "msgs": msgs}).to_string()).unwrap();
+        let msgs = vec![json!({"role": "user", "content": "fix it"}), json!({"role": "assistant", "content": "done"}),
+            json!({"role": "user", "content": "now the docs"}), json!({"role": "assistant", "content": "done too"})];
+        // marks: where each typed message begins; one past the end is not a place in it
+        std::fs::write(&p, json!({"api": format!("{:?}", super::Api::Chat), "msgs": msgs, "marks": [["u1", 0], ["u2", 2], ["bad", 9]]}).to_string()).unwrap();
         let (same, other) = (super::load_history(&id, super::Api::Chat), super::load_history(&id, super::Api::Messages));
         std::fs::remove_file(&p).unwrap();
-        assert_eq!(same, Some(msgs));
+        let mut h = same.unwrap();
+        assert_eq!((h.msgs.len(), h.marks.len()), (4, 2));
         assert_eq!(other, None, "a Chat history is not sent to the Messages API");
+        // "edit from here" on the second message: the conversation before it
+        h.cut_before("unknown");
+        assert_eq!(h.msgs.len(), 4, "an id it never saw leaves it whole");
+        h.cut_before("u2");
+        assert_eq!((h.msgs.len(), h.marks.len()), (2, 1));
+        assert_eq!(h.msgs[1]["content"], "done");
+        h.cut_before("u1");
+        assert!(h.msgs.is_empty() && h.marks.is_empty(), "before the first message: nothing");
     }
 
     #[test]
@@ -2933,6 +2998,7 @@ session: "s".into(),
             price: (1e-6, 1e-7, 4e-6),
             tools: vec![],
             msgs: vec![json!({"role": "system", "content": "sys"})],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(dir.clone()),
                         hub: None,
@@ -2983,6 +3049,7 @@ session: "s".into(),
             price: (0.0, 0.0, 0.0),
             tools: vec![],
             msgs: vec![],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(std::env::temp_dir()),
                         hub: None,
@@ -3035,6 +3102,7 @@ session: "s".into(),
             price: (0.0, 0.0, 0.0),
             tools: vec![],
             msgs: vec![],
+            marks: vec![],
             saved: None,
             server: crate::mcp::Server::new(dir.to_path_buf()),
                         hub: None,
@@ -3085,6 +3153,14 @@ session: "s".into(),
         let (_tx, rx) = std::sync::mpsc::channel();
         asking_loop("acceptEdits", &dir, ev.clone(), None).run(&json!("write b.txt"), false, &rx);
         assert!(dir.join("b.txt").exists() && !ev.borrow().iter().any(|e| e["type"] == "control_request"));
+        // plan mode (a side chat): the edit is refused without a question, and the model hears why
+        std::fs::remove_file(dir.join("b.txt")).unwrap();
+        let ev = Rc::new(RefCell::new(vec![]));
+        let (_tx, rx) = std::sync::mpsc::channel();
+        asking_loop("plan", &dir, ev.clone(), None).run(&json!("write b.txt"), false, &rx);
+        assert!(!dir.join("b.txt").exists() && !ev.borrow().iter().any(|e| e["type"] == "control_request"));
+        let result = ev.borrow().iter().find(|e| e["type"] == "user").cloned().unwrap();
+        assert!(result["message"]["content"][0]["content"].as_str().unwrap().starts_with("Plan mode"));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -16,6 +16,24 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.141 (2026-11-16): the own loop resumes, edits from an earlier message, forks and has plan mode
+
+- The engine saves where each typed message begins in its history (`marks` beside `msgs`). `--resume ID --resume-before
+  UUID` goes on from before that message, and `--fork-session` goes on under a new id with the original's file as it was:
+  the desktop's "edit from here" and side chat on own-loop models. `/rewind` there rewinds the conversation, not files
+  (claude keeps the file checkpoints; the desktop puts files back from tazuna's own turn snapshots).
+- Plan mode on the own loop: reads only. Edits are refused with a reason, commands and fetches ask. The side chat runs in
+  it; shift-tab and the app reach it on every model.
+- The /resume lists (terminal and app) include own-loop conversations, and resuming one moves to the model it ran on
+  (its saved history is that provider's); a Claude conversation resumed while on the own loop moves back to Claude.
+- A model you pick (/model, the app's picker) ends the lane's cascade: before, an own-loop model picked in a tiny repo
+  (the "small" lane) had every reply that changed no file, answers to questions too, done again on Opus.
+- A resumed conversation that was edited from an earlier message no longer shows the messages that went to its fork.
+- Checked on ERNIE 5.5 Flash (Mortera, free): two messages, an edit from the second, and the model recalled only the
+  first word; the original's history kept its 4 messages; resumed from Claude it moved to ERNIE and recalled both; a side
+  chat forked in plan mode recalled both and wrote nothing.
+- No other metric moves; 177 tests.
+
 ## 0.1.140 (2026-11-16): the Windows build is released again
 
 - 0.1.135 to 0.1.139 released no Windows build: two tests failed there, both test faults. The creator folder test wrote

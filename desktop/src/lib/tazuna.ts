@@ -28,7 +28,7 @@ export type View = {
   cost: number; usage: Usage; turns: number; context: number; context_window?: number; limits?: [number, number]; limits_reset?: number | null; balance?: number | null;
   /** what an untrusted folder's config would run (it runs lean until trusted) */
   untrusted?: string | null;
-  /** the claude session of this conversation (null before the first reply, and on the own loop) */
+  /** the conversation's session: claude's id, or the own loop's ("own-...") (null before the first reply) */
   session_id?: string | null;
   /** the oldest open permission question (text made safe by the core) */
   asking?: { tool: string; what: string; note: string; once: boolean; queued: number } | null;

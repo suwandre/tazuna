@@ -40,6 +40,8 @@ conversation's). 0.1.17: the core puts a side chat in plan mode itself, and the 
 share of input the cache served, the plan now; cost per day; by model; and per version and model what the run log knows of
 trouble in your own runs (stopped, errors, failed checks). Not yet: the cache's saving in dollars (worked back from run
 costs the prices were too noisy to show) and real use's corrections and rewinds (bench/realuse.py reads recordings).
+0.1.19 (with tazuna 0.1.141): own-loop models get "edit from here", side chats (on the conversation's own provider),
+resume from the sidebar (moving to the model it ran on), and plan mode.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

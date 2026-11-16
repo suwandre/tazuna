@@ -1089,7 +1089,7 @@ fn app_server(a: &Args) -> Result<()> {
                                 agent_send(&mut live, &mut s, text, &cwd, &mut turn, &mut undo_note, true);
                             }
                         }
-                        // the permission mode: auto, ask, edits or plan (the own loop has no plan)
+                        // the permission mode: auto, ask, edits or plan (on the own loop: reads only, edits refused)
                         Some("mode") => {
                             let mode = match cmd["mode"].as_str() {
                                 Some("auto") => Some("bypassPermissions"),
@@ -1189,11 +1189,25 @@ fn app_server(a: &Args) -> Result<()> {
                                 s.apply(&me, mt);
                                 info(&mut s, "no such conversation".into());
                             } else {
-                                if let Some(m) = cmd["model"].as_str().filter(|m| word(m) && live.provider.is_none()) {
+                                // on the own loop: the conversation's model on its provider (the window names the route), so the
+                                // engine can read its saved history; on claude: the model by name
+                                let want = (cmd["url"].as_str(), cmd["key_env"].as_str());
+                                let model = cmd["model"].as_str().filter(|m| word(m));
+                                let effort = cmd["effort"].as_str().filter(|e| word(e)).map(String::from);
+                                if let (Some(m), Some(_)) = (model, want.0) {
+                                    let cs = app_catalog()?;
+                                    match cs.iter().find(|c| c.model == m && c.route.as_ref().map(|r| (Some(r.0.as_str()), Some(r.1.as_str()))) == Some(want)) {
+                                        Some(c) => match apply_choice(&mut live, c, effort.clone()) {
+                                            Ok((t, e)) => s.apply(&e, t),
+                                            Err(e) => info(&mut s, format!("{e:#}")),
+                                        },
+                                        None => info(&mut s, format!("no model {m} on that provider in the catalog")),
+                                    }
+                                } else if let Some(m) = model.filter(|_| live.provider.is_none()) {
                                     live.model = m.to_string();
                                 }
-                                if let Some(e) = cmd["effort"].as_str().filter(|e| word(e)) {
-                                    live.effort = e.to_string();
+                                if let Some(e) = effort {
+                                    live.effort = e;
                                 }
                                 match live.restart(Some(id.to_string())) {
                                     Ok((t, _)) => {
@@ -1298,7 +1312,7 @@ fn app_server(a: &Args) -> Result<()> {
                             let cp = cmd["cp"].as_u64().unwrap_or(u64::MAX) as usize;
                             match edit_points(&s, &live).get(cp).copied() {
                                 _ if !live.idle() || turn.is_some() => info(&mut s, "wait until the run has finished (or stop it), then edit".into()),
-                                None => info(&mut s, "that message cannot be edited from here (only claude keeps checkpoints)".into()),
+                                None => info(&mut s, "that message cannot be edited from here (sent before this window opened it, or by an earlier tazuna)".into()),
                                 Some(block) => {
                                     let later: Vec<&AppTurn> = done_turns.iter().filter(|t| t.at_block > block && !t.undone).collect();
                                     let files_back = if cmd["files"] == true && let Some(first) = later.first() {
@@ -1944,6 +1958,8 @@ const CTX_HINT: u64 = 60_000;
 /// and the recordings that hold it (one per tazuna run it went through).
 struct Earlier {
     id: String,
+    /// the model of its latest run (an own-loop conversation goes on there)
+    model: String,
     first: String,
     last_at: u64,
     messages: usize,
@@ -1968,19 +1984,20 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
     let mut last_line: Vec<usize> = vec![];
     for (n, r) in std::fs::read_to_string(base.join("runs.jsonl")).unwrap_or_default().lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).enumerate() {
         let m = &r["meta"];
-        let Some(sid) = m["session_id"].as_str().filter(|s| !s.starts_with("own-")) else { continue };
+        let Some(sid) = m["session_id"].as_str() else { continue };
         if !m["cwd"].as_str().map(std::path::PathBuf::from).is_some_and(|c| c.canonicalize().unwrap_or(c) == cwd) {
             continue;
         }
         let (ts, rec) = (r["ts"].as_u64().unwrap_or(0), m["recording"].as_str().map(std::path::PathBuf::from));
         let i = out.iter().position(|s| s.id == sid).unwrap_or_else(|| {
-            out.push(Earlier { id: sid.to_string(), first: r["prompt"].as_str().unwrap_or_default().to_string(), last_at: ts, messages: 0, recordings: vec![] });
+            out.push(Earlier { id: sid.to_string(), model: String::new(), first: r["prompt"].as_str().unwrap_or_default().to_string(), last_at: ts, messages: 0, recordings: vec![] });
             last_line.push(0);
             out.len() - 1
         });
         last_line[i] = n;
         let e = &mut out[i];
         e.messages += 1;
+        e.model = m["model"].as_str().unwrap_or_default().to_string();
         e.last_at = e.last_at.max(ts);
         if let Some(p) = rec.filter(|p| !e.recordings.contains(p)) {
             e.recordings.push(p);
@@ -2015,8 +2032,9 @@ fn name_conversation(base: &std::path::Path, id: &str, field: &str, value: serde
 }
 
 /// The parts of a recording that are conversation `id`: a recording holds several when `/new` or `/resume` started another
-/// in the same run. Parts are split at their notices; a part is `id`'s when claude's init in it names that session. Each
-/// part ran on a claude process of its own, whose reported cost started at $0.
+/// in the same run, or an edit from an earlier message went on in a fork. Parts are split at their notices; a part is
+/// `id`'s when the init in it names that session. Each part ran on a process of its own, whose reported cost started at
+/// $0. A fork's part starts at its rewind notice: the messages it kept from before show in the original's.
 fn conversation<'a>(events: &'a [(f64, serde_json::Value)], id: &str) -> Vec<Vec<&'a (f64, serde_json::Value)>> {
     let mut parts: Vec<Vec<&(f64, serde_json::Value)>> = vec![vec![]];
     for e in events {
@@ -2024,6 +2042,9 @@ fn conversation<'a>(events: &'a [(f64, serde_json::Value)], id: &str) -> Vec<Vec
         if e.1["type"] == "harness_notice" && (text.starts_with("── new conversation") || text.starts_with("── resumed session")) {
             parts.push(vec![]);
             continue;
+        }
+        if e.1["type"] == "harness_notice" && (text.starts_with("── rewound conversation") || text.starts_with("── rewound files and conversation")) {
+            parts.push(vec![]);
         }
         parts.last_mut().expect("one at least").push(e);
     }
@@ -2042,8 +2063,6 @@ fn new_conversation(live: &mut live::Live, s: &mut Session, v: &mut View, earlie
     }
 }
 
-/// `/new` and `/resume` (the terminal's and the app's): a fresh conversation, or an earlier one continued with its
-/// messages replayed from the recordings.
 /// The run log's runs since `since` (seconds), each as [ts, model, version, on the claude CLI (the plan), cost, input,
 /// cache write, cache read, output, stop, verify, cache ttl, mode]: the usage page's rows. Prompts stay out.
 fn usage_rows(log: &str, since: u64) -> Vec<serde_json::Value> {
@@ -2061,7 +2080,25 @@ fn arg_word(w: &str) -> bool {
     !w.is_empty() && w.len() <= 80 && !w.starts_with('-') && w.chars().all(|c| c.is_ascii_alphanumeric() || "-._:[]".contains(c))
 }
 
+/// The model an earlier conversation goes on with, when the one in use will not do: the own loop's on the model it ran on
+/// (its saved history is that provider's API), claude's on Claude. None: keep the one in use (or none fits).
+fn resume_choice(live: &live::Live, e: &Earlier) -> Option<models::Choice> {
+    let own = e.id.starts_with("own-");
+    if if own { live.provider.is_some() && live.model == e.model } else { live.provider.is_none() } {
+        return None;
+    }
+    let cs = app_catalog().ok()?;
+    let fits = |c: &&models::Choice| c.route.is_some() == own && c.state == models::State::Ready;
+    cs.iter().filter(fits).find(|c| c.model == e.model).or_else(|| if own { None } else { cs.iter().find(fits) }).cloned()
+}
+
+/// `/new` and `/resume` (the terminal's and the app's): a fresh conversation, or an earlier one continued with its
+/// messages replayed from the recordings, on the model it needs.
 fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earlier>) -> Result<()> {
+    if let Some(c) = earlier.and_then(|e| resume_choice(live, e)) {
+        let (t, e) = apply_choice(live, &c, None)?;
+        s.apply(&e, t);
+    }
     let (t, notice) = live.restart(earlier.map(|e| e.id.clone()))?;
     *s = s.fresh();
     if let Some(e) = earlier {
@@ -3022,7 +3059,7 @@ fn run_live(
                 let next = match live.permission_mode.as_str() {
                     "bypassPermissions" => "default",
                     "default" => "acceptEdits",
-                    "acceptEdits" if live.provider.is_none() => "plan", // the own loop has no plan mode
+                    "acceptEdits" => "plan",
                     _ => "bypassPermissions",
                 };
                 let (t, e) = live.set_mode(next);
@@ -3770,6 +3807,7 @@ fn app_catalog() -> Result<Vec<models::Choice>> {
 /// A model picked (the terminal's /model picker, the app's): the switch, or only the effort when it is the model in use on
 /// the same provider; refused, with what to do, when its key is missing or its provider is not trusted.
 fn apply_choice(live: &mut live::Live, c: &models::Choice, effort: Option<String>) -> Result<(f64, serde_json::Value)> {
+    live.picked();
     // the model in use, on the same provider: only its effort changes, and the conversation goes on
     let same = c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1));
     let blocked = matches!(c.state, models::State::NoKey | models::State::NotOnKey) || (c.state == models::State::Untrusted && !live.data_any);
@@ -3870,6 +3908,16 @@ fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_picked_model_ends_the_lanes_cascade() {
+        let mut live = crate::live::Live::new("", "").unwrap();
+        live.set_escalate("claude-opus-5-5".into(), "high".into());
+        let c = models::Choice { model: live.model.clone(), label: "x".into(), route: None, place: String::new(), efforts: vec!["high".into()],
+            price: String::new(), note: String::new(), stale: false, state: models::State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
+        let _ = super::apply_choice(&mut live, &c, Some("high".into()));
+        assert!(live.escalation().is_none(), "the user's pick stands: no redo on another model");
+    }
+
     #[test]
     fn usage_rows_carry_no_prompt() {
         let log = r#"{"ts": 100, "prompt": "secret", "meta": {"model": "m", "version": "0.1.1", "claude_version": "2", "mode": "live"}, "cost_usd": 0.5, "tokens": {"input": 1, "cache_write": 2, "cache_read": 3, "output": 4}, "stop": "completed", "verify": {"status": "claimed"}}
@@ -4070,8 +4118,14 @@ not json"#;
         let rec = vec![ev(json!({"type": "harness_user", "text": "one"})), ev(json!({"type": "system", "subtype": "init", "session_id": "s1"})),
             ev(json!({"type": "harness_notice", "text": "── new conversation ──"})),
             ev(json!({"type": "harness_user", "text": "two"})), ev(json!({"type": "system", "subtype": "init", "session_id": "s2"}))];
-        let texts = |id: &str| super::conversation(&rec, id).into_iter().flatten().filter_map(|e| e.1["text"].as_str().map(String::from)).collect::<Vec<_>>();
-        assert_eq!((texts("s1"), texts("s2")), (vec!["one".to_string()], vec!["two".to_string()]));
+        let texts = |rec: &[(f64, serde_json::Value)], id: &str| super::conversation(rec, id).into_iter().flatten().filter_map(|e| e.1["text"].as_str().map(String::from)).collect::<Vec<_>>();
+        assert_eq!((texts(&rec, "s1"), texts(&rec, "s2")), (vec!["one".to_string()], vec!["two".to_string()]));
+        // an edit from an earlier message: what came after it is the fork's, not the original's
+        let rec = vec![ev(json!({"type": "system", "subtype": "init", "session_id": "s1"})), ev(json!({"type": "harness_user", "text": "a"})),
+            ev(json!({"type": "harness_user", "text": "b"})), ev(json!({"type": "harness_notice", "text": "── rewound conversation to before: b ──"})),
+            ev(json!({"type": "harness_user", "text": "c"})), ev(json!({"type": "system", "subtype": "init", "session_id": "f1"}))];
+        assert_eq!(texts(&rec, "s1"), vec!["a", "b"]);
+        assert_eq!(texts(&rec, "f1"), vec!["── rewound conversation to before: b ──", "c"]);
         std::fs::remove_dir_all(&base).ok();
     }
 }

@@ -84,16 +84,17 @@ function useCore() {
     core.stop(tid).catch(() => {});
     setThreads((t) => { const { [tid]: _, ...rest } = t; return rest; });
   };
-  /** A side chat beside thread `of`: its own core in the same folder, the conversation forked on the same model (its
-   * cache is the conversation's), in plan mode. Claude conversations only (the own loop cannot resume yet). */
+  /** A side chat beside thread `of`: its own core in the same folder, the conversation forked on the same model and
+   * provider (its cache is the conversation's; the own loop's saved history is that provider's), in plan mode. */
   const openSide = (of: string) => {
+    const route = of === activeRef.current ? models?.choices.find((c) => c.current) : undefined;
     const p = live.current[of], id = p?.view?.session_id;
     if (!p || !id || Object.values(live.current).some((t) => t.side === of)) return;
     const tid = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     setThreads((t) => ({ ...t, [tid]: { tid, folder: p.folder, view: null, error: null, used: Date.now(), side: of } }));
     core.start(tid, p.folder ?? undefined, p.folder ? undefined : "chat")
       // the core puts the fork in plan mode itself; the side box opens only once its view says plan
-      .then(() => core.opIn(tid, { op: "fork", id, model: p.view!.model, effort: p.view!.effort }))
+      .then(() => core.opIn(tid, { op: "fork", id, model: p.view!.model, effort: p.view!.effort, url: route?.url ?? null, key_env: route?.key_env ?? null }))
       .catch((e) => patch(tid, { error: String(e) }));
   };
   /** Closes thread `of`'s side chat; its fork leaves the saved lists (it was hidden when it got its id). */
