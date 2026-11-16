@@ -1425,7 +1425,7 @@ fn app_server(a: &Args) -> Result<()> {
             changed = true;
         }
         // creator mode: the oldest question, if it is a write or edit inside the allowed folder, is answered yes
-        if let Some(root) = &allow_root && let Some(req) = live.pending.front() && inside_root(req, root, &cwd) {
+        if let Some(root) = &allow_root && let Some(req) = live.pending.front() && inside_root(req, root) {
             if let Some((t, e)) = live.answer(true, false) {
                 s.apply(&e, t);
                 changed = true;
@@ -3603,10 +3603,10 @@ impl Picker {
 
 /// A permission question for a file write or edit whose real path, resolved, lies inside `root`. The path is read from
 /// the field the tool itself uses (`file_path` for claude's Write, Edit and MultiEdit; `path` for tazuna's write and
-/// edit), and a request that also carries the other field is refused; a relative path is resolved against `cwd`, where
-/// the tools run. An existing file must be a plain file with one link (not a link to elsewhere, dangling or not); a new
+/// edit), and a request that also carries the other field is refused; a relative path is refused (the tool server's
+/// working folder follows `cd`). An existing file must be a plain file with one link (not a link to elsewhere, dangling or not); a new
 /// file is judged by its folder, which must exist. Anything else asks as usual (security reviews, 2026-11-16).
-fn inside_root(req: &serde_json::Value, root: &std::path::Path, cwd: &std::path::Path) -> bool {
+fn inside_root(req: &serde_json::Value, root: &std::path::Path) -> bool {
     let r = &req["request"];
     if r["from_text"] == true {
         return false;
@@ -3621,7 +3621,11 @@ fn inside_root(req: &serde_json::Value, root: &std::path::Path, cwd: &std::path:
         return false;
     }
     let Some(raw) = input[field].as_str().filter(|p| !p.is_empty()) else { return false };
-    let p = if std::path::Path::new(raw).is_absolute() { std::path::PathBuf::from(raw) } else { cwd.join(raw) };
+    // absolute only: the tool server's working folder follows `cd` in its commands, so a relative path may land elsewhere
+    if !std::path::Path::new(raw).is_absolute() {
+        return false;
+    }
+    let p = std::path::PathBuf::from(raw);
     let (Some(dir), Some(name)) = (p.parent(), p.file_name()) else { return false };
     if name == ".." || name == "." {
         return false;
@@ -3815,10 +3819,10 @@ mod tests {
             let key = if tool.starts_with("mcp__lean__") { "path" } else { "file_path" };
             json!({"request": {"tool_name": tool, "input": {key: path}}})
         };
-        let ok = |req: serde_json::Value| super::inside_root(&req, &root, &root);
+        let ok = |req: serde_json::Value| super::inside_root(&req, &root);
         assert!(ok(q("Write", format!("{}/index.html", root.display()))));
         assert!(ok(q("mcp__lean__write", format!("{}/manifest.json", root.display()))));
-        assert!(ok(q("mcp__lean__write", "plugin.js".into())), "relative: against the folder the tools run in");
+        assert!(!ok(q("mcp__lean__write", "plugin.js".into())), "relative: the tool server's folder follows cd");
         assert!(!ok(q("Write", format!("{}/../evil.sh", root.display()))), "climbs out");
         assert!(!ok(q("Write", format!("{}/{}/../../x", root.display(), "a".repeat(500)))), "a long path that climbs out");
         assert!(!ok(q("Bash", format!("{}/x", root.display()))), "not a write tool");
