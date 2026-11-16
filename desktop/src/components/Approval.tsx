@@ -11,7 +11,7 @@ export function Approval({ asking, onAnswer }: { asking: NonNullable<View["askin
     setReady(false);
     const t = setTimeout(() => setReady(true), 600);
     return () => clearTimeout(t);
-  }, [asking.text]);
+  }, [asking.what, asking.tool]);
   useEffect(() => {
     if (!ready) return;
     const key = (e: KeyboardEvent) => {
@@ -23,8 +23,9 @@ export function Approval({ asking, onAnswer }: { asking: NonNullable<View["askin
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [ready, asking, onAnswer]);
-  const tool = asking.tool.replace(/^mcp__\w+?__/, "");
-  const what = asking.text.replace(/^[^:]+:\s*/, "").replace(/\s+\((always|once only)[^)]*\)$/, "");
+  // the core sends the tool, what it would do and the note apart (each made safe): shown as they come, nothing cut
+  const tool = asking.tool.replace(/^mcp__lean__/, "");
+  const what = asking.what;
   const btn = "rounded-md px-2.5 py-1 text-[12px] font-medium disabled:opacity-50";
   return (
     <div className="mx-auto mb-2 w-full max-w-[700px] px-7">
@@ -39,12 +40,12 @@ export function Approval({ asking, onAnswer }: { asking: NonNullable<View["askin
           <button disabled={!ready} onClick={() => onAnswer(true, false)} className={`${btn} bg-accent text-on-accent`}>Allow <kbd className="ml-1 font-mono opacity-70">y</kbd></button>
           {!asking.once && (
             <button disabled={!ready} onClick={() => onAnswer(true, true)} className={`${btn} border border-line text-ink`}
-              title={/bash|powershell/i.test(tool) ? "this command, for the rest of the session" : "this tool, for the rest of the session"}>
+              title={`${asking.note}, for the rest of the session`}>
               Always <kbd className="ml-1 font-mono text-faint">a</kbd>
             </button>
           )}
           <button disabled={!ready} onClick={() => onAnswer(false, false)} className={`${btn} border border-line text-muted`}>Decline <kbd className="ml-1 font-mono text-faint">n</kbd></button>
-          {asking.once && <span className="ml-1 text-[11.5px] text-faint">once only: the model wrote this call as text</span>}
+          {asking.once && <span className="ml-1 text-[11.5px] text-faint">{asking.note}</span>}
         </div>
       </div>
     </div>

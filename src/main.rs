@@ -1010,10 +1010,10 @@ fn app_server(a: &Args) -> Result<()> {
         v["untrusted"] = json!(untrusted);
         v["session_id"] = json!(live.session_id());
         // the oldest open permission question, as the terminal shows it (text made safe), and how many wait behind it
-        v["asking"] = live.pending.front().map_or(json!(null), |req| json!({
-            "text": question(req), "tool": session::shown(req["request"]["tool_name"].as_str().unwrap_or_default(), 60),
-            "once": req["request"]["from_text"] == true, "queued": live.pending.len() - 1,
-        }));
+        v["asking"] = live.pending.front().map_or(json!(null), |req| {
+            let (tool, what, note) = question_parts(req);
+            json!({"tool": tool, "what": what, "note": note, "once": req["request"]["from_text"] == true, "queued": live.pending.len() - 1})
+        });
         let mut o = out.lock();
         let _ = writeln!(o, "{v}");
         let _ = o.flush();
@@ -1522,6 +1522,13 @@ fn paste_image() -> Result<std::path::PathBuf> {
 
 /// "Write: /repo/b.txt  (always = this tool)": what a permission request asks, made safe to show.
 fn question(req: &serde_json::Value) -> String {
+    let (tool, what, note) = question_parts(req);
+    format!("{tool}: {what}  ({note})")
+}
+
+/// A permission question's parts, each made safe to show: the tool, what it would do, and the note on "always". The app
+/// gets them apart, so it never has to cut the model's text out of the line.
+fn question_parts(req: &serde_json::Value) -> (String, String, String) {
     let r = &req["request"];
     let tool = session::shown(r["tool_name"].as_str().unwrap_or_default(), 60);
     let i = &r["input"];
@@ -1531,11 +1538,12 @@ fn question(req: &serde_json::Value) -> String {
         None => session::shown(&i.to_string(), 400),
     };
     // a call the model wrote as text gets no "always": a or y both allow it once (live.rs)
-    if r["from_text"] == true {
-        return format!("{tool}: {what}  (once only: the model wrote this call as text)");
-    }
-    let scope = if matches!(tool.as_str(), "Bash" | "mcp__lean__bash" | "PowerShell") { "this command" } else { "this tool" };
-    format!("{tool}: {what}  (always = {scope})")
+    let note = if r["from_text"] == true {
+        "once only: the model wrote this call as text".to_string()
+    } else {
+        format!("always = {}", if matches!(tool.as_str(), "Bash" | "mcp__lean__bash" | "PowerShell") { "this command" } else { "this tool" })
+    };
+    (tool, what, note)
 }
 
 /// The latest session this repo ran (or the one whose id starts with `id`): claude's session id and tazuna's recording.

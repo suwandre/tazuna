@@ -22,7 +22,7 @@ export type View = {
   /** the claude session of this conversation (null before the first reply, and on the own loop) */
   session_id?: string | null;
   /** the oldest open permission question (text made safe by the core) */
-  asking?: { text: string; tool: string; once: boolean; queued: number } | null;
+  asking?: { tool: string; what: string; note: string; once: boolean; queued: number } | null;
 };
 export type SessionRow = { id: string; first: string; last_at: number; messages: number };
 export type Sessions = { dirs: { dir: string; list: SessionRow[] }[] };
