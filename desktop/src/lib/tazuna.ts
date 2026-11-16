@@ -99,6 +99,9 @@ export const core = {
   sessions: (dirs: string[]) => to("op", { msg: { op: "sessions", dirs } }),
   resume: (id: string) => to("op", { msg: { op: "resume", id } }),
   onSessions: (cb: (s: Sessions) => void) => on<Sessions>("sessions", cb),
+  /** the run log's last 90 days for the usage page (src/lib/usage.ts reads the rows) */
+  usage: () => to("op", { msg: { op: "usage" } }),
+  onUsage: (cb: (u: { rows: import("./usage").Row[] }) => void) => on<{ rows: import("./usage").Row[] }>("usage", cb),
   send: (text: string, agent = false) => to("send", { text, agent }),
   trust: () => to("trust"),
   pickFolder: () => invoke<string | null>("pick_folder"),

@@ -2049,7 +2049,9 @@ fn new_conversation(live: &mut live::Live, s: &mut Session, v: &mut View, earlie
 fn usage_rows(log: &str, since: u64) -> Vec<serde_json::Value> {
     log.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter(|r| r["ts"].as_u64().is_some_and(|t| t >= since)).map(|r| {
         let (m, t) = (&r["meta"], &r["tokens"]);
-        json!([r["ts"], m["model"], m["version"], !m["claude_version"].is_null(), r["cost_usd"], t["input"], t["cache_write"], t["cache_read"],
+        // the own loop records claude_version as null; runs before 0.0.3 have no such key and all ran on claude
+        let plan = m.get("claude_version").is_none_or(|v| !v.is_null());
+        json!([r["ts"], m["model"], m["version"], plan, r["cost_usd"], t["input"], t["cache_write"], t["cache_read"],
             t["output"], r["stop"], r["verify"]["status"], m["cache_ttl"], m["mode"]])
     }).collect()
 }
@@ -3872,11 +3874,13 @@ mod tests {
     fn usage_rows_carry_no_prompt() {
         let log = r#"{"ts": 100, "prompt": "secret", "meta": {"model": "m", "version": "0.1.1", "claude_version": "2", "mode": "live"}, "cost_usd": 0.5, "tokens": {"input": 1, "cache_write": 2, "cache_read": 3, "output": 4}, "stop": "completed", "verify": {"status": "claimed"}}
 {"ts": 50, "meta": {}}
+{"ts": 70, "meta": {"model": "deepseek", "claude_version": null}}
+{"ts": 80, "meta": {"model": "claude-haiku-4-5"}}
 not json"#;
         let rows = super::usage_rows(log, 60);
-        assert_eq!(rows.len(), 1);
+        assert_eq!(rows.len(), 3);
         assert_eq!(rows[0][0], 100);
-        assert_eq!(rows[0][3], true);
+        assert_eq!((&rows[0][3], &rows[1][3], &rows[2][3]), (&json!(true), &json!(false), &json!(true)), "plan, own loop, before claude_version");
         assert!(!rows[0].to_string().contains("secret"));
     }
 

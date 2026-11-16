@@ -8,6 +8,7 @@ import { creatorMessage, dryRun, summary, widgetData, widgetId, widgets, type Us
 import { footprint, load, onPaletteChange, pluginActions, safeMode, setActions, setData, unload } from "./lib/plugins";
 import { SettingsView } from "./components/SettingsView";
 import { SideChat } from "./components/SideChat";
+import { UsageView } from "./components/UsageView";
 import { Rail, UserPanel } from "./components/Rail";
 import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
@@ -200,9 +201,10 @@ function useTheme() {
 
 /** Cmd-K opens the palette, Cmd-/ the shortcuts. */
 function useOverlay() {
-  const [overlay, setOverlay] = useState<"palette" | "shortcuts" | "settings" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "shortcuts" | "settings" | "usage" | null>(null);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if (!menuKeys && (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "u") { e.preventDefault(); setOverlay((o) => (o === "usage" ? null : "usage")); }
       if (menuKeys || !(e.metaKey || e.ctrlKey) || e.shiftKey) return;
       if (e.key === "k") { e.preventDefault(); setOverlay((o) => (o === "palette" ? null : "palette")); }
       if (e.key === "/") { e.preventDefault(); setOverlay((o) => (o === "shortcuts" ? null : "shortcuts")); }
@@ -232,6 +234,7 @@ export default function App() {
       else if (id === "shortcuts") setOverlay((o) => (o === "shortcuts" ? null : "shortcuts"));
       else if (id === "theme") flipTheme();
       else if (id === "settings") setOverlay("settings");
+      else if (id === "usage") setOverlay("usage");
     });
     return () => { off.then((f) => f()); };
   }, []);
@@ -367,6 +370,7 @@ export default function App() {
       ...userWidgets.map((w) => ({ id: `edit-panel:${w.id}`, group: "Creator mode", label: `Change the panel "${w.title}"`, keywords: "widget edit", run: () => editPanel(w.id) })));
     void paletteTick;
     a.push(...pluginActions().map((p) => ({ id: p.id, group: "Plugins", label: p.label, hint: p.hint, run: p.run })));
+    a.push({ id: "usage", group: "Window", label: "Usage: cost by day and model, cache, plan", keys: "⌘⇧U", keywords: "spend money tokens stats", run: () => setTimeout(() => setOverlay("usage")) });
     a.push({ id: "theme", group: "Window", label: "Light or dark", keys: "⌘⇧L", run: flipTheme },
       { id: "keys", group: "Window", label: "Keyboard shortcuts", keys: "⌘/", run: () => setTimeout(() => setOverlay("shortcuts")) },
       { id: "settings", group: "Window", label: "Settings: provider keys, data policy, router", keys: "⌘,", run: () => setTimeout(() => setOverlay("settings")) });
@@ -457,6 +461,7 @@ export default function App() {
       <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
+      {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} />}
       {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} items={userWidgets} onEdit={editPanel}
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} />}

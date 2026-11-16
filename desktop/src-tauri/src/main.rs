@@ -424,7 +424,7 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
 /// nothing else passes (the core drops other lines too).
 #[tauri::command]
 fn op(core: State<Core>, tid: String, msg: serde_json::Value) -> Result<(), String> {
-    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "review" | "piece" | "allow_root" | "fork")) {
+    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "review" | "piece" | "allow_root" | "fork" | "usage")) {
         return Err(format!("not a command the window sends: {msg}"));
     }
     write(&core, &tid, msg)
@@ -468,7 +468,7 @@ fn menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         ])?,
         &Submenu::with_items(app, "View", true, &[
             &item("palette", "Command Palette", "CmdOrCtrl+K")?, &item("shortcuts", "Keyboard Shortcuts", "CmdOrCtrl+/")?,
-            &item("theme", "Light or Dark", "CmdOrCtrl+Shift+L")?, &sep()?, &P::fullscreen(app, None)?,
+            &item("theme", "Light or Dark", "CmdOrCtrl+Shift+L")?, &item("usage", "Usage", "CmdOrCtrl+Shift+U")?, &sep()?, &P::fullscreen(app, None)?,
         ])?,
         &Submenu::with_items(app, "Window", true, &[&P::minimize(app, None)?, &P::maximize(app, None)?])?,
     ])

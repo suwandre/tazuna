@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.139 (2026-11-16): the usage rows tell plan runs from API runs right
+
+- A run counts as the plan's (the claude CLI) unless its log entry says `claude_version: null` (the own loop); runs from
+  before 0.0.3 have no such field and all ran on claude. 0.1.138 counted those as API runs.
+- No other metric moves; 176 tests.
+
 ## 0.1.138 (2026-11-16): a side chat is in plan mode whatever its fork does
 
 - The app server's `fork` op puts the session in plan mode before anything else, so a side chat never changes files even

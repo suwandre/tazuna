@@ -1,5 +1,5 @@
 import { ExternalLink, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { safeMode } from "../lib/plugins";
 import { HOTKEY, core, defaultHotkey, type Settings } from "../lib/tazuna";
 import type { UserWidget } from "../lib/widgets";
@@ -20,13 +20,16 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
     .then(() => { localStorage.setItem(HOTKEY, keysNow.trim()); setHotkeyNote(keysNow.trim() ? "Saved." : "Off."); })
     .catch((e) => setHotkeyNote(`Not set: ${e}. Another app may hold it.`));
   const refresh = () => core.settings().catch(() => {});
+  // asked once when opened (the window re-renders on every streamed view, with a new onClose each time)
+  const close = useRef(onClose);
+  close.current = onClose;
   useEffect(() => {
     const off = core.onSettings(setSt);
     refresh();
-    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close.current(); };
     window.addEventListener("keydown", esc);
     return () => { off.then((f) => f()); window.removeEventListener("keydown", esc); };
-  }, [onClose]);
+  }, []);
   const save = async (name: string) => {
     await core.login(name, keys[name] ?? "");
     setKeys((k) => ({ ...k, [name]: "" }));

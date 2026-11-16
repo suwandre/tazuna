@@ -35,7 +35,11 @@ come back in that conversation's box; "Your messages" in the rail lists what you
 anywhere (Option-Space on macOS, Ctrl-Alt-Space elsewhere; Settings changes or clears it) brings the window up with a new chat. 0.1.16: a side chat (header, Cmd-K) beside a
 Claude conversation: a fork of it on the same model (so the cache is the conversation's), in plan mode, in place of the
 rail; nothing in it goes back, its fork stays out of the saved lists, and its questions take clicks only (y / n stay the
-conversation's).
+conversation's). 0.1.17: the core puts a side chat in plan mode itself, and the side box sends nothing until it is.
+0.1.18: Usage (Cmd-Shift-U, the View menu, Cmd-K): API spend (billed) and the Claude plan at API prices (not billed), the
+share of input the cache served, the plan now; cost per day; by model; and per version and model what the run log knows of
+trouble in your own runs (stopped, errors, failed checks). Not yet: the cache's saving in dollars (worked back from run
+costs the prices were too noisy to show) and real use's corrections and rewinds (bench/realuse.py reads recordings).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
