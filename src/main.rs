@@ -998,8 +998,8 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 22] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
-            "settings", "login", "data", "route", "full", "rename", "hide", "quit"];
+        const OPS: [&str; 23] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "quit"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1034,6 +1034,8 @@ fn app_server(a: &Args) -> Result<()> {
         })).collect::<Vec<_>>());
         v["untrusted"] = json!(untrusted);
         v["session_id"] = json!(live.session_id());
+        // the messages "edit from here" can go back to: claude's checkpoints, each with its message's block
+        v["edit_points"] = json!(edit_points(s, live).iter().enumerate().map(|(cp, b)| json!({"cp": cp, "block": b})).collect::<Vec<_>>());
         // the oldest open permission question, as the terminal shows it (text made safe), and how many wait behind it
         v["asking"] = live.pending.front().map_or(json!(null), |req| {
             let (tool, what, note) = question_parts(req);
@@ -1242,6 +1244,44 @@ fn app_server(a: &Args) -> Result<()> {
                             Ok((t, e)) => s.apply(&e, t),
                             Err(e) => info(&mut s, format!("{e:#}")),
                         },
+                        // "edit from here": the conversation back to before message `cp` (claude's checkpoint), the transcript
+                        // cut there; with "files", what tazuna's turns changed since goes back too (the turns' git trees, so
+                        // edits made through any tool or command count)
+                        Some("rewind") => {
+                            let cp = cmd["cp"].as_u64().unwrap_or(u64::MAX) as usize;
+                            match edit_points(&s, &live).get(cp).copied() {
+                                _ if !live.idle() || turn.is_some() => info(&mut s, "wait until the run has finished (or stop it), then edit".into()),
+                                None => info(&mut s, "that message cannot be edited from here (only claude keeps checkpoints)".into()),
+                                Some(block) => {
+                                    let later: Vec<&AppTurn> = done_turns.iter().filter(|t| t.at_block > block && !t.undone).collect();
+                                    let files_back = if cmd["files"] == true && let Some(first) = later.first() {
+                                        let paths: std::collections::HashSet<&str> = later.iter().flat_map(|t| t.files.iter().map(|f| f.path.as_str())).collect();
+                                        match turns::snapshot(&cwd) {
+                                            Some(now) => {
+                                                let fs: Vec<turns::File> = turns::files(&cwd, &first.before, &now).into_iter().filter(|f| paths.contains(f.path.as_str())).collect();
+                                                turns::undo(&cwd, &first.before, &now, &fs).map(|()| fs.len())
+                                            }
+                                            None => Err(anyhow::anyhow!("not a git repository: no snapshot to put files back from")),
+                                        }
+                                    } else {
+                                        Ok(0)
+                                    };
+                                    match files_back.and_then(|n| live.rewind(cp, false, true).map(|e| (n, e))) {
+                                        Ok((n, (t, e))) => {
+                                            s.blocks.truncate(block);
+                                            s.meta.truncate(block);
+                                            done_turns.retain(|t| t.at_block < block);
+                                            undo_note = None;
+                                            s.apply(&e, t);
+                                            if n > 0 {
+                                                s.apply(&json!({"type": "harness_notice", "text": format!("{n} file{} back as before that message", if n == 1 { "" } else { "s" }), "error": false}), t);
+                                            }
+                                        }
+                                        Err(e) => info(&mut s, format!("{e:#}")),
+                                    }
+                                }
+                            }
+                        }
                         // one file's diff in a turn, answered as a `diff` line
                         Some("diff") => {
                             let (i, path) = (cmd["turn"].as_u64().unwrap_or(u64::MAX) as usize, cmd["path"].as_str().unwrap_or_default());
@@ -3512,6 +3552,20 @@ impl Picker {
     fn group(&self) -> Option<String> {
         self.psel.checked_sub(1).and_then(|i| models::providers(&self.cs).get(i).map(|(n, _)| n.clone()))
     }
+}
+
+/// The prompt block of each of claude's checkpoints (the messages /rewind can go back to), in order: matched by text,
+/// since a message answered as a chat has a prompt and no checkpoint.
+fn edit_points(s: &Session, live: &live::Live) -> Vec<usize> {
+    let mut out = vec![];
+    let mut cps = live.checkpoints.iter().peekable();
+    for (i, b) in s.blocks.iter().enumerate() {
+        if let session::Block::Prompt(text) = b && cps.peek().is_some_and(|c| c.text == *text) {
+            out.push(i);
+            cps.next();
+        }
+    }
+    out
 }
 
 /// A finished turn on the agent that changed files (the app's change card).

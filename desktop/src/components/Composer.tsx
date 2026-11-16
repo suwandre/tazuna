@@ -1,5 +1,5 @@
 import { ArrowUp, Check, Gauge, Paperclip, Shield, Square, Zap } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
 import { usd, type Session } from "../lib/types";
 import { EffortMenu, Menu, ModelPicker } from "./ModelPicker";
@@ -12,6 +12,10 @@ type Props = {
   /** files to attach (the native picker); dropped files come through onDrop */
   onPickFiles?: () => Promise<string[]>;
   onDrop?: (cb: (paths: string[]) => void) => Promise<() => void>;
+  /** text put in the box from outside ("edit from here"): set whenever `n` changes */
+  draft?: { text: string; n: number };
+  /** shown above the box (the edit banner) */
+  above?: React.ReactNode;
 };
 
 // the permission modes in tazuna's words, in the order shift-tab steps through them (as in the terminal)
@@ -24,9 +28,11 @@ const MODES: [string, string][] = [
 
 const pill = "inline-flex items-center gap-1.5 rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2";
 
-export function Composer({ session, threadCost, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop }: Props) {
+export function Composer({ session, threadCost, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above }: Props) {
   const [text, setText] = useState("");
   const [menu, setMenu] = useState<"model" | "effort" | "mode" | null>(null);
+  const box = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => { if (draft) { setText(draft.text); box.current?.focus(); } }, [draft?.n]);
   // attachments go into the message as paths (quoted when they hold a space): the core sends images as images
   const attach = (paths: string[]) => paths.length && setText((t) => `${t}${t && !/\s$/.test(t) ? " " : ""}${paths.map(quotePath).join(" ")} `);
   useEffect(() => {
@@ -41,8 +47,9 @@ export function Composer({ session, threadCost, busy, onSend, onStop, models, on
   const send = () => { const t = text.trim(); if (!t) return; onSend?.(t); setText(""); };
   return (
     <footer className="px-7 pb-[22px] pt-2.5">
+      {above}
       <div className="mx-auto max-w-[700px] rounded-xl border border-line-strong bg-card py-2 pl-4 pr-3 pt-3 shadow-composer">
-        <textarea rows={1} autoFocus value={text} onChange={(e) => setText(e.target.value)}
+        <textarea ref={box} rows={1} autoFocus value={text} onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
           placeholder={busy ? "Type your next message: it goes after this reply" : "Ask anything, or describe a change…"} className="w-full resize-none bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
         <div className="flex items-center gap-1.5">

@@ -1,4 +1,4 @@
-import { FileText, MessageCircle } from "lucide-react";
+import { FileText, MessageCircle, Pencil } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Markdown } from "../lib/markdown";
 import { Step } from "./Step";
@@ -19,6 +19,10 @@ const doing: Record<string, string> = { Starting: "thinking", Waiting: "thinking
 type Props = {
   messages: Message[]; busy?: boolean; activity?: string; onSendToAgent?: (text: string) => void;
   onDiff?: (turn: number, path: string) => void; onUndo?: (turn: number) => void;
+  /** "edit from here" on one of your messages */
+  onEdit?: (edit: { cp: number; block: number }, text: string) => void;
+  /** the checkpoint being edited: that message and everything after it fade */
+  editFrom?: number;
 };
 
 const STATUS: Record<string, string> = { A: "added", D: "deleted", M: "changed" };
@@ -53,7 +57,7 @@ function ChangeCard({ change, busy, onDiff, onUndo }: { change: Change; busy?: b
   );
 }
 
-export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, onUndo }: Props) {
+export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, onUndo, onEdit, editFrom }: Props) {
   // follow new output while the reader is at the bottom; stay put once they scroll up
   const box = useRef<HTMLElement>(null), stick = useRef(true);
   // a long conversation draws its latest messages; earlier ones on request (a three-day session is ~1,900 blocks)
@@ -70,11 +74,15 @@ export function Transcript({ messages, busy, activity, onSendToAgent, onDiff, on
           </button>
         </div>
       )}
-      {messages.slice(hidden).map((m, i) => (
-        <div key={hidden + i} className="mx-auto mb-[22px] max-w-[700px] px-7">
+      {messages.slice(hidden).map((m, i, shown) => (
+        <div key={hidden + i} className={`group mx-auto mb-[22px] max-w-[700px] px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
           {m.role === "user" ? (
             <>
-              <div className="mb-1.5 text-[12px] font-medium text-faint">You{m.queued && <span className="ml-2 font-normal">· queued, goes after this reply</span>}</div>
+              <div className="mb-1.5 flex items-center gap-2 text-[12px] font-medium text-faint">You{m.queued && <span className="font-normal">· queued, goes after this reply</span>}
+                {m.edit && onEdit && !busy && (
+                  <button onClick={() => onEdit(m.edit!, m.text.replace(/^\[tazuna: [^\]]*\]\n\n/, ""))} title="Edit and send again from here: the conversation goes back to before this message"
+                    className="hidden items-center gap-1 rounded px-1.5 py-0.5 font-normal text-muted hover:bg-hover hover:text-ink group-hover:inline-flex"><Pencil size={12} strokeWidth={1.5} /> Edit</button>
+                )}</div>
               {(() => {
                 // the note tazuna adds after an undo ("[tazuna: ...]") is shown as what it is, apart from the message
                 const note = m.text.match(/^\[tazuna: ([^\]]*)\]\n\n/);

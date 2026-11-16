@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.132 (2026-11-16): "edit from here" in the app server
+
+- `tazuna app-server` takes {"op":"rewind","cp":N,"files":bool}: the conversation goes back to before message N (claude's
+  checkpoint, as /rewind), the transcript is cut there, and with "files" what tazuna's turns changed since goes back too.
+  Files go back from the turns' git snapshots, not claude's own checkpoints, so edits made through tazuna's tools and
+  shell commands count; refused if a file changed after the turns. Views list the messages that can be edited from.
+- Tested on a real conversation: two turns edited calc.py; a rewind to before the first put the file back and the model
+  no longer knew the earlier messages.
+- No other metric moves; 173 tests.
+
 ## 0.1.131 (2026-11-16): believable tok/s; the app server sends what changed
 
 - tok/s per model call: when most of a call's output never streamed (reasoning a provider keeps back), the speed now

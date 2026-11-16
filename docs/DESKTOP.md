@@ -24,7 +24,8 @@ the app once on macOS, Linux and Windows. 0.1 is complete.
 0.2 so far: 0.1.4 keeps each open conversation in a core of its own (`tazuna app-server` per thread): one works while
 another is on screen; "Open now" in the sidebar shows each with a dot (working, waiting for an answer, idle, stopped); at
 most four idle ones stay open (the oldest close; they stay resumable). 0.1.5: a conversation out of sight that finishes or asks for an
-answer says so with a system notification.
+answer says so with a system notification. 0.1.6: "edit from here" on your messages (claude path): the message comes back
+to the box, the rest fades, and sending goes back to before it, with the files tazuna changed since if you leave that on.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

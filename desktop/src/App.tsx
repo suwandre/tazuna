@@ -155,6 +155,10 @@ function useOverlay() {
 export default function App() {
   const flipTheme = useTheme();
   const [overlay, setOverlay] = useOverlay();
+  // "edit from here": the message being edited (its checkpoint, its block, the files tazuna changed since, whether they
+  // go back too) and the text put in the box
+  const [editing, setEditing] = useState<{ cp: number; block: number; files: number; keep: boolean } | null>(null);
+  const [draft, setDraft] = useState<{ text: string; n: number }>();
   // the menu bar's items (macOS)
   useEffect(() => {
     if (!menuKeys) return;
@@ -169,6 +173,7 @@ export default function App() {
     return () => { off.then((f) => f()); };
   }, []);
   const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart } = useCore();
+  useEffect(() => setEditing(null), [active]);
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
   const usage = view ? viewUsage(view) : demo.usage;
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
@@ -220,7 +225,11 @@ export default function App() {
             {session.branch && <span className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2">{session.branch} · {session.changed} changed</span>}
           </div>
         </header>
-        <Transcript key={`${active}:${view?.session_id ?? ""}`} messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)}
+        <Transcript key={`${active}:${view?.session_id ?? ""}`} messages={messages} editFrom={editing?.cp}
+          onEdit={inTauri ? (e, text) => {
+            const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
+            setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
+          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)}
           onDiff={(turn, path) => core.diff(turn, path)} onUndo={(turn) => core.undo(turn)} />
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {view?.untrusted && (
@@ -232,7 +241,21 @@ export default function App() {
         {error && <div className="mx-auto mb-2 max-w-[700px] px-7 text-[12.5px] text-bad">{error}</div>}
         {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
         <Composer session={session} threadCost={usage.threadCost} busy={busy}
-          onSend={(text) => core.send(text).catch((e) => console.error(e))} onStop={() => core.interrupt()}
+          onSend={(text) => {
+            if (!editing) { core.send(text).catch((e) => console.error(e)); return; }
+            const { cp, keep } = editing;
+            setEditing(null);
+            core.rewind(cp, keep).then(() => core.send(text)).catch((e) => console.error(e));
+          }}
+          draft={draft}
+          above={editing && (
+            <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
+              <span className="flex-1">Editing an earlier message: sending it goes back to before it, and the messages after it leave the conversation.
+                {editing.files > 0 && <label className="mt-1 flex items-center gap-2 text-ink"><input type="checkbox" checked={editing.keep} onChange={(e) => setEditing({ ...editing, keep: e.target.checked })} />
+                  Also put back the {editing.files} file{editing.files === 1 ? "" : "s"} tazuna changed since</label>}</span>
+              <button onClick={() => { setEditing(null); setDraft({ text: "", n: Date.now() }); }} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">Cancel</button>
+            </div>
+          )} onStop={() => core.interrupt()}
           models={models} onModels={inTauri ? () => core.models() : undefined}
           onPickModel={inTauri ? (c) => core.setModel(c) : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
           onMode={inTauri ? (m) => core.setMode(m) : undefined}

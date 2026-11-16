@@ -11,7 +11,7 @@ export type ChangedFile = { path: string; added: number | null; removed: number 
 export type Change = { turn: number; files: ChangedFile[]; undone: boolean; canUndo: boolean };
 export type Meta = { cost: number; tokens: number; cachedPct?: number; secs: number };
 export type Message =
-  | { role: "user"; text: string; queued?: boolean }
+  | { role: "user"; text: string; queued?: boolean; edit?: { cp: number; block: number } }
   | { role: "agent"; prose: string[]; tools?: ToolStep[]; change?: Change; meta?: Meta; routedChat?: boolean; ask?: string };
 export type Usage = { contextPct: number; contextUsed: string; contextMax: string; plan5h: number | null; plan5hReset: string; planWeek: number | null;
   threadCost: number; threadTurns: number; cachedPct: number; saved: number; today: number; todayTurns: number; todaySeries: number[];

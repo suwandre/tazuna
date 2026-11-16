@@ -34,6 +34,8 @@ export type View = {
   asking?: { tool: string; what: string; note: string; once: boolean; queued: number } | null;
   /** the turns that changed files: where their card goes (`at_block`, a done block) and what they changed */
   changes?: { turn: number; at_block: number; undone: boolean; can_undo: boolean; files: { path: string; added: number | null; removed: number | null; status: string }[] }[];
+  /** the messages "edit from here" can go back to: checkpoint and the message's block */
+  edit_points?: { cp: number; block: number }[];
 };
 export type Provider = { name: string; host: string; page: string; place: string; example: string; key: string; trusted: boolean };
 export type Settings = { providers: Provider[]; data_any: boolean; route: boolean; version: string };
@@ -60,6 +62,8 @@ export const core = {
   answer: (allow: boolean, always = false) => to("op", { msg: { op: "answer", allow, always } }),
   diff: (turn: number, path: string) => to("op", { msg: { op: "diff", turn, path } }),
   undo: (turn: number) => to("op", { msg: { op: "undo", turn } }),
+  /** the conversation back to before checkpoint `cp` (and with `files`, what tazuna changed since) */
+  rewind: (cp: number, files: boolean) => to("op", { msg: { op: "rewind", cp, files } }),
   onDiff: (cb: (d: Diff) => void) => on<Diff>("diff", cb),
   settings: () => to("op", { msg: { op: "settings" } }),
   login: (provider: string, key: string) => to("op", { msg: { op: "login", provider, key } }),

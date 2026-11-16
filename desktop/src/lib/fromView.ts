@@ -22,10 +22,13 @@ export function messages(v: View): Message[] {
   // a message sent during a reply waits in the core's queue: shown after that reply ends, not above it
   let open = false;
   const queue: string[] = [];
-  const prompt = (text: string) => { out.push({ role: "user", text }); agent = null; ask = text; open = true; };
+  const edits = new Map((v.edit_points ?? []).map((e) => [e.block, e]));
+  let at = 0;
+  const prompt = (text: string, block = at) => { out.push({ role: "user", text, edit: edits.get(block) }); agent = null; ask = text; open = true; };
   const current = () => (agent ??= (out.push({ role: "agent", prose: [], tools: [] }), out[out.length - 1] as Extract<Message, { role: "agent" }>));
   const changeAt = new Map((v.changes ?? []).map((c) => [c.at_block, c]));
   for (const [k, b] of v.blocks.entries()) {
+    at = k;
     if (b.kind === "prompt") { if (open) queue.push(b.text); else prompt(b.text); }
     // the router answered it as a chat (app server, 0.1.127's router): the reply carries the tag and the ask, for "send to agent"
     else if (b.kind === "notice" && b.text.startsWith("answered as a chat")) { Object.assign(current(), { routedChat: true, ask }); }
