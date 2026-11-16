@@ -83,6 +83,14 @@ jobs:
             for i in $(seq 1 30); do pgrep -f "tazuna app-server" > /dev/null && { found=dmabuf-off; break; }; sleep 1; done
             cat app2.log || true
           fi
+          # diagnosis only, never in the app: WebKit's web-process sandbox off (bubblewrap may fail in a CI container)
+          if [ -z "$found" ] && [ "$RUNNER_OS" = Linux ]; then
+            echo "not started; again with WebKit's sandbox off (diagnosis)"
+            pkill -f tazuna-desktop || true
+            (WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a "$app" > app3.log 2>&1 &)
+            for i in $(seq 1 30); do pgrep -f "tazuna app-server" > /dev/null && { found=sandbox-off; break; }; sleep 1; done
+            cat app3.log || true
+          fi
           cat app.log || true
           [ -n "$found" ] && echo "the app started its tazuna after ${i} s (${found})" || { echo "the app did not start its tazuna"; exit 1; }
       - name: collect the installers

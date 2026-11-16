@@ -148,6 +148,12 @@ fn open_link(url: String) -> Result<(), String> {
     r.map(|_| ()).map_err(|e| e.to_string())
 }
 
+/// A line from the page on stderr ("loaded", a script error): where the window stops shows in a terminal or a CI log.
+#[tauri::command]
+fn ui_log(msg: String) {
+    eprintln!("tazuna desktop (page): {}", msg.chars().take(500).collect::<String>());
+}
+
 /// A system notification (a conversation in the background finished or asks): plain text, shown by the system.
 #[tauri::command]
 fn notify(app: AppHandle, title: String, body: String) -> Result<(), String> {
@@ -243,7 +249,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 let core = w.state::<Core>();

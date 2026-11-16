@@ -63,7 +63,8 @@ function useCore() {
     const already = Object.values(live.current).find((t) => resume ? t.view?.session_id === resume
       : t.folder === path && !t.view?.blocks.some((b) => b.kind === "prompt") && !t.error);
     if (already) { show(already.tid); return; }
-    const tid = crypto.randomUUID();
+    // randomUUID needs a secure page, which some WebKit builds do not count the app's own pages as
+    const tid = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     setThreads((t) => ({ ...t, [tid]: { tid, folder: path, view: null, error: null, used: Date.now() } }));
     show(tid);
     core.start(tid, path ?? undefined, path ? undefined : "chat")
