@@ -998,8 +998,8 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 27] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
-            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork"];
+        const OPS: [&str; 28] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+            "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1140,6 +1140,15 @@ fn app_server(a: &Args) -> Result<()> {
                             let _ = writeln!(o, "{}", json!({"type": "sessions", "dirs": found}));
                             let _ = o.flush();
                         }
+                        // the usage page: the run log's last 90 days, one compact row per run (the window groups them)
+                        Some("usage") => {
+                            let log = std::fs::read_to_string(labels::dir()?.join("runs.jsonl")).unwrap_or_default();
+                            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+                            let rows = usage_rows(&log, now.saturating_sub(90 * 86_400));
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{}", json!({"type": "usage", "rows": rows}));
+                            let _ = o.flush();
+                        }
                         // a conversation renamed or taken off the lists (the CLI's /resume list too)
                         Some("rename") | Some("hide") => {
                             let id = cmd["id"].as_str().unwrap_or_default();
@@ -1173,7 +1182,11 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("fork") => {
                             let id = cmd["id"].as_str().unwrap_or_default();
                             let word = arg_word;
+                            // plan mode first, whatever happens next: a side chat never changes files (security review: as
+                            // a separate step from the window, a failed fork left it in the folder's usual mode)
+                            let (mt, me) = live.set_mode("plan");
                             if !word(id) {
+                                s.apply(&me, mt);
                                 info(&mut s, "no such conversation".into());
                             } else {
                                 if let Some(m) = cmd["model"].as_str().filter(|m| word(m) && live.provider.is_none()) {
@@ -1188,10 +1201,14 @@ fn app_server(a: &Args) -> Result<()> {
                                         s = s.fresh();
                                         (s.model, s.effort) = (live.model.clone(), live.effort.clone());
                                         s.apply(&json!({"type": "harness_notice", "text": "── side chat: it reads the conversation, nothing goes back ──", "error": false}), t);
+                                        s.apply(&me, mt);
                                         (turn, undo_note) = (None, None);
                                         done_turns.clear();
                                     }
-                                    Err(err) => info(&mut s, format!("{err:#}")),
+                                    Err(err) => {
+                                        s.apply(&me, mt);
+                                        info(&mut s, format!("{err:#}"));
+                                    }
                                 }
                             }
                         }
@@ -2027,6 +2044,16 @@ fn new_conversation(live: &mut live::Live, s: &mut Session, v: &mut View, earlie
 
 /// `/new` and `/resume` (the terminal's and the app's): a fresh conversation, or an earlier one continued with its
 /// messages replayed from the recordings.
+/// The run log's runs since `since` (seconds), each as [ts, model, version, on the claude CLI (the plan), cost, input,
+/// cache write, cache read, output, stop, verify, cache ttl, mode]: the usage page's rows. Prompts stay out.
+fn usage_rows(log: &str, since: u64) -> Vec<serde_json::Value> {
+    log.lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).filter(|r| r["ts"].as_u64().is_some_and(|t| t >= since)).map(|r| {
+        let (m, t) = (&r["meta"], &r["tokens"]);
+        json!([r["ts"], m["model"], m["version"], !m["claude_version"].is_null(), r["cost_usd"], t["input"], t["cache_write"], t["cache_read"],
+            t["output"], r["stop"], r["verify"]["status"], m["cache_ttl"], m["mode"]])
+    }).collect()
+}
+
 /// A value the window may put after a claude flag (a session id, a model, an effort): one plain word, never a flag.
 fn arg_word(w: &str) -> bool {
     !w.is_empty() && w.len() <= 80 && !w.starts_with('-') && w.chars().all(|c| c.is_ascii_alphanumeric() || "-._:[]".contains(c))
@@ -3841,6 +3868,18 @@ fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn usage_rows_carry_no_prompt() {
+        let log = r#"{"ts": 100, "prompt": "secret", "meta": {"model": "m", "version": "0.1.1", "claude_version": "2", "mode": "live"}, "cost_usd": 0.5, "tokens": {"input": 1, "cache_write": 2, "cache_read": 3, "output": 4}, "stop": "completed", "verify": {"status": "claimed"}}
+{"ts": 50, "meta": {}}
+not json"#;
+        let rows = super::usage_rows(log, 60);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0][0], 100);
+        assert_eq!(rows[0][3], true);
+        assert!(!rows[0].to_string().contains("secret"));
+    }
+
     #[test]
     fn side_chat_values_are_plain_words() {
         for ok in ["def2a71b-970e-412e-ba99-c8ae21c1064a", "claude-haiku-5-5", "opus[1m]", "high"] {

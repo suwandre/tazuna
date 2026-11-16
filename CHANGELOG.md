@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.138 (2026-11-16): a side chat is in plan mode whatever its fork does
+
+- The app server's `fork` op puts the session in plan mode before anything else, so a side chat never changes files even
+  when the fork fails (security review: the window set the mode in a second step, and a failed fork left the folder's usual
+  mode). Checked: plan after a good fork, after an id that is a flag, and after an unknown conversation.
+- `{"op": "usage"}`: the run log's last 90 days as one compact row per run (no prompts) for the desktop's usage page.
+- No other metric moves; 176 tests.
+
 ## 0.1.137 (2026-11-16): the app server forks a conversation for a side chat
 
 - `{"op": "fork", "id": ..., "model": ..., "effort": ...}`: the conversation continues in a fork (`--resume ID

@@ -84,15 +84,15 @@ function useCore() {
     setThreads((t) => { const { [tid]: _, ...rest } = t; return rest; });
   };
   /** A side chat beside thread `of`: its own core in the same folder, the conversation forked on the same model (its
-   * cache is the conversation's), plan mode. Claude conversations only (the own loop cannot resume yet). */
+   * cache is the conversation's), in plan mode. Claude conversations only (the own loop cannot resume yet). */
   const openSide = (of: string) => {
     const p = live.current[of], id = p?.view?.session_id;
     if (!p || !id || Object.values(live.current).some((t) => t.side === of)) return;
     const tid = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     setThreads((t) => ({ ...t, [tid]: { tid, folder: p.folder, view: null, error: null, used: Date.now(), side: of } }));
     core.start(tid, p.folder ?? undefined, p.folder ? undefined : "chat")
+      // the core puts the fork in plan mode itself; the side box opens only once its view says plan
       .then(() => core.opIn(tid, { op: "fork", id, model: p.view!.model, effort: p.view!.effort }))
-      .then(() => core.modeIn(tid, "plan"))
       .catch((e) => patch(tid, { error: String(e) }));
   };
   /** Closes thread `of`'s side chat; its fork leaves the saved lists (it was hidden when it got its id). */
