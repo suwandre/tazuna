@@ -64,6 +64,14 @@ Beside the suite, the user's own sessions give a free, continuous measure per ta
 asked for: runs stopped, rewound or crashed; the next message correcting the last answer ("no", "that's wrong", "not
 what I asked"); a question asked again; edits reverted in git. It catches regressions the suite cannot see.
 
+2026-11-16, the own loop's 23% strong misses (77 runs) against the Claude path's 5% (328), looked into: 31 of the 77
+were probes of a model ("what is your model name", "test"), asked again after each switch to another model, which read
+as re-asks; most of the rest that missed were free or preview models whose provider never answered (0 tokens, 3 to 26
+minutes, stopped by hand). Probes are now counted apart. On the 40 real asks the own loop misses 10%: three of the four
+are one preview model that never answered, one a DeepSeek storage clean-up whose change was discarded. DeepSeek on real
+asks: about 1 in 25, level with the Claude path. Since then the own loop says a model gave no answer after its first
+limit (180 s) in a live session, instead of trying again for up to 26 minutes.
+
 ## Order
 
 1. Pick the public repos (TypeScript monorepos with CI, active review and post-release PRs) and mine candidates per kind.

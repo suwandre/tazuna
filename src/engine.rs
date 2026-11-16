@@ -1665,6 +1665,13 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
                 bail!("{}: the model did not start answering; try again later or another model", e.to_string().trim_start_matches("io: "))
             }
             Ok(st) => st,
+            // someone is waiting at the screen: a model that has not answered at all in the limit is said, not tried again
+            // at twice the limit and more (free and preview models on a queue took 3-26 minutes to nothing, and the user
+            // stopped each by hand, 2026-11). Headless runs keep trying.
+            Err(ureq::Error::Timeout(_)) if !headless() => {
+                bail!("{} gave no answer in {} s: its provider may be queueing it (free and preview models often are); try again later or another model (/model)",
+                    body["model"].as_str().unwrap_or("the model"), limit.as_secs())
+            }
             Err(e) if wait > 0 => {
                 if matches!(e, ureq::Error::Timeout(_)) {
                     limit = (limit * 2).min(Duration::from_secs(900));

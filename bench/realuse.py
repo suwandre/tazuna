@@ -10,6 +10,7 @@ Per run, from the session recording and the next message the user sent:
   strong  the run was stopped or rewound, ended in an error or crash, git shows its change discarded, the router's chat
           answer was sent to the agent after all (`/agent`), the next message says it failed ("doesn't work", "wrong", "CI failed", "has an error", "don't ...") or asks the same again
   soft    pushback or waiting: "wait, ...", "why create ...?", "can't we ...", "progress?"
+  probes  checks on the model ("what is your model name", "test"): no signals, counted apart per lane
 Checked against 390 runs labelled by hand (2026-11-12): strong and soft together caught 12 of the 14 bad runs; 4 of
 231 good runs were flagged (all "wait - ..." clarifications, now soft).
 """
@@ -57,8 +58,16 @@ def messages():
     return out
 
 
+# a check on the model rather than a request for work ("what is your model name", "test"): asked again after each model
+# switch, which read as a re-ask (2026-11-16: 31 of the own loop's 77 runs were these)
+PROBE = re.compile(r"^\s*(test|hi|hello|ping|what('?s| is) your (model )?(name|model|[na]\w{2,3})|which model are you|who are you|"
+                   r"when were you (developed|released|trained|made)|what model( is this| are you)?)\W*$", re.I)
+
+
 def signals(r):
     strong, soft = [], []
+    if PROBE.search(r["prompt"] or ""):
+        return strong, soft
     if r["stopped"]: strong.append("stopped")
     if r["rewound"]: strong.append("rewound")
     if r["stop"] in ("error", "crashed"): strong.append(r["stop"])
@@ -130,7 +139,7 @@ def main():
     print(f"{len(rows)} live runs since {a.since} (strong: a clear miss; soft: pushback or waiting, not counted as strong)")
     import datetime
     table(lambda r: datetime.date.fromtimestamp(r["ts"] or 0).strftime("%Y-W%W"), "week")
-    table(lambda r: r["lane"], "lane")
+    table(lambda r: r["lane"] + (" (probes)" if PROBE.search(r["prompt"] or "") else ""), "lane")
     table(lambda r: (r["model"] or "(router)").split("@")[0][:24], "model")
     why = collections.Counter(s for r in rows for s in r["strong"] + r["soft"])
     print("\nsignals:", dict(why.most_common()))
