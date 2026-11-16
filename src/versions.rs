@@ -146,10 +146,12 @@ pub fn notices(claude: Option<&str>, model: Option<&str>, state: &Path, opened: 
     if let Some(v) = claude {
         let last = std::fs::read_to_string(state).unwrap_or_default();
         let last = last.trim();
-        if !last.is_empty() && last != v {
-            out.push(format!("Claude Code updated: {last} → {v}"));
-        }
-        if last != v {
+        // only a newer version is news, and the file keeps the newest seen: a window open for days still runs the claude
+        // it started with, and its next turn read as "updated: 2.1.325 → 2.1.323" after newer sessions (2026-11-16)
+        if last.is_empty() || older(last, v) {
+            if !last.is_empty() {
+                out.push(format!("Claude Code updated: {last} → {v}"));
+            }
             let _ = std::fs::write(state, v);
         }
         if older(v, MIN_CLAUDE) {
@@ -187,8 +189,10 @@ mod tests {
         assert!(notices(Some("2.1.314"), Some("claude-opus-5-5"), &state, later).is_empty(), "first session: nothing to compare");
         assert_eq!(notices(Some("2.1.318"), Some("claude-opus-5-5"), &state, later), ["Claude Code updated: 2.1.314 → 2.1.318"]);
         assert!(notices(Some("2.1.318"), None, &state, later).is_empty(), "said once");
+        assert!(notices(Some("2.1.316"), None, &state, later).is_empty(), "an older claude (a window open since before the update) is no update");
+        assert_eq!(std::fs::read_to_string(&state).unwrap(), "2.1.318", "the newest seen stays");
         let n = notices(Some("2.1.200"), Some("claude-opus-6-0"), &state, later);
-        assert!(n[1].contains("older than tazuna needs") && n[2].starts_with("claude-opus-6-0 is not in"), "{n:?}");
+        assert!(n[0].contains("older than tazuna needs") && n[1].starts_with("claude-opus-6-0 is not in"), "{n:?}");
         assert!(notices(None, None, &state, SystemTime::UNIX_EPOCH).iter().any(|n| n.starts_with("tazuna was rebuilt")));
         assert!(older("2.1.99", "2.1.292") && !older("2.1.318", "2.1.292") && !older("2.2.0", "2.1.292"));
         let _ = std::fs::remove_file(&state);
