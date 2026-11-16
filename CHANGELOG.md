@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.128 (2026-11-16): `tazuna app-server`, the core behind the desktop app
+
+- `tazuna app-server` runs tazuna's core for the desktop app (`desktop/`, docs/DESKTOP.md): the window's commands as JSON
+  lines on stdin (send, interrupt, new, resume, profile, model, effort, mode, answer, diff, undo, trust), the session as
+  snapshots on stdout. It shares the terminal's code for routing, model switches, /new and /resume, profile switches
+  and their trust check; stdin takes only the window's commands.
+- Each turn on the agent in the app records what it changed (git trees of the work tree before and after it, written
+  with a private index: nothing is staged and the user's index is untouched), with each file's diff and undo of the
+  last turn.
+- Fix: "Claude Code updated: 2.1.325 → 2.1.323" in a window open since before an update. The last version seen is
+  shared by every window, and an older window's claude read as a downgrade; only a newer version is announced now.
+- No metric moves: the terminal's paths are unchanged (shared code moved into functions); 172 tests.
+
 ## 0.1.127 (2026-11-15): general questions inside a project are answered as a chat, by themselves
 
 - A message with no sign of the code (no file, path, code quote, identifier, error or coding word, and nothing that
