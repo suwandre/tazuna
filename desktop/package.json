@@ -1,12 +1,13 @@
 {
   "name": "tazuna-desktop",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "sidecar": "node scripts/sidecar.mjs"
   },
   "dependencies": {
     "@fontsource-variable/source-serif-4": "^5.2.0",

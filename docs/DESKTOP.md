@@ -11,8 +11,9 @@ what a locked row needs) and the effort menu; saved conversations in the sidebar
 /resume list: either side opens the other's); the permission mode under the composer (auto, ask, edits, plan; shift-tab)
 and approvals inline (allow, always, decline; y / a / n); each turn's changes as a card (files, +/-, each file's diff) with
 undo of the last turn (git snapshots before and after, src/turns.rs; the next message tells the model); Cmd-K palette
-(chats, folders, conversations, model, effort, mode, undo, theme) and the Cmd-/ shortcut sheet. Left for 0.1.x: the app
-bundles tazuna (today it needs tazuna on the PATH), signed builds, and a check on Windows and Linux.
+(chats, folders, conversations, model, effort, mode, undo, theme) and the Cmd-/ shortcut sheet. 0.1.1 carries its own tazuna (built
+from the same commit; TAZUNA_BIN still overrides it) and CI builds it for macOS, Linux and Windows (.github/workflows/
+desktop.yml, tags desktop-vX.Y.Z). Left for 0.1.x: signed builds, and a run by hand on Windows and Linux.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

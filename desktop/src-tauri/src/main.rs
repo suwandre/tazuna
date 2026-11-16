@@ -19,9 +19,14 @@ struct Core {
     started: AtomicU64,
 }
 
-/// The tazuna binary: TAZUNA_BIN, else `tazuna` on the PATH (a bundled sidecar later).
+/// The tazuna binary: TAZUNA_BIN, else the one the app carries (bundle.externalBin, next to the app's own binary), else
+/// `tazuna` on the PATH (a development build run with `tauri dev`).
 fn tazuna_bin() -> String {
-    std::env::var("TAZUNA_BIN").unwrap_or_else(|_| "tazuna".into())
+    if let Ok(b) = std::env::var("TAZUNA_BIN") {
+        return b;
+    }
+    let carried = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(if cfg!(windows) { "tazuna.exe" } else { "tazuna" })));
+    carried.filter(|p| p.is_file()).map_or_else(|| "tazuna".into(), |p| p.to_string_lossy().into_owned())
 }
 
 /// A window opened from the Finder or a desktop launcher gets a bare PATH (/usr/bin:/bin...), without the folders
