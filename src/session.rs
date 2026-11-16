@@ -75,12 +75,14 @@ pub struct CallTime {
     pub out: u64,
 }
 
-/// (mean time to first token in ms, output tokens a second while generating) over `calls`; None where unknown.
+/// (mean time to first token in ms, output tokens a second while generating) over `calls`; None where unknown. The speed
+/// is the output over the time after the first token, of the calls where that can be measured (`gen_ms` > 0).
 pub fn speed(calls: &[CallTime]) -> (Option<f64>, Option<f64>) {
     let firsts: Vec<f64> = calls.iter().filter_map(|c| c.ttft_ms).collect();
     let ttft = (!firsts.is_empty()).then(|| firsts.iter().sum::<f64>() / firsts.len() as f64);
-    let gen_ms: f64 = calls.iter().map(|c| c.gen_ms).sum();
-    let tps = (gen_ms > 0.0).then(|| calls.iter().map(|c| c.out).sum::<u64>() as f64 / gen_ms * 1000.0);
+    let timed = calls.iter().filter(|c| c.gen_ms > 0.0);
+    let gen_ms: f64 = timed.clone().map(|c| c.gen_ms).sum();
+    let tps = (gen_ms > 0.0).then(|| timed.map(|c| c.out).sum::<u64>() as f64 / gen_ms * 1000.0);
     (ttft, tps)
 }
 
@@ -184,6 +186,8 @@ pub struct Session {
     /// Each subagent's own messages, by the call that started it: ctrl-b opens one as a conversation of its own.
     pub sub_events: std::collections::HashMap<String, Vec<(f64, Value)>>,
     call_est: f64,
+    /// How many pieces the call in flight has streamed (a speed needs a few, not one handed over at the end).
+    call_deltas: u32,
     call_thinking: Vec<usize>,
     /// When the last call started (ms into the session) and the cache life claude wrote it with (5 minutes or 1 hour, from
     /// its usage): each call that reads the cache renews it, counted from the request's start (Anthropic's docs: a reply
@@ -283,6 +287,7 @@ impl Session {
             sub_events: Default::default(),
             waiting_note: None,
             call_est: 0.0,
+            call_deltas: 0,
             call_thinking: vec![],
             last_call_ms: None,
             cache_ttl_ms: None,
@@ -789,7 +794,7 @@ impl Session {
                 self.turns += 1;
                 // the own loop sends this when its request goes out, right after the tool results
                 self.call_start = Some(self.ready_at.take().unwrap_or(self.now_ms));
-                (self.first_token, self.call_est) = (None, 0.0);
+                (self.first_token, self.call_est, self.call_deltas) = (None, 0.0, 0);
                 self.call_thinking.clear();
                 self.turn_usage.push(Usage::default());
             }
@@ -826,6 +831,7 @@ impl Session {
             Some("content_block_delta") => {
                 let d = &ev["delta"];
                 self.first_token.get_or_insert(self.now_ms);
+                self.call_deltas += 1;
                 self.waiting_note = None;
                 // reasoning that streams (DeepSeek's thinking) is output as well: without it, a call whose reasoning was
                 // shown read as reasoning kept back, and its speed counted the wait before the first token (0.1.137-0.1.147:
@@ -872,21 +878,27 @@ impl Session {
                     }
                 }
                 if let Some(start) = self.call_start.take() {
+                    // the speed is the output over the time after the first token, only where the stream shows the model
+                    // writing (all recorded calls of every model, 2026-11-16); otherwise the call has none (gen_ms 0)
+                    // rather than a figure that takes the wait in:
+                    // - nothing streamed: the first token's time is unknown (unstreamed providers, the own loop before
+                    //   streaming);
+                    // - under 20 tokens, under 5 streamed pieces or under half a second after the first: too short to
+                    //   time (two short calls on Mistral read 545 tok/s, the model's long ones far less);
+                    // - faster than 1,000 tok/s: handed over in a burst after it was written (claude: 66 deltas in 57 ms;
+                    //   providers buffering); no tested model streams near that, and its first token came late too;
+                    // - a model other than Claude whose output mostly never streamed: reasoning kept back before the first
+                    //   visible token (ERNIE: 102 tokens over 53 ms, 20 s in). Claude's thinking streams as a summary
+                    //   while it thinks (with thinking 124 tok/s, without 155, Opus 5.5 over 1,691 calls), so it counts;
+                    // - a count far below what streamed: not this call's usage (8 tokens reported for ~1,500 streamed).
                     let first = self.first_token.take();
-                    let mut c = CallTime { ttft_ms: first.map(|f| f - start), gen_ms: self.now_ms - first.unwrap_or(start), out: t.output };
-                    // claude sometimes hands a reply over in one burst after it was written (66 deltas in 57 ms: "6684
-                    // tok/s", 2026-11-03). No Claude model writes 1,000 tokens a second: the first token's time is then
-                    // unknown, and the speed counts from the call's start (a lower bound).
-                    if self.model.starts_with("claude-") && c.gen_ms > 0.0 && c.out as f64 / c.gen_ms > 1.0 {
-                        c = CallTime { ttft_ms: None, gen_ms: self.now_ms - start, out: t.output };
-                    } else if first.is_some() && self.call_est < 0.5 * t.output as f64 {
-                        // most of the output never streamed: reasoning the provider kept back (ERNIE at high effort: 102
-                        // tokens counted over the 53 ms after its first visible one, 20 s in, read as "1933 tok/s",
-                        // 2026-11-16). Those tokens were made before the first one shown, so the speed counts from the
-                        // call's start (a lower bound); the time to the first visible token stands.
-                        c.gen_ms = self.now_ms - start;
-                    }
-                    self.calls.push(c);
+                    let after = first.map_or(0.0, |f| self.now_ms - f);
+                    let out = t.output as f64;
+                    let burst = after > 0.0 && out / after > 1.0;
+                    let kept_back = !self.model.starts_with("claude-") && self.call_est < 0.5 * out;
+                    let measured = first.is_some() && t.output >= 20 && self.call_deltas >= 5 && after >= 500.0 && !burst && !kept_back
+                        && self.call_est <= 2.0 * out + 50.0;
+                    self.calls.push(CallTime { ttft_ms: first.filter(|_| !burst).map(|f| f - start), gen_ms: if measured { after } else { 0.0 }, out: t.output });
                 }
                 if let Some(last) = self.turn_usage.last_mut() {
                     *last = t;
@@ -974,6 +986,55 @@ pub fn failure_reason(result: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Every recorded call of every model, replayed through this code: the speed it shows against output over the time
+    /// after the first token, and calls no real model could make (over 1,500 tok/s, or under 2). Reads the user's
+    /// recordings: `cargo test --release audit_speeds -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn audit_speeds() {
+        let dir = crate::labels::dir().unwrap().join("sessions");
+        // model -> (calls, shown out, shown ms, formula out, formula ms, kept-back calls, burst calls, odd calls)
+        let mut by: std::collections::BTreeMap<String, (u32, u64, f64, u64, f64, u32, u32, Vec<String>)> = Default::default();
+        for f in std::fs::read_dir(&dir).unwrap().flatten() {
+            let Ok(text) = std::fs::read_to_string(f.path()) else { continue };
+            let mut s = Session::new("", "medium");
+            for l in text.lines() {
+                let Ok(d) = serde_json::from_str::<Value>(l) else { continue };
+                let (t, e) = (d["t"].as_f64().unwrap_or(0.0), &d["e"]);
+                let before = (s.call_start, s.first_token, s.call_est, s.calls.len());
+                s.apply(e, t);
+                if s.calls.len() > before.3 {
+                    let c = *s.calls.last().unwrap();
+                    let (Some(start), first) = (before.0, before.1) else { continue };
+                    let m = by.entry(s.model.clone()).or_default();
+                    m.0 += 1;
+                    if c.out == 0 || c.gen_ms <= 0.0 {
+                        continue;
+                    }
+                    (m.1, m.2) = (m.1 + c.out, m.2 + c.gen_ms);
+                    let after_first = first.map(|f| t - f);
+                    if let Some(g) = after_first.filter(|g| *g > 0.0) {
+                        (m.3, m.4) = (m.3 + c.out, m.4 + g);
+                    }
+                    let kept = first.is_some() && (c.gen_ms - (t - start)).abs() < 1.0 && c.ttft_ms.is_some();
+                    let burst = first.is_some() && c.ttft_ms.is_none();
+                    m.5 += kept as u32;
+                    m.6 += burst as u32;
+                    let shown = c.out as f64 / c.gen_ms * 1000.0;
+                    if (shown > 1500.0 || shown < 2.0) && m.7.len() < 3 {
+                        m.7.push(format!("{} tok/{:.1}s={shown:.0} (first after {:.1}s, streamed ~{:.0})", c.out, c.gen_ms / 1000.0,
+                            first.map_or(f64::NAN, |f| (f - start) / 1000.0), before.2));
+                    }
+                }
+            }
+        }
+        println!("{:<44} {:>6} {:>9} {:>9} {:>6} {:>6}  odd", "model", "calls", "shown", "formula", "kept", "burst");
+        for (model, m) in &by {
+            let rate = |o: u64, ms: f64| if ms > 0.0 { format!("{:.0}", o as f64 / ms * 1000.0) } else { "-".into() };
+            println!("{:<44} {:>6} {:>9} {:>9} {:>6} {:>6}  {}", model.chars().take(44).collect::<String>(), m.0, rate(m.1, m.2), rate(m.3, m.4), m.5, m.6, m.7.join(" | "));
+        }
+    }
+
     #[test]
     fn permission_text_cannot_hide_anything() {
         assert_eq!(shown("ls\nrm -rf ~", 100), "ls⏎rm -rf ~");
@@ -1058,26 +1119,29 @@ mod tests {
         c.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 2000.0);
         c.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "12345678"}})), 2000.0);
         assert_eq!(c.in_flight(), Some((600.0, Some(2000.0), 2.0)), "8 characters: ~2 tokens so far");
-        c.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(1432)}})), 6900.0);
+        for at in [3000.0, 4000.0, 5000.0, 6900.0] {
+            c.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(358)}})), at);
+        }
         c.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 10, "output_tokens": 360}})), 7000.0);
         assert_eq!(c.in_flight(), None);
         // the own loop, unstreamed: its message_start goes out with the request, and no token streams
         c.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "x", "content": "ok"}]}}), 7900.0);
         c.apply(&ev(json!({"type": "message_start"})), 8000.0);
         c.apply(&ev(json!({"type": "message_delta", "usage": {"input_tokens": 10, "output_tokens": 100}})), 10100.0);
-        assert_eq!(c.calls, [CallTime { ttft_ms: Some(1400.0), gen_ms: 5000.0, out: 360 }, CallTime { ttft_ms: None, gen_ms: 2200.0, out: 100 }]);
+        assert_eq!(c.calls, [CallTime { ttft_ms: Some(1400.0), gen_ms: 5000.0, out: 360 }, CallTime { ttft_ms: None, gen_ms: 0.0, out: 100 }]);
         let (first, rate) = speed(&c.calls);
-        assert_eq!((first, rate.map(|r| r.round())), (Some(1400.0), Some(64.0)), "460 tokens over 7.2 s");
-        // a reply claude hands over in one burst: no first token, the speed from the call's start
+        assert_eq!((first, rate.map(|r| r.round())), (Some(1400.0), Some(72.0)), "360 tokens over the 5 s after the first; the unstreamed call has no speed");
+        // a reply claude hands over in one burst: neither its first token's time nor its speed is known
         let mut b = Session::new("", "medium");
         b.model = "claude-opus-5-5".into();
         b.apply(&json!({"type": "harness_user", "text": "go"}), 0.0);
         b.apply(&ev(json!({"type": "message_start"})), 3900.0);
         b.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x"}})), 3900.0);
         b.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 380}})), 3957.0);
-        assert_eq!(b.calls, [CallTime { ttft_ms: None, gen_ms: 3957.0, out: 380 }]);
-        // reasoning a provider keeps back: 102 tokens, ~10 of them streamed in 53 ms after 20 s of nothing; the speed
-        // counts from the call's start, not "1933 tok/s"
+        assert_eq!(b.calls, [CallTime { ttft_ms: None, gen_ms: 0.0, out: 380 }]);
+        assert_eq!(speed(&b.calls), (None, None));
+        // reasoning a provider keeps back: 102 tokens, ~10 of them streamed in 53 ms after 20 s of nothing; no speed, not
+        // "1933 tok/s", and handed over in a burst, so no time to first token either
         let mut h = Session::new("", "high");
         h.model = "ernie-5-5-flash-preview".into();
         h.apply(&json!({"type": "harness_user", "text": "go"}), 0.0);
@@ -1085,20 +1149,61 @@ mod tests {
         h.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 20_000.0);
         h.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(40)}})), 20_000.0);
         h.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 102}})), 20_053.0);
-        assert_eq!(h.calls, [CallTime { ttft_ms: Some(20_000.0), gen_ms: 20_053.0, out: 102 }]);
-        assert_eq!(speed(&h.calls).1.map(|r| r.round()), Some(5.0), "102 tokens over 20 s");
+        assert_eq!(h.calls, [CallTime { ttft_ms: None, gen_ms: 0.0, out: 102 }]);
+        assert_eq!(speed(&h.calls), (None, None));
+        // kept back without a burst (a few visible tokens over a while): no speed; the wait to the first one stands
+        let mut k2 = Session::new("", "high");
+        k2.model = "deepseek-v4-1-flash-1017".into();
+        k2.apply(&json!({"type": "harness_user", "text": "go"}), 0.0);
+        k2.apply(&ev(json!({"type": "message_start"})), 0.0);
+        k2.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(400)}})), 9_000.0);
+        k2.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 900}})), 10_200.0);
+        assert_eq!(k2.calls, [CallTime { ttft_ms: Some(9_000.0), gen_ms: 0.0, out: 900 }], "750 tok/s on 100 visible tokens: reasoning kept back");
+        // two pieces over 0.1 s (Mistral, 2026-11-16: read 960 tok/s): too short to time, whatever the rate
+        let mut sh = Session::new("", "high");
+        sh.model = "deepseek-v4-1-flash-1017".into();
+        sh.apply(&json!({"type": "harness_user", "text": "go"}), 0.0);
+        sh.apply(&ev(json!({"type": "message_start"})), 0.0);
+        sh.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(240)}})), 1_000.0);
+        sh.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(240)}})), 1_050.0);
+        sh.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 120}})), 1_125.0);
+        assert_eq!(sh.calls[0].gen_ms, 0.0);
         // reasoning that streams counts as output: the speed is output over the time after the first token
         let mut d = Session::new("", "high");
         d.model = "deepseek-v4.1-flash-1017-fast".into();
         d.apply(&json!({"type": "harness_user", "text": "go"}), 0.0);
         d.apply(&ev(json!({"type": "message_start"})), 0.0);
         d.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "thinking"}})), 2_400.0);
-        d.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "t".repeat(1023)}})), 2_400.0);
+        for at in [2_400.0, 2_900.0, 3_400.0] {
+            d.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "thinking_delta", "thinking": "t".repeat(341)}})), at);
+        }
         d.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 4_000.0);
-        d.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(892)}})), 4_000.0);
+        for at in [4_000.0, 4_500.0] {
+            d.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(446)}})), at);
+        }
         d.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 451}})), 5_100.0);
         assert_eq!(d.calls, [CallTime { ttft_ms: Some(2_400.0), gen_ms: 2_700.0, out: 451 }]);
         assert_eq!(speed(&d.calls).1.map(|r| r.round()), Some(167.0), "451 tokens over the 2.7 s after the first one, not 88 over 5.1 s");
+        // Claude's thinking streams as a summary (a third of its output) while it thinks: timed from the first token
+        let mut o = Session::new("", "high");
+        o.model = "claude-opus-5-5".into();
+        o.apply(&json!({"type": "harness_user", "text": "go"}), 0.0);
+        o.apply(&ev(json!({"type": "message_start"})), 0.0);
+        for (at, kind, n) in [(1_500.0, "thinking", 400), (3_000.0, "thinking", 400), (6_000.0, "text", 200), (7_000.0, "text", 100), (8_000.0, "text", 100)] {
+            o.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": format!("{kind}_delta"), kind: "x".repeat(n)}})), at);
+        }
+        o.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 900}})), 8_500.0);
+        assert_eq!(o.calls, [CallTime { ttft_ms: Some(1_500.0), gen_ms: 7_000.0, out: 900 }]);
+        // too short to time, and a count that is not this call's (8 reported for ~1,500 streamed): no speed
+        let mut q = Session::new("", "high");
+        q.model = "claude-fable-5-2".into();
+        for (out, chars) in [(4u64, 16usize), (8, 6_000)] {
+            q.apply(&json!({"type": "harness_user", "text": "go"}), 0.0);
+            q.apply(&ev(json!({"type": "message_start"})), 0.0);
+            q.apply(&ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": "x".repeat(chars)}})), 1_000.0);
+            q.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": out}})), 4_000.0);
+        }
+        assert_eq!(speed(&q.calls).1, None);
         // the cache's life from what the call wrote, renewed by each call; the last call's cached share
         let mut k = Session::new("", "medium");
         k.apply(&ev(json!({"type": "message_start"})), 0.0);

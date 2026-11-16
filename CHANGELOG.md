@@ -16,6 +16,22 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.149 (2026-11-16): tok/s is the output over the time after the first token, or nothing
+
+- Audited on every recorded call of every model (4,927 calls, 25 models; `cargo test --release audit_speeds -- --ignored
+  --nocapture` replays them through this code). A call's speed is now its output over the time after its first token,
+  and only where the stream shows the model writing; otherwise it has none, rather than a figure that takes the wait in:
+  nothing streamed (GPT-6, Gemini, Grok, Mistral Small, older own-loop runs: the first token's time is unknown; they had
+  shown output over the whole call); under 20 tokens, under 5 streamed pieces or under half a second (two short calls on
+  Mistral read 545 tok/s); faster than 1,000 tok/s (a reply handed over in a burst: up to 53,500 "tok/s" on Opus and
+  41,000 on ERNIE before); a model other than Claude whose output mostly never streamed (reasoning kept back); a count
+  far below what streamed. Claude's thinking streams as a summary while it thinks (124 tok/s with it, 155 without, Opus),
+  so its calls count. Before, the cases above counted from the call's start, pulling averages down.
+- After: Opus 5.5 114 tok/s, Fable 5.2 110, Haiku 5.5 299, DeepSeek V4.1 Flash 252, 1017 160, 1017-fast 173, ERNIE 5.5
+  Flash 248; no call shows over 1,500 or under 2. The rule's variants agree for every model with many calls (Opus
+  115/115/114).
+- No other metric moves; 182 tests (and the audit, ignored by default).
+
 ## 0.1.148 (2026-11-16): tok/s counts from the first token again on models that stream their reasoning
 
 - Since 0.1.137 a call whose output mostly did not stream counted its speed from the call's start (for ERNIE, whose
