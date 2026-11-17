@@ -1,0 +1,8 @@
+{
+  "tazuna_plugin": 1,
+  "id": "last-turn-bar",
+  "files": {
+    "manifest.json": "{\n  \"title\": \"Last turn\",\n  \"description\": \"Above the message box: the last turn's cost, time and cache share, and the conversation's cost\",\n  \"api\": 1\n}",
+    "plugin.js": "// Above the message box: the last turn's cost, time and cache share, and the conversation's cost so far.\nexport default function (ctx) {\n  const { h } = ctx;\n  function Bar() {\n    const d = ctx.useData();\n    if (!d || !d.session || !d.turns || !d.turns.length) return null;\n    const t = d.turns[d.turns.length - 1];\n    const parts = [`last turn $${t.cost.toFixed(4)}`, `${Math.round(t.secs)} s`, t.cached == null ? null : `${Math.round(100 * t.cached)}% cached`,\n      `conversation $${d.session.cost.toFixed(3)}`].filter(Boolean);\n    return h(\"div\", { style: { font: \"11.5px var(--font-mono)\", color: \"var(--muted)\", padding: \"2px 4px\" } }, parts.join(\" \u00b7 \"));\n  }\n  ctx.slots.register(\"composer.dock\", { id: \"last-turn-bar\", order: 10, render: () => h(Bar) });\n}\n"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "items": [
+    {
+      "file": "cache-meter.json",
+      "id": "cache-meter",
+      "kind": "panel",
+      "title": "Cache meter",
+      "about": "How much of the conversation was read from the prompt cache, and each turn's share",
+      "author": "tazuna"
+    },
+    {
+      "file": "last-turn-bar.json",
+      "id": "last-turn-bar",
+      "kind": "plugin",
+      "title": "Last turn",
+      "about": "Above the message box: the last turn's cost, time and cache share, and the conversation's cost",
+      "author": "tazuna"
+    }
+  ]
+}
