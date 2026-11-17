@@ -21,6 +21,11 @@ export const widgets = {
   code: (id: string) => invoke<{ code: string; print: string }>("plugins_code", { id }),
   /** a plugin on (for the code it had when listed) or off */
   enable: (id: string, print: string, on: boolean) => invoke("plugins_enable", { id, print, on }),
+  /** one panel or plugin as a file to share, where the user picks; its path (null: cancelled) */
+  share: (id: string) => invoke<string | null>("plugins_export", { id }),
+  /** a shared one in, from a file the user picks (null: cancelled) or from its text (the gallery's); its id. A plugin stays off. */
+  importFile: () => invoke<string | null>("plugins_import_file"),
+  importText: (text: string) => invoke<string>("plugins_import", { text }),
 };
 
 /** Where a panel's page is served (the tzwidget: scheme; Windows' webview reaches custom schemes over http). */

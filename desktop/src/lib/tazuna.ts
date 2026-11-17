@@ -48,6 +48,7 @@ export type Settings = { providers: Provider[]; data_any: boolean; route: boolea
 export type Mcp = { on: boolean; claude: boolean; servers: { name: string; target: string }[]; note: string };
 /** a server's check: progress (a login link) without `ok`, then the outcome */
 export type McpStatus = { name: string; ok?: boolean; text: string };
+export type GalleryItem = { file: string; id: string; kind: "panel" | "plugin"; title: string; about: string; author: string };
 export type Hook = { cwd: string; after_turn: string | null; note: string };
 export type WorktreeMade = { ask_setup?: boolean; script?: string; id?: string; setup_skipped?: string; error?: string; path?: string; branch?: string; port?: number; copied?: string[]; setup?: { ok: boolean; tail: string } | null };
 export type Review = { scope: string; turn?: number | null; base?: string | null; text: string };
@@ -122,6 +123,11 @@ export const core = {
   /** this folder's command after each turn that changed files (src/hooks.rs): set with a string (empty: none), asked without */
   hook: (afterTurn?: string) => to("op", { msg: { op: "hook", after_turn: afterTurn } }),
   onHook: (cb: (h: Hook) => void) => on<Hook>("hook", cb),
+  /** the plugin gallery (gallery/ in tazuna's repository): its list; one entry's shared file */
+  gallery: () => to("op", { msg: { op: "gallery" } }),
+  galleryGet: (file: string) => to("op", { msg: { op: "gallery_get", file } }),
+  onGallery: (cb: (g: { items?: GalleryItem[]; error?: string }) => void) => on<{ items?: GalleryItem[]; error?: string }>("gallery", cb),
+  onGalleryItem: (cb: (g: { file?: string; text?: string; error?: string }) => void) => on<{ file?: string; text?: string; error?: string }>("gallery_item", cb),
   /** the first run's checks: the claude CLI's version, or null when it is not installed */
   setup: () => to("op", { msg: { op: "setup" } }),
   onSetup: (cb: (s: { claude: string | null }) => void) => on<{ claude: string | null }>("setup", cb),

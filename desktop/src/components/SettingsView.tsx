@@ -2,16 +2,18 @@ import { ExternalLink, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useDialog } from "../lib/dialog";
 import { safeMode } from "../lib/plugins";
-import { HOTKEY, core, defaultHotkey, type Hook, type Mcp, type Settings } from "../lib/tazuna";
-import type { UserWidget } from "../lib/widgets";
+import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Settings } from "../lib/tazuna";
+import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
 
 // Settings: provider keys (saved by tazuna, never shown again), the data policy for this session, the router. The
 // terminal's /login, /data and /route in one page.
 type PluginProps = {
   items?: UserWidget[]; onEnable?: (w: UserWidget, on: boolean) => void; onEdit?: (id: string) => void; onRemove?: (id: string) => void;
+  /** a panel or plugin came in (a file, the gallery): the list again */
+  onChanged?: () => void;
 };
 
-export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }: { onClose: () => void } & PluginProps) {
+export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, onChanged }: { onClose: () => void } & PluginProps) {
   const [st, setSt] = useState<Settings | null>(null);
   const dialog = useDialog();
   const [keys, setKeys] = useState<Record<string, string>>({});
@@ -23,6 +25,24 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
   const [mcpState, setMcpState] = useState<Record<string, { ok?: boolean; text: string }>>({});
   const [adding, setAdding] = useState({ name: "", target: "" });
   const [hook, setHook] = useState<Hook | null>(null);
+  // a plugin read before it is enabled (its code and what it would register, from one read); sharing and the gallery
+  const [reading, setReading] = useState<{ w: UserWidget; code: string; print: string; would: string } | null>(null);
+  const [plugNote, setPlugNote] = useState("");
+  const [gallery, setGallery] = useState<{ items?: GalleryItem[]; error?: string } | null>(null);
+  // the gallery entries asked for and not yet in: each answer is taken once (a second click or listener adds no copy)
+  const asked = useRef(new Set<string>());
+  const [, setAskedN] = useState(0);
+  const read = async (w: UserWidget) => {
+    const c = await widgets.code(w.id).catch(() => null);
+    if (!c) { setPlugNote(`Could not read ${w.title}'s code.`); return; }
+    const r = await dryRun(w.id);
+    setReading({ w, code: c.code, print: c.print, would: r.error ? `It fails when run: ${r.error}` : summary(r.rec) || "It registers nothing." });
+  };
+  const arrived = (id: string | null, from: string) => {
+    if (!id) return;
+    onChanged?.();
+    setPlugNote(`Added ${id} from ${from}. A plugin stays off until you read its code and enable it; a panel shows at once, sandboxed.`);
+  };
   const [hookCmd, setHookCmd] = useState<string | null>(null);
   const canAdd = !!adding.name.trim() && !!adding.target.trim();
   const addServer = () => {
@@ -40,12 +60,18 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
   useEffect(() => {
     const off = core.onSettings(setSt);
     const offMcp = core.onMcp(setMcp), offStatus = core.onMcpStatus((m) => setMcpState((all) => ({ ...all, [m.name]: m }))), offHook = core.onHook(setHook);
+    const offGallery = core.onGallery(setGallery), offItem = core.onGalleryItem((g) => {
+      if (g.file && !asked.current.delete(g.file)) return;
+      setAskedN((n) => n + 1);
+      if (g.error || !g.text) { setPlugNote(`The gallery entry did not come: ${g.error ?? "empty"}`); return; }
+      widgets.importText(g.text).then((id) => arrived(id, "the gallery")).catch((e) => setPlugNote(`Not added: ${e}`));
+    });
     refresh();
     core.mcp().catch(() => {});
     core.hook().catch(() => {});
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close.current(); };
     window.addEventListener("keydown", esc);
-    return () => { for (const o of [off, offMcp, offStatus, offHook]) o.then((f) => f()); window.removeEventListener("keydown", esc); };
+    return () => { for (const o of [off, offMcp, offStatus, offHook, offGallery, offItem]) o.then((f) => f()); window.removeEventListener("keydown", esc); };
   }, []);
   const save = async (name: string) => {
     await core.login(name, keys[name] ?? "");
@@ -174,12 +200,47 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
                 <span className="min-w-0 flex-1"><span className="block truncate text-ink">{w.title}</span>
                   <span className="block truncate text-[11.5px] text-faint">{w.kind === "panel" ? "panel · sandboxed" : w.state === "enabled" ? "plugin · on"
                     : w.state === "changed" ? "plugin · its code changed since you enabled it: look before enabling again" : "plugin · off"}{w.about ? ` · ${w.about}` : ""}</span></span>
-                {w.kind === "plugin" && <button onClick={() => onEnable?.(w, w.state !== "enabled")}
-                  className={`rounded-md border px-2.5 py-1 text-[12px] hover:bg-hover ${w.state === "enabled" ? "border-line text-ink-2" : "border-line-strong text-ink"}`}>{w.state === "enabled" ? "Turn off" : "Enable"}</button>}
+                {w.kind === "plugin" && <button onClick={() => (w.state === "enabled" ? onEnable?.(w, false) : read(w))}
+                  className={`rounded-md border px-2.5 py-1 text-[12px] hover:bg-hover ${w.state === "enabled" ? "border-line text-ink-2" : "border-line-strong text-ink"}`}>{w.state === "enabled" ? "Turn off" : "Read and enable"}</button>}
+                <button onClick={() => widgets.share(w.id).then((p) => p && setPlugNote(`Saved ${w.title} to ${p}: anyone can add it with "Add from a file".`)).catch((e) => setPlugNote(`Not saved: ${e}`))}
+                  title="Save it as one file to give to someone" className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Share</button>
                 <button onClick={() => { onClose(); onEdit?.(w.id); }} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Change with tazuna</button>
                 <button onClick={() => onRemove?.(w.id)} title="Remove (its folder moves to .removed)" className="rounded p-1 text-muted hover:bg-hover"><X size={14} strokeWidth={1.5} /></button>
               </div>
             ))}
+            {reading && (
+              <div role="region" aria-label={`${reading.w.title}: its code`} className="mt-2 rounded-md border border-line-strong px-3 py-2.5">
+                <div className="text-[12.5px] text-ink">{reading.w.title}: {reading.would}</div>
+                <div className="mb-1.5 text-[12px] text-muted">It runs inside the window with tazuna's reach: read it before you enable it.</div>
+                <pre tabIndex={0} className="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] text-ink select-text">{reading.code}</pre>
+                <div className="mt-2 flex justify-end gap-2">
+                  <button onClick={() => setReading(null)} className="rounded-md px-2.5 py-1 text-[12px] text-muted hover:bg-hover">Cancel</button>
+                  <button onClick={() => { onEnable?.({ ...reading.w, print: reading.print }, true); setReading(null); }}
+                    className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent">Enable this code</button>
+                </div>
+              </div>
+            )}
+            <div className="mt-2 flex items-center gap-2">
+              <button onClick={() => widgets.importFile().then((id) => arrived(id, "the file")).catch((e) => setPlugNote(`Not added: ${e}`))}
+                className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover">Add from a file…</button>
+              <button onClick={() => { setGallery({}); core.gallery().catch(() => {}); }} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover">Browse the gallery</button>
+            </div>
+            {plugNote && <div role="status" className="mt-1.5 text-[12px] text-muted">{plugNote}</div>}
+            {gallery && (
+              <div className="mt-2 rounded-md border border-line px-3 py-1">
+                {!gallery.items && !gallery.error && <div className="py-1.5 text-[12.5px] text-faint">Loading the gallery…</div>}
+                {gallery.error && <div className="py-1.5 text-[12.5px] text-bad">{gallery.error}</div>}
+                {gallery.items?.map((g) => (
+                  <div key={g.file} className="flex items-center gap-2 border-b border-line-soft py-2 last:border-b-0">
+                    <span className="min-w-0 flex-1"><span className="block text-ink">{g.title} <span className="text-[11.5px] text-faint">· {g.kind}{g.author ? ` · by ${g.author}` : ""}</span></span>
+                      <span className="block text-[12px] text-muted">{g.about}</span></span>
+                    <button disabled={asked.current.has(g.file)} onClick={() => { asked.current.add(g.file); setAskedN((n) => n + 1); core.galleryGet(g.file); }}
+                      className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-40">{asked.current.has(g.file) ? "Adding…" : "Add"}</button>
+                  </div>
+                ))}
+                <div className="py-1.5 text-[11.5px] text-faint">From gallery/ in tazuna's repository; anyone can propose one there with a pull request.</div>
+              </div>
+            )}
             <label className="mt-3 flex items-start gap-2 py-1"><input type="checkbox" checked={safeMode()} onChange={(e) => {
               if (e.target.checked) localStorage.setItem("tazuna.safe", "1"); else localStorage.removeItem("tazuna.safe");
               location.reload();

@@ -154,3 +154,22 @@ Between 40 and 600 px.
   });
 </script>
 ```
+
+## Sharing and the gallery
+
+Settings, Panels and plugins: **Share** saves one as a single file, `<id>.tazuna.json`:
+
+```json
+{"tazuna_plugin": 1, "id": "cache-meter", "files": {"manifest.json": "...", "index.html": "..."}}
+```
+
+It carries only `manifest.json` and `index.html` or `plugin.js`, as text, 1 MB at most; **Add from a file…** takes such a
+file and nothing else (another file name, a folder, a binary: refused), under a free id. **Browse the gallery** lists
+`gallery/index.json` in tazuna's repository and adds an entry the same way; the core fetches only files from that folder.
+
+What comes in is treated like what the agent makes: a panel shows at once (it is sandboxed), a plugin stays off until
+you **Read and enable** it: Settings shows what it would register (a dry run) and its code, and **Enable this code**
+turns on exactly the bytes you read.
+
+To put one in the gallery: add its shared file as `gallery/<id>.json` and a line in `gallery/index.json`
+(`{"file", "id", "kind", "title", "about", "author"}`), and open a pull request.

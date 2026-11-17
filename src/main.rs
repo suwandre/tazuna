@@ -757,6 +757,9 @@ impl RouteCtx {
     }
 }
 
+/// Where the plugin gallery lives: gallery/ in tazuna's public repository (an entry joins it by pull request).
+const GALLERY: &str = "https://raw.githubusercontent.com/suwandre/tazuna/main/gallery";
+
 /// The router's check for a message with no code signals (route::code_signals). 0 of 45 coding messages and follow-ups
 /// went to chat with it, 22 of 24 general questions did (bench/suite/route-messages.jsonl, DeepSeek, 2026-11-15).
 const ROUTE_SYSTEM: &str = "You route messages in a coding assistant that works in the user's software project. Reply with one word. CODE: the \
@@ -1124,9 +1127,9 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 43] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+        const OPS: [&str; 45] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
             "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
-            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup"];
+            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1399,6 +1402,29 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("tazuna_hook") => if cmd["ok"] != true {
                             s.apply(&json!({"type": "harness_notice", "text": cmd["text"], "error": true}), at);
                         },
+                        // the plugin gallery (gallery/ in tazuna's repository, docs/PLUGINS.md): its list, or one entry's shared file,
+                        // fetched on a thread from that folder only (an entry is a file name there, nothing else)
+                        Some("gallery" | "gallery_get") => {
+                            let file = if cmd["op"] == "gallery" { Some("index.json".to_string()) } else {
+                                cmd["file"].as_str().filter(|f| f.len() <= 80 && f.ends_with(".json") && f.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.') && !f.contains("..")).map(String::from)
+                            };
+                            let kind = if cmd["op"] == "gallery" { "gallery" } else { "gallery_item" };
+                            std::thread::spawn(move || {
+                                let got = file.ok_or_else(|| "not a gallery entry".to_string()).and_then(|f| {
+                                    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(20))).build().into();
+                                    let mut r = http.get(&format!("{GALLERY}/{f}")).call().map_err(|e| format!("the gallery did not answer: {e}"))?;
+                                    r.body_mut().with_config().limit(2 << 20).read_to_string().map_err(|e| e.to_string()).map(|t| (f, t))
+                                });
+                                let v = match got {
+                                    Ok((f, t)) if kind == "gallery" => serde_json::from_str::<serde_json::Value>(&t).map(|i| json!({"type": kind, "items": i["items"]})).unwrap_or_else(|_| json!({"type": kind, "error": format!("{f} is not JSON")})),
+                                    Ok((f, t)) => json!({"type": kind, "file": f, "text": t}),
+                                    Err(e) => json!({"type": kind, "error": e}),
+                                };
+                                let mut o = std::io::stdout().lock();
+                                let _ = writeln!(o, "{v}");
+                                let _ = o.flush();
+                            });
+                        }
                         // the first run's checks: is the claude CLI there (its version; ~1 s, so on a thread)
                         Some("setup") => {
                             std::thread::spawn(|| {

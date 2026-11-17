@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.162 (2026-11-17): the plugin gallery
+
+- The app server's `gallery` and `gallery_get` ops fetch the plugin gallery (gallery/ in this repository: index.json and
+  one shared file per entry) on a thread, from that folder only: an entry is a file name there (a path or a URL is
+  refused). The gallery starts with a cache meter panel and a last-turn plugin.
+
 ## 0.1.161 (2026-11-17): review mode, with commands in a sandbox
 
 - A fifth permission mode, `review` (shift-tab after edits; the desktop's mode menu): edits go ahead as in edits mode,

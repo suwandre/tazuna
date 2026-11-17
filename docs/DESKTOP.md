@@ -89,6 +89,9 @@ its own way there: Claude on the subscription (the claude CLI found, with its ve
 models' keys, who may see the code, the quick-chat key. "Choose later" closes it; Cmd-K "Set up tazuna" brings it back.
 0.1.38 (with tazuna 0.1.161), from 1.1: review mode in the mode menu: a reviewer model answers command requests and
 what it allows runs in a sandbox (tazuna 0.1.161's notes); the question card says while the reviewer checks it.
+0.1.39 (with tazuna 0.1.162): sharing and the gallery (docs/PLUGINS.md): Share saves a panel or plugin as one file, Add
+from a file and Browse the gallery bring one in. A plugin from either stays off until Read and enable, which now shows
+what it would register and its code first (Settings' Enable turned a plugin on without showing its code before).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
@@ -138,7 +141,7 @@ keeps its own numbers; the app says which tazuna it needs.
 
 Work order from 0.1.33 (2026-11-17, ranked by worth for daily use and the goals against effort): the per-turn call view
 (done), the accessibility pass (done), MCP servers and hooks in Settings (done), best-of-N across models (done), first run with "choose later" (done),
-the router learning from real use (held back: too few runs on cheap models yet), the approval reviewer (done), plugin sharing and a gallery, SSH and remote sessions, the
+the router learning from real use (held back: too few runs on cheap models yet), the approval reviewer (done), plugin sharing and a gallery (done), SSH and remote sessions, the
 mobile companion and team settings. Code signing stays off by choice.
 
 ### 0.1: the MVP (usable every day by one person)
@@ -260,8 +263,8 @@ tazuna takes the reach and keeps a safe default:
   stand-in that records what it would register) and sends a failure or "shows nowhere" back into the conversation (two
   rounds), where DeepSeek's creator reports done for plugins that never loaded. A plugin that passes waits for the user:
   what it would do, its code, and Enable; nothing agent-written runs in the window before that (security review).
-- Next: sharing and a gallery by 1.0; more spots as needs show (settings sections, the sidebar's lists); behaviour
-  plugins in 1.1.
+- Sharing and a gallery: done in 0.1.39. Next: more spots as needs show (settings sections, the sidebar's lists).
+  (Behaviour plugins came in 0.1.28: /create.)
 
 ## Open questions
 1. Which design direction first (mockups A-E)?

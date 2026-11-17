@@ -266,6 +266,75 @@ fn widgets_path(id: String) -> Result<String, String> {
     widget_id_ok(&id).then(|| widgets_dir().join(&id).to_string_lossy().into_owned()).ok_or(format!("not a panel id: {id}"))
 }
 
+/// The files a shared panel or plugin carries (docs/PLUGINS.md, Sharing): nothing else is written on import.
+const SHARED: [&str; 3] = ["manifest.json", "index.html", "plugin.js"];
+
+/// A panel or plugin as one file to share, `{"tazuna_plugin": 1, "id", "files": {name: text}}`, saved where the user
+/// picks; its path, or None when the dialog was cancelled.
+#[tauri::command]
+async fn plugins_export(app: AppHandle, id: String) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    if !widget_id_ok(&id) {
+        return Err(format!("not a plugin id: {id}"));
+    }
+    let dir = widgets_dir().join(&id);
+    let files: serde_json::Map<String, serde_json::Value> = SHARED.iter()
+        .filter_map(|n| std::fs::read_to_string(dir.join(n)).ok().map(|t| (n.to_string(), serde_json::json!(t)))).collect();
+    let text = serde_json::to_string_pretty(&serde_json::json!({"tazuna_plugin": 1, "id": id, "files": files})).map_err(|e| e.to_string())?;
+    let Some(path) = app.dialog().file().set_file_name(format!("{id}.tazuna.json")).blocking_save_file().and_then(|p| p.into_path().ok()) else { return Ok(None) };
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+/// A shared panel or plugin (the shared file's text, from a file or the gallery) into the plugins folder under a free id:
+/// only its manifest, index.html and plugin.js, as text, 1 MB together at most. A plugin arrives off: it runs only once the
+/// user has read its code and enabled it (Settings), like one the agent made; an approval left under the same id goes.
+#[tauri::command]
+fn plugins_import(text: String) -> Result<String, String> {
+    import_into(&widgets_dir(), &text)
+}
+
+fn import_into(root: &std::path::Path, text: &str) -> Result<String, String> {
+    let v: serde_json::Value = serde_json::from_str(text).map_err(|_| "not a shared tazuna panel or plugin".to_string())?;
+    let files = v["files"].as_object().filter(|_| v["tazuna_plugin"] == 1).ok_or("not a shared tazuna panel or plugin")?;
+    if let Some(odd) = files.keys().find(|k| !SHARED.contains(&k.as_str())) {
+        return Err(format!("it carries {odd}: a shared panel or plugin holds only manifest.json and index.html or plugin.js"));
+    }
+    let texts: Vec<(&str, &str)> = files.iter().map(|(k, t)| t.as_str().map(|t| (k.as_str(), t)).ok_or(format!("{k} is not text"))).collect::<Result<_, _>>()?;
+    if texts.iter().map(|(_, t)| t.len()).sum::<usize>() > 1 << 20 {
+        return Err("it is over 1 MB".into());
+    }
+    let manifest = files.get("manifest.json").and_then(|m| m.as_str()).and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok()).filter(|m| m.is_object());
+    if manifest.is_none() || !(files.contains_key("index.html") || files.contains_key("plugin.js")) {
+        return Err("it needs a manifest.json and an index.html or a plugin.js".into());
+    }
+    let base = v["id"].as_str().filter(|i| widget_id_ok(i) && i.len() <= 56).unwrap_or("shared").to_string();
+    let id = (1..100).map(|n| if n == 1 { base.clone() } else { format!("{base}-{n}") }).find(|i| !root.join(i).exists()).ok_or("no free id")?;
+    let dir = root.join(&id);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    for (name, t) in texts {
+        std::fs::write(dir.join(name), t).map_err(|e| e.to_string())?;
+    }
+    if root == widgets_dir() {
+        let mut a = approvals();
+        if a.remove(&id).is_some() {
+            save_approvals(&a)?;
+        }
+    }
+    Ok(id)
+}
+
+/// The file picker for a shared panel or plugin, then plugins_import; None when cancelled.
+#[tauri::command]
+async fn plugins_import_file(app: AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(path) = app.dialog().file().add_filter("tazuna panel or plugin", &["json"]).blocking_pick_file().and_then(|p| p.into_path().ok()) else { return Ok(None) };
+    if std::fs::metadata(&path).map_err(|e| e.to_string())?.len() > 2 << 20 {
+        return Err("it is over 2 MB".into());
+    }
+    plugins_import(std::fs::read_to_string(&path).map_err(|e| e.to_string())?).map(Some)
+}
+
 /// A panel off the window: its folder moves to widgets/.removed/ (kept, not deleted).
 #[tauri::command]
 fn widgets_remove(id: String) -> Result<(), String> {
@@ -458,7 +527,7 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
 /// nothing else passes (the core drops other lines too).
 #[tauri::command]
 fn op(core: State<Core>, tid: String, msg: serde_json::Value) -> Result<(), String> {
-    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard")) {
+    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "gallery" | "gallery_get" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard")) {
         return Err(format!("not a command the window sends: {msg}"));
     }
     write(&core, &tid, msg)
@@ -554,7 +623,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 let core = w.state::<Core>();
@@ -570,6 +639,22 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_shared_plugin_is_imported_with_its_own_files_only_under_a_free_id() {
+        let root = std::env::temp_dir().join(format!("tazuna-import-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("cost-bar")).unwrap();
+        let bundle = |files: serde_json::Value| serde_json::json!({"tazuna_plugin": 1, "id": "cost-bar", "files": files}).to_string();
+        let ok = bundle(serde_json::json!({"manifest.json": "{\"title\": \"Cost\"}", "plugin.js": "export default function () {}"}));
+        assert_eq!(super::import_into(&root, &ok).unwrap(), "cost-bar-2", "a taken id gets a number");
+        assert!(root.join("cost-bar-2/plugin.js").is_file());
+        assert!(super::import_into(&root, &bundle(serde_json::json!({"manifest.json": "{}", "plugin.js": "x", "../evil.sh": "x"}))).unwrap_err().contains("../evil.sh"));
+        assert!(super::import_into(&root, &bundle(serde_json::json!({"plugin.js": "x"}))).unwrap_err().contains("manifest"));
+        let odd = serde_json::json!({"tazuna_plugin": 1, "id": "../../x", "files": {"manifest.json": "{}", "index.html": "<p>"}}).to_string();
+        assert_eq!(super::import_into(&root, &odd).unwrap(), "shared", "an id that is not a folder name is not used");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// The dry run's page for a plugin, written to TAZUNA_DRYRUN_OUT for a browser to run (the window's own check).
     #[test]
     fn dry_run_page_wraps_the_plugin() {

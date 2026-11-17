@@ -643,7 +643,7 @@ export default function App() {
         onClose={() => { localStorage.setItem(SETUP, "1"); setOverlay(null); }} />}
       {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} items={userWidgets} onEdit={editPanel}
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
-        onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} />}
+        onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
   );
 }
