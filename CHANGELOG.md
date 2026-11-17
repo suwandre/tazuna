@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.168 (2026-11-17): rollback, and what an update brought
+
+- `tazuna rollback [VERSION]` goes back: to VERSION, else to the version the last upgrade came from, else to the release
+  before. `tazuna upgrade` with an older VERSION points there instead of going back itself; `tazuna rollback` with a
+  newer one points to upgrade. (`tazuna update` is the same as `tazuna upgrade`, as before.)
+- Both say what they do first ("Upgrading tazuna 0.1.166 → 0.1.168", "Rolling back tazuna 0.1.168 → 0.1.166") and how
+  it ended ("✓ Upgraded to tazuna 0.1.168"; after a rollback, that `tazuna upgrade` brings the newest back).
+- The first session on a newer tazuna says what changed since the last one that ran: "tazuna updated: 0.1.151 →
+  0.1.168 (17 versions)" with the newest four titles, however it was updated (tazuna remembers the last version it ran).
+- `/changelog`: every version's title in a list; a click on one unfolds its notes (the CHANGELOG at this version).
+
 ## 0.1.167 (2026-11-17): the sandbox's names fold as the disk does
 
 - The two letters macOS's disk folds onto ASCII ones, long s (ſ) onto s and the Kelvin sign (K) onto k, match too:

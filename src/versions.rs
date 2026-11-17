@@ -166,16 +166,71 @@ fn mb(bytes: u64) -> String {
     format!("{:.1} MB", bytes as f64 / 1_048_576.0)
 }
 
-/// Each version's title in the CHANGELOG at `version`'s tag ("## 0.1.165 (2026-11-17): no system services from the
-/// sandbox" gives 0.1.165 → "no system services from the sandbox"); empty when it cannot be read.
-fn titles(version: &str) -> std::collections::HashMap<String, String> {
+/// One version in the CHANGELOG: "## 0.1.165 (2026-11-17): no system services from the sandbox" and its notes.
+pub struct Entry {
+    pub version: String,
+    pub title: String,
+    pub notes: String,
+}
+
+/// The CHANGELOG's versions, newest first, from its text.
+fn entries(text: &str) -> Vec<Entry> {
+    let mut out: Vec<Entry> = vec![];
+    for l in text.lines() {
+        if let Some((v, title)) = l.strip_prefix("## ").and_then(|r| r.split_once(' ')).and_then(|(v, rest)| Some((v, rest.split_once("): ")?.1)))
+            && v.starts_with(|c: char| c.is_ascii_digit())
+        {
+            out.push(Entry { version: v.to_string(), title: title.trim().to_string(), notes: String::new() });
+        } else if l.starts_with("## ") || l.starts_with("# ") {
+            out.push(Entry { version: String::new(), title: String::new(), notes: String::new() }); // another section: its text is not a version's
+        } else if let Some(e) = out.last_mut() {
+            e.notes.push_str(l);
+            e.notes.push('\n');
+        }
+    }
+    out.retain(|e| !e.version.is_empty());
+    for e in &mut out {
+        e.notes = e.notes.trim().to_string();
+    }
+    out
+}
+
+/// The CHANGELOG as it was at `version`'s tag (GitHub); empty when it cannot be read.
+pub fn changelog(version: &str) -> Vec<Entry> {
     let url = format!("https://raw.githubusercontent.com/{REPO}/v{version}/CHANGELOG.md");
-    let text = github_get(&url, "text/plain", None).ok().and_then(|mut r| r.body_mut().with_config().limit(4 << 20).read_to_string().ok()).unwrap_or_default();
-    text.lines().filter_map(|l| {
-        let rest = l.strip_prefix("## ")?;
-        let (v, title) = rest.split_once(' ')?;
-        Some((v.to_string(), title.split_once("): ")?.1.trim().to_string()))
-    }).collect()
+    entries(&github_get(&url, "text/plain", None).ok().and_then(|mut r| r.body_mut().with_config().limit(4 << 20).read_to_string().ok()).unwrap_or_default())
+}
+
+/// What the last upgrade did, for `tazuna rollback` with no version (where it came from): upgrades.json in tazuna's data
+/// folder.
+fn upgrades_file() -> Option<std::path::PathBuf> {
+    crate::labels::dir().ok().map(|d| d.join("upgrades.json"))
+}
+
+/// Said once, in the first session on a newer tazuna than the last one that ran (however it came: an upgrade by old
+/// code, a manual install): from which version, and the newest few titles from the CHANGELOG. last-version in tazuna's
+/// data folder keeps the version that ran last; the first run ever says nothing.
+pub fn update_news(data: &Path) -> Option<String> {
+    let file = data.join("last-version");
+    let current = env!("CARGO_PKG_VERSION");
+    let last = std::fs::read_to_string(&file).ok().map(|t| t.trim().to_string());
+    let _ = std::fs::create_dir_all(data);
+    let _ = std::fs::write(&file, current);
+    let last = last.filter(|l| older(l, current))?;
+    let items: Vec<(String, String)> = changelog(current).into_iter().filter(|e| older(&last, &e.version) && !older(current, &e.version))
+        .map(|e| (e.version, e.title)).collect();
+    Some(news_text(&last, current, &items))
+}
+
+/// "tazuna updated: 0.1.151 → 0.1.167 (16 versions)" and the newest four titles, then where the rest is.
+fn news_text(from: &str, to: &str, items: &[(String, String)]) -> String {
+    let n = items.len();
+    let mut text = format!("tazuna updated: {from} → {to}{}", if n > 1 { format!(" ({n} versions)") } else { String::new() });
+    for (v, t) in items.iter().take(4) {
+        text.push_str(&format!("\n  {v}  {t}"));
+    }
+    text.push_str(if n > 4 { "\n  … and more: /changelog lists every version with its notes" } else { "\n  /changelog has the notes" });
+    text
 }
 
 /// The first line of a release's first note, where the CHANGELOG has no title for it.
@@ -210,11 +265,29 @@ fn pick(current: &str, want: Option<&str>, wait: bool, list: &[(String, bool)]) 
     }))
 }
 
-/// `tazuna upgrade [VERSION] [--wait] [--force]`: the newest release CI has finished for this platform, or VERSION (older
-/// ones too), in place of this binary. While CI still builds the newest, the one before it comes, with a word that a
+/// What `tazuna rollback` installs: VERSION (older than this one), else the version the last upgrade came from, else the
+/// newest older release CI has built here. Err: why not.
+fn pick_back(current: &str, want: Option<&str>, previous: Option<&str>, list: &[(String, bool)]) -> Result<String, String> {
+    if let Some(v) = want {
+        if !list.iter().any(|r| r.0 == v) {
+            return Err(format!("there is no tazuna {v}"));
+        }
+        if !older(v, current) {
+            return Err(if v == current { format!("tazuna {current} is already installed") } else { format!("{v} is newer than this tazuna ({current}): `tazuna upgrade {v}` installs it") });
+        }
+        return Ok(v.to_string());
+    }
+    if let Some(p) = previous.filter(|p| older(p, current) && list.iter().any(|r| r.0 == *p)) {
+        return Ok(p.to_string());
+    }
+    list.iter().find(|r| r.1 && older(&r.0, current)).map(|r| r.0.clone()).ok_or_else(|| format!("there is no release older than {current} to go back to"))
+}
+
+/// `tazuna upgrade [VERSION] [--wait] [--force]` (or `update`) and `tazuna rollback [VERSION]` (`back`): the newest
+/// release CI has finished for this platform, or VERSION, in place of this binary. While CI still builds the newest, the one before it comes, with a word that a
 /// newer one is on its way; `--wait` waits for that build instead. A source build (under a cargo target/ directory) is
 /// left alone unless --force: `git pull && cargo build --release` updates that one.
-pub fn upgrade_cli(args: &[String]) -> anyhow::Result<()> {
+pub fn upgrade_cli(args: &[String], back: bool) -> anyhow::Result<()> {
     use anyhow::Context;
     let ui = Ui::new();
     let current = env!("CARGO_PKG_VERSION");
@@ -227,18 +300,29 @@ pub fn upgrade_cli(args: &[String]) -> anyhow::Result<()> {
         anyhow::bail!("this tazuna is a source build ({}): update it with `git pull && cargo build --release`, or `tazuna upgrade --force` to put a release there", exe.display());
     }
     let token = github_token();
-    let spin = ui.spin("Checking for a new tazuna…");
+    let spin = ui.spin(if back { "Looking for the version to go back to…" } else { "Checking for a new tazuna…" });
     let list = releases(token.as_deref());
     spin.stop();
     let list = list?;
     let ready: Vec<(String, bool)> = list.iter().map(|(v, r)| (v.clone(), built(r, asset).is_some())).collect();
-    let (version, mut note) = match pick(current, want.as_deref(), wait, &ready).map_err(|e| anyhow::anyhow!(e))? {
-        Ok(go) => go,
-        Err(done) => {
-            ui.line(&format!("{} {done}", ui.paint("32", "✓")));
-            return Ok(());
+    let previous = upgrades_file().and_then(|f| std::fs::read_to_string(f).ok()).and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|r| r["from"].as_str().map(String::from));
+    let (version, mut note) = if back {
+        (pick_back(current, want.as_deref(), previous.as_deref(), &ready).map_err(|e| anyhow::anyhow!(e))?, None)
+    } else {
+        // an older VERSION is a rollback: said so, and done by its own command
+        if let Some(v) = want.as_deref().filter(|v| older(v, current)) {
+            anyhow::bail!("{v} is older than this tazuna ({current}): `tazuna rollback {v}` goes back to it");
+        }
+        match pick(current, want.as_deref(), wait, &ready).map_err(|e| anyhow::anyhow!(e))? {
+            Ok(go) => go,
+            Err(done) => {
+                ui.line(&format!("{} {done}", ui.paint("32", "✓")));
+                return Ok(());
+            }
         }
     };
+    ui.line(&ui.paint("1", &format!("{} tazuna {current} → {version}", if back { "Rolling back" } else { "Upgrading" })));
     let rel = |v: &str| list.iter().find(|r| r.0 == v).map(|r| r.1.clone());
     let mut release = rel(&version).context("that release went away")?;
     // not built yet for this machine: wait for CI (--wait), or say so
@@ -270,9 +354,9 @@ pub fn upgrade_cli(args: &[String]) -> anyhow::Result<()> {
     let mut bytes = Vec::with_capacity(size as usize);
     let mut buf = [0u8; 64 * 1024];
     let mut drawn = std::time::Instant::now() - std::time::Duration::from_secs(1);
-    let label = format!("tazuna {current} → {version}");
+    let label = "  Downloading".to_string();
     if !ui.tty {
-        println!("{label}: downloading {asset} ({})", mb(size));
+        println!("  downloading {asset} ({})", mb(size));
     }
     loop {
         let n = std::io::Read::read(&mut reader, &mut buf)?;
@@ -320,18 +404,32 @@ pub fn upgrade_cli(args: &[String]) -> anyhow::Result<()> {
     let _ = std::fs::remove_dir_all(&dir);
     spin.stop();
     result?;
-    ui.line(&format!("{} tazuna {current} → {} {}", ui.paint("32", "✓"), ui.paint("1", &version), ui.paint("2", &format!("({})", exe.display()))));
-    // what came: each release between the two, newest first (at most six)
-    let span: Vec<&(String, serde_json::Value)> = list.iter().filter(|(v, _)| older(current, v) && !older(&version, v)).take(6).collect();
-    let named = if span.is_empty() { Default::default() } else { titles(&version) };
-    for (v, r) in &span {
-        let h = named.get(v).cloned().unwrap_or_else(|| headline(r));
+    ui.line(&format!("{} {} {}", ui.paint("32", "✓"), if back { format!("Rolled back to tazuna {version}") } else { format!("Upgraded to tazuna {version}") },
+        ui.paint("2", &format!("({})", exe.display()))));
+    if back {
+        let newest = &list[0].0;
+        ui.line(&format!("{} `tazuna upgrade` brings {newest} back", ui.paint("2", "→")));
+        return Ok(());
+    }
+    // what came: each release between the two, newest first; six here, all kept for the next session's word and rollback
+    let span: Vec<&(String, serde_json::Value)> = list.iter().filter(|(v, _)| older(current, v) && !older(&version, v)).collect();
+    let notes = if span.is_empty() { vec![] } else { changelog(&version) };
+    let title = |v: &str, r: &serde_json::Value| notes.iter().find(|e| e.version == v).map(|e| e.title.clone()).unwrap_or_else(|| headline(r));
+    let items: Vec<(String, String)> = span.iter().map(|(v, r)| (v.clone(), title(v, r))).collect();
+    for (v, h) in items.iter().take(6) {
         if !h.is_empty() {
             ui.line(&format!("  {} {h}", ui.paint("2", &format!("{v:<8}"))));
         }
     }
-    if !span.is_empty() {
-        ui.line(&ui.paint("2", &format!("  all notes: https://github.com/{REPO}/blob/main/CHANGELOG.md")));
+    if items.len() > 6 {
+        ui.line(&ui.paint("2", &format!("  … {} more", items.len() - 6)));
+    }
+    if !items.is_empty() {
+        ui.line(&ui.paint("2", "  in tazuna: /changelog has every version's notes"));
+    }
+    if let Some(f) = upgrades_file() {
+        let _ = f.parent().map(std::fs::create_dir_all);
+        let _ = std::fs::write(f, serde_json::json!({"from": current, "to": version}).to_string());
     }
     if let Some(n) = note.take() {
         ui.line(&format!("{} {n}", ui.paint("33", "→")));
@@ -419,6 +517,38 @@ mod tests {
         assert!(pick("0.1.165", Some("0.1.99"), false, &building).unwrap_err().contains("no tazuna 0.1.99"));
         assert!(pick("0.1.163", Some("0.1.163"), false, &building).unwrap().unwrap_err().contains("already installed"));
         assert_eq!(pick("0.1.160", None, false, &l(&[("0.1.165", true), ("0.1.164", true)])).unwrap().unwrap(), ("0.1.165".to_string(), None));
+    }
+
+    #[test]
+    fn rollback_goes_to_the_version_asked_for_or_the_one_before() {
+        let l = |xs: &[(&str, bool)]| xs.iter().map(|(v, b)| (v.to_string(), *b)).collect::<Vec<_>>();
+        let list = l(&[("0.1.167", true), ("0.1.166", true), ("0.1.165", true), ("0.1.151", true)]);
+        assert_eq!(pick_back("0.1.167", None, Some("0.1.151"), &list).unwrap(), "0.1.151", "where the last upgrade came from");
+        assert_eq!(pick_back("0.1.167", None, None, &list).unwrap(), "0.1.166", "else the release before");
+        assert_eq!(pick_back("0.1.167", Some("0.1.165"), Some("0.1.151"), &list).unwrap(), "0.1.165");
+        assert!(pick_back("0.1.166", Some("0.1.167"), None, &list).unwrap_err().contains("`tazuna upgrade 0.1.167`"));
+        assert!(pick_back("0.1.151", None, None, &list).unwrap_err().contains("no release older"));
+    }
+
+    #[test]
+    fn the_changelog_reads_as_versions_with_titles_and_notes() {
+        let e = entries("# Changelog\n\nintro\n\n## 0.1.167 (2026-11-17): names fold\n\n- one\n- two\n\n## 0.1.166 (2026-11-17): upgrade\n\n- three\n");
+        assert_eq!(e.iter().map(|e| (e.version.as_str(), e.title.as_str(), e.notes.as_str())).collect::<Vec<_>>(),
+            [("0.1.167", "names fold", "- one\n- two"), ("0.1.166", "upgrade", "- three")]);
+    }
+
+    #[test]
+    fn the_first_session_on_a_newer_tazuna_says_what_it_brought() {
+        let items: Vec<(String, String)> = (0..6).map(|i| (format!("0.1.{}", 170 - i), format!("change {i}"))).collect();
+        let text = news_text("0.1.151", "0.1.170", &items);
+        assert!(text.starts_with("tazuna updated: 0.1.151 → 0.1.170 (6 versions)") && text.contains("change 3") && !text.contains("change 4"), "{text}");
+        assert!(text.contains("/changelog lists every version"));
+        assert!(news_text("0.1.169", "0.1.170", &items[..1]).ends_with("/changelog has the notes"));
+        // the first run ever and a run on the same version say nothing; the file then holds this version
+        let dir = std::env::temp_dir().join(format!("tazuna-news-{}", std::process::id()));
+        assert!(update_news(&dir).is_none() && update_news(&dir).is_none());
+        assert_eq!(std::fs::read_to_string(dir.join("last-version")).unwrap(), env!("CARGO_PKG_VERSION"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

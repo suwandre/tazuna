@@ -62,6 +62,7 @@
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
 //!   tazuna upgrade [VERSION] [--wait] [--force]   # (or update) the newest release CI has built for this machine, or VERSION, in
 //!                              place of this binary; --wait waits for one still building; `tazuna --version` says which
+//!   tazuna rollback [VERSION]  # back to VERSION, or to the version the last upgrade came from
 //!   tazuna subrouter [--apply]   # each checked model's SubRouter providers, set on your one key (--apply: with the
 //!                                # account's access token in ~/.subrouter-account)
 //!   tazuna --run <prompt-file> [--then <file>]... [--model M] [--effort E]   # headless: one task (later messages
@@ -464,9 +465,10 @@ fn main() -> Result<()> {
         println!("tazuna {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
-    if matches!(std::env::args().nth(1).as_deref(), Some("upgrade" | "update")) {
-        // `tazuna upgrade [VERSION] [--wait] [--force]` (or `update`, the word other CLIs use): versions.rs upgrade_cli
-        return versions::upgrade_cli(&std::env::args().skip(2).collect::<Vec<_>>());
+    if matches!(std::env::args().nth(1).as_deref(), Some("upgrade" | "update" | "rollback")) {
+        // `tazuna upgrade [VERSION] [--wait] [--force]` (or `update`, the word other CLIs use), `tazuna rollback [VERSION]`:
+        // versions.rs upgrade_cli
+        return versions::upgrade_cli(&std::env::args().skip(2).collect::<Vec<_>>(), std::env::args().nth(1).as_deref() == Some("rollback"));
     }
     if std::env::args().nth(1).as_deref() == Some("mcp") {
         return mcp::serve();
@@ -2290,6 +2292,24 @@ fn tool_calls(s: &Session, name: &str) -> ui::ListPanel {
 
 /// Every model call (a click on the tokens panel): what it sent and read from cache, what it wrote, its first token
 /// and its speed.
+/// `/changelog`: a row per version (its title), its notes unfolded by a click.
+#[inline(never)]
+fn changelog_panel(entries: &[serde_json::Value]) -> ui::ListPanel {
+    let rows: Vec<(String, bool)> = entries.iter().map(|e| (format!("{:<9}{}", e["version"].as_str().unwrap_or_default(), e["title"].as_str().unwrap_or_default()), false)).collect();
+    let details = entries.iter().map(|e| e["notes"].as_str().filter(|n| !n.is_empty()).map(String::from)).collect();
+    ui::ListPanel {
+        title: format!("changelog · tazuna {} · click a version for its notes", env!("CARGO_PKG_VERSION")),
+        head: String::new(),
+        links: vec![None; rows.len()],
+        rows,
+        scroll: 0,
+        link_from: 0,
+        hscroll: 0,
+        details,
+        open: Default::default(),
+    }
+}
+
 fn model_calls(s: &Session) -> ui::ListPanel {
     let rows = s.turn_usage.iter().enumerate().map(|(i, u)| {
         let c = s.calls.get(i);
@@ -2701,6 +2721,10 @@ fn run_live(
         let tx = status_tx.clone();
         std::thread::spawn(move || {
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+            // the first session after an upgrade: what it brought (versions::update_news, once)
+            if let Some(text) = labels::dir().ok().and_then(|d| versions::update_news(&d)) {
+                let _ = tx.send(json!({"type": "tazuna_update", "text": text}));
+            }
             if let Some(text) = labels::dir().ok().and_then(|d| versions::update_notice(&d, now)) {
                 let _ = tx.send(json!({"type": "tazuna_update", "text": text}));
             }
@@ -2980,6 +3004,10 @@ fn run_live(
                 }
                 Some("tazuna_balance") => s.balance = e["usd"].as_f64(),
                 Some("tazuna_update") => s.apply(&json!({"type": "harness_info", "text": e["text"]}), live.elapsed_ms()),
+                Some("tazuna_changelog") => match e["entries"].as_array().filter(|a| !a.is_empty()) {
+                    Some(list) => v.list = Some(changelog_panel(list)),
+                    None => s.apply(&json!({"type": "harness_info", "text": "the changelog could not be read (offline?): https://github.com/suwandre/tazuna/blob/main/CHANGELOG.md"}), live.elapsed_ms()),
+                },
                 // a server added or logged in: it joins at once while MCP is on (claude restarts with it, the own loop
                 // reconnects), else with /mcp on
                 Some("tazuna_mcp_ready") => {
@@ -3987,6 +4015,18 @@ fn run_live(
                             mcpc::list()
                         )),
                     }
+                    continue;
+                }
+                // /changelog: every version's title, its notes unfolded by a click (the CHANGELOG at this version's tag, read
+                // off the screen's thread)
+                if text == "/changelog" {
+                    s.apply(&json!({"type": "harness_info", "text": "reading the changelog…"}), live.elapsed_ms());
+                    let tx = status_tx.clone();
+                    std::thread::spawn(move || {
+                        let e: Vec<serde_json::Value> = versions::changelog(env!("CARGO_PKG_VERSION")).into_iter()
+                            .map(|e| json!({"version": e.version, "title": e.title, "notes": e.notes})).collect();
+                        let _ = tx.send(json!({"type": "tazuna_changelog", "entries": e}));
+                    });
                     continue;
                 }
                 // /hook CMD: this project's command after each turn that changed files (hooks.rs); /hook off; /hook says it

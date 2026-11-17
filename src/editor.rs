@@ -428,6 +428,7 @@ pub fn describe(cmd: &str) -> &'static str {
         "good" | "bad" => "Rate the last run (kept on this machine)",
         "boss" => "A lead model directs Haiku workers (on, off, or a model)",
         "chat" => "A plain chat, or back to the profile before it",
+        "changelog" => "What each tazuna version changed (click one for its notes)",
         "create" => "Make a command, skill or tool for every model (enable, discard)",
         "hook" => "A command of yours after each turn that changed files, at no token cost (off)",
         "data" => "Which providers may see your code (trusted, any)",
