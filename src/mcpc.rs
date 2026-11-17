@@ -180,6 +180,14 @@ pub fn remove(name: &str) -> Result<bool> {
     Ok(gone)
 }
 
+/// What a server runs: its URL, or its command and arguments.
+pub fn target(spec: &Value) -> String {
+    match spec["url"].as_str() {
+        Some(u) => u.to_string(),
+        None => format!("{} {}", spec["command"].as_str().unwrap_or("?"), spec["args"].as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join(" ")).trim_end().to_string(),
+    }
+}
+
 /// One line per server for `/mcp`.
 pub fn list() -> String {
     let conf = match read_conf() {
@@ -190,10 +198,7 @@ pub fn list() -> String {
         .as_object()
         .into_iter()
         .flatten()
-        .map(|(n, s)| match s["url"].as_str() {
-            Some(u) => format!("  {n}: {u}{}", if auth(n, &expand(u)).is_some() { " (logged in)" } else { "" }),
-            None => format!("  {n}: {} {}", s["command"].as_str().unwrap_or("?"), s["args"].as_array().into_iter().flatten().filter_map(Value::as_str).collect::<Vec<_>>().join(" ")),
-        })
+        .map(|(n, s)| format!("  {n}: {}{}", target(s), if s["url"].as_str().is_some_and(|u| auth(n, &expand(u)).is_some()) { " (logged in)" } else { "" }))
         .collect();
     if lines.is_empty() { "  none yet".into() } else { lines.join("\n") }
 }

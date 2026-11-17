@@ -44,6 +44,11 @@ export type Provider = { name: string; host: string; page: string; place: string
 export type Settings = { providers: Provider[]; data_any: boolean; route: boolean; version: string;
   /** dollars of paid API spend allowed per 24 hours (null: no cap), and what was spent */
   spend_cap?: number | null; spent_24h?: number };
+/** MCP servers for every model (the core's mcp.json): on for this conversation or not, the list, a refusal to show */
+export type Mcp = { on: boolean; claude: boolean; servers: { name: string; target: string }[]; note: string };
+/** a server's check: progress (a login link) without `ok`, then the outcome */
+export type McpStatus = { name: string; ok?: boolean; text: string };
+export type Hook = { cwd: string; after_turn: string | null; note: string };
 export type WorktreeMade = { ask_setup?: boolean; script?: string; id?: string; setup_skipped?: string; error?: string; path?: string; branch?: string; port?: number; copied?: string[]; setup?: { ok: boolean; tail: string } | null };
 export type Review = { scope: string; turn?: number | null; base?: string | null; text: string };
 export type Diff = { turn: number; path: string; text: string };
@@ -105,6 +110,18 @@ export const core = {
   onPr: (cb: (p: import("./pr").Pr, tid: string) => void) => on<import("./pr").Pr>("pr", cb),
   /** the cap on paid API spend per 24 hours (null: none) */
   setSpendCap: (value: number | null) => to("op", { msg: { op: "spend_cap", value } }),
+  /** MCP servers (src/mcpc.rs), as the terminal's /mcp: list, on or off, add (a URL, or a command and its arguments), remove,
+   * check (login: log in again first) */
+  mcp: () => to("op", { msg: { op: "mcp" } }),
+  mcpOn: (on: boolean) => to("op", { msg: { op: "mcp_on", on } }),
+  mcpAdd: (name: string, target: string) => to("op", { msg: { op: "mcp_add", name, target } }),
+  mcpRemove: (name: string) => to("op", { msg: { op: "mcp_remove", name } }),
+  mcpCheck: (name: string, login = false) => to("op", { msg: { op: "mcp_check", name, login } }),
+  onMcp: (cb: (m: Mcp) => void) => on<Mcp>("mcp", cb),
+  onMcpStatus: (cb: (m: McpStatus) => void) => on<McpStatus>("mcp_status", cb),
+  /** this folder's command after each turn that changed files (src/hooks.rs): set with a string (empty: none), asked without */
+  hook: (afterTurn?: string) => to("op", { msg: { op: "hook", after_turn: afterTurn } }),
+  onHook: (cb: (h: Hook) => void) => on<Hook>("hook", cb),
   openKeyPage: (url: string) => invoke("open_key_page", { url }),
   /** a system notification */
   notify: async (title: string, body: string) => {

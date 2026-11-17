@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.159 (2026-11-17): hooks, and MCP servers from the app
+
+- `/hook CMD`: your own command after each turn that changed files (a formatter, a linter, a sync), run in the project's
+  folder at no token cost: the model never sees it, and only a failure shows, as a notice. One per project, kept in
+  ~/.config/tazuna/hooks.json, never in the repository (a repository cannot make tazuna run anything). `/hook off`
+  removes it. Checked on ERNIE ($0): it ran after the turn that wrote a file, not after the one that changed nothing,
+  and a failing command showed its output.
+- The app server takes /mcp's work as ops (mcp, mcp_on, mcp_add, mcp_remove, mcp_check) and the hook (hook), for the
+  desktop's settings page.
+
 ## 0.1.158 (2026-11-17): each model call in the app server's view
 
 - The app server's view carries each model call (`calls`): where it began, its tokens (new in, cached, out), its timing

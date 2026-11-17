@@ -2,7 +2,7 @@ import { ExternalLink, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useDialog } from "../lib/dialog";
 import { safeMode } from "../lib/plugins";
-import { HOTKEY, core, defaultHotkey, type Settings } from "../lib/tazuna";
+import { HOTKEY, core, defaultHotkey, type Hook, type Mcp, type Settings } from "../lib/tazuna";
 import type { UserWidget } from "../lib/widgets";
 
 // Settings: provider keys (saved by tazuna, never shown again), the data policy for this session, the router. The
@@ -19,6 +19,17 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
   const [keysNow, setKeysNow] = useState(() => localStorage.getItem(HOTKEY) ?? defaultHotkey);
   const [hotkeyNote, setHotkeyNote] = useState("");
   const [cap, setCap] = useState<string | null>(null);
+  const [mcp, setMcp] = useState<Mcp | null>(null);
+  const [mcpState, setMcpState] = useState<Record<string, { ok?: boolean; text: string }>>({});
+  const [adding, setAdding] = useState({ name: "", target: "" });
+  const [hook, setHook] = useState<Hook | null>(null);
+  const [hookCmd, setHookCmd] = useState<string | null>(null);
+  const canAdd = !!adding.name.trim() && !!adding.target.trim();
+  const addServer = () => {
+    const name = adding.name.trim();
+    setMcpState((all) => ({ ...all, [name]: { text: "connecting…" } }));
+    core.mcpAdd(name, adding.target.trim()).then(() => setAdding({ name: "", target: "" }));
+  };
   const saveHotkey = () => core.hotkey(keysNow.trim())
     .then(() => { localStorage.setItem(HOTKEY, keysNow.trim()); setHotkeyNote(keysNow.trim() ? "Saved." : "Off."); })
     .catch((e) => setHotkeyNote(`Not set: ${e}. Another app may hold it.`));
@@ -28,10 +39,13 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
   close.current = onClose;
   useEffect(() => {
     const off = core.onSettings(setSt);
+    const offMcp = core.onMcp(setMcp), offStatus = core.onMcpStatus((m) => setMcpState((all) => ({ ...all, [m.name]: m }))), offHook = core.onHook(setHook);
     refresh();
+    core.mcp().catch(() => {});
+    core.hook().catch(() => {});
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close.current(); };
     window.addEventListener("keydown", esc);
-    return () => { off.then((f) => f()); window.removeEventListener("keydown", esc); };
+    return () => { for (const o of [off, offMcp, offStatus, offHook]) o.then((f) => f()); window.removeEventListener("keydown", esc); };
   }, []);
   const save = async (name: string) => {
     await core.login(name, keys[name] ?? "");
@@ -93,6 +107,54 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
                 className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-40">Save</button>
               <span className="text-[11.5px] text-faint">empty: no cap</span>
             </div>
+
+            <div className={label}>Tools from MCP servers</div>
+            <div className="mb-1.5 text-[12px] text-muted">Servers for every model, from tazuna's list (the terminal's <code>/mcp</code>).
+              A server runs its command on this machine: add only ones you trust.</div>
+            {mcp && <>
+              <label className="flex items-start gap-2 py-1"><input type="checkbox" checked={mcp.on} onChange={(e) => core.mcpOn(e.target.checked)} className="mt-1" />
+                <span><span className="text-ink">Use them in this conversation</span><span className="block text-[12px] text-muted">
+                  Remembered for new conversations.{mcp.claude ? " On Claude, your claude.ai connectors come too." : ""} Their tools take room in every request.</span></span></label>
+              {mcp.note && <div className="py-1 text-[12px] text-bad">{mcp.note}</div>}
+              {mcp.servers.length === 0 && <div className="py-1 text-[12.5px] text-faint">None yet.</div>}
+              {mcp.servers.map((m) => {
+                const st = mcpState[m.name];
+                return (
+                  <div key={m.name} className="flex items-center gap-2 border-b border-line-soft py-2 last:border-b-0">
+                    <span className="min-w-0 flex-1"><span className="block text-ink">{m.name}</span>
+                      <span className="block truncate font-mono text-[11.5px] text-faint" title={m.target}>{m.target}</span>
+                      {st && <span role="status" className={`block text-[11.5px] ${st.ok === false ? "text-bad" : st.ok ? "text-ok" : "text-muted"}`}>{st.text}</span>}</span>
+                    <button onClick={() => { setMcpState((all) => ({ ...all, [m.name]: { text: "connecting…" } })); core.mcpCheck(m.name); }}
+                      className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Check</button>
+                    {/^https?:/.test(m.target) && <button onClick={() => { setMcpState((all) => ({ ...all, [m.name]: { text: "logging in…" } })); core.mcpCheck(m.name, true); }}
+                      title="Log in again in the browser" className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Log in</button>}
+                    <button onClick={() => core.mcpRemove(m.name)} aria-label={`Remove ${m.name}`} title="Remove" className="rounded p-1 text-muted hover:bg-hover"><X size={14} strokeWidth={1.5} /></button>
+                  </div>
+                );
+              })}
+              <div className="flex items-center gap-2 py-2">
+                <input value={adding.name} onChange={(e) => setAdding({ ...adding, name: e.target.value })} placeholder="name" aria-label="Server name" spellCheck={false}
+                  className="w-28 rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none placeholder:font-sans placeholder:text-faint" />
+                <input value={adding.target} onChange={(e) => setAdding({ ...adding, target: e.target.value })} placeholder="https://… or a command and its arguments"
+                  aria-label="Server URL or command" spellCheck={false} onKeyDown={(e) => { if (e.key === "Enter" && canAdd) addServer(); }}
+                  className="min-w-0 flex-1 rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none placeholder:font-sans placeholder:text-faint" />
+                <button disabled={!canAdd} onClick={addServer} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-40">Add</button>
+              </div>
+            </>}
+
+            {hook && <>
+              <div className={label}>After each turn that changed files</div>
+              <div className="mb-1.5 text-[12px] text-muted">A command of yours for <span className="font-mono">{hook.cwd}</span>, such as a formatter. It runs there at no
+                token cost: the model never sees it, and only a failure shows. Kept in your settings, never the repository's (the terminal's <code>/hook</code>).</div>
+              <div className="flex items-center gap-2 py-1">
+                <input value={hookCmd ?? hook.after_turn ?? ""} onChange={(e) => setHookCmd(e.target.value)} placeholder="none, e.g. cargo fmt" aria-label="Command after each turn"
+                  spellCheck={false} onKeyDown={(e) => { if (e.key === "Enter" && hookCmd != null) core.hook(hookCmd.trim()).then(() => setHookCmd(null)); }}
+                  className="min-w-0 flex-1 rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none placeholder:font-sans placeholder:text-faint" />
+                <button disabled={hookCmd == null} onClick={() => core.hook(hookCmd!.trim()).then(() => setHookCmd(null))}
+                  className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-40">Save</button>
+              </div>
+              {hook.note && <div className="py-1 text-[12px] text-bad">{hook.note}</div>}
+            </>}
 
             <div className={label}>Quick chat from anywhere</div>
             <div className="flex items-center gap-2 py-1">

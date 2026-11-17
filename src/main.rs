@@ -79,6 +79,7 @@
 mod diag;
 mod editor;
 mod engine;
+mod hooks;
 mod labels;
 mod lessons;
 mod live;
@@ -1013,6 +1014,7 @@ fn app_server(a: &Args) -> Result<()> {
     // closing stdin arrives as a quit, since the router's sender keeps the channel open
     let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
     let stdin_tx = tx.clone();
+    let hook_tx = tx.clone();
     fetch_balance(&tx);
     // the providers' model lists for the picker (the terminal refreshes them at its start): at most once an hour, since
     // each open conversation of the desktop runs a server of its own
@@ -1027,9 +1029,9 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 36] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+        const OPS: [&str; 42] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
             "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
-            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard"];
+            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1296,6 +1298,17 @@ fn app_server(a: &Args) -> Result<()> {
                         }
                         // SubRouter's balance, read on a thread
                         Some("tazuna_balance") => s.balance = cmd["usd"].as_f64(),
+                        // the project's hook ran (hooks.rs): only a failure shows
+                        Some("tazuna_hook") => if cmd["ok"] != true {
+                            s.apply(&json!({"type": "harness_notice", "text": cmd["text"], "error": true}), at);
+                        },
+                        // the project's hook (hooks.rs): set when `after_turn` comes (empty: none), and said back
+                        Some("hook") => {
+                            let note = cmd["after_turn"].as_str().and_then(|c| hooks::set_after_turn(&cwd, c).err()).map(|e| format!("{e:#}")).unwrap_or_default();
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{}", json!({"type": "hook", "cwd": cwd, "after_turn": hooks::after_turn(&cwd), "note": note}));
+                            let _ = o.flush();
+                        }
                         Some("tazuna_chat_event") => {
                             if cmd["e"]["type"] == "result" && let Some(r) = cmd["e"]["result"].as_str() {
                                 last_reply = r.to_string();
@@ -1578,6 +1591,56 @@ fn app_server(a: &Args) -> Result<()> {
                                 if route_on { "are answered as a chat" } else { "go to the agent" });
                             s.apply(&json!({"type": "harness_notice", "text": text, "error": false}), at);
                         }
+                        // MCP servers for every model (~/.config/tazuna/mcp.json), as the terminal's /mcp: the settings page lists
+                        // them, adds, removes and checks one (logging in where it asks), and switches them on or off (remembered)
+                        Some("mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check") => {
+                            let name = cmd["name"].as_str().unwrap_or_default().to_string();
+                            let mut note = String::new();
+                            let mut check = cmd["op"] == "mcp_check";
+                            // claude reads the list when it starts: with MCP on, it restarts to take a change in
+                            let reload = |live: &mut live::Live, s: &mut Session| if live.connectors && live.idle() && let Ok((t, e)) = live.set_connectors(true) { s.apply(&e, t) };
+                            match cmd["op"].as_str() {
+                                Some("mcp_on") => match live.set_connectors(cmd["on"] == true) {
+                                    Ok((t, e)) => {
+                                        if let Ok(f) = labels::dir().map(|d| d.join("connectors")) {
+                                            let _ = if live.connectors { std::fs::write(f, "") } else { std::fs::remove_file(f) };
+                                        }
+                                        s.apply(&e, t);
+                                    }
+                                    Err(e) => note = format!("{e:#}"),
+                                },
+                                Some("mcp_add") => match mcpc::add(&name, &cmd["target"].as_str().unwrap_or_default().split_whitespace().collect::<Vec<_>>()) {
+                                    Ok(()) => {
+                                        check = true;
+                                        reload(&mut live, &mut s);
+                                    }
+                                    Err(e) => note = format!("{e:#}"),
+                                },
+                                Some("mcp_remove") => match mcpc::remove(&name) {
+                                    Ok(_) => reload(&mut live, &mut s),
+                                    Err(e) => note = format!("{e:#}"),
+                                },
+                                _ => {}
+                            }
+                            let servers: Vec<serde_json::Value> = mcpc::servers().iter().map(|(n, spec)| json!({"name": n, "target": mcpc::target(spec)})).collect();
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{}", json!({"type": "mcp", "on": live.connectors, "claude": live.provider.is_none(), "servers": servers, "note": note}));
+                            let _ = o.flush();
+                            drop(o);
+                            // connecting (and a login in the browser) takes a while: off this thread, its outcome as mcp_status
+                            if check && note.is_empty() {
+                                let login = cmd["login"] == true;
+                                std::thread::spawn(move || {
+                                    let send = |v: serde_json::Value| { let mut o = std::io::stdout().lock(); let _ = writeln!(o, "{v}"); let _ = o.flush(); };
+                                    let say = |t: String| send(json!({"type": "mcp_status", "name": name, "text": t}));
+                                    let (ok, text) = match mcpc::check(&name, login, &say) {
+                                        Ok(n) => (true, format!("connected, {n} tools")),
+                                        Err(e) => (false, format!("{e:#}")),
+                                    };
+                                    send(json!({"type": "mcp_status", "name": name, "ok": ok, "text": text}));
+                                });
+                            }
+                        }
                         // /create from the window: a fresh conversation in this thread makes it (as the terminal's /create)
                         Some("create") => {
                             let ask = cmd["ask"].as_str().unwrap_or_default().trim().to_string();
@@ -1662,6 +1725,9 @@ fn app_server(a: &Args) -> Result<()> {
                 let at_block = s.blocks.iter().rposition(|b| matches!(b, session::Block::Done(_))).unwrap_or(0);
                 done_turns.push(AppTurn { before, after, files, at_block, undone: false });
                 changed = true;
+                if let Some(cmd) = hooks::after_turn(&cwd) {
+                    hooks::spawn(cwd.clone(), cmd, hook_tx.clone());
+                }
             }
         }
         if changed && last.elapsed() >= Duration::from_millis(50) {
@@ -2528,6 +2594,8 @@ fn run_live(
     let mut over_link = false;
     // the work tree when this conversation began: what it changed since is the files panel and /diff
     let mut git_start = runlog::git_snapshot(&std::env::current_dir()?);
+    // the work tree when the project's hook last ran (hooks.rs): it runs again only after a turn changed something
+    let mut hook_mark = git_start.clone();
     let mut changed_at = Instant::now();
     let mut sel: Option<select::Selection> = None;
     let (mut copy_now, mut copied) = (false, None::<String>);
@@ -2710,6 +2778,13 @@ fn run_live(
             if e["type"] == "result" && e["tazuna_paid"] == true {
                 fetch_balance(&status_tx); // a run on SubRouter spent some of it
             }
+            // the project's hook after a turn that changed files (hooks.rs): on a thread, at no token cost
+            if e["type"] == "result" && let Ok(dir) = std::env::current_dir() && let Some(cmd) = hooks::after_turn(&dir)
+                && let Some(now) = runlog::git_snapshot(&dir) && hook_mark.as_ref().is_none_or(|m| !runlog::changed(m, &now).is_empty())
+            {
+                hook_mark = Some(now);
+                hooks::spawn(dir, cmd, status_tx.clone());
+            }
             // what the conversation changed: after each run, and while one runs at most every 5 s (a few git calls each)
             if e["type"] == "result" || (e["type"] == "user" && changed_at.elapsed() > Duration::from_secs(5)) {
                 v.changed = conversation_changes(git_start.as_ref(), &s);
@@ -2743,6 +2818,13 @@ fn run_live(
                         chat_turn(RouteCtx::of(live), text, status_tx.clone());
                     } else if let Err(err) = live.send_typed(&text) {
                         s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms());
+                    }
+                }
+                Some("tazuna_hook") => {
+                    // what the hook changed (a formatter's work) does not count as a turn's change next time
+                    hook_mark = runlog::git_snapshot(&std::env::current_dir().unwrap_or_default());
+                    if e["ok"] != true {
+                        s.apply(&json!({"type": "harness_notice", "text": e["text"], "error": true}), live.elapsed_ms());
                     }
                 }
                 Some("tazuna_chat_event") => {
@@ -3761,6 +3843,22 @@ fn run_live(
                             mcpc::list()
                         )),
                     }
+                    continue;
+                }
+                // /hook CMD: this project's command after each turn that changed files (hooks.rs); /hook off; /hook says it
+                if text == "/hook" || text.starts_with("/hook ") {
+                    let arg = text["/hook".len()..].trim();
+                    let dir = std::env::current_dir()?;
+                    let said = match (arg, hooks::after_turn(&dir)) {
+                        ("", Some(c)) => format!("hook: `{c}` runs after each turn that changed files, at no token cost; /hook off removes it"),
+                        ("", None) => "no hook: /hook CMD runs CMD in this folder after each turn that changed files (a formatter, a linter), at no token cost: the model never sees it, only a failure shows".into(),
+                        (a, _) => match hooks::set_after_turn(&dir, if a == "off" { "" } else { a }) {
+                            Ok(()) if a == "off" => "hook: off".into(),
+                            Ok(()) => format!("hook: `{a}` runs after each turn that changed files"),
+                            Err(e) => format!("{e:#}"),
+                        },
+                    };
+                    s.apply(&json!({"type": "harness_info", "text": said}), live.elapsed_ms());
                     continue;
                 }
                 if text == "/diff" {
