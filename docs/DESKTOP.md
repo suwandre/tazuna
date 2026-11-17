@@ -95,7 +95,8 @@ what it would register and its code first (Settings' Enable turned a plugin on w
 0.1.40 (with tazuna 0.1.163): the review sandbox tightened (tazuna 0.1.163's notes); a plugin from a shared file or the
 gallery is marked as such and warns harder before Enable, and the trial run's list is shown as what it did there, not
 a promise: the code is what counts.
-0.1.41 (with tazuna 0.1.164): the review sandbox closes .git and the keychain, and is macOS only for now.
+0.1.41-0.1.42 (with tazuna 0.1.164-0.1.165): the review sandbox closes .git, the keychain and every system service but the
+user-name lookup, and is macOS only for now.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

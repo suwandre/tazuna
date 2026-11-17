@@ -1,10 +1,11 @@
 //! The sandbox a reviewed command runs in (review mode: a cheap model approves the agent's commands instead of the user).
 //! It may write only inside the project and the temporary and cache folders, reach no network (no unix sockets either:
-//! docker's is root), and read none of the credential stores (CREDENTIALS) or the keychain. Inside the project it may
-//! not write what runs later outside the sandbox: anything in .git (hooks, config with core.fsmonitor, which runs on
-//! tazuna's own `git status`, or .git replaced by a gitdir file pointing elsewhere), the project's .claude, .mcp.json
-//! and .tazuna (claude loads a trusted repository's settings, hooks among them), .envrc (direnv runs it). So git add
-//! and commit cannot run in it: the reviewer leaves those to the user. Secret-looking environment variables are unset
+//! docker's is root), no system service but the user-name lookup (launchd would start a job outside the sandbox, Apple
+//! Events would make Terminal run one, the keychain hands out secrets), and read none of the credential stores
+//! (CREDENTIALS). Inside the project, at any depth, it may not write what runs later outside the sandbox (RUN_LATER):
+//! anything in .git (hooks, config with core.fsmonitor, which runs on tazuna's own `git status`, or .git replaced by a
+//! gitdir file pointing elsewhere), claude's and tazuna's project settings, direnv's, mise's and asdf's files, editor
+//! tasks. So git add and commit cannot run in it: the reviewer leaves those to the user. Secret-looking environment variables are unset
 //! first (security reviews, 2026-11-17). macOS only (sandbox-exec, a Seatbelt profile); elsewhere the user answers as
 //! before (a Linux sandbox was dropped untested, with known gaps: bubblewrap cannot cover a path that does not exist).
 
@@ -19,9 +20,14 @@ fn q(s: &str) -> String {
 const CREDENTIALS: [&str; 16] = [".ssh", ".aws", ".gnupg", ".config/tazuna", ".netrc", ".config/gh", ".kube", ".docker", ".npmrc",
     ".git-credentials", ".pypirc", ".cargo/credentials.toml", ".config/gcloud", ".azure", ".claude.json", "Library/Keychains"];
 
-/// In the project: what git, claude, tazuna or the shell later run outside the sandbox (the entry itself included: no
-/// renaming it away and putting another in its place).
-const RUN_LATER: [&str; 5] = [".git", ".claude", ".mcp.json", ".tazuna", ".envrc"];
+/// In the project, at any depth: what git, claude, tazuna, the shell or an editor later run outside the sandbox (the entry
+/// itself included: no renaming it away and putting another in its place).
+const RUN_LATER: [&str; 10] = [".git", ".claude", ".mcp.json", ".tazuna", ".envrc", ".mise.toml", "mise.toml", ".tool-versions", ".vscode", ".idea"];
+
+/// A regular expression matching `s` literally.
+fn re(s: &str) -> String {
+    s.chars().map(|c| if ".[]{}()*+?^$|\\/".contains(c) { format!("\\{c}") } else { c.to_string() }).collect()
+}
 
 /// The command after unsetting environment variables that look like secrets (names with TOKEN, SECRET, PASSWORD,
 /// CREDENTIAL or KEY, and AWS_, GH_, GITHUB_ ones): its output goes to the model.
@@ -37,22 +43,24 @@ fn lit(s: &str) -> String {
 /// The macOS profile for a project in `cwd` (resolved: /tmp is /private/tmp to the kernel).
 fn profile(cwd: &Path, home: &Path) -> String {
     let h = |p: &str| lit(&home.join(p).to_string_lossy());
-    // subpath covers a folder and a file of that name alike
-    let later: Vec<String> = RUN_LATER.iter().map(|p| format!("(subpath {})", lit(&cwd.join(p).to_string_lossy()))).collect();
+    let names: Vec<String> = RUN_LATER.iter().map(|n| re(n)).collect();
+    let later = format!("(regex #\"^{}/(.*/)?({})(/|$)\")", re(&cwd.to_string_lossy()), names.join("|"));
     let secret: Vec<String> = CREDENTIALS.iter().map(|p| format!("(subpath {})", h(p))).collect();
     format!(
         "(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n\
          (allow file-write* (subpath {}) (subpath \"/private/tmp\") (subpath \"/private/var/folders\") (subpath \"/dev\") (subpath {}) (subpath {}))\n\
          (deny file-write* {})\n(deny file-read* {})\n\
-         (deny mach-lookup (global-name \"com.apple.SecurityServer\") (global-name \"com.apple.securityd\"))\n",
-        lit(&cwd.to_string_lossy()), h("Library/Caches"), h(".cache"), later.join(" "), secret.join(" ")
+         (deny mach-lookup)\n(allow mach-lookup (global-name \"com.apple.system.opendirectoryd.libinfo\"))\n\
+         (deny process-exec (literal \"/usr/bin/security\") (literal \"/bin/launchctl\") (literal \"/usr/bin/open\") (literal \"/usr/bin/osascript\"))\n",
+        lit(&cwd.to_string_lossy()), h("Library/Caches"), h(".cache"), later, secret.join(" ")
     )
 }
 
 /// `command` as a shell command line that runs it in the sandbox for the project in `cwd`; None where there is no
 /// sandbox (anywhere but macOS).
 pub fn wrap(command: &str, cwd: &Path) -> Option<String> {
-    let cwd = cwd.canonicalize().ok()?;
+    // a quote cannot go into the profile's regex literal: no sandbox for such a folder
+    let cwd = cwd.canonicalize().ok().filter(|c| !c.to_string_lossy().contains('"'))?;
     let home = crate::platform::home()?;
     if cfg!(target_os = "macos") && Path::new("/usr/bin/sandbox-exec").exists() {
         return Some(format!("/usr/bin/sandbox-exec -p {} /bin/bash -c {}", q(&profile(&cwd, &home)), q(&scrubbed(command))));
@@ -83,6 +91,12 @@ mod tests {
         assert!(!run("git config core.fsmonitor 'touch /tmp/x'").status.success(), "no git config");
         assert!(!run("mv .git .g").status.success() && dir.join(".git").is_dir(), ".git stays where it is");
         assert!(!run("mkdir -p .claude && echo {} > .claude/settings.json").status.success() && !dir.join(".claude").exists(), "no claude settings");
+        assert!(!run("mkdir -p sub/deep && echo x > sub/deep/.envrc").status.success() && run("echo x > sub/deep/.envrc.txt").status.success(), "at any depth, by name");
+        // no system service: launchd would start a job outside the sandbox
+        let escaped = std::env::temp_dir().join(format!("tazuna-launchd-{}", std::process::id()));
+        let _ = run(&format!("launchctl submit -l tazuna.sbx.{} -- /usr/bin/touch {}", std::process::id(), escaped.display()));
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        assert!(!escaped.exists(), "no launchd job");
         assert!(run("git status --short").status.success(), "reading the repository works");
         assert!(!run("echo a > a.txt && git add a.txt").status.success(), "writing it does not: the user answers git add and commit");
         // no secrets in the environment, no keychain, no unix sockets

@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.165 (2026-11-17): no system services from the sandbox
+
+- A reviewed command reaches no macOS system service but the user-name lookup (security review): `launchctl submit` had
+  launchd start a job outside the sandbox, `osascript` could have had Terminal run one, `open` an app, and the keychain
+  had more doors than the two closed in 0.1.164. git, cargo build and test, node, npm, python, go, make and rustc all ran
+  with every other service closed. launchctl, open, osascript and security cannot start either.
+- What runs later outside the sandbox is closed at any depth of the project, not only at its top: .git, .claude,
+  .mcp.json, .tazuna, .envrc, mise's and asdf's files, .vscode, .idea (`.envrc.txt` and the like stay writable).
+
 ## 0.1.164 (2026-11-17): the sandbox closes .git and the keychain; macOS only
 
 - Nothing in .git can be written from the sandbox, the entry itself included: .git renamed away and replaced by a
