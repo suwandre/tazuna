@@ -1,10 +1,12 @@
 //! The sandbox a reviewed command runs in (review mode: a cheap model approves the agent's commands instead of the user).
 //! It may write only inside the project and the temporary and cache folders, reach no network (no unix sockets either:
-//! docker's is root), and read none of the credential stores (CREDENTIALS). Inside the project it may not write what
-//! runs later outside the sandbox: git's hooks and config (core.fsmonitor runs on tazuna's own `git status`), claude's
-//! and tazuna's project settings (.claude, .mcp.json, .tazuna). Secret-looking environment variables are unset first,
-//! and macOS's keychain tool cannot run (security review, 2026-11-17). macOS: sandbox-exec with a Seatbelt profile;
-//! Linux: bubblewrap (bwrap) where installed; elsewhere none, and the user answers as before.
+//! docker's is root), and read none of the credential stores (CREDENTIALS) or the keychain. Inside the project it may
+//! not write what runs later outside the sandbox: anything in .git (hooks, config with core.fsmonitor, which runs on
+//! tazuna's own `git status`, or .git replaced by a gitdir file pointing elsewhere), the project's .claude, .mcp.json
+//! and .tazuna (claude loads a trusted repository's settings, hooks among them), .envrc (direnv runs it). So git add
+//! and commit cannot run in it: the reviewer leaves those to the user. Secret-looking environment variables are unset
+//! first (security reviews, 2026-11-17). macOS only (sandbox-exec, a Seatbelt profile); elsewhere the user answers as
+//! before (a Linux sandbox was dropped untested, with known gaps: bubblewrap cannot cover a path that does not exist).
 
 use std::path::Path;
 
@@ -14,11 +16,12 @@ fn q(s: &str) -> String {
 }
 
 /// Under the home folder: what holds keys and logins.
-const CREDENTIALS: [&str; 15] = [".ssh", ".aws", ".gnupg", ".config/tazuna", ".netrc", ".config/gh", ".kube", ".docker", ".npmrc",
-    ".git-credentials", ".pypirc", ".cargo/credentials.toml", ".config/gcloud", ".azure", ".claude.json"];
+const CREDENTIALS: [&str; 16] = [".ssh", ".aws", ".gnupg", ".config/tazuna", ".netrc", ".config/gh", ".kube", ".docker", ".npmrc",
+    ".git-credentials", ".pypirc", ".cargo/credentials.toml", ".config/gcloud", ".azure", ".claude.json", "Library/Keychains"];
 
-/// In the project: what git, claude or tazuna later run outside the sandbox.
-const RUN_LATER: [&str; 5] = [".git/hooks", ".git/config", ".claude", ".mcp.json", ".tazuna"];
+/// In the project: what git, claude, tazuna or the shell later run outside the sandbox (the entry itself included: no
+/// renaming it away and putting another in its place).
+const RUN_LATER: [&str; 5] = [".git", ".claude", ".mcp.json", ".tazuna", ".envrc"];
 
 /// The command after unsetting environment variables that look like secrets (names with TOKEN, SECRET, PASSWORD,
 /// CREDENTIAL or KEY, and AWS_, GH_, GITHUB_ ones): its output goes to the model.
@@ -40,34 +43,21 @@ fn profile(cwd: &Path, home: &Path) -> String {
     format!(
         "(version 1)\n(allow default)\n(deny network*)\n(deny file-write*)\n\
          (allow file-write* (subpath {}) (subpath \"/private/tmp\") (subpath \"/private/var/folders\") (subpath \"/dev\") (subpath {}) (subpath {}))\n\
-         (deny file-write* {})\n(deny file-read* {})\n(deny process-exec (literal \"/usr/bin/security\"))\n",
+         (deny file-write* {})\n(deny file-read* {})\n\
+         (deny mach-lookup (global-name \"com.apple.SecurityServer\") (global-name \"com.apple.securityd\"))\n",
         lit(&cwd.to_string_lossy()), h("Library/Caches"), h(".cache"), later.join(" "), secret.join(" ")
     )
 }
 
 /// `command` as a shell command line that runs it in the sandbox for the project in `cwd`; None where there is no
-/// sandbox (Windows; Linux without bwrap).
+/// sandbox (anywhere but macOS).
 pub fn wrap(command: &str, cwd: &Path) -> Option<String> {
     let cwd = cwd.canonicalize().ok()?;
     let home = crate::platform::home()?;
     if cfg!(target_os = "macos") && Path::new("/usr/bin/sandbox-exec").exists() {
         return Some(format!("/usr/bin/sandbox-exec -p {} /bin/bash -c {}", q(&profile(&cwd, &home)), q(&scrubbed(command))));
     }
-    if cfg!(target_os = "linux") && let Some(bwrap) = which("bwrap") {
-        // ponytail: untested on a Linux machine (CI has no bwrap); a bwrap that fails fails the command, never widens it.
-        // Only what exists can be covered: a missing .claude could be created (macOS denies it either way).
-        let c = cwd.to_string_lossy();
-        let cover = |p: std::path::PathBuf| if p.is_dir() { Some(format!("--tmpfs {}", q(&p.to_string_lossy()))) } else if p.exists() { Some(format!("--ro-bind /dev/null {}", q(&p.to_string_lossy()))) } else { None };
-        let hidden: Vec<String> = CREDENTIALS.iter().filter_map(|p| cover(home.join(p))).collect();
-        let fixed: Vec<String> = RUN_LATER.iter().map(|p| cwd.join(p)).filter(|p| p.exists()).map(|p| { let s = q(&p.to_string_lossy()); format!("--ro-bind {s} {s}") }).collect();
-        return Some(format!("{} --ro-bind / / --dev /dev --proc /proc --tmpfs /run --bind {c2} {c2} --bind /tmp /tmp {} {} --unshare-net --die-with-parent -- /bin/bash -c {}",
-            q(&bwrap), hidden.join(" "), fixed.join(" "), q(&scrubbed(command)), c2 = q(&c)));
-    }
     None
-}
-
-fn which(name: &str) -> Option<String> {
-    std::env::var_os("PATH").and_then(|p| std::env::split_paths(&p).map(|d| d.join(name)).find(|f| f.is_file())).map(|f| f.to_string_lossy().into_owned())
 }
 
 #[cfg(test)]
@@ -91,13 +81,16 @@ mod tests {
         assert!(std::process::Command::new("git").args(["init", "-q"]).current_dir(&dir).status().unwrap().success());
         assert!(!run("echo x > .git/hooks/pre-commit").status.success() && !dir.join(".git/hooks/pre-commit").exists(), "no git hook");
         assert!(!run("git config core.fsmonitor 'touch /tmp/x'").status.success(), "no git config");
+        assert!(!run("mv .git .g").status.success() && dir.join(".git").is_dir(), ".git stays where it is");
         assert!(!run("mkdir -p .claude && echo {} > .claude/settings.json").status.success() && !dir.join(".claude").exists(), "no claude settings");
-        assert!(run("echo a > a.txt && git add a.txt && git -c user.email=a@b -c user.name=t commit -qm x").status.success(), "a commit still works");
+        assert!(run("git status --short").status.success(), "reading the repository works");
+        assert!(!run("echo a > a.txt && git add a.txt").status.success(), "writing it does not: the user answers git add and commit");
         // no secrets in the environment, no keychain, no unix sockets
         let env = std::process::Command::new("/bin/sh").arg("-c").arg(wrap("printenv MY_TOKEN; printenv github_token; printenv PATH >/dev/null && echo path-kept", &dir).unwrap())
             .env("MY_TOKEN", "s3cret").env("github_token", "s3cret").current_dir(&dir).output().unwrap();
         assert_eq!(String::from_utf8_lossy(&env.stdout).trim(), "path-kept", "secret-looking variables unset, others kept");
-        assert!(!run("/usr/bin/security list-keychains").status.success(), "no keychain tool");
+        assert!(!run("ls ~/Library/Keychains").status.success(), "no keychain files");
+        assert!(!run("/usr/bin/security find-generic-password -s tazuna-sbx-test").status.success(), "no keychain service");
         assert!(!run("python3 -c 'import socket; s = socket.socket(socket.AF_UNIX); s.connect(\"/var/run/syslog\")'").status.success(), "no unix sockets");
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.164 (2026-11-17): the sandbox closes .git and the keychain; macOS only
+
+- Nothing in .git can be written from the sandbox, the entry itself included: .git renamed away and replaced by a
+  `gitdir:` file pointing at a planted config was a way out (security review). So git add, commit and the like cannot run
+  in it; the reviewer leaves them to you. git status, diff and log work. .envrc (direnv runs it) is closed too.
+- The keychain: its service (mach-lookup) and ~/Library/Keychains, not only /usr/bin/security (a copy of it ran).
+- The Linux sandbox (bubblewrap) is gone: never run on a Linux machine, and it could not cover a path that did not exist
+  yet, nor the unix sockets in /tmp. On Linux, as on Windows, commands in review mode come to you.
+
 ## 0.1.163 (2026-11-17): a tighter sandbox (security review)
 
 - A reviewed command may no longer write what runs later outside the sandbox: git's hooks and config (core.fsmonitor
