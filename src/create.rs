@@ -88,7 +88,7 @@ pub fn check(dir: &Path, run_tool: bool) -> std::result::Result<Made, String> {
     if !valid(name) {
         return Err(format!("creation.json's name \"{name}\" must be lowercase letters, digits and -"));
     }
-    for e in walk(dir) {
+    for e in walk(dir)? {
         if std::fs::read_to_string(&e).is_ok_and(|t| holds_key(&t)) {
             return Err(format!("{} holds what looks like a key or token: read it from an environment variable instead", e.display()));
         }
@@ -135,10 +135,10 @@ fn server(dir: &Path, name: &str) -> Result<Value> {
     Ok(json!({"command": command, "args": args}))
 }
 
-/// Every file under `dir` (to look for keys), at most a few hundred, from at most a few hundred folders. Links are not
-/// followed (security review: a link to its own folder looped for ever); a link is not a file the creation carries
-/// (copy_dir leaves links out too).
-fn walk(dir: &Path) -> Vec<PathBuf> {
+/// Every file under `dir` (to look for keys), at most a few hundred, from at most a few hundred folders. A link anywhere
+/// fails the check (security review): the scan cannot follow one safely (a link to its own folder looped for ever), and
+/// a skipped link to ~/.aws/credentials named commands/x.md would have been copied, its target's text, by enable.
+fn walk(dir: &Path) -> std::result::Result<Vec<PathBuf>, String> {
     let mut out = vec![];
     let mut todo = vec![dir.to_path_buf()];
     let mut folders = 0;
@@ -150,6 +150,9 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
         for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
             let Ok(kind) = e.file_type() else { continue };
             let p = e.path();
+            if kind.is_symlink() {
+                return Err(format!("{} is a link: a creation holds real files only", p.display()));
+            }
             if kind.is_dir() && !p.ends_with("node_modules") && !p.ends_with("__pycache__") {
                 todo.push(p);
             } else if kind.is_file() && out.len() < 500 {
@@ -157,7 +160,7 @@ fn walk(dir: &Path) -> Vec<PathBuf> {
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// The creation in `dir` turned on, its folder in staging removed; what the user can do with it now.
@@ -169,7 +172,11 @@ pub fn enable(dir: &Path) -> Result<String> {
     let said = match made.kind.as_str() {
         "command" => {
             std::fs::create_dir_all(live.join("commands"))?;
-            std::fs::copy(dir.join("commands").join(format!("{name}.md")), live.join("commands").join(format!("{name}.md")))?;
+            let from = dir.join("commands").join(format!("{name}.md"));
+            if std::fs::symlink_metadata(&from)?.file_type().is_symlink() {
+                bail!("commands/{name}.md is a link: a creation holds real files only");
+            }
+            std::fs::copy(from, live.join("commands").join(format!("{name}.md")))?;
             format!("/{name} works now, on every model: {summary}")
         }
         "skill" => {
@@ -233,12 +240,20 @@ mod tests {
         assert!(!holds_key("read the key from the environment: API_KEY") && !holds_key("token: ${GITHUB_TOKEN}"));
         // a letter whose lower case is longer (İ) before the word does not shift the slice into a panic
         assert!(holds_key("İİİ token = abcdefghijklmnopqrstuvwxyz0123") && !holds_key("İİİİ key"));
-        // a link to its own folder does not loop
+        // a link fails the check: one to its own folder (no loop), one standing in for the command file
         #[cfg(unix)]
         {
+            std::fs::write(dir.join("creation.json"), r#"{"kind": "command", "name": "standup", "summary": "x"}"#).unwrap();
             std::os::unix::fs::symlink(&dir, dir.join("commands/loop")).unwrap();
-            assert!(walk(&dir).len() < 50);
+            assert!(check(&dir, false).unwrap_err().contains("is a link"));
             std::fs::remove_file(dir.join("commands/loop")).unwrap();
+            std::fs::write(dir.join("secret.txt"), "the target's text\n").unwrap();
+            std::fs::rename(dir.join("commands/standup.md"), dir.join("standup.md")).unwrap();
+            std::os::unix::fs::symlink(dir.join("secret.txt"), dir.join("commands/standup.md")).unwrap();
+            assert!(check(&dir, false).unwrap_err().contains("is a link") && enable(&dir).is_err());
+            std::fs::remove_file(dir.join("commands/standup.md")).unwrap();
+            std::fs::rename(dir.join("standup.md"), dir.join("commands/standup.md")).unwrap();
+            std::fs::remove_file(dir.join("secret.txt")).unwrap();
         }
         // a tool: its server started and its tools listed
         #[cfg(unix)]

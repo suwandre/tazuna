@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.155 (2026-11-17): a creation holds real files only
+
+- A link anywhere in a creation fails its check, and enable refuses a command file that is a link. Before, the key scan
+  skipped links while enable copied a command file through one: a link named commands/x.md to a file of secrets would
+  have turned that file's text into a live command (security review).
+
 ## 0.1.154 (2026-11-17): /create fixes from a security review
 
 - /create follows /data like any message: when the model on it is one /data does not allow, nothing is sent, neither the
