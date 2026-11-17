@@ -428,6 +428,7 @@ pub fn describe(cmd: &str) -> &'static str {
         "good" | "bad" => "Rate the last run (kept on this machine)",
         "boss" => "A lead model directs Haiku workers (on, off, or a model)",
         "chat" => "A plain chat, or back to the profile before it",
+        "create" => "Make a command, skill or tool for every model (enable, discard)",
         "data" => "Which providers may see your code (trusted, any)",
         "diff" => "What this conversation changed, file by file",
         "effort" => "The model's effort level",

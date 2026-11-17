@@ -64,6 +64,10 @@ plan, the own loop) and per version and model, how often your own runs were a cl
 change thrown away, the next message correcting it or asking again) or met pushback ("wait, ...", "progress?"). On the
 last 90 days: Claude 4% clear misses over 350 runs, the own loop 5% over 40.
 0.1.26-0.1.27 (with tazuna 0.1.150-0.1.151): the core's command menu, end-to-end speed and Cheaper Inference fixes, and model providers' keys kept out of the agent's commands.
+0.1.28 (with tazuna 0.1.152-0.1.153), creator mode for behaviour: /create asks "part of the window" (a panel or plugin)
+or "something tazuna does": a command, a skill or a tool (an MCP server), made in a new conversation, checked by the
+core, turned on with Enable after you read it. They work on every model: claude gets them as a plugin (--plugin-dir),
+the own loop and the lean profile through tazuna (commands expanded, skills listed in the prompt).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

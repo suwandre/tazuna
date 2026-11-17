@@ -92,6 +92,11 @@ export const core = {
   worktreeRemove: (path: string, force = false) => to("op", { msg: { op: "worktree_remove", path, force } }),
   onWorktree: (cb: (w: WorktreeMade, tid: string) => void) => on<WorktreeMade>("worktree", cb),
   onWorktreeRemoved: (cb: (w: { path: string; error?: string }, tid: string) => void) => on<{ path: string; error?: string }>("worktree_removed", cb),
+  /** /create for behaviour (src/create.rs): a command, skill or tool made in thread `tid`'s fresh conversation; enable or
+   * discard what it made */
+  createIn: (tid: string, ask: string) => invoke("op", { tid, msg: { op: "create", ask } }),
+  createDoneIn: (tid: string, enable: boolean) => invoke("op", { tid, msg: { op: enable ? "create_enable" : "create_discard" } }),
+  onCreation: (cb: (c: { state: string; dir?: string }, tid: string) => void) => on<{ state: string; dir?: string }>("creation", cb),
   /** the pull request of thread `tid`'s branch (gh) */
   prIn: (tid: string) => invoke("op", { tid, msg: { op: "pr" } }),
   onPr: (cb: (p: import("./pr").Pr, tid: string) => void) => on<import("./pr").Pr>("pr", cb),

@@ -122,7 +122,8 @@ function useCore() {
     if (path && !opts.creator) setProjects((p) => { const next = [path, ...p.filter((x) => x !== path)].slice(0, 12); localStorage.setItem(RECENT, JSON.stringify(next)); return next; });
     const already = !opts.creator && Object.values(live.current).find((t) => resume ? t.view?.session_id === resume
       : t.folder === path && !t.creator && !t.view?.blocks.some((b) => b.kind === "prompt") && !t.error);
-    if (already) { show(already.tid); return; }
+    // an open one is reused; what was to follow its start (`then`) follows now
+    if (already) { show(already.tid); opts.then?.(already.tid); return; }
     // messages it had queued when the window last closed were never sent: they go back in its box
     const lost = resume && localStorage.getItem(QUEUE + resume);
     if (lost) {
@@ -392,9 +393,17 @@ export default function App() {
   }, []);
   const threadsRef = useRef(threads);
   threadsRef.current = threads;
+  // /create's question, and what creating behaviour made in each conversation (the core's "creation" lines)
+  const [createAsk, setCreateAsk] = useState<string | null>(null);
+  const [creations, setCreations] = useState<Record<string, { state: string; dir?: string }>>({});
+  useEffect(() => { if (!inTauri) return; const off = core.onCreation((c, tid) => setCreations((m) => ({ ...m, [tid]: c }))); return () => { off.then((f) => f()); }; }, []);
+  /** A command, skill or tool: a new conversation in this folder makes it (src/create.rs), checked by the core. */
+  const createBehaviour = (ask: string) => open(folder, undefined, { then: (tid) => { core.createIn(tid, ask).catch(() => {}); } });
+  const creation = creations[active];
   /** A message on its way: /create, a creator conversation's first, an edit from an earlier message, or a plain one. */
   const sendNow = (text: string) => {
-    if (text.startsWith("/create ")) { createPanel(text.slice(8).trim()); return; }
+    // /create: part of the window (a panel or plugin) or something tazuna does (a command, skill or tool): asked first
+    if (text.startsWith("/create ")) { setCreateAsk(text.slice(8).trim()); return; }
     if (creator === "edit" && !view?.blocks.some((b) => b.kind === "prompt")) { core.send(creatorMessage(text, true), true).catch(() => {}); return; }
     if (!editing) { core.send(text).catch((e) => console.error(e)); return; }
     const { cp, keep } = editing;
@@ -433,6 +442,8 @@ export default function App() {
       a.push(...(cur?.efforts ?? []).map((e) => ({ id: `e:${e}`, group: "Effort", label: e, hint: e === view.effort ? "current" : undefined, keywords: "effort thinking", run: () => core.setEffort(e) })));
       a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: c.label, hint: c.current ? "current" : c.place, keywords: `model ${c.provider}`, run: () => core.setModel(c) })));
     }
+    a.push({ id: "create-behaviour", group: "Creator mode", label: "Make a command, skill or tool…", hint: "/create what it should do", keywords: "skill command mcp tool creator",
+        run: () => setDraft({ text: "/create ", n: Date.now() }) });
     a.push({ id: "create-panel", group: "Creator mode", label: "Create a panel…", hint: "/create what it should show", keywords: "widget creator customize",
         run: () => setDraft({ text: "/create ", n: Date.now() }) },
       ...userWidgets.map((w) => ({ id: `edit-panel:${w.id}`, group: "Creator mode", label: `Change the panel "${w.title}"`, keywords: "widget edit", run: () => editPanel(w.id) })));
@@ -492,6 +503,21 @@ export default function App() {
           <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
             <span className="flex-1">Worktree ready. {wtNotes[folder]}.</span>
             <button onClick={() => setWtNotes((m) => { const { [folder]: _, ...rest } = m; return rest; })} className="text-muted hover:text-ink">Dismiss</button>
+          </div>
+        )}
+        {createAsk != null && (
+          <div className="mx-auto mb-2 flex w-full max-w-[700px] flex-wrap items-center gap-2 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
+            <span className="flex-1">What should <span className="text-ink">“{createAsk.slice(0, 60)}”</span> be?</span>
+            <button onClick={() => { createPanel(createAsk); setCreateAsk(null); }} className="rounded-md border border-line-strong px-2.5 py-1 text-ink hover:bg-hover" title="A panel in the right column, or a plugin that changes the window">Part of the window</button>
+            <button onClick={() => { createBehaviour(createAsk); setCreateAsk(null); }} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent" title="A /command, a skill the agent reads, or a tool (MCP server): on every model">Something tazuna does</button>
+            <button onClick={() => setCreateAsk(null)} className="rounded-md px-2 py-1 text-muted hover:bg-hover">Cancel</button>
+          </div>
+        )}
+        {creation && creation.state !== "done" && (
+          <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
+            <span className="flex-1">{creation.state === "made" ? "It is made and checked: what it is and where it is are in the conversation above. Read it, then turn it on." : "It did not pass the checks: the conversation says why."}</span>
+            {creation.state === "made" && <button onClick={() => core.createDoneIn(active, true).catch(() => {})} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Enable</button>}
+            <button onClick={() => core.createDoneIn(active, false).catch(() => {})} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">Discard</button>
           </div>
         )}
         {wt && (

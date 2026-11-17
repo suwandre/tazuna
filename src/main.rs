@@ -100,6 +100,7 @@ mod turns;
 mod ui;
 mod verify;
 mod behave;
+mod create;
 mod realuse;
 mod versions;
 mod worktree;
@@ -1002,6 +1003,9 @@ fn app_server(a: &Args) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let config = route::RepoConfig::read(&cwd);
     let mut untrusted = (config.runs_code() && !a.trust && !labels::dir().is_ok_and(|b| trust::is_trusted(&b, &cwd))).then(|| config.summary());
+    // /create (create.rs): the creation being made and the one made, as in the terminal
+    let mut creating: Option<(PathBuf, u8, usize)> = None;
+    let mut made: Option<PathBuf> = None;
     // a worktree's setup script as last shown to the user (its question's id and bytes), and why one was not shown
     let mut setup_asked: Option<(String, Vec<u8>)> = None;
     let mut setup_refused: Option<String> = None;
@@ -1023,9 +1027,9 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 33] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+        const OPS: [&str; 36] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
             "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
-            "worktree_new", "worktrees", "worktree_remove", "pr"];
+            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1570,6 +1574,27 @@ fn app_server(a: &Args) -> Result<()> {
                                 if route_on { "are answered as a chat" } else { "go to the agent" });
                             s.apply(&json!({"type": "harness_notice", "text": text, "error": false}), at);
                         }
+                        // /create from the window: a fresh conversation in this thread makes it (as the terminal's /create)
+                        Some("create") => {
+                            let ask = cmd["ask"].as_str().unwrap_or_default().trim().to_string();
+                            if ask.is_empty() {
+                                info(&mut s, CREATE_USAGE.into());
+                            } else if !live.idle() || creating.is_some() {
+                                info(&mut s, "wait until this run has finished, then create".into());
+                            } else if let Err(err) = restart_session(&mut live, &mut s, None) {
+                                info(&mut s, format!("{err:#}"));
+                            } else {
+                                (turn, undo_note) = (None, None);
+                                done_turns.clear();
+                                creating = creation_start(&mut live, &mut s, &ask);
+                            }
+                        }
+                        Some("create_enable") | Some("create_discard") => {
+                            creation_finish(&mut s, at, &mut made, cmd["op"] == "create_enable");
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{}", json!({"type": "creation", "state": "done"}));
+                            let _ = o.flush();
+                        }
                         Some("allow_root") => {
                             let desk = platform::home().map(|h| h.join(".config/tazuna/desktop")).and_then(|d| d.canonicalize().ok());
                             let want = cmd["path"].as_str().and_then(|p| std::path::Path::new(p).canonicalize().ok());
@@ -1613,6 +1638,14 @@ fn app_server(a: &Args) -> Result<()> {
                 s.apply(&e, t);
                 changed = true;
             }
+        }
+        // /create: the creation checked once the agent's turn on it has ended; the window hears it is ready
+        if let Some((dir, ready)) = creation_step(&mut live, &mut s, &mut creating) {
+            let mut o = out.lock();
+            let _ = writeln!(o, "{}", json!({"type": "creation", "state": if ready { "made" } else { "failed" }, "dir": dir}));
+            let _ = o.flush();
+            made = Some(dir);
+            changed = true;
         }
         // a turn is over once its result came and nothing runs (checks and fix rounds included): what did it change?
         if turn.as_ref().is_some_and(|t| t.1) && live.idle() && let Some((before, _)) = turn.take()
@@ -2233,6 +2266,85 @@ fn arg_word(w: &str) -> bool {
     !w.is_empty() && w.len() <= 80 && !w.starts_with('-') && w.chars().all(|c| c.is_ascii_alphanumeric() || "-._:[]".contains(c))
 }
 
+const CREATE_USAGE: &str = "/create WHAT YOU WANT: tazuna makes it as a command (/name), a skill (know-how the agent reads) or a \
+    tool (an MCP server), checks it, and /create enable turns it on for every model (/create discard throws it away)";
+
+/// /create WHAT, in a conversation just started: its folder, and the request with create.rs's specification sent. The
+/// creation as it is being made (folder, fix rounds, finished turns then), or None when the request did not go out.
+fn creation_start(live: &mut live::Live, s: &mut Session, ask: &str) -> Option<(PathBuf, u8, usize)> {
+    let say = |s: &mut Session, text: String, t: f64| s.apply(&json!({"type": "harness_info", "text": text}), t);
+    let dir = match create::new_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            say(s, format!("{e:#}"), live.elapsed_ms());
+            return None;
+        }
+    };
+    say(s, format!("making it in {} (/resume brings back the conversation before)", dir.display()), live.elapsed_ms());
+    match live.send(&create::spec(ask, &dir)) {
+        Ok((t, e)) => {
+            s.apply(&e, t);
+            Some((dir, 0, s.blocks.iter().filter(|b| matches!(b, session::Block::Done(_))).count()))
+        }
+        Err(err) => {
+            say(s, format!("{err:#}"), live.elapsed_ms());
+            None
+        }
+    }
+}
+
+/// Once the agent's turn on a creation has ended: what it made checked (create.rs). A problem goes back to it, twice at
+/// most. Some((folder, ready)) when it is done with it: made, or given up on (it stays for /create discard).
+fn creation_step(live: &mut live::Live, s: &mut Session, creating: &mut Option<(PathBuf, u8, usize)>) -> Option<(PathBuf, bool)> {
+    let (dir, rounds, at) = creating.clone()?;
+    let dones = s.blocks.iter().filter(|b| matches!(b, session::Block::Done(_))).count();
+    if dones <= at || !live.idle() || busy(s) {
+        return None;
+    }
+    let say = |s: &mut Session, text: String, t: f64| s.apply(&json!({"type": "harness_info", "text": text}), t);
+    match create::check(&dir, live.permission_mode == "bypassPermissions") {
+        Ok(m) => {
+            *creating = None;
+            let tools = if m.tools.is_empty() { String::new() } else { format!(" (its tools: {})", m.tools.join(", ")) };
+            say(s, format!("made a {}: {}{tools}. {}. Read it in {}, then /create enable turns it on, /create discard throws it away.",
+                m.kind, m.name, m.summary.trim_end_matches('.'), dir.display()), live.elapsed_ms());
+            Some((dir, true))
+        }
+        Err(problem) if rounds < 2 => {
+            *creating = Some((dir.clone(), rounds + 1, dones));
+            match live.send(&format!("tazuna checked what you made: {problem}. Fix it in {}.", dir.display())) {
+                Ok((t, e)) => s.apply(&e, t),
+                Err(err) => say(s, format!("{err:#}"), live.elapsed_ms()),
+            }
+            None
+        }
+        Err(problem) => {
+            *creating = None;
+            say(s, format!("the creation is not ready: {problem}. It stays in {} (/create discard removes it).", dir.display()), live.elapsed_ms());
+            Some((dir, false))
+        }
+    }
+}
+
+/// /create enable or discard: the creation made last turned on (create.rs) or thrown away.
+fn creation_finish(s: &mut Session, at: f64, made: &mut Option<PathBuf>, enable: bool) {
+    let say = |s: &mut Session, text: String| s.apply(&json!({"type": "harness_info", "text": text}), at);
+    match made.take() {
+        Some(dir) if enable => match create::enable(&dir) {
+            Ok(said) => say(s, format!("{said}. Conversations from now on have it (/new).")),
+            Err(e) => {
+                say(s, format!("not enabled: {e:#}"));
+                *made = Some(dir);
+            }
+        },
+        Some(dir) => {
+            let _ = std::fs::remove_dir_all(&dir);
+            say(s, "thrown away".into());
+        }
+        None => say(s, "nothing made yet: /create WHAT YOU WANT".into()),
+    }
+}
+
 /// The model an earlier conversation goes on with, when the one in use will not do: the own loop's on the model it ran on
 /// (its saved history is that provider's API), claude's on Claude. None: keep the one in use (or none fits).
 fn resume_choice(live: &live::Live, e: &Earlier) -> Option<models::Choice> {
@@ -2435,6 +2547,10 @@ fn run_live(
         pick = Some(open_picker(live, &key_models)?);
     }
     let mut hinted = 0usize;
+    // /create (create.rs): the creation the agent is making (its folder, the fix rounds sent, the finished turns when it was
+    // asked for), and the one made and waiting for /create enable
+    let mut creating: Option<(PathBuf, u8, usize)> = None;
+    let mut made: Option<PathBuf> = None;
     // the context size at which /new was last suggested (0: not yet in this conversation)
     let mut ctx_hint = 0u64;
     // /vim: modal editing in the composer (remembered across sessions); `normal` and a pending operator (d, c)
@@ -2452,6 +2568,10 @@ fn run_live(
             asked_at = None;
         } else if asked_at.is_none() {
             asked_at = Some(Instant::now());
+        }
+        // /create: when the agent's turn on it has ended, what it made is checked (a problem goes back to it)
+        if let Some((dir, _)) = creation_step(live, &mut s, &mut creating) {
+            made = Some(dir);
         }
         if v.input != ed.text || v.cursor != ed.cursor {
             let (start, token) = ed.token();
@@ -3637,6 +3757,25 @@ fn run_live(
                     match v.changed.first() {
                         Some(c) => v.diff = Some(ui::DiffPanel { selected: 0, diff: diff_of(c), scroll: 0 }),
                         None => s.apply(&json!({"type": "harness_info", "text": "no file changed in this conversation yet"}), live.elapsed_ms()),
+                    }
+                    continue;
+                }
+                // /create WHAT: a command, a skill or a tool made by the agent in a fresh conversation, checked, then turned on
+                // by the user (create.rs)
+                if text == "/create" || text.starts_with("/create ") {
+                    let rest = text["/create".len()..].trim().to_string();
+                    let say = |s: &mut Session, text: String, t: f64| s.apply(&json!({"type": "harness_info", "text": text}), t);
+                    match rest.as_str() {
+                        "" => say(&mut s, CREATE_USAGE.into(), live.elapsed_ms()),
+                        "enable" | "discard" => creation_finish(&mut s, live.elapsed_ms(), &mut made, rest == "enable"),
+                        _ if busy(&s) || creating.is_some() => say(&mut s, "wait until this run has finished, then /create".into(), live.elapsed_ms()),
+                        ask => {
+                            new_conversation(live, &mut s, &mut v, None);
+                            git_start = runlog::git_snapshot(&std::env::current_dir()?);
+                            v.changed.clear();
+                            ctx_hint = 0;
+                            creating = creation_start(live, &mut s, ask);
+                        }
                     }
                     continue;
                 }

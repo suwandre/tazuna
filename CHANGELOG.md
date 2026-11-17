@@ -16,6 +16,22 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.153 (2026-11-17): /create makes commands, skills and tools
+
+- `/create WHAT YOU WANT` (terminal; the desktop asks "part of the window" or "something tazuna does") starts a fresh
+  conversation in which the agent makes it as a command (/name), a skill (know-how the agent reads when a task fits) or
+  a tool (a small MCP server), in ~/.config/tazuna/behave-new/<id>/, from src/create.rs's specification of the three
+  forms. When its turn ends tazuna checks it: creation.json, the files in the right place and form, no key written in any
+  file, and a tool's server started to list its tools (only in auto mode, where the agent could start it anyway); a
+  problem goes back to the agent, twice at most. Nothing goes live until `/create enable`: a command or skill into the
+  creations folder (0.1.152: every model), a tool into ~/.config/tazuna/behave/tools/ and the MCP list. `/create discard`
+  throws it away. Checked end to end: ERNIE made /standup from a request, the check passed, enable made it live; Haiku made
+  a temperature converter MCP server, the check started it and listed its tool, enable put it in the MCP list ($0.004).
+- The desktop: /create asks which kind, makes behaviour in a new conversation of the folder, and shows Enable and Discard
+  when it is ready; Cmd-K "Make a command, skill or tool…". Opening a conversation that is already open now runs what was
+  to follow its start (it did not, so a request could be lost).
+- No other metric moves; 190 tests.
+
 ## 0.1.152 (2026-11-17): your commands and skills on every model
 
 - src/behave.rs: the user's own commands and skills that tazuna keeps (~/.config/tazuna/behave, a Claude Code plugin

@@ -17,7 +17,7 @@ pub struct Item {
 }
 
 /// The frontmatter's fields (`key: value`, folded `>`/`|` values joined) and the body after it.
-fn frontmatter(text: &str) -> (Vec<(String, String)>, &str) {
+pub(crate) fn frontmatter(text: &str) -> (Vec<(String, String)>, &str) {
     let Some(rest) = text.strip_prefix("---\n").or_else(|| text.strip_prefix("---\r\n")) else { return (vec![], text) };
     let Some(end) = rest.find("\n---") else { return (vec![], text) };
     let (head, tail) = (&rest[..end], &rest[end + 4..]);
@@ -40,7 +40,7 @@ fn frontmatter(text: &str) -> (Vec<(String, String)>, &str) {
     (fields, body)
 }
 
-fn field(fields: &[(String, String)], key: &str) -> String {
+pub(crate) fn field(fields: &[(String, String)], key: &str) -> String {
     fields.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()).unwrap_or_default()
 }
 
