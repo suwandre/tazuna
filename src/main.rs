@@ -1016,7 +1016,7 @@ fn login_save(l: &models::Login, typed: &str) -> Result<String> {
             p = models::save_key(var, typed)?;
         }
         said.push(format!("logged in to {}: key saved in {} (readable by you only)", l.name, p.display()));
-        if l.host == "mortera.cloud" || l.host == "api.cheaperinference.com" {
+        if matches!(l.host, "mortera.cloud" | "api.cheaperinference.com" | "localhost") {
             // ponytail: on the UI thread, ~1 s (15 s at most) once; their models come from their lists, which need the key
             models::refresh_mortera();
         }

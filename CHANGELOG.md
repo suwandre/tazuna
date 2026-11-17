@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.170 (2026-11-17): OmniRoute as a provider
+
+- OmniRoute, a gateway on this machine (http://localhost:20128), joins the providers: the accounts and API keys
+  connected there, one endpoint. `/login` (or Settings) takes its key from its dashboard (Endpoints); its model list then
+  fills the picker under OmniRoute ("provider/model", and its auto/ combos).
+- Its Claude Code subscription route (provider claude, alias cc) is left out, and while one is connected so are the
+  combos, which could route through it: claude runs only through the official CLI.
+- What a call costs is OmniRoute's to know (a subscription reads $0 there, an upstream API key bills): tazuna counts it
+  as free, so the spend cap does not see it. Effort levels and quality not measured.
+
 ## 0.1.169 (2026-11-17): TAZUNA_NO_UPDATE_CHECK covers the update note too
 
 - With TAZUNA_NO_UPDATE_CHECK set, the first session on a newer tazuna says only "tazuna updated: X → Y": its changelog

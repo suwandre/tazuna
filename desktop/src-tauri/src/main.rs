@@ -121,7 +121,8 @@ fn trust(core: State<Core>, tid: String) -> Result<(), String> {
 fn open_key_page(url: String) -> Result<(), String> {
     const HOSTS: [&str; 6] = ["subrouter.ai", "mortera.cloud", "openrouter.ai", "kenari.id", "console.mistral.ai", "platform.cheaperinference.com"];
     let host = url.strip_prefix("https://").and_then(|r| r.split(['/', '?', '#']).next()).unwrap_or_default();
-    if !HOSTS.contains(&host) || url.chars().any(|c| c.is_whitespace() || c == '"') {
+    // OmniRoute's dashboard is on this machine, over plain http: that one address exactly
+    if (!HOSTS.contains(&host) && url != "http://localhost:20128") || url.chars().any(|c| c.is_whitespace() || c == '"') {
         return Err(format!("not a provider page: {url}"));
     }
     #[cfg(target_os = "macos")]
