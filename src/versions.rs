@@ -210,6 +210,12 @@ fn upgrades_file() -> Option<std::path::PathBuf> {
 /// Said once, in the first session on a newer tazuna than the last one that ran (however it came: an upgrade by old
 /// code, a manual install): from which version, and the newest few titles from the CHANGELOG. last-version in tazuna's
 /// data folder keeps the version that ran last; the first run ever says nothing.
+/// TAZUNA_NO_UPDATE_CHECK: no call to GitHub when a session starts (the daily release check, the changelog for the
+/// update note). One gate for both, so they cannot drift apart.
+fn quiet() -> bool {
+    std::env::var_os("TAZUNA_NO_UPDATE_CHECK").is_some()
+}
+
 pub fn update_news(data: &Path) -> Option<String> {
     let file = data.join("last-version");
     let current = env!("CARGO_PKG_VERSION");
@@ -217,7 +223,9 @@ pub fn update_news(data: &Path) -> Option<String> {
     let _ = std::fs::create_dir_all(data);
     let _ = std::fs::write(&file, current);
     let last = last.filter(|l| older(l, current))?;
-    let items: Vec<(String, String)> = changelog(current).into_iter().filter(|e| older(&last, &e.version) && !older(current, &e.version))
+    // with the checks off, only the versions: the changelog would come from GitHub
+    let entries = if quiet() { vec![] } else { changelog(current) };
+    let items: Vec<(String, String)> = entries.into_iter().filter(|e| older(&last, &e.version) && !older(current, &e.version))
         .map(|e| (e.version, e.title)).collect();
     Some(news_text(&last, current, &items))
 }
@@ -440,7 +448,7 @@ pub fn upgrade_cli(args: &[String], back: bool) -> anyhow::Result<()> {
 /// Once a day at most: "tazuna X is out" when the newest release is newer than this binary. The check is cached in
 /// update-check.json; nothing when offline or with TAZUNA_NO_UPDATE_CHECK.
 pub fn update_notice(data: &Path, now: u64) -> Option<String> {
-    if std::env::var_os("TAZUNA_NO_UPDATE_CHECK").is_some() {
+    if quiet() {
         return None;
     }
     let file = data.join("update-check.json");

@@ -16,6 +16,11 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.169 (2026-11-17): TAZUNA_NO_UPDATE_CHECK covers the update note too
+
+- With TAZUNA_NO_UPDATE_CHECK set, the first session on a newer tazuna says only "tazuna updated: X → Y": its changelog
+  would come from GitHub, which that setting keeps a session from calling (security review). One gate for both checks.
+
 ## 0.1.168 (2026-11-17): rollback, and what an update brought
 
 - `tazuna rollback [VERSION]` goes back: to VERSION, else to the version the last upgrade came from, else to the release
