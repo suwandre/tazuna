@@ -63,6 +63,7 @@ open one, a merged worktree offers its removal. CheaperInference joins the provi
 plan, the own loop) and per version and model, how often your own runs were a clear miss (stopped, rewound, an error, a
 change thrown away, the next message correcting it or asking again) or met pushback ("wait, ...", "progress?"). On the
 last 90 days: Claude 4% clear misses over 350 runs, the own loop 5% over 40.
+0.1.26-0.1.27 (with tazuna 0.1.150-0.1.151): the core's command menu, end-to-end speed and Cheaper Inference fixes, and model providers' keys kept out of the agent's commands.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
