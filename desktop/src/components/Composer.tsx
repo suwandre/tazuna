@@ -38,6 +38,7 @@ const MODES: [string, string][] = [
   ["auto", "runs commands and edits without asking"],
   ["ask", "asks before each command and edit"],
   ["edits", "edits freely, asks before commands"],
+  ["review", "edits freely; a reviewer model answers command requests, run in a sandbox"],
   ["plan", "reads only: no edits, asks before commands"],
 ];
 

@@ -31,7 +31,7 @@ export type View = {
   /** the conversation's session: claude's id, or the own loop's ("own-...") (null before the first reply) */
   session_id?: string | null;
   /** the oldest open permission question (text made safe by the core) */
-  asking?: { tool: string; what: string; note: string; once: boolean; queued: number } | null;
+  asking?: { tool: string; what: string; note: string; once: boolean; queued: number; reviewing?: boolean } | null;
   /** the turns that changed files: where their card goes (`at_block`, a done block) and what they changed */
   changes?: { turn: number; at_block: number; undone: boolean; can_undo: boolean; files: { path: string; added: number | null; removed: number | null; status: string }[] }[];
   /** the messages "edit from here" can go back to: checkpoint and the message's block */

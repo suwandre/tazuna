@@ -36,6 +36,7 @@ export function Approval({ asking, onAnswer, keys = true }: { asking: NonNullabl
           <ShieldQuestion size={15} strokeWidth={1.5} className="text-warn" />
           tazuna asks to use <span className="font-medium text-ink">{tool}</span>
           {asking.queued > 0 && <span className="text-faint">· {asking.queued} more waiting</span>}
+          {asking.reviewing && <span role="status" className="text-muted">· the reviewer is checking it; you can answer first</span>}
         </div>
         <pre className="mb-2.5 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[12px] text-ink select-text">{what}</pre>
         <div className="flex items-center gap-1.5">

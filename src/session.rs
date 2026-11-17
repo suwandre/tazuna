@@ -516,7 +516,8 @@ impl Session {
             (Some("system"), Some("mcp_status")) => self.mcp_failures(e),
             (Some("system"), Some("call_waiting")) => self.waiting_note = e["message"].as_str().map(String::from),
             (Some("system"), Some("status")) => {
-                if let Some(m) = e["permissionMode"].as_str() {
+                // review mode runs as acceptEdits underneath: claude's report of that does not rename it
+                if let Some(m) = e["permissionMode"].as_str() && !(self.mode == "review" && m == "acceptEdits") {
                     self.mode = mode_name(m).to_string();
                 }
                 self.activity = Activity::Waiting;

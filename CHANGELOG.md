@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.161 (2026-11-17): review mode, with commands in a sandbox
+
+- A fifth permission mode, `review` (shift-tab after edits; the desktop's mode menu): edits go ahead as in edits mode,
+  and a reviewer model answers the agent's command requests in your place: the own loop's own model, or Haiku through
+  the official claude CLI. ALLOW runs the command in a sandbox (writes only in the project and the temporary and cache
+  folders, no network, no reading ~/.ssh, ~/.aws, ~/.gnupg, ~/.netrc or tazuna's keys): macOS sandbox-exec, Linux
+  bubblewrap where installed (not yet tried on a Linux machine). DENY sends its reason to the agent; ASK, or an unclear
+  answer, leaves the question to you, and you can answer before the reviewer does. Never reviewed: fetches, MCP tools,
+  calls the model wrote as text, and commands where there is no sandbox (Windows): those ask you as before.
+- Checked on ERNIE ($0) and on Claude (Haiku on the plan): `ls` allowed and sandboxed; curl, `cat ~/.ssh/config` and a
+  write to the home folder refused; `rm -rf app.py notes.txt` allowed when the message asked for exactly that. On
+  Claude's own Bash tool an allowed `ls ~/.ssh` came back "Operation not permitted": claude runs the sandboxed command.
+- The release build took over 13 minutes until the reviewer's functions were kept out of the two event loops
+  (`#[inline(never)]`): 57 s.
+
 ## 0.1.160 (2026-11-17): the app server says whether claude is installed
 
 - The `setup` op answers with the claude CLI's version, or null when it is not on the PATH (on a thread: it takes about a

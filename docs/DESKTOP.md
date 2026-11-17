@@ -87,6 +87,8 @@ dialog now also takes back focus that a conversation opening behind it took.
 0.1.37 (with tazuna 0.1.160), the first run: "Set up tazuna" opens once and says what is set and what is left, each with
 its own way there: Claude on the subscription (the claude CLI found, with its version, or how to install it), other
 models' keys, who may see the code, the quick-chat key. "Choose later" closes it; Cmd-K "Set up tazuna" brings it back.
+0.1.38 (with tazuna 0.1.161), from 1.1: review mode in the mode menu: a reviewer model answers command requests and
+what it allows runs in a sandbox (tazuna 0.1.161's notes); the question card says while the reviewer checks it.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
@@ -136,7 +138,7 @@ keeps its own numbers; the app says which tazuna it needs.
 
 Work order from 0.1.33 (2026-11-17, ranked by worth for daily use and the goals against effort): the per-turn call view
 (done), the accessibility pass (done), MCP servers and hooks in Settings (done), best-of-N across models (done), first run with "choose later" (done),
-the router learning from real use, the approval reviewer, plugin sharing and a gallery, SSH and remote sessions, the
+the router learning from real use (held back: too few runs on cheap models yet), the approval reviewer (done), plugin sharing and a gallery, SSH and remote sessions, the
 mobile companion and team settings. Code signing stays off by choice.
 
 ### 0.1: the MVP (usable every day by one person)
@@ -176,7 +178,7 @@ mobile companion and team settings. Code signing stays off by choice.
 ### 1.1
 - Best-of-N across models in worktrees, each lane with its cost and checks: price to performance visible on the spot
   (Cursor's idea, with the number Cursor hides). Done in 0.1.36.
-- An approval reviewer inside a fixed sandbox (Codex Auto-review, Claude Auto).
+- An approval reviewer inside a fixed sandbox (Codex Auto-review, Claude Auto). Done in 0.1.38.
 - Trajectory view per turn: each call, its tokens, time and cost (DeepSeek Harness). Done in 0.1.33.
 - MCP and hooks in settings; hooks that run shell commands at no token cost (Kiro): done in 0.1.35. SSH and remote
   sessions.

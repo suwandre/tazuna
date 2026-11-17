@@ -491,6 +491,9 @@ pub struct Live {
     /// Permission mode as claude names it: bypassPermissions (tazuna's "auto"), default ("ask"), acceptEdits ("edits"),
     /// plan. Every mode but auto routes claude's permission questions to tazuna (`--permission-prompt-tool stdio`).
     pub permission_mode: String,
+    /// Review mode (tazuna's "review"): acceptEdits underneath, and a reviewer model answers the agent's command requests
+    /// in the user's place (main.rs review_pending); a command it allows runs in the sandbox (sandbox.rs).
+    pub reviewer: bool,
     /// Questions waiting for the user's answer: claude's `can_use_tool` control requests. The UI shows the front one
     /// from here, so what is shown and what an answer applies to cannot drift apart.
     pub pending: VecDeque<Value>,
@@ -639,6 +642,7 @@ impl Live {
             fork_next: false,
             permission_mode: "bypassPermissions".into(),
             pending: VecDeque::new(),
+            reviewer: false,
             outbox: Vec::new(),
             allowed: Default::default(),
             requests_sent: 0,
@@ -1029,13 +1033,35 @@ impl Live {
 
     /// Switches the permission mode (also mid-run). Before the process starts it only sets the starting mode.
     pub fn set_mode(&mut self, mode: &str) -> (f64, Value) {
+        self.reviewer = mode == "review";
+        let shown = mode;
+        let mode = if self.reviewer { "acceptEdits" } else { mode };
         self.permission_mode = mode.to_string();
         if let Some(stdin) = self.stdin.as_mut() {
             self.requests_sent += 1;
             let req = json!({"type": "control_request", "request_id": format!("mode-{}", self.requests_sent), "request": {"subtype": "set_permission_mode", "mode": mode}});
             let _ = writeln!(stdin, "{req}").and_then(|_| stdin.flush());
         }
-        self.record(json!({"type": "harness_mode", "mode": mode}))
+        self.record(json!({"type": "harness_mode", "mode": shown}))
+    }
+
+    /// The reviewer's answer to the oldest question, if it is still request `id`: allowed with `input` (the command in its
+    /// sandbox), or refused with `why`. None: the question was answered meanwhile.
+    pub fn answer_reviewed(&mut self, id: &str, allow: bool, input: Value, why: &str) -> Option<(f64, Value)> {
+        if self.pending.front()?["request_id"].as_str() != Some(id) {
+            return None;
+        }
+        let req = self.pending.pop_front()?;
+        let answer = if allow {
+            json!({"behavior": "allow", "updatedInput": input})
+        } else {
+            json!({"behavior": "deny", "message": format!("tazuna's reviewer refused this: {why}. Do it another way, or ask the user.")})
+        };
+        let line = json!({"type": "control_response", "response": {"subtype": "success", "request_id": req["request_id"], "response": answer}});
+        if let Some(stdin) = self.stdin.as_mut() {
+            let _ = writeln!(stdin, "{line}").and_then(|_| stdin.flush());
+        }
+        Some(self.record(json!({"type": "harness_permission_done", "tool": req["request"]["tool_name"], "allow": allow, "always": false, "mode": self.permission_mode})))
     }
 
     /// Rewinds to just before the user message `checkpoints[i]`: the file changes made since (`files`, claude's
