@@ -68,11 +68,13 @@ fn valid(name: &str) -> bool {
 
 /// What looks like a key written into a file (sk-..., or a long token after key/token/secret =): a creation holds none.
 fn holds_key(text: &str) -> bool {
-    let lower = text.to_lowercase();
+    // ASCII lower case keeps every byte where it was, so an index found in `lower` is one in `text` (security review: a
+    // full lower case changes some letters' length, and the slice could panic)
+    let lower = text.to_ascii_lowercase();
     let long_run = |s: &str| s.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').count() >= 24;
-    lower.match_indices("sk-").any(|(i, _)| long_run(&text[i + 3..]))
+    lower.match_indices("sk-").any(|(i, _)| text.get(i + 3..).is_some_and(long_run))
         || ["key", "token", "secret"].iter().any(|w| lower.match_indices(w).any(|(i, _)| {
-            let after = text[i + w.len()..].trim_start_matches(|c: char| c == '_' || c == '"' || c == '\'' || c.is_whitespace());
+            let after = text.get(i + w.len()..).unwrap_or_default().trim_start_matches(|c: char| c == '_' || c == '"' || c == '\'' || c.is_whitespace());
             after.strip_prefix('=').or_else(|| after.strip_prefix(':')).map(|v| v.trim_start().trim_start_matches(['"', '\''])).is_some_and(long_run)
         }))
 }
@@ -133,16 +135,24 @@ fn server(dir: &Path, name: &str) -> Result<Value> {
     Ok(json!({"command": command, "args": args}))
 }
 
-/// Every file under `dir` (to look for keys), at most a few hundred.
+/// Every file under `dir` (to look for keys), at most a few hundred, from at most a few hundred folders. Links are not
+/// followed (security review: a link to its own folder looped for ever); a link is not a file the creation carries
+/// (copy_dir leaves links out too).
 fn walk(dir: &Path) -> Vec<PathBuf> {
     let mut out = vec![];
     let mut todo = vec![dir.to_path_buf()];
+    let mut folders = 0;
     while let Some(d) = todo.pop() {
+        folders += 1;
+        if folders > 500 {
+            break;
+        }
         for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let Ok(kind) = e.file_type() else { continue };
             let p = e.path();
-            if p.is_dir() && !p.ends_with("node_modules") && !p.ends_with("__pycache__") {
+            if kind.is_dir() && !p.ends_with("node_modules") && !p.ends_with("__pycache__") {
                 todo.push(p);
-            } else if p.is_file() && out.len() < 500 {
+            } else if kind.is_file() && out.len() < 500 {
                 out.push(p);
             }
         }
@@ -221,6 +231,15 @@ mod tests {
         std::fs::write(dir.join("creation.json"), r#"{"kind": "command", "name": "../evil", "summary": "x"}"#).unwrap();
         assert!(check(&dir, false).unwrap_err().contains("lowercase"));
         assert!(!holds_key("read the key from the environment: API_KEY") && !holds_key("token: ${GITHUB_TOKEN}"));
+        // a letter whose lower case is longer (İ) before the word does not shift the slice into a panic
+        assert!(holds_key("İİİ token = abcdefghijklmnopqrstuvwxyz0123") && !holds_key("İİİİ key"));
+        // a link to its own folder does not loop
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&dir, dir.join("commands/loop")).unwrap();
+            assert!(walk(&dir).len() < 50);
+            std::fs::remove_file(dir.join("commands/loop")).unwrap();
+        }
         // a tool: its server started and its tools listed
         #[cfg(unix)]
         {

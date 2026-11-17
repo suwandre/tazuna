@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.154 (2026-11-17): /create fixes from a security review
+
+- /create follows /data like any message: when the model on it is one /data does not allow, nothing is sent, neither the
+  request nor a fix round.
+- The key scan of a creation no longer follows links (a link to its own folder looped for ever) and stops after 500
+  folders.
+- The key scan reads text positions safely: a letter whose lower case is longer (İ) no longer shifts them into a panic.
+
 ## 0.1.153 (2026-11-17): /create makes commands, skills and tools
 
 - `/create WHAT YOU WANT` (terminal; the desktop asks "part of the window" or "something tazuna does") starts a fresh

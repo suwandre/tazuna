@@ -1581,6 +1581,8 @@ fn app_server(a: &Args) -> Result<()> {
                                 info(&mut s, CREATE_USAGE.into());
                             } else if !live.idle() || creating.is_some() {
                                 info(&mut s, "wait until this run has finished, then create".into());
+                            } else if let Some(why) = untrusted_in_use(&live) {
+                                info(&mut s, why);
                             } else if let Err(err) = restart_session(&mut live, &mut s, None) {
                                 info(&mut s, format!("{err:#}"));
                             } else {
@@ -2312,6 +2314,11 @@ fn creation_step(live: &mut live::Live, s: &mut Session, creating: &mut Option<(
         }
         Err(problem) if rounds < 2 => {
             *creating = Some((dir.clone(), rounds + 1, dones));
+            if let Some(why) = untrusted_in_use(live) {
+                *creating = None;
+                say(s, why, live.elapsed_ms());
+                return Some((dir, false));
+            }
             match live.send(&format!("tazuna checked what you made: {problem}. Fix it in {}.", dir.display())) {
                 Ok((t, e)) => s.apply(&e, t),
                 Err(err) => say(s, format!("{err:#}"), live.elapsed_ms()),
@@ -3769,6 +3776,7 @@ fn run_live(
                         "" => say(&mut s, CREATE_USAGE.into(), live.elapsed_ms()),
                         "enable" | "discard" => creation_finish(&mut s, live.elapsed_ms(), &mut made, rest == "enable"),
                         _ if busy(&s) || creating.is_some() => say(&mut s, "wait until this run has finished, then /create".into(), live.elapsed_ms()),
+                        _ if let Some(why) = untrusted_in_use(live) => say(&mut s, why, live.elapsed_ms()),
                         ask => {
                             new_conversation(live, &mut s, &mut v, None);
                             git_start = runlog::git_snapshot(&std::env::current_dir()?);
