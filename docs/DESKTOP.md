@@ -68,7 +68,7 @@ last 90 days: Claude 4% clear misses over 350 runs, the own loop 5% over 40.
 or "something tazuna does": a command, a skill or a tool (an MCP server), made in a new conversation, checked by the
 core, turned on with Enable after you read it. They work on every model: claude gets them as a plugin (--plugin-dir),
 the own loop and the lean profile through tazuna (commands expanded, skills listed in the prompt).
-0.1.29-0.1.31 (with tazuna 0.1.154-0.1.156): /create follows /data, and a creation holding a link fails its check.
+0.1.29-0.1.32 (with tazuna 0.1.154-0.1.157): /create follows /data, and a creation holding a link or a private key fails its check.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

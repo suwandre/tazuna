@@ -72,7 +72,10 @@ fn holds_key(text: &str) -> bool {
     // full lower case changes some letters' length, and the slice could panic)
     let lower = text.to_ascii_lowercase();
     let long_run = |s: &str| s.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').count() >= 24;
-    lower.match_indices("sk-").any(|(i, _)| text.get(i + 3..).is_some_and(long_run))
+    // a private key's block (-----BEGIN OPENSSH PRIVATE KEY-----): a copied ~/.ssh/id_rsa, on any system and however it
+    // got there (copied, or a hard link, which Windows does not let tazuna count; security review)
+    lower.contains("private key-----")
+        || lower.match_indices("sk-").any(|(i, _)| text.get(i + 3..).is_some_and(long_run))
         || ["key", "token", "secret"].iter().any(|w| lower.match_indices(w).any(|(i, _)| {
             let after = text.get(i + w.len()..).unwrap_or_default().trim_start_matches(|c: char| c == '_' || c == '"' || c == '\'' || c.is_whitespace());
             after.strip_prefix('=').or_else(|| after.strip_prefix(':')).map(|v| v.trim_start().trim_start_matches(['"', '\''])).is_some_and(long_run)
@@ -135,8 +138,9 @@ fn server(dir: &Path, name: &str) -> Result<Value> {
     Ok(json!({"command": command, "args": args}))
 }
 
-/// A link of either kind: a symbolic one, or a file with a second name (a hard link to ~/.ssh/id_rsa reads as a plain
-/// file, and a PEM key has no `key =` for the scan to find). `m` is read without following links.
+/// A link of either kind: a symbolic one, or a file with a second name (a hard link to a file of secrets reads as a plain
+/// file). `m` is read without following links. Windows: hard links are not counted (std cannot yet); the key scan is the
+/// check that holds on every system, a copied file being no link at all.
 fn linked(m: &std::fs::Metadata) -> bool {
     #[cfg(unix)]
     if m.is_file() && std::os::unix::fs::MetadataExt::nlink(m) > 1 {
@@ -250,6 +254,8 @@ mod tests {
         assert!(!holds_key("read the key from the environment: API_KEY") && !holds_key("token: ${GITHUB_TOKEN}"));
         // a letter whose lower case is longer (İ) before the word does not shift the slice into a panic
         assert!(holds_key("İİİ token = abcdefghijklmnopqrstuvwxyz0123") && !holds_key("İİİİ key"));
+        assert!(holds_key("-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n") && holds_key("-----BEGIN RSA PRIVATE KEY-----"));
+        assert!(!holds_key("Never paste a private key into a command."));
         // a link fails the check: one to its own folder (no loop), one standing in for the command file
         #[cfg(unix)]
         {

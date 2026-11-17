@@ -16,6 +16,11 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.157 (2026-11-17): the key scan finds private keys
+
+- A creation holding a private key's block (-----BEGIN ... PRIVATE KEY-----) fails its check. Links were not the whole
+  gap: a copied ~/.ssh/id_rsa is a plain file, and Windows does not let tazuna count hard links (security review).
+
 ## 0.1.156 (2026-11-17): hard links count as links in a creation
 
 - A file with a second name (a hard link, on macOS and Linux) fails a creation's check like a symbolic link, and enable
