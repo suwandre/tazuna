@@ -10,6 +10,7 @@ import { SettingsView } from "./components/SettingsView";
 import { SideChat } from "./components/SideChat";
 import { UsageView } from "./components/UsageView";
 import { PrView } from "./components/PrView";
+import { BestOfStart, LanesView, type Lane, type Lanes } from "./components/BestOf";
 import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
@@ -21,7 +22,7 @@ import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import * as demo from "./lib/demo";
 import { messages as viewMessages, queued, usage as viewUsage } from "./lib/fromView";
-import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Diff, type Models, type SessionRow, type View } from "./lib/tazuna";
+import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Diff, type ModelChoice, type Models, type SessionRow, type View } from "./lib/tazuna";
 import { listen } from "@tauri-apps/api/event";
 
 const RECENT = "tazuna.projects";
@@ -369,17 +370,59 @@ export default function App() {
   const [wt, setWt] = useState<{ ask?: boolean; script?: string; id?: string; error?: string; remove?: { path: string; dirty?: string } } | null>(null);
   const [wtNotes, setWtNotes] = useState<Record<string, string>>({});
   const inWorktree = !!folder && isWorktree(folder);
+  // best-of-N (components/BestOf.tsx): the lanes of one task, and the models still waiting for their worktree (made one
+  // after another by the conversation they were started from)
+  const [bestOf, setBestOf] = useState(false);
+  const [lanes, setLanes] = useState<Lanes | null>(null);
+  const [showLanes, setShowLanes] = useState(false);
+  const lanesRef = useRef(lanes);
+  lanesRef.current = lanes;
+  const laneQueue = useRef<ModelChoice[]>([]);
+  // each worktree's event handled once (React's development mode listens twice)
+  const seenWorktrees = useRef(new Set<string>());
+  const startLanes = (task: string, models: ModelChoice[]) => {
+    setLanes({ task, origin: active, lanes: models.map((model) => ({ model })) });
+    laneQueue.current = [...models];
+    core.opIn(active, { op: "worktree_new", run_setup: false }).catch(() => {});
+    setShowLanes(true);
+  };
+  const keepLane = (keep: Lane) => {
+    const ls = lanesRef.current;
+    if (!ls) return;
+    const via = threadsRef.current.some((t) => t.tid === ls.origin) ? ls.origin : keep.tid!;
+    for (const l of ls.lanes) if (l !== keep && l.path) core.opIn(via, { op: "worktree_remove", path: l.path, force: true }).catch(() => {});
+    setLanes(null); setShowLanes(false);
+    if (keep.tid) show(keep.tid);
+  };
   useEffect(() => {
     if (!inTauri) return;
     const offs = [
       core.onWorktree((w) => {
         if (w.ask_setup) { setWt({ ask: true, script: w.script, id: w.id }); return; }
-        if (w.error || !w.path) { setWt({ error: w.error ?? "no worktree made" }); return; }
+        if (w.error || !w.path) {
+          // a lane's worktree failed: the lanes not started yet are dropped
+          if (laneQueue.current.length) { laneQueue.current = []; setLanes((ls) => ls && { ...ls, lanes: ls.lanes.filter((l) => l.tid) }); }
+          setWt({ error: w.error ?? "no worktree made" }); return;
+        }
         setWt(null);
         const parts = [`Branch ${w.branch}`, `ports ${w.port}-${(w.port ?? 0) + 9} (TAZUNA_PORT)`, w.copied?.length ? `copied ${w.copied.join(", ")}` : "no local files to copy"];
         if (w.setup) parts.push(w.setup.ok ? "setup ran" : `setup failed: ${w.setup.tail.split("\n").slice(-2).join(" ")}`);
         if (w.setup_skipped) parts.push(w.setup_skipped);
         setWtNotes((m) => ({ ...m, [w.path!]: parts.join(" · ") }));
+        if (seenWorktrees.current.has(w.path)) return;
+        seenWorktrees.current.add(w.path);
+        const model = laneQueue.current.shift(), ls = lanesRef.current;
+        if (model && ls) {
+          // a lane: its model, auto mode (it works inside its own worktree), the task; then the next lane's worktree
+          open(w.path, undefined, { then: (tid) => {
+            core.opIn(tid, { op: "model", model: model.model, url: model.url, key_env: model.key_env }).catch(() => {});
+            core.modeIn(tid, "auto").catch(() => {});
+            core.sendIn(tid, ls.task).catch(() => {});
+            setLanes((cur) => cur && { ...cur, lanes: cur.lanes.map((l) => (l.model === model ? { ...l, path: w.path, tid } : l)) });
+          } });
+          if (laneQueue.current.length) core.opIn(ls.origin, { op: "worktree_new", run_setup: false }).catch(() => {});
+          return;
+        }
         open(w.path);
       }),
       core.onWorktreeRemoved((r) => {
@@ -429,7 +472,10 @@ export default function App() {
     const undo = view?.changes?.find((c) => c.can_undo);
     if (undo && !busy) a.push({ id: "undo", group: "This conversation", label: `Undo the last turn's changes`, hint: `${undo.files.length} file${undo.files.length === 1 ? "" : "s"}`, run: () => core.undo(undo.turn) });
     if (view && folder) a.push({ id: "worktree", group: "This project", label: "New conversation in a worktree", hint: "a branch and folder of its own", keywords: "worktree branch parallel", run: () => core.worktreeNew(null).catch(() => {}) },
-      { id: "pr", group: "This project", label: "Pull request: checks and reviews", keywords: "pr github gh checks ci", run: () => setShowPr(true) });
+      { id: "pr", group: "This project", label: "Pull request: checks and reviews", keywords: "pr github gh checks ci", run: () => setShowPr(true) },
+      { id: "best-of", group: "This project", label: "Try on several models…", hint: "one task, a worktree each, compared", keywords: "best of n compare lanes models parallel",
+        run: () => { core.models().catch(() => {}); setBestOf(true); } });
+    if (lanes) a.push({ id: "lanes", group: "This project", label: "Compare the lanes", hint: `${lanes.lanes.length} models`, keywords: "best of n lanes", run: () => setShowLanes(true) });
     if (inWorktree) a.push({ id: "worktree-remove", group: "This project", label: "Remove this worktree", hint: "its branch stays", run: () => setWt({ remove: { path: folder! } }) });
     if (view?.session_id && !side) a.push({ id: "side", group: "This conversation", label: "Side chat", hint: "ask about it; nothing goes back", keywords: "btw aside question fork", run: () => openSide(active) });
     if (side) a.push({ id: "side-close", group: "This conversation", label: "Close the side chat", run: () => closeSide(active) });
@@ -585,6 +631,9 @@ export default function App() {
       <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
+      {bestOf && <BestOfStart choices={models?.choices ?? []} onStart={(task, ms) => { setBestOf(false); startLanes(task, ms); }} onClose={() => setBestOf(false)} />}
+      {showLanes && lanes && <LanesView lanes={lanes} views={Object.fromEntries(threads.map((t) => [t.tid, t.view]))}
+        onOpen={(tid) => { setShowLanes(false); show(tid); }} onKeep={keepLane} onClose={() => setShowLanes(false)} />}
       {showPr && inTauri && <PrView pr={pr ?? null} worktree={inWorktree} onClose={() => setShowPr(false)} onRefresh={() => core.prIn(active).catch(() => {})}
         onSend={(text) => { setShowPr(false); core.send(text, true).catch(() => {}); }} onRemoveWorktree={() => { setShowPr(false); setWt({ remove: { path: folder! } }); }} />}
       {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} />}

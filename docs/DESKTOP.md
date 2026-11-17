@@ -79,6 +79,11 @@ from the keyboard; the reply's progress is announced. Reduced motion was honoure
 0.1.35 (with tazuna 0.1.159): Settings lists the MCP servers for every model (add a URL or a command, check, log in,
 remove, on or off for the conversation) and takes the folder's hook: a command after each turn that changed files, at
 no token cost (the terminal's /mcp and /hook).
+0.1.36, best-of-N (from 1.1): "Try on several models…" (Cmd-K, in a project) takes a task and two to four models; each
+lane gets a worktree of its own (no setup script), its model, auto mode and the task. "Compare the lanes" shows each
+one's state, cost (the cheapest finished one marked), time, files and lines changed and its checks; Open goes to it,
+Keep removes the other lanes' worktrees after a yes (their branches stay). Lanes last while the window is open. A
+dialog now also takes back focus that a conversation opening behind it took.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
@@ -127,7 +132,7 @@ bumps the patch (0.1.1, 0.1.2, ...), a stage below starts the next minor, and 1.
 keeps its own numbers; the app says which tazuna it needs.
 
 Work order from 0.1.33 (2026-11-17, ranked by worth for daily use and the goals against effort): the per-turn call view
-(done), the accessibility pass (done), MCP servers and hooks in Settings (done), best-of-N across models, first run with "choose later",
+(done), the accessibility pass (done), MCP servers and hooks in Settings (done), best-of-N across models (done), first run with "choose later",
 the router learning from real use, the approval reviewer, plugin sharing and a gallery, SSH and remote sessions, the
 mobile companion and team settings. Code signing stays off by choice.
 
@@ -166,7 +171,7 @@ mobile companion and team settings. Code signing stays off by choice.
 
 ### 1.1
 - Best-of-N across models in worktrees, each lane with its cost and checks: price to performance visible on the spot
-  (Cursor's idea, with the number Cursor hides).
+  (Cursor's idea, with the number Cursor hides). Done in 0.1.36.
 - An approval reviewer inside a fixed sandbox (Codex Auto-review, Claude Auto).
 - Trajectory view per turn: each call, its tokens, time and cost (DeepSeek Harness). Done in 0.1.33.
 - MCP and hooks in settings; hooks that run shell commands at no token cost (Kiro): done in 0.1.35. SSH and remote
