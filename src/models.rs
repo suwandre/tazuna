@@ -537,6 +537,24 @@ fn kenari_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) -
 /// OmniRoute's endpoint: a gateway the user runs on this machine.
 const OMNIROUTE: &str = "http://localhost:20128/v1";
 
+/// OmniRoute's model list into the data folder, each time the picker opens (and at start): it is on this machine and
+/// answers in well under a second, and what it lists follows the accounts the user logs in and out of there (a list
+/// read only at start showed Antigravity's models after a switch to Antigravity CLI, 2026-11-17). No key, or OmniRoute
+/// not running: nothing, at once.
+pub fn refresh_omniroute() {
+    let Some(k) = key("OMNIROUTE_API_KEY") else { return };
+    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(3))).build().into();
+    let Ok(mut r) = http.get(&format!("{OMNIROUTE}/models")).header("Authorization", format!("Bearer {}", k.trim())).call() else { return };
+    let Ok(body) = r.body_mut().with_config().limit(20 << 20).read_to_string() else { return };
+    let ok = serde_json::from_str::<Value>(&body).is_ok_and(|v| v["data"].is_array());
+    if let (true, Ok(dir)) = (ok, crate::labels::dir()) {
+        let tmp = dir.join("omniroute-models.json.tmp");
+        if std::fs::write(&tmp, body).is_ok() {
+            let _ = std::fs::rename(&tmp, dir.join("omniroute-models.json"));
+        }
+    }
+}
+
 /// OmniRoute's models as picker rows: the accounts and API keys the user connected there, one endpoint (its ids read
 /// "provider/model"; combos such as auto/thrifty choose among them). Its Claude Code subscription route (provider claude,
 /// alias cc) is left out, and while one is connected so are the combos, which could route through it: claude runs only
@@ -544,16 +562,20 @@ const OMNIROUTE: &str = "http://localhost:20128/v1";
 /// upstream API key bills): tazuna counts it as free, so the spend cap does not see it.
 fn omniroute_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) -> Vec<Choice> {
     let data = list["data"].as_array().cloned().unwrap_or_default();
+    // by its owner, and by any part of its id: OmniRoute also lists them as no-think/cc/claude-...
     let claude = |m: &Value| {
         let id = m["id"].as_str().unwrap_or_default().to_ascii_lowercase();
         let owner = m["owned_by"].as_str().unwrap_or_default();
-        id.starts_with("cc/") || id.starts_with("claude/") || owner == "claude" || owner == "cc"
+        id.split('/').any(|p| p == "cc" || p == "claude") || owner == "claude" || owner == "cc"
     };
     let has_claude = data.iter().any(claude);
     let mut rows: Vec<Choice> = data.iter().filter_map(|m| {
         let id = m["id"].as_str()?;
         let combo = m["owned_by"] == "combo" || id.starts_with("auto/");
-        let other_kind = m["kind"].as_str().or(m["type"].as_str()).is_some_and(|k| !matches!(k, "chat" | "text" | "llm" | "model"));
+        // an agent needs text out and tool calls: image and video models (179 of 733 on 2026-11-17) are not for it
+        let other_kind = m["kind"].as_str().or(m["type"].as_str()).is_some_and(|k| !matches!(k, "chat" | "text" | "llm" | "model"))
+            || m["output_modalities"].as_array().is_some_and(|o| !o.iter().any(|x| x == "text"))
+            || m["capabilities"]["tool_calling"] == false;
         if claude(m) || (combo && has_claude) || other_kind {
             return None;
         }
@@ -644,9 +666,9 @@ pub fn refresh_openrouter() {
 /// At start, for each provider whose list needs its key and has one set (Mortera, CheaperInference): its model list into
 /// the data folder, where `/model` reads it (a slow or absent answer leaves the last copy).
 pub fn refresh_mortera() {
+    refresh_omniroute();
     for (var, url, name) in [("MORTERA_API_KEY", "https://mortera.cloud/v1/models", "mortera-models.json"),
-                             ("CHEAPER_INFERENCE_API_KEY", "https://api.cheaperinference.com/v1/models", "cheaperinference-models.json"),
-                             ("OMNIROUTE_API_KEY", &format!("{OMNIROUTE}/models"), "omniroute-models.json")] {
+                             ("CHEAPER_INFERENCE_API_KEY", "https://api.cheaperinference.com/v1/models", "cheaperinference-models.json")] {
         let Some(k) = key(var) else { continue };
         let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(15))).build().into();
         let Ok(mut r) = http.get(url).header("Authorization", format!("Bearer {}", k.trim())).call() else { continue };
@@ -1110,11 +1132,13 @@ mod tests {
             {"id": "an-embedder", "type": "embedding", "features": ["tool-use"], "capabilities": {}, "pricing": {"input_per_million": "0.01", "output_per_million": "0"}},
             {"id": "glyph-cluster", "type": "text", "is_free": true, "features": ["tool-use"], "capabilities": {}, "pricing": {"input_per_million": "0", "output_per_million": "0"}}]});
         let omni = serde_json::json!({"data": [{"id": "auto/thrifty", "owned_by": "combo"}, {"id": "antigravity/gemini-3-pro", "owned_by": "antigravity"},
-            {"id": "cc/claude-opus-5-5", "owned_by": "claude"}, {"id": "glm/glm-5.2", "owned_by": "glm"}, {"id": "openai/text-embedding-4", "owned_by": "openai", "kind": "embedding"}]});
+            {"id": "cc/claude-opus-5-5", "owned_by": "claude"}, {"id": "glm/glm-5.2", "owned_by": "glm"}, {"id": "openai/text-embedding-4", "owned_by": "openai", "kind": "embedding"},
+            {"id": "no-think/cc/claude-opus-5", "owned_by": "x"}, {"id": "aihorde/flux", "owned_by": "aihorde", "output_modalities": ["image"]},
+            {"id": "dva/old", "owned_by": "dva", "capabilities": {"tool_calling": false}}]});
         let ids = |l: &Value| omniroute_choices(l, &serde_json::json!({}), &|_: &str| true).into_iter().map(|c| c.model).collect::<Vec<_>>();
         assert_eq!(ids(&omni), ["antigravity/gemini-3-pro", "glm/glm-5.2"], "no Claude subscription, and no combo while one is connected");
         let mut no_cc = omni.clone();
-        no_cc["data"].as_array_mut().unwrap().remove(2);
+        no_cc["data"].as_array_mut().unwrap().retain(|m| !m["id"].as_str().unwrap().contains("cc/"));
         assert_eq!(ids(&no_cc), ["auto/thrifty", "antigravity/gemini-3-pro", "glm/glm-5.2"], "combos when no Claude account is behind them");
         let row = &omniroute_choices(&no_cc, &serde_json::json!({}), &|_: &str| true)[1];
         assert_eq!((provider_of(row).as_str(), row.route.as_ref().unwrap().0.as_str()), ("OmniRoute", "http://localhost:20128/v1"));

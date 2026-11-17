@@ -16,6 +16,14 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.171 (2026-11-17): OmniRoute's list as it is now
+
+- The picker reads OmniRoute's model list each time it opens (/model, the desktop's picker): it follows the accounts
+  logged in and out there. Read only when a session started (the desktop: at most hourly), it still showed Antigravity's
+  models after a switch to Antigravity CLI. On this machine the picker answered in 0.4 s with the fresh list.
+- Only models an agent can use: text out and tool calls (733 listed, 270 kept: the image and video ones go). Claude
+  subscription routes go by any part of their id too (OmniRoute also lists them as no-think/cc/claude-...).
+
 ## 0.1.170 (2026-11-17): OmniRoute as a provider
 
 - OmniRoute, a gateway on this machine (http://localhost:20128), joins the providers: the accounts and API keys

@@ -1455,6 +1455,7 @@ fn app_server(a: &Args) -> Result<()> {
                         }
                         // the model picker: the catalog as the terminal's /model shows it, answered as a `models` line
                         Some("models") => {
+                            models::refresh_omniroute(); // on this machine: its list as it is now
                             let cs = app_catalog()?;
                             let rows: Vec<serde_json::Value> = cs.iter().map(|c| json!({
                                 "model": c.model, "label": c.label, "place": c.place, "provider": models::provider_of(c),
@@ -4447,6 +4448,7 @@ fn apply_choice(live: &mut live::Live, c: &models::Choice, effort: Option<String
 }
 
 fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
+    models::refresh_omniroute(); // on this machine: its list as it is now (it follows the accounts logged in there)
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     let cs = models::catalog(&labels::dir()?.join("routes.json"), trusted_host, keys, now);
     let eff: Vec<usize> = cs.iter().map(|c| models::start_effort(c, &live.model, &live.effort)).collect();
