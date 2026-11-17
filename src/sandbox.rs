@@ -24,15 +24,17 @@ const CREDENTIALS: [&str; 16] = [".ssh", ".aws", ".gnupg", ".config/tazuna", ".n
 /// sandbox (the entry itself included: no renaming it away and putting another in its place). Every config file mise
 /// reads (mise.<env>.toml too: MISE_TOML below) and the project's .config, where mise and others look.
 const RUN_LATER: [&str; 17] = [".git", ".claude", ".mcp.json", ".tazuna", ".envrc", ".tool-versions", ".vscode", ".idea", ".config",
-    ".mise", "mise-tasks", "mise/config.toml", ".mise.toml", "mise.toml", ".mise.local.toml", "mise.local.toml", ".mise-tasks"];
+    ".mise", "mise", "mise-tasks", ".mise.toml", "mise.toml", ".mise.local.toml", "mise.local.toml", ".mise-tasks"];
 
 /// mise.<env>.toml and .mise.<env>.toml, case-blind as `re` makes everything.
 const MISE_TOML: &str = "\\.?[mM][iI][sS][eE]\\.[^/]*\\.[tT][oO][mM][lL]";
 
 /// A regular expression matching `s` literally and in any case: macOS's disks are case-blind, so .GIT is .git
-/// (Seatbelt's regex has no flag for it; security review, 2026-11-17).
+/// (Seatbelt's regex has no flag for it; security review, 2026-11-17). The disk folds two other letters onto ASCII ones,
+/// long s (ſ) onto s and the Kelvin sign (K) onto k (every character up to U+FFFF tried on APFS): .miſe is .mise.
 fn re(s: &str) -> String {
-    s.chars().map(|c| if c.is_ascii_alphabetic() { format!("[{}{}]", c.to_ascii_lowercase(), c.to_ascii_uppercase()) }
+    s.chars().map(|c| if c == 's' || c == 'S' { "([sS]|ſ)".to_string() } else if c == 'k' || c == 'K' { "([kK]|K)".to_string() }
+        else if c.is_ascii_alphabetic() { format!("[{}{}]", c.to_ascii_lowercase(), c.to_ascii_uppercase()) }
         else if ".[]{}()*+?^$|\\/".contains(c) { format!("\\{c}") } else { c.to_string() }).collect()
 }
 
@@ -102,6 +104,8 @@ mod tests {
         assert!(!run("echo x > .GIT/hooks/pre-commit").status.success() && !run("echo x > sub/.Envrc").status.success(), "in any case (the disk is case-blind)");
         assert!(!run("echo x > sub/mise.local.toml").status.success() && !run("echo x > mise.dev.toml").status.success() && !run("mkdir -p .config").status.success(), "mise's files");
         assert!(run("echo x > sub/premise.toml.txt").status.success(), "a name that only contains one is fine");
+        assert!(!run("mkdir -p .mi\u{17f}e").status.success() && !run("mkdir -p sub/mise-tas\u{212a}s").status.success(), "letters the disk folds onto s and k");
+        assert!(!run("mkdir -p x && echo y > x/config.toml && mv x mise").status.success() && !dir.join("mise").exists(), "no folder renamed into mise");
         // no system service: launchd would start a job outside the sandbox
         let escaped = std::env::temp_dir().join(format!("tazuna-launchd-{}", std::process::id()));
         let _ = run(&format!("launchctl submit -l tazuna.sbx.{} -- /usr/bin/touch {}", std::process::id(), escaped.display()));

@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.167 (2026-11-17): the sandbox's names fold as the disk does
+
+- The two letters macOS's disk folds onto ASCII ones, long s (ſ) onto s and the Kelvin sign (K) onto k, match too:
+  `.miſe` is `.mise` on disk (every character up to U+FFFF tried on APFS; these two are all). A folder named mise is
+  closed as a whole, so a folder renamed into it is refused (security review).
+
 ## 0.1.166 (2026-11-17): upgrade picks what is built, or the version you name
 
 - `tazuna upgrade` installs the newest release CI has built for this machine. While the newest is still building, the
