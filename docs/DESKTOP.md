@@ -135,7 +135,7 @@ bumps the patch (0.1.1, 0.1.2, ...), a stage below starts the next minor, and 1.
 keeps its own numbers; the app says which tazuna it needs.
 
 Work order from 0.1.33 (2026-11-17, ranked by worth for daily use and the goals against effort): the per-turn call view
-(done), the accessibility pass (done), MCP servers and hooks in Settings (done), best-of-N across models (done), first run with "choose later",
+(done), the accessibility pass (done), MCP servers and hooks in Settings (done), best-of-N across models (done), first run with "choose later" (done),
 the router learning from real use, the approval reviewer, plugin sharing and a gallery, SSH and remote sessions, the
 mobile companion and team settings. Code signing stays off by choice.
 
