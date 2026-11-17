@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { core } from "../lib/tazuna";
+import { useDialog } from "../lib/dialog";
 import { summarize, type Day, type Row } from "../lib/usage";
 import { usd } from "../lib/types";
 
@@ -12,6 +13,7 @@ const money = (n: number) => (n >= 100 ? `$${Math.round(n)}` : n >= 1 ? `$${n.to
 
 export function UsageView({ onClose, limits, balance }: { onClose: () => void; limits?: [number, number] | null; balance?: number | null }) {
   const [rows, setRows] = useState<Row[] | null>(null);
+  const dialog = useDialog();
   const [days, setDays] = useState(30);
   // asked once when opened (the window re-renders on every streamed view; onClose is new each time)
   const close = useRef(onClose);
@@ -28,7 +30,7 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
   const th = "py-1.5 pr-3 text-left font-medium text-faint", td = "py-1.5 pr-3", num = "py-1.5 pr-3 text-right font-mono text-[12px]";
   return (
     <div onMouseDown={onClose} className="fixed inset-0 z-30 grid place-items-center bg-ink/15 p-10">
-      <div onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-[780px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Usage" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-[780px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-3 border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Usage</span>
           <span className="flex rounded-md border border-line p-0.5 text-[12px]">

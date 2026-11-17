@@ -1,6 +1,7 @@
 import { ExternalLink, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { core } from "../lib/tazuna";
+import { useDialog } from "../lib/dialog";
 import { checksOf, fromCollaborator, oneLine, type Pr } from "../lib/pr";
 
 // The PR panel (docs/DESKTOP.md 0.3): the pull request of this folder's branch through gh. Its checks, reviews and
@@ -8,6 +9,7 @@ import { checksOf, fromCollaborator, oneLine, type Pr } from "../lib/pr";
 export function PrView({ pr, worktree, onClose, onSend, onRefresh, onRemoveWorktree }: {
   pr: Pr | null; worktree: boolean; onClose: () => void; onSend: (text: string) => void; onRefresh: () => void; onRemoveWorktree: () => void;
 }) {
+  const dialog = useDialog();
   const close = useRef(onClose);
   close.current = onClose;
   useEffect(() => {
@@ -29,7 +31,7 @@ export function PrView({ pr, worktree, onClose, onSend, onRefresh, onRemoveWorkt
   const h = "mb-2 mt-5 text-[11.5px] font-medium text-faint";
   return (
     <div onMouseDown={onClose} className="fixed inset-0 z-30 grid place-items-center bg-ink/15 p-10">
-      <div onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-[720px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Pull request" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-[720px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-2 border-b border-line-soft px-5 py-3">
           <span className="flex-1 truncate font-medium">{pr && !pr.none && !pr.error ? `#${pr.number} ${pr.title}` : "Pull request"}</span>
           <button onClick={onRefresh} className="rounded-md px-2 py-0.5 text-[12px] text-muted hover:bg-hover">Refresh</button>

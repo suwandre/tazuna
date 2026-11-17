@@ -108,7 +108,7 @@ export function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: 
 /** The right column: the `rail` spot (tazuna's cards and the user's panels and plugins). */
 export function Rail({ usage, data, messages }: { usage: Usage; data?: unknown; messages: Message[] }) {
   return (
-    <aside className="flex min-h-0 flex-col gap-3 overflow-y-auto border-l border-line bg-sidebar px-3.5 py-4">
+    <aside aria-label="This conversation" className="flex min-h-0 flex-col gap-3 overflow-y-auto border-l border-line bg-sidebar px-3.5 py-4">
       <Slot name="rail" props={{ usage, data, messages }} />
     </aside>
   );

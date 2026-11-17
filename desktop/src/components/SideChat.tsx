@@ -22,7 +22,7 @@ export function SideChat({ view, onSend, onStop, onAnswer, onClose }: {
     return () => window.removeEventListener("keydown", esc);
   }, [busy, onClose]);
   return (
-    <aside data-side className="flex min-h-0 flex-col border-l border-line bg-sidebar">
+    <aside data-side aria-label="Side chat" className="flex min-h-0 flex-col border-l border-line bg-sidebar">
       <div className="flex items-start gap-2 border-b border-line-soft px-4 py-3">
         <span className="flex-1"><span className="font-medium">Side chat</span>
           <span className="block text-[11.5px] text-muted">Knows this conversation. Nothing here goes back to it, and it changes no files.</span></span>

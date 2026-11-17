@@ -72,7 +72,7 @@ const STATE: Record<string, [string, string]> = {
 
 export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch, onSettings, onRename, onHide, open = [], activeTid, onSwitch, onClose }: Props) {
   return (
-    <aside className="flex flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
+    <aside aria-label="Conversations" className="flex flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
       {macOverlay && <div data-tauri-drag-region className="-mx-2.5 -mt-3.5 h-[38px] flex-none" />}
       <div data-tauri-drag-region className="flex items-center gap-2 px-2 pb-3 pt-0.5 font-semibold tracking-[-0.01em]">
         <span className="grid size-[22px] place-items-center rounded-sm bg-accent text-[12px] font-bold text-on-accent">手</span>

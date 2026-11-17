@@ -1,5 +1,6 @@
 import { ExternalLink, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { useDialog } from "../lib/dialog";
 import { safeMode } from "../lib/plugins";
 import { HOTKEY, core, defaultHotkey, type Settings } from "../lib/tazuna";
 import type { UserWidget } from "../lib/widgets";
@@ -12,6 +13,7 @@ type PluginProps = {
 
 export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }: { onClose: () => void } & PluginProps) {
   const [st, setSt] = useState<Settings | null>(null);
+  const dialog = useDialog();
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [askAny, setAskAny] = useState(false);
   const [keysNow, setKeysNow] = useState(() => localStorage.getItem(HOTKEY) ?? defaultHotkey);
@@ -39,7 +41,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove }
   const label = "mb-2 mt-5 text-[11.5px] font-medium text-faint first:mt-0";
   return (
     <div onMouseDown={onClose} className="fixed inset-0 z-30 grid place-items-center bg-ink/15 p-10">
-      <div onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-[640px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-[640px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Settings</span>
           <button onClick={onClose} title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>

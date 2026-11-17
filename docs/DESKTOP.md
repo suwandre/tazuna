@@ -71,6 +71,11 @@ the own loop and the lean profile through tazuna (commands expanded, skills list
 0.1.29-0.1.32 (with tazuna 0.1.154-0.1.157): /create follows /data, and a creation holding a link or a private key fails its check.
 0.1.33 (with tazuna 0.1.158), from 1.1: under each reply, "N calls" opens its model calls, one row each: what it called,
 new and cached input, output, time to the first token, writing speed, the whole call's time and its cost.
+0.1.34, the accessibility pass: axe-core (WCAG 2.2 AA and best practice) finds nothing on the main window, the palette,
+usage and settings, light and dark (before: faint text at 2.3-2.9:1 in 31-45 places a screen, unlabelled landmarks, no
+heading). Panels are dialogs: focus goes in, Tab stays inside, Escape closes them from anywhere in them (the palette
+only closed from its search box) and focus goes back where it was; one focus ring everywhere; diff lines take a comment
+from the keyboard; the reply's progress is announced. Reduced motion was honoured already.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
@@ -119,7 +124,7 @@ bumps the patch (0.1.1, 0.1.2, ...), a stage below starts the next minor, and 1.
 keeps its own numbers; the app says which tazuna it needs.
 
 Work order from 0.1.33 (2026-11-17, ranked by worth for daily use and the goals against effort): the per-turn call view
-(done), the accessibility pass, MCP servers and hooks in Settings, best-of-N across models, first run with "choose later",
+(done), the accessibility pass (done), MCP servers and hooks in Settings, best-of-N across models, first run with "choose later",
 the router learning from real use, the approval reviewer, plugin sharing and a gallery, SSH and remote sessions, the
 mobile companion and team settings. Code signing stays off by choice.
 
@@ -154,7 +159,7 @@ mobile companion and team settings. Code signing stays off by choice.
 - Routing that explains itself: "DeepSeek high, est. $0.004" or "Opus, plan headroom 62%"; plan first, a cheap API
   model when the plan runs low; a warning and a cap before any paid call.
 - Signed builds for macOS, Windows and Linux, auto-update; first run lets you "choose later" (Hermes).
-- Accessibility pass, reduced motion honoured.
+- Accessibility pass, reduced motion honoured. Done in 0.1.34.
 
 ### 1.1
 - Best-of-N across models in worktrees, each lane with its cost and checks: price to performance visible on the spot

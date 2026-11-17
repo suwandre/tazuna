@@ -1,6 +1,7 @@
 import { MessageSquare, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { core, type Review } from "../lib/tazuna";
+import { useDialog } from "../lib/dialog";
 import { numbered, parse, patchOf, type FileDiff, type Piece } from "../lib/unidiff";
 
 type Comment = { path: string; line: number; text: string; quote: string };
@@ -12,6 +13,7 @@ export function ReviewView({ start, turns, onClose, onSend }: {
   start: { scope: string; turn?: number }; turns: number[]; onClose: () => void; onSend: (text: string) => void;
 }) {
   const [scope, setScope] = useState(start);
+  const dialog = useDialog();
   const [review, setReview] = useState<Review | null>(null);
   const [sel, setSel] = useState(0);
   const [comments, setComments] = useState<Comment[]>([]);
@@ -38,7 +40,7 @@ export function ReviewView({ start, turns, onClose, onSend }: {
   );
   return (
     <div onMouseDown={onClose} className="fixed inset-0 z-20 flex bg-ink/20 p-8">
-      <div onMouseDown={(e) => e.stopPropagation()} className="flex min-h-0 w-full flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Review changes" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="flex min-h-0 w-full flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-1.5 border-b border-line-soft px-4 py-2.5">
           <span className="mr-2 font-medium">Review</span>
           {tab("uncommitted", "Uncommitted")}{tab("branch", "Branch")}
@@ -76,11 +78,13 @@ export function ReviewView({ start, turns, onClose, onSend }: {
                     return (
                       <div key={i}>
                         <div onClick={() => l.line[0] !== "\\" && setWriting({ path: file.path, line: at, quote: l.line, text: c?.text ?? "" })}
+                          {...(l.line[0] !== "\\" && { role: "button", tabIndex: 0, "aria-label": `${c ? "Edit the comment on" : "Comment on"} line ${at}: ${l.line.slice(0, 80)}`,
+                            onKeyDown: (e: React.KeyboardEvent) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setWriting({ path: file.path, line: at, quote: l.line, text: c?.text ?? "" }); } } })}
                           className={`group flex cursor-pointer ${l.line[0] === "+" ? "bg-ok/10" : l.line[0] === "-" ? "bg-bad/10" : ""} hover:bg-accent-soft`}>
                           <span className="w-10 flex-none select-none pr-2 text-right text-faint">{l.old ?? ""}</span>
                           <span className="w-10 flex-none select-none pr-2 text-right text-faint">{l.new ?? ""}</span>
                           <span className={`min-w-0 flex-1 whitespace-pre-wrap break-all pr-3 ${l.line[0] === "+" ? "text-ok" : l.line[0] === "-" ? "text-bad" : "text-ink-2"}`}>{l.line || " "}</span>
-                          <MessageSquare size={12} strokeWidth={1.5} className={`mr-2 mt-1 flex-none ${c ? "text-accent" : "invisible text-faint group-hover:visible"}`} />
+                          <MessageSquare size={12} strokeWidth={1.5} className={`mr-2 mt-1 flex-none ${c ? "text-accent" : "invisible text-faint group-hover:visible group-focus-visible:visible"}`} />
                         </div>
                         {c && !(writing && writing.path === file.path && writing.line === at) && (
                           <div className="flex items-start gap-2 border-y border-line-soft bg-accent-soft px-3 py-1.5 font-sans text-[12.5px] text-ink-2">

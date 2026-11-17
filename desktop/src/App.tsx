@@ -473,7 +473,7 @@ export default function App() {
         planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
       <main className="flex min-h-0 min-w-0 flex-col bg-main">
         <header data-tauri-drag-region className="flex items-center justify-between border-b border-line-soft px-7 py-3">
-          <div className="flex items-center gap-2 font-medium"><span className="text-muted">{place}</span><span className="text-faint">/</span><span className="truncate">{title}</span></div>
+          <div className="flex items-center gap-2 font-medium"><span className="text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 className="truncate text-[inherit] font-[inherit]">{title}</h1></div>
           <div className="flex gap-1.5">
             <HeaderCtx.Provider value={{ modelLabel: models?.choices.find((c) => c.current)?.label ?? session.model, effort: session.effort,
               branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,

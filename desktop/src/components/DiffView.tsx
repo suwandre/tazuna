@@ -1,10 +1,12 @@
 import { X } from "lucide-react";
 import { useEffect } from "react";
 import type { Diff } from "../lib/tazuna";
+import { useDialog } from "../lib/dialog";
 
 // One file's diff for a turn, over the transcript; Esc or a click outside closes it.
 /** `plain`: any text, shown as it is (a plugin's code), not as a diff. */
 export function DiffView({ diff, onClose, plain }: { diff: Diff; onClose: () => void; plain?: boolean }) {
+  const dialog = useDialog();
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", esc);
@@ -15,7 +17,7 @@ export function DiffView({ diff, onClose, plain }: { diff: Diff; onClose: () => 
   const tone = (l: string) => plain ? "text-ink-2" : l.startsWith("+") ? "bg-ok/10 text-ok" : l.startsWith("-") ? "bg-bad/10 text-bad" : l.startsWith("@@") ? "text-faint" : "text-ink-2";
   return (
     <div onMouseDown={onClose} className="fixed inset-0 z-20 grid place-items-center bg-ink/20 p-10">
-      <div onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-full max-w-[900px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Changes" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-full max-w-[900px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-2 border-b border-line-soft px-4 py-2.5">
           <span className="flex-1 truncate font-mono text-[12.5px] text-ink">{diff.path}</span>
           <button onClick={onClose} title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>

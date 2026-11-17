@@ -118,7 +118,7 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
         </div>
       ))}
       {busy && activity && doing[activity] && (
-        <div className="mx-auto max-w-[700px] px-7 font-mono text-[11.5px] text-faint">{doing[activity]}…</div>
+        <div role="status" className="mx-auto max-w-[700px] px-7 font-mono text-[11.5px] text-faint">{doing[activity]}…</div>
       )}
     </section>
     </TranscriptCtx.Provider>

@@ -1,5 +1,6 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useDialog } from "../lib/dialog";
 
 /** One thing the palette can do: shown under its group, found by its label and `keywords`. */
 export type Action = { id: string; group: string; label: string; hint?: string; keys?: string; keywords?: string; run: () => void };
@@ -9,6 +10,7 @@ export type Action = { id: string; group: string; label: string; hint?: string; 
 export function Palette({ actions, onClose }: { actions: Action[]; onClose: () => void }) {
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
+  const dialog = useDialog();
   const list = useRef<HTMLDivElement>(null);
   const rows = useMemo(() => {
     const words = q.toLowerCase().split(/\s+/).filter(Boolean);
@@ -23,7 +25,8 @@ export function Palette({ actions, onClose }: { actions: Action[]; onClose: () =
   const run = (a?: Action) => { if (!a) return; onClose(); a.run(); };
   return (
     <div onMouseDown={onClose} className="fixed inset-0 z-30 flex justify-center bg-ink/15 pt-[12vh]">
-      <div onMouseDown={(e) => e.stopPropagation()} className="flex max-h-[60vh] w-[560px] flex-col self-start overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Commands" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } }} className="flex max-h-[60vh] w-[560px] flex-col self-start overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-2 border-b border-line-soft px-3.5 py-2.5 text-muted">
           <Search size={15} strokeWidth={1.5} />
           <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Type a command, a conversation or a model"
@@ -31,7 +34,6 @@ export function Palette({ actions, onClose }: { actions: Action[]; onClose: () =
               if (e.key === "ArrowDown") { e.preventDefault(); setSel((s) => Math.min(s + 1, rows.length - 1)); }
               else if (e.key === "ArrowUp") { e.preventDefault(); setSel((s) => Math.max(s - 1, 0)); }
               else if (e.key === "Enter") { e.preventDefault(); run(rows[sel]); }
-              else if (e.key === "Escape") { e.preventDefault(); onClose(); }
             }}
             className="flex-1 bg-transparent text-[14px] text-ink outline-none placeholder:text-faint" />
         </div>
@@ -61,6 +63,7 @@ const SHORTCUTS: [string, string][] = [
 
 /** Cmd-/: the keyboard shortcuts. */
 export function Shortcuts({ onClose }: { onClose: () => void }) {
+  const dialog = useDialog();
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", esc);
@@ -68,7 +71,7 @@ export function Shortcuts({ onClose }: { onClose: () => void }) {
   }, [onClose]);
   return (
     <div onMouseDown={onClose} className="fixed inset-0 z-30 grid place-items-center bg-ink/15">
-      <div onMouseDown={(e) => e.stopPropagation()} className="w-[380px] rounded-xl border border-line-strong bg-card px-4 py-3 shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="w-[380px] rounded-xl border border-line-strong bg-card px-4 py-3 shadow-composer">
         <div className="mb-2 text-[11.5px] font-medium text-faint">Keyboard shortcuts</div>
         {SHORTCUTS.map(([k, what]) => (
           <div key={k} className="flex items-center py-[5px] text-ink-2">

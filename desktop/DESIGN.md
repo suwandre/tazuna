@@ -13,8 +13,8 @@ colors:
     selected: "#e6e1f2"
     ink: "#23221e"
     ink-2: "#3f3c35"
-    muted: "#6f6a60"
-    faint: "#9b958a"
+    muted: "#5b574f"
+    faint: "#69655d"
     line: "#e3ded3"
     line-soft: "#ece8df"
     line-strong: "#d8d2c5"
@@ -35,8 +35,8 @@ colors:
     selected: "#2b2c45"
     ink: "#ece8df"
     ink-2: "#d2cdc2"
-    muted: "#a19b8f"
-    faint: "#77726a"
+    muted: "#afaa9e"
+    faint: "#9a958d"
     line: "#2f2c27"
     line-soft: "#25231f"
     line-strong: "#3a3731"
@@ -81,7 +81,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - Code in answers has its own four tokens (`code-keyword` = accent-ink, `code-string` ochre, `code-number` plum,
   `code-comment` = faint, italic), so syntax never borrows the result colours.
 - Text levels: `ink` for content, `ink-2` for secondary content, `muted` for supporting text, `faint` for labels and
-  metadata. No grey text on coloured backgrounds.
+  metadata. No grey text on coloured backgrounds. Every text level reads at 4.5:1 or more on every background in both
+  themes (WCAG AA; faint was 2.3-2.9:1 until desktop 0.1.34). Check with axe-core before changing a colour.
 - Light and dark are designed together from the same tokens; neither is derived by inverting the other.
 
 ## Typography

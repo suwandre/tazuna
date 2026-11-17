@@ -73,7 +73,7 @@ export function Composer({ session, threadCost, busy, onSend, onStop, models, on
       <div className="mx-auto max-w-[700px]"><Slot name="composer.dock" props={{}} /></div>
       {above}
       <div className="mx-auto max-w-[700px] rounded-xl border border-line-strong bg-card py-2 pl-4 pr-3 pt-3 shadow-composer">
-        <textarea ref={box} rows={1} autoFocus value={text} onChange={(e) => setText(e.target.value)}
+        <textarea ref={box} rows={1} autoFocus aria-label="Message" value={text} onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
           placeholder={busy ? "Type your next message: it goes after this reply" : "Ask anything, or describe a change…"} className="w-full resize-none bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
         <div className="flex items-center gap-1.5">
