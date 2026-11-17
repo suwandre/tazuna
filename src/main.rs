@@ -1462,7 +1462,7 @@ fn app_server(a: &Args) -> Result<()> {
                                 "url": c.route.as_ref().map(|r| &r.0), "key_env": c.route.as_ref().map(|r| &r.1),
                                 "efforts": c.efforts, "effort": c.efforts.get(models::start_effort(c, &live.model, &live.effort)),
                                 "price": c.price, "bench": c.bench, "why_not": models::why_not(c).filter(|_| !live.data_any || c.state != models::State::Untrusted),
-                                "current": c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)),
+                                "current": models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)),
                             })).collect();
                             // a Claude switch in a long conversation re-reads it without the cache: said before the user picks
                             let rebuild = rebuild_text(&s).filter(|_| live.provider.is_none());
@@ -2918,7 +2918,7 @@ fn run_live(
                     };
                     ui::ModelRow { label, place: c.place.clone(), price: c.price.clone(), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
                         state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3, models::State::NotOnKey => 4 },
-                        why: models::why_not(c).unwrap_or_default(), stale: c.stale, current: c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
+                        why: models::why_not(c).unwrap_or_default(), stale: c.stale, current: models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
                 }).collect(),
                 selected: *sel,
                 filter: filter.clone(),
@@ -3741,7 +3741,7 @@ fn run_live(
                 if text == "/effort" || text.starts_with("/effort ") {
                     let want = text["/effort".len()..].trim().to_string();
                     let mut pk = open_picker(live, &key_models)?;
-                    let i = pk.cs.iter().position(|c| c.model == live.model
+                    let i = pk.cs.iter().position(|c| models::same_model(c, &live.model)
                         && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)));
                     let levels = i.map(|i| pk.cs[i].efforts.clone()).unwrap_or_default();
                     let r = if levels.len() < 2 {
@@ -4420,7 +4420,7 @@ fn app_catalog() -> Result<Vec<models::Choice>> {
 fn apply_choice(live: &mut live::Live, c: &models::Choice, effort: Option<String>) -> Result<(f64, serde_json::Value)> {
     live.picked();
     // the model in use, on the same provider: only its effort changes, and the conversation goes on
-    let same = c.model == live.model && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1));
+    let same = models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1));
     let blocked = matches!(c.state, models::State::NoKey | models::State::NotOnKey) || (c.state == models::State::Untrusted && !live.data_any);
     let effort = effort.unwrap_or_else(|| live.effort.clone());
     if same && !blocked {
@@ -4428,18 +4428,18 @@ fn apply_choice(live: &mut live::Live, c: &models::Choice, effort: Option<String
     }
     match c.state {
         // `/data any`: the user allowed providers off the trusted list for this session
-        models::State::Untrusted if live.data_any => live.switch(c.model.clone(), effort, c.route.clone()),
+        models::State::Untrusted if live.data_any => live.switch(models::resolve(c, &effort), effort, c.route.clone()),
         models::State::NoKey | models::State::Untrusted | models::State::NotOnKey =>
             Err(anyhow::anyhow!("{}: {}", c.label, models::why_not(c).unwrap_or_default())),
         // a checked SubRouter model on the user's own key: its providers are the key's, not the checked ones
         models::State::Ready if c.route.as_ref().is_some_and(|r| r.1 == "SUBROUTER_API_KEY") && !models::key_is_managed() =>
-            live.switch(c.model.clone(), effort, c.route.clone()).map(|(t, e)| {
+            live.switch(models::resolve(c, &effort), effort, c.route.clone()).map(|(t, e)| {
                 let text = format!("{} · on your own SubRouter key, whose settings choose the providers (tazuna subrouter \
                     --apply pins the checked ones on it; --manage makes a key with them)", e["text"].as_str().unwrap_or_default());
                 (t, json!({"type": "harness_switch", "model": e["model"], "effort": e["effort"], "text": text}))
             }),
-        models::State::Ready => live.switch(c.model.clone(), effort, c.route.clone()),
-        models::State::Unchecked => live.switch(c.model.clone(), effort, c.route.clone()).map(|(t, e)| {
+        models::State::Ready => live.switch(models::resolve(c, &effort), effort, c.route.clone()),
+        models::State::Unchecked => live.switch(models::resolve(c, &effort), effort, c.route.clone()).map(|(t, e)| {
             let text = format!("{} · unchecked route: SubRouter picks the provider, so cache, price and quality are unknown \
                 (bench/routes.py refresh {} checks it)", e["text"].as_str().unwrap_or_default(), c.model);
             (t, json!({"type": "harness_switch", "model": e["model"], "effort": e["effort"], "text": text}))
@@ -4456,7 +4456,7 @@ fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     let key = live.provider.as_ref().map(|p| p.1.as_str());
     let prov: Vec<usize> = cs.iter().map(|c| c.pins.iter().position(|p| Some(p.key_env.as_str()) == key).map_or(0, |i| i + 1)).collect();
     // it opens on the providers, the current one selected and its models beside it, the current model marked
-    let current = cs.iter().position(|c| c.model == live.model).map(|i| models::provider_of(&cs[i]));
+    let current = cs.iter().position(|c| models::same_model(c, &live.model)).map(|i| models::provider_of(&cs[i]));
     let psel = models::providers(&cs).iter().position(|(n, _)| Some(n) == current.as_ref()).map_or(0, |i| i + 1);
     let mut p = Picker { cs, sel: 0, eff, prov, filter: String::new(), psel, in_models: false, effort_at: None, effort_only: false, confirm: false };
     p.sel = shown(&p.cs, "", p.group().as_deref()).iter().position(|&i| p.cs[i].model == live.model).unwrap_or(0);

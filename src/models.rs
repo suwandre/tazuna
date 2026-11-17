@@ -172,6 +172,9 @@ pub fn key_models(var: &str) -> Option<std::collections::HashSet<String>> {
 /// The provider a row belongs to in `/model`'s first level (OMP-style: providers, then their models): Claude for the
 /// subscription, else the route's host by its name.
 pub fn provider_of(c: &Choice) -> String {
+    if on_omniroute(c) {
+        return "OmniRoute".into();
+    }
     match c.route.as_ref().map(|r| host_of(&r.0)) {
         None => "Claude".into(),
         Some("subrouter.ai") => "SubRouter".into(),
@@ -555,41 +558,138 @@ pub fn refresh_omniroute() {
     }
 }
 
-/// OmniRoute's models as picker rows: the accounts and API keys the user connected there, one endpoint (its ids read
-/// "provider/model"; combos such as auto/thrifty choose among them). Every route shows: the user chooses (2026-11-17,
-/// ROADMAP's decision log). tazuna itself still runs Claude only through the official CLI; OmniRoute's Claude Code
-/// route (provider claude, alias cc) runs the subscription through OmniRoute's own client, and its row says so. What a
-/// call costs is OmniRoute's to know (a subscription reads $0 there, an upstream API key bills): tazuna counts it as
-/// free, so the spend cap does not see it.
+/// Effort levels as OmniRoute spells them at the end of a model's id (agy/gemini-4-argon-high), lowest first.
+const TIERS: [&str; 6] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/// An OmniRoute id split into the model and its level: agy/gemini-4-argon-high → (agy/gemini-4-argon, high).
+pub fn tier_of(id: &str) -> Option<(&str, &str)> {
+    id.rsplit_once('-').filter(|(_, t)| TIERS.contains(t))
+}
+
+/// A row on OmniRoute's endpoint.
+pub fn on_omniroute(c: &Choice) -> bool {
+    c.route.as_ref().is_some_and(|r| r.0 == OMNIROUTE)
+}
+
+/// The id a pick runs: an OmniRoute model with levels runs as its id for that level (Gemini 4 Argon at high:
+/// agy/gemini-4-argon-high); every other row as its own id.
+pub fn resolve(c: &Choice, effort: &str) -> String {
+    if on_omniroute(c) && c.efforts.iter().any(|e| e == effort) { format!("{}-{effort}", c.model) } else { c.model.clone() }
+}
+
+/// Whether `model` (what the session runs) is this row: its id, or one of its levels' ids on OmniRoute.
+pub fn same_model(c: &Choice, model: &str) -> bool {
+    c.model == model || (on_omniroute(c) && tier_of(model).is_some_and(|(base, t)| base == c.model && c.efforts.iter().any(|e| e == t)))
+}
+
+/// A model's name from its id: claude-opus-5-5 → Claude Opus 5.5, gemini-4-argon → Gemini 4 Argon, gpt-oss-120b →
+/// GPT OSS 120B.
+fn display_name(id: &str) -> String {
+    let mut out: Vec<String> = vec![];
+    for w in id.split('-').filter(|w| !w.is_empty()) {
+        let digit = |x: &str| x.len() == 1 && x.chars().all(|c| c.is_ascii_digit());
+        // 5-5 is version 5.5
+        if digit(w) && out.last().is_some_and(|l| l.chars().all(|c| c.is_ascii_digit() || c == '.') && !l.is_empty()) {
+            let l = out.pop().unwrap_or_default();
+            out.push(format!("{l}.{w}"));
+            continue;
+        }
+        out.push(match w {
+            "gpt" | "oss" | "glm" | "ai" | "vl" | "lm" => w.to_ascii_uppercase(),
+            _ if w.chars().any(|c| c.is_ascii_digit()) && w.chars().any(|c| c.is_ascii_alphabetic()) => w.to_ascii_uppercase(),
+            _ => w.chars().enumerate().map(|(i, c)| if i == 0 { c.to_ascii_uppercase() } else { c }).collect(),
+        });
+    }
+    out.join(" ")
+}
+
+/// Where an OmniRoute model runs, by its owner (or its id's first part): the account or service connected there.
+fn omniroute_source(owner: &str) -> String {
+    match owner {
+        "agy" => "Antigravity CLI",
+        "antigravity" => "Antigravity",
+        "claude" | "cc" => "your Claude subscription, not through the claude CLI",
+        "codex" | "cx" => "Codex",
+        "codex-app-server" | "cxa" => "Codex app server",
+        "devin-cli-agentic" | "devin-cli" | "dva" | "dv" => "Devin CLI",
+        "auggie" | "aug" => "Augment",
+        "cloudflare-playground" | "cfp" => "Cloudflare Playground",
+        "zcode" | "zc" => "Z Code",
+        "uncloseai" | "unc" => "UncloseAI",
+        "github" | "gh" => "GitHub Copilot",
+        "kiro" | "kr" => "Kiro",
+        "cursor" | "cu" => "Cursor",
+        "kimi-coding" | "kmc" => "Kimi Code",
+        "combo" | "auto" => "a combo: OmniRoute picks",
+        other => other,
+    }.to_string()
+}
+
+/// OmniRoute's models as picker rows: the accounts and API keys the user connected there, one endpoint. One row a model,
+/// named (Gemini 4 Argon), placed (OmniRoute · Antigravity CLI), its levels as efforts where OmniRoute lists one id per
+/// level (agy/gemini-4-argon-high, -medium, -low): until 0.1.172 each level was a row of its own, and tazuna's effort
+/// on top read "argon-high at medium" (2026-11-18). Every route shows: the user chooses (ROADMAP's decision log, 2026-11-17).
+/// tazuna itself still runs Claude only through the official CLI; OmniRoute's Claude Code route (provider claude, alias
+/// cc) runs the subscription through OmniRoute's own client, and its rows say so. What a call costs is OmniRoute's to know
+/// (a subscription reads $0 there, an upstream API key bills): tazuna counts it as free, so the spend cap does not see it.
 fn omniroute_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) -> Vec<Choice> {
-    let data = list["data"].as_array().cloned().unwrap_or_default();
     // the Claude subscription's routes, by owner and by any part of the id (OmniRoute also lists no-think/cc/claude-...)
     let claude = |m: &Value| {
         let id = m["id"].as_str().unwrap_or_default().to_ascii_lowercase();
         let owner = m["owned_by"].as_str().unwrap_or_default();
         id.split('/').any(|p| p == "cc" || p == "claude") || owner == "claude" || owner == "cc"
     };
-    let mut rows: Vec<Choice> = data.iter().filter_map(|m| {
-        let id = m["id"].as_str()?;
+    // each model the agent can use, by its id without a level: (owner, its levels, whether the id without one is served too)
+    let mut groups: Vec<(String, String, Vec<String>, bool)> = vec![];
+    for m in list["data"].as_array().into_iter().flatten() {
+        let Some(id) = m["id"].as_str() else { continue };
         // an agent needs text out and tool calls: image and video models (179 of 733 on 2026-11-17) are not for it
         let other_kind = m["kind"].as_str().or(m["type"].as_str()).is_some_and(|k| !matches!(k, "chat" | "text" | "llm" | "model"))
             || m["output_modalities"].as_array().is_some_and(|o| !o.iter().any(|x| x == "text"))
             || m["capabilities"]["tool_calling"] == false;
         if other_kind {
-            return None;
+            continue;
         }
-        let sub = claude(m);
-        Some(Choice {
-            model: id.to_string(),
-            label: format!("{id} · OmniRoute"),
+        let owner = if claude(m) { "claude".to_string() } else { m["owned_by"].as_str().unwrap_or_default().to_string() };
+        let (base, tier) = tier_of(id).map_or((id, None), |(b, t)| (b, Some(t)));
+        match groups.iter_mut().find(|g| g.0 == base) {
+            Some(g) => match tier {
+                Some(t) => g.2.push(t.to_string()),
+                None => g.3 = true,
+            },
+            None => groups.push((base.to_string(), owner, tier.map(String::from).into_iter().collect(), tier.is_none())),
+        }
+    }
+    // OmniRoute lists the Claude subscription twice (cc/ and claude/, its alias and its id): one row a model
+    let mut seen = std::collections::HashSet::new();
+    groups.retain(|g| {
+        let first = g.0.split('/').next().unwrap_or_default();
+        let rest = g.0.trim_start_matches(&format!("{first}/"));
+        !(g.1 == "claude" && (first == "claude" || first == "cc")) || seen.insert(rest.to_string())
+    });
+    let mut rows: Vec<Choice> = groups.into_iter().map(|(base, owner, mut tiers, bare)| {
+        tiers.sort_by_key(|t| TIERS.iter().position(|x| x == t));
+        tiers.dedup();
+        // levels only where there are two: one level alone is just the model (and the id without one stays its own model)
+        let levelled = tiers.len() >= 2;
+        let model = if levelled || bare || tiers.is_empty() { base.clone() } else { format!("{base}-{}", tiers[0]) };
+        let parts: Vec<&str> = base.split('/').collect();
+        let combo = owner == "combo" || parts.first() == Some(&"auto");
+        let no_think = parts.first() == Some(&"no-think");
+        let source = omniroute_source(if owner.is_empty() { parts.first().copied().unwrap_or_default() } else { &owner });
+        let sub = owner == "claude";
+        let name = parts.last().copied().unwrap_or(&base);
+        Choice {
+            label: if combo { format!("auto: {name}") } else { format!("{}{}", display_name(name), if no_think { " (no thinking)" } else { "" }) },
+            model,
             route: Some((OMNIROUTE.into(), "OMNIROUTE_API_KEY".into(), route_price(0.0, 0.0, None))),
-            place: if sub { "OmniRoute · your Claude subscription, not through the claude CLI".into() } else { "OmniRoute (this machine)".into() },
-            efforts: vec![],
+            place: format!("OmniRoute · {source}"),
+            efforts: if levelled { tiers } else { vec![] },
             price: "via OmniRoute".into(),
             note: if sub {
                 "your Claude subscription through OmniRoute's own client, not the official claude CLI: outside Anthropic's terms for the subscription, and accounts have been suspended for it; tazuna's own Claude rows use the CLI".into()
             } else {
-                "through OmniRoute on this machine: it picks the account or key behind the model; prices, effort levels and quality not measured, and the spend cap does not count it".into()
+                "through OmniRoute on this machine: it picks the account or key behind the model; prices and quality not measured, and the spend cap does not count it".into()
             },
             stale: false,
             state: if key("OMNIROUTE_API_KEY").is_none() {
@@ -599,13 +699,13 @@ fn omniroute_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool
             } else {
                 State::Ready
             },
-            bench: scores(file, id.rsplit('/').next().unwrap_or(id)).0,
-            aa: scores(file, id.rsplit('/').next().unwrap_or(id)).1,
+            bench: scores(file, name).0,
+            aa: scores(file, name).1,
             pins: vec![],
-        })
+        }
     }).collect();
-    // combos first (OmniRoute's own choice among the rest), then by provider and name
-    rows.sort_by_key(|c| (!c.model.starts_with("auto/"), c.model.clone()));
+    // combos first (OmniRoute's own choice among the rest), then by where they run and by name
+    rows.sort_by_key(|c| (!c.label.starts_with("auto: "), c.place.clone(), c.label.clone()));
     rows
 }
 
@@ -1028,7 +1128,7 @@ pub fn subrouter_cli(args: &[String]) -> anyhow::Result<()> {
 /// The effort a row starts at: the session's own when it is that model, else medium on Claude and the model's high (its
 /// default where it has few levels) on a route.
 pub fn start_effort(c: &Choice, current_model: &str, current_effort: &str) -> usize {
-    let pick = if c.model == current_model { current_effort } else if c.route.is_none() { "medium" } else { "high" };
+    let pick = if same_model(c, current_model) { current_effort } else if c.route.is_none() || on_omniroute(c) { "medium" } else { "high" };
     c.efforts.iter().position(|e| e == pick).unwrap_or(0)
 }
 
@@ -1140,11 +1240,22 @@ mod tests {
             {"id": "no-think/cc/claude-opus-5", "owned_by": "x"}, {"id": "aihorde/flux", "owned_by": "aihorde", "output_modalities": ["image"]},
             {"id": "dva/old", "owned_by": "dva", "capabilities": {"tool_calling": false}}]});
         let ids = |l: &Value| omniroute_choices(l, &serde_json::json!({}), &|_: &str| true).into_iter().map(|c| c.model).collect::<Vec<_>>();
-        assert_eq!(ids(&omni), ["auto/thrifty", "antigravity/gemini-3-pro", "cc/claude-opus-5-5", "glm/glm-5.2", "no-think/cc/claude-opus-5"],
+        assert_eq!(ids(&omni), ["auto/thrifty", "antigravity/gemini-3-pro", "glm/glm-5.2", "no-think/cc/claude-opus-5", "cc/claude-opus-5-5"],
             "every route the agent can use (the user chooses), not the image, embedding or tool-less ones");
         let all = omniroute_choices(&omni, &serde_json::json!({}), &|_: &str| true);
-        assert!(all.iter().filter(|c| c.place.contains("Claude subscription")).map(|c| c.model.as_str()).eq(["cc/claude-opus-5-5", "no-think/cc/claude-opus-5"]),
+        assert!(all.iter().filter(|c| c.place.contains("Claude subscription")).map(|c| c.model.as_str()).eq(["no-think/cc/claude-opus-5", "cc/claude-opus-5-5"]),
             "the subscription's routes say what they are");
+        // one row a model, its levels as efforts, named and placed (a level each was a row until 0.1.172)
+        let levels = serde_json::json!({"data": [{"id": "agy/gemini-4-argon-high", "owned_by": "agy"}, {"id": "agy/gemini-4-argon-low", "owned_by": "agy"},
+            {"id": "agy/gemini-4-argon-medium", "owned_by": "agy"}, {"id": "cc/claude-opus-5-5", "owned_by": "claude"}, {"id": "claude/claude-opus-5-5", "owned_by": "claude"},
+            {"id": "agy/gpt-oss-120b-medium", "owned_by": "agy"}]});
+        let rows = omniroute_choices(&levels, &serde_json::json!({}), &|_: &str| true);
+        let argon = rows.iter().find(|c| c.model == "agy/gemini-4-argon").unwrap();
+        assert_eq!((argon.label.as_str(), argon.place.as_str(), argon.efforts.join(",")), ("Gemini 4 Argon", "OmniRoute · Antigravity CLI", "low,medium,high".into()));
+        assert_eq!((resolve(argon, "high").as_str(), same_model(argon, "agy/gemini-4-argon-low"), same_model(argon, "agy/gemini-4-argonx")), ("agy/gemini-4-argon-high", true, false));
+        assert_eq!(rows.iter().filter(|c| c.label == "Claude Opus 5.5").count(), 1, "cc/ and claude/ are one route");
+        let gpt = rows.iter().find(|c| c.label == "GPT OSS 120B").unwrap();
+        assert!(gpt.model == "agy/gpt-oss-120b-medium" && gpt.efforts.is_empty(), "a model with one level runs as listed");
         let row = &all[1];
         assert_eq!((provider_of(row).as_str(), row.route.as_ref().unwrap().0.as_str()), ("OmniRoute", "http://localhost:20128/v1"));
         let rows = cheaper_choices(&list, &serde_json::json!({}), &|h: &str| h == "api.cheaperinference.com");

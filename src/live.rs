@@ -833,11 +833,13 @@ impl Live {
         self.respawn(model.clone(), effort.clone());
         self.provider = route.as_ref().map(|(u, k, _)| (u.clone(), k.clone()));
         self.price = route.map(|r| r.2);
+        // an id that ends in its level (OmniRoute's agy/gemini-4-argon-high) is said without it: "… argon at high"
+        let shown = model.strip_suffix(&format!("-{effort}")).unwrap_or(&model).to_string();
         let text = if goes_on {
-            format!("model: {model} at {effort} for the rest of the session (the conversation goes on; its cache is rebuilt once)")
+            format!("model: {shown} at {effort} for the rest of the session (the conversation goes on; its cache is rebuilt once)")
         } else {
             self.session_id = None;
-            format!("model: {model} at {effort}: a new conversation (only claude can carry one over to another model)")
+            format!("model: {shown} at {effort}: a new conversation (only claude can carry one over to another model)")
         };
         Ok(self.record(json!({"type": "harness_switch", "model": model, "effort": effort, "text": text})))
     }
@@ -848,12 +850,20 @@ impl Live {
         if !self.idle() {
             bail!("wait until the run has finished (or stop it with esc)");
         }
+        // an OmniRoute model with a level in its id (agy/gemini-4-argon-high): another level is that level's id, the
+        // conversation going on
+        let levelled = self.provider.as_ref().is_some_and(|p| p.0 == "http://localhost:20128/v1")
+            && crate::models::tier_of(&self.model).is_some_and(|(_, t)| t == self.effort);
+        let model = if levelled { crate::models::tier_of(&self.model).map(|(b, _)| format!("{b}-{effort}")) } else { None };
         if self.provider.is_some() {
             if let Some(stdin) = self.stdin.as_mut() {
-                writeln!(stdin, "{}", json!({"type": "tazuna_effort", "effort": effort}))?;
+                writeln!(stdin, "{}", json!({"type": "tazuna_effort", "effort": effort, "model": model}))?;
                 stdin.flush()?;
             }
             self.effort = effort.clone();
+            if let Some(m) = &model {
+                self.model = m.clone();
+            }
         } else {
             self.respawn(self.model.clone(), effort.clone());
         }
@@ -862,7 +872,7 @@ impl Live {
         } else {
             format!("effort: {effort} for the rest of the session (the conversation goes on; Claude rebuilds its cache once)")
         };
-        Ok(self.record(json!({"type": "harness_effort", "effort": effort, "text": text})))
+        Ok(self.record(json!({"type": "harness_effort", "effort": effort, "model": model, "text": text})))
     }
 
     /// `/boss`: the rest of the session with boss mode on (Some: the workers' model) or off. claude restarts with the

@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.173 (2026-11-18): OmniRoute's models by name, their levels as efforts
+
+- One picker row a model, named and placed: "Gemini 4 Argon", OmniRoute · Antigravity CLI. OmniRoute lists one id per
+  level (agy/gemini-4-argon-high, -medium, -low); those are now the row's efforts, and a pick runs that level's id.
+  Until now each level was a row of its own, and tazuna's effort on top read "agy/gemini-4-argon-high at medium".
+- An effort change on such a model runs that level's id and the conversation goes on; the switch says "model:
+  agy/gemini-4-argon at high", the status line the model without its level. No reasoning_effort field goes out when the
+  id carries the level. cc/ and claude/ (one Claude subscription route under two names) are one row. 270 rows became 246.
+
 ## 0.1.172 (2026-11-17): every OmniRoute route, yours to choose
 
 - The picker shows every OmniRoute route an agent can use, its Claude Code subscription route and the auto/ combos

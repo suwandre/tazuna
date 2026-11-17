@@ -858,7 +858,8 @@ impl Loop {
                     if let Some(n) = self.max_out {
                         b["max_tokens"] = json!(n);
                     }
-                    if let Some(e) = &self.effort {
+                    // no field when the id carries the level itself (OmniRoute's agy/gemini-4-argon-high)
+                    if let Some(e) = self.effort.as_ref().filter(|e| !self.model.ends_with(&format!("-{e}"))) {
                         b["reasoning_effort"] = json!(api_effort(e));
                     }
                     b
@@ -1377,6 +1378,10 @@ impl Loop {
         // `/effort`: the next calls at another level, the conversation going on
         if m["type"] == "tazuna_effort" {
             self.effort = m["effort"].as_str().map(String::from);
+            // a level that is its own model id (OmniRoute's agy/gemini-4-argon-high): that id for the next calls
+            if let Some(model) = m["model"].as_str() {
+                self.model = model.to_string();
+            }
         }
         if m["type"] == "control_request" && m["request"]["subtype"] == "set_permission_mode" {
             if let Some(mode) = m["request"]["mode"].as_str() {

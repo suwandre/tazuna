@@ -657,6 +657,9 @@ impl Session {
             (Some("harness_process_end"), _) => self.close_process(),
             (Some("harness_effort"), _) => {
                 self.effort = s(&e["effort"]);
+                if let Some(m) = e["model"].as_str() {
+                    self.model = m.to_string(); // a level that is its own id (OmniRoute's)
+                }
                 self.push(Block::Notice { text: s(&e["text"]), error: false });
             }
             (Some("harness_switch"), _) => {

@@ -1137,6 +1137,8 @@ pub fn tool_arg<'a>(t: &'a Tool, key: &str) -> &'a str {
 }
 
 pub fn model_short(m: &str) -> String {
+    // OmniRoute's ids carry their level (agy/gemini-4-argon-high), which the effort beside the name already says
+    let m = if m.contains('/') { crate::models::tier_of(m).map_or(m, |(base, _)| base) } else { m };
     if m.is_empty() { "connecting…".into() } else { m.strip_prefix("claude-").unwrap_or(m).to_string() }
 }
 
