@@ -246,8 +246,16 @@ impl Server {
     fn bash(&mut self, command: &str, timeout: Duration) -> String {
         // Git Bash's $PWD is /c/...; `pwd -W` gives the C:/... path Windows programs read
         let pwd = if cfg!(windows) { "$(pwd -W)" } else { "$PWD" };
-        let script = format!("{command}\n__rc=$?; printf '\\n__LEAN_CWD__%s' \"{pwd}\" >&2; exit $__rc");
-        let spawned = crate::platform::own_group(&mut crate::platform::login_bash(&script))
+        // model providers' keys are out of the command's environment, and unset after the login shell's profile too (it
+        // could export them again): a command that prints the environment would send them to the model
+        let keys = crate::models::provider_key_vars();
+        let unset = if keys.is_empty() || cfg!(windows) { String::new() } else { format!("unset {} 2>/dev/null\n", keys.join(" ")) };
+        let script = format!("{unset}{command}\n__rc=$?; printf '\\n__LEAN_CWD__%s' \"{pwd}\" >&2; exit $__rc");
+        let mut bash = crate::platform::login_bash(&script);
+        for k in &keys {
+            bash.env_remove(k);
+        }
+        let spawned = crate::platform::own_group(&mut bash)
             .current_dir(&self.cwd)
             // commands the agent runs must not see the auth token claude was started with
             .env_remove("CLAUDE_CODE_OAUTH_TOKEN")
@@ -730,6 +738,18 @@ fn cap(s: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn the_agents_commands_do_not_see_provider_keys() {
+        // SAFETY: a name no other test reads
+        unsafe { std::env::set_var("SUBROUTER_SCRUB_TEST_KEY", "sk-scrub-test-secret") };
+        let mut s = Server::new(std::env::temp_dir());
+        let out = s.bash("env; echo \"[$SUBROUTER_SCRUB_TEST_KEY]\"; echo end-of-env", BASH_TIMEOUT);
+        assert!(out.contains("end-of-env") && out.contains("[]"), "{out}");
+        assert!(!out.contains("sk-scrub-test-secret"), "a provider's key reached the command: {out}");
+        assert!(crate::models::provider_key_vars().iter().any(|k| k == "MORTERA_API_KEY"), "tazuna's logins are in the list");
+    }
 
     #[test]
     #[cfg(unix)] // leftovers are found with ps; none are reaped on Windows

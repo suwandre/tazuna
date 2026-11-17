@@ -1721,6 +1721,14 @@ impl Live {
             return self.start(cmd);
         }
         let mut cmd = Command::new("claude");
+        // model providers' keys stay out of claude's environment, which its Bash tool's commands inherit (models.rs
+        // provider_key_vars); the explorer's own key stays, since claude starts the explorer
+        let explorer_key = self.explorer_provider.as_ref().map(|e| e.1.clone());
+        for k in crate::models::provider_key_vars() {
+            if Some(&k) != explorer_key.as_ref() {
+                cmd.env_remove(k);
+            }
+        }
         // the user's own setting wins; otherwise the mode decides
         if std::env::var_os("CLAUDE_CODE_PROMPT_CACHE_TTL").is_none() {
             let ttl = self.ttl();

@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.151 (2026-11-17): the agent's commands no longer see model providers' keys
+
+- An own-loop agent asked where it runs ran `env | grep ...` and printed the user's SUBROUTER_*_KEY keys, which went to
+  the model's provider as the tool's output (2026-11-16). Model providers' keys are now out of what the agent's
+  commands see: tazuna's logins (SubRouter, Mortera, OpenRouter, Kenari, Mistral, Cheaper Inference), every
+  `SUBROUTER_...` variable, and every key variable routes.json names. The own loop's commands start without them and
+  unset them after the login shell's profile (which could export them again); claude starts without them, so its Bash
+  tool's commands do too (an own-loop explorer keeps its own key, since claude starts it). TAZUNA_KEEP_KEYS keeps them
+  for a project whose own code reads one. Test: a key set in tazuna's environment does not show in a command's `env`.
+- No other metric moves.
+
 ## 0.1.150 (2026-11-17): a command menu, end-to-end speed, and Cheaper Inference that answers
 
 - Typing `/` opens a menu over the message box (OpenCode's): every matching command with what it does (tazuna's own,

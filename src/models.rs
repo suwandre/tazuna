@@ -730,6 +730,36 @@ pub const LOGINS: [Login; 6] = [
             page: "https://platform.cheaperinference.com/dashboard", place: "your Cheaper Inference dashboard (API keys)", example: "" },
 ];
 
+/// Environment variables that hold model providers' keys: tazuna's logins, every `SUBROUTER_...` variable and the key
+/// variables the routes name. The agent's commands never need them, and one that printed the environment sent them to
+/// the model (`env | grep` in a DeepSeek chat showed SUBROUTER_*_KEY, 2026-11-16), so they are taken out of what the
+/// agent's commands see. TAZUNA_KEEP_KEYS keeps them (a project whose own code reads one).
+pub fn provider_key_vars() -> Vec<String> {
+    if std::env::var_os("TAZUNA_KEEP_KEYS").is_some() {
+        return vec![];
+    }
+    let mut v: Vec<String> = LOGINS.iter().flat_map(|l| l.vars.iter().map(|s| s.to_string())).collect();
+    v.extend(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok()).filter(|k| k.starts_with("SUBROUTER_")));
+    // every "key_env" in routes.json, at any depth (a route's own and its pinned providers')
+    if let Some(routes) = crate::labels::dir().ok().and_then(|d| std::fs::read_to_string(d.join("routes.json")).ok()).and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
+        let mut todo = vec![&routes];
+        while let Some(x) = todo.pop() {
+            match x {
+                Value::Object(m) => {
+                    v.extend(m.get("key_env").and_then(Value::as_str).map(String::from));
+                    todo.extend(m.values());
+                }
+                Value::Array(a) => todo.extend(a.iter()),
+                _ => {}
+            }
+        }
+    }
+    v.retain(|k| !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    v.sort();
+    v.dedup();
+    v
+}
+
 /// Where a provider's key comes from, for `/login`'s list; empty: none.
 pub fn key_source(vars: &[&str]) -> &'static str {
     // a variable set in one terminal is seen by tazuna started there only (a Mistral key showed in one folder's terminal
