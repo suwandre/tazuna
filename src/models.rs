@@ -556,37 +556,41 @@ pub fn refresh_omniroute() {
 }
 
 /// OmniRoute's models as picker rows: the accounts and API keys the user connected there, one endpoint (its ids read
-/// "provider/model"; combos such as auto/thrifty choose among them). Its Claude Code subscription route (provider claude,
-/// alias cc) is left out, and while one is connected so are the combos, which could route through it: claude runs only
-/// through the official CLI (CLAUDE.md). What a call costs is OmniRoute's to know (a subscription reads $0 there, an
-/// upstream API key bills): tazuna counts it as free, so the spend cap does not see it.
+/// "provider/model"; combos such as auto/thrifty choose among them). Every route shows: the user chooses (2026-11-17,
+/// ROADMAP's decision log). tazuna itself still runs Claude only through the official CLI; OmniRoute's Claude Code
+/// route (provider claude, alias cc) runs the subscription through OmniRoute's own client, and its row says so. What a
+/// call costs is OmniRoute's to know (a subscription reads $0 there, an upstream API key bills): tazuna counts it as
+/// free, so the spend cap does not see it.
 fn omniroute_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) -> Vec<Choice> {
     let data = list["data"].as_array().cloned().unwrap_or_default();
-    // by its owner, and by any part of its id: OmniRoute also lists them as no-think/cc/claude-...
+    // the Claude subscription's routes, by owner and by any part of the id (OmniRoute also lists no-think/cc/claude-...)
     let claude = |m: &Value| {
         let id = m["id"].as_str().unwrap_or_default().to_ascii_lowercase();
         let owner = m["owned_by"].as_str().unwrap_or_default();
         id.split('/').any(|p| p == "cc" || p == "claude") || owner == "claude" || owner == "cc"
     };
-    let has_claude = data.iter().any(claude);
     let mut rows: Vec<Choice> = data.iter().filter_map(|m| {
         let id = m["id"].as_str()?;
-        let combo = m["owned_by"] == "combo" || id.starts_with("auto/");
         // an agent needs text out and tool calls: image and video models (179 of 733 on 2026-11-17) are not for it
         let other_kind = m["kind"].as_str().or(m["type"].as_str()).is_some_and(|k| !matches!(k, "chat" | "text" | "llm" | "model"))
             || m["output_modalities"].as_array().is_some_and(|o| !o.iter().any(|x| x == "text"))
             || m["capabilities"]["tool_calling"] == false;
-        if claude(m) || (combo && has_claude) || other_kind {
+        if other_kind {
             return None;
         }
+        let sub = claude(m);
         Some(Choice {
             model: id.to_string(),
             label: format!("{id} · OmniRoute"),
             route: Some((OMNIROUTE.into(), "OMNIROUTE_API_KEY".into(), route_price(0.0, 0.0, None))),
-            place: "OmniRoute (this machine)".into(),
+            place: if sub { "OmniRoute · your Claude subscription, not through the claude CLI".into() } else { "OmniRoute (this machine)".into() },
             efforts: vec![],
             price: "via OmniRoute".into(),
-            note: "through OmniRoute on this machine: it picks the account or key behind the model; prices, effort levels and quality not measured, and the spend cap does not count it".into(),
+            note: if sub {
+                "your Claude subscription through OmniRoute's own client, not the official claude CLI: outside Anthropic's terms for the subscription, and accounts have been suspended for it; tazuna's own Claude rows use the CLI".into()
+            } else {
+                "through OmniRoute on this machine: it picks the account or key behind the model; prices, effort levels and quality not measured, and the spend cap does not count it".into()
+            },
             stale: false,
             state: if key("OMNIROUTE_API_KEY").is_none() {
                 State::NoKey
@@ -1136,11 +1140,12 @@ mod tests {
             {"id": "no-think/cc/claude-opus-5", "owned_by": "x"}, {"id": "aihorde/flux", "owned_by": "aihorde", "output_modalities": ["image"]},
             {"id": "dva/old", "owned_by": "dva", "capabilities": {"tool_calling": false}}]});
         let ids = |l: &Value| omniroute_choices(l, &serde_json::json!({}), &|_: &str| true).into_iter().map(|c| c.model).collect::<Vec<_>>();
-        assert_eq!(ids(&omni), ["antigravity/gemini-3-pro", "glm/glm-5.2"], "no Claude subscription, and no combo while one is connected");
-        let mut no_cc = omni.clone();
-        no_cc["data"].as_array_mut().unwrap().retain(|m| !m["id"].as_str().unwrap().contains("cc/"));
-        assert_eq!(ids(&no_cc), ["auto/thrifty", "antigravity/gemini-3-pro", "glm/glm-5.2"], "combos when no Claude account is behind them");
-        let row = &omniroute_choices(&no_cc, &serde_json::json!({}), &|_: &str| true)[1];
+        assert_eq!(ids(&omni), ["auto/thrifty", "antigravity/gemini-3-pro", "cc/claude-opus-5-5", "glm/glm-5.2", "no-think/cc/claude-opus-5"],
+            "every route the agent can use (the user chooses), not the image, embedding or tool-less ones");
+        let all = omniroute_choices(&omni, &serde_json::json!({}), &|_: &str| true);
+        assert!(all.iter().filter(|c| c.place.contains("Claude subscription")).map(|c| c.model.as_str()).eq(["cc/claude-opus-5-5", "no-think/cc/claude-opus-5"]),
+            "the subscription's routes say what they are");
+        let row = &all[1];
         assert_eq!((provider_of(row).as_str(), row.route.as_ref().unwrap().0.as_str()), ("OmniRoute", "http://localhost:20128/v1"));
         let rows = cheaper_choices(&list, &serde_json::json!({}), &|h: &str| h == "api.cheaperinference.com");
         assert_eq!(rows.iter().map(|c| c.model.as_str()).collect::<Vec<_>>(), ["deepseek-v4.1-flash", "glyph-cluster"], "text models with tools, no Claude");

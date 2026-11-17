@@ -302,6 +302,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-17: OmniRoute (a gateway the user runs on their machine) joins the providers with every route it offers,
+  its Claude Code subscription route included: the user chooses between Claude through it and Claude through the CLI.
+  tazuna's own rule stands for tazuna's own code (Claude only through the official `claude` CLI, no copied headers, no
+  reuse of its token); OmniRoute's route runs the subscription through OmniRoute's client, and its rows say that it is
+  outside Anthropic's terms for the subscription. They were hidden in 0.1.170-0.1.171.
 - 2026-11-16: a desktop app beside the CLI (`desktop/`, docs/DESKTOP.md): Tauri and React in design A, over `tazuna
   app-server` (0.1.128), so the CLI and the app share one core and one data folder. 0.1.0 has chats and projects, the
   router, models, saved conversations, approvals, per-turn diff and undo, Cmd-K; 0.1.1 carries its own tazuna and CI
