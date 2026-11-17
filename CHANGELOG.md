@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.152 (2026-11-17): your commands and skills on every model
+
+- src/behave.rs: the user's own commands and skills that tazuna keeps (~/.config/tazuna/behave, a Claude Code plugin
+  named "tazuna": commands/<name>.md, skills/<name>/SKILL.md; what /create will make) work on every model and profile.
+  Where claude runs commands and skills itself (the repo profiles) it gets the folder with --plugin-dir, and a typed
+  /name goes as its /tazuna:name. Where it does not (the lean profile turns its slash commands off; the own loop), tazuna
+  expands the command (Claude Code's form: frontmatter, $ARGUMENTS, $1-$9) and lists the skills (name, what for, where
+  SKILL.md is) in its own system prompt for the model to read. There, as claude would, ~/.claude's commands and skills
+  count with --user-settings and the repository's .claude ones in the repo profiles, each file only if it really lives
+  inside its folder (a link out is not read).
+- The / menu shows the user's commands with their own descriptions, on every model.
+- Checked with a test command and skill: Claude in the lean profile, Claude in the repo profile (the plugin) and the
+  own loop (ERNIE) each ran the command and followed the skill. Test.
+- No other metric moves; 189 tests.
+
 ## 0.1.151 (2026-11-17): the agent's commands no longer see model providers' keys
 
 - An own-loop agent asked where it runs ran `env | grep ...` and printed the user's SUBROUTER_*_KEY keys, which went to

@@ -686,7 +686,30 @@ impl Live {
     /// A message the user typed: image files it names are read and sent as images. Never for text that came from
     /// claude, a command or a reviewer, which could name any file on the machine and bypass the permission mode.
     pub fn send_typed(&mut self, text: &str) -> Result<(f64, Value)> {
+        // one of the user's commands (behave.rs): the own loop gets its text, claude its plugin's name for it
+        if text.starts_with('/') {
+            let mine = if self.claude_commands() { crate::behave::for_claude(text) } else { crate::behave::expand(&self.cwd, self.behave_scope(), text) };
+            if let Some(t) = mine {
+                return self.send_message(&t, true);
+            }
+        }
         self.send_message(text, true)
+    }
+
+    /// claude runs commands and skills itself here (the repo profiles; the lean ones turn its slash commands off, so tazuna
+    /// expands them and lists the skills in its own prompt, as on the own loop).
+    fn claude_commands(&self) -> bool {
+        self.provider.is_none() && matches!(self.profile, Profile::Repo | Profile::RepoLean)
+    }
+
+    /// The user's commands (behave.rs) that count here: name and what each does.
+    pub fn my_commands(&self) -> Vec<(String, String)> {
+        crate::behave::commands(&self.cwd, self.behave_scope()).into_iter().map(|c| (c.name, c.description)).collect()
+    }
+
+    /// Whose commands and skills count (behave.rs), as claude's own settings sources would have them.
+    pub fn behave_scope(&self) -> crate::behave::Scope {
+        crate::behave::Scope { user: self.user_settings, project: matches!(self.profile, Profile::Repo | Profile::RepoLean) }
     }
 
     /// The own loop's model costs nothing: its price (the catalog's route, or --price) is 0 for input and output.
@@ -1671,6 +1694,8 @@ impl Live {
                 prompt.push_str(&text);
                 self.instructions_used = (bytes, sources);
             }
+            // the skills claude would have (behave.rs): listed, for the model to read when a task fits
+            prompt.push_str(&crate::behave::skills_prompt(&crate::behave::skills(&self.cwd, self.behave_scope())));
             if std::env::var_os("TAZUNA_NO_IDENTITY").is_none() {
                 prompt = identity(&self.model, &url) + &prompt;
             }
@@ -1739,6 +1764,10 @@ impl Live {
             // claude asks tazuna (stdio) instead of a terminal it does not have; "auto" never asks
             .args(["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions", "--permission-mode", &self.permission_mode])
             .args(["--setting-sources", self.setting_sources()]);
+        // the user's commands and skills made with /create (behave.rs), as a plugin where claude runs them itself
+        if self.claude_commands() && let Some(d) = crate::behave::plugin_dir() {
+            cmd.arg("--plugin-dir").arg(d);
+        }
         // benchmarks (TAZUNA_NO_WEB): Claude's web search runs on Anthropic's servers, past any local network jail; OMP
         // found a held-out task's fix PR with it (2026-11-14)
         if std::env::var_os("TAZUNA_NO_WEB").is_some() {
@@ -1841,6 +1870,8 @@ impl Live {
                     prompt.push_str(&text);
                     self.instructions_used = (bytes, sources);
                 }
+                // its slash commands are off: the user's skills listed here, their commands expanded by tazuna (behave.rs)
+                prompt.push_str(&crate::behave::skills_prompt(&crate::behave::skills(&self.cwd, self.behave_scope())));
                 // the lean tools are this binary's `mcp` mode
                 let exe = std::env::current_exe().context("locating the tazuna binary")?;
                 let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": exe, "args": ["mcp"], "env": {"LEAN_BASH_CAP": self.bash_cap.to_string()}}}}).to_string();

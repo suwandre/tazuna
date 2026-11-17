@@ -407,11 +407,17 @@ pub fn suggest(token: &str, at_start: bool, commands: &[String], files: &[String
 
 /// The slash commands whose names start with `prefix`, then those that hold it elsewhere, each with what it does: the
 /// list that opens over the message box when it holds only `/...` (OpenCode's command menu, the user's ask 2026-11-16).
-pub fn command_menu(prefix: &str, commands: &[String]) -> Vec<(String, String)> {
+/// `mine`: the user's own commands (behave.rs) with their descriptions; claude's names for them ("tazuna:x") are left
+/// out, since a typed /x runs them.
+pub fn command_menu(prefix: &str, commands: &[String], mine: &[(String, String)]) -> Vec<(String, String)> {
     let p = prefix.to_lowercase();
-    let starts = commands.iter().filter(|c| c.starts_with(&p));
-    let inside = commands.iter().filter(|c| !c.starts_with(&p) && c.contains(&p));
-    starts.chain(inside).take(60).map(|c| (format!("/{c}"), describe(c).to_string())).collect()
+    let mut all: Vec<&String> = commands.iter().filter(|c| !c.starts_with("tazuna:")).chain(mine.iter().map(|m| &m.0)).collect();
+    all.sort();
+    all.dedup();
+    let about = |c: &str| mine.iter().find(|m| m.0 == c).map_or_else(|| describe(c).to_string(), |m| m.1.clone());
+    let starts = all.iter().filter(|c| c.starts_with(&p));
+    let inside = all.iter().filter(|c| !c.starts_with(&p) && c.contains(&p));
+    starts.chain(inside).take(60).map(|c| (format!("/{c}"), about(c))).collect()
 }
 
 /// What a slash command does, in a few words: tazuna's own, then claude's common ones; anything else is one of claude's
@@ -466,11 +472,15 @@ mod tests {
     #[test]
     fn the_command_menu_lists_matches_with_what_they_do() {
         let cmds: Vec<String> = ["compact", "diff", "model", "new", "review", "security-review", "my-skill"].map(String::from).to_vec();
-        let m = super::command_menu("re", &cmds);
+        let m = super::command_menu("re", &cmds, &[]);
         assert_eq!(m.iter().map(|(c, _)| c.as_str()).collect::<Vec<_>>(), ["/review", "/security-review"], "names that start with it first");
         assert_eq!(m[0].1, "A review of each finished change (on, off, a model)");
-        assert_eq!(super::command_menu("", &cmds).len(), 7);
-        assert_eq!(super::command_menu("my", &cmds)[0].1, "Claude command or skill");
+        assert_eq!(super::command_menu("", &cmds, &[]).len(), 7);
+        assert_eq!(super::command_menu("my", &cmds, &[])[0].1, "Claude command or skill");
+        // the user's own command: its description, and claude's plugin name for it left out
+        let with = [cmds.clone(), vec!["tazuna:standup".into()]].concat();
+        let m = super::command_menu("st", &with, &[("standup".into(), "Write today's standup".into())]);
+        assert_eq!(m, [("/standup".to_string(), "Write today's standup".to_string())]);
     }
 
     #[test]

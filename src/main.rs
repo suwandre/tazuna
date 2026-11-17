@@ -99,6 +99,7 @@ mod trust;
 mod turns;
 mod ui;
 mod verify;
+mod behave;
 mod realuse;
 mod versions;
 mod worktree;
@@ -2455,7 +2456,10 @@ fn run_live(
         if v.input != ed.text || v.cursor != ed.cursor {
             let (start, token) = ed.token();
             // the box holds only `/...`: the command menu over it; anything else: the one-line hints (`@` files)
-            let menu = ed.text.strip_prefix('/').filter(|t| !t.contains(char::is_whitespace)).map(|t| editor::command_menu(t, &s.commands)).unwrap_or_default();
+            // the user's own commands (behave.rs) too, with their descriptions, on every model
+            let menu = ed.text.strip_prefix('/').filter(|t| !t.contains(char::is_whitespace)).map(|t| {
+                editor::command_menu(t, &s.commands, &live.my_commands())
+            }).unwrap_or_default();
             if menu.first().map(|m| &m.0) != v.menu.first().map(|m| &m.0) || menu.len() != v.menu.len() {
                 v.menu_sel = 0;
             }

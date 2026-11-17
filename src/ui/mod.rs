@@ -2368,7 +2368,7 @@ mod tests {
     fn the_command_menu_lists_commands_over_the_box() {
         let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: "/re".into(), cursor: 3, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
         let cmds: Vec<String> = ["new", "resume", "review", "rewind", "security-review"].map(String::from).to_vec();
-        v.menu = crate::editor::command_menu("re", &cmds);
+        v.menu = crate::editor::command_menu("re", &cmds, &[]);
         v.menu_sel = 1;
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(110, 30)).unwrap();
         term.draw(|f| draw_menu(f, &v, Design::Cockpit.theme(), Rect::new(0, 0, 110, 26))).unwrap();
