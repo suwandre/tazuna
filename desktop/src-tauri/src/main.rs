@@ -209,7 +209,7 @@ fn widgets_list() -> Vec<serde_json::Value> {
                 Some(_) => "changed",
                 None => "new",
             };
-            return Some(serde_json::json!({"id": id, "kind": "plugin", "title": title, "state": state, "print": print,
+            return Some(serde_json::json!({"id": id, "kind": "plugin", "title": title, "state": state, "print": print, "imported": e.path().join(".imported").exists(),
                 "about": manifest["description"].as_str().unwrap_or_default().chars().take(200).collect::<String>()}));
         }
         e.path().join("index.html").is_file().then_some(())?;
@@ -315,6 +315,8 @@ fn import_into(root: &std::path::Path, text: &str) -> Result<String, String> {
     for (name, t) in texts {
         std::fs::write(dir.join(name), t).map_err(|e| e.to_string())?;
     }
+    // tazuna's own mark (no shared file can carry it): Settings warns harder before enabling what came from someone else
+    std::fs::write(dir.join(".imported"), "").map_err(|e| e.to_string())?;
     if root == widgets_dir() {
         let mut a = approvals();
         if a.remove(&id).is_some() {
@@ -647,7 +649,7 @@ mod tests {
         let bundle = |files: serde_json::Value| serde_json::json!({"tazuna_plugin": 1, "id": "cost-bar", "files": files}).to_string();
         let ok = bundle(serde_json::json!({"manifest.json": "{\"title\": \"Cost\"}", "plugin.js": "export default function () {}"}));
         assert_eq!(super::import_into(&root, &ok).unwrap(), "cost-bar-2", "a taken id gets a number");
-        assert!(root.join("cost-bar-2/plugin.js").is_file());
+        assert!(root.join("cost-bar-2/plugin.js").is_file() && root.join("cost-bar-2/.imported").is_file());
         assert!(super::import_into(&root, &bundle(serde_json::json!({"manifest.json": "{}", "plugin.js": "x", "../evil.sh": "x"}))).unwrap_err().contains("../evil.sh"));
         assert!(super::import_into(&root, &bundle(serde_json::json!({"plugin.js": "x"}))).unwrap_err().contains("manifest"));
         let odd = serde_json::json!({"tazuna_plugin": 1, "id": "../../x", "files": {"manifest.json": "{}", "index.html": "<p>"}}).to_string();

@@ -36,7 +36,8 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
     const c = await widgets.code(w.id).catch(() => null);
     if (!c) { setPlugNote(`Could not read ${w.title}'s code.`); return; }
     const r = await dryRun(w.id);
-    setReading({ w, code: c.code, print: c.print, would: r.error ? `It fails when run: ${r.error}` : summary(r.rec) || "It registers nothing." });
+    // what a trial run saw it register: the plugin's own behaviour there, not a promise (it can act differently later)
+    setReading({ w, code: c.code, print: c.print, would: r.error ? `In a trial run it failed: ${r.error}` : `In a trial run it registered: ${summary(r.rec) || "nothing"}` });
   };
   const arrived = (id: string | null, from: string) => {
     if (!id) return;
@@ -210,8 +211,11 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
             ))}
             {reading && (
               <div role="region" aria-label={`${reading.w.title}: its code`} className="mt-2 rounded-md border border-line-strong px-3 py-2.5">
-                <div className="text-[12.5px] text-ink">{reading.w.title}: {reading.would}</div>
-                <div className="mb-1.5 text-[12px] text-muted">It runs inside the window with tazuna's reach: read it before you enable it.</div>
+                <div className="text-[12.5px] text-ink">{reading.w.title}</div>
+                {reading.w.imported && <div className="text-[12.5px] font-medium text-warn">It came from someone else (a shared file or the gallery). Enable it only if you
+                  have read the code and trust where it came from.</div>}
+                <div className="mb-1.5 text-[12px] text-muted">{reading.would}. A plugin can act differently later: the code below is what counts. It runs inside the
+                  window with tazuna's reach (it can send messages to the agent, which can act on your files).</div>
                 <pre tabIndex={0} className="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] text-ink select-text">{reading.code}</pre>
                 <div className="mt-2 flex justify-end gap-2">
                   <button onClick={() => setReading(null)} className="rounded-md px-2.5 py-1 text-[12px] text-muted hover:bg-hover">Cancel</button>

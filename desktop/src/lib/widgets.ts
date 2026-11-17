@@ -9,6 +9,8 @@ export type UserWidget = {
   id: string; title: string; kind: "panel" | "plugin"; slot?: string;
   /** a plugin's: enabled (this exact code), changed (enabled, code changed since), new; its code's fingerprint; what it says it does */
   state?: "enabled" | "changed" | "new"; print?: string; about?: string;
+  /** it came from a shared file or the gallery, not from you or your agent */
+  imported?: boolean;
 };
 
 export const widgets = {

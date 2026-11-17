@@ -92,6 +92,9 @@ what it allows runs in a sandbox (tazuna 0.1.161's notes); the question card say
 0.1.39 (with tazuna 0.1.162): sharing and the gallery (docs/PLUGINS.md): Share saves a panel or plugin as one file, Add
 from a file and Browse the gallery bring one in. A plugin from either stays off until Read and enable, which now shows
 what it would register and its code first (Settings' Enable turned a plugin on without showing its code before).
+0.1.40 (with tazuna 0.1.163): the review sandbox tightened (tazuna 0.1.163's notes); a plugin from a shared file or the
+gallery is marked as such and warns harder before Enable, and the trial run's list is shown as what it did there, not
+a promise: the code is what counts.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.163 (2026-11-17): a tighter sandbox (security review)
+
+- A reviewed command may no longer write what runs later outside the sandbox: git's hooks and config (core.fsmonitor
+  runs on any `git status`, tazuna's own included), and the project's .claude, .mcp.json and .tazuna (claude loads a
+  trusted repository's settings, hooks among them). `git init` inside the sandbox is refused with them; commits work.
+- No unix sockets (docker's is root on the machine), no macOS keychain tool, and more credential stores unreadable:
+  ~/.config/gh, ~/.kube, ~/.docker, ~/.npmrc, ~/.git-credentials, ~/.pypirc, ~/.cargo/credentials.toml,
+  ~/.config/gcloud, ~/.azure, ~/.claude.json. Environment variables that look like secrets (TOKEN, SECRET, PASSWORD,
+  CREDENTIAL, *_KEY, AWS_, GH_, GITHUB_, any case) are unset before the command: its output goes to the model.
+
 ## 0.1.162 (2026-11-17): the plugin gallery
 
 - The app server's `gallery` and `gallery_get` ops fetch the plugin gallery (gallery/ in this repository: index.json and
