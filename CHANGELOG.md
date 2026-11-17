@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.156 (2026-11-17): hard links count as links in a creation
+
+- A file with a second name (a hard link, on macOS and Linux) fails a creation's check like a symbolic link, and enable
+  and the folder copy leave it out: a hard link to ~/.ssh/id_rsa read as a plain file, and a PEM key has no `key =` for
+  the key scan to find (security review).
+
 ## 0.1.155 (2026-11-17): a creation holds real files only
 
 - A link anywhere in a creation fails its check, and enable refuses a command file that is a link. Before, the key scan

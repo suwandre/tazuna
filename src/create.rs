@@ -135,6 +135,16 @@ fn server(dir: &Path, name: &str) -> Result<Value> {
     Ok(json!({"command": command, "args": args}))
 }
 
+/// A link of either kind: a symbolic one, or a file with a second name (a hard link to ~/.ssh/id_rsa reads as a plain
+/// file, and a PEM key has no `key =` for the scan to find). `m` is read without following links.
+fn linked(m: &std::fs::Metadata) -> bool {
+    #[cfg(unix)]
+    if m.is_file() && std::os::unix::fs::MetadataExt::nlink(m) > 1 {
+        return true;
+    }
+    m.file_type().is_symlink()
+}
+
 /// Every file under `dir` (to look for keys), at most a few hundred, from at most a few hundred folders. A link anywhere
 /// fails the check (security review): the scan cannot follow one safely (a link to its own folder looped for ever), and
 /// a skipped link to ~/.aws/credentials named commands/x.md would have been copied, its target's text, by enable.
@@ -148,9 +158,9 @@ fn walk(dir: &Path) -> std::result::Result<Vec<PathBuf>, String> {
             break;
         }
         for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
-            let Ok(kind) = e.file_type() else { continue };
-            let p = e.path();
-            if kind.is_symlink() {
+            let Ok(m) = e.metadata() else { continue };
+            let (kind, p) = (m.file_type(), e.path());
+            if linked(&m) {
                 return Err(format!("{} is a link: a creation holds real files only", p.display()));
             }
             if kind.is_dir() && !p.ends_with("node_modules") && !p.ends_with("__pycache__") {
@@ -173,7 +183,7 @@ pub fn enable(dir: &Path) -> Result<String> {
         "command" => {
             std::fs::create_dir_all(live.join("commands"))?;
             let from = dir.join("commands").join(format!("{name}.md"));
-            if std::fs::symlink_metadata(&from)?.file_type().is_symlink() {
+            if linked(&std::fs::symlink_metadata(&from)?) {
                 bail!("commands/{name}.md is a link: a creation holds real files only");
             }
             std::fs::copy(from, live.join("commands").join(format!("{name}.md")))?;
@@ -205,7 +215,7 @@ fn copy_dir(from: &Path, to: &Path) -> Result<()> {
     std::fs::create_dir_all(to)?;
     for e in std::fs::read_dir(from)?.flatten() {
         let (p, q) = (e.path(), to.join(e.file_name()));
-        if e.file_type()?.is_symlink() {
+        if linked(&e.metadata()?) {
             continue; // a creation's link could point anywhere: not carried over
         } else if p.is_dir() {
             copy_dir(&p, &q)?;
@@ -251,6 +261,9 @@ mod tests {
             std::fs::rename(dir.join("commands/standup.md"), dir.join("standup.md")).unwrap();
             std::os::unix::fs::symlink(dir.join("secret.txt"), dir.join("commands/standup.md")).unwrap();
             assert!(check(&dir, false).unwrap_err().contains("is a link") && enable(&dir).is_err());
+            std::fs::remove_file(dir.join("commands/standup.md")).unwrap();
+            std::fs::hard_link(dir.join("secret.txt"), dir.join("commands/standup.md")).unwrap();
+            assert!(check(&dir, false).unwrap_err().contains("is a link") && enable(&dir).is_err(), "a hard link too");
             std::fs::remove_file(dir.join("commands/standup.md")).unwrap();
             std::fs::rename(dir.join("standup.md"), dir.join("commands/standup.md")).unwrap();
             std::fs::remove_file(dir.join("secret.txt")).unwrap();
