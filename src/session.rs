@@ -186,6 +186,9 @@ pub struct Session {
     /// far (estimated: thinking as claude estimates it, text and tool input at ~4 characters a token) and its thinking
     /// blocks, which get the exact count when it ends.
     pub calls: Vec<CallTime>,
+    /// Where each model call began: the number of blocks then, by call (turn_usage's order). The desktop puts each call
+    /// under its reply, with the tools it called.
+    call_blocks: Vec<usize>,
     call_start: Option<f64>,
     first_token: Option<f64>,
     /// The own loop's provider is sending keep-alive comments and no output yet (cleared when the call answers or ends).
@@ -289,6 +292,7 @@ impl Session {
             busy_ms: 0.0,
             run_since: None,
             calls: vec![],
+            call_blocks: vec![],
             call_start: None,
             first_token: None,
             sub_events: Default::default(),
@@ -409,7 +413,20 @@ impl Session {
         }).collect();
         json!({"type": "view", "blocks": blocks, "model": self.model, "effort": self.effort, "cwd": self.cwd, "profile": self.profile,
             "mode": self.mode, "activity": format!("{:?}", self.activity), "cost": self.cost(), "usage": usage(&self.usage), "turns": self.turns,
-            "context": self.context, "context_window": self.context_window, "limits": self.limits, "limits_reset": self.limits_reset, "balance": self.balance})
+            "context": self.context, "context_window": self.context_window, "limits": self.limits, "limits_reset": self.limits_reset, "balance": self.balance,
+            "calls": self.calls_view()})
+    }
+
+    /// Each model call for the desktop's per-turn view: where it began (a block index), its tokens (new input: sent
+    /// uncached or written into the cache), its timing as /calls shows it (None: in flight, or not measured) and its
+    /// cost at this model's prices.
+    fn calls_view(&self) -> Vec<Value> {
+        self.turn_usage.iter().zip(&self.call_blocks).enumerate().map(|(i, (u, &block))| {
+            let c = self.calls.get(i);
+            json!({"block": block, "fresh": u.input + u.cache_write, "cached": u.cache_read, "out": u.output, "cost": self.estimate(u),
+                "first_ms": c.and_then(|c| c.ttft_ms), "tps": c.filter(|c| c.gen_ms > 0.0).map(|c| c.out as f64 / c.gen_ms * 1000.0),
+                "total_ms": c.map(|c| c.total_ms)})
+        }).collect()
     }
 
     /// Exact cost so far plus an estimate for tokens used since the last reported result.
@@ -804,6 +821,7 @@ impl Session {
                 (self.first_token, self.call_est, self.call_deltas) = (None, 0.0, 0);
                 self.call_thinking.clear();
                 self.turn_usage.push(Usage::default());
+                self.call_blocks.push(self.blocks.len());
             }
             Some("content_block_start") => {
                 self.streamed = true;
@@ -1110,6 +1128,8 @@ mod tests {
         // the call's end brings the exact count
         s.apply(&ev(json!({"type": "message_delta", "usage": {"output_tokens": 700, "output_tokens_details": {"thinking_tokens": 478}}})), 11.0);
         assert_eq!(thinking(&s), Some((478, false, true)));
+        let calls = s.view()["calls"].clone();
+        assert_eq!((calls[0]["block"].as_u64(), calls[0]["out"].as_u64()), (Some(0), Some(700)), "each call in the view: where it began, its tokens");
         // while live, the count runs from the last total to the new one over a second (eased), not in one jump
         let mut t = Session::new("", "medium");
         t.apply(&ev(json!({"type": "message_start"})), 0.0);

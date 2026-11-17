@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.158 (2026-11-17): each model call in the app server's view
+
+- The app server's view carries each model call (`calls`): where it began, its tokens (new in, cached, out), its timing
+  as /calls shows it and its cost at the model's prices. Like the blocks, only the calls from the first that changed go
+  out (`calls_from`): a free-model run of two messages sent 738 bytes of calls over 11 views.
+
 ## 0.1.157 (2026-11-17): the key scan finds private keys
 
 - A creation holding a private key's block (-----BEGIN ... PRIVATE KEY-----) fails its check. Links were not the whole

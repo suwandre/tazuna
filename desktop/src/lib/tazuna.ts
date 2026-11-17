@@ -36,6 +36,9 @@ export type View = {
   changes?: { turn: number; at_block: number; undone: boolean; can_undo: boolean; files: { path: string; added: number | null; removed: number | null; status: string }[] }[];
   /** the messages "edit from here" can go back to: checkpoint and the message's block */
   edit_points?: { cp: number; block: number }[];
+  /** each model call: the block it began at, its tokens (fresh: sent uncached or written into the cache), its cost at the
+   * model's prices, its timing (null: in flight or not measured) */
+  calls?: { block: number; fresh: number; cached: number; out: number; cost: number; first_ms: number | null; tps: number | null; total_ms: number | null }[];
 };
 export type Provider = { name: string; host: string; page: string; place: string; example: string; key: string; trusted: boolean };
 export type Settings = { providers: Provider[]; data_any: boolean; route: boolean; version: string;
@@ -143,13 +146,14 @@ export const core = {
   /** Each thread's session as its core sends it: a view carries the blocks from `from` on (the ones that changed), merged
    * here with that thread's blocks from before. */
   onView: (cb: (v: View, tid: string) => void) => {
-    const blocks = new Map<string, ViewBlock[]>();
-    return on<View & { from?: number }>("view", (p, tid) => {
-      const old = blocks.get(tid) ?? [], from = p.from ?? 0;
-      if (from > old.length) { invoke("op", { tid, msg: { op: "full" } }); return; }
-      const merged = old.slice(0, from).concat(p.blocks);
+    const blocks = new Map<string, ViewBlock[]>(), calls = new Map<string, NonNullable<View["calls"]>>();
+    return on<View & { from?: number; calls_from?: number }>("view", (p, tid) => {
+      const old = blocks.get(tid) ?? [], from = p.from ?? 0, oldCalls = calls.get(tid) ?? [], callsFrom = p.calls_from ?? 0;
+      if (from > old.length || callsFrom > oldCalls.length) { invoke("op", { tid, msg: { op: "full" } }); return; }
+      const merged = old.slice(0, from).concat(p.blocks), mergedCalls = oldCalls.slice(0, callsFrom).concat(p.calls ?? []);
       blocks.set(tid, merged);
-      cb({ ...p, blocks: merged }, tid);
+      calls.set(tid, mergedCalls);
+      cb({ ...p, blocks: merged, calls: mergedCalls }, tid);
     });
   },
 };

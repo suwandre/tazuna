@@ -1045,17 +1045,21 @@ fn app_server(a: &Args) -> Result<()> {
     // the blocks as last sent: a view carries only the blocks from the first one that changed (`from`; the window keeps
     // the rest). A three-day session is ~1,900 blocks and 2 MB, which went out whole up to 20 times a second while a
     // reply streamed (2026-11-16).
-    let sent = std::cell::RefCell::new(Vec::<String>::new());
+    // the model calls likewise (`calls_from`): a long session has hundreds, and only the one in flight changes
+    let sent = std::cell::RefCell::new((Vec::<String>::new(), Vec::<String>::new()));
     let emit = |s: &Session, untrusted: &Option<String>, live: &live::Live, done_turns: &[AppTurn]| {
         let mut v = s.view();
-        let blocks = v["blocks"].take();
-        let blocks = blocks.as_array().map(Vec::as_slice).unwrap_or_default();
-        let strs: Vec<String> = blocks.iter().map(|b| b.to_string()).collect();
         let mut prev = sent.borrow_mut();
-        let from = prev.iter().zip(&strs).take_while(|(a, b)| a == b).count();
-        v["from"] = json!(from);
-        v["blocks"] = json!(blocks[from..]);
-        *prev = strs;
+        let (old_blocks, old_calls) = &mut *prev;
+        for (key, from_key, old) in [("blocks", "from", old_blocks), ("calls", "calls_from", old_calls)] {
+            let items = v[key].take();
+            let items = items.as_array().map(Vec::as_slice).unwrap_or_default();
+            let strs: Vec<String> = items.iter().map(|b| b.to_string()).collect();
+            let from = old.iter().zip(&strs).take_while(|(a, b)| a == b).count();
+            v[from_key] = json!(from);
+            v[key] = json!(items[from..]);
+            *old = strs;
+        }
         drop(prev);
         let last_undoable = done_turns.iter().rposition(|t| !t.undone);
         v["changes"] = json!(done_turns.iter().enumerate().map(|(i, t)| json!({
@@ -1611,7 +1615,7 @@ fn app_server(a: &Args) -> Result<()> {
                             Err(e) => info(&mut s, format!("{e:#}")),
                         },
                         // the window lost track of the blocks (a reload): the next view carries them all
-                        Some("full") => sent.borrow_mut().clear(),
+                        Some("full") => *sent.borrow_mut() = Default::default(),
                         Some("quit") => return Ok(()),
                         _ => info(&mut s, format!("unknown command: {cmd}")),
                     }

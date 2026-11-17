@@ -9,7 +9,9 @@ export type ToolStep = {
 export type ChangedFile = { path: string; added: number | null; removed: number | null; status: string };
 /** What one turn changed (the core's git snapshots before and after it). */
 export type Change = { turn: number; files: ChangedFile[]; undone: boolean; canUndo: boolean };
-export type Meta = { cost: number; tokens: number; cachedPct?: number; secs: number };
+/** One model call of a reply: what it called (tool verbs, or empty for the answer alone), its tokens, timing and cost. */
+export type Call = { tools: string; fresh: number; cached: number; out: number; cost: number; firstMs: number | null; tps: number | null; totalMs: number | null };
+export type Meta = { cost: number; tokens: number; cachedPct?: number; secs: number; calls?: Call[] };
 export type Message =
   | { role: "user"; text: string; queued?: boolean; edit?: { cp: number; block: number } }
   | { role: "agent"; prose: string[]; tools?: ToolStep[]; change?: Change; meta?: Meta; routedChat?: boolean; ask?: string };

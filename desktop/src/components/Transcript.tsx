@@ -1,7 +1,7 @@
 import { FileText, MessageCircle, Pencil } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
-import { usd, type Change, type Message } from "../lib/types";
+import { usd, type Call, type Change, type Message } from "../lib/types";
 
 function inlineCode(text: string) {
   return text.split(/(`[^`]+`)/).map((part, i) => part.startsWith("`") ? <code key={i}>{part.slice(1, -1)}</code> : part);
@@ -151,6 +151,44 @@ export function MessageChange({ message: m }: { message: Message }) {
   return m.role === "agent" && m.change ? <ChangeCard change={m.change} busy={busy} onDiff={onDiff} onUndo={onUndo} onReview={onReview} /> : null;
 }
 
+const tok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+const secs = (ms: number | null) => (ms == null ? "–" : `${(ms / 1000).toFixed(1)} s`);
+const HEAD: [string, string][] = [["#", ""], ["called", "the tools this call asked for; none: it wrote the answer"],
+  ["new in", "input tokens sent uncached or written into the cache"], ["cached", "input tokens read from the cache"], ["out", "output tokens"],
+  ["first", "from its input being ready to its first token"], ["tok/s", "output while writing, after the first token (– where it cannot be measured)"],
+  ["time", "the whole call, the wait included"], ["cost", "at this model's prices"]];
+
+/** A reply's model calls, one row each: what it called, its tokens, timing and cost. */
+function Calls({ calls }: { calls: Call[] }) {
+  return (
+    <table className="mt-1.5 w-full border-collapse font-mono text-[11px] text-muted">
+      <thead className="text-faint">
+        <tr>{HEAD.map(([h, why], i) => <th key={h} title={why || undefined} scope="col" className={`px-1.5 py-0.5 font-normal ${i < 2 ? "text-left" : "text-right"}`}>{h}</th>)}</tr>
+      </thead>
+      <tbody>
+        {calls.map((c, i) => (
+          <tr key={i} className="border-t border-line-soft">
+            <td className="px-1.5 py-0.5">{i + 1}</td>
+            <td className="max-w-[200px] truncate px-1.5 py-0.5" title={c.tools || undefined}>{c.tools || "answer"}</td>
+            {[tok(c.fresh), tok(c.cached), tok(c.out), secs(c.firstMs), c.tps == null ? "–" : `${Math.round(c.tps)}`,
+              c.totalMs == null ? "…" : secs(c.totalMs), usd(c.cost)].map((x, j) => <td key={j} className="px-1.5 py-0.5 text-right">{x}</td>)}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
 export function MessageMeta({ message: m }: { message: Message }) {
-  return m.role === "agent" && m.meta ? <div className="mt-2 font-mono text-[11.5px] text-faint">{meta(m.meta)}</div> : null;
+  const [open, setOpen] = useState(false);
+  if (m.role !== "agent" || !m.meta) return null;
+  const n = m.meta.calls?.length ?? 0;
+  return (
+    <div className="mt-2 font-mono text-[11.5px] text-faint">
+      {meta(m.meta)}
+      {n > 0 && <> · <button onClick={() => setOpen(!open)} aria-expanded={open} title="Each model call of this reply: tokens, timing and cost"
+        className="rounded px-1 hover:bg-hover hover:text-ink">{n} call{n === 1 ? "" : "s"} {open ? "▾" : "▸"}</button></>}
+      {open && m.meta.calls && <Calls calls={m.meta.calls} />}
+    </div>
+  );
 }

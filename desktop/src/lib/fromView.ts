@@ -1,6 +1,6 @@
 // The core's view (Session::view) turned into what the window draws.
 import type { View } from "./tazuna";
-import type { Message, ToolStep, Usage } from "./types";
+import type { Call, Message, ToolStep, Usage } from "./types";
 
 function target(input: Record<string, unknown>): string {
   for (const k of ["file_path", "command", "pattern", "path", "url", "query", "description"]) {
@@ -16,8 +16,21 @@ function verb(name: string): string {
     Task: "Asked a subagent", Agent: "Asked a subagent", fetch: "Fetched", WebFetch: "Fetched" } as Record<string, string>)[n] ?? n;
 }
 
+/** Each call with what it called: the tool blocks from its start to the next call's (or the end). */
+function calls(v: View): (Call & { block: number })[] {
+  const list = v.calls ?? [];
+  return list.map((c, i) => {
+    const end = list[i + 1]?.block ?? v.blocks.length, counts = new Map<string, number>();
+    for (const b of v.blocks.slice(c.block, end)) if (b.kind === "tool") { const w = verb(b.name); counts.set(w, (counts.get(w) ?? 0) + 1); }
+    const tools = [...counts].map(([w, n]) => (n > 1 ? `${w} ×${n}` : w)).join(", ");
+    return { block: c.block, tools, fresh: c.fresh, cached: c.cached, out: c.out, cost: c.cost, firstMs: c.first_ms, tps: c.tps, totalMs: c.total_ms };
+  });
+}
+
 export function messages(v: View): Message[] {
   const out: Message[] = [];
+  // the calls not yet given to a reply: each done block takes those that began before it
+  const pending = calls(v);
   let agent: Extract<Message, { role: "agent" }> | null = null, ask = "";
   // a message sent during a reply waits in the core's queue: shown after that reply ends, not above it
   let open = false;
@@ -45,7 +58,11 @@ export function messages(v: View): Message[] {
     }
     else if (b.kind === "done") {
       const u = b.usage, total = u.input + u.cache_write + u.cache_read + u.output, read = u.input + u.cache_write + u.cache_read;
-      current().meta = { cost: b.cost, tokens: total, cachedPct: read ? Math.round((100 * u.cache_read) / read) : undefined, secs: Math.round(b.secs) };
+      let n = 0;
+      while (n < pending.length && pending[n].block < k) n++;
+      const mine = pending.splice(0, n).map(({ block: _, ...c }) => c);
+      current().meta = { cost: b.cost, tokens: total, cachedPct: read ? Math.round((100 * u.cache_read) / read) : undefined, secs: Math.round(b.secs),
+        calls: mine.length ? mine : undefined };
       const c = changeAt.get(k);
       if (c) current().change = { turn: c.turn, files: c.files, undone: c.undone, canUndo: c.can_undo };
       agent = null;
