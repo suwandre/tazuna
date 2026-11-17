@@ -16,6 +16,18 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.166 (2026-11-17): upgrade picks what is built, or the version you name
+
+- `tazuna upgrade` installs the newest release CI has built for this machine. While the newest is still building, the
+  one before it comes, with a line that a newer one is on its way (until now: an error, "release 0.1.164 has no
+  tazuna-aarch64-apple-darwin.tar.gz"). `tazuna upgrade --wait` waits for that build instead and installs it when ready.
+  `tazuna upgrade 0.1.162` installs that version, older ones too (the version was ignored before).
+- It shows what it does: a spinner while it checks, waits or installs, a bar while it downloads, then each version it
+  brought with its title from the CHANGELOG. Plain lines where the output is not a terminal, and on Windows.
+- The once-a-day "tazuna X is out" in a session names only a release built for this machine.
+- The sandbox's closed names match in any case (macOS disks are case-blind: .GIT is .git), and cover every config file
+  mise reads, and the project's .config (security review).
+
 ## 0.1.165 (2026-11-17): no system services from the sandbox
 
 - A reviewed command reaches no macOS system service but the user-name lookup (security review): `launchctl submit` had
