@@ -16,6 +16,11 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.160 (2026-11-17): the app server says whether claude is installed
+
+- The `setup` op answers with the claude CLI's version, or null when it is not on the PATH (on a thread: it takes about a
+  second), for the desktop's first run.
+
 ## 0.1.159 (2026-11-17): hooks, and MCP servers from the app
 
 - `/hook CMD`: your own command after each turn that changed files (a formatter, a linter, a sync), run in the project's

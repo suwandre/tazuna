@@ -84,6 +84,9 @@ lane gets a worktree of its own (no setup script), its model, auto mode and the 
 one's state, cost (the cheapest finished one marked), time, files and lines changed and its checks; Open goes to it,
 Keep removes the other lanes' worktrees after a yes (their branches stay). Lanes last while the window is open. A
 dialog now also takes back focus that a conversation opening behind it took.
+0.1.37 (with tazuna 0.1.160), the first run: "Set up tazuna" opens once and says what is set and what is left, each with
+its own way there: Claude on the subscription (the claude CLI found, with its version, or how to install it), other
+models' keys, who may see the code, the quick-chat key. "Choose later" closes it; Cmd-K "Set up tazuna" brings it back.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
@@ -166,7 +169,8 @@ mobile companion and team settings. Code signing stays off by choice.
 - PR panel through `gh`: checks, review comments, fix a failing check.
 - Routing that explains itself: "DeepSeek high, est. $0.004" or "Opus, plan headroom 62%"; plan first, a cheap API
   model when the plan runs low; a warning and a cap before any paid call.
-- Signed builds for macOS, Windows and Linux, auto-update; first run lets you "choose later" (Hermes).
+- Signed builds for macOS, Windows and Linux, auto-update; first run lets you "choose later" (Hermes). Auto-update done in
+  0.1.20, the first run in 0.1.37; code signing off by choice.
 - Accessibility pass, reduced motion honoured. Done in 0.1.34.
 
 ### 1.1

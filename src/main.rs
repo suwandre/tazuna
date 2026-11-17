@@ -1029,9 +1029,9 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 42] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+        const OPS: [&str; 43] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
             "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
-            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook"];
+            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1302,6 +1302,16 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("tazuna_hook") => if cmd["ok"] != true {
                             s.apply(&json!({"type": "harness_notice", "text": cmd["text"], "error": true}), at);
                         },
+                        // the first run's checks: is the claude CLI there (its version; ~1 s, so on a thread)
+                        Some("setup") => {
+                            std::thread::spawn(|| {
+                                let version = std::process::Command::new("claude").arg("--version").output().ok().filter(|o| o.status.success())
+                                    .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+                                let mut o = std::io::stdout().lock();
+                                let _ = writeln!(o, "{}", json!({"type": "setup", "claude": version}));
+                                let _ = o.flush();
+                            });
+                        }
                         // the project's hook (hooks.rs): set when `after_turn` comes (empty: none), and said back
                         Some("hook") => {
                             let note = cmd["after_turn"].as_str().and_then(|c| hooks::set_after_turn(&cwd, c).err()).map(|e| format!("{e:#}")).unwrap_or_default();

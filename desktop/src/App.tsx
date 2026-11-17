@@ -11,6 +11,7 @@ import { SideChat } from "./components/SideChat";
 import { UsageView } from "./components/UsageView";
 import { PrView } from "./components/PrView";
 import { BestOfStart, LanesView, type Lane, type Lanes } from "./components/BestOf";
+import { SETUP, Setup } from "./components/Setup";
 import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
@@ -212,7 +213,7 @@ function useTheme() {
 
 /** Cmd-K opens the palette, Cmd-/ the shortcuts. */
 function useOverlay() {
-  const [overlay, setOverlay] = useState<"palette" | "shortcuts" | "settings" | "usage" | null>(null);
+  const [overlay, setOverlay] = useState<"palette" | "shortcuts" | "settings" | "usage" | "setup" | null>(() => (inTauri && !localStorage.getItem(SETUP) ? "setup" : null));
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       if (!menuKeys && (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "u") { e.preventDefault(); setOverlay((o) => (o === "usage" ? null : "usage")); }
@@ -499,7 +500,8 @@ export default function App() {
     a.push({ id: "usage", group: "Window", label: "Usage: cost by day and model, cache, plan", keys: "⌘⇧U", keywords: "spend money tokens stats", run: () => setTimeout(() => setOverlay("usage")) });
     a.push({ id: "theme", group: "Window", label: "Light or dark", keys: "⌘⇧L", run: flipTheme },
       { id: "keys", group: "Window", label: "Keyboard shortcuts", keys: "⌘/", run: () => setTimeout(() => setOverlay("shortcuts")) },
-      { id: "settings", group: "Window", label: "Settings: provider keys, data policy, router", keys: "⌘,", run: () => setTimeout(() => setOverlay("settings")) });
+      { id: "settings", group: "Window", label: "Settings: provider keys, data policy, router", keys: "⌘,", run: () => setTimeout(() => setOverlay("settings")) },
+      { id: "setup", group: "Window", label: "Set up tazuna", hint: "what is set, what is left", keywords: "welcome first run onboarding", run: () => setTimeout(() => setOverlay("setup")) });
     return a;
   };
   const data = widgetData(view);
@@ -637,6 +639,8 @@ export default function App() {
       {showPr && inTauri && <PrView pr={pr ?? null} worktree={inWorktree} onClose={() => setShowPr(false)} onRefresh={() => core.prIn(active).catch(() => {})}
         onSend={(text) => { setShowPr(false); core.send(text, true).catch(() => {}); }} onRemoveWorktree={() => { setShowPr(false); setWt({ remove: { path: folder! } }); }} />}
       {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} />}
+      {overlay === "setup" && inTauri && <Setup onSettings={() => { localStorage.setItem(SETUP, "1"); setOverlay("settings"); }}
+        onClose={() => { localStorage.setItem(SETUP, "1"); setOverlay(null); }} />}
       {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} items={userWidgets} onEdit={editPanel}
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} />}

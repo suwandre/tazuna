@@ -122,6 +122,9 @@ export const core = {
   /** this folder's command after each turn that changed files (src/hooks.rs): set with a string (empty: none), asked without */
   hook: (afterTurn?: string) => to("op", { msg: { op: "hook", after_turn: afterTurn } }),
   onHook: (cb: (h: Hook) => void) => on<Hook>("hook", cb),
+  /** the first run's checks: the claude CLI's version, or null when it is not installed */
+  setup: () => to("op", { msg: { op: "setup" } }),
+  onSetup: (cb: (s: { claude: string | null }) => void) => on<{ claude: string | null }>("setup", cb),
   openKeyPage: (url: string) => invoke("open_key_page", { url }),
   /** a system notification */
   notify: async (title: string, body: string) => {
