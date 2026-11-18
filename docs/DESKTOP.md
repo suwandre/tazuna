@@ -97,6 +97,8 @@ gallery is marked as such and warns harder before Enable, and the trial run's li
 a promise: the code is what counts.
 0.1.41-0.1.42 (with tazuna 0.1.164-0.1.165): the review sandbox closes .git, the keychain and every system service but the
 user-name lookup, and is macOS only for now.
+0.1.51: the message box grows upwards with what is typed (it stayed one line and earlier lines went out of sight), up
+to 40% of the window, then scrolls; its card's border shows the focus.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

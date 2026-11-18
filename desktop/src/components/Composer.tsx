@@ -1,5 +1,5 @@
 import { ArrowUp, Check, Gauge, Paperclip, Shield, Square, Zap } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
 import { usd, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
@@ -47,6 +47,14 @@ const pill = "inline-flex items-center gap-1.5 rounded-full border border-line b
 export function Composer({ session, threadCost, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   const box = useRef<HTMLTextAreaElement>(null);
+  // the box grows with what is typed, up to 40% of the window, then scrolls (it was one line, and earlier lines went out
+  // of sight); at the window's bottom it grows upwards
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, Math.round(window.innerHeight * 0.4))}px`;
+  }, [text]);
   // draft recovery: what is in the box is saved as it changes, under the conversation's key
   const savedAt = useRef(draftKey);
   useEffect(() => {
@@ -73,10 +81,10 @@ export function Composer({ session, threadCost, busy, onSend, onStop, models, on
     <footer className="px-7 pb-[22px] pt-2.5">
       <div className="mx-auto max-w-[700px]"><Slot name="composer.dock" props={{}} /></div>
       {above}
-      <div className="mx-auto max-w-[700px] rounded-xl border border-line-strong bg-card py-2 pl-4 pr-3 pt-3 shadow-composer">
+      <div className="mx-auto max-w-[700px] rounded-xl border border-line-strong bg-card py-2 pl-4 pr-3 pt-3 shadow-composer focus-within:border-accent">
         <textarea ref={box} rows={1} autoFocus aria-label="Message" value={text} onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
-          placeholder={busy ? "Type your next message: it goes after this reply" : "Ask anything, or describe a change…"} className="w-full resize-none bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
+          placeholder={busy ? "Type your next message: it goes after this reply" : "Ask anything, or describe a change…"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
         <div className="flex items-center gap-1.5">
           <Slot name="composer.pills" props={{ composer: bag }} />
           <span className="flex-1" />

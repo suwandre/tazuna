@@ -54,6 +54,8 @@ input, textarea, [contenteditable] { user-select: text; cursor: text; }
 /* where the keyboard is: one ring everywhere (a panel focused on opening shows none) */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 [role=dialog]:focus-visible { outline: none; }
+/* the message box: its card's border says it has the focus, not a ring inside it */
+footer textarea:focus-visible { outline: none; }
 input[type=radio], input[type=checkbox] { accent-color: var(--accent); cursor: default; }
 .prose-answer { font-family: var(--font-prose); font-size: 15.5px; line-height: 1.62; user-select: text; }
 .prose-answer p { margin: 0 0 10px; }
