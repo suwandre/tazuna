@@ -44,7 +44,7 @@ type Props = {
 export const DRAFT = "tazuna.draft.";
 
 // the permission modes in tazuna's words, in the order shift-tab steps through them (as in the terminal)
-const MODES: [string, string][] = [
+export const MODES: [string, string][] = [
   ["auto", "runs commands and edits without asking"],
   ["ask", "asks before each command and edit"],
   ["edits", "edits freely, asks before commands"],

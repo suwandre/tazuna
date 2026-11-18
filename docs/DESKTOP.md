@@ -155,6 +155,11 @@ panel's; "Ask tazuna to open one" for a branch without a pull request.
 conversation there), the last three conversations to pick up, the projects to start in. The usage page is in Settings'
 cards: Right now (every account's meters and credits), Spending (three figures with quiet zeros, the daily bars with
 plan and paid parts, the models), How your runs went.
+0.1.69: the third review's polish: no square focus ring inside the palette's, the model picker's or the side chat's
+rounded boxes (the ring is in the base layer now, so a field whose box shows the focus is not ringed inside it; bordered
+fields turn their border accent); a change card's Diff opens the review view at that file (one diff view, with line
+numbers, Stage and Revert); the side chat's box takes the main one's focus border and send button; the palette names the
+permission modes with what each does.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

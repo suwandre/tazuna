@@ -39,7 +39,7 @@ export function BestOfStart({ choices, onStart, onClose }: { choices: ModelChoic
         </div>
         <div className="overflow-auto px-5 py-4">
           <textarea autoFocus value={task} onChange={(e) => setTask(e.target.value)} rows={3} aria-label="Task" placeholder="The task, as you would send it"
-            className="w-full resize-none rounded-md border border-line bg-field px-2.5 py-2 text-ink outline-none placeholder:text-faint" />
+            className="w-full resize-none rounded-md border border-line bg-field px-2.5 py-2 text-ink outline-none focus:border-accent placeholder:text-faint" />
           <div className="mb-1.5 mt-3 text-[11.5px] font-medium text-faint">Models: two to four</div>
           {usable.map((c) => {
             const on = picked.includes(id(c));

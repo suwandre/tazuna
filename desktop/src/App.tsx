@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
 import { Approval } from "./components/Approval";
-import { Composer, DRAFT } from "./components/Composer";
+import { Composer, DRAFT, MODES } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
 import { ReviewView } from "./components/ReviewView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
@@ -240,7 +240,7 @@ export default function App() {
   // go back too) and the text put in the box
   const [editing, setEditing] = useState<{ cp: number; block: number; files: number; keep: boolean } | null>(null);
   const [draft, setDraft] = useState<{ text: string; n: number }>();
-  const [reviewing, setReviewing] = useState<{ scope: string; turn?: number } | null>(null);
+  const [reviewing, setReviewing] = useState<{ scope: string; turn?: number; path?: string } | null>(null);
   // the menu bar's items (macOS)
   useEffect(() => {
     if (!menuKeys) return;
@@ -520,7 +520,8 @@ export default function App() {
       { id: "review-uncommitted", group: "Review", label: "Review uncommitted changes", keywords: "diff stage revert hunk", run: () => setReviewing({ scope: "uncommitted" }) },
       { id: "review-branch", group: "Review", label: "Review the branch against its base", keywords: "diff pr", run: () => setReviewing({ scope: "branch" }) });
     if (view) {
-      a.push(...["auto", "ask", "edits", "review", "plan"].map((m) => ({ id: `m:${m}`, group: "Permission mode", label: m, hint: m === view.mode ? "current" : undefined, keywords: "mode permission", run: () => core.setMode(m) })));
+      // each mode with what it does (the palette listed bare "auto, ask, edits", review 3)
+      a.push(...MODES.map(([m, about]) => ({ id: `m:${m}`, group: "Permission mode", label: `${m.charAt(0).toUpperCase()}${m.slice(1)}`, hint: m === view.mode ? `current · ${about}` : about, keywords: `mode permission ${m}`, run: () => core.setMode(m) })));
       const cur = models?.choices.find((c) => c.current);
       a.push(...(cur?.efforts ?? []).map((e) => ({ id: `e:${e}`, group: "Effort", label: e, hint: e === view.effort ? "current" : undefined, keywords: "effort thinking", run: () => core.setEffort(e) })));
       a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: c.label, hint: c.current ? "current" : c.place, keywords: `model ${c.provider}`, run: () => core.setModel(c) })));
@@ -622,7 +623,7 @@ export default function App() {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
           } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} onSendToAgent={(text) => core.send(text, true)}
-          onDiff={(turn, path) => core.diff(turn, path)} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />}
+          onDiff={(turn, path) => (inTauri ? setReviewing({ scope: "turn", turn, path }) : core.diff(turn, path))} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />}
         </div>
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {reviewing && <ReviewView start={reviewing} turns={(view?.changes ?? []).filter((c) => !c.undone).map((c) => c.turn)}

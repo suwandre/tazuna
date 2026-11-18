@@ -89,7 +89,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
     setKeys((k) => ({ ...k, [name]: "" }));
     refresh(); core.models().catch(() => {});
   };
-  const input = "rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none placeholder:font-sans placeholder:text-faint";
+  const input = "rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none focus:border-accent placeholder:font-sans placeholder:text-faint";
   const button = "rounded-md border border-line px-2.5 py-1 text-[12px] text-ink disabled:opacity-40";
   return (
     <div onMouseDown={onClose} className="fixed inset-0 z-30 grid place-items-center bg-ink/15 p-10">

@@ -133,7 +133,9 @@ pills, plan bar and card, and send; work panel section (Changes, Checks, Pull re
 
 ## Desktop habits
 - UI chrome is not selectable; the default cursor everywhere but text fields and links.
-- Keyboard first: Cmd-K palette, Cmd-N new chat, Cmd-/ shortcut sheet, focus states always visible.
+- Keyboard first: Cmd-K palette, Cmd-N new chat, Cmd-/ shortcut sheet, focus states always visible: the accent ring on
+  buttons and links; a text field whose box is the visible container (the composer, the palette, a bordered field) shows
+  its focus on that box's border instead (`outline-none` and `focus:border-accent` or `focus-within:border-accent`).
 - macOS overlay title bar; native menus.
 
 ## Do not

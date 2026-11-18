@@ -10,7 +10,8 @@ type Comment = { path: string; line: number; text: string; quote: string };
 // line leaves a comment, and the comments go to the agent together. Scopes: uncommitted, the branch against its base,
 // one turn (from its change card).
 export function ReviewView({ start, turns, onClose, onSend }: {
-  start: { scope: string; turn?: number }; turns: number[]; onClose: () => void; onSend: (text: string) => void;
+  /** with `path`: that file selected once the diff is in (a change card's "Diff") */
+  start: { scope: string; turn?: number; path?: string }; turns: number[]; onClose: () => void; onSend: (text: string) => void;
 }) {
   const [scope, setScope] = useState(start);
   const dialog = useDialog();
@@ -28,6 +29,9 @@ export function ReviewView({ start, turns, onClose, onSend }: {
   }, [scope.scope, scope.turn]);
   const files = useMemo(() => parse(review?.text ?? ""), [review]);
   const file = files[Math.min(sel, files.length - 1)];
+  // a change card's "Diff" opens here at its file (until desktop 0.1.69 it opened a second, simpler diff without line numbers)
+  const [wanted, setWanted] = useState(start.path);
+  useEffect(() => { if (!wanted || !files.length) return; const i = files.findIndex((f) => f.path === wanted); if (i >= 0) setSel(i); setWanted(undefined); }, [files, wanted]);
   const act = (f: FileDiff, p: Piece, stage: boolean) => core.piece(patchOf(f, p), stage).then(() => setTimeout(load, 300)).catch(() => {});
   const send = () => {
     const body = comments.map((c) => `- \`${c.path}\` line ${c.line}: ${c.text}\n  > ${c.quote.slice(1).trim()}`).join("\n");
@@ -104,7 +108,7 @@ export function ReviewView({ start, turns, onClose, onSend }: {
                                 }
                               }}
                               placeholder="A comment for the agent on this line (⌘↵ keeps it, Esc drops it)"
-                              className="w-full resize-none rounded-md border border-line bg-field px-2 py-1.5 text-[12.5px] text-ink outline-none" />
+                              className="w-full resize-none rounded-md border border-line bg-field px-2 py-1.5 text-[12.5px] text-ink outline-none focus:border-accent" />
                           </div>
                         )}
                       </div>

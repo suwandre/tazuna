@@ -32,13 +32,15 @@ export function SideChat({ view, onSend, onStop, onAnswer, onClose }: {
       <Transcript messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} jumps={false} />
       {view?.asking && <Approval asking={view.asking} onAnswer={onAnswer} keys={false} />}
       <div className="px-3 pb-3">
-        <div className="flex items-end gap-2 rounded-xl border border-line-strong bg-card py-2 pl-3 pr-2">
+        <div className="flex items-end gap-2 rounded-xl border border-line-strong bg-card py-2 pl-3 pr-2 shadow-composer focus-within:border-accent">
           <textarea rows={2} autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask on the side…"
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
             className="min-w-0 flex-1 resize-none bg-transparent text-ink outline-none placeholder:text-faint" />
           {busy && !text.trim()
             ? <button onClick={onStop} title="Stop" className="grid size-[28px] flex-none place-items-center rounded-full bg-ink text-canvas"><Square size={11} strokeWidth={2} fill="currentColor" /></button>
-            : <button onClick={send} disabled={!text.trim() || !ready} title="Send (Enter)" className="grid size-[28px] flex-none place-items-center rounded-full bg-accent text-on-accent disabled:opacity-40"><ArrowUp size={15} strokeWidth={1.75} /></button>}
+            // as the main box's: solid only when there is something to send
+            : <button onClick={send} disabled={!text.trim() || !ready} title="Send (Enter)"
+                className={`grid size-[28px] flex-none place-items-center rounded-full ${text.trim() && ready ? "bg-accent text-on-accent" : "border border-line bg-field text-faint"}`}><ArrowUp size={15} strokeWidth={1.75} /></button>}
         </div>
       </div>
     </aside>
