@@ -112,6 +112,8 @@ Hover colours keep every text level at 4.5:1 or more (light #e7e3db, dark #302e2
 0.1.55: a button with a border takes an accent-tinted one on hover (the lighter background alone barely showed in dark
 mode); the composer's pills answer the pointer only when they can be used, and look dimmed when they cannot (during a
 reply, or a model with one effort). The app looks for an update hourly, not every 12 hours.
+0.1.56: Settings ends with the app's version and its core's ("tazuna desktop 0.1.56 · its core 0.1.173"); "tazuna 0.1.173"
+alone read as the terminal's.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

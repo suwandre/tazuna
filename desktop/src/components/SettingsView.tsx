@@ -1,5 +1,6 @@
 import { ExternalLink, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { useDialog } from "../lib/dialog";
 import { safeMode } from "../lib/plugins";
 import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Settings } from "../lib/tazuna";
@@ -25,6 +26,9 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
   const [mcpState, setMcpState] = useState<Record<string, { ok?: boolean; text: string }>>({});
   const [adding, setAdding] = useState({ name: "", target: "" });
   const [hook, setHook] = useState<Hook | null>(null);
+  // the app's own version beside its core's: "tazuna 0.1.173" alone read as the terminal's
+  const [appVersion, setAppVersion] = useState("");
+  useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);
   // a plugin read before it is enabled (its code and what it would register, from one read); sharing and the gallery
   const [reading, setReading] = useState<{ w: UserWidget; code: string; print: string; would: string } | null>(null);
   const [plugNote, setPlugNote] = useState("");
@@ -251,7 +255,8 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
             }} className="mt-1" />
               <span><span className="text-ink">Safe mode: start without plugins</span><span className="block text-[12px] text-muted">For when a plugin breaks the window. Panels stay.</span></span></label>
 
-            <div className="mt-5 text-[11.5px] text-faint">tazuna {st.version}</div>
+            <div className="mt-5 text-[11.5px] text-faint" title="The app carries its own tazuna core, separate from the terminal's">
+              tazuna desktop {appVersion || "?"} · its core {st.version}</div>
           </>}
         </div>
       </div>
