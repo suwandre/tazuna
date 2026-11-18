@@ -3,7 +3,7 @@ import type { View } from "./tazuna";
 import type { Call, Message, ToolStep, Usage } from "./types";
 
 function target(input: Record<string, unknown>): string {
-  for (const k of ["file_path", "command", "pattern", "path", "url", "query", "description"]) {
+  for (const k of ["file_path", "command", "pattern", "path", "url", "query", "skill", "description"]) {
     const v = input[k];
     if (typeof v === "string" && v) return v.length > 80 ? `${v.slice(0, 80)}…` : v;
   }
@@ -13,7 +13,7 @@ function target(input: Record<string, unknown>): string {
 function verb(name: string): string {
   const n = name.replace(/^mcp__\w+__/, "");
   return ({ Read: "Read", read: "Read", Bash: "Ran", bash: "Ran", Grep: "Searched", Glob: "Listed", Edit: "Edited", edit: "Edited", Write: "Wrote", write: "Wrote",
-    Task: "Asked a subagent", Agent: "Asked a subagent", fetch: "Fetched", WebFetch: "Fetched" } as Record<string, string>)[n] ?? n;
+    Task: "Asked a subagent", Agent: "Asked a subagent", fetch: "Fetched", WebFetch: "Fetched", Skill: "Used skill", WebSearch: "Searched the web" } as Record<string, string>)[n] ?? n;
 }
 
 /** Each call with what it called: the tool blocks from its start to the next call's (or the end). */

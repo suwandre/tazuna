@@ -102,6 +102,10 @@ to 40% of the window, then scrolls; its card's border shows the focus.
 0.1.52: what is still going on moves, as in the terminal: a running step spins and its time ticks between the core's
 views (a long command's time stood still), live thinking pulses and its words shimmer, and under the reply a spinner,
 what it is doing with counting dots and how long it has run. Step times no longer wrap. Reduced motion stops all of it.
+0.1.53: an opened step reads as words, not JSON: a read is its file and lines, other calls' inputs labelled lines; a
+skill's, subagent's or page's answer is drawn as markdown, its JSON as labelled lines (a skill's findings came as raw
+```json); commands' and files' output stays as it is. A failed step shows a cross, not a red check; a skill's name is
+on its line.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
