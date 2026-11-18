@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.177 (2026-11-19): a chat's follow-up stays a chat
+
+- After the router answers a message as a chat, a short follow-up ("which exact model?") is a chat again, with that
+  question and answer as its context. Until now it skipped the router as a "short follow-up" and went to the agent: on
+  the own loop that is the agent's system prompt and tools, 11k input tokens a call on SubRouter, for a one-line answer.
+  A chat answer also knew nothing of the one before.
+- The router's check is told when the last answer was a chat, and its prompt counts a follow-up to a chat answer as
+  GENERAL unless it turns to the project. Its one-word verdict is read leniently ("**General.**" is GENERAL; a strict
+  prefix read it as CODE).
+- Not benchmarked: it changes which path a general question takes, not the agent's work on a task.
+
 ## 0.1.176 (2026-11-18): /usage in sections
 
 - The /usage panel reads in parts: Claude plan, providers' credits and OmniRoute accounts each under a heading with a line

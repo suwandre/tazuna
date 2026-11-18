@@ -507,7 +507,7 @@ fn main() -> Result<()> {
                         (Some(u), Some(k), Some(m)) => RouteCtx { model: m.into(), effort: "high".into(), provider: Some((u.into(), k.into())), price: None },
                         _ => RouteCtx { model: String::new(), effort: String::new(), provider: None, price: None },
                     };
-                    Some(route_general(&c, v["last"].as_str().unwrap_or_default(), text))
+                    Some(route_general(&c, v["last"].as_str().unwrap_or_default(), text, v["chat"] == true))
                 }
             };
             println!("{}", json!({"want": v["want"], "src": v["src"], "signals": signals, "general": general}));
@@ -767,17 +767,35 @@ const GALLERY: &str = "https://raw.githubusercontent.com/suwandre/tazuna/main/ga
 /// The router's check for a message with no code signals (route::code_signals). 0 of 45 coding messages and follow-ups
 /// went to chat with it, 22 of 24 general questions did (bench/suite/route-messages.jsonl, DeepSeek, 2026-11-15).
 const ROUTE_SYSTEM: &str = "You route messages in a coding assistant that works in the user's software project. Reply with one word. CODE: the \
-message is about the project, its code, files, tools or errors, or it continues the conversation's work (a follow-up, a correction, a yes or \
-no). GENERAL: a self-contained question or request unrelated to the project (general knowledge, writing, math, advice, everyday life). If unsure, CODE.";
+message is about the project, its code, files, tools or errors, or it continues work on the project (a follow-up, a correction, a yes or no). \
+GENERAL: a self-contained question or request unrelated to the project (general knowledge, writing, math, advice, everyday life), or a \
+follow-up to a general chat answer (the last assistant message marked kind=\"chat\") that does not turn to the project. If unsure, CODE.";
 
-/// True when the model check calls the message GENERAL; any failure keeps it on the agent.
-fn route_general(c: &RouteCtx, last: &str, msg: &str) -> bool {
+/// The last answer, when the router answered it as a chat: its question and answer. A follow-up then stays a chat and
+/// carries them; until 0.1.177 "which exact model?" after a chat answer went to the agent (11k tokens a call on
+/// SubRouter, 2026-11-19), and a chat answer knew nothing of the one before.
+#[derive(Clone, Default)]
+struct ChatLast {
+    q: String,
+    a: String,
+}
+
+/// True when the model check calls the message GENERAL; any failure keeps it on the agent. `chat`: the last answer was a
+/// chat answer (a follow-up to it is GENERAL).
+fn route_general(c: &RouteCtx, last: &str, msg: &str, chat: bool) -> bool {
     let last: String = last.chars().take(600).collect();
     // the instruction in the user turn too, and the message in tags: some providers' models answered the message itself
     // ("Every evening, Elias climbed…") with the instruction only in the system prompt
-    let user = format!("Classify the new message below; do not answer it. Reply with exactly one word: CODE or GENERAL.\n\n<last_assistant_message>{}</last_assistant_message>\n\n<new_message>{msg}</new_message>",
-        if last.is_empty() { "(none: this is the first message)" } else { &last });
-    quick_answer(c, ROUTE_SYSTEM, &user, 5).is_some_and(|a| a.trim().to_uppercase().starts_with("GEN"))
+    let user = format!("Classify the new message below; do not answer it. Reply with exactly one word: CODE or GENERAL.\n\n<last_assistant_message kind=\"{}\">{}</last_assistant_message>\n\n<new_message>{msg}</new_message>",
+        if chat { "chat" } else { "agent" }, if last.is_empty() { "(none: this is the first message)" } else { &last });
+    quick_answer(c, ROUTE_SYSTEM, &user, 5).is_some_and(|a| says_general(&a))
+}
+
+/// The router's one word, read leniently: "**GENERAL**", "General." and "GENERAL" are GENERAL (a strict prefix read
+/// a formatted answer as CODE and sent the message to the agent).
+fn says_general(answer: &str) -> bool {
+    let a = answer.to_uppercase();
+    a.contains("GENERAL") && !a.contains("CODE")
 }
 
 /// One short answer from the session's model, for the router and the reviewer: the own loop asks its own model (no
@@ -899,7 +917,7 @@ fn review_done(live: &mut live::Live, s: &mut Session, e: &serde_json::Value) {
 
 /// A general question asked inside a project, answered as the chat profile would (one-line prompt, no tools) in a one-off
 /// process beside the agent's, whose conversation it leaves alone. Its events go to the screen through `tx`.
-fn chat_turn(c: RouteCtx, text: String, tx: std::sync::mpsc::Sender<serde_json::Value>) {
+fn chat_turn(c: RouteCtx, text: String, prior: Option<ChatLast>, tx: std::sync::mpsc::Sender<serde_json::Value>) {
     use std::io::{BufRead, Write};
     std::thread::spawn(move || {
         let date = platform::shell("date +%Y-%m-%d", &[]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
@@ -933,7 +951,7 @@ fn chat_turn(c: RouteCtx, text: String, tx: std::sync::mpsc::Sender<serde_json::
             return;
         };
         if let Some(mut stdin) = child.stdin.take() {
-            let _ = writeln!(stdin, "{}", json!({"type": "user", "message": {"role": "user", "content": text}}));
+            let _ = writeln!(stdin, "{}", json!({"type": "user", "message": {"role": "user", "content": with_prior(&text, prior.as_ref())}}));
         }
         if let Some(out) = child.stdout.take() {
             for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
@@ -945,6 +963,15 @@ fn chat_turn(c: RouteCtx, text: String, tx: std::sync::mpsc::Sender<serde_json::
         }
         let _ = child.wait();
     });
+}
+
+/// A chat follow-up with the exchange before it (a chat answer is a one-off call that remembers nothing).
+fn with_prior(text: &str, prior: Option<&ChatLast>) -> String {
+    match prior {
+        Some(p) => format!("Earlier in this chat you were asked: {}\nYou answered: {}\n\nThe new message: {text}",
+            p.q.chars().take(1500).collect::<String>(), p.a.chars().take(3000).collect::<String>()),
+        None => text.to_string(),
+    }
 }
 
 /// Under `trusted` (the default, or `/data trusted` mid-session), a provider in use that is not on the trusted list: the
@@ -1191,6 +1218,7 @@ fn app_server(a: &Args) -> Result<()> {
     let mut undo_note: Option<String> = None;
     emit(&s, &untrusted, &live, &done_turns);
     let mut last_reply = String::new();
+    let (mut chat_last, mut chat_q): (Option<ChatLast>, String) = (None, String::new());
     // the router: on as in the terminal; the settings page turns it off (the terminal's /route off)
     let mut route_on = !a.no_route;
     // creator mode: writes and edits inside this folder (a panel's or plugin's own, under the desktop app's folder) are
@@ -1211,17 +1239,24 @@ fn app_server(a: &Args) -> Result<()> {
                                 Some(rest) => (rest.trim(), true),
                                 None => (text, cmd["agent"] == true),
                             };
+                            let open = route_on && !forced && live.idle() && live.profile != route::Profile::Chat && route::code_signals(text, &cwd).is_empty();
+                            let follow = route::short_followup(text, !s.last_prompt.is_empty());
                             if let Some(why) = untrusted_in_use(&live) {
                                 info(&mut s, why);
-                            } else if route_on && !forced && live.idle() && live.profile != route::Profile::Chat && route::code_signals(text, &cwd).is_empty()
-                                && !route::short_followup(text, !s.last_prompt.is_empty())
-                            {
+                            } else if open && follow && chat_last.is_some() {
+                                // a short follow-up to a chat answer: a chat again, with the exchange before it
+                                s.apply(&json!({"type": "harness_user", "text": text}), at);
+                                live.note(json!({"type": "harness_user", "text": text}));
+                                s.apply(&json!({"type": "harness_info", "text": "answered as a chat: a follow-up to the last chat answer"}), at);
+                                chat_q = text.to_string();
+                                chat_turn(RouteCtx::of(&live), text.to_string(), chat_last.clone(), tx.clone());
+                            } else if open && !follow {
                                 // no sign of the code: the router's check decides, off this thread (the terminal's flow); the
                                 // message shows at once
                                 s.apply(&json!({"type": "harness_user", "text": text}), at);
-                                let (c, tx, last, msg) = (RouteCtx::of(&live), tx.clone(), last_reply.clone(), text.to_string());
+                                let (c, tx, last, msg, chat) = (RouteCtx::of(&live), tx.clone(), last_reply.clone(), text.to_string(), chat_last.is_some());
                                 std::thread::spawn(move || {
-                                    let general = route_general(&c, &last, &msg);
+                                    let general = route_general(&c, &last, &msg, chat);
                                     let _ = tx.send(json!({"op": "routed", "general": general, "text": msg}));
                                 });
                             } else {
@@ -1395,7 +1430,8 @@ fn app_server(a: &Args) -> Result<()> {
                                 // shown since the send: recorded now
                                 live.note(json!({"type": "harness_user", "text": text}));
                                 s.apply(&json!({"type": "harness_info", "text": "answered as a chat: not about this project"}), at);
-                                chat_turn(RouteCtx::of(&live), text, tx.clone());
+                                chat_q = text.clone();
+                                chat_turn(RouteCtx::of(&live), text, chat_last.clone(), tx.clone());
                             } else {
                                 agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note, false);
                             }
@@ -1467,6 +1503,7 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("tazuna_chat_event") => {
                             if cmd["e"]["type"] == "result" && let Some(r) = cmd["e"]["result"].as_str() {
                                 last_reply = r.to_string();
+                                chat_last = Some(ChatLast { q: std::mem::take(&mut chat_q), a: r.to_string() });
                             }
                             let (t, ev) = live.note(cmd["e"].clone());
                             s.apply(&ev, t);
@@ -1847,6 +1884,7 @@ fn app_server(a: &Args) -> Result<()> {
         for (t, e) in live.poll() {
             if e["type"] == "result" && let Some(r) = e["result"].as_str() {
                 last_reply = r.to_string();
+                chat_last = None; // the agent answered: a follow-up continues its work
             }
             if e["type"] == "result" && let Some(t) = turn.as_mut() {
                 t.1 = true;
@@ -2740,6 +2778,7 @@ fn run_live(
     // the per-message router (`/route on|off`, `--no-route`) and the last reply it shows the model check
     let mut route_on = !a.no_route;
     let mut last_reply = String::new();
+    let (mut chat_last, mut chat_q): (Option<ChatLast>, String) = (None, String::new());
     fetch_balance(&status_tx);
     // no reading in any session yet (a new install, or a machine that only ran other providers) showed no plan line at
     // all (the Windows PC, 2026-11-08): claude's own /usage page reads it (no model call; a Haiku call until 0.1.174), and
@@ -2989,6 +3028,7 @@ fn run_live(
             s.apply(&e, t);
             if e["type"] == "result" && let Some(r) = e["result"].as_str() {
                 last_reply = r.to_string();
+                chat_last = None; // the agent answered: a follow-up continues its work
             }
             if e["type"] == "result" && e["tazuna_paid"] == true {
                 fetch_balance(&status_tx); // a run on SubRouter spent some of it
@@ -3031,7 +3071,8 @@ fn run_live(
                         let at = live.elapsed_ms();
                         live.note(json!({"type": "harness_user", "text": text}));
                         s.apply(&json!({"type": "harness_info", "text": "answered as a chat: not about this project (/agent TEXT sends it to the agent, /route off stops this)"}), at);
-                        chat_turn(RouteCtx::of(live), text, status_tx.clone());
+                        chat_q = text.clone();
+                        chat_turn(RouteCtx::of(live), text, chat_last.clone(), status_tx.clone());
                     } else if let Err(err) = live.send_typed(&text) {
                         s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms());
                     }
@@ -3045,9 +3086,10 @@ fn run_live(
                     }
                 }
                 Some("tazuna_chat_event") => {
-                    // a chat answer is the last reply too, for the router's next check
+                    // a chat answer is the last reply too, for the router's next check, and a follow-up's context
                     if e["e"]["type"] == "result" && let Some(r) = e["e"]["result"].as_str() {
                         last_reply = r.to_string();
+                        chat_last = Some(ChatLast { q: std::mem::take(&mut chat_q), a: r.to_string() });
                     }
                     let (t, ev) = live.note(e["e"].clone());
                     s.apply(&ev, t);
@@ -4258,15 +4300,27 @@ fn run_live(
                 };
                 // a message with no sign of the code, while the agent is idle, may be a general question: the model check
                 // decides off the screen's thread, and its verdict comes back as tazuna_route (2026-11-15)
-                if route_on && !forced && typed && live.idle() && live.profile != route::Profile::Chat
-                    && route::code_signals(&text, &std::env::current_dir()?).is_empty() && !route::short_followup(&text, !s.last_prompt.is_empty())
-                {
+                let open = route_on && !forced && typed && live.idle() && live.profile != route::Profile::Chat
+                    && route::code_signals(&text, &std::env::current_dir()?).is_empty();
+                let follow = route::short_followup(&text, !s.last_prompt.is_empty());
+                if open && follow && let Some(prior) = chat_last.clone() {
+                    // a short follow-up to a chat answer: a chat again, with the exchange before it
+                    let at = live.elapsed_ms();
+                    s.apply(&json!({"type": "harness_user", "text": text}), at);
+                    live.note(json!({"type": "harness_user", "text": text}));
+                    s.apply(&json!({"type": "harness_info", "text": "answered as a chat: a follow-up to the last chat answer (/agent TEXT sends it to the agent)"}), at);
+                    chat_q = text.clone();
+                    chat_turn(RouteCtx::of(live), text, Some(prior), status_tx.clone());
+                    v.scroll = 0;
+                    continue;
+                }
+                if open && !follow {
                     // the message shows at once, as thinking; the check decides where it goes (until 0.1.129 it appeared only
                     // after the check, 1-5 s later). The verdict's own message event is then not shown again.
                     s.apply(&json!({"type": "harness_user", "text": text}), live.elapsed_ms());
-                    let (c, tx, last, msg) = (RouteCtx::of(live), status_tx.clone(), last_reply.clone(), text.clone());
+                    let (c, tx, last, msg, chat) = (RouteCtx::of(live), status_tx.clone(), last_reply.clone(), text.clone(), chat_last.is_some());
                     std::thread::spawn(move || {
-                        let general = route_general(&c, &last, &msg);
+                        let general = route_general(&c, &last, &msg, chat);
                         let _ = tx.send(json!({"type": "tazuna_route", "general": general, "text": msg}));
                     });
                     v.scroll = 0;
@@ -4568,6 +4622,17 @@ fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_router_reads_its_word_leniently_and_a_chat_follow_up_carries_the_exchange() {
+        use super::{ChatLast, says_general, with_prior};
+        assert!(says_general("GENERAL") && says_general("**General.**") && says_general("general"));
+        assert!(!says_general("CODE") && !says_general("**CODE**") && !says_general("CODE, not GENERAL") && !says_general(""));
+        let prior = ChatLast { q: "what is your model name".into(), a: "I'm ChatGPT.".into() };
+        let m = with_prior("which exact model?", Some(&prior));
+        assert!(m.contains("what is your model name") && m.contains("I'm ChatGPT.") && m.ends_with("The new message: which exact model?"));
+        assert_eq!(with_prior("hi", None), "hi");
+    }
+
     #[test]
     fn review_mode_runs_as_accept_edits_and_reads_the_reviewers_verdict() {
         use super::{Verdict, verdict};
