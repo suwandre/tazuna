@@ -271,8 +271,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
                     className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-60">{checking ? "Checking…" : "Check for updates"}</button>}
             </div>
             {update.version && !update.installing && <div className="text-[12px] text-muted">tazuna desktop {update.version} is out. Replies running now stop when it restarts.</div>}
-            {update.upToDate && <div role="status" className="text-[12px] text-ok">Up to date.</div>}
-            {update.error && <div role="alert" className="text-[12px] text-bad">{update.error}</div>}
+
           </>}
         </div>
       </div>

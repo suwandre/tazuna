@@ -3,6 +3,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { useSyncExternalStore } from "react";
 import { inTauri } from "./tazuna";
+import { toast } from "./toast";
 
 export type UpdateState = { version?: string; notes?: string; installing?: boolean; error?: string; upToDate?: boolean };
 let state: UpdateState = {};
@@ -17,8 +18,11 @@ export async function checkUpdate(told = false) {
     const u = await invoke<{ version: string; notes?: string } | null>("update_check");
     if (u) set({ version: u.version, notes: u.notes });
     else if (told) { set({ upToDate: true }); setTimeout(() => state.upToDate && set({}), 4000); }
+    // a check the user asked for says how it ended, as a snackbar (until 0.1.59, a line of text in one place)
+    if (told) toast(u ? `tazuna desktop ${u.version} is out` : "tazuna desktop is up to date", u
+      ? { kind: "info", action: { label: "Install and restart", run: () => installUpdate() } } : { kind: "ok" });
   } catch (e) {
-    if (told) set({ error: `Could not check for updates: ${e}` });
+    if (told) { set({ error: `Could not check for updates: ${e}` }); toast(`Could not check for updates: ${e}`, { kind: "error" }); }
     else console.error(`update check: ${e}`);
   }
 }
@@ -26,7 +30,8 @@ export async function checkUpdate(told = false) {
 /** Downloads, checks the signature, installs and restarts (the conversations' cores stop; they stay resumable). */
 export async function installUpdate() {
   set({ ...state, installing: true, error: undefined });
-  try { await invoke("update_install"); } catch (e) { set({ ...state, installing: false, error: `The update failed: ${e}` }); }
+  toast("Installing the update… tazuna restarts by itself", { kind: "info" });
+  try { await invoke("update_install"); } catch (e) { set({ ...state, installing: false, error: `The update failed: ${e}` }); toast(`The update failed: ${e}`, { kind: "error" }); }
 }
 
 export function watchUpdates() {

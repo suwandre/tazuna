@@ -119,6 +119,8 @@ and unfolds its conversations (it only ever opened: open meant "the active proje
 rows act as buttons for the keyboard (Tab, Enter) and the pointer.
 0.1.58: Settings ends with Updates: the app's version and its core's, Check for updates (checking, up to date, or the
 new version with Install and restart).
+0.1.59: snackbars (lib/toast.ts): a check for updates, from Settings, Cmd-K or the menu, ends in one at the bottom: up to
+date, the new version with Install and restart, or why it could not check; installing says so too.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

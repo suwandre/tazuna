@@ -11,6 +11,7 @@ import { SideChat } from "./components/SideChat";
 import { UsageView } from "./components/UsageView";
 import { PrView } from "./components/PrView";
 import { BestOfStart, LanesView, type Lane, type Lanes } from "./components/BestOf";
+import { Toaster } from "./components/Toaster";
 import { SETUP, Setup } from "./components/Setup";
 import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
@@ -638,6 +639,7 @@ export default function App() {
       {bestOf && <BestOfStart choices={models?.choices ?? []} onStart={(task, ms) => { setBestOf(false); startLanes(task, ms); }} onClose={() => setBestOf(false)} />}
       {showLanes && lanes && <LanesView lanes={lanes} views={Object.fromEntries(threads.map((t) => [t.tid, t.view]))}
         onOpen={(tid) => { setShowLanes(false); show(tid); }} onKeep={keepLane} onClose={() => setShowLanes(false)} />}
+      <Toaster />
       {showPr && inTauri && <PrView pr={pr ?? null} worktree={inWorktree} onClose={() => setShowPr(false)} onRefresh={() => core.prIn(active).catch(() => {})}
         onSend={(text) => { setShowPr(false); core.send(text, true).catch(() => {}); }} onRemoveWorktree={() => { setShowPr(false); setWt({ remove: { path: folder! } }); }} />}
       {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} />}
