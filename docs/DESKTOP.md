@@ -141,6 +141,10 @@ needs (Needs you, Working, Open), then Recent in two-line rows with project and 
 0.1.65: an update's restart no longer waits on a busy conversation: each core gets 3 seconds to quit, all at once, then is
 ended (a core in a model call or a test run read the quit only when it finished, so "Installing… tazuna restarts by
 itself" could stay for minutes). Quitting the app waits the same way.
+0.1.66: an update shows its download at the bottom until the restart ("Downloading 0.1.66 · 3.0 of 6.0 MB", a bar, then
+"Installing… tazuna restarts by itself"), with a 5-minute limit: GitHub's release storage served the 6 MB at 80-200 KB/s,
+and "Installing…" alone read as stuck for over a minute. The sidebar's rows keep their height in a long list (it
+scrolls; 0.1.64 squeezed them until they overlapped).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

@@ -2,7 +2,7 @@ import { ExternalLink, RefreshCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { useDialog } from "../lib/dialog";
-import { checkUpdate, installUpdate, useUpdate } from "../lib/update";
+import { checkUpdate, installUpdate, progressText, useUpdate } from "../lib/update";
 import { safeMode } from "../lib/plugins";
 import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Settings } from "../lib/tazuna";
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
@@ -243,7 +243,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
               <Row title={<span className="flex items-center gap-2">Version <span className="rounded border border-line bg-field px-1.5 py-px font-mono text-[11.5px] font-normal text-ink-2">{appVersion || "?"}</span></span>}
                 note={<>tazuna desktop, with its own core (<span className="font-mono">{st.version}</span>), separate from the terminal's. It looks for updates every hour.</>}>
                 {update.version
-                  ? update.installing ? <span role="status" className="text-[12px] text-muted">Installing… tazuna restarts by itself.</span>
+                  ? update.installing ? <span role="status" className="text-[12px] text-muted">{progressText(update)}</span>
                     : <button onClick={() => installUpdate()} title="Replies running now stop; conversations stay resumable"
                         className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent">Install {update.version} and restart</button>
                   // aria-disabled, not disabled, while checking: a disabled button drops focus, which then had nowhere to

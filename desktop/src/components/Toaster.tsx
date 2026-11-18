@@ -2,6 +2,7 @@ import { CircleAlert, CircleCheck, Info, X } from "lucide-react";
 import { useEffect } from "react";
 import { useDialog } from "../lib/dialog";
 import { dismiss, useToasts, type Toast } from "../lib/toast";
+import { progressText, useUpdate } from "../lib/update";
 
 const icon = (t: Toast, size: number) => t.kind === "error" ? <CircleAlert size={size} strokeWidth={1.75} className="flex-none text-bad" aria-hidden="true" />
   : t.kind === "ok" ? <CircleCheck size={size} strokeWidth={1.75} className="flex-none text-ok" aria-hidden="true" />
@@ -11,8 +12,18 @@ const icon = (t: Toast, size: number) => t.kind === "error" ? <CircleAlert size=
 export function Toaster() {
   const toasts = useToasts();
   const bar = toasts.filter((t) => !t.modal), modal = toasts.filter((t) => t.modal).at(-1);
+  const update = useUpdate();
   return <>
-    {bar.length > 0 && <div className="pointer-events-none fixed inset-x-0 bottom-28 z-50 flex flex-col items-center gap-2">
+    {(bar.length > 0 || update.installing) && <div className="pointer-events-none fixed inset-x-0 bottom-28 z-50 flex flex-col items-center gap-2">
+      {/* an update on its way: its progress until the restart (no close: it cannot be stopped halfway) */}
+      {update.installing && (
+        <div role="status" className="tz-enter pointer-events-auto w-[360px] rounded-lg border border-line-strong bg-card px-3 py-2.5 text-[13px] text-ink shadow-composer">
+          <div className="flex items-center gap-2.5"><Info size={16} strokeWidth={1.75} className="flex-none text-accent" aria-hidden="true" />
+            <span className="min-w-0 flex-1 truncate">{progressText(update)}</span></div>
+          <div className="mt-2 h-1 overflow-hidden rounded bg-line"><i className={`block h-full rounded bg-accent transition-[width] duration-200 ${update.stage === "installing" || !update.total ? "animate-pulse" : ""}`}
+            style={{ width: `${update.stage === "installing" ? 100 : update.total ? Math.min(100, (100 * (update.got ?? 0)) / update.total) : 30}%` }} /></div>
+        </div>
+      )}
       {bar.map((t) => (
         <div key={t.id} role={t.kind === "error" ? "alert" : "status"}
           className="tz-enter pointer-events-auto flex max-w-[520px] items-center gap-2.5 rounded-lg border border-line-strong bg-card py-2 pl-3 pr-2 text-[13px] text-ink shadow-composer">

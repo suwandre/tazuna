@@ -494,8 +494,19 @@ async fn update_check(app: AppHandle) -> Result<Option<serde_json::Value>, Strin
 #[tauri::command]
 async fn update_install(app: AppHandle, core: State<'_, Core>) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
-    let u = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?.ok_or("no update to install")?;
-    let bytes = u.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    // the download's progress for the window ("update-progress"), and an end to it: GitHub's release storage served the
+    // 6 MB at 80-200 KB/s (2026-11-18), and the window said only "Installing…" for over a minute
+    let updater = app.updater_builder().timeout(std::time::Duration::from_secs(300)).build().map_err(|e| e.to_string())?;
+    let u = updater.check().await.map_err(|e| e.to_string())?.ok_or("no update to install")?;
+    let (window, mut got, mut said) = (app.clone(), 0u64, 0u64);
+    let bytes = u.download(move |n, total| {
+        got += n as u64;
+        if got - said >= 64 * 1024 || total == Some(got) {
+            said = got;
+            let _ = window.emit("update-progress", serde_json::json!({"got": got, "total": total}));
+        }
+    }, || {}).await.map_err(|e| e.to_string())?;
+    let _ = app.emit("update-progress", serde_json::json!({"installing": true}));
     stop_all(&core);
     eprintln!("tazuna desktop: installing {}", u.version);
     u.install(bytes).map_err(|e| e.to_string())?;

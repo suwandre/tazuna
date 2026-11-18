@@ -139,7 +139,9 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
       </button>
       <SidebarCtx.Provider value={{ onNewChat, onOpenFolder, onSettings, planLeft }}>
       <Slot name="sidebar.top" props={{}} />
-      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
+      {/* rows keep their height and the list scrolls (*:shrink-0): a row's truncate hides its overflow, so in a full list the
+          flex column squeezed every row to fit and they overlapped (desktop 0.1.64, with many saved conversations) */}
+      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto *:shrink-0">
       {/* the conversations open now by what they need: an answer from you, time to work, nothing (when more than one is open);
           then every saved one by when it last ran, its project and age under its name; then the projects (2026-11-18) */}
       {([["Needs you", needs], ["Working", working], ["Open", idle]] as const).map(([head, list]) => list.length > 0 && (
