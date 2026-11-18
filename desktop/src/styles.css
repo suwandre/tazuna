@@ -9,7 +9,7 @@
 
 /* DESIGN.md tokens: light by default, dark under .dark (follows the system unless the user picks) */
 :root {
-  --canvas: #f6f4ef; --main: #fbfaf7; --sidebar: #f3f0e9; --card: #fffefb; --field: #efebe3; --hover: #ebe7dd; --selected: #e6e1f2;
+  --canvas: #f6f4ef; --main: #fbfaf7; --sidebar: #f3f0e9; --card: #fffefb; --field: #efebe3; --hover: #e7e3db; --selected: #e6e1f2;
   --ink: #23221e; --ink-2: #3f3c35; --muted: #5b574f; --faint: #69655d;
   --line: #e3ded3; --line-soft: #ece8df; --line-strong: #d8d2c5;
   --accent: #3d4aa8; --accent-ink: #2f3a8f; --accent-soft: #e7e8f6; --on-accent: #ffffff;
@@ -19,7 +19,7 @@
   color-scheme: light;
 }
 .dark {
-  --canvas: #171613; --main: #1b1a17; --sidebar: #151411; --card: #211f1b; --field: #2a2823; --hover: #2a2823; --selected: #2b2c45;
+  --canvas: #171613; --main: #1b1a17; --sidebar: #151411; --card: #211f1b; --field: #2a2823; --hover: #302e29; --selected: #2b2c45;
   --ink: #ece8df; --ink-2: #d2cdc2; --muted: #afaa9e; --faint: #9a958d;
   --line: #2f2c27; --line-soft: #25231f; --line-strong: #3a3731;
   --accent: #8f9bf0; --accent-ink: #aab3f5; --accent-soft: #272a44; --on-accent: #14152a;
@@ -54,6 +54,19 @@ input, textarea, [contenteditable] { user-select: text; cursor: text; }
 /* where the keyboard is: one ring everywhere (a panel focused on opening shows none) */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 [role=dialog]:focus-visible { outline: none; }
+/* every button answers the pointer: a hand, a hover background, a press (in the base layer, so a button's own colours,
+   given as utilities, still win). Until 0.1.54 the hover colour was the pills' own background in dark mode, the cursor
+   stayed an arrow, and half the buttons had no hover style at all. */
+@layer base {
+  button:not(:disabled), [role=button], a[href] { cursor: pointer; }
+  button { transition: background-color .12s ease-out, color .12s ease-out, border-color .12s ease-out, filter .12s ease-out; }
+  button:not(:disabled):hover { background-color: var(--hover); }
+  button:not(:disabled):active { filter: brightness(.93); }
+  .dark button:not(:disabled):active { filter: brightness(1.18); }
+}
+/* the accent buttons (Send, Enable, Start) darken on hover */
+button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
+.dark button.bg-accent:not(:disabled):hover { filter: brightness(1.1); background-color: var(--accent); }
 /* what is still going on moves (a step running, the reply thinking): a light sweep over the words, dots that count */
 @keyframes tz-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .tz-live { background: linear-gradient(90deg, var(--muted) 35%, var(--ink) 50%, var(--muted) 65%) 0 0 / 200% 100%;

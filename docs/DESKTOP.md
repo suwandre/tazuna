@@ -106,6 +106,9 @@ what it is doing with counting dots and how long it has run. Step times no longe
 skill's, subagent's or page's answer is drawn as markdown, its JSON as labelled lines (a skill's findings came as raw
 ```json); commands' and files' output stays as it is. A failed step shows a cross, not a red check; a skill's name is
 on its line.
+0.1.54: every button answers the pointer: a hand, a hover background, a press (the hover colour was the pills' own
+background in dark mode, the cursor stayed an arrow, half the buttons had no hover style); the accent buttons darken.
+Hover colours keep every text level at 4.5:1 or more (light #e7e3db, dark #302e29).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
