@@ -23,6 +23,7 @@ import { Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rai
 import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
+import { Start, type StartItem } from "./components/Start";
 import * as demo from "./lib/demo";
 import { messages as viewMessages, queued, usage as viewUsage } from "./lib/fromView";
 import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Diff, type ModelChoice, type Models, type SessionRow, type View } from "./lib/tazuna";
@@ -539,6 +540,47 @@ export default function App() {
       { id: "setup", group: "Window", label: "Set up tazuna", hint: "what is set, what is left", keywords: "welcome first run onboarding", run: () => setTimeout(() => setOverlay("setup")) });
     return a;
   };
+  // a new conversation before its first message: the start screen, with the composer in its middle (design review 2,
+  // prototype mockups/v3.html)
+  const fresh = inTauri && !!view && !busy && !view.asking && !editing && !view.blocks.some((b) => b.kind === "prompt");
+  const startRecent: StartItem[] = Object.entries(sessions).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)",
+    place: dir === home ? "chat" : base(dir), dir: dir === home ? null : dir, at: r.last_at }))).sort((a, b) => b.at - a.at).slice(0, 3);
+  const where = { label: folder ? base(folder) : "Chat", folder: !!folder, pickFolder: pick,
+    choices: [{ label: "Chat", hint: "no folder: a general question", path: null as string | null }, ...projects.slice(0, 6).map((p) => ({ label: base(p), hint: p, path: p as string | null }))],
+    pick: (path: string | null) => { if (path !== folder) open(path); } };
+  const composer = (
+        <Composer key={active} where={fresh ? where : undefined} draftKey={draftKey} session={session} threadCost={usage.threadCost} usage={usage} busy={busy}
+            onSend={(text) => {
+              if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk(text); return; }
+              sendNow(text);
+            }}
+            below={line && (line.paid || line.low) && (
+              <div className={`flex items-center gap-2 text-[11.5px] ${line.low ? "text-warn" : "text-faint"}`}>
+                <span className="truncate" title="Where your next message goes and what it costs">→ {line.text}</span>
+                {line.low && <span>{line.low}</span>}
+                {line.offer && <button onClick={() => core.setModel(line.offer!)} className="font-medium text-accent-ink">Switch to {line.offer.label}</button>}
+              </div>
+            )}
+            draft={draft}
+            above={paidAsk != null ? (
+              <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
+                <span className="flex-1">This goes to <span className="text-ink">{choice?.label}</span> on {choice?.provider}, a paid API{line?.est != null ? `: about ${usd(line.est)} a message` : ""}. Paid spend stops at your cap per 24 hours (Settings).</span>
+                <button onClick={() => { localStorage.setItem(paidKey, "1"); const t = paidAsk; setPaidAsk(null); sendNow(t); }} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Send</button>
+                <button onClick={() => { setDraft({ text: paidAsk, n: Date.now() }); setPaidAsk(null); }} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">Cancel</button>
+              </div>
+            ) : editing && (
+              <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
+                <span className="flex-1">Editing an earlier message: sending it goes back to before it, and the messages after it leave the conversation.
+                  {editing.files > 0 && <label className="mt-1 flex items-center gap-2 text-ink"><input type="checkbox" checked={editing.keep} onChange={(e) => setEditing({ ...editing, keep: e.target.checked })} />
+                    Also put back the {editing.files} file{editing.files === 1 ? "" : "s"} tazuna changed since</label>}</span>
+                <button onClick={() => { setEditing(null); setDraft({ text: "", n: Date.now() }); }} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">Cancel</button>
+              </div>
+            )} onStop={() => core.interrupt()}
+            models={models} onModels={inTauri ? () => core.models() : undefined}
+            onPickModel={inTauri ? (c) => core.setModel(c) : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
+            onMode={inTauri ? (m) => core.setMode(m) : undefined}
+            onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined} />
+  );
   const data = widgetData(view);
   const title = view ? (view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] ?? "New chat" : "Retry test fails on CI";
   return (
@@ -573,12 +615,14 @@ export default function App() {
           </div>
         </header>
         <div key={`view:${active}`} className="tz-enter flex min-h-0 flex-1 flex-col">
-        <Transcript key={`${active}:${view?.session_id ?? ""}`} messages={messages} editFrom={editing?.cp}
+        {fresh ? <Start place={folder ? base(folder) : null} composer={composer} recent={startRecent} onResume={(r) => open(r.dir, r.id)} onFolder={pick}
+            projects={projects.filter((p) => p !== folder).slice(0, 3).map((p) => ({ path: p, name: base(p), count: sessions[p]?.length ?? 0 }))} onProject={(p) => open(p)} />
+        : <Transcript key={`${active}:${view?.session_id ?? ""}`} messages={messages} editFrom={editing?.cp}
           onEdit={inTauri ? (e, text) => {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
           } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} onSendToAgent={(text) => core.send(text, true)}
-          onDiff={(turn, path) => core.diff(turn, path)} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />
+          onDiff={(turn, path) => core.diff(turn, path)} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />}
         </div>
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {reviewing && <ReviewView start={reviewing} turns={(view?.changes ?? []).filter((c) => !c.undone).map((c) => c.turn)}
@@ -638,37 +682,7 @@ export default function App() {
         )}
         {codeView && <DiffView diff={{ turn: 0, path: `${codeView.title} · plugin.js`, text: codeView.text }} plain onClose={() => setCodeView(null)} />}
         {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
-        <Composer key={active} draftKey={draftKey} session={session} threadCost={usage.threadCost} usage={usage} busy={busy}
-          onSend={(text) => {
-            if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk(text); return; }
-            sendNow(text);
-          }}
-          below={line && (line.paid || line.low) && (
-            <div className={`flex items-center gap-2 text-[11.5px] ${line.low ? "text-warn" : "text-faint"}`}>
-              <span className="truncate" title="Where your next message goes and what it costs">→ {line.text}</span>
-              {line.low && <span>{line.low}</span>}
-              {line.offer && <button onClick={() => core.setModel(line.offer!)} className="font-medium text-accent-ink">Switch to {line.offer.label}</button>}
-            </div>
-          )}
-          draft={draft}
-          above={paidAsk != null ? (
-            <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
-              <span className="flex-1">This goes to <span className="text-ink">{choice?.label}</span> on {choice?.provider}, a paid API{line?.est != null ? `: about ${usd(line.est)} a message` : ""}. Paid spend stops at your cap per 24 hours (Settings).</span>
-              <button onClick={() => { localStorage.setItem(paidKey, "1"); const t = paidAsk; setPaidAsk(null); sendNow(t); }} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Send</button>
-              <button onClick={() => { setDraft({ text: paidAsk, n: Date.now() }); setPaidAsk(null); }} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">Cancel</button>
-            </div>
-          ) : editing && (
-            <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
-              <span className="flex-1">Editing an earlier message: sending it goes back to before it, and the messages after it leave the conversation.
-                {editing.files > 0 && <label className="mt-1 flex items-center gap-2 text-ink"><input type="checkbox" checked={editing.keep} onChange={(e) => setEditing({ ...editing, keep: e.target.checked })} />
-                  Also put back the {editing.files} file{editing.files === 1 ? "" : "s"} tazuna changed since</label>}</span>
-              <button onClick={() => { setEditing(null); setDraft({ text: "", n: Date.now() }); }} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">Cancel</button>
-            </div>
-          )} onStop={() => core.interrupt()}
-          models={models} onModels={inTauri ? () => core.models() : undefined}
-          onPickModel={inTauri ? (c) => core.setModel(c) : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
-          onMode={inTauri ? (m) => core.setMode(m) : undefined}
-          onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined} />
+        {!fresh && composer}
       </main>
       {side ? <SideChat key={side.tid} view={side.view} onClose={() => closeSide(active)} onStop={() => core.interruptIn(side.tid)}
           onSend={(text) => core.sendIn(side.tid, text).catch(() => {})} onAnswer={(allow, always) => core.opIn(side.tid, { op: "answer", allow, always })} />

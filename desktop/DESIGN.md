@@ -106,6 +106,12 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   the header's button. The composer's pills never wrap.
 - One live status per reply: its fold says "Working 12 s" (counted from when the reply began), or "Waiting for you" during
   an approval; the line under the transcript shows only before the first step.
+- A new conversation before its first message is the start screen (prototype `mockups/v3.html`): a serif question, the
+  composer in the middle with a "where it runs" pill (a chat or a project), "Pick up where you left off" (the last three
+  conversations) and "Start in a project", then the keys worth knowing. No $0.000 anywhere on it.
+- The usage page speaks Settings' language: sections (Right now, Spending, How your runs went), each a card of rows; every
+  account's windows as meters (amber from 75%), credits with "Open its page" where no API tells the balance; a zero is a
+  quiet line, not a big number; the daily bars stack the plan and paid parts.
 - The sidebar groups the conversations open now by what they need (Needs you, Working, Open), then Recent: every saved
   conversation by when it last ran, two lines each (its name; its project and age). Projects last, folded.
 - The transcript is a document, not two-sided bubbles: no speaker labels (your message is the field block), a reply's

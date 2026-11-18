@@ -1,4 +1,4 @@
-import { ArrowUp, Check, Gauge, Paperclip, Shield, Square, Zap } from "lucide-react";
+import { ArrowUp, Check, ChevronDown, FolderOpen, Gauge, MessageCircle, Paperclip, Plus, Shield, Square, Zap } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
 import { usd, type Session, type Usage } from "../lib/types";
@@ -8,7 +8,12 @@ import { EffortMenu, Menu, ModelPicker } from "./ModelPicker";
 
 /** What the controls under the message box get (the `composer.pills` spot's props): the session, the catalog and the
  * calls they make, and `attach` to put file paths into the box. */
+/** Where a new conversation runs, before its first message: a chat or a project's folder (the box's first pill). */
+export type Where = { label: string; folder: boolean; choices: { label: string; hint: string; path: string | null }[];
+  pick: (path: string | null) => void; pickFolder: () => void };
+
 export type ComposerBag = {
+  where?: Where;
   session: Session; busy?: boolean; models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void;
   onPickEffort?: (e: string) => void; onMode?: (mode: string) => void; onPickFiles?: () => Promise<string[]>; attach: (paths: string[]) => void;
 };
@@ -17,6 +22,8 @@ type Props = {
   session: Session; threadCost: number; busy?: boolean; onSend?: (text: string) => void; onStop?: () => void;
   /** the plan, context and cost for the ring beside the send button */
   usage?: Usage;
+  /** a new conversation: where it runs (a chat or a project), changed from the box */
+  where?: Where;
   /** the model catalog (null until asked for); onModels asks for it when the picker opens */
   models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void; onPickEffort?: (e: string) => void;
   onMode?: (mode: string) => void;
@@ -48,7 +55,7 @@ const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, usage, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey }: Props) {
+export function Composer({ session, usage, where, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   const box = useRef<HTMLTextAreaElement>(null);
   // the box grows with what is typed, up to 40% of the window, then scrolls (it was one line, and earlier lines went out
@@ -78,7 +85,7 @@ export function Composer({ session, usage, busy, onSend, onStop, models, onModel
     return () => { off.then((f) => f()); };
   }, [onDrop]);
   const nextMode = () => { const i = MODES.findIndex(([m]) => m === session.mode); onMode?.(MODES[(i + 1) % MODES.length][0]); };
-  const bag: ComposerBag = { session, busy, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, attach: (p) => { attach(p); } };
+  const bag: ComposerBag = { where, session, busy, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, attach: (p) => { attach(p); } };
   // a message sent during a reply waits behind it (the core queues it, as the terminal does)
   const send = () => { const t = text.trim(); if (!t) return; onSend?.(t); setText(""); };
   return (
@@ -149,6 +156,34 @@ function PlanRing({ u, last }: { u: Usage; last: number }) {
 }
 
 // tazuna's own controls under the message box, registered in the composer.pills spot (src/builtins.tsx)
+
+/** A new conversation's place: a chat, or one of the projects (its own conversation there), or a folder to open. */
+export function WherePill({ composer: c }: { composer: ComposerBag }) {
+  const [open, setOpen] = useState(false);
+  const w = c.where;
+  if (!w) return null;
+  return (
+    <span className="relative">
+      <button onClick={() => setOpen(!open)} title="Where it runs: a chat, or a project's folder"
+        className={`${pill} border-dashed border-line-strong bg-transparent`}>
+        {w.folder ? <FolderOpen size={14} strokeWidth={1.5} /> : <MessageCircle size={14} strokeWidth={1.5} />}{w.label}<ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
+      </button>
+      {open && (
+        // downward: on the start screen the box sits under the heading, which an upward menu covered
+        <Menu onClose={() => setOpen(false)} width={280} down>
+          {w.choices.map((ch) => (
+            <button key={ch.path ?? "chat"} onClick={() => { setOpen(false); w.pick(ch.path); }} title={ch.hint} className="flex w-full items-center gap-2 px-3 py-[6px] text-left hover:bg-hover">
+              <span className="w-3.5 flex-none text-accent">{ch.label === w.label && <Check size={14} strokeWidth={1.75} />}</span>
+              <span className="min-w-0 flex-1"><span className="block truncate text-ink">{ch.label}</span><span className="block truncate text-[11.5px] text-faint">{ch.hint}</span></span>
+            </button>
+          ))}
+          <button onClick={() => { setOpen(false); w.pickFolder(); }} className="flex w-full items-center gap-2 border-t border-line-soft px-3 py-[6px] text-left text-ink hover:bg-hover">
+            <span className="w-3.5 flex-none text-muted"><Plus size={14} strokeWidth={1.5} /></span>Open a folder…</button>
+        </Menu>
+      )}
+    </span>
+  );
+}
 
 export function ModePill({ composer: c }: { composer: ComposerBag }) {
   const [open, setOpen] = useState(false);

@@ -54,7 +54,7 @@ export function ModelPicker({ models, onPick, onClose }: { models: Models | null
 }
 
 /** A small menu over the composer that closes on a click outside or Esc. */
-export function Menu({ children, onClose, width = 240 }: { children: React.ReactNode; onClose: () => void; width?: number }) {
+export function Menu({ children, onClose, width = 240, down }: { children: React.ReactNode; onClose: () => void; width?: number; down?: boolean }) {
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) onClose(); };
@@ -63,7 +63,7 @@ export function Menu({ children, onClose, width = 240 }: { children: React.React
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
   }, [onClose]);
-  return <div ref={box} style={{ width }} className="absolute bottom-full left-0 z-10 mb-2 rounded-xl border border-line-strong bg-card py-1 shadow-composer">{children}</div>;
+  return <div ref={box} style={{ width }} className={`absolute left-0 z-10 rounded-xl border border-line-strong bg-card py-1 shadow-composer ${down ? "top-full mt-2" : "bottom-full mb-2"}`}>{children}</div>;
 }
 
 /** The current model's effort levels. */

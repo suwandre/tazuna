@@ -150,6 +150,11 @@ from the header; the composer's pills never wrap and stay readable during a repl
 12 s", or "Waiting for you" during an approval), its time kept across a switch; no empty "New conversation" rows; no
 $0.000 in a new chat's header; numbers in tabular Geist, mono only for code; no "−0"; the side chat a header icon like the
 panel's; "Ask tazuna to open one" for a branch without a pull request.
+0.1.68: the two screens of the second review's prototype (mockups/v3.html). A new conversation opens on a start screen:
+"What are we working on?", the composer in the middle with a pill for where it runs (a chat, or a project: its own new
+conversation there), the last three conversations to pick up, the projects to start in. The usage page is in Settings'
+cards: Right now (every account's meters and credits), Spending (three figures with quiet zeros, the daily bars with
+plan and paid parts, the models), How your runs went.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
