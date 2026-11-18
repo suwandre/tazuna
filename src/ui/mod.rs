@@ -272,11 +272,22 @@ pub struct Changed {
 }
 
 /// A list over the screen (cockpit): a tool's calls, or every model call. ↑↓ and the wheel scroll it, esc closes.
+/// How a list row is drawn: plain, failed (red), a section's heading, a note (dimmed), or a line across the panel.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Tone {
+    #[default]
+    Plain,
+    Bad,
+    Head,
+    Dim,
+    Rule,
+}
+
 pub struct ListPanel {
     pub title: String,
     /// The column heads, drawn above the rows.
     pub head: String,
-    pub rows: Vec<(String, bool)>,
+    pub rows: Vec<(String, Tone)>,
     pub scroll: usize,
     /// A row's link (a fetched page): its text from `link_from` on is drawn as a link, a click opens it.
     pub links: Vec<Option<String>>,
@@ -399,7 +410,8 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64) -> (Option
     let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
     f.render_widget(Clear, area);
     let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(format!(" {} · click a row: all of it · ↑↓ scroll · ←→ or shift+wheel sideways · esc or click outside closes ", p.title), st(th.accent).add_modifier(Modifier::BOLD)));
+        .title(Span::styled(format!(" {} · {}↑↓ scroll · ←→ or shift+wheel sideways · esc or click outside closes ", p.title,
+            if p.details.iter().any(Option::is_some) { "click a row: all of it · " } else { "" }), st(th.accent).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let width = inner.width as usize;
@@ -411,12 +423,21 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64) -> (Option
     let mut lines = vec![Line::from(Span::styled(cut(&p.head), st(th.faint).add_modifier(Modifier::BOLD)))];
     let (mut links, mut rows) = (vec![], vec![]);
     let room = inner.height.saturating_sub(1) as usize;
-    for (i, (r, bad)) in p.rows.iter().enumerate().skip(p.scroll) {
+    for (i, (r, tone)) in p.rows.iter().enumerate().skip(p.scroll) {
         if lines.len() > room {
             break;
         }
         let y = inner.y + lines.len() as u16;
-        let color = st(if *bad { th.err } else { th.text });
+        let color = match tone {
+            Tone::Bad => st(th.err),
+            Tone::Head => st(th.accent).add_modifier(Modifier::BOLD),
+            Tone::Dim => st(th.faint),
+            Tone::Plain | Tone::Rule => st(th.text),
+        };
+        if *tone == Tone::Rule {
+            lines.push(Line::from(Span::styled("─".repeat(width), st(th.border))));
+            continue;
+        }
         let shown = if p.pending && i == 0 { cut(&format!("{} {r}", spinner(clock_ms))) } else { cut(r) };
         rows.push((Rect::new(inner.x, y, inner.width, 1), i));
         match p.links.get(i).cloned().flatten() {
@@ -426,6 +447,19 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64) -> (Option
                 let (a, b): (String, String) = (shown.chars().take(at).collect(), shown.chars().skip(at).collect());
                 links.push((Rect::new(inner.x + at as u16, y, (b.width() as u16).min(inner.width.saturating_sub(at as u16)), 1), url));
                 lines.push(Line::from(vec![Span::styled(a, color), Span::styled(b, st(th.accent).add_modifier(Modifier::UNDERLINED))]));
+            }
+            // a meter's bar (█ used, ░ left) in the accent (red on a failed row) over a faint track
+            None if shown.contains('█') || shown.contains('░') => {
+                let bar = if *tone == Tone::Bad { st(th.err) } else { st(th.accent) };
+                let mut spans: Vec<Span> = vec![];
+                for c in shown.chars() {
+                    let s = match c { '█' => bar, '░' => st(th.border), _ => color };
+                    match spans.last_mut() {
+                        Some(last) if last.style == s => last.content.to_mut().push(c),
+                        _ => spans.push(Span::styled(c.to_string(), s)),
+                    }
+                }
+                lines.push(Line::from(spans));
             }
             None => lines.push(Line::from(Span::styled(shown, color))),
         }
@@ -2659,7 +2693,7 @@ mod tests {
         let tool = |result: &str, url: &str| Tool { id: "f".into(), name: "fetch".into(), input: serde_json::json!({"url": url}), result: Some(result.into()), error: false, started_ms: 0.0, done_ms: Some(1.0), sub: None };
         assert_eq!(fetch_label(&tool("[fetched https://x.com/a · \"Crypto prices today\", HTTP 200: web content]\nbody", "https://x.com/a")), "Crypto prices today");
         assert_eq!(fetch_label(&tool("[fetched https://api.coingecko.com/api/v3/global, HTTP 200: web content]\n{}", "https://api.coingecko.com/api/v3/global?x=1")), "api.coingecko.com/api/v3/global");
-        let mut p = ListPanel { title: "fetch".into(), head: "  #   took     what".into(), rows: vec![(format!("{:>3}  {:>7}  {}  {}", 1, "0.5s", "✓", "Crypto prices today"), false)], scroll: 0,
+        let mut p = ListPanel { title: "fetch".into(), head: "  #   took     what".into(), rows: vec![(format!("{:>3}  {:>7}  {}  {}", 1, "0.5s", "✓", "Crypto prices today"), Tone::Plain)], scroll: 0,
             links: vec![Some("https://x.com/a".into())], link_from: 17, hscroll: 0, details: vec![None], open: Default::default(), pending: false };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         let mut out = (None, vec![], vec![]);
@@ -2672,7 +2706,7 @@ mod tests {
         term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme(), 0.0); }).unwrap();
         assert_eq!(out.1[0].0.x, r.x - 10, "scrolled sideways, the link moves with its text");
         // still reading (/usage): the first row turns
-        let p = ListPanel { rows: vec![("reading your accounts…".into(), false)], links: vec![None], details: vec![None], hscroll: 0, pending: true, ..p };
+        let p = ListPanel { rows: vec![("reading your accounts…".into(), Tone::Plain)], links: vec![None], details: vec![None], hscroll: 0, pending: true, ..p };
         let shown = |t: &ratatui::Terminal<ratatui::backend::TestBackend>| t.backend().buffer().content().iter().map(|c| c.symbol()).collect::<String>();
         term.draw(|f| { draw_list(f, &p, Design::Cockpit.theme(), 0.0); }).unwrap();
         assert!(shown(&term).contains("⠋ reading your accounts…"));
@@ -2710,7 +2744,7 @@ mod tests {
             (b[(3, 0)].fg, b[(60, 20)].symbol().to_string())
         };
         assert_ne!(cell(&v).0, th.border, "the header in its own colours without a modal");
-        v.list = Some(ListPanel { title: "model calls".into(), head: "#".into(), rows: vec![("1".into(), false)], scroll: 0, links: vec![], link_from: 0, hscroll: 0, details: vec![], open: Default::default(), pending: false });
+        v.list = Some(ListPanel { title: "model calls".into(), head: "#".into(), rows: vec![("1".into(), Tone::Plain)], scroll: 0, links: vec![], link_from: 0, hscroll: 0, details: vec![], open: Default::default(), pending: false });
         let (fg, _) = cell(&v);
         assert_eq!(fg, th.border, "behind a modal everything takes the border colour");
     }

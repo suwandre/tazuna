@@ -128,6 +128,11 @@ providers' credits with a link to each page, and OmniRoute's accounts with their
 cost or balance card opens it.
 0.1.62: the sidebar's Settings row hovers like the rows above it: the fill sits evenly around its line (it had no padding
 below), with the divider above it outside the fill.
+0.1.63: Settings in sections: each a heading, a line on what it is for, and a card of rows (a setting and what it does
+on the left, its control on the right), with switches for on and off and a two-way choice for who may see the code. About
+shows the version as a tag. Check for updates answers in the middle over a dimmed window (up to date, a new version with
+Install and restart, or why it could not check): Esc, × or a click outside closes it and Settings stays; a snackbar at
+the bottom had covered Settings' own text. A new version found by the hourly check still shows as a snackbar.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

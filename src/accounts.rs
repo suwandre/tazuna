@@ -116,43 +116,115 @@ fn bar(used: f64, width: usize) -> String {
     format!("{}{}", "█".repeat(full), "░".repeat(width - full))
 }
 
-/// The same as lines, for the terminal's /usage panel.
-pub fn lines(v: &Value) -> Vec<String> {
-    let mut out = vec!["Claude plan (claude's own /usage, no model call)".to_string()];
+/// Seconds since 1970 of an ISO time in UTC ("2026-11-25T11:03:10.000Z"; days from the civil date, as in Howard
+/// Hinnant's algorithm).
+fn iso_secs(iso: &str) -> Option<i64> {
+    let n = |a: usize, b: usize| iso.get(a..b)?.parse::<i64>().ok();
+    let (y, m, d, hh, mm, ss) = (n(0, 4)?, n(5, 7)?, n(8, 10)?, n(11, 13)?, n(14, 16)?, n(17, 19)?);
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
+    Some(days * 86_400 + hh * 3600 + mm * 60 + ss)
+}
+
+/// "in 6 d 23 h", "in 3 h 12 min", "in 4 min" from `now` (seconds since 1970) to an ISO time: no time zone to get wrong.
+fn until(iso: &str, now: i64) -> Option<String> {
+    let s = (iso_secs(iso)? - now).max(0);
+    let (d, h, m) = (s / 86_400, s % 86_400 / 3600, s % 3600 / 60);
+    Some(if d > 0 { format!("in {d} d {h} h") } else if h > 0 { format!("in {h} h {m} min") } else { format!("in {m} min") })
+}
+
+/// claude's window names, shorter: "Current session" is the 5-hour one, "Current week (Fable)" the week on Fable.
+fn window_name(label: &str) -> String {
+    let l = label.trim_start_matches("Current ");
+    match l.split_once(" (") {
+        _ if l == "session" => "5-hour session".into(),
+        Some((w, rest)) => format!("{}{} · {}", w[..1].to_uppercase(), &w[1..], rest.trim_end_matches(')')),
+        None => format!("{}{}", l[..1].to_uppercase(), &l[1..]),
+    }
+}
+
+/// Where a provider's page link starts in its row: after the two-space indent and the name's column.
+pub const LINK_FROM: usize = 22;
+
+/// The terminal's /usage panel: a section per kind of account (a heading, a line across), the meters' bars aligned,
+/// notes dimmed; a row's link (a provider's page), opened by a click.
+pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
+    use crate::ui::Tone::{Bad, Dim, Head, Plain, Rule};
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let mut out: Vec<(String, crate::ui::Tone, Option<String>)> = vec![];
+    let mut push = |text: String, tone, link: Option<String>| out.push((text, tone, link));
+    // a meter's row: its name from `indent`, its bar at one column for all (column 35: "Claude & GPT Models · weekly" fits)
+    let meter = |indent: usize, name: &str, used: f64, resets: &str| {
+        format!("{:indent$}{name:<w$} {} {used:>4.0}%{}", "", bar(used, 20), if resets.is_empty() { String::new() } else { format!("   resets {resets}") }, w = 34 - indent)
+    };
+    push("Claude plan".into(), Head, None);
+    push(String::new(), Rule, None);
     match v["plan"].as_array() {
         Some(rows) => {
             for r in rows {
                 let used = r["used"].as_f64().unwrap_or(0.0);
-                out.push(format!("  {:<28} {} {:>3.0}% used · resets {}", r["label"].as_str().unwrap_or_default(), bar(used, 20), used, r["resets"].as_str().unwrap_or("?")));
+                // "Nov 18 at 5:29pm (Europe/Berlin)": the zone is the user's own
+                let resets = r["resets"].as_str().unwrap_or_default().split(" (").next().unwrap_or_default();
+                push(meter(2, &window_name(r["label"].as_str().unwrap_or_default()), used, resets), if used >= 90.0 { Bad } else { Plain }, None);
             }
-            for n in v["plan_notes"].as_array().into_iter().flatten().filter_map(Value::as_str).take(8) {
-                out.push(format!("  {n}"));
+            // what claude says contributes, for the last day (its last 7 days repeat the same advice)
+            let notes: Vec<&str> = v["plan_notes"].as_array().into_iter().flatten().filter_map(Value::as_str)
+                .take_while(|n| !n.trim_start().starts_with("Last 7d")).filter(|n| !n.starts_with("Approximate")).collect();
+            if !notes.is_empty() {
+                push(String::new(), Plain, None);
+                push("  What's contributing (approximate, this machine only)".into(), Dim, None);
+                for n in notes {
+                    push(format!("    {}", n.trim()), Dim, None);
+                }
             }
+            push(String::new(), Plain, None);
+            push("  from claude's own /usage: no model call".into(), Dim, None);
         }
-        None => out.push("  no reading: is claude installed and logged in to a subscription?".into()),
+        None => push("  no reading: is claude installed and logged in to a subscription?".into(), Dim, None),
     }
     let credits = v["credits"].as_array().cloned().unwrap_or_default();
     if !credits.is_empty() {
-        out.push(String::new());
-        out.push("Providers' credits".into());
+        push(String::new(), Plain, None);
+        push("Providers' credits".into(), Head, None);
+        push(String::new(), Rule, None);
         for c in &credits {
-            let left = c["left"].as_str().map_or(format!("see {}", c["page"].as_str().unwrap_or("its page")), String::from);
-            out.push(format!("  {:<18} {left}", c["provider"].as_str().unwrap_or_default()));
+            let name = c["provider"].as_str().unwrap_or_default();
+            match (c["left"].as_str(), c["page"].as_str()) {
+                (Some(left), _) => push(format!("  {name:<20}{left}"), if left.starts_with('-') { Bad } else { Plain }, None),
+                (None, Some(page)) => {
+                    let host = page.trim_start_matches("https://").trim_start_matches("http://");
+                    push(format!("  {name:<20}{host}"), Plain, Some(page.to_string()));
+                }
+                (None, None) => push(format!("  {name:<20}no balance to read"), Dim, None),
+            }
         }
+        push("  without a balance API: their page, a click away".into(), Dim, None);
     }
     let accounts = v["omniroute"].as_array().cloned().unwrap_or_default();
     if !accounts.is_empty() {
-        out.push(String::new());
-        out.push("OmniRoute accounts".into());
-        for a in &accounts {
+        push(String::new(), Plain, None);
+        push("OmniRoute accounts".into(), Head, None);
+        push(String::new(), Rule, None);
+        for (i, a) in accounts.iter().enumerate() {
+            if i > 0 {
+                push(String::new(), Plain, None);
+            }
             let plan = a["plan"].as_str().map_or(String::new(), |p| format!(" · {p}"));
-            out.push(format!("  {} · {}{plan}{}", a["provider"].as_str().unwrap_or("?"), a["name"].as_str().unwrap_or_default(),
-                if a["status"] == "valid" { String::new() } else { format!(" · login {}", a["status"].as_str().unwrap_or("?")) }));
+            let status = if a["status"] == "valid" { String::new() } else { format!(" · login {}", a["status"].as_str().unwrap_or("?")) };
+            push(format!("  {} · {}{plan}{status}", a["provider"].as_str().unwrap_or("?"), a["name"].as_str().unwrap_or_default()), Plain, None);
             for w in a["windows"].as_array().into_iter().flatten() {
+                let what = [w["group"].as_str().unwrap_or_default(), w["window"].as_str().unwrap_or_default()].iter()
+                    .filter(|x| !x.is_empty()).copied().collect::<Vec<_>>().join(" · ");
+                if w["unlimited"] == true {
+                    push(format!("    {what:<30} unlimited"), Plain, None);
+                    continue;
+                }
                 let used = w["used"].as_f64().unwrap_or(0.0);
-                let what = format!("{} {}", w["group"].as_str().unwrap_or_default(), w["window"].as_str().unwrap_or_default()).trim().to_string();
-                let resets = w["resets"].as_str().map_or(String::new(), |r| format!(" · resets {}", r.replace('T', " ").trim_end_matches(".000Z").trim_end_matches('Z')));
-                out.push(format!("    {what:<26} {} {used:>3.0}% used{resets}", if w["unlimited"] == true { "unlimited           ".into() } else { bar(used, 20) }));
+                let resets = w["resets"].as_str().and_then(|r| until(r, now)).unwrap_or_default();
+                push(meter(4, &what, used, &resets), if used >= 90.0 { Bad } else { Plain }, None);
             }
         }
     }
@@ -172,9 +244,19 @@ mod tests {
         assert!(notes.iter().any(|n| n.contains("Start fresh")));
         let e = rate_event(&rows).unwrap();
         assert_eq!((e["rate_limit_info"]["unifiedWindows"]["five_hour"]["utilization"].as_f64(), e["rate_limit_info"]["unifiedWindows"]["seven_day"]["utilization"].as_f64()), (Some(0.14), Some(0.78)));
-        let shown = lines(&json!({"plan": [{"label": "Current session", "used": 14.0, "resets": "5:29pm"}], "credits": [{"provider": "Mortera", "left": null, "page": "https://mortera.cloud"}],
-            "omniroute": [{"provider": "agy", "name": "a", "plan": "Ultra", "status": "valid", "windows": [{"group": "Gemini Models", "window": "weekly", "used": 1.4, "resets": "2026-11-25T11:03:10.000Z"}]}]}));
-        assert!(shown.iter().any(|l| l.contains("Current session") && l.contains("14% used")) && shown.iter().any(|l| l.contains("see https://mortera.cloud")));
-        assert!(shown.iter().any(|l| l.contains("Gemini Models weekly") && l.contains("resets 2026-11-25 11:03:10")));
+        let shown = lines(&json!({"plan": [{"label": "Current session", "used": 14.0, "resets": "5:29pm (Europe/Berlin)"}, {"label": "Current week (Fable)", "used": 95.0, "resets": "Nov 21"}],
+            "credits": [{"provider": "Mortera", "left": null, "page": "https://mortera.cloud"}, {"provider": "OpenRouter", "left": "-$0.17 left of $0.00", "page": "https://openrouter.ai/keys"}],
+            "omniroute": [{"provider": "agy", "name": "a", "plan": "Ultra", "status": "valid", "windows": [{"group": "Gemini Models", "window": "weekly", "used": 1.4, "resets": "2099-11-25T11:03:10.000Z"}]}]}));
+        let row = |t: &str| shown.iter().find(|l| l.0.contains(t)).unwrap_or_else(|| panic!("no row with {t}: {shown:?}"));
+        use crate::ui::Tone::{Bad, Head, Plain, Rule};
+        assert_eq!((row("Claude plan").1, shown[1].1), (Head, Rule), "a section: its heading, a line across");
+        assert!(row("5-hour session").0.contains("14%") && row("5-hour session").0.ends_with("resets 5:29pm"), "the zone dropped: {:?}", row("5-hour session"));
+        assert_eq!(row("Week · Fable").1, Bad, "a window at 90% or more is red");
+        assert_eq!((row("Mortera").2.as_deref(), &row("Mortera").0[LINK_FROM..]), (Some("https://mortera.cloud"), "mortera.cloud"), "its page, a click away");
+        assert_eq!(row("OpenRouter").1, Bad, "below zero");
+        let g = row("Gemini Models · weekly");
+        assert!(g.1 == Plain && g.0.contains(" in ") && g.0.chars().position(|c| c == '░') == row("5-hour session").0.chars().position(|c| c == '█'), "bars line up across sections: {g:?}");
+        assert_eq!(until("2026-11-25T11:03:10.000Z", iso_secs("2026-11-18T10:00:00Z").unwrap()).as_deref(), Some("in 7 d 1 h"));
+        assert_eq!(window_name("Current week (all models)"), "Week · all models");
     }
 }

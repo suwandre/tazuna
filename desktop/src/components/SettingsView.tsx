@@ -1,4 +1,4 @@
-import { ExternalLink, X } from "lucide-react";
+import { ExternalLink, RefreshCw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { useDialog } from "../lib/dialog";
@@ -8,7 +8,9 @@ import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, typ
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
 
 // Settings: provider keys (saved by tazuna, never shown again), the data policy for this session, the router. The
-// terminal's /login, /data and /route in one page.
+// terminal's /login, /data and /route in one page. Each part is a section: a heading, a line on what it is for, and a card
+// of rows (a setting's name and what it does on the left, its control on the right), so the page reads as parts and
+// not as one run of text (2026-11-18).
 type PluginProps = {
   items?: UserWidget[]; onEnable?: (w: UserWidget, on: boolean) => void; onEdit?: (id: string) => void; onRemove?: (id: string) => void;
   /** a panel or plugin came in (a file, the gallery): the list again */
@@ -87,193 +89,218 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
     setKeys((k) => ({ ...k, [name]: "" }));
     refresh(); core.models().catch(() => {});
   };
-  const label = "mb-2 mt-5 text-[11.5px] font-medium text-faint first:mt-0";
+  const input = "rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none placeholder:font-sans placeholder:text-faint";
+  const button = "rounded-md border border-line px-2.5 py-1 text-[12px] text-ink disabled:opacity-40";
   return (
     <div onMouseDown={onClose} className="fixed inset-0 z-30 grid place-items-center bg-ink/15 p-10">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-[640px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-[720px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Settings</span>
           <button onClick={onClose} title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
         </div>
-        <div className="overflow-auto px-5 py-4">
+        <div className="overflow-auto bg-sidebar px-6 pb-7 pt-5">
           {!st && <div className="text-[12.5px] text-faint">Loading…</div>}
           {st && <>
-            <div className={label}>Providers</div>
-            <div className="mb-2 text-[12px] text-muted">Claude runs on your subscription through the claude CLI (its own login). Other providers need an API key; tazuna saves it on this machine, readable by you only, and never shows it again.</div>
-            {st.providers.map((p) => (
-              <div key={p.name} className="flex items-center gap-2 border-b border-line-soft py-2 last:border-b-0">
-                <span className="w-24 text-ink">{p.name}</span>
-                <span className={`w-36 text-[12px] ${p.key ? "text-ok" : "text-faint"}`}>{p.key || "no key"}</span>
-                <input type="password" value={keys[p.name] ?? ""} onChange={(e) => setKeys((k) => ({ ...k, [p.name]: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === "Enter" && keys[p.name]) save(p.name); }}
-                  placeholder={p.key ? "replace the key" : p.example ? `key (${p.example})` : "key"} autoComplete="off" spellCheck={false}
-                  className="min-w-0 flex-1 rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none placeholder:font-sans placeholder:text-faint" />
-                <button disabled={!keys[p.name]} onClick={() => save(p.name)} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-40">Save</button>
-                <button onClick={() => core.openKeyPage(p.page)} title={`Make a key in ${p.place}`} className="rounded p-1 text-muted hover:bg-hover"><ExternalLink size={14} strokeWidth={1.5} /></button>
-              </div>
-            ))}
+            <Section title="Providers" note="Claude runs on your subscription through the claude CLI, with its own login. Other providers need an API key: tazuna saves it on this machine, readable by you only, and never shows it again.">
+              {st.providers.map((p) => (
+                <Row key={p.name} title={p.name} note={<span className={p.key ? "text-ok" : ""}>{p.key || "no key"}</span>}>
+                  <input type="password" value={keys[p.name] ?? ""} onChange={(e) => setKeys((k) => ({ ...k, [p.name]: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === "Enter" && keys[p.name]) save(p.name); }} aria-label={`${p.name} key`}
+                    placeholder={p.key ? "replace the key" : p.example ? `key (${p.example})` : "key"} autoComplete="off" spellCheck={false} className={`w-56 ${input}`} />
+                  <button disabled={!keys[p.name]} onClick={() => save(p.name)} className={button}>Save</button>
+                  <button onClick={() => core.openKeyPage(p.page)} aria-label={`Make a key in ${p.place}`} title={`Make a key in ${p.place}`} className="rounded p-1 text-muted hover:text-ink"><ExternalLink size={14} strokeWidth={1.5} /></button>
+                </Row>
+              ))}
+            </Section>
 
-            <div className={label}>Who may see your code (this session)</div>
-            <label className="flex items-start gap-2 py-1"><input type="radio" checked={!st.data_any} onChange={() => { setAskAny(false); core.setData("trusted").then(refresh); }} className="mt-1" />
-              <span><span className="text-ink">Trusted providers only</span><span className="block text-[12px] text-muted">The providers you saved a key for, and the ones on your trusted list.</span></span></label>
-            <label className="flex items-start gap-2 py-1"><input type="radio" checked={st.data_any} onChange={() => setAskAny(true)} className="mt-1" />
-              <span><span className="text-ink">Any provider</span><span className="block text-[12px] text-muted">The model picker may use providers off the trusted list, which may store your code or train on it.</span></span></label>
-            {askAny && !st.data_any && (
-              <div className="ml-6 mt-1 flex items-center gap-2 rounded-md border border-line-strong px-3 py-2 text-[12px] text-ink-2">
-                <span className="flex-1 text-warn">For a work repository this may not be allowed.</span>
-                <button onClick={() => core.setData("any", true).then(() => { setAskAny(false); refresh(); })} className="rounded-md border border-line px-2.5 py-1 text-ink hover:bg-hover">Allow for this session</button>
-                <button onClick={() => setAskAny(false)} className="rounded-md px-2 py-1 text-muted hover:bg-hover">Cancel</button>
-              </div>
-            )}
-
-            <div className={label}>Chat or agent</div>
-            <label className="flex items-start gap-2 py-1"><input type="checkbox" checked={st.route} onChange={(e) => core.setRoute(e.target.checked).then(refresh)} className="mt-1" />
-              <span><span className="text-ink">Answer general questions inside a project as a chat</span><span className="block text-[12px] text-muted">Off: everything you send in a project goes to the agent.</span></span></label>
-
-            <div className={label}>Paid API spend</div>
-            <div className="mb-1.5 text-[12px] text-muted">Models on a provider's API cost money (Claude on your plan does not). tazuna sends nothing to them once the last 24 hours reach this cap.
-              Last 24 hours: <span className="font-mono text-ink">${(st.spent_24h ?? 0).toFixed(2)}</span>.</div>
-            <div className="flex items-center gap-2 py-1">
-              <span className="text-ink-2">$</span>
-              <input value={cap ?? (st.spend_cap == null ? "" : String(st.spend_cap))} onChange={(e) => setCap(e.target.value)} placeholder="no cap" inputMode="decimal"
-                className="w-24 rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none" />
-              <span className="text-[12px] text-muted">per 24 hours</span>
-              <button disabled={cap == null || (cap.trim() !== "" && !(Number(cap) >= 0))} onClick={() => core.setSpendCap(cap!.trim() === "" ? null : Number(cap)).then(() => { setCap(null); refresh(); })}
-                className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-40">Save</button>
-              <span className="text-[11.5px] text-faint">empty: no cap</span>
-            </div>
-
-            <div className={label}>Tools from MCP servers</div>
-            <div className="mb-1.5 text-[12px] text-muted">Servers for every model, from tazuna's list (the terminal's <code>/mcp</code>).
-              A server runs its command on this machine: add only ones you trust.</div>
-            {mcp && <>
-              <label className="flex items-start gap-2 py-1"><input type="checkbox" checked={mcp.on} onChange={(e) => core.mcpOn(e.target.checked)} className="mt-1" />
-                <span><span className="text-ink">Use them in this conversation</span><span className="block text-[12px] text-muted">
-                  Remembered for new conversations.{mcp.claude ? " On Claude, your claude.ai connectors come too." : ""} Their tools take room in every request.</span></span></label>
-              {mcp.note && <div className="py-1 text-[12px] text-bad">{mcp.note}</div>}
-              {mcp.servers.length === 0 && <div className="py-1 text-[12.5px] text-faint">None yet.</div>}
-              {mcp.servers.map((m) => {
-                const st = mcpState[m.name];
-                return (
-                  <div key={m.name} className="flex items-center gap-2 border-b border-line-soft py-2 last:border-b-0">
-                    <span className="min-w-0 flex-1"><span className="block text-ink">{m.name}</span>
-                      <span className="block truncate font-mono text-[11.5px] text-faint" title={m.target}>{m.target}</span>
-                      {st && <span role="status" className={`block text-[11.5px] ${st.ok === false ? "text-bad" : st.ok ? "text-ok" : "text-muted"}`}>{st.text}</span>}</span>
-                    <button onClick={() => { setMcpState((all) => ({ ...all, [m.name]: { text: "connecting…" } })); core.mcpCheck(m.name); }}
-                      className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Check</button>
-                    {/^https?:/.test(m.target) && <button onClick={() => { setMcpState((all) => ({ ...all, [m.name]: { text: "logging in…" } })); core.mcpCheck(m.name, true); }}
-                      title="Log in again in the browser" className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Log in</button>}
-                    <button onClick={() => core.mcpRemove(m.name)} aria-label={`Remove ${m.name}`} title="Remove" className="rounded p-1 text-muted hover:bg-hover"><X size={14} strokeWidth={1.5} /></button>
-                  </div>
-                );
-              })}
-              <div className="flex items-center gap-2 py-2">
-                <input value={adding.name} onChange={(e) => setAdding({ ...adding, name: e.target.value })} placeholder="name" aria-label="Server name" spellCheck={false}
-                  className="w-28 rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none placeholder:font-sans placeholder:text-faint" />
-                <input value={adding.target} onChange={(e) => setAdding({ ...adding, target: e.target.value })} placeholder="https://… or a command and its arguments"
-                  aria-label="Server URL or command" spellCheck={false} onKeyDown={(e) => { if (e.key === "Enter" && canAdd) addServer(); }}
-                  className="min-w-0 flex-1 rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none placeholder:font-sans placeholder:text-faint" />
-                <button disabled={!canAdd} onClick={addServer} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-40">Add</button>
-              </div>
-            </>}
-
-            {hook && <>
-              <div className={label}>After each turn that changed files</div>
-              <div className="mb-1.5 text-[12px] text-muted">A command of yours for <span className="font-mono">{hook.cwd}</span>, such as a formatter. It runs there at no
-                token cost: the model never sees it, and only a failure shows. Kept in your settings, never the repository's (the terminal's <code>/hook</code>).</div>
-              <div className="flex items-center gap-2 py-1">
-                <input value={hookCmd ?? hook.after_turn ?? ""} onChange={(e) => setHookCmd(e.target.value)} placeholder="none, e.g. cargo fmt" aria-label="Command after each turn"
-                  spellCheck={false} onKeyDown={(e) => { if (e.key === "Enter" && hookCmd != null) core.hook(hookCmd.trim()).then(() => setHookCmd(null)); }}
-                  className="min-w-0 flex-1 rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none placeholder:font-sans placeholder:text-faint" />
-                <button disabled={hookCmd == null} onClick={() => core.hook(hookCmd!.trim()).then(() => setHookCmd(null))}
-                  className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-40">Save</button>
-              </div>
-              {hook.note && <div className="py-1 text-[12px] text-bad">{hook.note}</div>}
-            </>}
-
-            <div className={label}>Quick chat from anywhere</div>
-            <div className="flex items-center gap-2 py-1">
-              <input value={keysNow} onChange={(e) => setKeysNow(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") saveHotkey(); }}
-                placeholder="none" spellCheck={false} className="w-44 rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none" />
-              <button onClick={saveHotkey} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover">Save</button>
-              <span className="text-[12px] text-muted">{hotkeyNote || "brings tazuna up with a new chat. Like Alt+Space or CmdOrCtrl+Shift+K; empty: off."}</span>
-            </div>
-
-            <div className={label}>Panels and plugins</div>
-            <div className="mb-2 text-[12px] text-muted">Panels are sandboxed: they only show the conversation's numbers. Plugins run inside tazuna's
-              window with the same reach: they can change any part of it and send messages to the agent, which can act on your files.
-              Enable only plugins you made or trust. <code>/create …</code> builds either.</div>
-            {items.length === 0 && <div className="py-1 text-[12.5px] text-faint">None yet.</div>}
-            {items.map((w) => (
-              <div key={w.id} className="flex items-center gap-2 border-b border-line-soft py-2 last:border-b-0">
-                <span className="min-w-0 flex-1"><span className="block truncate text-ink">{w.title}</span>
-                  <span className="block truncate text-[11.5px] text-faint">{w.kind === "panel" ? "panel · sandboxed" : w.state === "enabled" ? "plugin · on"
-                    : w.state === "changed" ? "plugin · its code changed since you enabled it: look before enabling again" : "plugin · off"}{w.about ? ` · ${w.about}` : ""}</span></span>
-                {w.kind === "plugin" && <button onClick={() => (w.state === "enabled" ? onEnable?.(w, false) : read(w))}
-                  className={`rounded-md border px-2.5 py-1 text-[12px] hover:bg-hover ${w.state === "enabled" ? "border-line text-ink-2" : "border-line-strong text-ink"}`}>{w.state === "enabled" ? "Turn off" : "Read and enable"}</button>}
-                <button onClick={() => widgets.share(w.id).then((p) => p && setPlugNote(`Saved ${w.title} to ${p}: anyone can add it with "Add from a file".`)).catch((e) => setPlugNote(`Not saved: ${e}`))}
-                  title="Save it as one file to give to someone" className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Share</button>
-                <button onClick={() => { onClose(); onEdit?.(w.id); }} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink-2 hover:bg-hover">Change with tazuna</button>
-                <button onClick={() => onRemove?.(w.id)} title="Remove (its folder moves to .removed)" className="rounded p-1 text-muted hover:bg-hover"><X size={14} strokeWidth={1.5} /></button>
-              </div>
-            ))}
-            {reading && (
-              <div role="region" aria-label={`${reading.w.title}: its code`} className="mt-2 rounded-md border border-line-strong px-3 py-2.5">
-                <div className="text-[12.5px] text-ink">{reading.w.title}</div>
-                {reading.w.imported && <div className="text-[12.5px] font-medium text-warn">It came from someone else (a shared file or the gallery). Enable it only if you
-                  have read the code and trust where it came from.</div>}
-                <div className="mb-1.5 text-[12px] text-muted">{reading.would}. A plugin can act differently later: the code below is what counts. It runs inside the
-                  window with tazuna's reach (it can send messages to the agent, which can act on your files).</div>
-                <pre tabIndex={0} className="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] text-ink select-text">{reading.code}</pre>
-                <div className="mt-2 flex justify-end gap-2">
-                  <button onClick={() => setReading(null)} className="rounded-md px-2.5 py-1 text-[12px] text-muted hover:bg-hover">Cancel</button>
-                  <button onClick={() => { onEnable?.({ ...reading.w, print: reading.print }, true); setReading(null); }}
-                    className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent">Enable this code</button>
+            <Section title="Privacy and routing" note="Where your code may go in this session, and what answers a question.">
+              <Row title="Who may see your code" note={st.data_any ? "Any provider, for this session: the picker may use providers off the trusted list, which may store your code or train on it."
+                : "Trusted providers only: the ones you saved a key for, and the ones on your trusted list."}>
+                <Segmented label="Who may see your code" value={st.data_any || askAny ? "any" : "trusted"} options={[["trusted", "Trusted only"], ["any", "Any provider"]]}
+                  onChange={(v) => { if (v === "trusted") { setAskAny(false); core.setData("trusted").then(refresh); } else if (!st.data_any) setAskAny(true); }} />
+              </Row>
+              {askAny && !st.data_any && (
+                <div className="flex items-center gap-2 px-4 py-2.5 text-[12px]">
+                  <span className="flex-1 text-warn">For a work repository this may not be allowed.</span>
+                  <button onClick={() => core.setData("any", true).then(() => { setAskAny(false); refresh(); })} className={button}>Allow for this session</button>
+                  <button onClick={() => setAskAny(false)} className="rounded-md px-2 py-1 text-muted">Cancel</button>
                 </div>
-              </div>
+              )}
+              <Row title="Answer general questions as a chat" note="Inside a project, a question that is not about the code gets a chat answer. Off: everything you send goes to the agent.">
+                <Switch label="Answer general questions as a chat" on={st.route} onChange={(on) => core.setRoute(on).then(refresh)} />
+              </Row>
+            </Section>
+
+            <Section title="Paid API spend" note="Models on a provider's API cost money; Claude on your plan does not.">
+              <Row title="Cap per 24 hours" note={<>tazuna sends nothing to paid APIs once the last 24 hours reach it. Last 24 hours: <span className="font-mono text-ink">${(st.spent_24h ?? 0).toFixed(2)}</span>. Empty: no cap.</>}>
+                <span className="text-ink-2">$</span>
+                <input value={cap ?? (st.spend_cap == null ? "" : String(st.spend_cap))} onChange={(e) => setCap(e.target.value)} placeholder="no cap" inputMode="decimal" aria-label="Cap in dollars per 24 hours" className={`w-24 ${input}`} />
+                <button disabled={cap == null || (cap.trim() !== "" && !(Number(cap) >= 0))} onClick={() => core.setSpendCap(cap!.trim() === "" ? null : Number(cap)).then(() => { setCap(null); refresh(); })} className={button}>Save</button>
+              </Row>
+            </Section>
+
+            <Section title="Tools from MCP servers" note={<>Servers for every model, from tazuna's list (the terminal's <code>/mcp</code>). A server runs its command on this machine: add only ones you trust.</>}>
+              {mcp ? <>
+                <Row title="Use them in this conversation" note={`Remembered for new conversations.${mcp.claude ? " On Claude, your claude.ai connectors come too." : ""} Their tools take room in every request.`}>
+                  <Switch label="Use MCP servers in this conversation" on={mcp.on} onChange={(on) => core.mcpOn(on)} />
+                </Row>
+                {mcp.note && <div className="px-4 py-2.5 text-[12px] text-bad">{mcp.note}</div>}
+                {mcp.servers.length === 0 && <div className="px-4 py-2.5 text-[12.5px] text-faint">No servers yet.</div>}
+                {mcp.servers.map((m) => {
+                  const ms = mcpState[m.name];
+                  return (
+                    <Row key={m.name} title={m.name} note={<><span className="block truncate font-mono text-[11.5px] text-faint" title={m.target}>{m.target}</span>
+                      {ms && <span role="status" className={`block text-[11.5px] ${ms.ok === false ? "text-bad" : ms.ok ? "text-ok" : "text-muted"}`}>{ms.text}</span>}</>}>
+                      <button onClick={() => { setMcpState((all) => ({ ...all, [m.name]: { text: "connecting…" } })); core.mcpCheck(m.name); }} className={button}>Check</button>
+                      {/^https?:/.test(m.target) && <button onClick={() => { setMcpState((all) => ({ ...all, [m.name]: { text: "logging in…" } })); core.mcpCheck(m.name, true); }}
+                        title="Log in again in the browser" className={button}>Log in</button>}
+                      <button onClick={() => core.mcpRemove(m.name)} aria-label={`Remove ${m.name}`} title="Remove" className="rounded p-1 text-muted hover:text-ink"><X size={14} strokeWidth={1.5} /></button>
+                    </Row>
+                  );
+                })}
+                <div className="flex items-center gap-2 px-4 py-3">
+                  <input value={adding.name} onChange={(e) => setAdding({ ...adding, name: e.target.value })} placeholder="name" aria-label="Server name" spellCheck={false} className={`w-28 ${input}`} />
+                  <input value={adding.target} onChange={(e) => setAdding({ ...adding, target: e.target.value })} placeholder="https://… or a command and its arguments"
+                    aria-label="Server URL or command" spellCheck={false} onKeyDown={(e) => { if (e.key === "Enter" && canAdd) addServer(); }} className={`min-w-0 flex-1 ${input}`} />
+                  <button disabled={!canAdd} onClick={addServer} className={button}>Add</button>
+                </div>
+              </> : <div className="px-4 py-2.5 text-[12.5px] text-faint">Loading…</div>}
+            </Section>
+
+            {hook && (
+              <Section title="After each turn that changed files" note={<>A command of yours for <span className="font-mono">{hook.cwd}</span>, such as a formatter. It runs there at no token cost: the model
+                never sees it, and only a failure shows. Kept in your settings, never the repository's (the terminal's <code>/hook</code>).</>}>
+                <div className="flex items-center gap-2 px-4 py-3">
+                  <input value={hookCmd ?? hook.after_turn ?? ""} onChange={(e) => setHookCmd(e.target.value)} placeholder="none, e.g. cargo fmt" aria-label="Command after each turn"
+                    spellCheck={false} onKeyDown={(e) => { if (e.key === "Enter" && hookCmd != null) core.hook(hookCmd.trim()).then(() => setHookCmd(null)); }} className={`min-w-0 flex-1 ${input}`} />
+                  <button disabled={hookCmd == null} onClick={() => core.hook(hookCmd!.trim()).then(() => setHookCmd(null))} className={button}>Save</button>
+                </div>
+                {hook.note && <div className="px-4 py-2.5 text-[12px] text-bad">{hook.note}</div>}
+              </Section>
             )}
-            <div className="mt-2 flex items-center gap-2">
-              <button onClick={() => widgets.importFile().then((id) => arrived(id, "the file")).catch((e) => setPlugNote(`Not added: ${e}`))}
-                className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover">Add from a file…</button>
-              <button onClick={() => { setGallery({}); core.gallery().catch(() => {}); }} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover">Browse the gallery</button>
-            </div>
-            {plugNote && <div role="status" className="mt-1.5 text-[12px] text-muted">{plugNote}</div>}
-            {gallery && (
-              <div className="mt-2 rounded-md border border-line px-3 py-1">
-                {!gallery.items && !gallery.error && <div className="py-1.5 text-[12.5px] text-faint">Loading the gallery…</div>}
-                {gallery.error && <div className="py-1.5 text-[12.5px] text-bad">{gallery.error}</div>}
-                {gallery.items?.map((g) => (
-                  <div key={g.file} className="flex items-center gap-2 border-b border-line-soft py-2 last:border-b-0">
-                    <span className="min-w-0 flex-1"><span className="block text-ink">{g.title} <span className="text-[11.5px] text-faint">· {g.kind}{g.author ? ` · by ${g.author}` : ""}</span></span>
-                      <span className="block text-[12px] text-muted">{g.about}</span></span>
-                    <button disabled={asked.current.has(g.file)} onClick={() => { asked.current.add(g.file); setAskedN((n) => n + 1); core.galleryGet(g.file); }}
-                      className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-40">{asked.current.has(g.file) ? "Adding…" : "Add"}</button>
+
+            <Section title="Quick chat from anywhere">
+              <Row title="Shortcut" note={hotkeyNote || "Brings tazuna up with a new chat, from any app. Like Alt+Space or CmdOrCtrl+Shift+K; empty: off."}>
+                <input value={keysNow} onChange={(e) => setKeysNow(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") saveHotkey(); }} aria-label="Shortcut"
+                  placeholder="none" spellCheck={false} className={`w-40 ${input}`} />
+                <button onClick={saveHotkey} className={button}>Save</button>
+              </Row>
+            </Section>
+
+            <Section title="Panels and plugins" note={<>Panels are sandboxed: they only show the conversation's numbers. Plugins run inside tazuna's window with the same reach: they
+              can change any part of it and send messages to the agent, which can act on your files. Enable only plugins you made or trust. <code>/create …</code> builds either.</>}>
+              {items.length === 0 && <div className="px-4 py-2.5 text-[12.5px] text-faint">No panels or plugins yet.</div>}
+              {items.map((w) => (
+                <Row key={w.id} title={w.title} note={<span className="block truncate">{w.kind === "panel" ? "panel · sandboxed" : w.state === "enabled" ? "plugin · on"
+                  : w.state === "changed" ? "plugin · its code changed since you enabled it: look before enabling again" : "plugin · off"}{w.about ? ` · ${w.about}` : ""}</span>}>
+                  {w.kind === "plugin" && <button onClick={() => (w.state === "enabled" ? onEnable?.(w, false) : read(w))}
+                    className={`${button} ${w.state === "enabled" ? "text-ink-2" : "border-line-strong"}`}>{w.state === "enabled" ? "Turn off" : "Read and enable"}</button>}
+                  <button onClick={() => widgets.share(w.id).then((p) => p && setPlugNote(`Saved ${w.title} to ${p}: anyone can add it with "Add from a file".`)).catch((e) => setPlugNote(`Not saved: ${e}`))}
+                    title="Save it as one file to give to someone" className={button}>Share</button>
+                  <button onClick={() => { onClose(); onEdit?.(w.id); }} className={button}>Change with tazuna</button>
+                  <button onClick={() => onRemove?.(w.id)} aria-label={`Remove ${w.title}`} title="Remove (its folder moves to .removed)" className="rounded p-1 text-muted hover:text-ink"><X size={14} strokeWidth={1.5} /></button>
+                </Row>
+              ))}
+              {reading && (
+                <div role="region" aria-label={`${reading.w.title}: its code`} className="px-4 py-3">
+                  <div className="text-[12.5px] font-medium text-ink">{reading.w.title}</div>
+                  {reading.w.imported && <div className="text-[12.5px] font-medium text-warn">It came from someone else (a shared file or the gallery). Enable it only if you
+                    have read the code and trust where it came from.</div>}
+                  <div className="mb-1.5 text-[12px] text-muted">{reading.would}. A plugin can act differently later: the code below is what counts. It runs inside the
+                    window with tazuna's reach (it can send messages to the agent, which can act on your files).</div>
+                  <pre tabIndex={0} className="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] text-ink select-text">{reading.code}</pre>
+                  <div className="mt-2 flex justify-end gap-2">
+                    <button onClick={() => setReading(null)} className="rounded-md px-2.5 py-1 text-[12px] text-muted">Cancel</button>
+                    <button onClick={() => { onEnable?.({ ...reading.w, print: reading.print }, true); setReading(null); }}
+                      className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent">Enable this code</button>
                   </div>
-                ))}
-                <div className="py-1.5 text-[11.5px] text-faint">From gallery/ in tazuna's repository; anyone can propose one there with a pull request.</div>
+                </div>
+              )}
+              <div className="px-4 py-3">
+                <div className="flex items-center gap-2">
+                  <button onClick={() => widgets.importFile().then((id) => arrived(id, "the file")).catch((e) => setPlugNote(`Not added: ${e}`))} className={button}>Add from a file…</button>
+                  <button onClick={() => { setGallery({}); core.gallery().catch(() => {}); }} className={button}>Browse the gallery</button>
+                </div>
+                {plugNote && <div role="status" className="mt-1.5 text-[12px] text-muted">{plugNote}</div>}
               </div>
-            )}
-            <label className="mt-3 flex items-start gap-2 py-1"><input type="checkbox" checked={safeMode()} onChange={(e) => {
-              if (e.target.checked) localStorage.setItem("tazuna.safe", "1"); else localStorage.removeItem("tazuna.safe");
-              location.reload();
-            }} className="mt-1" />
-              <span><span className="text-ink">Safe mode: start without plugins</span><span className="block text-[12px] text-muted">For when a plugin breaks the window. Panels stay.</span></span></label>
+              {gallery && <>
+                {!gallery.items && !gallery.error && <div className="px-4 py-2.5 text-[12.5px] text-faint">Loading the gallery…</div>}
+                {gallery.error && <div className="px-4 py-2.5 text-[12.5px] text-bad">{gallery.error}</div>}
+                {gallery.items?.map((g) => (
+                  <Row key={g.file} title={<>{g.title} <span className="text-[11.5px] font-normal text-faint">· {g.kind}{g.author ? ` · by ${g.author}` : ""}</span></>} note={g.about}>
+                    <button disabled={asked.current.has(g.file)} onClick={() => { asked.current.add(g.file); setAskedN((n) => n + 1); core.galleryGet(g.file); }}
+                      className={button}>{asked.current.has(g.file) ? "Adding…" : "Add"}</button>
+                  </Row>
+                ))}
+                {gallery.items && <div className="px-4 py-2.5 text-[11.5px] text-faint">From gallery/ in tazuna's repository; anyone can propose one there with a pull request.</div>}
+              </>}
+              <Row title="Safe mode: start without plugins" note="For when a plugin breaks the window. Panels stay. The window reloads.">
+                <Switch label="Safe mode" on={safeMode()} onChange={(on) => { if (on) localStorage.setItem("tazuna.safe", "1"); else localStorage.removeItem("tazuna.safe"); location.reload(); }} />
+              </Row>
+            </Section>
 
-            <div className={label}>Updates</div>
-            <div className="flex items-center gap-2 py-1">
-              <span className="flex-1 text-[12.5px] text-ink-2" title="The app carries its own tazuna core, separate from the terminal's">
-                tazuna desktop {appVersion || "?"} <span className="text-faint">· its core {st.version}</span></span>
-              {update.version
-                ? update.installing ? <span role="status" className="text-[12px] text-muted">Installing… tazuna restarts by itself.</span>
-                  : <button onClick={() => installUpdate()} title="Replies running now stop; conversations stay resumable"
-                      className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent">Install {update.version} and restart</button>
-                : <button disabled={checking} onClick={async () => { setChecking(true); await checkUpdate(true); setChecking(false); }}
-                    className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-60">{checking ? "Checking…" : "Check for updates"}</button>}
-            </div>
-
+            <Section title="About">
+              <Row title={<span className="flex items-center gap-2">Version <span className="rounded border border-line bg-field px-1.5 py-px font-mono text-[11.5px] font-normal text-ink-2">{appVersion || "?"}</span></span>}
+                note={<>tazuna desktop, with its own core (<span className="font-mono">{st.version}</span>), separate from the terminal's. It looks for updates every hour.</>}>
+                {update.version
+                  ? update.installing ? <span role="status" className="text-[12px] text-muted">Installing… tazuna restarts by itself.</span>
+                    : <button onClick={() => installUpdate()} title="Replies running now stop; conversations stay resumable"
+                        className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent">Install {update.version} and restart</button>
+                  // aria-disabled, not disabled, while checking: a disabled button drops focus, which then had nowhere to
+                  // come back to when the answer's dialog closed
+                  : <button aria-disabled={checking} onClick={async () => { if (checking) return; setChecking(true); await checkUpdate(true); setChecking(false); }}
+                      className={`flex items-center gap-1.5 ${button} aria-disabled:opacity-60`}><RefreshCw size={12} strokeWidth={1.75} className={checking ? "animate-spin" : ""} aria-hidden="true" />{checking ? "Checking…" : "Check for updates"}</button>}
+              </Row>
+            </Section>
           </>}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** A part of the page: its heading, a line on what it is for, and its rows in one card, a line between each. */
+function Section({ title, note, children }: { title: string; note?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="mt-7 first:mt-0">
+      <h3 className="text-[13px] font-semibold text-ink">{title}</h3>
+      {note && <p className="mt-0.5 text-[12px] leading-relaxed text-muted">{note}</p>}
+      <div className="mt-2.5 divide-y divide-line-soft rounded-lg border border-line bg-card">{children}</div>
+    </section>
+  );
+}
+
+/** One setting: its name and what it does on the left, its control on the right. */
+function Row({ title, note, children }: { title: React.ReactNode; note?: React.ReactNode; children?: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-4 px-4 py-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-[13px] font-medium text-ink">{title}</div>
+        {note && <div className="mt-0.5 text-[12px] leading-relaxed text-muted">{note}</div>}
+      </div>
+      {children && <div className="flex flex-none items-center gap-2">{children}</div>}
+    </div>
+  );
+}
+
+/** On or off. */
+function Switch({ on, onChange, label }: { on: boolean; onChange: (on: boolean) => void; label: string }) {
+  return (
+    <button role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)}
+      className={`relative h-5 w-9 flex-none rounded-full ${on ? "bg-accent" : "bg-line-strong"}`}>
+      <span className={`absolute left-0.5 top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform duration-150 ${on ? "translate-x-4" : ""}`} />
+    </button>
+  );
+}
+
+/** One of a few, side by side. */
+function Segmented({ value, options, onChange, label }: { value: string; options: [string, string][]; onChange: (v: string) => void; label: string }) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex rounded-md border border-line p-0.5 text-[12px]">
+      {options.map(([v, l]) => (
+        <button key={v} role="radio" aria-checked={v === value} onClick={() => onChange(v)}
+          className={`whitespace-nowrap rounded px-2.5 py-1 ${v === value ? "bg-selected text-ink" : "text-muted hover:text-ink"}`}>{l}</button>
+      ))}
     </div>
   );
 }

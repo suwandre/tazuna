@@ -2286,7 +2286,7 @@ fn tool_calls(s: &Session, name: &str) -> ui::ListPanel {
     let rows = calls.iter().enumerate().map(|(i, t)| {
         let took = t.secs().map_or("running".to_string(), |x| format!("{x:.1}s"));
         let what: String = ui::plain(&ui::tool_summary(t, s)).chars().take(200).collect();
-        (format!("{:>3}  {:>7}  {}  {what}", i + 1, took, if t.error { "✗" } else if t.done_ms.is_some() { "✓" } else { "…" }), t.error)
+        (format!("{:>3}  {:>7}  {}  {what}", i + 1, took, if t.error { "✗" } else if t.done_ms.is_some() { "✓" } else { "…" }), if t.error { ui::Tone::Bad } else { ui::Tone::Plain })
     }).collect();
     // a fetched page's row links to it (the label is its title)
     let links = calls.iter().map(|t| matches!(ui::short_name(&t.name), "fetch" | "WebFetch").then(|| t.input["url"].as_str().map(String::from)).flatten()).collect();
@@ -2317,20 +2317,24 @@ const ACCOUNTS: &str = "usage · your accounts";
 /// `/usage`: every account's lines (accounts.rs); None: still reading them, said in the panel with a spinner.
 #[inline(never)]
 fn accounts_panel(v: Option<&serde_json::Value>) -> ui::ListPanel {
-    let rows: Vec<(String, bool)> = match v {
+    use ui::Tone::{Dim, Plain};
+    let lines = match v {
         Some(v) => accounts::lines(v),
-        None => vec!["reading your accounts…".into(), String::new(), "  Claude's plan: claude's own /usage, no model call".into(),
-            "  providers' credits".into(), "  OmniRoute's accounts and their quotas".into()],
-    }.into_iter().map(|l| (l, false)).collect();
+        None => vec![("reading your accounts…".into(), Plain, None), (String::new(), Plain, None),
+            ("  Claude's plan: claude's own /usage, no model call".into(), Dim, None), ("  providers' credits".into(), Dim, None),
+            ("  OmniRoute's accounts and their quotas".into(), Dim, None)],
+    };
+    let links: Vec<Option<String>> = lines.iter().map(|l| l.2.clone()).collect();
+    let rows: Vec<(String, ui::Tone)> = lines.into_iter().map(|(l, t, _)| (l, t)).collect();
     ui::ListPanel {
         pending: v.is_none(),
         title: ACCOUNTS.into(),
         head: String::new(),
-        links: vec![None; rows.len()],
+        links,
         details: vec![None; rows.len()],
         rows,
         scroll: 0,
-        link_from: 0,
+        link_from: accounts::LINK_FROM,
         hscroll: 0,
         open: Default::default(),
     }
@@ -2339,7 +2343,7 @@ fn accounts_panel(v: Option<&serde_json::Value>) -> ui::ListPanel {
 /// `/changelog`: a row per version (its title), its notes unfolded by a click.
 #[inline(never)]
 fn changelog_panel(entries: &[serde_json::Value]) -> ui::ListPanel {
-    let rows: Vec<(String, bool)> = entries.iter().map(|e| (format!("{:<9}{}", e["version"].as_str().unwrap_or_default(), e["title"].as_str().unwrap_or_default()), false)).collect();
+    let rows: Vec<(String, ui::Tone)> = entries.iter().map(|e| (format!("{:<9}{}", e["version"].as_str().unwrap_or_default(), e["title"].as_str().unwrap_or_default()), ui::Tone::Plain)).collect();
     let details = entries.iter().map(|e| e["notes"].as_str().filter(|n| !n.is_empty()).map(String::from)).collect();
     ui::ListPanel {
         title: format!("changelog · tazuna {} · click a version for its notes", env!("CARGO_PKG_VERSION")),
@@ -2361,7 +2365,7 @@ fn model_calls(s: &Session) -> ui::ListPanel {
         let first = c.and_then(|c| c.ttft_ms).map_or("-".to_string(), |ms| format!("{:.1}s", ms / 1000.0));
         let rate = c.filter(|c| c.gen_ms > 0.0).map_or("-".to_string(), |c| format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0));
         let e2e = c.filter(|c| c.total_ms > 0.0 && c.out > 0).map_or("-".to_string(), |c| format!("{:.0}", c.out as f64 / c.total_ms * 1000.0));
-        (format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}  {:>6}", i + 1, ui::human(u.input + u.cache_write), ui::human(u.cache_read), ui::human(u.output), first, rate, e2e), false)
+        (format!("{:>4}  {:>8}  {:>8}  {:>7}  {:>6}  {:>6}  {:>6}", i + 1, ui::human(u.input + u.cache_write), ui::human(u.cache_read), ui::human(u.output), first, rate, e2e), ui::Tone::Plain)
     }).collect();
     ui::ListPanel {
         title: format!("model calls · {}", s.turn_usage.len()),

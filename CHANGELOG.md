@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.176 (2026-11-18): /usage in sections
+
+- The /usage panel reads in parts: Claude plan, providers' credits and OmniRoute accounts each under a heading with a line
+  across. The meters' bars line up across the sections, coloured (red at 90% or more). Reset times drop the time zone,
+  which is the user's own; OmniRoute's say how long until they reset ("in 6 d 23 h") instead of a UTC timestamp. Notes
+  are dimmed, and only the last day's ones show (the week's repeat them). A provider without a balance API shows its page
+  as a link to click. A balance below zero is red.
+- A list panel's title offers "click a row: all of it" only where a row has more to show.
+
 ## 0.1.175 (2026-11-18): /usage opens its panel at once
 
 - /usage opens the accounts panel right away, with a spinner and what it is reading, and fills it when the accounts

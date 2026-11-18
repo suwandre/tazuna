@@ -1,5 +1,6 @@
 // Updates of the app itself (src-tauri update_check, update_install): looked for at start and hourly; a snackbar says
 // when there is one and installs it on the user's word (Settings has the button too).
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { useSyncExternalStore } from "react";
 import { inTauri } from "./tazuna";
@@ -21,12 +22,17 @@ export async function checkUpdate(told = false) {
     if (u) set({ version: u.version, notes: u.notes });
     // the snackbar says it, and only it (the sidebar's row and Settings' line went in 0.1.60): a new version once, staying
     // until installed or closed; a check the user asked for also when there is none
+    // asked for (Check for updates): the answer in the middle, over a dimmed window, until closed; found by the hourly
+    // check: a snackbar at the bottom, which does not stop the work
+    const now = told ? await getVersion().catch(() => "") : "";
     if (u && (told || announced !== u.version)) {
       announced = u.version;
-      toast(`tazuna desktop ${u.version} is out`, { kind: "info", sticky: true, action: { label: "Install and restart", run: () => installUpdate() } });
-    } else if (!u && told) toast("tazuna desktop is up to date", { kind: "ok" });
+      const notes = u.notes && u.notes !== `tazuna desktop ${u.version}` ? `${u.notes}\n\n` : "";
+      toast(`tazuna desktop ${u.version} is out`, { kind: "info", sticky: true, modal: told, action: { label: "Install and restart", run: () => installUpdate() },
+        detail: `${notes}You have ${now || "an older version"}. Installing restarts tazuna: replies running now stop, conversations stay resumable.` });
+    } else if (!u && told) toast("You're up to date", { kind: "ok", modal: true, detail: `tazuna desktop ${now} is the newest version.` });
   } catch (e) {
-    if (told) toast(`Could not check for updates: ${e}`, { kind: "error" });
+    if (told) toast("Could not check for updates", { kind: "error", modal: true, detail: String(e) });
     else console.error(`update check: ${e}`);
   }
 }
