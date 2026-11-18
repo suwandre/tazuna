@@ -32,6 +32,7 @@ export async function installUpdate() {
 export function watchUpdates() {
   if (!inTauri) return () => {};
   const first = setTimeout(() => checkUpdate(), 5000);
-  const every = setInterval(() => checkUpdate(), 12 * 3600 * 1000);
+  // hourly (12-hourly until 0.1.55: a fix waited half a day to arrive); one small request to GitHub each time
+  const every = setInterval(() => checkUpdate(), 3600 * 1000);
   return () => { clearTimeout(first); clearInterval(every); };
 }

@@ -42,7 +42,7 @@ const MODES: [string, string][] = [
   ["plan", "reads only: no edits, asks before commands"],
 ];
 
-const pill = "inline-flex items-center gap-1.5 rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 hover:border-line-strong hover:bg-hover hover:text-ink";
+const pill = "inline-flex items-center gap-1.5 rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:opacity-60";
 
 export function Composer({ session, threadCost, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
@@ -105,7 +105,7 @@ export function ModePill({ composer: c }: { composer: ComposerBag }) {
   const [open, setOpen] = useState(false);
   return (
     <span className="relative">
-      <button disabled={!c.onMode} onClick={() => setOpen(!open)} title="Permission mode (shift-tab)" className={`${pill} hover:bg-hover`}>
+      <button disabled={!c.onMode} onClick={() => setOpen(!open)} title="Permission mode (shift-tab)" className={pill}>
         <Shield size={14} strokeWidth={1.5} />{c.session.mode}
       </button>
       {open && (
@@ -127,7 +127,7 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
   const current = c.models?.choices.find((m) => m.current);
   return (
     <span className="relative">
-      <button disabled={c.busy || !c.onPickModel} onClick={() => { c.onModels?.(); setOpen(!open); }} title="Model" className={`${pill} hover:bg-hover`}>
+      <button disabled={c.busy || !c.onPickModel} onClick={() => { c.onModels?.(); setOpen(!open); }} title="Model" className={pill}>
         <Zap size={14} strokeWidth={1.5} />{current?.label ?? c.session.model}
       </button>
       {open && <ModelPicker models={c.models ?? null} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }} />}
@@ -141,7 +141,7 @@ export function EffortPill({ composer: c }: { composer: ComposerBag }) {
   if (!c.session.effort) return null;
   return (
     <span className="relative">
-      <button disabled={c.busy || !c.onPickEffort || efforts.length < 2} onClick={() => { c.onModels?.(); setOpen(!open); }} title="Effort" className={`${pill} hover:bg-hover`}>
+      <button disabled={c.busy || !c.onPickEffort || efforts.length < 2} onClick={() => { c.onModels?.(); setOpen(!open); }} title="Effort" className={pill}>
         <Gauge size={14} strokeWidth={1.5} />{c.session.effort}
       </button>
       {open && <EffortMenu efforts={efforts} current={c.session.effort} onClose={() => setOpen(false)} onPick={(e) => { setOpen(false); c.onPickEffort?.(e); }} />}

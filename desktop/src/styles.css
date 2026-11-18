@@ -64,6 +64,9 @@ input, textarea, [contenteditable] { user-select: text; cursor: text; }
   button:not(:disabled):active { filter: brightness(.93); }
   .dark button:not(:disabled):active { filter: brightness(1.18); }
 }
+/* a button with a border (the pills, Share, Check, Keep) takes an accent-tinted one on hover: seen at once in both themes,
+   where a lighter background alone barely showed in dark mode (2026-11-18); text contrast is untouched */
+button.border:not(:disabled):hover { border-color: color-mix(in srgb, var(--accent) 60%, var(--line-strong)); }
 /* the accent buttons (Send, Enable, Start) darken on hover */
 button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
 .dark button.bg-accent:not(:disabled):hover { filter: brightness(1.1); background-color: var(--accent); }

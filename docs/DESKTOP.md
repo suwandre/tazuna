@@ -109,6 +109,9 @@ on its line.
 0.1.54: every button answers the pointer: a hand, a hover background, a press (the hover colour was the pills' own
 background in dark mode, the cursor stayed an arrow, half the buttons had no hover style); the accent buttons darken.
 Hover colours keep every text level at 4.5:1 or more (light #e7e3db, dark #302e29).
+0.1.55: a button with a border takes an accent-tinted one on hover (the lighter background alone barely showed in dark
+mode); the composer's pills answer the pointer only when they can be used, and look dimmed when they cannot (during a
+reply, or a model with one effort). The app looks for an update hourly, not every 12 hours.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

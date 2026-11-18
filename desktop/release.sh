@@ -14,4 +14,4 @@ git fetch -q origin main
 [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || { echo "push main first"; exit 1; }
 git ls-remote --exit-code --tags origin "refs/tags/desktop-v$v" >/dev/null && { echo "desktop-v$v is tagged already: bump the version"; exit 1; }
 git tag "desktop-v$v" && git push -q origin "desktop-v$v"
-echo "desktop-v$v pushed: CI builds, signs and publishes it (gh run watch); installed apps offer it within 12 hours, or Check for Updates"
+echo "desktop-v$v pushed: CI builds, signs and publishes it (gh run watch); installed apps offer it within the hour, or Check for Updates"
