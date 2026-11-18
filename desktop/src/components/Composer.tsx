@@ -45,7 +45,8 @@ const MODES: [string, string][] = [
   ["plan", "reads only: no edits, asks before commands"],
 ];
 
-const pill = "inline-flex items-center gap-1.5 rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:opacity-60";
+// one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
+const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
 export function Composer({ session, usage, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
@@ -93,10 +94,10 @@ export function Composer({ session, usage, busy, onSend, onStop, models, onModel
           <span className="flex-1" />
           {usage && <PlanRing u={usage} last={session.lastCost} />}
           {busy && !text.trim()
-            ? <button onClick={onStop} title="Stop (Esc)" className="grid size-[30px] place-items-center rounded-full bg-ink text-canvas"><Square size={12} strokeWidth={2} fill="currentColor" /></button>
+            ? <button onClick={onStop} title="Stop (Esc)" className="grid size-[30px] flex-none place-items-center rounded-full bg-ink text-canvas"><Square size={12} strokeWidth={2} fill="currentColor" /></button>
             // solid only when there is something to send (a faded accent read as broken)
             : <button onClick={send} title={busy ? "Send after this reply (Enter)" : "Send (Enter)"} disabled={!text.trim()}
-                className={`grid size-[30px] place-items-center rounded-full ${text.trim() ? "bg-accent text-on-accent" : "border border-line bg-field text-faint"}`}><ArrowUp size={16} strokeWidth={1.75} /></button>}
+                className={`grid size-[30px] flex-none place-items-center rounded-full ${text.trim() ? "bg-accent text-on-accent" : "border border-line bg-field text-faint"}`}><ArrowUp size={16} strokeWidth={1.75} /></button>}
         </div>
       </div>
       {below && <div className="mx-auto mt-1.5 max-w-[700px] px-1">{below}</div>}
@@ -112,7 +113,7 @@ function PlanRing({ u, last }: { u: Usage; last: number }) {
   const pct = u.plan5h ?? u.contextPct;
   const meter = (label: string, value: string, p?: number) => (
     <div className="py-[3px]">
-      <div className="flex items-baseline gap-3"><span className="flex-none text-ink-2">{label}</span><span className="ml-auto truncate font-mono text-[12px] text-muted">{value}</span></div>
+      <div className="flex items-baseline gap-3"><span className="flex-none text-ink-2">{label}</span><span className="ml-auto truncate text-[12px] tabular-nums text-muted">{value}</span></div>
       {p != null && <div className="mt-1"><Bar pct={p} /></div>}
     </div>
   );
@@ -121,7 +122,7 @@ function PlanRing({ u, last }: { u: Usage; last: number }) {
     <span className="group/ring relative">
       {/* a short bar, not a ring: at this size a ring read as one more spinner beside the working ones */}
       <button onClick={openUsage} aria-describedby="plan-card" aria-label={`${u.plan5h != null ? "Plan" : "Context"} ${pct}% used: usage`}
-        className="flex items-center gap-1.5 rounded-full px-2 py-[5px] font-mono text-[12px] text-muted hover:bg-hover hover:text-ink">
+        className="flex flex-none items-center gap-1.5 rounded-full px-2 py-[5px] text-[12px] tabular-nums text-muted hover:bg-hover hover:text-ink">
         <span className="block h-[5px] w-6 overflow-hidden rounded-full bg-line-strong" aria-hidden="true">
           <i className={`block h-full rounded-full ${pct >= 90 ? "bg-warn" : "bg-accent"}`} style={{ width: `${Math.min(100, pct)}%` }} />
         </span>

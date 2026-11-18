@@ -2,7 +2,7 @@ import { Check, GitBranch, GitPullRequest, LoaderCircle, Pencil, SquareTerminal,
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Slot } from "../lib/slots";
 import { tokens, widgetUrl, type UserWidget } from "../lib/widgets";
-import { checksOf, type Pr } from "../lib/pr";
+import { OPEN_PR, checksOf, type Pr } from "../lib/pr";
 import type { ChangedFile, Message, Usage } from "../lib/types";
 
 // The right column is the work panel (the design review of 2026-11-18): what the agent changed, the checks it ran, the
@@ -23,6 +23,8 @@ export type Work = {
   pr?: Pr | null;
   folder?: string | null;
   review?: () => void; openPr?: () => void;
+  /** a message to the agent (the PR section's "Ask tazuna to open one") */
+  ask?: (text: string) => void;
 };
 export const WorkCtx = createContext<Work>({ files: [], checks: [] });
 
@@ -31,7 +33,7 @@ export function Section({ icon, title, right, children }: { icon?: ReactNode; ti
   return (
     <section className="rounded-lg border border-line bg-card">
       <div className="flex items-center gap-2 px-3 py-2.5 font-medium text-ink">{icon}<span className="flex-1">{title}</span>
-        {right != null && <span className="font-mono text-[12px] font-normal text-faint">{right}</span>}</div>
+        {right != null && <span className="min-w-0 truncate text-[12px] font-normal tabular-nums text-faint">{right}</span>}</div>
       {children && <div className="border-t border-line-soft px-3 pb-2.5 pt-1.5">{children}</div>}
     </section>
   );
@@ -71,9 +73,9 @@ export function ChangesSection() {
           return (
             <div key={f.path} title={f.path} className="flex items-center gap-2 py-[3px] text-[12.5px]">
               <span className="min-w-0 flex-1 truncate"><span className="font-medium text-ink">{file}</span> <span className="text-faint">{dir}</span></span>
-              {f.added == null ? <span className="font-mono text-[12px] text-faint">binary</span> : <>
-                {f.added > 0 && <span className="font-mono text-[12px] text-ok">+{f.added}</span>}
-                {(f.removed ?? 0) > 0 && <span className="font-mono text-[12px] text-bad">−{f.removed}</span>}</>}
+              {f.added == null ? <span className="text-[12px] text-faint">binary</span> : <>
+                {f.added > 0 && <span className="text-[12px] tabular-nums text-ok">+{f.added}</span>}
+                {(f.removed ?? 0) > 0 && <span className="text-[12px] tabular-nums text-bad">−{f.removed}</span>}</>}
             </div>
           );
         })}
@@ -89,13 +91,13 @@ export function ChecksSection() {
   if (!w.folder || !w.checks.length) return null;
   const [last, ...before] = w.checks;
   return (
-    <Section icon={<SquareTerminal size={14} strokeWidth={1.5} className={ico} />} title="Checks" right={<span className="truncate">{last.cmd.slice(0, 24)}</span>}>
+    <Section icon={<SquareTerminal size={14} strokeWidth={1.5} className={ico} />} title="Checks" right={<span className="font-mono">{last.cmd.slice(0, 24)}</span>}>
       {[last, ...before.slice(0, 2)].map((c, i) => (
         <div key={i} className="flex items-center gap-2 py-[3px] text-[12.5px] text-ink-2">
           {c.ok == null ? <LoaderCircle size={14} strokeWidth={1.75} className="flex-none animate-spin text-accent" />
             : c.ok ? <Check size={14} strokeWidth={1.75} className="flex-none text-ok" /> : <X size={14} strokeWidth={1.75} className="flex-none text-bad" />}
           <span className="min-w-0 flex-1 truncate">{c.ok == null ? "Running" : c.ok ? "Passed" : "Failed"}{i > 0 ? " before" : ""}</span>
-          <span className="font-mono text-[12px] text-faint">{c.secs.toFixed(1)} s</span>
+          <span className="text-[12px] tabular-nums text-faint">{c.secs.toFixed(1)} s</span>
         </div>
       ))}
     </Section>
@@ -114,7 +116,8 @@ export function PrSection() {
         <div className="text-[12.5px] text-muted">{p.state === "MERGED" ? "Merged" : p.state === "CLOSED" ? "Closed" : p.isDraft ? "Draft" : "Open"}
           {cs.length > 0 && <> · {failed ? <span className="text-bad">{failed} failed</span> : running ? `${running} running` : <span className="text-ok">checks passed</span>}</>}</div>
       </>}
-      {w.openPr && <div className="mt-2 flex gap-1.5"><button onClick={w.openPr} className={btn}>{p.none ? "Open one…" : "Checks and reviews"}</button></div>}
+      {p.none ? w.ask && <div className="mt-2 flex gap-1.5"><button onClick={() => w.ask!(OPEN_PR)} title="tazuna commits what is ready, pushes the branch and opens it with gh" className={btn}>Ask tazuna to open one</button></div>
+        : w.openPr && <div className="mt-2 flex gap-1.5"><button onClick={w.openPr} className={btn}>Checks and reviews</button></div>}
     </Section>
   );
 }

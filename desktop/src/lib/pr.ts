@@ -28,6 +28,9 @@ export function checksOf(pr: Pr): Check[] {
   });
 }
 
+/** What "Ask tazuna to open one" sends (the PR panel and the work panel). */
+export const OPEN_PR = "Commit what is ready, push this branch and open a pull request with gh pr create: a short title, and a description of what changed and why.";
+
 /** The header chip's text: "#12 ✓", "#12 ✗ 2", "#12 …", "#12 merged". */
 export function prChip(pr: Pr): string | null {
   if (pr.none || pr.error || !pr.number) return null;

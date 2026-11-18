@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { PanelRight } from "lucide-react";
+import { MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
 import { Approval } from "./components/Approval";
 import { Composer, DRAFT } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
@@ -374,10 +374,17 @@ export default function App() {
   // the work panel (the right column): open in a project, closed in a plain chat, until the user says otherwise (⌘\ or the
   // header's button) for this window's life
   const [panelPref, setPanelPref] = useState<boolean | null>(null);
-  const panelOpen = panelPref ?? !!folder;
+  // the window's width: the work panel closes by itself below 1280 px, and below 1000 px the sidebar opens over the
+  // conversation from the header's button (at 980 px the panel left the conversation 430 px and the composer's pills
+  // wrapped; design review, 2026-11-18)
+  const width = useWidth();
+  const narrow = width < 1000;
+  const [navOpen, setNavOpen] = useState(false);
+  useEffect(() => setNavOpen(false), [active, narrow]);
+  const panelOpen = panelPref ?? (!!folder && width >= 1280);
   const togglePanel = () => setPanelPref(!panelOpen);
   useEffect(() => {
-    const key = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setPanelPref((p) => !(p ?? !!folder)); } };
+    const key = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setPanelPref((p) => !(p ?? (!!folder && window.innerWidth >= 1280))); } };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [folder]);
@@ -388,6 +395,7 @@ export default function App() {
     pr: pr ?? null, folder,
     review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
     openPr: inTauri && folder ? () => setShowPr(true) : undefined,
+    ask: inTauri ? (text) => { core.send(text, true).catch(() => {}); } : undefined,
   };
   // worktrees (src/worktree.rs): a new conversation in a worktree of this project; its setup script runs on the user's word
   const [wt, setWt] = useState<{ ask?: boolean; script?: string; id?: string; error?: string; remove?: { path: string; dirty?: string } } | null>(null);
@@ -479,6 +487,11 @@ export default function App() {
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
   const usage = view ? viewUsage(view) : demo.usage;
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
+  // when the reply now running began, as this window first saw it: the fold's "Working 12 s" keeps counting across a switch
+  // to another conversation and back (it began at 0 s again on every switch)
+  const replyStart = useRef<Record<string, number>>({});
+  const startKey = `${active}:${view ? view.blocks.filter((b) => b.kind === "prompt").length : 0}`;
+  if (busy && !replyStart.current[startKey]) replyStart.current[startKey] = Date.now();
   const session = view
     ? { model: view.model || "default", effort: view.effort || "", mode: view.mode, branch: "", changed: 0, lastCost: lastCost(view) }
     : demo.session;
@@ -529,21 +542,27 @@ export default function App() {
   const data = widgetData(view);
   const title = view ? (view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] ?? "New chat" : "Retry test fails on CI";
   return (
-    <div className={`grid h-screen overflow-hidden ${side ? "grid-cols-[248px_1fr_380px]" : panelOpen ? "grid-cols-[248px_1fr_300px]" : "grid-cols-[248px_1fr]"}`}>
+    <div className="grid h-screen overflow-hidden"
+      style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", side ? "380px" : panelOpen ? "300px" : null].filter(Boolean).join(" ") }}>
+      {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-ink/15" />}
+      <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-composer" : "hidden") : "flex min-h-0"}>
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
         chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
         projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
         onNewChat={() => open(null)} onOpenFolder={pick} onOpenProject={(p) => p.path && open(p.path)}
         onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")} onSettings={() => setOverlay("settings")}
-        open={inTauri ? threads.map((t) => ({ tid: t.tid, id: t.view?.session_id, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
+        open={inTauri ? threads.filter((t) => t.tid === active || t.view?.blocks.some((b) => b.kind === "prompt")).map((t) => ({ tid: t.tid, id: t.view?.session_id, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
           state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
         activeTid={active} onSwitch={show} onClose={close}
         onRename={inTauri ? (t, title) => core.rename(t.id, title).then(refreshSessions) : undefined}
         onHide={inTauri ? (t) => core.hide(t.id).then(refreshSessions) : undefined}
         planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
+      </div>
       <main className="flex min-h-0 min-w-0 flex-col bg-main">
         <header data-tauri-drag-region className="flex items-center justify-between gap-3 border-b border-line-soft py-2.5 pl-7 pr-4">
-          <div className="flex min-w-0 items-center gap-2 font-medium"><span className="flex-none text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} title={title} className="tz-enter truncate text-[inherit] font-[inherit]">{title}</h1></div>
+          <div className="flex min-w-0 items-center gap-2 font-medium">
+            {narrow && <button onClick={() => setNavOpen(true)} aria-label="Conversations" title="Conversations" className="-ml-3 grid size-7 flex-none place-items-center rounded-md text-muted hover:text-ink"><PanelLeft size={16} strokeWidth={1.5} /></button>}
+            <span className="flex-none text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} title={title} className="tz-enter truncate text-[inherit] font-[inherit]">{title}</h1></div>
           <div className="flex flex-none items-center gap-1.5">
             <HeaderCtx.Provider value={{ modelLabel: models?.choices.find((c) => c.current)?.label ?? session.model, effort: session.effort,
               branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
@@ -558,7 +577,7 @@ export default function App() {
           onEdit={inTauri ? (e, text) => {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
-          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)}
+          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} onSendToAgent={(text) => core.send(text, true)}
           onDiff={(turn, path) => core.diff(turn, path)} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />
         </div>
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
@@ -679,6 +698,13 @@ function lastCost(v: View): number {
   return 0;
 }
 
+/** The window's width, kept as it is resized. */
+function useWidth() {
+  const [w, setW] = useState(() => window.innerWidth);
+  useEffect(() => { const on = () => setW(window.innerWidth); window.addEventListener("resize", on); return () => window.removeEventListener("resize", on); }, []);
+  return w;
+}
+
 /** The files a conversation changed and has not undone, each once with its lines summed over the turns. */
 function changedFiles(v: View | null): ChangedFile[] {
   const all = new Map<string, ChangedFile>();
@@ -720,8 +746,9 @@ function ReviewChip() {
 }
 function SideChip() {
   const h = useContext(HeaderCtx);
-  return h.side ? <button onClick={h.side} title="A chat beside this conversation that knows it: nothing in it goes back"
-    className={`rounded-full border px-2.5 py-1 text-[12px] hover:bg-hover ${h.sideOpen ? "border-line-strong bg-selected text-ink" : "border-line text-ink-2"}`}>Side chat</button> : null;
+  // an icon like the panel's button beside it (it was the header's one text pill)
+  return h.side ? <button onClick={h.side} aria-pressed={h.sideOpen} aria-label="Side chat" title="Side chat: ask about this conversation; nothing in it goes back"
+    className={`grid size-7 place-items-center rounded-md ${h.sideOpen ? "bg-field text-ink" : "text-muted hover:text-ink"}`}><MessagesSquare size={16} strokeWidth={1.5} /></button> : null;
 }
 slots.register({ id: "header.side", slot: "header.actions", order: 40, source: "tazuna", render: SideChip });
 function PrChip() {
@@ -733,7 +760,8 @@ function PrChip() {
 // ModelChip, BranchChip, ReviewChip and PrChip stay for a plugin that wants one back: slots.register({ ..., render: ModelChip }).
 function CostChip() {
   const h = useContext(HeaderCtx);
-  return h.cost != null ? <button onClick={openUsage} title="This conversation's cost · Usage (⌘⇧U)" className="rounded-md px-2 py-1 font-mono text-[12.5px] text-muted hover:text-ink">{usd(h.cost)}</button> : null;
+  // nothing until there is a cost (a new chat showed $0.000)
+  return h.cost ? <button onClick={openUsage} title="This conversation's cost · Usage (⌘⇧U)" className="rounded-md px-2 py-1 text-[12.5px] tabular-nums text-muted hover:text-ink">{usd(h.cost)}</button> : null;
 }
 function PanelChip() {
   const h = useContext(HeaderCtx);

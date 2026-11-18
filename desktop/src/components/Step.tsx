@@ -105,7 +105,7 @@ export function Step({ t }: { t: ToolStep }) {
         <span className={t.running ? "tz-live" : ""}>{t.running ? (NOW[t.verb] ?? t.verb) : t.verb}</span> {t.target && <span className="truncate font-mono text-[11.5px] text-ink-2">{t.target}</span>}
         {t.detail && <span className="text-faint">· {t.detail}</span>}
         {/* the time beside the step, not at the far right (the eye went 600 px for it) */}
-        {!thinking && <span className="flex-none whitespace-nowrap font-mono text-[11.5px] text-faint">{t.running ? <Elapsed secs={t.secs} /> : `${t.secs.toFixed(1)} s`}</span>}
+        {!thinking && <span className="flex-none whitespace-nowrap text-[12px] tabular-nums text-faint">{t.running ? <Elapsed secs={t.secs} /> : `${t.secs.toFixed(1)} s`}</span>}
         {more && <ChevronRight size={13} strokeWidth={1.5} className={`flex-none text-faint transition-transform duration-150 ${open ? "rotate-90" : ""}`} />}
       </button>
       {open && (thinking ? <div className={`${box} font-serif`}>{t.text}</div> : <>

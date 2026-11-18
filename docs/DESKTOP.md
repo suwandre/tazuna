@@ -145,6 +145,11 @@ itself" could stay for minutes). Quitting the app waits the same way.
 "Installing… tazuna restarts by itself"), with a 5-minute limit: GitHub's release storage served the 6 MB at 80-200 KB/s,
 and "Installing…" alone read as stuck for over a minute. The sidebar's rows keep their height in a long list (it
 scrolls; 0.1.64 squeezed them until they overlapped).
+0.1.67: the second design review's fixes: below 1280 px the work panel starts closed and below 1000 px the sidebar opens
+from the header; the composer's pills never wrap and stay readable during a reply; one live status per reply ("Working
+12 s", or "Waiting for you" during an approval), its time kept across a switch; no empty "New conversation" rows; no
+$0.000 in a new chat's header; numbers in tabular Geist, mono only for code; no "−0"; the side chat a header icon like the
+panel's; "Ask tazuna to open one" for a branch without a pull request.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

@@ -2,7 +2,7 @@ import { ExternalLink, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { core } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
-import { checksOf, fromCollaborator, oneLine, type Pr } from "../lib/pr";
+import { checksOf, fromCollaborator, oneLine, type Pr, OPEN_PR } from "../lib/pr";
 
 // The PR panel (docs/DESKTOP.md 0.3): the pull request of this folder's branch through gh. Its checks, reviews and
 // comments; a failing check or the review comments go to the agent in one click; no PR yet: ask tazuna to open one.
@@ -43,7 +43,7 @@ export function PrView({ pr, worktree, onClose, onSend, onRefresh, onRemoveWorkt
           {pr?.error && <div className="text-bad">{pr.error}</div>}
           {pr?.none && <>
             <div className="text-ink-2">No pull request for the branch <span className="font-mono">{pr.branch}</span> yet.</div>
-            <button onClick={() => onSend("Commit what is ready, push this branch and open a pull request with gh pr create: a short title, and a description of what changed and why.")}
+            <button onClick={() => onSend(OPEN_PR)}
               className="mt-3 rounded-md border border-line-strong px-2.5 py-1 text-ink hover:bg-hover">Ask tazuna to open one</button>
           </>}
           {pr && !pr.none && !pr.error && <>

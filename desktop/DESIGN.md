@@ -89,7 +89,9 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - UI: Geist 13.5 px. Labels: Geist 11.5 px medium, sentence case (no tracked capitals).
 - Assistant prose: Source Serif 4, 15.5 px, line height 1.62, reading width 700 px.
 - User messages: Geist on a `field` block; code inline in Geist Mono.
-- Mono for tool steps, file paths, diffs, costs and timings.
+- Mono for code: commands, file paths, diffs, branch names, tool targets. Numbers in the UI (costs, timings, counts, ages,
+  percentages) are Geist with tabular figures (`tabular-nums`), not mono: mono everywhere read as noise (review,
+  2026-11-18).
 - Fonts are bundled with the app (no network fonts).
 
 ## Layout
@@ -100,6 +102,10 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   button, its card on hover (plan windows, context, cost, cache, balance), the usage page on a click. The thread's cost:
   the header. An answer's own numbers: under it, on hover. The line under the composer only says what is new: a paid
   model's cost per message, or the plan running low.
+- Narrow windows: below 1280 px the work panel starts closed; below 1000 px the sidebar opens over the conversation from
+  the header's button. The composer's pills never wrap.
+- One live status per reply: its fold says "Working 12 s" (counted from when the reply began), or "Waiting for you" during
+  an approval; the line under the transcript shows only before the first step.
 - The sidebar groups the conversations open now by what they need (Needs you, Working, Open), then Recent: every saved
   conversation by when it last ran, two lines each (its name; its project and age). Projects last, folded.
 - The transcript is a document, not two-sided bubbles: no speaker labels (your message is the field block), a reply's

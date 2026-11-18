@@ -16,7 +16,11 @@ function meta(m: { cost: number; tokens: number; cachedPct?: number; secs: numbe
 const doing: Record<string, string> = { Starting: "thinking", Waiting: "thinking", Thinking: "thinking", Writing: "writing", Tool: "working", Verifying: "running the checks" };
 
 type Props = {
-  messages: Message[]; busy?: boolean; activity?: string; onSendToAgent?: (text: string) => void;
+  messages: Message[]; busy?: boolean; activity?: string;
+  /** the reply running waits for your answer (an approval): its fold says so */
+  asking?: boolean;
+  /** when the reply running began (ms), for its time */
+  since?: number; onSendToAgent?: (text: string) => void;
   onDiff?: (turn: number, path: string) => void; onUndo?: (turn: number) => void; onReview?: (turn: number) => void;
   /** "edit from here" on one of your messages */
   onEdit?: (edit: { cp: number; block: number }, text: string) => void;
@@ -40,9 +44,9 @@ function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change
             <FileText size={14} strokeWidth={1.5} className="flex-none" /><span className="truncate">{f.path}</span>
             {f.status !== "M" && <span className="flex-none font-sans text-[11px] text-faint">{STATUS[f.status] ?? f.status}</span>}
           </span>
-          {f.added == null ? <span className="font-mono text-[11.5px] text-faint">binary</span> : <>
-            <span className="font-mono text-[12px] font-semibold text-ok">+{f.added}</span>
-            <span className="font-mono text-[12px] font-semibold text-bad">−{f.removed}</span>
+          {f.added == null ? <span className="text-[12px] text-faint">binary</span> : <>
+            {f.added > 0 && <span className="text-[12px] font-medium tabular-nums text-ok">+{f.added}</span>}
+            {(f.removed ?? 0) > 0 && <span className="text-[12px] font-medium tabular-nums text-bad">−{f.removed}</span>}
           </>}
           <button onClick={() => onDiff?.(change.turn, f.path)} className="rounded-md border border-line px-2 py-0.5 text-[12px] text-ink-2 hover:bg-hover">Diff</button>
         </div>
@@ -67,6 +71,8 @@ export const useTranscript = () => useContext(TranscriptCtx);
 
 export function Transcript({ messages, activity, jumps = true, ...rest }: Props) {
   const { busy, editFrom } = rest;
+  // a reply with steps says it is working in its fold; the line under the transcript only until the first step
+  const folded = !!busy && messages.some((m) => m.role === "agent" && !m.meta && (m.tools?.length ?? 0) > 0);
   // follow new output while the reader is at the bottom; stay put once they scroll up
   const box = useRef<HTMLElement>(null), stick = useRef(true);
   // a long conversation draws its latest messages; earlier ones on request (a three-day session is ~1,900 blocks)
@@ -106,14 +112,14 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
                   </span>
                 </div>
               )}
-              {m.tools && m.tools.length > 0 && <WorkFold tools={m.tools} secs={m.meta?.secs} live={!!busy && !m.meta} />}
+              {m.tools && m.tools.length > 0 && <WorkFold tools={m.tools} secs={m.meta?.secs} live={!!busy && !m.meta} asking={rest.asking} since={rest.since} />}
               <div className="prose-answer text-ink">{m.prose.map((p, j) => <Slot key={j} name="message.text" props={{ text: p }} only />)}</div>
               <Slot name="message.after" props={{ message: m, index: hidden + i }} />
             </>
           )}
         </div>
       ))}
-      {busy && activity && doing[activity] && <Working what={doing[activity]} />}
+      {busy && !folded && activity && doing[activity] && <Working what={doing[activity]} since={rest.since} />}
     </section>
     </TranscriptCtx.Provider>
   );
@@ -141,17 +147,18 @@ export function workSummary(tools: ToolStep[]): string {
 
 /** A reply's steps as one line, "Worked 41 s · read 2 files, ran 3 commands ›": open while the reply runs, folded once it
  * is done (a click keeps it as chosen). Until desktop 0.1.64 each step was a line of its own above every answer. */
-function WorkFold({ tools, secs, live }: { tools: ToolStep[]; secs?: number; live: boolean }) {
+function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; secs?: number; live: boolean; asking?: boolean; since?: number }) {
   const [open, setOpen] = useState<boolean | null>(null);
   const shown = open ?? live;
   const what = workSummary(tools);
-  const took = secs == null ? "" : secs < 60 ? ` ${secs} s` : ` ${Math.floor(secs / 60)} min ${secs % 60} s`;
+  const took = secs == null ? "" : ` ${dur(secs)}`;
   return (
     <div className="mb-2.5">
       <button onClick={() => setOpen(!shown)} aria-expanded={shown} title={shown ? "Fold the steps" : "Show each step"}
         className="-ml-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-[12.5px] text-muted hover:bg-hover hover:text-ink">
         <ChevronRight size={13} strokeWidth={1.5} className={`flex-none transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
-        <span className="flex-none">{live ? "Working" : `Worked${took}`}</span>
+        {live && !asking && <LoaderCircle size={13} strokeWidth={1.75} className="flex-none animate-spin text-accent" aria-hidden="true" />}
+        <span className={`flex-none ${live && asking ? "font-medium text-warn" : ""}`}>{live ? (asking ? "Waiting for you" : <>Working{since && <> <Ticking since={since} /></>}</>) : `Worked${took}`}</span>
         {what && <span className="truncate text-faint">· {what}</span>}
       </button>
       {shown && (
@@ -165,18 +172,25 @@ function WorkFold({ tools, secs, live }: { tools: ToolStep[]; secs?: number; liv
 
 /** Under a reply that is still going: a spinner, what it is doing with dots that count, and how long the reply has run
  * (it stays mounted from the reply's start to its end). */
-function Working({ what }: { what: string }) {
-  const [start] = useState(() => Date.now());
-  const [, tick] = useState(0);
-  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, []);
-  const s = Math.floor((Date.now() - start) / 1000);
+function Working({ what, since }: { what: string; since?: number }) {
+  const [start] = useState(() => since ?? Date.now());
   return (
-    <div role="status" className="mx-auto flex max-w-[700px] items-center gap-2 px-7 font-mono text-[11.5px] text-faint">
+    <div role="status" className="mx-auto flex max-w-[700px] items-center gap-2 px-7 text-[12.5px] text-muted">
       <LoaderCircle size={13} strokeWidth={1.75} className="animate-spin text-accent" aria-hidden="true" />
       <span className="tz-live">{what}</span><span className="tz-dots -ml-2" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
-      <span>{s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`}</span>
+      <span className="tabular-nums text-faint"><Ticking since={start} /></span>
     </div>
   );
+}
+
+/** "41 s", "2 min 5 s" */
+const dur = (s: number) => (s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`);
+
+/** The seconds since `since`, counting. */
+function Ticking({ since }: { since: number }) {
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, []);
+  return <span className="tabular-nums">{dur(Math.max(0, Math.floor((Date.now() - since) / 1000)))}</span>;
 }
 
 // tazuna's own parts of a message, registered in their spots (src/builtins.tsx)
@@ -242,7 +256,7 @@ export function MessageMeta({ message: m }: { message: Message }) {
   return (
     // the answer's numbers show on its hover (or focus, or with its calls open): under every answer they were the busiest
     // line on the screen, and the thread's cost stays in the header
-    <div className={`mt-2 font-mono text-[11.5px] text-faint transition-opacity duration-150 ${open ? "" : "opacity-0 focus-within:opacity-100 group-hover:opacity-100"}`}>
+    <div className={`mt-2 text-[12px] tabular-nums text-faint transition-opacity duration-150 ${open ? "" : "opacity-0 focus-within:opacity-100 group-hover:opacity-100"}`}>
       {meta(m.meta)}
       {n > 0 && <> · <button onClick={() => setOpen(!open)} aria-expanded={open} title="Each model call of this reply: tokens, timing and cost"
         className="rounded px-1 hover:bg-hover hover:text-ink">{n} call{n === 1 ? "" : "s"} {open ? "▾" : "▸"}</button></>}

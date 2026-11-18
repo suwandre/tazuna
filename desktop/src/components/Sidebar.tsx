@@ -58,7 +58,7 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
       {twoLines ? (
         <span className="min-w-0 flex-1">
           <span className="block truncate text-ink">{t.title}</span>
-          <span className="flex gap-2 text-[11.5px] text-faint"><span className="truncate">{t.place}</span><span className="ml-auto flex-none font-mono group-hover:hidden">{age(t.at)}</span></span>
+          <span className="flex gap-2 text-[11.5px] text-faint"><span className="truncate">{t.place}</span><span className="ml-auto flex-none tabular-nums group-hover:hidden">{age(t.at)}</span></span>
         </span>
       ) : <span className="flex-1 truncate">{t.title}</span>}
       {onRename && <span className="hidden flex-none gap-0.5 group-hover:flex">
@@ -146,7 +146,7 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
           then every saved one by when it last ran, its project and age under its name; then the projects (2026-11-18) */}
       {([["Needs you", needs], ["Working", working], ["Open", idle]] as const).map(([head, list]) => list.length > 0 && (
         <div key={head} className="flex flex-col gap-0.5">
-          <div className={groupHead}><span className="flex-1">{head}</span><span className="font-mono">{list.length}</span></div>
+          <div className={groupHead}><span className="flex-1">{head}</span><span className="tabular-nums">{list.length}</span></div>
           {list.map((o) => <OpenRow key={o.tid} o={o} active={o.tid === activeTid} onSwitch={onSwitch} onClose={onClose} />)}
         </div>
       ))}
