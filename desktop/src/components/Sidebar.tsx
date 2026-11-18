@@ -1,7 +1,6 @@
 import { ChevronRight, FolderOpen, Pencil, Plus, Search, X } from "lucide-react";
 import { createContext, useContext, useState } from "react";
 import { Slot } from "../lib/slots";
-import { installUpdate, useUpdate } from "../lib/update";
 import type { Project, Thread } from "../lib/types";
 
 const icon = { size: 16, strokeWidth: 1.5 };
@@ -153,25 +152,6 @@ export function OpenFolderButton() {
     <FolderOpen {...icon} /><span>Open folder</span><Kbd>⌘O</Kbd></button>;
 }
 
-/** A newer tazuna to install (lib/update.ts): one click asks, the second installs and restarts. */
-export function UpdateRow() {
-  const u = useUpdate();
-  const [sure, setSure] = useState(false);
-  if (u.upToDate) return <div className="mb-2 px-2 text-[12px] text-muted">tazuna is up to date.</div>;
-  if (u.error && !u.version) return <div className="mb-2 px-2 text-[12px] text-bad">{u.error}</div>;
-  if (!u.version) return null;
-  return (
-    <div className="mx-1 mb-2 rounded-md border border-line-strong bg-card px-2.5 py-2 text-[12px]">
-      <div className="text-ink">tazuna {u.version} is out</div>
-      {u.error && <div className="mt-1 text-bad">{u.error}</div>}
-      {u.installing ? <div className="mt-1 text-muted">Installing… tazuna restarts by itself.</div>
-        : sure ? <div className="mt-1.5 flex items-center gap-1.5"><span className="flex-1 text-muted">Replies running now stop.</span>
-            <button onClick={() => installUpdate()} className="rounded bg-accent px-2 py-0.5 font-medium text-on-accent">Restart</button>
-            <button onClick={() => setSure(false)} className="rounded px-1.5 py-0.5 text-muted hover:bg-hover">Later</button></div>
-        : <button onClick={() => setSure(true)} className="mt-1 font-medium text-accent-ink">Install and restart</button>}
-    </div>
-  );
-}
 
 export function SettingsRow() {
   const { onSettings, planLeft } = useContext(SidebarCtx);

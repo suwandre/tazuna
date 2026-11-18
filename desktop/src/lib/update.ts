@@ -1,12 +1,14 @@
-// Updates of the app itself (src-tauri update_check, update_install): looked for at start and twice a day; the sidebar
-// shows one when there is, and installs it on the user's word.
+// Updates of the app itself (src-tauri update_check, update_install): looked for at start and hourly; a snackbar says
+// when there is one and installs it on the user's word (Settings has the button too).
 import { invoke } from "@tauri-apps/api/core";
 import { useSyncExternalStore } from "react";
 import { inTauri } from "./tazuna";
 import { toast } from "./toast";
 
-export type UpdateState = { version?: string; notes?: string; installing?: boolean; error?: string; upToDate?: boolean };
+export type UpdateState = { version?: string; notes?: string; installing?: boolean };
 let state: UpdateState = {};
+// the version a snackbar has said is out (said once, not at every hourly check)
+let announced = "";
 const listeners = new Set<() => void>();
 const set = (s: UpdateState) => { state = s; listeners.forEach((l) => l()); };
 export const useUpdate = () => useSyncExternalStore((l) => { listeners.add(l); return () => { listeners.delete(l); }; }, () => state);
@@ -17,21 +19,23 @@ export async function checkUpdate(told = false) {
   try {
     const u = await invoke<{ version: string; notes?: string } | null>("update_check");
     if (u) set({ version: u.version, notes: u.notes });
-    else if (told) { set({ upToDate: true }); setTimeout(() => state.upToDate && set({}), 4000); }
-    // a check the user asked for says how it ended, as a snackbar (until 0.1.59, a line of text in one place)
-    if (told) toast(u ? `tazuna desktop ${u.version} is out` : "tazuna desktop is up to date", u
-      ? { kind: "info", action: { label: "Install and restart", run: () => installUpdate() } } : { kind: "ok" });
+    // the snackbar says it, and only it (the sidebar's row and Settings' line went in 0.1.60): a new version once, staying
+    // until installed or closed; a check the user asked for also when there is none
+    if (u && (told || announced !== u.version)) {
+      announced = u.version;
+      toast(`tazuna desktop ${u.version} is out`, { kind: "info", sticky: true, action: { label: "Install and restart", run: () => installUpdate() } });
+    } else if (!u && told) toast("tazuna desktop is up to date", { kind: "ok" });
   } catch (e) {
-    if (told) { set({ error: `Could not check for updates: ${e}` }); toast(`Could not check for updates: ${e}`, { kind: "error" }); }
+    if (told) toast(`Could not check for updates: ${e}`, { kind: "error" });
     else console.error(`update check: ${e}`);
   }
 }
 
 /** Downloads, checks the signature, installs and restarts (the conversations' cores stop; they stay resumable). */
 export async function installUpdate() {
-  set({ ...state, installing: true, error: undefined });
+  set({ ...state, installing: true });
   toast("Installing the update… tazuna restarts by itself", { kind: "info" });
-  try { await invoke("update_install"); } catch (e) { set({ ...state, installing: false, error: `The update failed: ${e}` }); toast(`The update failed: ${e}`, { kind: "error" }); }
+  try { await invoke("update_install"); } catch (e) { set({ ...state, installing: false }); toast(`The update failed: ${e}`, { kind: "error" }); }
 }
 
 export function watchUpdates() {

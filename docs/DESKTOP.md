@@ -121,6 +121,8 @@ rows act as buttons for the keyboard (Tab, Enter) and the pointer.
 new version with Install and restart).
 0.1.59: snackbars (lib/toast.ts): a check for updates, from Settings, Cmd-K or the menu, ends in one at the bottom: up to
 date, the new version with Install and restart, or why it could not check; installing says so too.
+0.1.60: the snackbar alone says it: the sidebar's update row and Settings' line are gone; a new version found by the
+hourly check shows once, and stays until installed or closed.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
