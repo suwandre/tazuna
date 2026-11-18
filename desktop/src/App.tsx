@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { PanelRight } from "lucide-react";
 import { Approval } from "./components/Approval";
 import { Composer, DRAFT } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
@@ -17,8 +18,8 @@ import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
 import type { Row } from "./lib/usage";
-import { usd } from "./lib/types";
-import { Rail, UserPanel } from "./components/Rail";
+import { usd, type ChangedFile } from "./lib/types";
+import { Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rail";
 import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
@@ -370,6 +371,24 @@ export default function App() {
   const replies = view ? view.blocks.reduce((n, b) => n + (b.kind === "done" ? 1 : 0), 0) : 0;
   useEffect(() => { if (inTauri && folder && view) core.prIn(active).catch(() => {}); }, [active, folder, !!view, replies]);
   const pr = prs[active];
+  // the work panel (the right column): open in a project, closed in a plain chat, until the user says otherwise (⌘\ or the
+  // header's button) for this window's life
+  const [panelPref, setPanelPref] = useState<boolean | null>(null);
+  const panelOpen = panelPref ?? !!folder;
+  const togglePanel = () => setPanelPref(!panelOpen);
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setPanelPref((p) => !(p ?? !!folder)); } };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [folder]);
+  const work: Work = {
+    files: changedFiles(view),
+    branch: pr?.headRefName ?? pr?.branch, base: pr?.baseRefName,
+    checks: (view?.blocks ?? []).flatMap((b) => (b.kind === "verify" ? [{ cmd: b.cmd, ok: b.ok, secs: b.secs }] : [])).reverse(),
+    pr: pr ?? null, folder,
+    review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
+    openPr: inTauri && folder ? () => setShowPr(true) : undefined,
+  };
   // worktrees (src/worktree.rs): a new conversation in a worktree of this project; its setup script runs on the user's word
   const [wt, setWt] = useState<{ ask?: boolean; script?: string; id?: string; error?: string; remove?: { path: string; dirty?: string } } | null>(null);
   const [wtNotes, setWtNotes] = useState<Record<string, string>>({});
@@ -508,28 +527,28 @@ export default function App() {
     return a;
   };
   const data = widgetData(view);
-  const title = view ? (view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.slice(0, 60) ?? "New chat" : "Retry test fails on CI";
+  const title = view ? (view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] ?? "New chat" : "Retry test fails on CI";
   return (
-    <div className={`grid h-screen overflow-hidden ${side ? "grid-cols-[248px_1fr_380px]" : "grid-cols-[248px_1fr_232px]"}`}>
+    <div className={`grid h-screen overflow-hidden ${side ? "grid-cols-[248px_1fr_380px]" : panelOpen ? "grid-cols-[248px_1fr_300px]" : "grid-cols-[248px_1fr]"}`}>
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
         chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
-        projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p]) })) : demo.projects}
+        projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
         onNewChat={() => open(null)} onOpenFolder={pick} onOpenProject={(p) => p.path && open(p.path)}
         onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")} onSettings={() => setOverlay("settings")}
-        open={inTauri ? threads.map((t) => ({ tid: t.tid, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
+        open={inTauri ? threads.map((t) => ({ tid: t.tid, id: t.view?.session_id, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
           state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
         activeTid={active} onSwitch={show} onClose={close}
         onRename={inTauri ? (t, title) => core.rename(t.id, title).then(refreshSessions) : undefined}
         onHide={inTauri ? (t) => core.hide(t.id).then(refreshSessions) : undefined}
         planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
       <main className="flex min-h-0 min-w-0 flex-col bg-main">
-        <header data-tauri-drag-region className="flex items-center justify-between border-b border-line-soft px-7 py-3">
-          <div className="flex items-center gap-2 font-medium"><span className="text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} className="tz-enter truncate text-[inherit] font-[inherit]">{title}</h1></div>
-          <div className="flex gap-1.5">
+        <header data-tauri-drag-region className="flex items-center justify-between gap-3 border-b border-line-soft py-2.5 pl-7 pr-4">
+          <div className="flex min-w-0 items-center gap-2 font-medium"><span className="flex-none text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} title={title} className="tz-enter truncate text-[inherit] font-[inherit]">{title}</h1></div>
+          <div className="flex flex-none items-center gap-1.5">
             <HeaderCtx.Provider value={{ modelLabel: models?.choices.find((c) => c.current)?.label ?? session.model, effort: session.effort,
               branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
               side: inTauri && view?.session_id ? () => (side ? closeSide(active) : openSide(active)) : undefined, sideOpen: !!side,
-              pr: pr ? prChip(pr) : null, openPr: () => setShowPr(true) }}>
+              pr: pr ? prChip(pr) : null, openPr: () => setShowPr(true), cost: usage.threadCost, panelOpen: panelOpen && !side, togglePanel: side ? undefined : togglePanel }}>
               <Slot name="header.actions" props={{ data, folder }} />
             </HeaderCtx.Provider>
           </div>
@@ -600,12 +619,12 @@ export default function App() {
         )}
         {codeView && <DiffView diff={{ turn: 0, path: `${codeView.title} · plugin.js`, text: codeView.text }} plain onClose={() => setCodeView(null)} />}
         {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
-        <Composer key={active} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
+        <Composer key={active} draftKey={draftKey} session={session} threadCost={usage.threadCost} usage={usage} busy={busy}
           onSend={(text) => {
             if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk(text); return; }
             sendNow(text);
           }}
-          below={line && (
+          below={line && (line.paid || line.low) && (
             <div className={`flex items-center gap-2 text-[11.5px] ${line.low ? "text-warn" : "text-faint"}`}>
               <span className="truncate" title="Where your next message goes and what it costs">→ {line.text}</span>
               {line.low && <span>{line.low}</span>}
@@ -634,7 +653,7 @@ export default function App() {
       </main>
       {side ? <SideChat key={side.tid} view={side.view} onClose={() => closeSide(active)} onStop={() => core.interruptIn(side.tid)}
           onSend={(text) => core.sendIn(side.tid, text).catch(() => {})} onAnswer={(allow, always) => core.opIn(side.tid, { op: "answer", allow, always })} />
-        : <Rail usage={usage} data={data} messages={messages} />}
+        : panelOpen && <WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} /></WorkCtx.Provider>}
       <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
@@ -660,19 +679,32 @@ function lastCost(v: View): number {
   return 0;
 }
 
+/** The files a conversation changed and has not undone, each once with its lines summed over the turns. */
+function changedFiles(v: View | null): ChangedFile[] {
+  const all = new Map<string, ChangedFile>();
+  for (const c of v?.changes ?? []) {
+    if (c.undone) continue;
+    for (const f of c.files) {
+      const o = all.get(f.path);
+      all.set(f.path, o ? { ...f, added: o.added == null || f.added == null ? null : o.added + f.added, removed: o.removed == null || f.removed == null ? null : o.removed + f.removed } : { ...f });
+    }
+  }
+  return [...all.values()];
+}
+
 const base = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
 /** One of tazuna's worktrees (src/worktree.rs: <data>/worktrees/<repository>/wt-<name>). */
 const isWorktree = (path: string) => /[\\/]worktrees[\\/][^\\/]+[\\/]wt-[a-z0-9]+$/.test(path);
 
-const rowsOf = (rows?: SessionRow[]) => (rows ?? []).map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)" }));
+const rowsOf = (rows?: SessionRow[], place = "chat", project?: string) => (rows ?? []).map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)", place, project, at: r.last_at }));
 
 /** An open conversation's name: its first message, else a new one's. */
 const titleOf = (t: Thread) => (t.view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] || "New conversation";
 
 /** The header's built-in chips read this (and a plugin replacing one can too). */
 export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void; side?: () => void; sideOpen?: boolean;
-  pr?: string | null; openPr?: () => void }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
+  pr?: string | null; openPr?: () => void; cost?: number; panelOpen?: boolean; togglePanel?: () => void }>({ modelLabel: "", effort: "", branch: "", changed: 0 });
 
 function ModelChip() {
   const h = useContext(HeaderCtx);
@@ -696,7 +728,18 @@ function PrChip() {
   const h = useContext(HeaderCtx);
   return h.pr ? <button onClick={h.openPr} title="The pull request: checks and reviews" className={`rounded-full border px-2.5 py-1 text-[12px] hover:bg-hover ${h.pr.includes("✗") ? "border-bad/40 text-bad" : "border-line text-ink-2"}`}>{h.pr}</button> : null;
 }
-slots.register({ id: "header.pr", slot: "header.actions", order: 35, source: "tazuna", render: PrChip });
-slots.register({ id: "header.model", slot: "header.actions", order: 10, source: "tazuna", render: ModelChip });
-slots.register({ id: "header.branch", slot: "header.actions", order: 20, source: "tazuna", render: BranchChip });
-slots.register({ id: "header.review", slot: "header.actions", order: 30, source: "tazuna", render: ReviewChip });
+// the header holds the thread's cost (the usage page on a click), the side chat and the work panel's switch; the model,
+// branch, review and PR chips of desktop 0.1.63 and before went to the composer and the work panel (each shown once).
+// ModelChip, BranchChip, ReviewChip and PrChip stay for a plugin that wants one back: slots.register({ ..., render: ModelChip }).
+function CostChip() {
+  const h = useContext(HeaderCtx);
+  return h.cost != null ? <button onClick={openUsage} title="This conversation's cost · Usage (⌘⇧U)" className="rounded-md px-2 py-1 font-mono text-[12.5px] text-muted hover:text-ink">{usd(h.cost)}</button> : null;
+}
+function PanelChip() {
+  const h = useContext(HeaderCtx);
+  return h.togglePanel ? <button onClick={h.togglePanel} aria-pressed={h.panelOpen} title={`${h.panelOpen ? "Close" : "Open"} the work panel (⌘\\)`}
+    className={`grid size-7 place-items-center rounded-md ${h.panelOpen ? "bg-field text-ink" : "text-muted hover:text-ink"}`}><PanelRight size={16} strokeWidth={1.5} /></button> : null;
+}
+slots.register({ id: "header.cost", slot: "header.actions", order: 10, source: "tazuna", render: CostChip });
+slots.register({ id: "header.panel", slot: "header.actions", order: 50, source: "tazuna", render: PanelChip });
+export { BranchChip, ModelChip, PrChip, ReviewChip };

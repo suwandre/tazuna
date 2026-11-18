@@ -1,75 +1,137 @@
-import { Pencil, X } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, GitBranch, GitPullRequest, LoaderCircle, Pencil, SquareTerminal, X } from "lucide-react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Slot } from "../lib/slots";
 import { tokens, widgetUrl, type UserWidget } from "../lib/widgets";
-import { usd, type Message, type Usage } from "../lib/types";
+import { checksOf, type Pr } from "../lib/pr";
+import type { ChangedFile, Message, Usage } from "../lib/types";
 
-// The right rail is a slot of widgets (docs/DESKTOP.md "Customization"): tazuna's own panels are widgets too, so the
-// widget API that users and creator mode build on is the one these use. A widget with nothing real to show returns null
-// and its card is left out (DESIGN.md: real numbers only).
-export type Widget = { id: string; title: string; render: (u: Usage) => ReactNode | null };
+// The right column is the work panel (the design review of 2026-11-18): what the agent changed, the checks it ran, the
+// branch's pull request, then your messages and the user's own panels; it closes (⌘\), and a plain chat opens without
+// it. Until desktop 0.1.64 it held four equal cards of numbers (context, plan, thread cost, today) that repeated the
+// composer's and the header's; those went into the plan ring by the composer and the usage page. It stays a slot
+// (docs/PLUGINS.md): a plugin adds a section, replaces one by id, or hides it. A section with nothing real to show
+// returns null and is left out.
 
-/** A card; with onOpen, the whole card is a button (the plan and cost cards open the usage page). */
-export function Card({ title, children, onOpen }: { title: string; children: ReactNode; onOpen?: () => void }) {
-  const body = <><div className="mb-2 text-[11.5px] font-medium text-faint">{title}</div>{children}</>;
-  return onOpen
-    ? <button onClick={onOpen} title="Usage: all your accounts (⌘⇧U)" className="block w-full rounded-lg border border-line bg-card px-3.5 py-3 text-left hover:border-line-strong hover:bg-hover">{body}</button>
-    : <div className="rounded-lg border border-line bg-card px-3.5 py-3">{body}</div>;
+/** What the built-in sections read, from the window (a plugin replacing one can read it too). */
+export type Work = {
+  /** the files this conversation changed (not undone), summed over its turns */
+  files: ChangedFile[];
+  /** the branch and its base, when the pull request says them */
+  branch?: string; base?: string;
+  /** tazuna's own checks after a turn (the last run first) */
+  checks: { cmd: string; ok?: boolean; secs: number }[];
+  pr?: Pr | null;
+  folder?: string | null;
+  review?: () => void; openPr?: () => void;
+};
+export const WorkCtx = createContext<Work>({ files: [], checks: [] });
+
+/** One section of the panel: a heading with an icon and a figure on the right, its body under a line. */
+export function Section({ icon, title, right, children }: { icon?: ReactNode; title: string; right?: ReactNode; children?: ReactNode }) {
+  return (
+    <section className="rounded-lg border border-line bg-card">
+      <div className="flex items-center gap-2 px-3 py-2.5 font-medium text-ink">{icon}<span className="flex-1">{title}</span>
+        {right != null && <span className="font-mono text-[12px] font-normal text-faint">{right}</span>}</div>
+      {children && <div className="border-t border-line-soft px-3 pb-2.5 pt-1.5">{children}</div>}
+    </section>
+  );
+}
+
+const ico = "flex-none text-muted";
+const btn = "rounded-md border border-line px-2.5 py-1 text-[12.5px] text-ink";
+
+/** Kept for a panel or plugin made before 0.1.64: a titled card. */
+export function Card({ title, children }: { title: string; children: ReactNode }) {
+  return <Section title={title}>{children}</Section>;
+}
+
+/** A bar for a used share (the plan card's meters). */
+export function Bar({ pct }: { pct: number }) {
+  return <div className="h-1.5 overflow-hidden rounded bg-line"><i className="block h-full rounded bg-accent transition-[width] duration-200" style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} /></div>;
 }
 
 /** Opens the usage page (App listens). */
 export const openUsage = () => window.dispatchEvent(new CustomEvent("tazuna-usage"));
 
-function Bar({ pct }: { pct: number }) {
-  return <div className="h-1.5 overflow-hidden rounded bg-line"><i className="block h-full rounded bg-accent transition-[width] duration-200" style={{ width: `${pct}%` }} /></div>;
-}
+const name = (path: string) => { const i = path.lastIndexOf("/"); return i < 0 ? [path, ""] : [path.slice(i + 1), path.slice(0, i + 1)]; };
 
-function Ring({ pct }: { pct: number }) {
+export function ChangesSection() {
+  const w = useContext(WorkCtx);
+  const [all, setAll] = useState(false);
+  if (!w.folder) return null;
+  const added = w.files.reduce((n, f) => n + (f.added ?? 0), 0), removed = w.files.reduce((n, f) => n + (f.removed ?? 0), 0);
+  const shown = all ? w.files : w.files.slice(0, 8);
   return (
-    <div className="relative my-0.5 mb-1.5 size-16">
-      <svg viewBox="0 0 36 36" className="size-16 -rotate-90">
-        <circle cx="18" cy="18" r="15.9" fill="none" strokeWidth="3.2" stroke="var(--line)" />
-        <circle cx="18" cy="18" r="15.9" fill="none" strokeWidth="3.2" stroke="var(--accent)" strokeLinecap="round" strokeDasharray={`${pct} 100`} opacity={pct > 0 ? 1 : 0} />
-      </svg>
-      <span className="absolute inset-0 grid place-items-center text-[14px] font-semibold">{pct}%</span>
-    </div>
+    <Section icon={<GitBranch size={14} strokeWidth={1.5} className={ico} />} title="Changes"
+      right={w.files.length ? <><span className="text-ok">+{added}</span> <span className="text-bad">−{removed}</span></> : undefined}>
+      {w.branch && <div className="mb-1 truncate font-mono text-[12px] text-muted">{w.branch}{w.base ? ` → ${w.base}` : ""}</div>}
+      {w.files.length === 0 ? <div className="py-0.5 text-[12.5px] text-muted">Nothing changed in this conversation yet.</div> : <>
+        {shown.map((f) => {
+          const [file, dir] = name(f.path);
+          return (
+            <div key={f.path} title={f.path} className="flex items-center gap-2 py-[3px] text-[12.5px]">
+              <span className="min-w-0 flex-1 truncate"><span className="font-medium text-ink">{file}</span> <span className="text-faint">{dir}</span></span>
+              {f.added == null ? <span className="font-mono text-[12px] text-faint">binary</span> : <>
+                {f.added > 0 && <span className="font-mono text-[12px] text-ok">+{f.added}</span>}
+                {(f.removed ?? 0) > 0 && <span className="font-mono text-[12px] text-bad">−{f.removed}</span>}</>}
+            </div>
+          );
+        })}
+        {w.files.length > 8 && !all && <button onClick={() => setAll(true)} className="mt-0.5 text-[12.5px] text-accent-ink">{w.files.length - 8} more</button>}
+        {w.review && <div className="mt-2 flex gap-1.5"><button onClick={w.review} title="Go through the uncommitted changes piece by piece: stage or revert" className={btn}>Review</button></div>}
+      </>}
+    </Section>
   );
 }
 
-function Spark({ series }: { series: number[] }) {
-  const max = Math.max(...series), step = 120 / (series.length - 1);
-  const d = series.map((v, i) => `${i ? "L" : "M"}${(i * step).toFixed(1)} ${(30 - (v / max) * 26).toFixed(1)}`).join(" ");
-  return <svg viewBox="0 0 120 32" preserveAspectRatio="none" className="h-[34px] w-full"><path d={d} fill="none" stroke="var(--accent)" strokeWidth="1.6" /></svg>;
+export function ChecksSection() {
+  const w = useContext(WorkCtx);
+  if (!w.folder || !w.checks.length) return null;
+  const [last, ...before] = w.checks;
+  return (
+    <Section icon={<SquareTerminal size={14} strokeWidth={1.5} className={ico} />} title="Checks" right={<span className="truncate">{last.cmd.slice(0, 24)}</span>}>
+      {[last, ...before.slice(0, 2)].map((c, i) => (
+        <div key={i} className="flex items-center gap-2 py-[3px] text-[12.5px] text-ink-2">
+          {c.ok == null ? <LoaderCircle size={14} strokeWidth={1.75} className="flex-none animate-spin text-accent" />
+            : c.ok ? <Check size={14} strokeWidth={1.75} className="flex-none text-ok" /> : <X size={14} strokeWidth={1.75} className="flex-none text-bad" />}
+          <span className="min-w-0 flex-1 truncate">{c.ok == null ? "Running" : c.ok ? "Passed" : "Failed"}{i > 0 ? " before" : ""}</span>
+          <span className="font-mono text-[12px] text-faint">{c.secs.toFixed(1)} s</span>
+        </div>
+      ))}
+    </Section>
+  );
 }
 
-const small = "mt-1.5 text-[11.5px] text-muted";
-
-export const builtInWidgets: Widget[] = [
-  { id: "context", title: "Context", render: (u) => <><Ring pct={u.contextPct} /><div className={small}>{u.contextUsed} of {u.contextMax}</div></> },
-  { id: "plan", title: "Plan · 5 hours", render: (u) => u.plan5h == null ? null : <>
-      <Bar pct={u.plan5h} /><div className={small}>{u.plan5h}% used{u.plan5hReset && ` · resets ${u.plan5hReset}`}</div>
-      {u.planWeek != null && <><div className="mb-2 mt-3 text-[11.5px] font-medium text-faint">Plan · week</div><Bar pct={u.planWeek} /><div className={small}>{u.planWeek}% used</div></>}</> },
-  { id: "thread", title: "This thread", render: (u) => <>
-      <div className="text-[22px] font-semibold tracking-[-0.02em]">{usd(u.threadCost)}</div>
-      <div className={small}>{u.threadTurns} {u.threadTurns === 1 ? "turn" : "turns"} · {u.cachedPct}% cached{u.saved > 0 && ` · saved $${u.saved.toFixed(2)}`}</div></> },
-  { id: "balance", title: "SubRouter", render: (u) => u.balance == null ? null : <>
-      <div className="text-[22px] font-semibold tracking-[-0.02em]">${u.balance.toFixed(2)}</div><div className={small}>balance left</div></> },
-  { id: "today", title: "Today", render: (u) => u.todaySeries.length < 2 ? null : <><Spark series={u.todaySeries} /><div className={small}>${u.today.toFixed(2)} · {u.todayTurns} turns</div></> },
-];
+export function PrSection() {
+  const w = useContext(WorkCtx);
+  if (!w.folder || !w.pr || w.pr.error) return null;
+  const p = w.pr, cs = p.none ? [] : checksOf(p);
+  const failed = cs.filter((c) => c.state === "failed").length, running = cs.filter((c) => c.state === "running").length;
+  return (
+    <Section icon={<GitPullRequest size={14} strokeWidth={1.5} className={ico} />} title="Pull request" right={p.number ? `#${p.number}` : undefined}>
+      {p.none ? <div className="py-0.5 text-[12.5px] text-muted">No pull request for this branch yet.</div> : <>
+        <div className="truncate py-0.5 text-[12.5px] text-ink" title={p.title}>{p.title}</div>
+        <div className="text-[12.5px] text-muted">{p.state === "MERGED" ? "Merged" : p.state === "CLOSED" ? "Closed" : p.isDraft ? "Draft" : "Open"}
+          {cs.length > 0 && <> · {failed ? <span className="text-bad">{failed} failed</span> : running ? `${running} running` : <span className="text-ok">checks passed</span>}</>}</div>
+      </>}
+      {w.openPr && <div className="mt-2 flex gap-1.5"><button onClick={w.openPr} className={btn}>{p.none ? "Open one…" : "Checks and reviews"}</button></div>}
+    </Section>
+  );
+}
 
 /** Your messages in this conversation, newest last: a click scrolls the transcript to one (the prompt timeline). */
 export function Timeline({ messages }: { messages: Message[] }) {
   const mine = messages.flatMap((m, i) => m.role === "user" && !m.queued ? [{ i, text: m.text.replace(/^\[tazuna: [^\]]*\]\n\n/, "").split("\n")[0] }] : []);
   if (mine.length < 2) return null;
   return (
-    <Card title={`Your messages · ${mine.length}`}>
+    <Section title="Your messages" right={mine.length}>
       <div className="-mx-1 flex max-h-56 flex-col overflow-y-auto">
         {mine.map((m) => (
           <button key={m.i} title={m.text} onClick={() => window.dispatchEvent(new CustomEvent("tazuna-jump", { detail: m.i }))}
             className="truncate rounded px-1 py-[3px] text-left text-[12px] text-ink-2 hover:bg-hover">{m.text || "(attachment)"}</button>
         ))}
       </div>
-    </Card>
+    </Section>
   );
 }
 
@@ -110,7 +172,7 @@ export function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: 
 /** The right column: the `rail` spot (tazuna's cards and the user's panels and plugins). */
 export function Rail({ usage, data, messages }: { usage: Usage; data?: unknown; messages: Message[] }) {
   return (
-    <aside aria-label="This conversation" className="flex min-h-0 flex-col gap-3 overflow-y-auto border-l border-line bg-sidebar px-3.5 py-4">
+    <aside aria-label="The work" className="tz-enter flex min-h-0 flex-col gap-3 overflow-y-auto border-l border-line bg-sidebar px-3.5 py-4">
       <Slot name="rail" props={{ usage, data, messages }} />
     </aside>
   );

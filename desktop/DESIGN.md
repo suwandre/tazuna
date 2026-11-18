@@ -93,17 +93,26 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - Fonts are bundled with the app (no network fonts).
 
 ## Layout
-- Three columns: sidebar 248 px (chats, projects), main (header, transcript, composer), rail 232 px (context, plan,
-  cost). The rail can collapse; widgets fill its slots.
-- The transcript is a document, not two-sided bubbles: speaker label, tool steps as one line each (collapsed), prose,
-  then a change card (file, +/-, View diff, Undo) and a mono metadata line (cost, tokens, cached, time).
+- Three columns: sidebar 248 px, main (header, transcript, composer), the work panel 300 px. The work panel is open in a
+  project and closed in a plain chat; ⌘\ and the header's button switch it. (Design review, 2026-11-18, prototype
+  `mockups/v2.html`.)
+- Each number shows once. The model and effort: the composer's pills. The plan and context: the bar beside the send
+  button, its card on hover (plan windows, context, cost, cache, balance), the usage page on a click. The thread's cost:
+  the header. An answer's own numbers: under it, on hover. The line under the composer only says what is new: a paid
+  model's cost per message, or the plan running low.
+- The sidebar groups the conversations open now by what they need (Needs you, Working, Open), then Recent: every saved
+  conversation by when it last ran, two lines each (its name; its project and age). Projects last, folded.
+- The transcript is a document, not two-sided bubbles: no speaker labels (your message is the field block), a reply's
+  steps folded into one line ("Worked 41 s · read 2 files, ran 3 commands"; open while it runs, a click unfolds it), prose,
+  then a change card (file, +/-, Diff, Review, Undo) and its metadata line (cost, tokens, cached, time) on hover.
 - A message answered by the router as a chat carries an `answered as a chat · send to agent` tag.
-- The composer holds the permission mode, the model and effort, attachments, and the last and thread cost.
+- The work panel: Changes (the files this conversation changed, the branch, Review), Checks (tazuna's runs after a turn),
+  Pull request (state, CI, Checks and reviews), your messages, then the user's own panels.
 
 ## Components we own
-Sidebar item, project group, thread dot (idle, running), badge; header crumb and chips; message (user, agent, chat),
-tool step, change card, metadata line, routed tag; composer with pills and send; rail card, context ring, usage bar,
-sparkline. Reuse these before adding new ones; add new ones here when they are made.
+Sidebar item (two lines), open row, group heading, project group, thread dot (idle, running), badge; header crumb, cost and
+panel button; message (user, agent, chat), work fold, tool step, change card, metadata line, routed tag; composer with
+pills, plan bar and card, and send; work panel section (Changes, Checks, Pull request), usage bar. Reuse these before adding new ones; add new ones here when they are made.
 
 ## Motion
 - CSS transitions of 120-200 ms with the easing above; panels slide, toasts fade.

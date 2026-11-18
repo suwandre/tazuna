@@ -85,6 +85,9 @@ export function Elapsed({ secs }: { secs: number }) {
   return <>{(since.secs + (Date.now() - since.at) / 1000).toFixed(1)} s</>;
 }
 
+// a step still going says so: "Running npm test", then "Ran npm test"
+const NOW: Record<string, string> = { Read: "Reading", Ran: "Running", Edited: "Editing", Wrote: "Writing", Searched: "Searching", Listed: "Listing", Fetched: "Fetching" };
+
 // A step before the answer, one line; a click opens what it was given and what came back (or the reasoning, where the
 // model shows it). Steps with nothing more to show do not open.
 export function Step({ t }: { t: ToolStep }) {
@@ -99,10 +102,11 @@ export function Step({ t }: { t: ToolStep }) {
           : t.running ? <LoaderCircle size={14} strokeWidth={1.75} className="flex-none animate-spin text-accent" />
           : t.ok ? <Check size={14} strokeWidth={1.5} className="flex-none text-ok" />
           : <X size={14} strokeWidth={1.75} className="flex-none text-bad" aria-label="failed" />}
-        <span className={t.running ? "tz-live" : ""}>{t.verb}</span> {t.target && <span className="truncate font-mono text-[11.5px] text-ink-2">{t.target}</span>}
+        <span className={t.running ? "tz-live" : ""}>{t.running ? (NOW[t.verb] ?? t.verb) : t.verb}</span> {t.target && <span className="truncate font-mono text-[11.5px] text-ink-2">{t.target}</span>}
         {t.detail && <span className="text-faint">· {t.detail}</span>}
-        {more && <ChevronRight size={13} strokeWidth={1.5} className={`text-faint transition-transform duration-150 ${open ? "rotate-90" : ""}`} />}
-        {!thinking && <span className="ml-auto flex-none whitespace-nowrap pl-2 font-mono text-[11px] text-faint">{t.running ? <Elapsed secs={t.secs} /> : `${t.secs.toFixed(1)} s`}</span>}
+        {/* the time beside the step, not at the far right (the eye went 600 px for it) */}
+        {!thinking && <span className="flex-none whitespace-nowrap font-mono text-[11.5px] text-faint">{t.running ? <Elapsed secs={t.secs} /> : `${t.secs.toFixed(1)} s`}</span>}
+        {more && <ChevronRight size={13} strokeWidth={1.5} className={`flex-none text-faint transition-transform duration-150 ${open ? "rotate-90" : ""}`} />}
       </button>
       {open && (thinking ? <div className={`${box} font-serif`}>{t.text}</div> : <>
         {t.input && Object.keys(t.input).length > 0 && <Given name={t.name ?? ""} input={t.input} />}

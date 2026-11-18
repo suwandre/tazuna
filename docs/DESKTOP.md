@@ -133,6 +133,11 @@ on the left, its control on the right), with switches for on and off and a two-w
 shows the version as a tag. Check for updates answers in the middle over a dimmed window (up to date, a new version with
 Install and restart, or why it could not check): Esc, × or a click outside closes it and Settings stays; a snackbar at
 the bottom had covered Settings' own text. A new version found by the hourly check still shows as a snackbar.
+0.1.64: the main screen after the design review (2026-11-18, prototype mockups/v2.html): each number once (the model in the
+composer, the plan and context in a bar beside send with its card on hover, the thread's cost in the header, an answer's
+numbers on hover); no speaker labels; a reply's steps folded into one line; the right column is the work panel (changes,
+checks, pull request, your messages), open in a project, ⌘\ to switch; the sidebar grouped by what each conversation
+needs (Needs you, Working, Open), then Recent in two-line rows with project and age.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

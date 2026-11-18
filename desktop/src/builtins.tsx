@@ -1,18 +1,19 @@
 // tazuna's own parts, registered in the window's spots the same way a plugin registers (docs/PLUGINS.md): a plugin can
 // replace any of them by registering its id, or hide it. Imported once by main.tsx.
 import { AttachButton, EffortPill, ModelPill, ModePill } from "./components/Composer";
-import { Card, Timeline, builtInWidgets, openUsage } from "./components/Rail";
+import { ChangesSection, ChecksSection, PrSection, Timeline } from "./components/Rail";
 import { NewChatButton, OpenFolderButton, SettingsRow } from "./components/Sidebar";
 import { Step } from "./components/Step";
 import { MessageChange, MessageMeta, UserMessage } from "./components/Transcript";
 import { Markdown } from "./lib/markdown";
 import { slots } from "./lib/slots";
-import type { ToolStep, Usage } from "./lib/types";
+import type { ToolStep } from "./lib/types";
 
 const own = "tazuna";
 
-builtInWidgets.forEach((w, i) => slots.register({ id: `rail.${w.id}`, slot: "rail", order: i * 10, source: own,
-  render: ({ usage }: { usage: Usage }) => { const body = w.render(usage); return body == null ? null : <Card title={w.title} onOpen={w.id === "context" ? undefined : openUsage}>{body}</Card>; } }));
+slots.register({ id: "rail.changes", slot: "rail", order: 10, source: own, render: ChangesSection });
+slots.register({ id: "rail.checks", slot: "rail", order: 20, source: own, render: ChecksSection });
+slots.register({ id: "rail.pr", slot: "rail", order: 30, source: own, render: PrSection });
 
 slots.register({ id: "rail.timeline", slot: "rail", order: 50, source: own, render: Timeline });
 

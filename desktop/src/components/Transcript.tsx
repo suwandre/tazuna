@@ -1,7 +1,7 @@
-import { FileText, LoaderCircle, MessageCircle, Pencil } from "lucide-react";
+import { ChevronRight, FileText, LoaderCircle, MessageCircle, Pencil } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
-import { usd, type Call, type Change, type Message } from "../lib/types";
+import { usd, type Call, type Change, type Message, type ToolStep } from "../lib/types";
 
 function inlineCode(text: string) {
   return text.split(/(`[^`]+`)/).map((part, i) => part.startsWith("`") ? <code key={i}>{part.slice(1, -1)}</code> : part);
@@ -98,19 +98,15 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
         <div key={hidden + i} data-msg={hidden + i} className={`group mx-auto mb-[22px] max-w-[700px] px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
           {m.role === "user" ? <Slot name="message.user" props={{ message: m, index: hidden + i }} only /> : (
             <>
-              <div className="mb-1.5 flex items-center gap-2.5 text-[12px] font-medium text-faint">
-                tazuna
-                {m.routedChat && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2 py-px text-[11.5px] font-normal text-muted">
+              {/* no "tazuna" over each answer (nor "You" over each message): the field block says which is yours */}
+              {m.routedChat && (
+                <div className="mb-1.5">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2 py-px text-[11.5px] text-muted">
                     <MessageCircle size={13} strokeWidth={1.5} /> answered as a chat · <button disabled={busy} onClick={() => m.ask && rest.onSendToAgent?.(m.ask)} className="font-medium text-accent-ink disabled:opacity-50">send to agent</button>
                   </span>
-                )}
-              </div>
-              {m.tools && m.tools.length > 0 && (
-                <div className="mb-2.5 mt-0.5 flex flex-col gap-0.5">
-                  {m.tools.map((t, j) => <Slot key={j} name="tool.view" props={{ step: t }} only />)}
                 </div>
               )}
+              {m.tools && m.tools.length > 0 && <WorkFold tools={m.tools} secs={m.meta?.secs} live={!!busy && !m.meta} />}
               <div className="prose-answer text-ink">{m.prose.map((p, j) => <Slot key={j} name="message.text" props={{ text: p }} only />)}</div>
               <Slot name="message.after" props={{ message: m, index: hidden + i }} />
             </>
@@ -120,6 +116,50 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
       {busy && activity && doing[activity] && <Working what={doing[activity]} />}
     </section>
     </TranscriptCtx.Provider>
+  );
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/** What a reply's steps did, in a few words: "read 2 files, edited 1, ran 3 commands". */
+export function workSummary(tools: ToolStep[]): string {
+  const n = new Map<string, number>();
+  for (const t of tools) if (t.kind !== "thinking") n.set(t.verb, (n.get(t.verb) ?? 0) + 1);
+  const edits = (n.get("Edited") ?? 0) + (n.get("Wrote") ?? 0);
+  n.delete("Edited"); n.delete("Wrote");
+  const parts: string[] = [];
+  if (n.has("Read")) parts.push(`read ${plural(n.get("Read")!, "file")}`);
+  if (edits) parts.push(`edited ${plural(edits, "file")}`);
+  if (n.has("Ran")) parts.push(`ran ${plural(n.get("Ran")!, "command")}`);
+  const searched = (n.get("Searched") ?? 0) + (n.get("Listed") ?? 0);
+  if (searched) parts.push(searched === 1 ? "searched" : `searched ${searched} times`);
+  for (const k of ["Read", "Ran", "Searched", "Listed"]) n.delete(k);
+  for (const [verb, count] of n) parts.push(`${verb.toLowerCase()}${count > 1 ? ` ×${count}` : ""}`);
+  if (!parts.length && tools.some((t) => t.kind === "thinking")) parts.push("thought it through");
+  return parts.slice(0, 4).join(", ");
+}
+
+/** A reply's steps as one line, "Worked 41 s · read 2 files, ran 3 commands ›": open while the reply runs, folded once it
+ * is done (a click keeps it as chosen). Until desktop 0.1.64 each step was a line of its own above every answer. */
+function WorkFold({ tools, secs, live }: { tools: ToolStep[]; secs?: number; live: boolean }) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  const shown = open ?? live;
+  const what = workSummary(tools);
+  const took = secs == null ? "" : secs < 60 ? ` ${secs} s` : ` ${Math.floor(secs / 60)} min ${secs % 60} s`;
+  return (
+    <div className="mb-2.5">
+      <button onClick={() => setOpen(!shown)} aria-expanded={shown} title={shown ? "Fold the steps" : "Show each step"}
+        className="-ml-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-[12.5px] text-muted hover:bg-hover hover:text-ink">
+        <ChevronRight size={13} strokeWidth={1.5} className={`flex-none transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
+        <span className="flex-none">{live ? "Working" : `Worked${took}`}</span>
+        {what && <span className="truncate text-faint">· {what}</span>}
+      </button>
+      {shown && (
+        <div className="tz-enter ml-[5px] mt-1 flex flex-col gap-0.5 border-l border-line pl-3.5">
+          {tools.map((t, j) => <Slot key={j} name="tool.view" props={{ step: t }} only />)}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -149,13 +189,15 @@ export function UserMessage({ message: m }: { message: Message }) {
   const text = note ? m.text.slice(note[0].length) : m.text;
   return (
     <>
-      <div className="mb-1.5 flex items-center gap-2 text-[12px] font-medium text-faint">You{m.queued && <span className="font-normal">· queued, goes after this reply</span>}
-        {m.edit && onEdit && !busy && (
-          <button onClick={() => onEdit(m.edit!, text)} title="Edit and send again from here: the conversation goes back to before this message"
-            className="hidden items-center gap-1 rounded px-1.5 py-0.5 font-normal text-muted hover:bg-hover hover:text-ink group-hover:inline-flex"><Pencil size={12} strokeWidth={1.5} /> Edit</button>
-        )}</div>
       {note && <div className="mb-1 text-[11.5px] text-faint">told the model: {note[1]}</div>}
-      <div className="inline-block max-w-full select-text rounded-lg bg-field px-3.5 py-2.5 text-ink">{inlineCode(text)}</div>
+      <div className="flex items-start gap-1">
+        <div className="inline-block max-w-full select-text rounded-lg bg-field px-3.5 py-2.5 text-ink">{inlineCode(text)}</div>
+        {m.edit && onEdit && !busy && (
+          <button onClick={() => onEdit(m.edit!, text)} title="Edit and send again from here: the conversation goes back to before this message" aria-label="Edit from here"
+            className="mt-1.5 flex-none rounded p-1 text-faint opacity-0 hover:bg-hover hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"><Pencil size={13} strokeWidth={1.5} /></button>
+        )}
+      </div>
+      {m.queued && <div className="mt-1 text-[11.5px] text-faint">Queued: goes after this reply</div>}
     </>
   );
 }
@@ -198,7 +240,9 @@ export function MessageMeta({ message: m }: { message: Message }) {
   if (m.role !== "agent" || !m.meta) return null;
   const n = m.meta.calls?.length ?? 0;
   return (
-    <div className="mt-2 font-mono text-[11.5px] text-faint">
+    // the answer's numbers show on its hover (or focus, or with its calls open): under every answer they were the busiest
+    // line on the screen, and the thread's cost stays in the header
+    <div className={`mt-2 font-mono text-[11.5px] text-faint transition-opacity duration-150 ${open ? "" : "opacity-0 focus-within:opacity-100 group-hover:opacity-100"}`}>
       {meta(m.meta)}
       {n > 0 && <> · <button onClick={() => setOpen(!open)} aria-expanded={open} title="Each model call of this reply: tokens, timing and cost"
         className="rounded px-1 hover:bg-hover hover:text-ink">{n} call{n === 1 ? "" : "s"} {open ? "▾" : "▸"}</button></>}

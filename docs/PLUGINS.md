@@ -54,8 +54,8 @@ and its error shows in Settings.
 
 | Spot | What it is, and its props | tazuna's own parts there (ids) |
 |---|---|---|
-| `rail` | the right column's cards. props: { usage, data, messages } | rail.context, rail.plan, rail.thread, rail.balance, rail.today, rail.timeline (your messages; `window.dispatchEvent(new CustomEvent("tazuna-jump", {detail: i}))` scrolls to message i) |
-| `header.actions` | the chips and buttons at the right of the header. props: { data, folder } | header.model, header.branch, header.review, header.pr, header.side |
+| `rail` | the work panel's sections (the right column; open in a project, ⌘\ toggles). props: { usage, data, messages }; the built-in sections read `WorkCtx` (components/Rail.tsx: files changed, branch, checks, PR) | rail.changes, rail.checks, rail.pr, rail.timeline (your messages; `window.dispatchEvent(new CustomEvent("tazuna-jump", {detail: i}))` scrolls to message i). Until desktop 0.1.64: rail.context, rail.plan, rail.thread, rail.balance, rail.today (now in the composer's plan card and the usage page) |
+| `header.actions` | the buttons at the right of the header. props: { data, folder } | header.cost, header.side, header.panel. Until 0.1.64 also header.model, header.branch, header.review, header.pr: their components are still exported from App.tsx for a plugin that wants one back |
 | `composer.dock` | above the message box (a bar, a dashboard). props: {} (the data: ctx.useData()) | (empty) |
 | `composer.pills` | the controls under the message box (mode, model, effort, attach). props: { composer } | composer.mode, composer.model, composer.effort, composer.attach |
 | `sidebar.top` | the sidebar's actions under the search (New chat, Open folder). props: {} | sidebar.new-chat, sidebar.open-folder |
