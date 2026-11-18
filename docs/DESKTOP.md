@@ -117,6 +117,8 @@ alone read as the terminal's.
 0.1.57: another conversation comes in with a short fade up, its title too, so a switch is seen; a project's chevron folds
 and unfolds its conversations (it only ever opened: open meant "the active project"), its name opens it; the sidebar's
 rows act as buttons for the keyboard (Tab, Enter) and the pointer.
+0.1.58: Settings ends with Updates: the app's version and its core's, Check for updates (checking, up to date, or the
+new version with Install and restart).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

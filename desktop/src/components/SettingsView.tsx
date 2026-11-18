@@ -2,6 +2,7 @@ import { ExternalLink, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { useDialog } from "../lib/dialog";
+import { checkUpdate, installUpdate, useUpdate } from "../lib/update";
 import { safeMode } from "../lib/plugins";
 import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Settings } from "../lib/tazuna";
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
@@ -29,6 +30,9 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
   // the app's own version beside its core's: "tazuna 0.1.173" alone read as the terminal's
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);
+  // updates from here (until 0.1.58 only the sidebar's row, when one was found, and Cmd-K)
+  const update = useUpdate();
+  const [checking, setChecking] = useState(false);
   // a plugin read before it is enabled (its code and what it would register, from one read); sharing and the gallery
   const [reading, setReading] = useState<{ w: UserWidget; code: string; print: string; would: string } | null>(null);
   const [plugNote, setPlugNote] = useState("");
@@ -255,8 +259,20 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
             }} className="mt-1" />
               <span><span className="text-ink">Safe mode: start without plugins</span><span className="block text-[12px] text-muted">For when a plugin breaks the window. Panels stay.</span></span></label>
 
-            <div className="mt-5 text-[11.5px] text-faint" title="The app carries its own tazuna core, separate from the terminal's">
-              tazuna desktop {appVersion || "?"} · its core {st.version}</div>
+            <div className={label}>Updates</div>
+            <div className="flex items-center gap-2 py-1">
+              <span className="flex-1 text-[12.5px] text-ink-2" title="The app carries its own tazuna core, separate from the terminal's">
+                tazuna desktop {appVersion || "?"} <span className="text-faint">· its core {st.version}</span></span>
+              {update.version
+                ? update.installing ? <span role="status" className="text-[12px] text-muted">Installing… tazuna restarts by itself.</span>
+                  : <button onClick={() => installUpdate()} title="Replies running now stop; conversations stay resumable"
+                      className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent">Install {update.version} and restart</button>
+                : <button disabled={checking} onClick={async () => { setChecking(true); await checkUpdate(true); setChecking(false); }}
+                    className="rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-60">{checking ? "Checking…" : "Check for updates"}</button>}
+            </div>
+            {update.version && !update.installing && <div className="text-[12px] text-muted">tazuna desktop {update.version} is out. Replies running now stop when it restarts.</div>}
+            {update.upToDate && <div role="status" className="text-[12px] text-ok">Up to date.</div>}
+            {update.error && <div role="alert" className="text-[12px] text-bad">{update.error}</div>}
           </>}
         </div>
       </div>
