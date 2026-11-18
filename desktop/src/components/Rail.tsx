@@ -9,14 +9,16 @@ import { usd, type Message, type Usage } from "../lib/types";
 // and its card is left out (DESIGN.md: real numbers only).
 export type Widget = { id: string; title: string; render: (u: Usage) => ReactNode | null };
 
-export function Card({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <div className="rounded-lg border border-line bg-card px-3.5 py-3">
-      <div className="mb-2 text-[11.5px] font-medium text-faint">{title}</div>
-      {children}
-    </div>
-  );
+/** A card; with onOpen, the whole card is a button (the plan and cost cards open the usage page). */
+export function Card({ title, children, onOpen }: { title: string; children: ReactNode; onOpen?: () => void }) {
+  const body = <><div className="mb-2 text-[11.5px] font-medium text-faint">{title}</div>{children}</>;
+  return onOpen
+    ? <button onClick={onOpen} title="Usage: all your accounts (⌘⇧U)" className="block w-full rounded-lg border border-line bg-card px-3.5 py-3 text-left hover:border-line-strong hover:bg-hover">{body}</button>
+    : <div className="rounded-lg border border-line bg-card px-3.5 py-3">{body}</div>;
 }
+
+/** Opens the usage page (App listens). */
+export const openUsage = () => window.dispatchEvent(new CustomEvent("tazuna-usage"));
 
 function Bar({ pct }: { pct: number }) {
   return <div className="h-1.5 overflow-hidden rounded bg-line"><i className="block h-full rounded bg-accent transition-[width] duration-200" style={{ width: `${pct}%` }} /></div>;

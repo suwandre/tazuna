@@ -223,8 +223,10 @@ function useOverlay() {
       if (e.key === "/") { e.preventDefault(); setOverlay((o) => (o === "shortcuts" ? null : "shortcuts")); }
       if (e.key === ",") { e.preventDefault(); setOverlay((o) => (o === "settings" ? null : "settings")); }
     };
+    const usage = () => setOverlay("usage");
     window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
+    window.addEventListener("tazuna-usage", usage);
+    return () => { window.removeEventListener("keydown", key); window.removeEventListener("tazuna-usage", usage); };
   }, []);
   return [overlay, setOverlay] as const;
 }

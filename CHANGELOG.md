@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.174 (2026-11-18): /usage shows every account, with no model call
+
+- /usage reads Claude's plan from the claude CLI's own /usage page (`claude -p /usage`): no model call, $0, about 4 s.
+  Until now it made a short Haiku call and read the plan from its rate-limit event. The start of a session reads it the
+  same way when no session has recorded a reading yet.
+- One panel for every account: the plan's windows (5-hour session, week, the week per model) with their resets and what
+  claude says contributes to the use; the providers' credits where their API says (SubRouter, OpenRouter; the others get
+  their page); OmniRoute's connected accounts with their plan and quota windows (OmniRoute's /api/usage endpoints, read
+  with tazuna's OmniRoute key).
+- The app server's new `accounts` op returns the same for the desktop's usage page.
+
 ## 0.1.173 (2026-11-18): OmniRoute's models by name, their levels as efforts
 
 - One picker row a model, named and placed: "Gemini 4 Argon", OmniRoute · Antigravity CLI. OmniRoute lists one id per

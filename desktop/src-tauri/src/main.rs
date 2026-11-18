@@ -530,7 +530,7 @@ async fn pick_folder(app: AppHandle) -> Option<String> {
 /// nothing else passes (the core drops other lines too).
 #[tauri::command]
 fn op(core: State<Core>, tid: String, msg: serde_json::Value) -> Result<(), String> {
-    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "gallery" | "gallery_get" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard")) {
+    if msg.get("type").is_some() || !matches!(msg["op"].as_str(), Some("models" | "model" | "effort" | "sessions" | "resume" | "mode" | "answer" | "diff" | "undo" | "settings" | "login" | "data" | "route" | "full" | "rename" | "hide" | "rewind" | "mcp" | "mcp_on" | "mcp_add" | "mcp_remove" | "mcp_check" | "hook" | "setup" | "gallery" | "gallery_get" | "accounts" | "review" | "piece" | "allow_root" | "fork" | "usage" | "spend_cap" | "worktree_new" | "worktrees" | "worktree_remove" | "pr" | "create" | "create_enable" | "create_discard")) {
         return Err(format!("not a command the window sends: {msg}"));
     }
     write(&core, &tid, msg)

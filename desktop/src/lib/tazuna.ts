@@ -60,6 +60,11 @@ export type ModelChoice = {
   model: string; label: string; place: string; provider: string; url: string | null; key_env: string | null;
   efforts: string[]; effort: string | null; price: string; bench: string; why_not: string | null; current: boolean;
 };
+export type Accounts = {
+  plan: { label: string; used: number; resets: string }[] | null; plan_notes: string[];
+  credits: { provider: string; left: string | null; page: string }[];
+  omniroute: { provider: string; name: string; plan: string | null; status: string; windows: { group: string; window: string; used: number | null; resets: string | null; unlimited: boolean | null }[] }[];
+};
 export type Models = { choices: ModelChoice[]; rebuild: string | null };
 
 export const core = {
@@ -150,6 +155,10 @@ export const core = {
   /** the run log's last 90 days for the usage page (src/lib/usage.ts reads the rows) */
   usage: (signals = false) => to("op", { msg: { op: "usage", signals } }),
   onUsage: (cb: (u: { rows: import("./usage").Row[] }) => void) => on<{ rows: import("./usage").Row[] }>("usage", cb),
+  /** what each account has left (src/accounts.rs): Claude's plan from claude's own /usage (no model call), the providers'
+   * credits, OmniRoute's connected accounts; takes a few seconds */
+  accounts: () => to("op", { msg: { op: "accounts" } }),
+  onAccounts: (cb: (a: Accounts) => void) => on<Accounts>("accounts", cb),
   send: (text: string, agent = false) => to("send", { text, agent }),
   trust: () => to("trust"),
   pickFolder: () => invoke<string | null>("pick_folder"),

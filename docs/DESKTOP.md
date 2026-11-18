@@ -123,6 +123,9 @@ new version with Install and restart).
 date, the new version with Install and restart, or why it could not check; installing says so too.
 0.1.60: the snackbar alone says it: the sidebar's update row and Settings' line are gone; a new version found by the
 hourly check shows once, and stays until installed or closed.
+0.1.61: the usage page opens with "Your accounts now": Claude's plan from claude's own /usage (no model call), the
+providers' credits with a link to each page, and OmniRoute's accounts with their quota windows. A click on the rail's plan,
+cost or balance card opens it.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

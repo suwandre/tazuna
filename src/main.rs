@@ -103,6 +103,7 @@ mod trust;
 mod turns;
 mod ui;
 mod verify;
+mod accounts;
 mod behave;
 mod create;
 mod realuse;
@@ -1131,9 +1132,9 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 45] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+        const OPS: [&str; 46] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
             "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
-            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get"];
+            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get", "accounts"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1424,6 +1425,23 @@ fn app_server(a: &Args) -> Result<()> {
                                     Ok((f, t)) => json!({"type": kind, "file": f, "text": t}),
                                     Err(e) => json!({"type": kind, "error": e}),
                                 };
+                                let mut o = std::io::stdout().lock();
+                                let _ = writeln!(o, "{v}");
+                                let _ = o.flush();
+                            });
+                        }
+                        // the usage page's accounts (accounts.rs), on a thread: Claude's plan, credits, OmniRoute's accounts; the
+                        // plan's reading also feeds this conversation's meters
+                        Some("accounts") => {
+                            let tx = hook_tx.clone();
+                            std::thread::spawn(move || {
+                                let mut v = accounts::all();
+                                let rows: Vec<accounts::PlanRow> = v["plan"].as_array().into_iter().flatten().map(|r| accounts::PlanRow {
+                                    label: r["label"].as_str().unwrap_or_default().to_string(), used: r["used"].as_f64().unwrap_or(0.0), resets: String::new() }).collect();
+                                if let Some(ev) = accounts::rate_event(&rows) {
+                                    let _ = tx.send(json!({"type": "tazuna_chat_event", "e": ev}));
+                                }
+                                v["type"] = json!("accounts");
                                 let mut o = std::io::stdout().lock();
                                 let _ = writeln!(o, "{v}");
                                 let _ = o.flush();
@@ -2293,6 +2311,23 @@ fn tool_calls(s: &Session, name: &str) -> ui::ListPanel {
 
 /// Every model call (a click on the tokens panel): what it sent and read from cache, what it wrote, its first token
 /// and its speed.
+/// `/usage`: every account's lines (accounts.rs).
+#[inline(never)]
+fn accounts_panel(v: &serde_json::Value) -> ui::ListPanel {
+    let rows: Vec<(String, bool)> = accounts::lines(v).into_iter().map(|l| (l, false)).collect();
+    ui::ListPanel {
+        title: "usage · your accounts".into(),
+        head: String::new(),
+        links: vec![None; rows.len()],
+        details: vec![None; rows.len()],
+        rows,
+        scroll: 0,
+        link_from: 0,
+        hscroll: 0,
+        open: Default::default(),
+    }
+}
+
 /// `/changelog`: a row per version (its title), its notes unfolded by a click.
 #[inline(never)]
 fn changelog_panel(entries: &[serde_json::Value]) -> ui::ListPanel {
@@ -2693,12 +2728,12 @@ fn run_live(
     let mut last_reply = String::new();
     fetch_balance(&status_tx);
     // no reading in any session yet (a new install, or a machine that only ran other providers) showed no plan line at
-    // all (the Windows PC, 2026-11-08): one short Haiku call reads it, as /usage does, and is recorded for the next start.
-    // Not with an API key in the environment, where the call would be billed.
+    // all (the Windows PC, 2026-11-08): claude's own /usage page reads it (no model call; a Haiku call until 0.1.174), and
+    // it is recorded for the next start
     if last_read.is_none() && std::env::var_os("ANTHROPIC_API_KEY").is_none() {
         let tx = status_tx.clone();
         std::thread::spawn(move || {
-            if let Some(e) = plan_reading() {
+            if let Some(e) = accounts::claude_plan().and_then(|(rows, _)| accounts::rate_event(&rows)) {
                 let _ = tx.send(e);
             }
         });
@@ -3024,9 +3059,19 @@ fn run_live(
                         s.apply(&e, t);
                     }
                 }
-                Some("tazuna_usage_done") => {
-                    let text = ui::limits_str(&s, v.design.theme()).map_or("no reading: claude sent none, and no SubRouter key is set".into(), |(t, _)| t);
-                    s.apply(&json!({"type": "harness_info", "text": format!("usage: {text}")}), live.elapsed_ms());
+                Some("tazuna_accounts") => {
+                    // the plan's reading feeds the meters too, and goes into the recording for the next start
+                    let rows: Vec<accounts::PlanRow> = e["v"]["plan"].as_array().into_iter().flatten().map(|r| accounts::PlanRow {
+                        label: r["label"].as_str().unwrap_or_default().to_string(), used: r["used"].as_f64().unwrap_or(0.0), resets: String::new() }).collect();
+                    if let Some(ev) = accounts::rate_event(&rows) {
+                        let (t, ev) = live.note(ev);
+                        s.apply(&ev, t);
+                    }
+                    if let Some(b) = e["v"]["credits"].as_array().into_iter().flatten().find(|c| c["provider"] == "SubRouter").and_then(|c| c["left"].as_str())
+                        .and_then(|l| l.trim_start_matches('$').split(' ').next()?.parse::<f64>().ok()) {
+                        s.balance = Some(b);
+                    }
+                    v.list = Some(accounts_panel(&e["v"]));
                 }
                 // a plan reading from /usage or the start goes into the recording, where the next session finds it
                 Some("rate_limit_event") => {
@@ -3780,17 +3825,13 @@ fn run_live(
                     pick = Some(open_picker(live, &key_models)?);
                     continue;
                 }
+                // /usage: every account in one panel: Claude's plan (claude's own /usage page, no model call), the
+                // providers' credits, OmniRoute's accounts and their quotas (accounts.rs)
                 if text == "/usage" {
-                    s.apply(&json!({"type": "harness_info", "text": "reading the plan's windows (one short Haiku call through claude) and SubRouter's balance…"}), live.elapsed_ms());
+                    s.apply(&json!({"type": "harness_info", "text": "reading your accounts: Claude's plan (no model call), providers' credits, OmniRoute's accounts…"}), live.elapsed_ms());
                     let tx = status_tx.clone();
                     std::thread::spawn(move || {
-                        if let Some(e) = plan_reading() {
-                            let _ = tx.send(e);
-                        }
-                        if let Some(b) = models::subrouter_balance() {
-                            let _ = tx.send(json!({"type": "tazuna_balance", "usd": b}));
-                        }
-                        let _ = tx.send(json!({"type": "tazuna_usage_done"}));
+                        let _ = tx.send(json!({"type": "tazuna_accounts", "v": accounts::all()}));
                     });
                     continue;
                 }
@@ -4273,16 +4314,6 @@ fn fetch_balance(tx: &std::sync::mpsc::Sender<serde_json::Value>) {
     });
 }
 
-/// The plan's windows now: one short Haiku call through the official `claude` CLI, which reports them in its
-/// rate_limit_event (bench/guard.py reads them the same way). None when it sends none.
-fn plan_reading() -> Option<serde_json::Value> {
-    let dir = std::env::temp_dir();
-    let out = std::process::Command::new("claude")
-        .args(["-p", "Reply with: ok", "--model", "claude-haiku-5-5", "--output-format", "stream-json", "--verbose", "--no-session-persistence",
-               "--setting-sources", "", "--strict-mcp-config", "--tools", "", "--system-prompt", "Reply briefly."])
-        .current_dir(dir).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok()?;
-    String::from_utf8_lossy(&out.stdout).lines().filter(|l| l.contains("\"rate_limit_event\"")).find_map(|l| serde_json::from_str(l).ok())
-}
 
 /// The /model picker: the choices, the selected row, each row's effort and pinned provider (0: any checked one), the filter.
 struct Picker {

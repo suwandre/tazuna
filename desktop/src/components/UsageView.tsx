@@ -1,18 +1,20 @@
 import { X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { core } from "../lib/tazuna";
+import { core, type Accounts } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
 import { summarize, type Day, type Row } from "../lib/usage";
 import { usd } from "../lib/types";
 
-// The usage page (Cmd-K, the View menu): what the last days cost by day and model, how much input the cache served, the plan
-// now, and what the run log knows of trouble per version and model. Read from the run log (runs.jsonl) by the core.
+// The usage page (Cmd-K, the View menu, a click on the rail's plan or cost cards): what each account has left now (Claude's
+// plan from claude's own /usage, the providers' credits, OmniRoute's accounts: src/accounts.rs), what the last days cost by
+// day and model, how much input the cache served, and what the run log knows of trouble per version and model.
 const RANGES = [7, 30, 90];
 const big = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`);
 const money = (n: number) => (n >= 100 ? `$${Math.round(n)}` : n >= 1 ? `$${n.toFixed(2)}` : usd(n));
 
 export function UsageView({ onClose, limits, balance }: { onClose: () => void; limits?: [number, number] | null; balance?: number | null }) {
   const [rows, setRows] = useState<Row[] | null>(null);
+  const [acc, setAcc] = useState<Accounts | null | undefined>(undefined);
   const dialog = useDialog();
   const [days, setDays] = useState(30);
   // asked once when opened (the window re-renders on every streamed view; onClose is new each time)
@@ -21,9 +23,11 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
   useEffect(() => {
     const off = core.onUsage((u) => setRows(u.rows));
     core.usage(true).catch(() => setRows([]));
+    const offAcc = core.onAccounts(setAcc);
+    core.accounts().catch(() => setAcc(null));
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close.current(); };
     window.addEventListener("keydown", esc);
-    return () => { off.then((f) => f()); window.removeEventListener("keydown", esc); };
+    return () => { off.then((f) => f()); offAcc.then((f) => f()); window.removeEventListener("keydown", esc); };
   }, []);
   const s = useMemo(() => (rows ? summarize(rows, days) : null), [rows, days]);
   const label = "mb-2 mt-6 text-[11.5px] font-medium text-faint";
@@ -45,8 +49,11 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
               <Tile title="API spend" value={money(s.api)} note={`billed · ${s.byModel.filter((m) => !m.plan).reduce((a, m) => a + m.runs, 0)} runs`} />
               <Tile title="Claude plan" value={money(s.plan)} note={`at API prices, not billed · ${s.byModel.filter((m) => m.plan).reduce((a, m) => a + m.runs, 0)} runs`} />
               <Tile title="From the cache" value={`${s.read ? Math.round((100 * s.cached) / s.read) : 0}%`} note={`of input · ${big(s.cached)} tokens`} />
-              <Tile title="Plan now" value={limits ? `${Math.round(limits[0])}%` : "–"} note={limits ? `of 5 hours used · week ${Math.round(limits[1])}%${balance != null ? ` · SubRouter $${balance.toFixed(2)}` : ""}` : "known after a Claude reply"} />
+              <Tile title="Plan now" value={limits ? `${Math.round(limits[0])}%` : "–"} note={limits ? `of 5 hours used · week ${Math.round(limits[1])}%${balance != null ? ` · SubRouter $${balance.toFixed(2)}` : ""}` : acc === undefined ? "asking claude…" : "no Claude plan reading"} />
             </div>
+
+            <div className={label}>Your accounts now</div>
+            <AccountsPart acc={acc} />
 
             <div className={label}>Cost per day, at API prices (plan runs included, not billed)</div>
             <Bars days={s.days} />
@@ -82,6 +89,61 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
       </div>
     </div>
   );
+}
+
+/** A used-% meter: the bar, the number, when it resets. */
+function Meter({ what, used, resets }: { what: string; used: number | null; resets?: string | null }) {
+  const pct = Math.max(0, Math.min(100, used ?? 0));
+  return (
+    <div className="flex items-center gap-3 py-1 text-[12.5px]">
+      <span className="w-[190px] flex-none truncate text-ink-2" title={what}>{what}</span>
+      <span className="h-1.5 w-[160px] flex-none overflow-hidden rounded bg-line"><i className={`block h-full rounded ${pct >= 90 ? "bg-bad" : "bg-accent"}`} style={{ width: `${pct}%` }} /></span>
+      <span className="w-[70px] flex-none text-right font-mono text-[12px]">{used == null ? "–" : `${Math.round(used)}%`} used</span>
+      {resets && <span className="min-w-0 truncate text-[12px] text-muted">resets {resets}</span>}
+    </div>
+  );
+}
+
+/** OmniRoute's reset times come as UTC ISO strings: the user's local day and time. */
+const when = (iso: string | null) => {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+};
+
+function AccountsPart({ acc }: { acc: Accounts | null | undefined }) {
+  const sub = "mb-1 mt-3 text-[12px] font-medium text-ink";
+  if (acc === undefined) return <div className="text-[12.5px] text-faint">Asking your accounts (claude's own /usage, the providers, OmniRoute)…</div>;
+  if (acc === null) return <div className="text-[12.5px] text-faint">The core did not answer.</div>;
+  return <>
+    <div className={sub}>Claude plan <span className="font-normal text-faint">· claude's own /usage, no model call</span></div>
+    {acc.plan ? acc.plan.map((r) => <Meter key={r.label} what={r.label === "Current session" ? "5-hour session" : r.label.replace(/^Current w/, "W")} used={r.used} resets={r.resets} />)
+      : <div className="text-[12.5px] text-faint">No reading: is claude installed and logged in to a subscription?</div>}
+    {acc.plan_notes.length > 0 && (
+      <details className="mt-1 text-[12px] text-muted"><summary className="cursor-pointer hover:text-ink">What's contributing to your usage</summary>
+        <pre className="mt-1 whitespace-pre-wrap font-mono text-[11.5px]">{acc.plan_notes.join("\n")}</pre></details>
+    )}
+    {acc.credits.length > 0 && <>
+      <div className={sub}>Providers' credits</div>
+      {acc.credits.map((c) => (
+        <div key={c.provider} className="flex items-center gap-3 py-1 text-[12.5px]">
+          <span className="w-[190px] flex-none text-ink-2">{c.provider}</span>
+          {c.left ? <span className="font-mono text-[12px]">{c.left}</span> : <span className="text-muted">its API does not say</span>}
+          <button onClick={() => core.openLink(c.page).catch(() => {})} className="ml-auto rounded-md border border-line px-2 py-0.5 text-[12px] text-ink-2 hover:bg-hover">Open its page</button>
+        </div>
+      ))}
+    </>}
+    {acc.omniroute.map((a) => (
+      <div key={`${a.provider}${a.name}`}>
+        <div className={sub}>OmniRoute · {a.provider} <span className="font-normal text-muted">· {a.name}{a.plan ? ` · ${a.plan}` : ""}</span>
+          {a.status !== "valid" && <span className="font-normal text-muted"> · login {a.status}</span>}</div>
+        {a.windows.length === 0 ? <div className="text-[12.5px] text-faint">No quota reported.</div>
+          : a.windows.map((w, i) => w.unlimited
+            ? <div key={i} className="py-1 text-[12.5px] text-ink-2">{`${w.group} ${w.window}`.trim()} <span className="text-muted">· unlimited</span></div>
+            : <Meter key={i} what={`${w.group} ${w.window}`.trim()} used={w.used} resets={when(w.resets)} />)}
+      </div>
+    ))}
+  </>;
 }
 
 function Tile({ title, value, note }: { title: string; value: string; note: string }) {
