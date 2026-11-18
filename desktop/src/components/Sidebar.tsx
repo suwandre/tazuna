@@ -156,10 +156,12 @@ export function OpenFolderButton() {
 export function SettingsRow() {
   const { onSettings, planLeft } = useContext(SidebarCtx);
   return (
-    <button onClick={onSettings} className="flex w-full items-center gap-2 border-t border-line px-2 pt-2.5 text-left text-muted hover:text-ink">
-      <span className="grid size-[22px] place-items-center rounded-full border border-line bg-field text-[11px] text-ink-2">S</span>
-      <span>Settings</span>
-      <span className="ml-auto text-[11.5px] text-faint">{planLeft}</span>
-    </button>
+    <div className="border-t border-line pt-1.5">
+      <button onClick={onSettings} className="flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-muted transition-colors hover:bg-hover hover:text-ink">
+        <span className="grid size-[22px] place-items-center rounded-full border border-line bg-field text-[11px] text-ink-2">S</span>
+        <span>Settings</span>
+        <span className="ml-auto text-[11.5px] text-faint">{planLeft}</span>
+      </button>
+    </div>
   );
 }

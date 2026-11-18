@@ -126,6 +126,8 @@ hourly check shows once, and stays until installed or closed.
 0.1.61: the usage page opens with "Your accounts now": Claude's plan from claude's own /usage (no model call), the
 providers' credits with a link to each page, and OmniRoute's accounts with their quota windows. A click on the rail's plan,
 cost or balance card opens it.
+0.1.62: the sidebar's Settings row hovers like the rows above it: the fill sits evenly around its line (it had no padding
+below), with the divider above it outside the fill.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
