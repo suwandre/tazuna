@@ -286,6 +286,8 @@ pub struct ListPanel {
     /// A row's whole text (a long command), unfolded under it when the row is clicked; rows show cut to the modal.
     pub details: Vec<Option<String>>,
     pub open: std::collections::BTreeSet<usize>,
+    /// Still being read (/usage asks several accounts): the first row turns with a spinner until the rows come.
+    pub pending: bool,
 }
 
 /// `/diff` (or a click on the files panel): the changed files, the selected one's diff, how far it is scrolled.
@@ -355,7 +357,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
         draw_login(f, p, th);
     }
     if let Some(p) = &v.list {
-        (areas.list, areas.list_links, areas.list_rows) = draw_list(f, p, th);
+        (areas.list, areas.list_links, areas.list_rows) = draw_list(f, p, th, v.clock_ms);
     }
     areas
 }
@@ -389,7 +391,7 @@ fn draw_menu(f: &mut Frame, v: &View, th: &Theme, over: Rect) {
 }
 
 /// A ListPanel in the middle of the screen: its title, the column heads, the rows that fit (failed ones in red).
-fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme) -> (Option<Rect>, Vec<(Rect, String)>, Vec<(Rect, usize)>) {
+fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64) -> (Option<Rect>, Vec<(Rect, String)>, Vec<(Rect, usize)>) {
     use ratatui::widgets::{Block, Borders, Clear, Paragraph};
     let full = f.area();
     let want = p.rows.iter().map(|r| r.0.width()).chain([p.head.width(), p.title.width()]).max().unwrap_or(20) as u16 + 4;
@@ -415,7 +417,7 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme) -> (Option<Rect>, Vec<(Re
         }
         let y = inner.y + lines.len() as u16;
         let color = st(if *bad { th.err } else { th.text });
-        let shown = cut(r);
+        let shown = if p.pending && i == 0 { cut(&format!("{} {r}", spinner(clock_ms))) } else { cut(r) };
         rows.push((Rect::new(inner.x, y, inner.width, 1), i));
         match p.links.get(i).cloned().flatten() {
             Some(url) => {
@@ -2658,17 +2660,24 @@ mod tests {
         assert_eq!(fetch_label(&tool("[fetched https://x.com/a · \"Crypto prices today\", HTTP 200: web content]\nbody", "https://x.com/a")), "Crypto prices today");
         assert_eq!(fetch_label(&tool("[fetched https://api.coingecko.com/api/v3/global, HTTP 200: web content]\n{}", "https://api.coingecko.com/api/v3/global?x=1")), "api.coingecko.com/api/v3/global");
         let mut p = ListPanel { title: "fetch".into(), head: "  #   took     what".into(), rows: vec![(format!("{:>3}  {:>7}  {}  {}", 1, "0.5s", "✓", "Crypto prices today"), false)], scroll: 0,
-            links: vec![Some("https://x.com/a".into())], link_from: 17, hscroll: 0, details: vec![None], open: Default::default() };
+            links: vec![Some("https://x.com/a".into())], link_from: 17, hscroll: 0, details: vec![None], open: Default::default(), pending: false };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         let mut out = (None, vec![], vec![]);
-        term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme()); }).unwrap();
+        term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme(), 0.0); }).unwrap();
         let (area, links, _) = out.clone();
         assert!(area.is_some() && links.len() == 1 && links[0].1 == "https://x.com/a");
         let r = links[0].0;
         assert_eq!(term.backend().buffer()[(r.x, r.y)].symbol(), "C", "the link starts at the title");
         p.hscroll = 10;
-        term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme()); }).unwrap();
+        term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme(), 0.0); }).unwrap();
         assert_eq!(out.1[0].0.x, r.x - 10, "scrolled sideways, the link moves with its text");
+        // still reading (/usage): the first row turns
+        let p = ListPanel { rows: vec![("reading your accounts…".into(), false)], links: vec![None], details: vec![None], hscroll: 0, pending: true, ..p };
+        let shown = |t: &ratatui::Terminal<ratatui::backend::TestBackend>| t.backend().buffer().content().iter().map(|c| c.symbol()).collect::<String>();
+        term.draw(|f| { draw_list(f, &p, Design::Cockpit.theme(), 0.0); }).unwrap();
+        assert!(shown(&term).contains("⠋ reading your accounts…"));
+        term.draw(|f| { draw_list(f, &p, Design::Cockpit.theme(), 85.0); }).unwrap();
+        assert!(shown(&term).contains("⠙ reading your accounts…"), "the next frame");
     }
 
     #[test]
@@ -2701,7 +2710,7 @@ mod tests {
             (b[(3, 0)].fg, b[(60, 20)].symbol().to_string())
         };
         assert_ne!(cell(&v).0, th.border, "the header in its own colours without a modal");
-        v.list = Some(ListPanel { title: "model calls".into(), head: "#".into(), rows: vec![("1".into(), false)], scroll: 0, links: vec![], link_from: 0, hscroll: 0, details: vec![], open: Default::default() });
+        v.list = Some(ListPanel { title: "model calls".into(), head: "#".into(), rows: vec![("1".into(), false)], scroll: 0, links: vec![], link_from: 0, hscroll: 0, details: vec![], open: Default::default(), pending: false });
         let (fg, _) = cell(&v);
         assert_eq!(fg, th.border, "behind a modal everything takes the border colour");
     }

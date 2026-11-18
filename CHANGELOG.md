@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.175 (2026-11-18): /usage opens its panel at once
+
+- /usage opens the accounts panel right away, with a spinner and what it is reading, and fills it when the accounts
+  answer (a few seconds). Until now a line in the transcript said it was reading, easy to miss, and the panel came later.
+  A panel closed before the answer stays closed; the plan's meters update either way.
+
 ## 0.1.174 (2026-11-18): /usage shows every account, with no model call
 
 - /usage reads Claude's plan from the claude CLI's own /usage page (`claude -p /usage`): no model call, $0, about 4 s.

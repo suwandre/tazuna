@@ -2306,17 +2306,25 @@ fn tool_calls(s: &Session, name: &str) -> ui::ListPanel {
         hscroll: 0,
         details,
         open: Default::default(),
+        pending: false,
     }
 }
 
 /// Every model call (a click on the tokens panel): what it sent and read from cache, what it wrote, its first token
 /// and its speed.
-/// `/usage`: every account's lines (accounts.rs).
+const ACCOUNTS: &str = "usage · your accounts";
+
+/// `/usage`: every account's lines (accounts.rs); None: still reading them, said in the panel with a spinner.
 #[inline(never)]
-fn accounts_panel(v: &serde_json::Value) -> ui::ListPanel {
-    let rows: Vec<(String, bool)> = accounts::lines(v).into_iter().map(|l| (l, false)).collect();
+fn accounts_panel(v: Option<&serde_json::Value>) -> ui::ListPanel {
+    let rows: Vec<(String, bool)> = match v {
+        Some(v) => accounts::lines(v),
+        None => vec!["reading your accounts…".into(), String::new(), "  Claude's plan: claude's own /usage, no model call".into(),
+            "  providers' credits".into(), "  OmniRoute's accounts and their quotas".into()],
+    }.into_iter().map(|l| (l, false)).collect();
     ui::ListPanel {
-        title: "usage · your accounts".into(),
+        pending: v.is_none(),
+        title: ACCOUNTS.into(),
         head: String::new(),
         links: vec![None; rows.len()],
         details: vec![None; rows.len()],
@@ -2343,6 +2351,7 @@ fn changelog_panel(entries: &[serde_json::Value]) -> ui::ListPanel {
         hscroll: 0,
         details,
         open: Default::default(),
+        pending: false,
     }
 }
 
@@ -2366,6 +2375,7 @@ fn model_calls(s: &Session) -> ui::ListPanel {
         hscroll: 0,
         details: vec![],
         open: Default::default(),
+        pending: false,
     }
 }
 
@@ -3071,7 +3081,10 @@ fn run_live(
                         .and_then(|l| l.trim_start_matches('$').split(' ').next()?.parse::<f64>().ok()) {
                         s.balance = Some(b);
                     }
-                    v.list = Some(accounts_panel(&e["v"]));
+                    // into the panel /usage opened, unless it was closed meanwhile
+                    if v.list.as_ref().is_some_and(|l| l.title == ACCOUNTS && l.pending) {
+                        v.list = Some(accounts_panel(Some(&e["v"])));
+                    }
                 }
                 // a plan reading from /usage or the start goes into the recording, where the next session finds it
                 Some("rate_limit_event") => {
@@ -3828,7 +3841,7 @@ fn run_live(
                 // /usage: every account in one panel: Claude's plan (claude's own /usage page, no model call), the
                 // providers' credits, OmniRoute's accounts and their quotas (accounts.rs)
                 if text == "/usage" {
-                    s.apply(&json!({"type": "harness_info", "text": "reading your accounts: Claude's plan (no model call), providers' credits, OmniRoute's accounts…"}), live.elapsed_ms());
+                    v.list = Some(accounts_panel(None));
                     let tx = status_tx.clone();
                     std::thread::spawn(move || {
                         let _ = tx.send(json!({"type": "tazuna_accounts", "v": accounts::all()}));
