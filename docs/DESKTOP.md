@@ -99,6 +99,9 @@ a promise: the code is what counts.
 user-name lookup, and is macOS only for now.
 0.1.51: the message box grows upwards with what is typed (it stayed one line and earlier lines went out of sight), up
 to 40% of the window, then scrolls; its card's border shows the focus.
+0.1.52: what is still going on moves, as in the terminal: a running step spins and its time ticks between the core's
+views (a long command's time stood still), live thinking pulses and its words shimmer, and under the reply a spinner,
+what it is doing with counting dots and how long it has run. Step times no longer wrap. Reduced motion stops all of it.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

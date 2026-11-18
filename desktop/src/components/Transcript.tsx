@@ -1,4 +1,4 @@
-import { FileText, MessageCircle, Pencil } from "lucide-react";
+import { FileText, LoaderCircle, MessageCircle, Pencil } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
 import { usd, type Call, type Change, type Message } from "../lib/types";
@@ -117,11 +117,25 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
           )}
         </div>
       ))}
-      {busy && activity && doing[activity] && (
-        <div role="status" className="mx-auto max-w-[700px] px-7 font-mono text-[11.5px] text-faint">{doing[activity]}…</div>
-      )}
+      {busy && activity && doing[activity] && <Working what={doing[activity]} />}
     </section>
     </TranscriptCtx.Provider>
+  );
+}
+
+/** Under a reply that is still going: a spinner, what it is doing with dots that count, and how long the reply has run
+ * (it stays mounted from the reply's start to its end). */
+function Working({ what }: { what: string }) {
+  const [start] = useState(() => Date.now());
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 1000); return () => clearInterval(t); }, []);
+  const s = Math.floor((Date.now() - start) / 1000);
+  return (
+    <div role="status" className="mx-auto flex max-w-[700px] items-center gap-2 px-7 font-mono text-[11.5px] text-faint">
+      <LoaderCircle size={13} strokeWidth={1.75} className="animate-spin text-accent" aria-hidden="true" />
+      <span className="tz-live">{what}</span><span className="tz-dots -ml-2" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
+      <span>{s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`}</span>
+    </div>
   );
 }
 

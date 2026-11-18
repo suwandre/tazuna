@@ -54,6 +54,12 @@ input, textarea, [contenteditable] { user-select: text; cursor: text; }
 /* where the keyboard is: one ring everywhere (a panel focused on opening shows none) */
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 [role=dialog]:focus-visible { outline: none; }
+/* what is still going on moves (a step running, the reply thinking): a light sweep over the words, dots that count */
+@keyframes tz-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+.tz-live { background: linear-gradient(90deg, var(--muted) 35%, var(--ink) 50%, var(--muted) 65%) 0 0 / 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: tz-sweep 1.6s linear infinite; }
+@keyframes tz-dot { 0%, 20% { opacity: 0; } 40%, 100% { opacity: 1; } }
+.tz-dots span { animation: tz-dot 1.2s infinite; } .tz-dots span:nth-child(2) { animation-delay: .2s; } .tz-dots span:nth-child(3) { animation-delay: .4s; }
 /* the message box: its card's border says it has the focus, not a ring inside it */
 footer textarea:focus-visible { outline: none; }
 input[type=radio], input[type=checkbox] { accent-color: var(--accent); cursor: default; }
