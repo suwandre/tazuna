@@ -521,7 +521,7 @@ export default function App() {
         planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
       <main className="flex min-h-0 min-w-0 flex-col bg-main">
         <header data-tauri-drag-region className="flex items-center justify-between border-b border-line-soft px-7 py-3">
-          <div className="flex items-center gap-2 font-medium"><span className="text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 className="truncate text-[inherit] font-[inherit]">{title}</h1></div>
+          <div className="flex items-center gap-2 font-medium"><span className="text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} className="tz-enter truncate text-[inherit] font-[inherit]">{title}</h1></div>
           <div className="flex gap-1.5">
             <HeaderCtx.Provider value={{ modelLabel: models?.choices.find((c) => c.current)?.label ?? session.model, effort: session.effort,
               branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
@@ -531,12 +531,14 @@ export default function App() {
             </HeaderCtx.Provider>
           </div>
         </header>
+        <div key={`view:${active}`} className="tz-enter flex min-h-0 flex-1 flex-col">
         <Transcript key={`${active}:${view?.session_id ?? ""}`} messages={messages} editFrom={editing?.cp}
           onEdit={inTauri ? (e, text) => {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
           } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} onSendToAgent={(text) => core.send(text, true)}
           onDiff={(turn, path) => core.diff(turn, path)} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />
+        </div>
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {reviewing && <ReviewView start={reviewing} turns={(view?.changes ?? []).filter((c) => !c.undone).map((c) => c.turn)}
           onClose={() => setReviewing(null)} onSend={(text) => core.send(text, true)} />}

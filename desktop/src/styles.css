@@ -70,6 +70,9 @@ button.border:not(:disabled):hover { border-color: color-mix(in srgb, var(--acce
 /* the accent buttons (Send, Enable, Start) darken on hover */
 button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
 .dark button.bg-accent:not(:disabled):hover { filter: brightness(1.1); background-color: var(--accent); }
+/* another conversation on screen comes in (fades up), so a switch is seen, not a jump cut (2026-11-18) */
+@keyframes tz-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.tz-enter { animation: tz-enter .2s ease-out; }
 /* what is still going on moves (a step running, the reply thinking): a light sweep over the words, dots that count */
 @keyframes tz-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .tz-live { background: linear-gradient(90deg, var(--muted) 35%, var(--ink) 50%, var(--muted) 65%) 0 0 / 200% 100%;

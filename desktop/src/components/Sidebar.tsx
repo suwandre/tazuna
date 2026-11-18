@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, FolderOpen, Pencil, Plus, Search, X } from "lucide-react";
+import { ChevronRight, FolderOpen, Pencil, Plus, Search, X } from "lucide-react";
 import { createContext, useContext, useState } from "react";
 import { Slot } from "../lib/slots";
 import { installUpdate, useUpdate } from "../lib/update";
@@ -9,6 +9,13 @@ const icon = { size: 16, strokeWidth: 1.5 };
 function Kbd({ children }: { children: string }) {
   return <kbd className="ml-auto rounded-[5px] border border-line px-[5px] py-px font-mono text-[11px] text-faint">{children}</kbd>;
 }
+
+/** A row that holds buttons of its own (rename, close) cannot be a button itself: it acts as one, for the keyboard and the
+ * pointer (a hand, Enter and Space), as the window's other buttons do. */
+const press = (go?: () => void) => ({
+  role: "button", tabIndex: 0,
+  onKeyDown: (e: React.KeyboardEvent) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); go?.(); } },
+});
 
 function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
   t: Thread; active: boolean; sub?: boolean; onClick?: () => void; onRename?: (title: string) => void; onHide?: () => void;
@@ -33,7 +40,7 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
     );
   }
   return (
-    <a onClick={onClick} title={t.title} className={`group flex items-center gap-2 truncate rounded-md px-[9px] py-1.5 text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
+    <a onClick={onClick} {...press(onClick)} title={t.title} className={`group flex items-center gap-2 truncate rounded-md px-[9px] py-1.5 text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
       {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-accent shadow-[0_0_0_3px_var(--accent-soft)]" : "bg-faint"}`} />}
       <span className="flex-1 truncate">{t.title}</span>
       {onRename && <span className="hidden flex-none gap-0.5 group-hover:flex">
@@ -71,6 +78,9 @@ const STATE: Record<string, [string, string]> = {
 };
 
 export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch, onSettings, onRename, onHide, open = [], activeTid, onSwitch, onClose }: Props) {
+  // the chevron folds and unfolds a project's conversations by itself (until 0.1.57 "open" was only "the active project":
+  // a click opened it and nothing folded it again); the name opens the project
+  const [fold, setFold] = useState<Record<string, boolean>>({});
   return (
     <aside aria-label="Conversations" className="flex flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
       {macOverlay && <div data-tauri-drag-region className="-mx-2.5 -mt-3.5 h-[38px] flex-none" />}
@@ -87,7 +97,7 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
       <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto">
       {open.length > 1 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Open now</div>}
       {open.length > 1 && open.map((o) => (
-        <a key={o.tid} onClick={() => onSwitch?.(o.tid)} title={`${o.title} (${STATE[o.state][1]})`}
+        <a key={o.tid} onClick={() => onSwitch?.(o.tid)} {...press(() => onSwitch?.(o.tid))} title={`${o.title} (${STATE[o.state][1]})`}
           className={`group flex items-center gap-2 rounded-md px-[9px] py-1.5 text-ink-2 hover:bg-hover ${o.tid === activeTid ? "bg-selected text-ink" : ""}`}>
           <span className={`size-1.5 flex-none rounded-full ${STATE[o.state][0]}`} />
           <span className="min-w-0 flex-1 truncate">{o.title}</span>
@@ -99,18 +109,28 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
       {chats.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} onClick={() => onOpenThread?.(t)}
         onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
       {projects.length > 0 && <div className="px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint">Projects</div>}
-      {projects.map((p) => (
-        <div key={p.path ?? p.name}>
-          <a onClick={() => onOpenProject?.(p)} title={p.path}
-            className={`flex items-center gap-2 rounded-md px-[9px] py-1.5 text-ink-2 hover:bg-hover ${p.path && p.path === active ? "bg-selected text-ink" : ""}`}>
-            {p.threads.length > 0 && (p.open ? <ChevronDown size={14} strokeWidth={1.5} /> : <ChevronRight size={14} strokeWidth={1.5} />)}
-            <span className="flex-1 truncate">{p.name}</span>
-            {p.pending ? <span className="rounded-full bg-accent px-1.5 text-[10.5px] font-semibold leading-[17px] text-on-accent">{p.pending}</span> : null}
-          </a>
-          {p.open && p.threads.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} sub onClick={() => onOpenThread?.(t, p)}
+      {projects.map((p) => {
+        const key = p.path ?? p.name, shown = fold[key] ?? p.open;
+        return (
+        <div key={key}>
+          <div className={`flex items-center rounded-md text-ink-2 ${p.path && p.path === active ? "bg-selected text-ink" : ""}`}>
+            {p.threads.length > 0 ? (
+              <button onClick={() => setFold((f) => ({ ...f, [key]: !shown }))} aria-expanded={shown} aria-label={`${shown ? "Hide" : "Show"} ${p.name}'s conversations`}
+                className="ml-1 rounded p-1 text-faint hover:bg-hover hover:text-ink">
+                <ChevronRight size={14} strokeWidth={1.5} className={`transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
+              </button>
+            ) : <span className="ml-1 w-[22px]" />}
+            <button onClick={() => { setFold((f) => ({ ...f, [key]: true })); onOpenProject?.(p); }} title={p.path}
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-1 pr-[9px] text-left hover:bg-hover">
+              <span className="flex-1 truncate">{p.name}</span>
+              {p.pending ? <span className="rounded-full bg-accent px-1.5 text-[10.5px] font-semibold leading-[17px] text-on-accent">{p.pending}</span> : null}
+            </button>
+          </div>
+          {shown && p.threads.slice(0, 15).map((t) => <ThreadRow key={t.id} t={t} active={t.id === active} sub onClick={() => onOpenThread?.(t, p)}
             onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
         </div>
-      ))}
+        );
+      })}
       </div>
       <div className="mt-auto"><Slot name="sidebar.footer" props={{ planLeft }} /></div>
       </SidebarCtx.Provider>

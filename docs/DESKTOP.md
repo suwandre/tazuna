@@ -114,6 +114,9 @@ mode); the composer's pills answer the pointer only when they can be used, and l
 reply, or a model with one effort). The app looks for an update hourly, not every 12 hours.
 0.1.56: Settings ends with the app's version and its core's ("tazuna desktop 0.1.56 · its core 0.1.173"); "tazuna 0.1.173"
 alone read as the terminal's.
+0.1.57: another conversation comes in with a short fade up, its title too, so a switch is seen; a project's chevron folds
+and unfolds its conversations (it only ever opened: open meant "the active project"), its name opens it; the sidebar's
+rows act as buttons for the keyboard (Tab, Enter) and the pointer.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
