@@ -97,10 +97,37 @@ fn write(core: &State<Core>, tid: &str, v: serde_json::Value) -> Result<(), Stri
 
 fn stop_thread(core: &State<Core>, tid: &str) {
     let gone = core.threads.lock().unwrap().remove(tid);
-    if let Some((_, mut child, mut stdin)) = gone {
-        let _ = writeln!(stdin, "{}", serde_json::json!({"op": "quit"}));
-        drop(stdin);
-        let _ = child.wait();
+    if let Some((_, child, stdin)) = gone {
+        quit_core(child, stdin);
+    }
+}
+
+/// Asks a core to quit and waits for it, at most 3 seconds, then ends it. A core in the middle of a model call or a test
+/// run reads the quit only when that ends, and the window waited for it without limit: an update's "Installing… tazuna
+/// restarts by itself" stayed on screen until the reply was done (2026-11-18).
+// ponytail: the core's own claude runs in a session of its own (platform::detach), so a killed core leaves it to end at
+// its stdin's close; kill its tree from the core's side if that ever costs a reply's worth of tokens
+fn quit_core(mut child: Child, mut stdin: ChildStdin) {
+    let _ = writeln!(stdin, "{}", serde_json::json!({"op": "quit"}));
+    drop(stdin);
+    let end = std::time::Instant::now() + std::time::Duration::from_secs(3);
+    while std::time::Instant::now() < end {
+        if !matches!(child.try_wait(), Ok(None)) {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    eprintln!("tazuna desktop: app-server {} did not quit in 3 s: ended", child.id());
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// Every core at once (the window closing, an update's restart): their 3 seconds side by side, not one after another.
+fn stop_all(core: &Core) {
+    let all: Vec<(Child, ChildStdin)> = core.threads.lock().unwrap().drain().map(|(_, (_, c, i))| (c, i)).collect();
+    let quits: Vec<_> = all.into_iter().map(|(c, i)| std::thread::spawn(move || quit_core(c, i))).collect();
+    for q in quits {
+        let _ = q.join();
     }
 }
 
@@ -469,10 +496,7 @@ async fn update_install(app: AppHandle, core: State<'_, Core>) -> Result<(), Str
     use tauri_plugin_updater::UpdaterExt;
     let u = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?.ok_or("no update to install")?;
     let bytes = u.download(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
-    let tids: Vec<String> = core.threads.lock().unwrap().keys().cloned().collect();
-    for t in tids {
-        stop_thread(&core, &t);
-    }
+    stop_all(&core);
     eprintln!("tazuna desktop: installing {}", u.version);
     u.install(bytes).map_err(|e| e.to_string())?;
     app.restart()
@@ -629,11 +653,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
-                let core = w.state::<Core>();
-                let tids: Vec<String> = core.threads.lock().unwrap().keys().cloned().collect();
-                for t in tids {
-                    stop_thread(&core, &t);
-                }
+                stop_all(&w.state::<Core>());
             }
         })
         .run(tauri::generate_context!())
@@ -642,6 +662,18 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[cfg(unix)]
+    fn a_core_that_does_not_quit_is_ended_after_three_seconds() {
+        use std::process::{Command, Stdio};
+        // reads nothing, quits on nothing: a core busy in a long model call
+        let mut child = Command::new("sleep").arg("60").stdin(Stdio::piped()).spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
+        let t = std::time::Instant::now();
+        super::quit_core(child, stdin);
+        assert!(t.elapsed() < std::time::Duration::from_secs(5), "{:?}", t.elapsed());
+    }
+
     #[test]
     fn a_shared_plugin_is_imported_with_its_own_files_only_under_a_free_id() {
         let root = std::env::temp_dir().join(format!("tazuna-import-{}", std::process::id()));

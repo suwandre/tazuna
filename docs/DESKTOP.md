@@ -138,6 +138,9 @@ composer, the plan and context in a bar beside send with its card on hover, the 
 numbers on hover); no speaker labels; a reply's steps folded into one line; the right column is the work panel (changes,
 checks, pull request, your messages), open in a project, ⌘\ to switch; the sidebar grouped by what each conversation
 needs (Needs you, Working, Open), then Recent in two-line rows with project and age.
+0.1.65: an update's restart no longer waits on a busy conversation: each core gets 3 seconds to quit, all at once, then is
+ended (a core in a model call or a test run read the quit only when it finished, so "Installing… tazuna restarts by
+itself" could stay for minutes). Quitting the app waits the same way.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
