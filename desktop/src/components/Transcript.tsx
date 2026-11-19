@@ -172,7 +172,8 @@ function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; sec
       </button>
       {shown && (
         <div className="tz-enter ml-[5px] mt-1 flex flex-col gap-0.5 border-l border-line pl-3.5">
-          {tools.map((t, j) => <Slot key={j} name="tool.view" props={{ step: t }} only />)}
+          {/* a short thought with nothing to read is no step of its own (rows of "Thought ~14 tokens" between the commands) */}
+          {tools.filter((t) => !(t.kind === "thinking" && !t.running && !t.text?.trim() && !/k tokens/.test(t.detail ?? ""))).map((t, j) => <Slot key={j} name="tool.view" props={{ step: t }} only />)}
         </div>
       )}
     </div>

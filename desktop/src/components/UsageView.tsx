@@ -109,7 +109,7 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
           <button onClick={onClose} title="Close (Esc)" aria-label="Close" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
         </div>
         <div className="overflow-auto bg-sidebar px-6 pb-7 pt-5">
-          <Section title="Right now" note="What each account has left: Claude's plan from claude's own /usage (no model call), OmniRoute's accounts, the providers' credits.">
+          <Section title="Right now" note="What each account has left: your Claude plan, your OmniRoute accounts and the credit with each provider.">
             <RightNow acc={acc} limits={limits} balance={balance} />
           </Section>
 
@@ -169,6 +169,9 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
   );
 }
 
+/** An OmniRoute provider as people say it: its id "openai-compatible-chat-585fa18d-…" is "OpenAI-compatible". */
+const who = (p: string) => (p.startsWith("openai-compatible") ? "OpenAI-compatible" : p);
+
 /** Every account's windows and credits, one row each. */
 function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; limits?: [number, number] | null; balance?: number | null }) {
   if (acc === undefined) return <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Asking your accounts…</div>;
@@ -179,10 +182,10 @@ function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; 
   return <>
     {plan.map((r) => <Meter key={r.label} name={windowName(r.label)} of="Claude plan" used={r.used} resets={r.resets.split(" (")[0]} />)}
     {acc?.omniroute.flatMap((a) => a.windows.map((w, i) => w.unlimited
-      ? <div key={`${a.provider}${a.name}${i}`} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]"><span className="w-[200px] flex-none"><span className="block text-ink">{[w.group, w.window].filter(Boolean).join(" · ")}</span>
-          <Parts className="block truncate text-[11.5px] text-faint" items={["OmniRoute", a.provider, a.plan]} /></span><span className="text-muted">unlimited</span></div>
-      : <Meter key={`${a.provider}${a.name}${i}`} name={[w.group, w.window].filter(Boolean).join(", ")} used={w.used} resets={until(w.resets)}
-          of={<Parts items={["OmniRoute", a.provider, a.plan, a.status !== "valid" && `login ${a.status}`]} />} />))}
+      ? <div key={`${a.provider}${a.name}${i}`} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]"><span className="w-[200px] flex-none"><span className="block text-ink">{[w.group, w.window].filter(Boolean).join(", ")}</span>
+          <Parts className="block truncate text-[11.5px] text-faint" items={["OmniRoute", who(a.provider), a.name.split("@")[0], a.plan]} /></span><span className="text-muted">unlimited</span></div>
+      : <Meter key={`${a.provider}${a.name}${i}`} name={[w.group, w.window].filter(Boolean).join(", ").replace(/^quota$/, "Quota") || "Quota"} used={w.used} resets={until(w.resets)}
+          of={<Parts items={["OmniRoute", who(a.provider), a.name.split("@")[0], a.plan, a.status !== "valid" && `login ${a.status}`]} />} />))}
     {credits.map((c) => (
       <div key={c.provider} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
         <span className="w-[200px] flex-none"><span className="block text-ink">{c.provider}</span><span className="block text-[11.5px] text-faint">credit</span></span>

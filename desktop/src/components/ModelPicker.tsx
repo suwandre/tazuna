@@ -32,6 +32,14 @@ export function usePlace(box: RefObject<HTMLElement | null>, want = 420): { styl
   return p.down ? { style: { marginTop: p.lift + 8, maxHeight: p.max }, side: "top-full origin-top" } : { style: { marginBottom: p.lift + 8, maxHeight: p.max }, side: "bottom-full origin-bottom" };
 }
 
+/** "$ per M in / out" said evenly: "0.021 / 0.064" for "0.0213 / 0.0639", "1.4 / 4.4", "free" for "0 / 0". */
+export function price(p: string): string {
+  const n = p.split("/").map((x) => Number(x.trim()));
+  if (n.length !== 2 || n.some(Number.isNaN)) return p;
+  if (n.every((x) => x === 0)) return "free";
+  return n.map((x) => (x === 0 ? "0" : x >= 1 ? String(+x.toFixed(2)) : String(+x.toPrecision(2)))).join(" / ");
+}
+
 export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onEffort }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
   /** the current model's effort levels, chosen at the top (one pill for model and effort since desktop 0.1.70, as Claude,
    * MonoCode and DeepSeek Harness have it) */
@@ -91,7 +99,7 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
                   {c.why_not && <span className="block truncate text-[11.5px] text-faint">{c.why_not}</span>}
                 </span>
                 <span className="w-[64px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-faint" title="tazuna bench: judge score (runs)">{c.bench}</span>
-                <span className="w-[112px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-muted" title="$ per million tokens: input / output">{c.price === "plan" ? "on your plan" : c.price}</span>
+                <span className="w-[112px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-muted" title="$ per million tokens: input / output">{c.price === "plan" ? "on your plan" : price(c.price)}</span>
               </button>
             ))}
           </div>

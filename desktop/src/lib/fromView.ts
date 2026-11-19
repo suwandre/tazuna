@@ -12,7 +12,9 @@ export function readableError(text: string): string {
 
 function target(input: Record<string, unknown>): string {
   for (const k of ["file_path", "command", "pattern", "path", "url", "query", "skill", "description"]) {
-    const v = input[k];
+    // a command that first goes to the project's folder says only what it runs there: every step read
+    // `cd "/Users/…/application" && gh pr view …` (design review 6; the whole command is in the step's details)
+    const v = typeof input[k] === "string" && k === "command" ? (input[k] as string).replace(/^cd\s+("[^"]+"|'[^']+'|\S+)\s*&&\s*/, "") : input[k];
     if (typeof v === "string" && v) return v.length > 80 ? `${v.slice(0, 80)}…` : v;
   }
   return "";
@@ -67,11 +69,12 @@ export function messages(v: View): Message[] {
         secs: 0, ok: true, running: b.live, text: b.text });
     }
     else if (b.kind === "done") {
-      const u = b.usage, total = u.input + u.cache_write + u.cache_read + u.output, read = u.input + u.cache_write + u.cache_read;
+      // the reply's own cost and tokens (the totals so far were shown under every answer until desktop 0.1.80)
+      const u = b.run_usage ?? b.usage, total = u.input + u.cache_write + u.cache_read + u.output, read = u.input + u.cache_write + u.cache_read;
       let n = 0;
       while (n < pending.length && pending[n].block < k) n++;
       const mine = pending.splice(0, n).map(({ block: _, ...c }) => c);
-      current().meta = { cost: b.cost, tokens: total, cachedPct: read ? Math.round((100 * u.cache_read) / read) : undefined, secs: Math.round(b.secs),
+      current().meta = { cost: b.run_cost ?? b.cost, tokens: total, cachedPct: read ? Math.round((100 * u.cache_read) / read) : undefined, secs: Math.round(b.secs),
         calls: mine.length ? mine : undefined };
       // a reply that ended without its answer says why, where a provider's error before it said (until desktop 0.1.74 the
       // error was its raw JSON, as the answer's text, and a failed reply ended with nothing)

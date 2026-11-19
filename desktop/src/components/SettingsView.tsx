@@ -243,7 +243,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
 
             <Section title="About">
               <Row title={<span className="flex items-center gap-2">Version <span className="rounded border border-line bg-field px-1.5 py-px font-mono text-[11.5px] font-normal text-ink-2">{appVersion || "?"}</span></span>}
-                note={<>tazuna desktop, with its own core (<span className="font-mono">{st.version}</span>), separate from the terminal's. It looks for updates every hour.</>}>
+                note={<>The app carries its own tazuna (<span className="tabular-nums">{st.version}</span>), apart from the one in your terminal. It looks for updates every hour.</>}>
                 {update.version
                   ? update.installing ? <span role="status" className="text-[12px] text-muted">{progressText(update)}</span>
                     : <button onClick={() => installUpdate()} title="Replies running now stop; conversations stay resumable"

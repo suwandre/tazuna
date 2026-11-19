@@ -242,6 +242,16 @@ its standing's colour; beside it one badge when another account needs you: its n
 a week and $12.40 left add up to nothing anyone can act on. The readings come at the start, every 15 minutes and with
 the usage page.
 
+0.1.80 (design review 6):
+- Under each answer its own cost and tokens (CLI 0.1.183's `run_cost` and `run_usage`): "$0.29, 673k tokens" where it
+  showed the conversation's total so far ("$12.13, 4.8M tokens" under a 31-second reply).
+- The steps say what a command runs, not the `cd "<project>" &&` before it; a short thought with nothing to read is no
+  row of its own (thoughts from 1k tokens stay).
+- "Your messages" keeps its rows' height and scrolls (a long list squeezed them and cut the letters' tails).
+- The usage page names each OmniRoute account ("agy, someone") and says "OpenAI-compatible" for a generated provider id;
+  plainer wording on the usage page and in Settings' About.
+- The model picker's prices evenly: "0.021 / 0.064" for "0.0213 / 0.0639", "free" for "0 / 0".
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

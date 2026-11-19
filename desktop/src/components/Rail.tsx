@@ -129,10 +129,11 @@ export function Timeline({ messages }: { messages: Message[] }) {
   if (mine.length < 2) return null;
   return (
     <Section title="Your messages" right={mine.length}>
-      <div className="-mx-1 flex max-h-56 flex-col overflow-y-auto">
+      {/* rows keep their height and the list scrolls: a long list squeezed them and cut the letters' tails (design review 6) */}
+      <div className="-mx-1 flex max-h-56 flex-col overflow-y-auto *:shrink-0">
         {mine.map((m) => (
           <button key={m.i} title={m.text} onClick={() => window.dispatchEvent(new CustomEvent("tazuna-jump", { detail: m.i }))}
-            className="truncate rounded px-1 py-[3px] text-left text-[12px] text-ink-2 hover:bg-hover">{m.text || "(attachment)"}</button>
+            className="truncate rounded px-1 py-[3px] text-left text-[12px] leading-[18px] text-ink-2 hover:bg-hover">{m.text || "(attachment)"}</button>
         ))}
       </div>
     </Section>
