@@ -169,6 +169,11 @@ export const core = {
   /** the quick-chat shortcut from anywhere ("Alt+Space"; empty: none); fails when another app holds it */
   hotkey: (keys: string) => invoke("hotkey", { keys }),
   pickFiles: () => invoke<string[]>("pick_files"),
+  /** what `/` and `@` complete to here: the conversation's commands with what each does, and the project's files */
+  complete: () => to("op", { msg: { op: "complete" } }),
+  onComplete: (cb: (c: { commands: [string, string][]; files: string[] }, tid: string) => void) => on<{ commands: [string, string][]; files: string[] }>("complete", cb),
+  /** an image file as a data URL (the page may not read files): `cwd` for a path an answer gives from its folder */
+  imageData: (path: string, cwd?: string) => invoke<string>("image_data", { path, cwd }),
   /** files dropped on the window, as paths */
   onDrop: (cb: (paths: string[]) => void) => import("@tauri-apps/api/webview").then(({ getCurrentWebview }) =>
     getCurrentWebview().onDragDropEvent((e) => { if (e.payload.type === "drop") cb(e.payload.paths); })),

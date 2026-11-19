@@ -147,3 +147,28 @@ localStorage.setItem("tazuna.projects", JSON.stringify([PROJ]));
 })();
 
 }
+
+// desktop 0.1.87 (design review 8): what `/` and `@` complete to, an attached image's thumbnail, and an answer that names
+// a picture it made ("Speed up the CI build", p3)
+(() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T);
+  const chart = "data:image/svg+xml;base64," + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="640" height="320" viewBox="0 0 640 320"><rect width="640" height="320" fill="#1b1a17"/>'
+    + [[94, "npm ci"], [61, "type check"], [48, "tests"], [27, "lint"]].map(([v, l], i) => `<rect x="${70 + i * 140}" y="${260 - v * 2.2}" width="84" height="${v * 2.2}" rx="4" fill="${i ? "#3a3731" : "#8f9bf0"}"/><text x="${112 + i * 140}" y="286" fill="#afaa9e" font-family="sans-serif" font-size="15" text-anchor="middle">${l}</text><text x="${112 + i * 140}" y="${250 - v * 2.2}" fill="#ece8df" font-family="sans-serif" font-size="15" text-anchor="middle">${v} s</text>`).join("") + "</svg>");
+  const p3 = { type: "view", from: 0, model: "mistral-large-3", effort: "high", cwd: "/Users/x/api-gateway", profile: "repo", mode: "auto", session_id: "p3", cost: 0.012, turns: 1, activity: "Done", context: 18000,
+    usage: { input: 3000, cache_write: 0, cache_read: 14000, output: 700 },
+    blocks: [{ kind: "prompt", text: "Chart where the CI time goes and save it as a picture." },
+      { kind: "tool", id: "g1", name: "Bash", input: { command: "node tools/ci-chart.mjs" }, result: "wrote out/ci-time.svg", error: false, secs: 1.4, running: false },
+      { kind: "text", text: "Done. The chart is in `out/ci-time.svg`: `npm ci` is the tallest bar at 94 s, ahead of the type check and the tests." },
+      { kind: "done", ok: true, turns: 1, stopped: false, cost: 0.012, secs: 964, usage: { input: 3000, cache_write: 0, cache_read: 14000, output: 700 } }] };
+  T.invoke = async (cmd, args) => {
+    const m = (msg) => setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg }), 20);
+    if (cmd === "image_data") { if (/ci-time\.svg$|\.png$/.test(args.path)) return chart; throw "no such file"; }
+    if (cmd === "pick_files") return ["/Users/x/Desktop/Screenshot 2026-11-19 at 21.04.png", "/Users/x/api-gateway/docs/retry-policy.md"];
+    if (cmd === "op" && args.msg.op === "resume" && args.msg.id === "p3") { m(p3); return null; }
+    if (cmd === "op" && args.msg.op === "complete") { m({ type: "complete",
+      commands: [["/agent", "Send to the coding agent, past the chat router"], ["/clear", "Start a new conversation in this folder"], ["/compact", "Summarize the conversation so far to free context"],
+        ["/create", "Make a command, skill or tool for every model"], ["/init", "Write a CLAUDE.md for this repository"], ["/review", "Review a pull request"],
+        ["/security-review", "Check the branch's changes for security problems"], ["/ticket", "Your skill: read a ticket and plan the change"]],
+      files: ["src/retry.ts", "src/backoff.ts", "src/gateway.ts", "src/routes/health.ts", "tests/retry.test.ts", "tests/gateway.e2e.test.ts", "docs/retry-policy.md", "package.json", ".github/workflows/ci.yml", "README.md"] }); return null; }
+    return inv(cmd, args);
+  };
+})();

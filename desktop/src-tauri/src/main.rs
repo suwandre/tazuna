@@ -553,6 +553,40 @@ async fn pick_files(app: AppHandle) -> Vec<String> {
         .filter_map(|p| p.into_path().ok()).map(|p| p.to_string_lossy().into_owned()).collect()
 }
 
+/// An image file as a data URL, for an attachment's thumbnail and an image an answer names (the page's own policy lets it
+/// load nothing from disk). Images only, by their extension, and up to 8 MB; `cwd` is the folder a relative path is from.
+#[tauri::command]
+async fn image_data(path: String, cwd: Option<String>) -> Result<String, String> {
+    let p = std::path::Path::new(&path);
+    let p = if p.is_absolute() { p.to_path_buf() } else { std::path::Path::new(&cwd.ok_or("a relative path needs its folder")?).join(p) };
+    let mime = match p.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        Some("png") => "image/png", Some("jpg" | "jpeg") => "image/jpeg", Some("gif") => "image/gif", Some("webp") => "image/webp",
+        Some("svg") => "image/svg+xml", Some("bmp") => "image/bmp", Some("avif") => "image/avif",
+        _ => return Err("not an image".into()),
+    };
+    if std::fs::metadata(&p).map_err(|e| e.to_string())?.len() > 8 << 20 { return Err("larger than 8 MB".into()); }
+    Ok(format!("data:{mime};base64,{}", base64(&std::fs::read(&p).map_err(|e| e.to_string())?)))
+}
+
+/// Standard base64 with padding (the one use here does not earn a dependency).
+fn base64(bytes: &[u8]) -> String {
+    const ABC: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for c in bytes.chunks(3) {
+        let n = (c[0] as u32) << 16 | (*c.get(1).unwrap_or(&0) as u32) << 8 | *c.get(2).unwrap_or(&0) as u32;
+        for i in 0..4 {
+            out.push(if i <= c.len() { ABC[(n >> (18 - 6 * i) & 63) as usize] as char } else { '=' });
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+#[test]
+fn base64_pads() {
+    assert_eq!([base64(b""), base64(b"f"), base64(b"fo"), base64(b"foo"), base64(b"foob")], ["", "Zg==", "Zm8=", "Zm9v", "Zm9vYg=="]);
+}
+
 /// The native folder picker; async so it does not block the main thread it needs.
 #[tauri::command]
 async fn pick_folder(app: AppHandle) -> Option<String> {
@@ -661,7 +695,7 @@ fn main() {
             Ok(())
         })
         .manage(Core::default())
-        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
+        .invoke_handler(tauri::generate_handler![start, stop, send, op, trust, pick_folder, pick_files, image_data, open_key_page, open_link, notify, ui_log, widgets_list, widgets_new, widgets_path, widgets_remove, plugins_enable, plugins_code, plugins_export, plugins_import, plugins_import_file, hotkey, update_check, update_install, interrupt, new_chat, set_profile])
         .on_window_event(|w, e| {
             if let tauri::WindowEvent::Destroyed = e {
                 stop_all(&w.state::<Core>());

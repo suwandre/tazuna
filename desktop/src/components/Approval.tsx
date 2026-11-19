@@ -32,10 +32,11 @@ export function Approval({ asking, onAnswer, keys = true }: { asking: NonNullabl
   const btn = "rounded-md px-2.5 py-1 text-[12px] font-medium disabled:opacity-50";
   return (
     <div className="mx-auto mb-2 w-full max-w-[756px] px-7">
-      <div className="rounded-lg border border-line-strong bg-card px-3.5 py-3">
-        <div className="mb-1.5 flex items-center gap-2 text-[12.5px] text-ink-2">
+      {/* the one thing waiting on you: the warn colour on its edge, its words in ink (it read as one more card) */}
+      <div className="rounded-lg border border-[color-mix(in_srgb,var(--warn)_55%,var(--line-strong))] bg-card px-3.5 py-3 shadow-[var(--shadow-composer)]">
+        <div className="mb-1.5 flex items-center gap-2 text-[12.5px] font-medium text-ink">
           <ShieldQuestion size={15} strokeWidth={1.5} className="text-warn" />
-          tazuna asks to use <span className="font-medium text-ink">{tool}</span>
+          tazuna asks to use {tool}
           {asking.queued > 0 && <span className="flex items-center text-faint"><Sep />{asking.queued} more waiting</span>}
           {asking.reviewing && <span role="status" className="flex items-center text-muted"><Sep />the reviewer is checking it; you can answer first</span>}
         </div>

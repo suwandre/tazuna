@@ -1,4 +1,4 @@
-import { CircleAlert, Check, ChevronRight, Copy, FileText, LoaderCircle, MessageCircle, Pencil, RotateCcw, Square } from "lucide-react";
+import { ArrowDown, CircleAlert, Check, ChevronRight, Copy, FileText, LoaderCircle, MessageCircle, Pencil, RotateCcw, Square } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
 import { readableError } from "../lib/fromView";
@@ -11,7 +11,8 @@ function inlineCode(text: string) {
 
 function meta(m: { cost: number; tokens: number; cachedPct?: number; secs: number }) {
   const tokens = m.tokens >= 1e6 ? `${(m.tokens / 1e6).toFixed(1)}M` : m.tokens >= 1000 ? `${(m.tokens / 1000).toFixed(1)}k` : `${m.tokens}`;
-  return [usd(m.cost), `${tokens} tokens`, m.cachedPct != null ? `${m.cachedPct}% cached` : null, `${m.secs} s`];
+  // the time as the fold over the answer says it ("16 min 4 s" there and "964 s" here, design review 8)
+  return [usd(m.cost), `${tokens} tokens`, m.cachedPct != null ? `${m.cachedPct}% cached` : null, dur(m.secs)];
 }
 
 // one "thinking" from send to the first output (no "starting", then "waiting", then "thinking")
@@ -32,6 +33,8 @@ type Props = {
   jumps?: boolean;
   /** sends a failed reply's message again */
   onRetry?: (text: string) => void;
+  /** an image file an answer names, as a data URL (it fails for a file that is not there) */
+  onImage?: (path: string) => Promise<string>;
 };
 
 const STATUS: Record<string, string> = { A: "added", D: "deleted", M: "changed" };
@@ -81,6 +84,8 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
   const box = useRef<HTMLElement>(null), stick = useRef(true);
   // a long conversation draws its latest messages; earlier ones on request (a three-day session is ~1,900 blocks)
   const [limit, setLimit] = useState(40);
+  // scrolled well up from the end: a way back down (new output no longer pulls the page there)
+  const [away, setAway] = useState(false);
   const hidden = Math.max(0, messages.length - limit);
   useEffect(() => { if (stick.current && box.current) box.current.scrollTop = box.current.scrollHeight; });
   // the rail's list of your messages (or a plugin) asks for message i with a "tazuna-jump" event: drawn if it was not, then
@@ -95,7 +100,7 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
   useEffect(() => { if (jump == null) return; box.current?.querySelector(`[data-msg="${jump}"]`)?.scrollIntoView({ block: "start" }); setJump(null); }, [jump]);
   return (
     <TranscriptCtx.Provider value={rest}>
-    <section ref={box} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}
+    <section ref={box} onScroll={(e) => { const el = e.currentTarget, gap = el.scrollHeight - el.scrollTop - el.clientHeight; stick.current = gap < 40; setAway(gap > 240); }}
       className="min-h-0 flex-1 overflow-auto pb-3 pt-7">
       {hidden > 0 && (
         <div className="mx-auto mb-5 max-w-[756px] px-7">
@@ -124,6 +129,12 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
         </div>
       ))}
       {busy && !folded && activity && doing[activity] && <Working what={doing[activity]} since={rest.since} />}
+      {away && (
+        <div className="pointer-events-none sticky bottom-1 z-[1] flex justify-center">
+          <button onClick={() => { stick.current = true; box.current?.scrollTo({ top: box.current.scrollHeight, behavior: "smooth" }); }} title="Jump to the latest" aria-label="Jump to the latest"
+            className="tz-enter pointer-events-auto grid size-8 place-items-center rounded-full border border-line-strong bg-card text-ink-2 shadow-[var(--shadow-pop)]"><ArrowDown size={15} strokeWidth={1.75} /></button>
+        </div>
+      )}
     </section>
     </TranscriptCtx.Provider>
   );
@@ -313,15 +324,41 @@ function CopyAnswer({ text }: { text: string }) {
   );
 }
 
+/** The image files an answer names (`out/chart.png` in code marks, or a markdown image), shown under it: up to four, each
+ * only if it is there to read. Until desktop 0.1.87 a picture the agent made was a line of path. A click shows it whole. */
+export function MessageImages({ message: m }: { message: Message }) {
+  const { onImage } = useTranscript();
+  const paths = m.role === "agent" ? [...new Set([...m.prose.join("\n").matchAll(/`([^`\s]+\.(?:png|jpe?g|gif|webp|svg))`|!\[[^\]\n]*\]\(([^)\s]+\.(?:png|jpe?g|gif|webp|svg))\)/gi)]
+    .map((x) => x[1] ?? x[2]).filter((p) => !/^(https?|data):/.test(p)))].slice(0, 4) : [];
+  const [got, setGot] = useState<Record<string, string>>({}), [big, setBig] = useState<string | null>(null);
+  useEffect(() => { for (const p of paths) if (onImage && !got[p]) onImage(p).then((src) => setGot((g) => ({ ...g, [p]: src }))).catch(() => {}); }, [paths.join("|")]);
+  const shown = paths.filter((p) => got[p]);
+  if (!shown.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-2">
+      {shown.map((p) => (
+        <button key={p} onClick={() => setBig(big === p ? null : p)} title={big === p ? "Smaller" : "Show it whole"} aria-label={`${p}: ${big === p ? "smaller" : "show it whole"}`}
+          className={`overflow-hidden rounded-lg border border-line bg-card p-0 text-left hover:border-line-strong ${big === p ? "w-full" : ""}`}>
+          <img src={got[p]} alt={p} className={big === p ? "block w-full" : "block max-h-[180px] max-w-[320px] object-contain"} />
+          <span className="block truncate border-t border-line-soft px-2 py-1 font-mono text-[11.5px] text-faint">{p}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function MessageMeta({ message: m }: { message: Message }) {
   const [open, setOpen] = useState(false);
+  // its calls open into view (under the last answer they opened below the message box's edge)
+  const line = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (open) line.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [open]);
   if (m.role !== "agent" || !m.meta) return null;
   const n = m.meta.calls?.length ?? 0;
   const text = m.prose.join("\n\n");
   return (
     // the answer's numbers show on its hover (or focus, or with its calls open): under every answer they were the busiest
     // line on the screen, and the thread's cost stays in the header
-    <div className={`mt-2 text-[12px] tabular-nums text-faint transition-opacity duration-150 ${open ? "" : "opacity-0 focus-within:opacity-100 group-hover:opacity-100"}`}>
+    <div ref={line} className={`mt-2 scroll-mb-3 text-[12px] tabular-nums text-faint transition-opacity duration-150 ${open ? "" : "opacity-0 focus-within:opacity-100 group-hover:opacity-100"}`}>
       <Parts items={[text && <CopyAnswer key="c" text={text} />, ...meta(m.meta)]} />
       {n > 0 && <><Sep /><button onClick={() => setOpen(!open)} aria-expanded={open} title="Each model call of this reply: tokens, timing and cost"
         className="rounded px-1 hover:bg-hover hover:text-ink">{n} call{n === 1 ? "" : "s"} {open ? "▾" : "▸"}</button></>}

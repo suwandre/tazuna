@@ -60,6 +60,7 @@ radius: { sm: 6px, md: 7px, lg: 10px, xl: 14px, pill: 999px }
 elevation:
   none: none
   composer: "0 1px 2px #2321190d, 0 4px 14px #23211908"
+  pop: { light: "0 2px 6px #2321190f, 0 14px 36px #23211924", dark: "0 0 0 1px #ffffff0a, 0 10px 32px #00000080", dark-fill: "#282622" }
 layout: { sidebar: 248px, rail: 232px, reading: 700px, gutter: 28px }
 motion: { fast: 120ms, base: 160ms, slow: 200ms, easing: "cubic-bezier(0.2, 0, 0, 1)" }
 icons: { set: "Lucide", stroke: 1.5, size: 16px, small: 14px }
@@ -72,7 +73,9 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 
 ## Character
 - Paper and ink: a warm cream canvas, warm near-black text, one indigo accent (ai-iro; tazuna means "reins").
-- Quiet structure: hairline borders, not shadows. The only shadow is the composer's.
+- Quiet structure: hairline borders, not shadows, for everything that sits on the page. What floats over it (a menu, a
+  popover, a dialog, a tooltip) has the `pop` shadow, and in dark a fill one step lighter than a card: a menu over a card
+  of the same fill read as part of it (design review 8, desktop 0.1.87). The composer keeps its own soft shadow.
 - Reading first: the assistant's prose is set in a serif; code, paths, tool calls, costs and numbers in mono.
 - Real numbers only: cost, tokens, cache and plan usage come from the session, never placeholders.
 
@@ -109,6 +112,13 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   the header's button. The composer's pills never wrap.
 - One live status per reply: its fold says "Working 12 s" (counted from when the reply began), or "Waiting for you" during
   an approval; the line under the transcript shows only before the first step.
+- The message box completes: `/` at its start lists the conversation's commands with what each does, `@` anywhere lists
+  the project's files, in one menu over the box (arrows, Enter or Tab to take, Esc to shut); its placeholder says so.
+  Attachments are chips over the text, an image with its thumbnail. An answer that names an image file shows it under
+  the answer (a click shows it whole); nothing loads from the network.
+- Settings is one part at a time, chosen in a list on its left (Appearance first: theme, text size, the type answers are
+  set in); a provider's key field shows when asked for.
+- Scrolled up from the end of a conversation, a round button over the message box goes back down.
 - A new conversation before its first message is the start screen (prototype `mockups/v3.html`): a serif question, the
   composer in the middle with a "where it runs" pill (a chat or a project), "Pick up where you left off" (the last three
   conversations) and "Start in a project", then the keys worth knowing. No $0.000 anywhere on it.
@@ -128,7 +138,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 Sidebar item (two lines), open row, group heading, project group, thread dot (idle, running), badge; header crumb, cost and
 panel button; message (user, agent, chat), work fold, tool step, change card, metadata line, routed tag; composer with
 pills (where, mode, model with its effort) and send, their menus placed by one rule (usePlace: above the whole box where it
-fits, else below it); answer copy; error card (the provider's message in words, Retry, its raw reply on request); code
+fits, else below it); completion menu and attachment chip (Composer), answer images, jump to latest, tooltip (`.tz-tip`: every `title` shows
+in it, lib/chrome.ts); answer copy; error card (the provider's message in words, Retry, its raw reply on request); code
 block with its language and copy; work panel section (Changes, Checks, Pull request), usage bar, status bar. Reuse these before adding new ones; add new ones here when they are made.
 
 ## Motion
@@ -136,6 +147,9 @@ block with its language and copy; work panel section (Changes, Checks, Pull requ
 - Every dialog comes up over its backdrop (`tz-dialog`, the backdrop `tz-fade`); a menu or popover opens from its button
   (`tz-pop`). The backdrop is `scrim`: darker in both themes, never the ink colour (in dark mode that lightened the window).
 - No animated backgrounds, particles, glow or shimmer; streaming text is not animated per token.
+- What closes fades out where it was (`tz-out`, 110 ms; lib/chrome.ts does it for every menu and dialog), and the work
+  panel's column slides open and shut.
+- Selected text is the accent at 30%, not the system's blue.
 - Honour `prefers-reduced-motion`.
 
 ## Desktop habits

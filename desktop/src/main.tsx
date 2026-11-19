@@ -3,6 +3,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./builtins";
+import { applyLooks, installExits, installTooltips } from "./lib/chrome";
 import { inTauri } from "./lib/tazuna";
 import "./styles.css";
 
@@ -15,4 +16,7 @@ if (inTauri) {
   log("loaded");
 }
 
+applyLooks();
+installTooltips();
+installExits();
 createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);

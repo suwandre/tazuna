@@ -14,7 +14,7 @@ const TOKEN = process.env.BRIDGE_TOKEN || crypto.randomBytes(32).toString("hex")
 const ORIGINS = new Set((process.env.BRIDGE_ORIGINS || "http://localhost:1420,http://127.0.0.1:1420").split(","));
 const HOSTS = new Set([`127.0.0.1:${PORT}`, `localhost:${PORT}`]);
 const same = (a, b) => a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
-const READ = new Set(["models", "sessions", "resume", "diff", "settings", "usage", "accounts", "review", "pr", "worktrees", "gallery", "setup", "mcp"]);
+const READ = new Set(["models", "sessions", "resume", "diff", "settings", "usage", "accounts", "review", "pr", "worktrees", "gallery", "setup", "mcp", "complete"]);
 const kids = new Map(), clients = new Set(), log = [];
 const emit = (ev) => { const s = `data: ${JSON.stringify(ev)}\n\n`; for (const c of clients) c.write(s); };
 const stop = (tid) => { const k = kids.get(tid); if (k) { k.kill(); kids.delete(tid); } };

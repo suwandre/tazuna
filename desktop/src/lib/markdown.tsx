@@ -9,11 +9,15 @@ import { core, inTauri } from "./tazuna";
 const open = (url: string) => (inTauri ? core.openLink(url) : window.open(url, "_blank", "noopener"));
 
 function inline(text: string): ReactNode[] {
-  return text.split(/(`[^`\n]+`|\*\*[^*\n]+\*\*|(?<![\w*])\*(?![\s*])[^*\n]+(?<![\s*])\*(?![\w*])|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/).map((p, i) => {
+  return text.split(/(`[^`\n]+`|!\[[^\]\n]*\]\([^)\s]+\)|\*\*[^*\n]+\*\*|(?<![\w*])\*(?![\s*])[^*\n]+(?<![\s*])\*(?![\w*])|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/).map((p, i) => {
     if (p.startsWith("`") && p.endsWith("`") && p.length > 1) return <code key={i}>{p.slice(1, -1)}</code>;
     // what is inside bold or italic is read again: **`file.ts` lines 3-4** showed its backticks (design review 5)
     if (p.startsWith("**") && p.endsWith("**") && p.length > 3) return <strong key={i}>{inline(p.slice(2, -2))}</strong>;
     if (/^\*[^*].*\*$/.test(p)) return <em key={i}>{inline(p.slice(1, -1))}</em>;
+    // a markdown image: its words here, the picture under the answer when it is a file here (Transcript's MessageImages);
+    // nothing loads from the network
+    const img = p.match(/^!\[([^\]]*)\]\(([^)\s]+)\)$/);
+    if (img) return <span key={i} className="text-muted">{img[1] || img[2]}</span>;
     const md = p.match(/^\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)$/);
     const url = md ? md[2] : /^https?:\/\//.test(p) ? p : null;
     if (url) return <a key={i} href={url} title={url} onClick={(e) => { e.preventDefault(); open(url); }}>{md ? md[1] : p}</a>;
@@ -138,6 +142,7 @@ export async function demo() {
   const { renderToStaticMarkup } = await import("react-dom/server");
   const html = renderToStaticMarkup(<Markdown text={"## Why\n\nFix `add` *now*:\n\n1. first\n\n```py\nreturn a + b # sum\n\nx = \"s\"\n```\n\n2. second\n   - nested\n   - **two**\n3. third\n\n> quoted\n\n| a | b |\n|---|--:|\n| 1 | [docs](https://example.com) |\n\nsee https://tazuna.dev."} />);
   if (!renderToStaticMarkup(<Markdown text="**`a.ts` lines 1-2:** fix" />).includes("<strong><code>a.ts</code> lines 1-2:</strong>")) throw new Error("markdown: code in bold");
+  if (/<img|!\[/.test(renderToStaticMarkup(<Markdown text="See ![the chart](out/c.png) here" />))) throw new Error("markdown: an image is its words, nothing loaded");
   for (const want of ["<h3>Why</h3>", "<em>now</em>", '<ol start="2"><li>second<ul><li>nested</li><li><strong>two</strong></li></ul></li><li>third</li></ol>',
     '<div class="code-head"><span>py</span>', "<pre>", "<blockquote>", 'style="text-align:right"', 'href="https://example.com"', 'href="https://tazuna.dev"',
     "tok-comment", "tok-string", "tok-keyword"]) {

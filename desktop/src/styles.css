@@ -16,6 +16,7 @@
   --ok: #3b7d4f; --bad: #b4473a; --warn: #a76a14;
 --code-string: #7a5a1c; --code-number: #8a4a6b; --code-keyword: var(--accent-ink); --code-comment: var(--faint);
   --shadow-composer: 0 1px 2px #2321190d, 0 4px 14px #23211908;
+  --shadow-pop: 0 2px 6px #2321190f, 0 14px 36px #23211924; --pop: var(--card);
   /* behind a dialog: darker in both themes (until desktop 0.1.74 the ink at 15%, which in dark lightened the window to grey) */
   --scrim: #1d1b1640;
   color-scheme: light;
@@ -28,6 +29,7 @@
   --ok: #7cc08f; --bad: #e08b7f; --warn: #e0b46a;
 --code-string: #d6b878; --code-number: #d9a0c0; --code-keyword: var(--accent-ink); --code-comment: var(--faint);
   --shadow-composer: none;
+  --shadow-pop: 0 0 0 1px #ffffff0a, 0 10px 32px #00000080; --pop: #282622;
   --scrim: #0000008c;
   color-scheme: dark;
 }
@@ -96,8 +98,28 @@ button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
   -webkit-background-clip: text; background-clip: text; color: transparent; animation: tz-sweep 1.6s linear infinite; }
 @keyframes tz-dot { 0%, 20% { opacity: 0; } 40%, 100% { opacity: 1; } }
 .tz-dots span { animation: tz-dot 1.2s infinite; } .tz-dots span:nth-child(2) { animation-delay: .2s; } .tz-dots span:nth-child(3) { animation-delay: .4s; }
+/* what floats over the page (a menu, a popover, a dialog) lifts off it: until desktop 0.1.87 the only shadow was the
+   composer's, and a menu over a card of the same fill read as part of it (design review 8) */
+.tz-pop, .tz-dialog { box-shadow: var(--shadow-pop); }
+/* in dark a shadow alone hardly shows: a menu's own fill is a step lighter than the cards it opens over */
+.tz-pop { background-color: var(--pop); }
+/* a list that scrolls inside a popover fades out at its lower edge, so a row cut there reads as "more below" */
+.tz-scrollfade { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); padding-bottom: 14px; }
+/* selected text in the paper's own indigo, not the system's blue */
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+/* what closes goes out as it came in: lib/chrome.ts leaves a copy of a closed menu or dialog for this long */
+@keyframes tz-out { to { opacity: 0; } }
+.tz-out { animation: tz-out .11s ease-in forwards !important; pointer-events: none; }
+.tz-out * { animation: none !important; }
+/* the window's own tooltip (lib/chrome.ts shows a control's `title` in it; the system's came late and in its own style) */
+.tz-tip { position: fixed; z-index: 100; max-width: 300px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--line-strong);
+  background: var(--card); color: var(--ink-2); font-size: 11.5px; line-height: 1.4; box-shadow: var(--shadow-pop);
+  pointer-events: none; opacity: 0; transform: translateY(2px); transition: opacity .1s ease-out, transform .1s ease-out; }
+.tz-tip.on { opacity: 1; transform: none; }
 input[type=radio], input[type=checkbox] { accent-color: var(--accent); cursor: default; }
 .prose-answer { font-family: var(--font-prose); font-size: 15.5px; line-height: 1.62; user-select: text; }
+/* Settings, Appearance: answers in the window's own type */
+.prose-sans .prose-answer { font-family: var(--font-ui); font-size: 14.5px; line-height: 1.6; }
 .prose-answer p { margin: 0 0 10px; }
 .prose-answer :not(pre) > code { font-size: 0.84em; background: var(--field); border-radius: 4px; padding: 1px 4px; }
 .prose-answer pre { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--card);

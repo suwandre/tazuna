@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
 import { Approval } from "./components/Approval";
-import { Composer, DRAFT, MODES } from "./components/Composer";
+import { Composer, DRAFT, MODES, type Completions } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
 import { ReviewView } from "./components/ReviewView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
@@ -33,6 +33,7 @@ import { items as accountItems, mine as accountOf } from "./lib/health";
 import { Parts } from "./components/Sep";
 
 const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
+import { THEME, applyLooks, darkNow, look } from "./lib/chrome";
 import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Accounts, type Diff, type ModelChoice, type Models, type SessionRow, type View } from "./lib/tazuna";
 import { listen } from "@tauri-apps/api/event";
 
@@ -209,23 +210,20 @@ function useCore() {
   return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, side, openSide, closeSide, forget };
 }
 
+/** Light or dark: the choice in Settings (lib/chrome.ts keeps it; until desktop 0.1.87 a flip lasted until the window
+ * closed), else the system's, followed as it changes. Returns the flip. */
 function useTheme() {
-  const media = window.matchMedia("(prefers-color-scheme: dark)");
-  const [dark, setDark] = useState(media.matches);
   useEffect(() => {
-    const on = (e: MediaQueryListEvent) => setDark(e.matches);
-    media.addEventListener("change", on);
-    return () => media.removeEventListener("change", on);
-  }, [media]);
-  useEffect(() => { document.documentElement.classList.toggle("dark", dark); }, [dark]);
-  // Cmd/Ctrl-Shift-L flips light and dark for this window
-  useEffect(() => {
-    const key = (e: KeyboardEvent) => { if (!menuKeys && (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "l") setDark((d) => !d); };
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    media.addEventListener("change", applyLooks);
+    // Cmd/Ctrl-Shift-L flips light and dark
+    const key = (e: KeyboardEvent) => { if (!menuKeys && (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "l") flip(); };
     window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
+    return () => { media.removeEventListener("change", applyLooks); window.removeEventListener("keydown", key); };
   }, []);
-  return () => setDark((d) => !d);
+  return flip;
 }
+const flip = () => look(THEME, darkNow() ? "light" : "dark");
 
 /** Cmd-K opens the palette, Cmd-/ the shortcuts. */
 function useOverlay() {
@@ -487,6 +485,9 @@ export default function App() {
   const [createAsk, setCreateAsk] = useState<string | null>(null);
   const [creations, setCreations] = useState<Record<string, { state: string; dir?: string }>>({});
   useEffect(() => { if (!inTauri) return; const off = core.onCreation((c, tid) => setCreations((m) => ({ ...m, [tid]: c }))); return () => { off.then((f) => f()); }; }, []);
+  // what `/` and `@` complete to in each conversation, asked when one is first typed there
+  const [complete, setComplete] = useState<Record<string, Completions>>({});
+  useEffect(() => { if (!inTauri) return; const off = core.onComplete((c, tid) => setComplete((m) => ({ ...m, [tid]: c }))); return () => { off.then((f) => f()); }; }, []);
   /** A command, skill or tool: a new conversation in this folder makes it (src/create.rs), checked by the core. */
   const createBehaviour = (ask: string) => open(folder, undefined, { then: (tid) => { core.createIn(tid, ask).catch(() => {}); } });
   const creation = creations[active];
@@ -616,14 +617,17 @@ export default function App() {
             models={models} onModels={inTauri ? () => core.models() : undefined}
             onPickModel={inTauri ? (c) => core.setModel(c) : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
             onMode={inTauri ? (m) => core.setMode(m) : undefined}
-            onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined} />
+            onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined}
+            complete={complete[active] ?? null} onComplete={inTauri ? () => { core.complete().catch(() => {}); } : undefined}
+            onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined} />
   );
   const data = widgetData(view);
   const title = view ? titleFrom((view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text) || "New chat" : inTauri ? (failed ? "Could not start" : "New chat") : "Retry test fails on CI";
   return (
     <div className="flex h-screen flex-col overflow-hidden">
     <div className="grid min-h-0 flex-1 overflow-hidden"
-      style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", side ? "380px" : panelOpen ? "300px" : null].filter(Boolean).join(" ") }}>
+      // the right column is always a track (0 px when shut), so it slides: a track that came and went was a jump cut
+      style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", side ? "380px" : panelOpen ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
       {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-scrim" />}
       <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-composer" : "hidden") : "flex min-h-0"}>
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
@@ -661,6 +665,7 @@ export default function App() {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
           } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} onSendToAgent={(text) => core.send(text, true)} onRetry={(text) => core.send(text)}
+          onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined}
           onDiff={(turn, path) => (inTauri ? setReviewing({ scope: "turn", turn, path }) : core.diff(turn, path))} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />}
         </div>
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
@@ -725,7 +730,7 @@ export default function App() {
       </main>
       {side ? <SideChat key={side.tid} view={side.view} onClose={() => closeSide(active)} onStop={() => core.interruptIn(side.tid)}
           onSend={(text) => core.sendIn(side.tid, text).catch(() => {})} onAnswer={(allow, always) => core.opIn(side.tid, { op: "answer", allow, always })} />
-        : panelOpen && <WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} /></WorkCtx.Provider>}
+        : panelOpen && <div className="flex min-h-0 justify-end overflow-hidden"><WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} /></WorkCtx.Provider></div>}
       <Slot name="overlay" props={{ data }} />
       {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
@@ -736,7 +741,7 @@ export default function App() {
       {showPr && inTauri && <PrView pr={pr ?? null} worktree={inWorktree} onClose={() => setShowPr(false)} onRefresh={() => core.prIn(active).catch(() => {})}
         onSend={(text) => { setShowPr(false); core.send(text, true).catch(() => {}); }} onRemoveWorktree={() => { setShowPr(false); setWt({ remove: { path: folder! } }); }} />}
       {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} choices={models?.choices} />}
-      {overlay === "setup" && inTauri && <Setup onSettings={() => { localStorage.setItem(SETUP, "1"); setOverlay("settings"); }}
+      {overlay === "setup" && inTauri && <Setup onSettings={() => { localStorage.setItem(SETUP, "1"); localStorage.setItem("tazuna.settings.tab", "Providers"); setOverlay("settings"); }}
         onClose={() => { localStorage.setItem(SETUP, "1"); setOverlay(null); }} />}
       {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} items={userWidgets} onEdit={editPanel}
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}

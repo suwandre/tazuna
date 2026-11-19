@@ -5,7 +5,7 @@ import { AttachButton, ModelPill, ModePill, WherePill } from "./components/Compo
 import { ChangesSection, ChecksSection, PrSection, Timeline } from "./components/Rail";
 import { NewChatButton, OpenFolderButton, SettingsRow } from "./components/Sidebar";
 import { Step } from "./components/Step";
-import { MessageChange, MessageFailure, MessageMeta, UserMessage } from "./components/Transcript";
+import { MessageChange, MessageFailure, MessageImages, MessageMeta, UserMessage } from "./components/Transcript";
 import { Markdown } from "./lib/markdown";
 import { slots } from "./lib/slots";
 import type { ToolStep } from "./lib/types";
@@ -30,6 +30,7 @@ slots.register({ id: "sidebar.settings", slot: "sidebar.footer", order: 10, sour
 slots.register({ id: "message.user.default", slot: "message.user", order: 10, source: own, render: UserMessage });
 slots.register({ id: "message.text.markdown", slot: "message.text", order: 10, source: own, render: ({ text }: { text: string }) => <Markdown text={text} /> });
 slots.register({ id: "message.failure", slot: "message.after", order: 5, source: own, render: MessageFailure });
+slots.register({ id: "message.images", slot: "message.after", order: 8, source: own, render: MessageImages });
 slots.register({ id: "message.change", slot: "message.after", order: 10, source: own, render: MessageChange });
 slots.register({ id: "message.meta", slot: "message.after", order: 20, source: own, render: MessageMeta });
 slots.register({ id: "tool.view.default", slot: "tool.view", order: 10, source: own, render: ({ step }: { step: ToolStep }) => <Step t={step} /> });

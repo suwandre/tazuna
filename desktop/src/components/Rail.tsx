@@ -177,7 +177,9 @@ export function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: 
 /** The right column: the `rail` spot (tazuna's cards and the user's panels and plugins). */
 export function Rail({ usage, data, messages }: { usage: Usage; data?: unknown; messages: Message[] }) {
   return (
-    <aside aria-label="The work" className="tz-enter flex min-h-0 flex-col gap-3 overflow-y-auto border-l border-line bg-sidebar px-3.5 py-4">
+    // 300 px wide whatever its column is: the column slides open and shut (App's grid), the cards do not reflow in it.
+    // With no card (a plain chat) it says so, not a blank column.
+    <aside aria-label="The work" className="tz-enter flex min-h-0 w-[300px] flex-col gap-3 overflow-y-auto border-l border-line bg-sidebar px-3.5 py-4 empty:after:text-[12.5px] empty:after:leading-relaxed empty:after:text-faint empty:after:content-['Nothing_here_for_a_plain_chat._In_a_project_this_shows_its_changes,_checks_and_pull_request.']">
       <Slot name="rail" props={{ usage, data, messages }} />
     </aside>
   );

@@ -79,9 +79,9 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
         </div>
       )}
       {models?.rebuild && <div className="border-b border-line-soft px-3 py-1.5 text-[12px] text-warn">Switching between Claude models: {models.rebuild}</div>}
-      <div className="overflow-auto pb-1">
+      <div className="tz-scrollfade overflow-auto">
         {/* what the numbers on the right are (until desktop 0.1.74 only a hover said: "8.4 (12)", "0.14 / 0.56") */}
-        {groups.length > 0 && <div className="sticky top-0 z-[1] flex items-center gap-2 bg-card px-3 pb-0.5 pt-1.5 text-[11px] text-faint">
+        {groups.length > 0 && <div className="sticky top-0 z-[1] flex items-center gap-2 bg-[var(--pop)] px-3 pb-0.5 pt-1.5 text-[11px] text-faint">
           <span className="flex-1" /><span className="w-[64px] text-right" title="tazuna bench: judge score out of 10 (runs)">Score</span>
           <span className="w-[112px] text-right" title="dollars per million tokens: input / output">$ per M, in / out</span></div>}
         {!models && <div className="px-3 py-2 text-[12.5px] text-faint">Loading…</div>}

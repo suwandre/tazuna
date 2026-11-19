@@ -1,11 +1,12 @@
 import { ExternalLink, RefreshCw, X } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { useDialog } from "../lib/dialog";
 import { checkUpdate, installUpdate, progressText, useUpdate } from "../lib/update";
 import { safeMode } from "../lib/plugins";
 import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Settings } from "../lib/tazuna";
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
+import { PROSE, TEXT_SIZES, THEME, ZOOM, look } from "../lib/chrome";
 import { Parts } from "./Sep";
 
 // Settings: provider keys (saved by tazuna, never shown again), the data policy for this session, the router. The
@@ -18,8 +19,20 @@ type PluginProps = {
   onChanged?: () => void;
 };
 
+// The page's parts, one on screen at a time, chosen in the list on its left (until desktop 0.1.87 one scroll of eight parts
+// in a 720 px dialog, with nothing to say where you were; design review 8). The last one open comes back.
+const TAB = "tazuna.settings.tab";
+const TabCtx = createContext("");
+
 export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, onChanged }: { onClose: () => void } & PluginProps) {
   const [st, setSt] = useState<Settings | null>(null);
+  const [tab, setTabNow] = useState(() => localStorage.getItem(TAB) || "Appearance");
+  const setTab = (t: string) => { localStorage.setItem(TAB, t); setTabNow(t); };
+  // how the window looks (lib/chrome.ts keeps and applies it)
+  const [looks, setLooks] = useState(() => ({ theme: localStorage.getItem(THEME) ?? "system", zoom: localStorage.getItem(ZOOM) ?? "1", prose: localStorage.getItem(PROSE) ?? "serif" }));
+  const setLook = (key: string, name: keyof typeof looks, v: string) => { look(key, v); setLooks((l) => ({ ...l, [name]: v })); };
+  // a provider's key field shows when asked for (seven open fields down the page read as a form to fill in)
+  const [keyFor, setKeyFor] = useState<string | null>(null);
   const dialog = useDialog();
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [askAny, setAskAny] = useState(false);
@@ -88,28 +101,51 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
   const save = async (name: string) => {
     await core.login(name, keys[name] ?? "");
     setKeys((k) => ({ ...k, [name]: "" }));
+    setKeyFor(null);
     refresh(); core.models().catch(() => {});
   };
   const input = "rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none focus:border-accent placeholder:font-sans placeholder:text-faint";
   const button = "rounded-md border border-line px-2.5 py-1 text-[12px] text-ink disabled:opacity-40";
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex max-h-full w-[720px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
-        <div className="flex items-center border-b border-line-soft px-5 py-3">
-          <span className="flex-1 font-medium">Settings</span>
-          <button onClick={onClose} title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex h-[620px] max-h-full w-[860px] max-w-full overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+        <nav aria-label="Settings" className="flex w-[196px] flex-none flex-col gap-px border-r border-line-soft bg-sidebar px-2 pb-3 pt-2.5">
+          <div className="px-2.5 pb-2.5 pt-px font-medium">Settings</div>
+          {["Appearance", "Providers", "Privacy and routing", "Paid API spend", "Tools from MCP servers", ...(hook ? ["After each turn"] : []), "Quick chat", "Panels and plugins", "About"].map((t) => (
+            <button key={t} onClick={() => setTab(t)} aria-current={t === tab ? "page" : undefined}
+              className={`rounded-md px-2.5 py-[5px] text-left text-[13px] ${t === tab ? "bg-selected font-medium text-ink" : "text-ink-2"}`}>{t}</button>
+          ))}
+        </nav>
+        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center border-b border-line-soft py-2.5 pl-6 pr-4">
+          <span className="flex-1 font-medium">{tab}</span>
+          <button onClick={onClose} title="Close (Esc)" aria-label="Close" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
         </div>
-        <div className="overflow-auto bg-sidebar px-6 pb-7 pt-5">
-          {!st && <div className="text-[12.5px] text-faint">Loading…</div>}
+        <div className="flex-1 overflow-auto px-6 pb-7 pt-5">
+          <TabCtx.Provider value={tab}>
+          <Section title="Appearance">
+            <Row title="Theme" note="System follows your computer's light and dark.">
+              <Segmented label="Theme" value={looks.theme} options={[["system", "System"], ["light", "Light"], ["dark", "Dark"]]} onChange={(v) => setLook(THEME, "theme", v)} />
+            </Row>
+            <Row title="Text size" note="Everything in the window, larger or smaller.">
+              <Segmented label="Text size" value={looks.zoom} options={TEXT_SIZES} onChange={(v) => setLook(ZOOM, "zoom", v)} />
+            </Row>
+            <Row title="Answers" note="The type an answer is set in. Code stays in mono.">
+              <Segmented label="Answers" value={looks.prose} options={[["serif", "Serif"], ["sans", "Sans"]]} onChange={(v) => setLook(PROSE, "prose", v)} />
+            </Row>
+          </Section>
+          {!st && tab !== "Appearance" && <div className="text-[12.5px] text-faint">Loading…</div>}
           {st && <>
             <Section title="Providers" note="Claude runs on your subscription through the claude CLI, with its own login. Other providers need an API key: tazuna saves it on this machine, readable by you only, and never shows it again.">
               {st.providers.map((p) => (
                 <Row key={p.name} title={p.name} note={<span className={p.key ? "text-ok" : ""}>{p.key || "no key"}</span>}>
-                  <input type="password" value={keys[p.name] ?? ""} onChange={(e) => setKeys((k) => ({ ...k, [p.name]: e.target.value }))}
-                    onKeyDown={(e) => { if (e.key === "Enter" && keys[p.name]) save(p.name); }} aria-label={`${p.name} key`}
-                    placeholder={p.key ? "Paste a new key" : `Paste a key${p.example ? ` (${p.example})` : ""}`} autoComplete="off" spellCheck={false} className={`w-56 ${input}`} />
-                  {/* Save once there is something to save: seven idle Save buttons down the list (design review 5) */}
-                  <button disabled={!keys[p.name]} onClick={() => save(p.name)} className={`${button} ${keys[p.name] ? "" : "invisible"}`}>Save</button>
+                  {keyFor === p.name ? <>
+                    <input autoFocus type="password" value={keys[p.name] ?? ""} onChange={(e) => setKeys((k) => ({ ...k, [p.name]: e.target.value }))}
+                      onKeyDown={(e) => { if (e.key === "Enter" && keys[p.name]) save(p.name); if (e.key === "Escape") { e.stopPropagation(); setKeyFor(null); } }} aria-label={`${p.name} key`}
+                      placeholder={p.key ? "Paste a new key" : `Paste a key${p.example ? ` (${p.example})` : ""}`} autoComplete="off" spellCheck={false} className={`w-56 ${input}`} />
+                    <button disabled={!keys[p.name]} onClick={() => save(p.name)} className={button}>Save</button>
+                    <button onClick={() => setKeyFor(null)} className="rounded-md px-2 py-1 text-[12px] text-muted">Cancel</button>
+                  </> : <button onClick={() => setKeyFor(p.name)} className={button}>{p.key ? "Replace key" : "Add key"}</button>}
                   <button onClick={() => core.openKeyPage(p.page)} aria-label={`Make a key in ${p.place}`} title={`Make a key in ${p.place}`} className="rounded p-1 text-muted hover:text-ink"><ExternalLink size={14} strokeWidth={1.5} /></button>
                 </Row>
               ))}
@@ -170,7 +206,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
             </Section>
 
             {hook && (
-              <Section title="After each turn that changed files" note={<>A command of yours for <span className="font-mono">{hook.cwd}</span>, such as a formatter. It runs there at no token cost: the model
+              <Section title="After each turn" note={<>A command of yours for <span className="font-mono">{hook.cwd}</span>, such as a formatter. It runs there at no token cost: the model
                 never sees it, and only a failure shows. Kept in your settings, never the repository's (the terminal's <code>/hook</code>).</>}>
                 <div className="flex items-center gap-2 px-4 py-3">
                   <input value={hookCmd ?? hook.after_turn ?? ""} onChange={(e) => setHookCmd(e.target.value)} placeholder="none, e.g. cargo fmt" aria-label="Command after each turn"
@@ -181,7 +217,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
               </Section>
             )}
 
-            <Section title="Quick chat from anywhere">
+            <Section title="Quick chat">
               <Row title="Shortcut" note={hotkeyNote || "Brings tazuna up with a new chat, from any app: for example Alt+Space or Cmd+Shift+K. Empty: off."}>
                 <input value={keysNow} onChange={(e) => setKeysNow(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") saveHotkey(); }} aria-label="Shortcut"
                   placeholder="none" spellCheck={false} className={`w-40 ${input}`} />
@@ -255,6 +291,8 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
               </Row>
             </Section>
           </>}
+          </TabCtx.Provider>
+        </div>
         </div>
       </div>
     </div>
@@ -263,11 +301,12 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
 
 /** A part of the page: its heading, a line on what it is for, and its rows in one card, a line between each. */
 function Section({ title, note, children }: { title: string; note?: React.ReactNode; children: React.ReactNode }) {
+  // the part chosen on the left is the one on screen; its name is the page's heading
+  if (useContext(TabCtx) !== title) return null;
   return (
-    <section className="mt-7 first:mt-0">
-      <h3 className="text-[13px] font-semibold text-ink">{title}</h3>
-      {note && <p className="mt-0.5 text-[12px] leading-relaxed text-muted">{note}</p>}
-      <div className="mt-2.5 divide-y divide-line-soft rounded-lg border border-line bg-card">{children}</div>
+    <section>
+      {note && <p className="mb-3 text-[12.5px] leading-relaxed text-muted">{note}</p>}
+      <div className="divide-y divide-line-soft rounded-lg border border-line bg-main">{children}</div>
     </section>
   );
 }

@@ -286,6 +286,30 @@ accounts need you" (it said only "3 accounts need you"); "Add credits".
 "up to date" for a few seconds; an update found opens its dialog, as Settings' button); an update the hourly check found
 shows there by itself, "update to 0.1.87" in the accent. It was a line of text that did nothing.
 
+0.1.87 (with tazuna 0.1.185; design review 8, against the other harnesses' windows: Conductor, T3 Code, Cursor's agents
+window; before and after of each change side by side, as review 4's):
+- The message box completes. `/` at its start lists the conversation's commands with what each does (the core's
+  `complete`: the terminal's menu), `@` anywhere the project's tracked files; arrows, Enter or Tab to take, Esc to shut.
+  The placeholder says so. It was a plain text field: typing `/` showed nothing.
+- Attachments are chips over the text (a name, a thumbnail for an image, a way to take it off), sent as paths after the
+  message as before. They were paths typed into the message.
+- An answer that names an image file (`out/chart.png` in code marks, or a markdown image) shows it under the answer, up
+  to four, each only if it is there; a click shows it whole. The shell's `image_data` reads it (images only, up to 8 MB):
+  the page's policy loads nothing from disk or the network.
+- Settings is one part at a time with a list on its left, and has Appearance: theme (System, Light, Dark; a flip now
+  stays), text size (the webview's zoom) and the type answers are set in. A provider's key field shows when asked for.
+- What floats lifts off the page (DESIGN.md's `pop` shadow, a lighter fill in dark), and a popover's list fades at its
+  lower edge. Every `title` shows in the window's own tooltip (118 system ones). Selected text is the accent. A closed
+  menu or dialog fades out; the work panel's column slides. All of it in lib/chrome.ts and styles.css.
+- Scrolled up, a button goes back to the latest; an answer's calls open into view; one time format per answer ("16 min
+  4 s" in the fold and under it); the approval card has the warn colour on its edge; the work panel says why it is empty
+  in a plain chat.
+- Not done from the review: the model picker's rows that need a key (one repeated sentence), the status bar changing
+  shape between screens, days and pins in the sidebar, shorter copy on the usage page, the best-of dialog's raw ids,
+  math, pasting an image, the app icon.
+- Not seen in the real window: the zoom, the thumbnail of a real file, tooltips and exits in WebKit. The sweep
+  (review/sweep.cjs, now with the message box's menus, chips, a picture and Settings' parts) ran in Chromium on test data.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
