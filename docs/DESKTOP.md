@@ -206,6 +206,23 @@ has this new user's window now.
 answered (right after launch) skipped the fetch, so the sidebar and the start page stayed empty until a switch to a chat.
 In a project the start page offers that project's own recent conversations, and the open project's list is unfolded.
 
+0.1.77 (design review 5, on real data: `desktop/review/bridge.mjs` runs the window on the real core, read-only, and
+`review/real.cjs` goes through your conversations, projects, models, accounts and settings with the in-page checks of
+`review/audit.cjs`: text cut without "…", contrast under WCAG AA, targets under 24 px, anything wider than the window):
+- A core that does not start shows why and Try again; the demo's title, plan and cost no longer fill the window around it.
+- The model picker's search takes the typing as it opens (0.1.74 to 0.1.76 it did not); a menu or picker that closes
+  gives the focus back to its button; the permission and folder menus move with the arrow keys.
+- The status bar's plan is the account's newest reading, not the open conversation's own (it changed with each
+  conversation opened, up to days old).
+- Conversation names say what a pasted link is: "PR #1521 · application", "Claude artifact", with the next line when the
+  first was only a link (eight rows read "https://github.com/acme/a…").
+- Opening another conversation closes the idle one on screen (it stays in the lists); the one on screen stays in Recent,
+  marked; projects stay folded until unfolded (0.1.76 listed each project conversation twice).
+- **`code`** inside bold or italic; money in cents from ten cents up ("$10.13", was "$10.127"), "< $0.01" and "$0" in the
+  usage tables; "of 1M" (was "1000k"); "1 min" (was "1 min 0 s"); tools without a verb counted ("used 4 other tools", not
+  "toolsearch ×3, guide"); the usage page's model table shows the eight most used, the rest on request; a provider's Save
+  shows once a key is typed; the sidebar's row buttons are 24 px; a long first message folds to six lines.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

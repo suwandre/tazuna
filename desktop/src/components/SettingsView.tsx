@@ -106,8 +106,9 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
                 <Row key={p.name} title={p.name} note={<span className={p.key ? "text-ok" : ""}>{p.key || "no key"}</span>}>
                   <input type="password" value={keys[p.name] ?? ""} onChange={(e) => setKeys((k) => ({ ...k, [p.name]: e.target.value }))}
                     onKeyDown={(e) => { if (e.key === "Enter" && keys[p.name]) save(p.name); }} aria-label={`${p.name} key`}
-                    placeholder={p.key ? "replace the key" : p.example ? `key (${p.example})` : "key"} autoComplete="off" spellCheck={false} className={`w-56 ${input}`} />
-                  <button disabled={!keys[p.name]} onClick={() => save(p.name)} className={button}>Save</button>
+                    placeholder={p.key ? "Paste a new key" : `Paste a key${p.example ? ` (${p.example})` : ""}`} autoComplete="off" spellCheck={false} className={`w-56 ${input}`} />
+                  {/* Save once there is something to save: seven idle Save buttons down the list (design review 5) */}
+                  <button disabled={!keys[p.name]} onClick={() => save(p.name)} className={`${button} ${keys[p.name] ? "" : "invisible"}`}>Save</button>
                   <button onClick={() => core.openKeyPage(p.page)} aria-label={`Make a key in ${p.place}`} title={`Make a key in ${p.place}`} className="rounded p-1 text-muted hover:text-ink"><ExternalLink size={14} strokeWidth={1.5} /></button>
                 </Row>
               ))}

@@ -25,7 +25,7 @@ export type ViewBlock =
 type Usage = { input: number; cache_write: number; cache_read: number; output: number };
 export type View = {
   blocks: ViewBlock[]; model: string; effort: string; cwd: string; profile: string; mode: string; activity: string;
-  cost: number; usage: Usage; turns: number; context: number; context_window?: number; limits?: [number, number]; limits_reset?: number | null; balance?: number | null;
+  cost: number; usage: Usage; turns: number; context: number; context_window?: number; limits?: [number, number]; limits_at?: number | null; limits_reset?: number | null; balance?: number | null;
   /** what an untrusted folder's config would run (it runs lean until trusted) */
   untrusted?: string | null;
   /** the conversation's session: claude's id, or the own loop's ("own-...") (null before the first reply) */

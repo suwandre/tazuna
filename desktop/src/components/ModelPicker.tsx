@@ -19,8 +19,15 @@ export function usePlace(box: RefObject<HTMLElement | null>, want = 420): { styl
     const above = b.top - v.top - 12, below = v.bottom - b.bottom - 12, need = Math.min(want, el.scrollHeight);
     const down = above < need && below > above;
     setP({ down, lift: Math.max(0, down ? b.bottom - a.bottom : a.top - b.top), max: Math.max(120, Math.min(want, down ? below : above)) });
+    // closed: focus back on the button that opened it (it fell to the page)
+    // (after the commit, and only if it is really gone: a development remount ran this and took the focus from its search)
+    return () => queueMicrotask(() => {
+      if (!el.isConnected && (!document.activeElement || document.activeElement === document.body)) anchor.querySelector("button")?.focus();
+    });
   }, [box, want]);
-  if (!p) return { style: { visibility: "hidden" }, side: "bottom-full" };
+  // measured before it shows: transparent, not hidden, so its search field can take the focus (hidden, it could not, and
+  // typing after a click went nowhere, design review 5)
+  if (!p) return { style: { opacity: 0 }, side: "bottom-full" };
   return p.down ? { style: { marginTop: p.lift + 8, maxHeight: p.max }, side: "top-full origin-top" } : { style: { marginBottom: p.lift + 8, maxHeight: p.max }, side: "bottom-full origin-bottom" };
 }
 
@@ -93,10 +100,20 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
   );
 }
 
-/** A small menu on the composer that closes on a click outside or Esc, placed as the model picker is (usePlace). */
+/** A small menu on the composer that closes on a click outside or Esc, placed as the model picker is (usePlace). The
+ * keyboard moves through it: focus on the checked item (or the first) when it opens, arrows and Home/End between items,
+ * Tab closes it (until desktop 0.1.77 focus stayed on the button and the arrows did nothing). */
 export function Menu({ children, onClose, width = 240 }: { children: React.ReactNode; onClose: () => void; width?: number }) {
   const box = useRef<HTMLDivElement>(null);
   const place = usePlace(box);
+  const items = () => [...(box.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+  useEffect(() => { const all = items(); (all.find((b) => b.querySelector("svg.lucide-check")) ?? all[0])?.focus(); }, []);
+  const keys = (e: React.KeyboardEvent) => {
+    const all = items(), i = all.indexOf(document.activeElement as HTMLButtonElement);
+    const go = (n: number) => { e.preventDefault(); all[(n + all.length) % all.length]?.focus(); };
+    if (e.key === "ArrowDown") go(i + 1); else if (e.key === "ArrowUp") go(i - 1); else if (e.key === "Home") go(0); else if (e.key === "End") go(all.length - 1);
+    else if (e.key === "Tab") onClose();
+  };
   useEffect(() => {
     const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) onClose(); };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -104,7 +121,7 @@ export function Menu({ children, onClose, width = 240 }: { children: React.React
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
   }, [onClose]);
-  return <div ref={box} style={{ width, ...place.style }} className={`tz-pop absolute ${place.side} left-0 z-10 overflow-y-auto rounded-xl border border-line-strong bg-card py-1 shadow-composer`}>{children}</div>;
+  return <div ref={box} role="menu" onKeyDown={keys} style={{ width, ...place.style }} className={`tz-pop absolute ${place.side} left-0 z-10 overflow-y-auto rounded-xl border border-line-strong bg-card py-1 shadow-composer [&_button]:outline-offset-[-2px] [&_button:focus-visible]:bg-hover`}>{children}</div>;
 }
 
 /** The current model's effort levels. */

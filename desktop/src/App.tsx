@@ -23,11 +23,14 @@ import { Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rai
 import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
-import { Start, type StartItem } from "./components/Start";
+import { CoreFailed, Start, type StartItem } from "./components/Start";
 import { StatusBar } from "./components/StatusBar";
 import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
-import { messages as viewMessages, queued, usage as viewUsage } from "./lib/fromView";
+import { messages as viewMessages, queued, resetIn, usage as viewUsage } from "./lib/fromView";
+import { titleFrom, type Usage } from "./lib/types";
+
+const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
 import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Diff, type ModelChoice, type Models, type SessionRow, type View } from "./lib/tazuna";
 import { listen } from "@tauri-apps/api/event";
 
@@ -72,7 +75,7 @@ function useCore() {
     const now = v.asking ? "asking" : busyView(v) ? "working" : "idle", before = was.current[tid];
     was.current[tid] = now;
     if (now === before || (tid === activeRef.current && document.hasFocus())) return;
-    const title = (v.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] ?? "A conversation";
+    const title = titleFrom((v.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text) || "A conversation";
     if (now === "asking") core.notify("tazuna asks", `${title}: ${v.asking!.tool.replace(/^mcp__lean__/, "")} ${v.asking!.what}`).catch(() => {});
     else if (now === "idle" && before === "working") core.notify("tazuna is done", title).catch(() => {});
   };
@@ -140,6 +143,10 @@ function useCore() {
     // randomUUID needs a secure page, which some WebKit builds do not count the app's own pages as
     const tid = crypto.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     setThreads((t) => ({ ...t, [tid]: { tid, folder: path, view: null, error: null, used: Date.now(), creator: opts.creator, resume } }));
+    // the one on screen goes when it is idle: it is in the lists, a click away (until desktop 0.1.77 each conversation opened
+    // stayed open with its own core, and four old ones looked through meant four "Open" rows and four processes)
+    const was = live.current[activeRef.current];
+    if (was && !was.creator && !was.side && !was.error && (!was.view || (["Ready", "Done"].includes(was.view.activity) && !was.view.asking))) close(was.tid);
     show(tid);
     core.start(tid, path ?? undefined, path ? undefined : "chat")
       .then((dir) => { if (!path) setHome(dir); if (resume) return core.resumeIn(tid, resume); opts.then?.(tid); })
@@ -492,7 +499,14 @@ export default function App() {
     core.rewind(cp, keep).then(() => core.send(text)).catch((e) => console.error(e));
   };
   const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
-  const usage = view ? viewUsage(view) : demo.usage;
+  // the core did not start: its reason and a way to try again, no conversation (until desktop 0.1.77 the demo's title,
+  // plan and cost filled the window around a small red line)
+  const failed = inTauri && !view && !!error;
+  // the plan's windows are the account's: the newest reading of any open conversation, not the one on screen (a resumed
+  // conversation showed its own days-old reading, design review 5)
+  const planView = threads.map((t) => t.view).filter((v) => v?.limits).sort((a, b) => (b!.limits_at ?? 0) - (a!.limits_at ?? 0))[0];
+  const usage = { ...(view ? viewUsage(view) : inTauri ? NO_USAGE : demo.usage),
+    ...(planView?.limits ? { plan5h: Math.round(planView.limits[0]), planWeek: Math.round(planView.limits[1]), plan5hReset: resetIn(planView.limits_reset) } : {}) };
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
   // when the reply now running began, as this window first saw it: the fold's "Working 12 s" keeps counting across a switch
   // to another conversation and back (it began at 0 s again on every switch)
@@ -501,7 +515,7 @@ export default function App() {
   if (busy && !replyStart.current[startKey]) replyStart.current[startKey] = Date.now();
   const session = view
     ? { model: view.model || "default", effort: view.effort || "", mode: view.mode, branch: "", changed: 0, lastCost: lastCost(view) }
-    : demo.session;
+    : inTauri ? { model: "", effort: "", mode: "auto", branch: "", changed: 0, lastCost: 0 } : demo.session;
   const place = inTauri ? (folder ? base(folder) : "Chat") : "api-gateway";
   const actions = (): Action[] => {
     const a: Action[] = [
@@ -509,7 +523,7 @@ export default function App() {
       { id: "folder", group: "Start", label: "Open folder…", keys: "⌘O", run: pick },
       ...projects.map((p) => ({ id: `p:${p}`, group: "Projects", label: base(p), hint: p, keywords: "open project folder", run: () => open(p) })),
       ...[...(home ? (sessions[home] ?? []).map((r) => [r, null] as const) : []), ...projects.flatMap((p) => (sessions[p] ?? []).slice(0, 10).map((r) => [r, p] as const))]
-        .map(([r, dir]) => ({ id: `s:${r.id}`, group: "Conversations", label: r.first.split("\n")[0] || "(no message)", hint: dir ? base(dir) : "chat", keywords: "resume continue", run: () => open(dir, r.id) })),
+        .map(([r, dir]) => ({ id: `s:${r.id}`, group: "Conversations", label: titleFrom(r.first) || "(no message)", hint: dir ? base(dir) : "chat", keywords: "resume continue", run: () => open(dir, r.id) })),
     ];
     if (busy) a.unshift({ id: "stop", group: "This conversation", label: "Stop the reply", keys: "Esc", run: () => core.interrupt() });
     const undo = view?.changes?.find((c) => c.can_undo);
@@ -551,7 +565,7 @@ export default function App() {
   // prototype mockups/v3.html)
   const fresh = inTauri && !!view && !busy && !view.asking && !editing && !view.blocks.some((b) => b.kind === "prompt");
   // in a project, its own conversations; in a chat, everything by when it last ran
-  const startRecent: StartItem[] = Object.entries(sessions).filter(([dir]) => !folder || dir === folder).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)",
+  const startRecent: StartItem[] = Object.entries(sessions).filter(([dir]) => !folder || dir === folder).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: titleFrom(r.first) || "(no message)",
     place: dir === home ? "chat" : base(dir), dir: dir === home ? null : dir, at: r.last_at }))).sort((a, b) => b.at - a.at).slice(0, 3);
   const where = { label: folder ? base(folder) : "Chat", folder: !!folder, pickFolder: pick,
     choices: [{ label: "Chat", hint: "no folder: a general question", path: null as string | null }, ...projects.slice(0, 6).map((p) => ({ label: base(p), hint: p, path: p as string | null }))],
@@ -590,7 +604,7 @@ export default function App() {
             onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined} />
   );
   const data = widgetData(view);
-  const title = view ? (view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] ?? "New chat" : "Retry test fails on CI";
+  const title = view ? titleFrom((view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text) || "New chat" : inTauri ? (failed ? "Could not start" : "New chat") : "Retry test fails on CI";
   return (
     <div className="flex h-screen flex-col overflow-hidden">
     <div className="grid min-h-0 flex-1 overflow-hidden"
@@ -624,7 +638,8 @@ export default function App() {
           </div>
         </header>
         <div key={`view:${active}`} className="tz-enter flex min-h-0 flex-1 flex-col">
-        {fresh ? <Start place={folder ? base(folder) : null} composer={composer} recent={startRecent} onResume={(r) => open(r.dir, r.id)} onFolder={pick}
+        {failed ? <CoreFailed error={error!} folder={folder} onRetry={restart} onChat={() => open(null)} />
+        : fresh ? <Start place={folder ? base(folder) : null} composer={composer} recent={startRecent} onResume={(r) => open(r.dir, r.id)} onFolder={pick}
             projects={projects.filter((p) => p !== folder).slice(0, 3).map((p) => ({ path: p, name: base(p), count: sessions[p]?.length ?? 0 }))} onProject={(p) => open(p)} />
         : <Transcript key={`${active}:${view?.session_id ?? ""}`} messages={messages} editFrom={editing?.cp}
           onEdit={inTauri ? (e, text) => {
@@ -642,7 +657,7 @@ export default function App() {
             <button onClick={() => core.trust().then(restart)} className="rounded-md border border-line-strong px-2.5 py-1 font-medium text-ink hover:bg-hover">Trust folder</button>
           </div>
         )}
-        {error && <div className="mx-auto mb-2 max-w-[756px] px-7 text-[12.5px] text-bad">{error}</div>}
+        {error && !failed && <div className="mx-auto mb-2 max-w-[756px] px-7 text-[12.5px] text-bad">{error}</div>}
         {folder && wtNotes[folder] && (
           <div className="mx-auto mb-2 flex w-full max-w-[756px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
             <span className="flex-1">Worktree ready. {wtNotes[folder]}.</span>
@@ -691,7 +706,7 @@ export default function App() {
         )}
         {codeView && <DiffView diff={{ turn: 0, path: `${codeView.title} · plugin.js`, text: codeView.text }} plain onClose={() => setCodeView(null)} />}
         {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
-        {!fresh && composer}
+        {!fresh && !failed && composer}
       </main>
       {side ? <SideChat key={side.tid} view={side.view} onClose={() => closeSide(active)} onStop={() => core.interruptIn(side.tid)}
           onSend={(text) => core.sendIn(side.tid, text).catch(() => {})} onAnswer={(allow, always) => core.opIn(side.tid, { op: "answer", allow, always })} />
@@ -712,7 +727,7 @@ export default function App() {
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
-    <StatusBar usage={usage} version={appVersion} idle={fresh} />
+    <StatusBar usage={usage} version={appVersion} idle={fresh || failed} />
     </div>
   );
 }
@@ -748,10 +763,10 @@ const base = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path
 /** One of tazuna's worktrees (src/worktree.rs: <data>/worktrees/<repository>/wt-<name>). */
 const isWorktree = (path: string) => /[\\/]worktrees[\\/][^\\/]+[\\/]wt-[a-z0-9]+$/.test(path);
 
-const rowsOf = (rows?: SessionRow[], place = "chat", project?: string) => (rows ?? []).map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)", place, project, at: r.last_at, model: r.model }));
+const rowsOf = (rows?: SessionRow[], place = "chat", project?: string) => (rows ?? []).map((r) => ({ id: r.id, title: titleFrom(r.first) || "(no message)", place, project, at: r.last_at, model: r.model }));
 
 /** An open conversation's name: its first message, else a new one's. */
-const titleOf = (t: Thread) => (t.view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] || "New conversation";
+const titleOf = (t: Thread) => titleFrom((t.view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text) || "New conversation";
 
 /** The header's built-in chips read this (and a plugin replacing one can too). */
 export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void; side?: () => void; sideOpen?: boolean;

@@ -88,6 +88,17 @@ const log = [];
     await step(p, "project-opened-early", async () => { await side(p).locator('button[title="/Users/x/api-gateway"]').click(); await p.waitForTimeout(2500); });
     log.push(`project opened early: ${await side(p).locator("a").count()} conversations in the sidebar (some wanted)`);
     await ctx.close(); }
+  // the core does not start: its reason and Try again, no demo numbers around it (desktop 0.1.77)
+  { const fail = `(() => { const go = () => { const T = window.__TAURI_INTERNALS__; if (!T) return setTimeout(go, 0); const inv = T.invoke.bind(T); T.invoke = async (c, a) => { if (c === "start") throw "could not start tazuna app-server: No such file or directory (os error 2)"; return inv(c, a); }; }; go(); })();`;
+    const [ctx, p] = await ctxOf({ extra: fail });
+    await step(p, "core-fails", async () => { await p.waitForTimeout(600); });
+    log.push(`core fails: ${await p.getByText("tazuna could not start").count() ? "failure screen" : "NO failure screen"}, ${await p.getByText("Retry test fails on CI").count() ? "DEMO TITLE SHOWN" : "no demo title"}`);
+    await ctx.close(); }
+  // the model picker's search takes the typing as it opens (0.1.74 to 0.1.76 it did not)
+  { const [ctx, p] = await ctxOf({});
+    await p.getByTitle("Model and effort").click(); await p.waitForTimeout(400);
+    log.push(`picker focus: ${await p.evaluate(() => document.activeElement?.getAttribute("placeholder") || document.activeElement?.tagName)}`);
+    await ctx.close(); }
   { const [ctx, p] = await ctxOf({ setup: false }); await step(p, "first-run-setup", async () => { await p.waitForTimeout(600); }); await ctx.close(); }
   fs.writeFileSync(`${OUT}/log.txt`, log.join("\n"));
   console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok", `· ${log.length} steps in ${OUT}`);

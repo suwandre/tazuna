@@ -35,7 +35,8 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
 }) {
   const [mode, setMode] = useState<"view" | "rename" | "hide">("view");
   const [title, setTitle] = useState(t.title);
-  const icon = "rounded p-0.5 text-faint hover:bg-hover hover:text-ink";
+  // 24 px to hit (WCAG 2.2's minimum; they were 16, design review 5)
+  const icon = "grid size-6 place-items-center rounded text-faint hover:bg-hover hover:text-ink";
   if (mode === "rename") {
     return (
       <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onBlur={() => setMode("view")}
@@ -88,7 +89,7 @@ function OpenRow({ o, active, onSwitch, onClose }: { o: Open; active: boolean; o
         <span className="block truncate text-[11.5px] text-faint">{[o.place, modelLabel(o.model)].filter(Boolean).join(" · ")}{o.state === "asking" ? " · waiting for your answer" : o.state === "stopped" ? " · stopped" : ""}</span>
       </span>
       <button title="Close (the conversation stays in the lists)" aria-label={`Close ${o.title}`} onClick={(e) => { e.stopPropagation(); onClose?.(o.tid); }}
-        className="hidden flex-none rounded p-0.5 text-faint hover:bg-hover hover:text-ink group-hover:block"><X size={12} strokeWidth={1.5} /></button>
+        className="hidden size-6 flex-none place-items-center rounded text-faint hover:bg-hover hover:text-ink group-hover:grid"><X size={12} strokeWidth={1.5} /></button>
     </a>
   );
 }
@@ -125,8 +126,9 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
   const [fold, setFold] = useState<Record<string, boolean>>({});
   const needs = open.filter((o) => o.state === "asking"), working = open.filter((o) => o.state === "working");
   const idle = open.length > 1 ? open.filter((o) => o.state === "idle" || o.state === "stopped") : [];
-  // an open conversation shows once, in its group above
-  const opened = new Set(open.map((o) => o.id).filter(Boolean));
+  // a conversation in a group above shows there only; the one on screen alone stays in Recent, marked (until desktop 0.1.77
+  // it left Recent and was nowhere)
+  const opened = new Set([...needs, ...working, ...idle].map((o) => o.id).filter(Boolean));
   const recent = [...chats.map((t) => ({ t, p: undefined as Project | undefined })), ...projects.flatMap((p) => p.threads.map((t) => ({ t, p })))]
     .filter(({ t }) => !opened.has(t.id)).sort((a, b) => (b.t.at ?? 0) - (a.t.at ?? 0)).slice(0, 20);
   return (
@@ -159,8 +161,8 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
         onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
       {projects.length > 0 && <div className={groupHead}>Projects</div>}
       {projects.map((p) => {
-        // the open project shows its conversations unless folded by hand
-        const key = p.path ?? p.name, shown = fold[key] ?? p.open;
+        // folded until unfolded by hand: its conversations are in Recent too (unfolded on open, desktop 0.1.76 listed each twice)
+        const key = p.path ?? p.name, shown = fold[key] ?? false;
         return (
         <div key={key}>
           <div className={`flex items-center rounded-md text-ink-2 ${p.path && p.path === active ? "bg-selected text-ink" : ""}`}>
@@ -170,7 +172,7 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
                 <ChevronRight size={14} strokeWidth={1.5} className={`transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
               </button>
             ) : <span className="ml-1 w-[22px]" />}
-            <button onClick={() => { setFold((f) => ({ ...f, [key]: true })); onOpenProject?.(p); }} title={p.path}
+            <button onClick={() => onOpenProject?.(p)} title={p.path}
               className="flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pl-1 pr-[9px] text-left hover:bg-hover">
               <span className="flex-1 truncate">{p.name}</span>
               {p.pending ? <span className="rounded-full bg-accent px-1.5 text-[10.5px] font-semibold leading-[17px] text-on-accent">{p.pending}</span> : null}

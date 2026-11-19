@@ -143,7 +143,12 @@ export function workSummary(tools: ToolStep[]): string {
   const searched = (n.get("Searched") ?? 0) + (n.get("Listed") ?? 0);
   if (searched) parts.push(searched === 1 ? "searched" : `searched ${searched} times`);
   for (const k of ["Read", "Ran", "Searched", "Listed"]) n.delete(k);
-  for (const [verb, count] of n) parts.push(`${verb.toLowerCase()}${count > 1 ? ` ×${count}` : ""}`);
+  // tools without a verb of their own (an MCP server's "toolsearch", a skill's "guide") as a count, not their raw names
+  // (design review 5: "ran 15 commands, toolsearch ×3, guide")
+  const known = ["Asked a subagent", "Fetched", "Used skill", "Searched the web"];
+  for (const [verb, count] of n) if (known.includes(verb)) parts.push(`${verb.toLowerCase()}${count > 1 ? ` ×${count}` : ""}`);
+  const other = [...n].filter(([v]) => !known.includes(v)).reduce((a, [, c]) => a + c, 0);
+  if (other) parts.push(`used ${plural(other, "other tool")}`);
   if (!parts.length && tools.some((t) => t.kind === "thinking")) parts.push("thought it through");
   return parts.slice(0, 4).join(", ");
 }
@@ -187,7 +192,7 @@ function Working({ what, since }: { what: string; since?: number }) {
 }
 
 /** "41 s", "2 min 5 s" */
-const dur = (s: number) => (s < 60 ? `${s} s` : `${Math.floor(s / 60)} min ${s % 60} s`);
+const dur = (s: number) => (s < 60 ? `${s} s` : s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s / 60} min`);
 
 /** The seconds since `since`, counting. */
 function Ticking({ since }: { since: number }) {
@@ -200,15 +205,21 @@ function Ticking({ since }: { since: number }) {
 
 export function UserMessage({ message: m }: { message: Message }) {
   const { busy, onEdit } = useTranscript();
+  const [all, setAll] = useState(false);
   if (m.role !== "user") return null;
   // the note tazuna adds after an undo ("[tazuna: ...]") is shown as what it is, apart from the message
   const note = m.text.match(/^\[tazuna: ([^\]]*)\]\n\n/);
   const text = note ? m.text.slice(note[0].length) : m.text;
+  const long = text.length > 600 || text.split("\n").length > 6;
   return (
     <>
       {note && <div className="mb-1 text-[11.5px] text-faint">told the model: {note[1]}</div>}
       <div className="flex items-start gap-1">
-        <div className="inline-block max-w-full select-text rounded-lg bg-field px-3.5 py-2.5 text-ink">{inlineCode(text)}</div>
+        {/* a long message (a pasted log, eight lines of links) folds to six lines; all of it on a click (design review 5) */}
+        <div className="inline-block max-w-full select-text rounded-lg bg-field px-3.5 py-2.5 text-ink">
+          <div className={!all && long ? "line-clamp-6 break-words" : "break-words"}>{inlineCode(text)}</div>
+          {long && <button onClick={() => setAll(!all)} className="mt-1 text-[12px] text-muted hover:text-ink">{all ? "Show less" : "Show all"}</button>}
+        </div>
         {m.edit && onEdit && !busy && (
           <button onClick={() => onEdit(m.edit!, text)} title="Edit and send again from here: the conversation goes back to before this message" aria-label="Edit from here"
             className="mt-1.5 flex-none rounded p-1 text-faint opacity-0 hover:bg-hover hover:text-ink focus-visible:opacity-100 group-hover:opacity-100"><Pencil size={13} strokeWidth={1.5} /></button>

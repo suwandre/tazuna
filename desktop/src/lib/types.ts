@@ -42,6 +42,30 @@ export function modelLabel(id?: string | null): string {
   return id.replace(/^[\w-]+\//, "");
 }
 
-/** Dollars as tazuna shows them: three decimals, or two significant digits below a tenth of a cent ($0.00012), so a cheap
- * turn does not read as free. */
-export const usd = (n: number) => (n > 0 && n < 0.001 ? `$${n.toPrecision(2)}` : `$${n.toFixed(3)}`);
+/** A link as a few words: a GitHub pull request is "PR #1521 · application", an issue "Issue #12 · repo", a repo
+ * "owner/repo", a Claude artifact "Claude artifact", anything else its host and last path part. */
+export function linkName(u: string): string {
+  try {
+    const url = new URL(u), p = url.pathname.split("/").filter(Boolean), host = url.hostname.replace(/^www\./, "");
+    if (host === "github.com" && p.length >= 4 && (p[2] === "pull" || p[2] === "issues")) return `${p[2] === "pull" ? "PR" : "Issue"} #${p[3]} · ${p[1]}`;
+    if (host === "github.com" && p.length >= 2) return `${p[0]}/${p[1]}`;
+    if (/(^|\.)claude\.ai$/.test(host) && p[0] === "artifact") return "Claude artifact";
+    return p.length ? `${host}/${decodeURIComponent(p[p.length - 1]).slice(0, 40)}` : host;
+  } catch { return u; }
+}
+
+/** A conversation's name from its first message: its first line with each link said in words, and when that line was only
+ * a link, the next line after it ("PR #1485 · application · good to approve?"). Until desktop 0.1.77 the first line as
+ * typed, so a list of pasted links read "https://github.com/acme/a…" eight times (design review 5). */
+export function titleFrom(text?: string | null): string {
+  const lines = (text ?? "").replace(/^\[tazuna: [^\]]*\]\n\n/, "").split("\n").map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return "";
+  const said = (l: string) => l.replace(/https?:\/\/[^\s<>()]+/g, (u) => linkName(u.replace(/[.,;:!?)]+$/, ""))).replace(/\s+/g, " ").trim();
+  const onlyLink = /^https?:\/\/\S+$/.test(lines[0]);
+  return onlyLink && lines[1] ? `${said(lines[0])} · ${said(lines[1])}` : said(lines[0]);
+}
+
+/** Dollars as tazuna shows them: cents from ten cents up ($0.41, $10.13), three decimals below ($0.042), two significant
+ * digits below a tenth of a cent ($0.00012) so a cheap turn does not read as free, and $0 for nothing. Until desktop 0.1.77
+ * always three decimals: "$10.127" (design review 5). */
+export const usd = (n: number) => (n <= 0 ? "$0" : n < 0.001 ? `$${n.toPrecision(2)}` : n < 0.1 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`);

@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { core, type Accounts } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
 import { summarize, type Day, type Row } from "../lib/usage";
-import { modelLabel, usd } from "../lib/types";
+import { modelLabel } from "../lib/types";
 
 // The usage page (Cmd-Shift-U, the menu, a click on the plan bar or the cost): what each account has left right now
 // (Claude's plan from claude's own /usage, OmniRoute's accounts, the providers' credits: src/accounts.rs), what the last
@@ -12,7 +12,8 @@ import { modelLabel, usd } from "../lib/types";
 // not a big "$0.000".
 const RANGES = [7, 30, 90];
 const big = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`);
-const money = (n: number) => (n >= 100 ? `$${Math.round(n)}` : n >= 0.01 ? `$${n.toFixed(2)}` : usd(n));
+// totals in cents: "$0" for nothing, "< $0.01" below a cent ("$0.000072" beside "$0.26" in one column, design review 5)
+const money = (n: number) => (n <= 0 ? "$0" : n < 0.01 ? "< $0.01" : n >= 100 ? `$${Math.round(n)}` : `$${n.toFixed(2)}`);
 
 /** OmniRoute's resets (UTC ISO strings) as claude's /usage writes its own, in local time: "Nov 25 at 11:03am", "Nov 21
  * at 3am". One format for every reset on the page (until desktop 0.1.74 "in 5 d" beside "Nov 21 at 3am"). */
@@ -69,6 +70,7 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
   const [acc, setAcc] = useState<Accounts | null | undefined>(undefined);
   const dialog = useDialog();
   const [days, setDays] = useState(30);
+  const [allModels, setAllModels] = useState(false);
   // asked once when opened (the window re-renders on every streamed view; onClose is new each time)
   const close = useRef(onClose);
   close.current = onClose;
@@ -113,11 +115,15 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
               {s.byModel.length > 0 && (
                 <table className="w-full text-[12.5px]"><thead><tr><th className={th}>Model</th><th className={th}>Runs on</th>
                   <th className={`${th} text-right`}>Runs</th><th className={`${th} text-right`}>Cost</th><th className={`${th} text-right`}>From cache</th></tr></thead>
-                  <tbody>{s.byModel.map((m) => (
+                  <tbody>{(allModels ? s.byModel : s.byModel.slice(0, 8)).map((m) => (
                     <tr key={`${m.plan}${m.model}`}><td className={td} title={m.model}>{modelLabel(m.model)}</td>
                       <td className={td}><span className="rounded-full border border-line px-2 text-[11px] text-muted">{m.plan ? "Claude plan" : "API"}</span></td>
                       <td className={num}>{m.runs}</td><td className={num}>{money(m.cost)}</td><td className={num}>{m.cachePct}%</td></tr>
-                  ))}</tbody></table>
+                  ))}</tbody>
+                  {/* the eight most used, the rest on request: every model ever tried made a list of 40 (design review 5) */}
+                  {s.byModel.length > 8 && <tfoot><tr><td colSpan={5} className="px-3.5 py-2"><button onClick={() => setAllModels(!allModels)} className="text-[12px] text-muted hover:text-ink">
+                    {allModels ? "Show the eight most used" : `Show all ${s.byModel.length} models`}</button></td></tr></tfoot>}
+                </table>
               )}
             </>}
           </Section>

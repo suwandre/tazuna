@@ -99,7 +99,7 @@ export const queued = (v: View) => messages(v).flatMap((m) => (m.role === "user"
 
 export function usage(v: View): Usage {
   const win = v.context_window ?? 200000;
-  const k = (n: number) => (n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
+  const k = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
   const u = v.usage, read = u.input + u.cache_write + u.cache_read;
   return { contextPct: Math.min(100, Math.round((100 * v.context) / win)), contextUsed: k(v.context), contextMax: k(win),
     plan5h: v.limits ? Math.round(v.limits[0]) : null, plan5hReset: resetIn(v.limits_reset), planWeek: v.limits ? Math.round(v.limits[1]) : null,
