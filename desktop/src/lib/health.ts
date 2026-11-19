@@ -79,8 +79,8 @@ export function items(acc: Accounts | null, fallback: { plan5h: number | null; p
     const level: Level = amount == null ? "unknown" : amount <= 0 ? "out" : amount < 2 ? "low" : "ok";
     out.push({ key: `credit:${c.provider}`, provider: c.provider, name: c.provider, group: "Credit with each provider", label: c.provider, note: amount == null ? "no balance from its API" : undefined,
       value: amount == null ? undefined : amount < 0 ? `$${(-amount).toFixed(2)} over` : `$${amount.toFixed(2)} left`, level, page: c.page,
-      advice: amount == null ? undefined : amount <= 0 ? `Your ${c.provider} credit is ${amount < 0 ? `$${(-amount).toFixed(2)} past zero` : "used up"}. Add credit, or runs on ${c.provider} will fail.`
-        : `${c.provider} has $${amount.toFixed(2)} left. Add credit soon, or runs on ${c.provider} will stop.`,
+      advice: amount == null ? undefined : amount <= 0 ? `Your ${c.provider} credit is ${amount < 0 ? `$${(-amount).toFixed(2)} past zero` : "used up"}. Add credits, or runs on ${c.provider} will fail.`
+        : `${c.provider} has $${amount.toFixed(2)} left. Add credits soon, or runs on ${c.provider} will stop.`,
       short: amount == null ? c.provider : amount < 0 ? `${c.provider} $${(-amount).toFixed(2)} over` : `${c.provider} $${amount.toFixed(2)} left` });
   }
   for (const a of acc?.omniroute ?? []) for (const w of a.windows) {

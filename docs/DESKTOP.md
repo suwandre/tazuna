@@ -278,6 +278,10 @@ usage if you turned that on. It resets on Sat 3am."); it opened the account card
   click on one did nothing.
 - A link pasted without its scheme names itself too ("app PR #1476"), and a Jira issue as "Jira T-1214".
 
+0.1.85 (the user): the badge is no button (the account beside it opens the usage page); several accounts that need you
+name the most urgent and count the rest, "OpenRouter $0.17 over +2", the stopped ones first, each in the hover under "3
+accounts need you" (it said only "3 accounts need you"); "Add credits".
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

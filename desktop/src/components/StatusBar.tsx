@@ -69,7 +69,8 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [] }:
   const item = "flex flex-none items-center gap-1.5";
   const button = `${item} rounded px-1 -mx-1 hover:bg-hover hover:text-ink`;
   const b = "font-medium text-ink-2";
-  const others = accounts.filter((i) => !here.includes(i) && (i.level === "low" || i.level === "out"));
+  // the other accounts that need you, the stopped ones first: the badge names the first and counts the rest
+  const others = accounts.filter((i) => !here.includes(i) && (i.level === "low" || i.level === "out")).sort((a, b) => Number(b.level === "out") - Number(a.level === "out"));
   // the countdown moves on by itself
   const [, tick] = useState(0);
   useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(t); }, []);
@@ -81,17 +82,20 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [] }:
         </button>
         <Card all={accounts} here={here} />
       </span>
-      {/* the badge says what it means and what to do, on its own hover (it opened the account card too, the user) */}
+      {/* the badge says what it means and what to do, on its own hover (it opened the account card too, the user). Not a
+          button: the account beside it opens the usage page. Several accounts: the most urgent by name, the rest counted
+          ("OpenRouter $0.17 over +2"), each in the hover; one badge, not one each, and not "3 accounts need you" */}
       {others.length > 0 && (
         <span className="group/adv relative flex flex-none">
-          <button onClick={openUsage} aria-describedby="usage-advice" className={`flex flex-none items-center gap-1.5 rounded-full border px-2 leading-[18px] ${worst(others) === "out" ? "border-bad/45 text-bad" : "border-warn/45 text-warn"} hover:bg-hover`}>
-            <TriangleAlert size={12} strokeWidth={1.75} />{others.length === 1 ? others[0].short : `${others.length} accounts need you`}
-          </button>
+          <span tabIndex={0} aria-describedby="usage-advice" className={`flex flex-none cursor-default items-center gap-1.5 rounded-full border px-2 leading-[18px] ${worst(others) === "out" ? "border-bad/45 text-bad" : "border-warn/45 text-warn"}`}>
+            <TriangleAlert size={12} strokeWidth={1.75} aria-hidden="true" />{others[0].short}
+            {others.length > 1 && <span className="rounded-full bg-current/15 px-1.5 text-[11px] font-medium leading-4">+{others.length - 1}</span>}
+          </span>
           <span className="invisible absolute bottom-full left-0 z-30 pb-2 opacity-0 transition-opacity duration-150 group-hover/adv:visible group-hover/adv:opacity-100 group-focus-within/adv:visible group-focus-within/adv:opacity-100">
-            <span id="usage-advice" role="tooltip" className="block w-[320px] whitespace-normal rounded-xl border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-2 shadow-composer">
+            <span id="usage-advice" role="tooltip" className="block w-[340px] whitespace-normal rounded-xl border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-2 shadow-composer">
+              {others.length > 1 && <span className="mb-1.5 block text-[11.5px] font-medium text-faint">{others.length} accounts need you</span>}
               {others.map((o) => <span key={o.key} className="mb-1.5 flex items-start gap-2 last:mb-0">
                 <span className={`mt-[7px] size-1.5 flex-none rounded-full ${tone[o.level]}`} aria-hidden="true" />{o.advice ?? o.short}</span>)}
-              <span className="mt-2 block border-t border-line-soft pt-1.5 text-[11.5px] text-faint">Click for usage and spending</span>
             </span>
           </span>
         </span>
