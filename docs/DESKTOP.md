@@ -165,6 +165,10 @@ the model and its effort in one pill ("Opus 5.5 · high"), the effort levels at 
 the whole box (it covered the box's text); a copy button on each answer, beside its numbers; each conversation in the
 sidebar marked with its provider (a letter: C Claude, D DeepSeek, O OpenAI, G Gemini, M Mistral…; core 0.1.178 sends the
 model).
+0.1.71: a status bar along the window's bottom (prototype mockups/v4.html, variant B): the plan's 5 hours and week with
+their bars and what is left, SubRouter's balance, this conversation's context, cache and cost, the app's version; a click
+on the plan or the cost opens the usage page. It replaces the plan bar by the send button and the cost in the header
+(each number once). A narrow window drops the cache and the version first.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

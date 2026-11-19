@@ -24,6 +24,8 @@ import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
 import { Transcript } from "./components/Transcript";
 import { Start, type StartItem } from "./components/Start";
+import { StatusBar } from "./components/StatusBar";
+import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
 import { messages as viewMessages, queued, usage as viewUsage } from "./lib/fromView";
 import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Diff, type ModelChoice, type Models, type SessionRow, type View } from "./lib/tazuna";
@@ -372,6 +374,8 @@ export default function App() {
   const replies = view ? view.blocks.reduce((n, b) => n + (b.kind === "done" ? 1 : 0), 0) : 0;
   useEffect(() => { if (inTauri && folder && view) core.prIn(active).catch(() => {}); }, [active, folder, !!view, replies]);
   const pr = prs[active];
+  const [appVersion, setAppVersion] = useState("");
+  useEffect(() => { if (inTauri) getVersion().then(setAppVersion).catch(() => {}); }, []);
   // the work panel (the right column): open in a project, closed in a plain chat, until the user says otherwise (⌘\ or the
   // header's button) for this window's life
   const [panelPref, setPanelPref] = useState<boolean | null>(null);
@@ -550,7 +554,7 @@ export default function App() {
     choices: [{ label: "Chat", hint: "no folder: a general question", path: null as string | null }, ...projects.slice(0, 6).map((p) => ({ label: base(p), hint: p, path: p as string | null }))],
     pick: (path: string | null) => { if (path !== folder) open(path); } };
   const composer = (
-        <Composer key={active} where={fresh ? where : undefined} draftKey={draftKey} session={session} threadCost={usage.threadCost} usage={usage} busy={busy}
+        <Composer key={active} where={fresh ? where : undefined} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
             onSend={(text) => {
               if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk(text); return; }
               sendNow(text);
@@ -585,7 +589,8 @@ export default function App() {
   const data = widgetData(view);
   const title = view ? (view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] ?? "New chat" : "Retry test fails on CI";
   return (
-    <div className="grid h-screen overflow-hidden"
+    <div className="flex h-screen flex-col overflow-hidden">
+    <div className="grid min-h-0 flex-1 overflow-hidden"
       style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", side ? "380px" : panelOpen ? "300px" : null].filter(Boolean).join(" ") }}>
       {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-ink/15" />}
       <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-composer" : "hidden") : "flex min-h-0"}>
@@ -704,6 +709,8 @@ export default function App() {
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
+    <StatusBar usage={usage} version={appVersion} />
+    </div>
   );
 }
 
@@ -783,6 +790,6 @@ function PanelChip() {
   return h.togglePanel ? <button onClick={h.togglePanel} aria-pressed={h.panelOpen} title={`${h.panelOpen ? "Close" : "Open"} the work panel (⌘\\)`}
     className={`grid size-7 place-items-center rounded-md ${h.panelOpen ? "bg-field text-ink" : "text-muted hover:text-ink"}`}><PanelRight size={16} strokeWidth={1.5} /></button> : null;
 }
-slots.register({ id: "header.cost", slot: "header.actions", order: 10, source: "tazuna", render: CostChip });
+// the cost moved to the status bar (desktop 0.1.71): CostChip stays exported for a plugin that wants it in the header
 slots.register({ id: "header.panel", slot: "header.actions", order: 50, source: "tazuna", render: PanelChip });
-export { BranchChip, ModelChip, PrChip, ReviewChip };
+export { BranchChip, CostChip, ModelChip, PrChip, ReviewChip };

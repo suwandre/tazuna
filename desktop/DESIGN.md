@@ -98,10 +98,11 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - Three columns: sidebar 248 px, main (header, transcript, composer), the work panel 300 px. The work panel is open in a
   project and closed in a plain chat; ⌘\ and the header's button switch it. (Design review, 2026-11-18, prototype
   `mockups/v2.html`.)
-- Each number shows once. The model and effort: the composer's pills. The plan and context: the bar beside the send
-  button, its card on hover (plan windows, context, cost, cache, balance), the usage page on a click. The thread's cost:
-  the header. An answer's own numbers: under it, on hover. The line under the composer only says what is new: a paid
-  model's cost per message, or the plan running low.
+- Each number shows once. The model and effort: the composer's one pill. The plan (5 hours and week, what is left), the
+  SubRouter balance, this conversation's context, cache and cost, and the app's version: the status bar along the window's
+  bottom (prototype `mockups/v4.html`, variant B, 2026-11-19), a click on the plan or the cost opening the usage page. An
+  answer's own numbers: under it, on hover. The line under the composer only says what is new: a paid model's cost per
+  message, or the plan running low.
 - Narrow windows: below 1280 px the work panel starts closed; below 1000 px the sidebar opens over the conversation from
   the header's button. The composer's pills never wrap.
 - One live status per reply: its fold says "Working 12 s" (counted from when the reply began), or "Waiting for you" during
