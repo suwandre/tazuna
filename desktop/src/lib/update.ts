@@ -16,9 +16,11 @@ const listeners = new Set<() => void>();
 const set = (s: UpdateState) => { state = s; listeners.forEach((l) => l()); };
 export const useUpdate = () => useSyncExternalStore((l) => { listeners.add(l); return () => { listeners.delete(l); }; }, () => state);
 
-/** Looks for a newer version; `told` says "up to date" for a while when there is none (a check the user asked for). */
-export async function checkUpdate(told = false) {
+/** Looks for a newer version; `told` says "up to date" for a while when there is none (a check the user asked for);
+ * "inline" (the status bar's version) says it where it was asked, not in a dialog: the answer comes back. */
+export async function checkUpdate(told: boolean | "inline" = false): Promise<"new" | "none" | "error" | undefined> {
   if (!inTauri || state.installing) return;
+  const inline = told === "inline";
   try {
     const u = await invoke<{ version: string; notes?: string } | null>("update_check");
     if (u) set({ version: u.version, notes: u.notes });
@@ -30,12 +32,14 @@ export async function checkUpdate(told = false) {
     if (u && (told || announced !== u.version)) {
       announced = u.version;
       const notes = u.notes && u.notes !== `tazuna desktop ${u.version}` ? `${u.notes}\n\n` : "";
-      toast(`tazuna desktop ${u.version} is out`, { kind: "info", sticky: true, modal: told, action: { label: "Install and restart", run: () => installUpdate() },
+      toast(`tazuna desktop ${u.version} is out`, { kind: "info", sticky: true, modal: !!told, action: { label: "Install and restart", run: () => installUpdate() },
         detail: `${notes}You have ${now || "an older version"}. Installing restarts tazuna: replies running now stop, conversations stay resumable.` });
-    } else if (!u && told) toast("You're up to date", { kind: "ok", modal: true, detail: `tazuna desktop ${now} is the newest version.` });
+    } else if (!u && told && !inline) toast("You're up to date", { kind: "ok", modal: true, detail: `tazuna desktop ${now} is the newest version.` });
+    return u ? "new" : "none";
   } catch (e) {
-    if (told) toast("Could not check for updates", { kind: "error", modal: true, detail: String(e) });
+    if (told) toast("Could not check for updates", { kind: "error", modal: !inline, detail: String(e) });
     else console.error(`update check: ${e}`);
+    return "error";
   }
 }
 

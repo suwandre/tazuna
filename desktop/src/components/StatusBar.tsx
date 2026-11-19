@@ -1,8 +1,9 @@
-import { RotateCw, TriangleAlert } from "lucide-react";
+import { ArrowUpCircle, Check, LoaderCircle, RotateCw, TriangleAlert } from "lucide-react";
 import { openUsage } from "./Rail";
 import { usd, type Usage } from "../lib/types";
 import { useEffect, useState } from "react";
 import { exactly, whenReset, worst, type Item, type Level } from "../lib/health";
+import { checkUpdate, useUpdate } from "../lib/update";
 
 // The status bar along the window's bottom: on the left the account this conversation runs on (the plan's 5 hours and
 // week on Claude, the credit on SubRouter, the window on OmniRoute) and, when another account is running low or stopped,
@@ -61,6 +62,34 @@ function Card({ all, here }: { all: Item[]; here: Item[] }) {
   );
 }
 
+/** The app's version, and what a click on it does: look for an update and answer in place ("up to date"), or offer the
+ * one found (its dialog, as Settings' button); an update found by the hourly check shows here by itself, "update to
+ * 0.1.86" in the accent, as VS Code and MonoCode show theirs. Until desktop 0.1.86 a line of text that did nothing (the
+ * user: "should be clickable"). */
+function Version({ version }: { version: string }) {
+  const up = useUpdate();
+  const [said, setSaid] = useState<"checking" | "none" | "error" | null>(null);
+  const check = async () => {
+    if (said === "checking" || up.installing) return;
+    setSaid("checking");
+    const r = await checkUpdate("inline");
+    setSaid(r === "none" ? "none" : null);
+    if (r === "none") setTimeout(() => setSaid((s) => (s === "none" ? null : s)), 4000);
+  };
+  const newer = up.version && up.version !== version;
+  const base = "flex flex-none items-center gap-1.5 rounded px-1 -mx-1 hover:bg-hover";
+  if (up.installing) return <span className="flex flex-none items-center gap-1.5 text-faint"><LoaderCircle size={11} strokeWidth={2} className="animate-spin" aria-hidden="true" />updating</span>;
+  if (newer) return <button onClick={() => checkUpdate(true)} title={`tazuna desktop ${up.version} is out: see what changed and install`} className={`${base} font-medium text-accent-ink`}>
+    <ArrowUpCircle size={12} strokeWidth={1.75} aria-hidden="true" />update to {up.version}</button>;
+  return (
+    <button onClick={check} title="Check for updates" aria-live="polite" className={`${base} text-faint hover:text-ink max-[1100px]:hidden`}>
+      {said === "checking" ? <><LoaderCircle size={11} strokeWidth={2} className="animate-spin" aria-hidden="true" />checking</>
+        : said === "none" ? <><Check size={12} strokeWidth={2} className="text-ok" aria-hidden="true" />up to date</>
+        : <>tazuna {version}</>}
+    </button>
+  );
+}
+
 export function StatusBar({ usage: u, version, idle, accounts = [], here = [] }: { usage: Usage; version: string;
   /** no conversation on screen (a new one, before its first message): its context and cache are not shown as 0% */
   idle?: boolean;
@@ -104,7 +133,7 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [] }:
       {!idle && <span className={`${item} max-[900px]:hidden`} title="This conversation's context">context <span className={b}>{u.contextPct}%</span> of {u.contextMax}</span>}
       {!idle && <span className={`${item} max-[1100px]:hidden`} title="Input read from the cache in this conversation">cache <span className={b}>{u.cachedPct}%</span></span>}
       {u.threadCost > 0 && <button onClick={openUsage} title="This conversation's cost · Usage" className={button}>this chat <span className={b}>{usd(u.threadCost)}</span></button>}
-      {version && <span className={`${item} text-faint max-[1100px]:hidden`}>tazuna {version}</span>}
+      {version && <Version version={version} />}
     </footer>
   );
 }
