@@ -197,6 +197,11 @@ high, cut it off at the top), and its height is what the page has room for.
   plainer Settings wording.
 - `desktop/review/sweep.cjs` takes the screenshots of all of this on test data (`review/mock.js`): run before a release.
 
+0.1.75: the sidebar fills its column whatever its rows (with one project and no conversations it shrank to them and left
+a strip of the window's background beside it); the start page sits in the middle of the window, a little above it (12%
+from the top left a tall window empty in its lower half); a lone "Start in a project" card spans the width. The sweep
+has this new user's window now.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

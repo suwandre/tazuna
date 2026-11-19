@@ -14,10 +14,11 @@ fs.mkdirSync(OUT, { recursive: true });
 const log = [];
 (async () => {
   const browser = await chromium.launch();
-  const ctxOf = async ({ theme = "dark", w = 1280, h = 800, setup = true } = {}) => {
+  const ctxOf = async ({ theme = "dark", w = 1280, h = 800, setup = true, extra = "" } = {}) => {
     // a Linux agent: on a Mac one the app leaves its shortcuts to the native menus, which a browser does not have
     const ctx = await browser.newContext({ viewport: { width: w, height: h }, colorScheme: theme, userAgent: "Mozilla/5.0 (X11; Linux x86_64) Chrome/140" });
     await ctx.addInitScript(MOCK);
+    if (extra) await ctx.addInitScript(extra);
     const p = await ctx.newPage(); p.errs = [];
     p.on("pageerror", (e) => p.errs.push(String(e)));
     await p.goto(BASE);
@@ -71,6 +72,13 @@ const log = [];
     await step(p, `w${w}-markdown`, async () => { await open(p, "Why is the CI build"); });
     await ctx.close();
   }
+  // a new user's window: tall, one project, no saved conversation (the sidebar shrank to its rows and the start page sat
+  // high, desktop 0.1.75)
+  { const none = `(() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T); T.invoke = async (c, a) => { if (c === "op" && a.msg.op === "sessions") { setTimeout(() => T.emit("tazuna-view", { tid: a.tid, msg: { type: "sessions", dirs: [] } }), 20); return null; } return inv(c, a); }; })();`;
+    const [ctx, p] = await ctxOf({ w: 1700, h: 1300, extra: none });
+    await step(p, "new-user-tall", async () => {});
+    log.push(`new-user sidebar ${await p.evaluate(() => Math.round(document.querySelector("aside[aria-label=Conversations]").getBoundingClientRect().width))} px (248 wanted)`);
+    await ctx.close(); }
   { const [ctx, p] = await ctxOf({ setup: false }); await step(p, "first-run-setup", async () => { await p.waitForTimeout(600); }); await ctx.close(); }
   fs.writeFileSync(`${OUT}/log.txt`, log.join("\n"));
   console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok", `· ${log.length} steps in ${OUT}`);

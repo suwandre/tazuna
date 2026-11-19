@@ -18,13 +18,16 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
   const row = "flex w-full items-center gap-2.5 border-t border-line-soft px-3.5 py-[7px] text-left hover:bg-hover focus-visible:outline-offset-[-2px]";
   const head = "flex px-3.5 pb-1.5 pt-2.5 text-[11.5px] font-medium text-faint";
   return (
-    <div className="flex min-h-0 flex-1 flex-col items-center overflow-auto px-7 pb-10 pt-[12vh]">
+    // the block in the middle of the page, a little above it (it sat 12% from the top, and a tall window was empty in its
+    // lower half, desktop 0.1.75); my-auto, not justify-center, so a short window still scrolls to its top
+    <div className="flex min-h-0 flex-1 flex-col items-center overflow-auto px-7 py-10">
+      <div className="my-auto flex w-full flex-col items-center pb-[6vh]">
       <h2 className="mb-1.5 text-center font-prose text-[27px] font-normal leading-tight tracking-[-0.01em] text-ink">
         {place ? <>What are we working on in {place}?</> : "What are we working on?"}</h2>
       <div className="mb-3 text-center text-[12.5px] text-muted">{place ? "A change in this project, or a question about it." : "A question for a chat, or a change in one of your projects."}</div>
       <div className="w-full max-w-[756px]">{composer}</div>
       {(recent.length > 0 || projects.length > 0 || !place) && (
-        <div className="mt-2 grid w-full max-w-[700px] grid-cols-1 gap-3.5 sm:grid-cols-2">
+        <div className={`mt-2 grid w-full max-w-[700px] grid-cols-1 gap-3.5 ${recent.length > 0 ? "sm:grid-cols-2" : ""}`}>
           {recent.length > 0 && (
             <section className="overflow-hidden rounded-xl border border-line bg-card">
               <div className={head}>Pick up where you left off</div>
@@ -57,6 +60,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
         {([["Search", "⌘K"], ["Mode", "⇧Tab"], ["Shortcuts", "⌘/"]] as const).map(([what, keys]) => (
           <span key={what}>{what} <kbd className="ml-1 rounded-[5px] border border-line px-[5px] font-mono text-[11px]">{keys}</kbd></span>
         ))}
+      </div>
       </div>
     </div>
   );

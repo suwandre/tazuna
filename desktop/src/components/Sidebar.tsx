@@ -130,7 +130,9 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
   const recent = [...chats.map((t) => ({ t, p: undefined as Project | undefined })), ...projects.flatMap((p) => p.threads.map((t) => ({ t, p })))]
     .filter(({ t }) => !opened.has(t.id)).sort((a, b) => (b.t.at ?? 0) - (a.t.at ?? 0)).slice(0, 20);
   return (
-    <aside aria-label="Conversations" className="flex flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
+    // the column's whole width, whatever its rows: with a short list it shrank to them and left a strip of the window's
+    // background between it and the conversation (desktop 0.1.75)
+    <aside aria-label="Conversations" className="flex min-w-0 flex-1 flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
       {macOverlay && <div data-tauri-drag-region className="-mx-2.5 -mt-3.5 h-[38px] flex-none" />}
       <div data-tauri-drag-region className="flex items-center gap-2 px-2 pb-3 pt-0.5 font-semibold tracking-[-0.01em]">
         <span className="grid size-[22px] place-items-center rounded-sm bg-accent text-[12px] font-bold text-on-accent">手</span>
