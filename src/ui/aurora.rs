@@ -18,7 +18,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Span::styled(" ◆ tazuna ", Style::new().fg(th.bg).bg(th.accent).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(model_short(&s.model), st(th.text)),
-        Span::styled(" · ", st(th.faint)),
+        Span::raw("  "),
         Span::styled(s.effort.clone(), st(th.warn)),
     ]);
     let dir = s.cwd.rsplit('/').next().unwrap_or_default().to_string();

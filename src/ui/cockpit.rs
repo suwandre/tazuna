@@ -45,7 +45,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Span::styled(format!("{glyph} {label}"), st(color)),
         Span::styled("   ", st(th.faint)),
         Span::styled(model_short(&s.model), st(th.text)),
-        Span::styled(format!(" · {} ", s.effort), st(th.warn)),
+        Span::styled(format!("  {} ", s.effort), st(th.warn)),
     ];
     if narrow {
         right.splice(1..1, [Span::styled("   ", st(th.faint)), Span::styled(cost_str(s), st(th.ok))]);
@@ -87,7 +87,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             // elapsed: the whole session, the user's own time too; working: message to last token, summed
             Line::from(vec![kv("elapsed", &clock_str(v.clock_ms - v.since_ms), th), Span::raw("  "), kv("working", &clock_str(s.busy(v.clock_ms)), th)]),
             Line::from(vec![kv("turn", &s.turns.to_string(), th), Span::raw("  "),
-                if v.live { Span::styled(format!("live · {} · {}", if s.profile.is_empty() { "lean" } else { &s.profile }, s.mode), st(th.text)) } else { kv("replay", &play, th) }]),
+                if v.live { Span::styled(format!("live  {}  {}", if s.profile.is_empty() { "lean" } else { &s.profile }, s.mode), st(th.text)) } else { kv("replay", &play, th) }]),
         ]),
         a,
     );
@@ -99,7 +99,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let [g1, g2, g3, g4] = Layout::vertical([Constraint::Length(1); 4]).areas(a);
     // the window as the model reports it: none until claude's first result, none on the own loop
     let (ctx, window) = s.context_window.map_or((0.0, String::new()), |w| (s.context as f64 / w as f64, format!(" / {}", human(w))));
-    gauge(f, g1, ctx, &format!("{:<12}{}{window}", "ctx", human(s.context)), th.accent, th);
+    gauge(f, g1, ctx, &format!("{:<12}{}{window}", "context", human(s.context)), th.accent, th);
     let misses = s.cache_misses();
     let miss = match misses {
         0 => String::new(),

@@ -1147,16 +1147,16 @@ pub fn readable_notice(text: &str) -> Option<String> {
 pub fn plan_spans(s: &Session, th: &Theme) -> Option<Vec<Span<'static>>> {
     let (h5, d7) = s.limits?;
     let c = |x: f64| if x >= 90.0 { th.err } else if x >= 75.0 { th.warn } else { th.dim };
-    Some(vec![Span::styled(format!("5h {h5:.0}%"), st(c(h5))), Span::styled(" · ", st(th.faint)), Span::styled(format!("7d {d7:.0}%"), st(c(d7))),
+    Some(vec![Span::styled(format!("5h {h5:.0}%"), st(c(h5))), Span::raw("  "), Span::styled(format!("7d {d7:.0}%"), st(c(d7))),
         Span::styled(limits_age(s), st(th.faint))])
 }
 
 /// How old the plan's reading is, when 10 minutes or more: " · 2h ago".
 fn limits_age(s: &Session) -> String {
     s.limits_at.map(|t| crate::session::unix_now().saturating_sub(t)).filter(|a| *a >= 600).map_or(String::new(), |a| match a {
-        0..3600 => format!(" · {}m ago", a / 60),
-        3600..86_400 => format!(" · {}h ago", a / 3600),
-        _ => format!(" · {}d ago", a / 86_400),
+        0..3600 => format!("  {}m ago", a / 60),
+        3600..86_400 => format!("  {}h ago", a / 3600),
+        _ => format!("  {}d ago", a / 86_400),
     })
 }
 
@@ -1193,7 +1193,7 @@ pub fn clock_str(ms: f64) -> String {
 /// working" on an idle session read as stuck, design review 4).
 pub fn times_str(s: &Session, v: &View) -> String {
     let busy = s.busy(v.clock_ms);
-    if busy < 1000.0 { clock_str(v.clock_ms - v.since_ms) } else { format!("{} · {} working", clock_str(v.clock_ms - v.since_ms), clock_str(busy)) }
+    if busy < 1000.0 { clock_str(v.clock_ms - v.since_ms) } else { format!("{}  {} working", clock_str(v.clock_ms - v.since_ms), clock_str(busy)) }
 }
 
 /// The replay's speed ("▶ 4.0×", "⏸ paused"); nothing in a live session, where it is no control of the user's (until
@@ -1607,13 +1607,17 @@ fn welcome(s: &Session, th: &Theme) -> Vec<Line<'static>> {
     let home = crate::platform::home().map(|h| h.display().to_string()).unwrap_or_default();
     let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
     let cwd = if !home.is_empty() && cwd.starts_with(&home) { format!("~{}", &cwd[home.len()..]) } else { cwd };
-    let plan = if s.limits.is_some() { " · Claude plan" } else { "" };
+    let plan = if s.limits.is_some() { ", on your Claude plan" } else { "" };
+    let profile = match profile.split_once(" (") {
+        Some((_, inner)) => inner.trim_end_matches(')').replace(" tracked files", " files").replace("; repo config: ", ", ").replace("2 other .claude entries", "2 more .claude files"),
+        None => profile,
+    };
     vec![
         Line::from(vec![Span::styled(" ◆ ", st(th.accent)), Span::styled("tazuna", st(th.text).add_modifier(Modifier::BOLD)), Span::styled(format!(" {}", env!("CARGO_PKG_VERSION")), st(th.faint))]),
-        Line::from(vec![Span::raw("   "), Span::styled(model_short(&s.model), st(th.text)), Span::styled(format!(" · {}{plan}", s.effort), st(th.dim))]),
-        Line::from(vec![Span::raw("   "), Span::styled(cwd, st(th.dim)), Span::styled(if profile.is_empty() { String::new() } else { format!(" · {profile}") }, st(th.faint))]),
+        Line::from(vec![Span::raw("   "), Span::styled(model_short(&s.model), st(th.text)), Span::styled(format!("  {}{plan}", s.effort), st(th.dim))]),
+        Line::from(vec![Span::raw("   "), Span::styled(cwd, st(th.dim)), Span::styled(if profile.is_empty() { String::new() } else { format!("  {profile}") }, st(th.faint))]),
         Line::default(),
-        Line::from(vec![Span::raw("   "), Span::styled("Try \"how is this repo laid out?\" · /keys for every key", st(th.faint))]),
+        Line::from(vec![Span::raw("   "), Span::styled("Try \"how is this repo laid out?\", or /keys for every key", st(th.faint))]),
     ]
 }
 
@@ -1704,7 +1708,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             // line of numbers was the whole conversation's so far, the same under every answer and wrapping onto two
             // lines: it shows when the line is clicked, or with everything expanded.
             let took = if d.secs < 60.0 { format!("{:.0} s", d.secs) } else { format!("{} min {:02} s", d.secs as u64 / 60, d.secs as u64 % 60) };
-            let mut first = vec![Span::styled(format!("{glyph} {word}"), st(color).add_modifier(Modifier::BOLD)), Span::styled(format!("  {took} · {}", usd(d.cost)), st(th.dim))];
+            let mut first = vec![Span::styled(format!("{glyph} {word}"), st(color).add_modifier(Modifier::BOLD)), Span::styled(format!("  {took}  {}", usd(d.run_cost)), st(th.dim))];
             if !open {
                 first.push(Span::styled("  ▸", st(th.faint)));
             }

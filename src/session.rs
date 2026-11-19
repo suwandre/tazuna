@@ -64,6 +64,10 @@ pub struct Summary {
     pub usage: Usage,
     /// The user stopped this run.
     pub stopped: bool,
+    /// This run's own cost and tokens: the totals less the previous run's. Under each answer these are what it took; the
+    /// totals were shown there until 0.1.183 ("$12.13, 4.8M tokens" under a 31 s reply, design review 6).
+    pub run_cost: f64,
+    pub run_usage: Usage,
 }
 
 /// One model call's timing: how long from its input being ready (the prompt sent, the last tool's result in) to its first
@@ -237,6 +241,17 @@ pub fn unix_now() -> u64 {
 
 /// The newest plan reading in the session recordings under `dir` (claude's rate_limit_event): (5-hour %, 7-day %, read
 /// at, when the 5-hour window resets). A window whose reset time has passed since counts from 0.
+/// A run's own share of the session's totals: `cost` and `usage` less those at the previous run's end. Totals that went
+/// down (a new conversation on the same screen) start again: the run's share is all of them.
+fn run_share(blocks: &[Block], cost: f64, usage: Usage) -> (f64, Usage) {
+    let Some((pc, pu)) = blocks.iter().rev().find_map(|b| if let Block::Done(d) = b { Some((d.cost, d.usage)) } else { None }) else { return (cost, usage) };
+    let down = cost + 1e-9 < pc || usage.input < pu.input || usage.cache_read < pu.cache_read || usage.output < pu.output || usage.cache_write < pu.cache_write;
+    if down {
+        return (cost, usage);
+    }
+    (cost - pc, Usage { input: usage.input - pu.input, cache_write: usage.cache_write - pu.cache_write, cache_read: usage.cache_read - pu.cache_read, output: usage.output - pu.output })
+}
+
 pub fn last_limits(dir: &std::path::Path) -> Option<(f64, f64, u64, Option<u64>)> {
     let mut files: Vec<std::path::PathBuf> = std::fs::read_dir(dir).ok()?.filter_map(|e| e.ok().map(|e| e.path())).collect();
     files.sort();
@@ -406,7 +421,8 @@ impl Session {
             Block::Thinking { tokens, live, exact, text } => json!({"kind": "thinking", "tokens": tokens, "live": live, "exact": exact, "text": text.chars().take(20_000).collect::<String>()}),
             Block::Tool(t) => json!({"kind": "tool", "id": t.id, "name": t.name, "input": t.input, "result": t.result.as_deref().map(|r| cut(r, 4000)),
                 "error": t.error, "secs": t.secs(), "running": t.done_ms.is_none(), "sub": t.sub.as_ref().map(|(n, last)| json!({"calls": n, "last": last}))}),
-            Block::Done(d) => json!({"kind": "done", "ok": d.ok, "secs": d.secs, "turns": d.turns, "cost": d.cost, "usage": usage(&d.usage), "stopped": d.stopped}),
+            Block::Done(d) => json!({"kind": "done", "ok": d.ok, "secs": d.secs, "turns": d.turns, "cost": d.cost, "usage": usage(&d.usage), "stopped": d.stopped,
+                "run_cost": d.run_cost, "run_usage": usage(&d.run_usage)}),
             Block::Notice { text, error } => json!({"kind": "notice", "text": text, "error": error}),
             Block::Verify(v) => json!({"kind": "verify", "cmd": v.cmd, "ok": v.ok, "secs": v.secs, "round": v.round, "no_tests": v.no_tests,
                 "timed_out": v.timed_out, "output": cut(&v.output, 4000)}),
@@ -798,7 +814,9 @@ impl Session {
                         self.push(Block::Notice { text: failure_reason(why), error: true });
                     }
                 }
-                self.push(Block::Done(Summary { ok, secs, turns, cost: self.cost(), usage: self.usage, stopped }));
+                let (cost, usage) = (self.cost(), self.usage);
+                let (run_cost, run_usage) = run_share(&self.blocks, cost, usage);
+                self.push(Block::Done(Summary { ok, secs, turns, cost, usage, stopped, run_cost, run_usage }));
                 self.activity = Activity::Done;
                 self.results += 1;
             }
@@ -1381,6 +1399,10 @@ mod tests {
         assert!(s.in_flight().is_none(), "a killed call stops its clock");
         s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.005}), 4.0); // resumed process restarts at $0
         assert!((s.cost() - 0.035).abs() < 1e-9, "{}", s.cost());
+        // under each answer its own share, not the total so far: $0.01, $0.02, $0.005 (design review 6)
+        let own: Vec<f64> = s.blocks.iter().filter_map(|b| if let Block::Done(d) = b { Some(d.run_cost) } else { None }).collect();
+        assert_eq!(own.len(), 3);
+        assert!((own[0] - 0.01).abs() < 1e-9 && (own[1] - 0.02).abs() < 1e-9 && (own[2] - 0.005).abs() < 1e-9, "{own:?}");
         // `/resume` replays: each recording's process starts again at $0; a slash command (no tokens) kept claude's
         // figure for its process alone: $55.63 on screen, then $17.98 after /mcp (2026-11-06)
         let mut r = Session::new("", "low");

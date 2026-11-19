@@ -221,7 +221,9 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
             }
             let plan = a["plan"].as_str().map_or(String::new(), |p| format!(" · {p}"));
             let status = if a["status"] == "valid" { String::new() } else { format!(" · login {}", a["status"].as_str().unwrap_or("?")) };
-            push(format!("  {} · {}{plan}{status}", a["provider"].as_str().unwrap_or("?"), a["name"].as_str().unwrap_or_default()), Plain, None);
+            let provider = a["provider"].as_str().unwrap_or("?");
+            let provider = if provider.starts_with("openai-compatible") { "OpenAI-compatible" } else { provider };
+            push(format!("  {provider} · {}{plan}{status}", a["name"].as_str().unwrap_or_default()), Plain, None);
             for w in a["windows"].as_array().into_iter().flatten() {
                 let what = [w["group"].as_str().unwrap_or_default(), w["window"].as_str().unwrap_or_default()].iter()
                     .filter(|x| !x.is_empty()).copied().collect::<Vec<_>>().join(" · ");

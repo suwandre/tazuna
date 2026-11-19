@@ -20,7 +20,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     ])
     .areas(col);
 
-    let dot = || Span::styled("  ·  ", st(th.faint));
+    let dot = || Span::raw("    ");
     let right = Line::from(vec![
         Span::styled(model_short(&s.model), st(th.dim)),
         Span::styled(format!(" {}", s.effort), st(th.faint)),
@@ -35,7 +35,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     if plan_spans(s, th).is_some() || balance_str(s).is_some() {
         let mut spans = plan_spans(s, th).map(|p| [vec![Span::styled("Claude ", st(th.dim))], p].concat()).unwrap_or_default();
         if let Some(b) = balance_str(s) {
-            spans.extend([Span::styled(if spans.is_empty() { "" } else { " · " }, st(th.faint)), Span::styled(b, st(th.dim))]);
+            spans.extend([Span::raw(if spans.is_empty() { "" } else { "    " }), Span::styled(b, st(th.dim))]);
         }
         split_row(f, under, Line::default(), Line::from(spans), None);
     }

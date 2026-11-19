@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.183 (2026-11-19): each answer's own cost
+
+From design review 6.
+
+- The line under each answer says what that answer took: "✔ Done  31 s  $0.29", where it showed the conversation's
+  total so far ("$12.13" under a 31-second reply). The app server's done blocks carry the run's own share
+  (`run_cost`, `run_usage`) beside the totals, and the desktop app shows it too.
+- The terminal's headers and status lines keep their items apart by space, not middle dots ("Claude 5h 53%  7d 95%",
+  "Opus 5.5  medium"); Cockpit's "ctx" is "context"; the first screen says what was read in words ("4150 files,
+  CLAUDE.md, hooks, 4 skills").
+- `/usage` names an OmniRoute provider whose id is a generated one "OpenAI-compatible".
+- No metric moves: drawing, wording and a figure that was the wrong one.
+
 ## 0.1.182 (2026-11-19): models by name, API runs by provider
 
 - Every model reads by its name in the terminal, by the desktop app's rule (the cases are shared): "DeepSeek V4.1 Flash
