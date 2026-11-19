@@ -41,6 +41,7 @@ const log = [];
     await step(p, `${T}-start-model-picker`, async () => { await p.getByTitle("Model and effort").click(); });
     await step(p, `${T}-start-model-search`, async () => { await p.keyboard.type("mis"); }); await esc(p);
     await step(p, `${T}-start-focus`, async () => { await p.locator("body").click({ position: { x: 700, y: 700 } }); for (let i = 0; i < 6; i++) await p.keyboard.press("Tab"); });
+    await step(p, `${T}-usage-refresh`, async () => { await p.getByRole("button", { name: "Refresh usage" }).click(); await p.waitForTimeout(100); await p.getByRole("button", { name: "Refresh usage" }).hover(); await p.waitForTimeout(800); });
     await step(p, `${T}-sidebar-hover`, async () => { await side(p).locator('a[title="Names for a grey cat"]').hover(); });
     await step(p, `${T}-thread-busy`, async () => { await open(p, "Fix the flaky retry test"); });
     await step(p, `${T}-workfold-open`, async () => { await p.getByText(/^Worked \d+ s/).first().click(); });

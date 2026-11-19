@@ -508,15 +508,22 @@ export default function App() {
   // the plan's windows are the account's: the newest reading of any open conversation, not the one on screen (a resumed
   // conversation showed its own days-old reading, design review 5)
   const planView = threads.map((t) => t.view).filter((v) => v?.limits).sort((a, b) => (b!.limits_at ?? 0) - (a!.limits_at ?? 0))[0];
-  // every account's reading for the status bar: at the start, every 15 minutes, and whenever the usage page asks
-  // ponytail: a fixed 15 minutes (claude's /usage takes seconds, no model call); on demand only if it ever costs
+  // every account's reading for the status bar: at the start, every 15 minutes, whenever the usage page asks, and from
+  // the bar's refresh button (claude's /usage takes seconds, no model call)
   const [accounts, setAccounts] = useState<Accounts | null>(null);
-  useEffect(() => { const off = core.onAccounts(setAccounts); return () => { off.then((f) => f()); }; }, []);
+  // when the reading came, and whether one is on its way (it gives up waiting after 45 s: the core may not answer)
+  const [acct, setAcct] = useState<{ at?: number; busy: boolean }>({ busy: false });
+  useEffect(() => { const off = core.onAccounts((a) => { setAccounts(a); setAcct({ at: Date.now(), busy: false }); }); return () => { off.then((f) => f()); }; }, []);
+  const readAccounts = () => {
+    setAcct((a) => ({ ...a, busy: true }));
+    core.accounts().catch(() => {});
+    setTimeout(() => setAcct((a) => (a.busy ? { ...a, busy: false } : a)), 45_000);
+  };
   const haveView = !!view;
   useEffect(() => {
     if (!inTauri || !haveView) return;
-    core.accounts().catch(() => {});
-    const t = setInterval(() => core.accounts().catch(() => {}), 15 * 60_000);
+    readAccounts();
+    const t = setInterval(readAccounts, 15 * 60_000);
     return () => clearInterval(t);
   }, [haveView]);
   const usage = { ...(view ? viewUsage(view) : inTauri ? NO_USAGE : demo.usage),
@@ -747,7 +754,8 @@ export default function App() {
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
-    <StatusBar usage={usage} version={appVersion} idle={fresh || failed} accounts={accts} here={hereAccts} />
+    <StatusBar usage={usage} version={appVersion} idle={fresh || failed} accounts={accts} here={hereAccts}
+      onRefresh={inTauri && haveView ? readAccounts : undefined} refreshing={acct.busy} readAt={acct.at} />
     </div>
   );
 }

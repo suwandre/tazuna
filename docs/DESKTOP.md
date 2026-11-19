@@ -307,8 +307,19 @@ window; before and after of each change side by side, as review 4's):
 - Not done from the review: the model picker's rows that need a key (one repeated sentence), the status bar changing
   shape between screens, days and pins in the sidebar, shorter copy on the usage page, the best-of dialog's raw ids,
   math, pasting an image, the app icon.
-- Not seen in the real window: the zoom, the thumbnail of a real file, tooltips and exits in WebKit. The sweep
-  (review/sweep.cjs, now with the message box's menus, chips, a picture and Settings' parts) ran in Chromium on test data.
+- The sweep (review/sweep.cjs, now with the message box's menus, chips, a picture and Settings' parts) ran in Chromium
+  and, after the release, in WebKit (Playwright's, `chromium` swapped for `webkit`): 84 steps each, no page error. Then
+  in the real window: the shell in dev mode with a script in the page that drives it and reports through `ui_log`
+  (the zoom at 1.25 measured on the window's width, a dropped image's chip and thumbnail through `image_data`, which
+  refuses a file that is no image, the tooltip, the `/` menu on the real core, a closed menu's and dialog's fading
+  copy, the panel's column mid-slide), with the window captured at each step. Not seen there: a picture under an
+  answer (the same `image_data` and `<img>`), the `@` menu (seen on the real core in a browser).
+
+0.1.88 (the user, with MonoCode's bar as the example): a refresh button at the
+end of the status bar's account reading (two arrows; the single one marks a reset). It reads every account again
+(claude's own /usage, a few seconds, no model call), turns while it does, and says on hover when the reading on screen
+came ("read 4 min ago"). The reading came only at the start and every 15 minutes: a stored one from an hour before
+said "week 99%" where the live one said 72%. Seen in the real window against the real accounts (5.7 s).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

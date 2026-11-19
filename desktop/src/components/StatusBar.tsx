@@ -1,4 +1,4 @@
-import { ArrowUpCircle, Check, LoaderCircle, RotateCw, TriangleAlert } from "lucide-react";
+import { ArrowUpCircle, Check, LoaderCircle, RefreshCw, RotateCw, TriangleAlert } from "lucide-react";
 import { openUsage } from "./Rail";
 import { usd, type Usage } from "../lib/types";
 import { useEffect, useState } from "react";
@@ -90,7 +90,12 @@ function Version({ version }: { version: string }) {
   );
 }
 
-export function StatusBar({ usage: u, version, idle, accounts = [], here = [] }: { usage: Usage; version: string;
+/** "just now", "4 min ago", "2 h ago". */
+const ago = (at: number) => { const m = Math.floor((Date.now() - at) / 60_000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.floor(m / 60)} h ago`; };
+
+export function StatusBar({ usage: u, version, idle, accounts = [], here = [], onRefresh, refreshing, readAt }: { usage: Usage; version: string;
+  /** reads every account again (a few seconds, no model call), while `refreshing`; `readAt`: when the reading on screen came */
+  onRefresh?: () => void; refreshing?: boolean; readAt?: number;
   /** no conversation on screen (a new one, before its first message): its context and cache are not shown as 0% */
   idle?: boolean;
   /** every account (lib/health.ts) and the conversation's own among them */
@@ -111,6 +116,16 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [] }:
         </button>
         <Card all={accounts} here={here} />
       </span>
+      {/* the reading again, now: it came at the start and every 15 minutes, and a plan moves faster than that while you
+          work (the user, 2026-11-20: "it might change along the way", as MonoCode's bar has it). Two arrows, not the one
+          that marks a reset. */}
+      {onRefresh && (
+        <button onClick={() => !refreshing && onRefresh()} aria-disabled={refreshing} aria-label="Refresh usage"
+          title={refreshing ? "Reading your accounts…" : `Refresh usage${readAt ? ` (read ${ago(readAt)})` : ""}`}
+          className="-ml-2.5 grid size-5 flex-none place-items-center rounded text-faint hover:bg-hover hover:text-ink">
+          <RefreshCw size={11} strokeWidth={2} className={refreshing ? "animate-spin" : ""} aria-hidden="true" />
+        </button>
+      )}
       {/* the badge says what it means and what to do, on its own hover (it opened the account card too, the user). Not a
           button: the account beside it opens the usage page. Several accounts: the most urgent by name, the rest counted
           ("OpenRouter $0.17 over +2"), each in the hover; one badge, not one each, and not "3 accounts need you" */}
