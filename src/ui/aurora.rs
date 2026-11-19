@@ -25,7 +25,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     split_row(f, header, left, Line::from(vec![Span::styled("aurora · ", st(th.faint)), Span::styled(format!("{dir} "), st(th.dim))]), None);
 
     let area = body.inner(Margin { horizontal: 2, vertical: 0 });
-    let (last_block, trows, top_line) = render_transcript(f, area, transcript(s, v, th, &OPTS, area.width as usize), v.scroll);
+    // lines wrap at 120 columns at most: at 200 a line of prose ran to 190 characters (design review 5)
+    let (last_block, trows, top_line) = render_transcript(f, area, transcript(s, v, th, &OPTS, (area.width as usize).min(120)), v.scroll);
 
     let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.border));
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(4));

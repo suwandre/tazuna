@@ -413,7 +413,7 @@ impl Session {
         }).collect();
         json!({"type": "view", "blocks": blocks, "model": self.model, "effort": self.effort, "cwd": self.cwd, "profile": self.profile,
             "mode": self.mode, "activity": format!("{:?}", self.activity), "cost": self.cost(), "usage": usage(&self.usage), "turns": self.turns,
-            "context": self.context, "context_window": self.context_window, "limits": self.limits, "limits_reset": self.limits_reset, "balance": self.balance,
+            "context": self.context, "context_window": self.context_window, "limits": self.limits, "limits_at": self.limits_at, "limits_reset": self.limits_reset, "balance": self.balance,
             "calls": self.calls_view()})
     }
 

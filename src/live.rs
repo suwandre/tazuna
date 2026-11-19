@@ -836,10 +836,10 @@ impl Live {
         // an id that ends in its level (OmniRoute's agy/gemini-4-argon-high) is said without it: "… argon at high"
         let shown = model.strip_suffix(&format!("-{effort}")).unwrap_or(&model).to_string();
         let text = if goes_on {
-            format!("model: {shown} at {effort} for the rest of the session (the conversation goes on; its cache is rebuilt once)")
+            format!("model: {} · {effort} from here on (the conversation goes on; its cache is rebuilt once)", crate::ui::model_short(&shown))
         } else {
             self.session_id = None;
-            format!("model: {shown} at {effort}: a new conversation (only claude can carry one over to another model)")
+            format!("model: {} · {effort}: a new conversation (only claude can carry one over to another model)", crate::ui::model_short(&shown))
         };
         Ok(self.record(json!({"type": "harness_switch", "model": model, "effort": effort, "text": text})))
     }

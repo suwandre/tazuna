@@ -1239,7 +1239,39 @@ pub fn tool_arg<'a>(t: &'a Tool, key: &str) -> &'a str {
 pub fn model_short(m: &str) -> String {
     // OmniRoute's ids carry their level (agy/gemini-4-argon-high), which the effort beside the name already says
     let m = if m.contains('/') { crate::models::tier_of(m).map_or(m, |(base, _)| base) } else { m };
-    if m.is_empty() { "connecting…".into() } else { m.strip_prefix("claude-").unwrap_or(m).to_string() }
+    if m.is_empty() {
+        return "connecting…".into();
+    }
+    // Claude's as people say them, as the desktop app does: "claude-opus-5-5" is "Opus 5.5" (design review 5)
+    let m = m.strip_prefix("claude-").unwrap_or(m);
+    if let Some((fam, ver)) = m.split_once('-') && ["opus", "sonnet", "haiku", "fable"].contains(&fam) {
+        let v: Vec<&str> = ver.split('-').take_while(|p| p.len() <= 2 && p.chars().all(|c| c.is_ascii_digit())).take(2).collect();
+        if !v.is_empty() {
+            return format!("{}{} {}", fam[..1].to_uppercase(), &fam[1..], v.join("."));
+        }
+    }
+    m.to_string()
+}
+
+/// A model switch said as 0.1.181 says it, for recordings made before: "model: claude-fable-5-2 at high for the rest of
+/// the session (…)" is "model: Fable 5.2 · high from here on (…)".
+pub fn model_notice(text: &str) -> Option<String> {
+    let rest = text.strip_prefix("model: ")?;
+    let (model, after) = rest.split_once(" at ")?;
+    let (effort, tail) = after.split_once(" for the rest of the session").or_else(|| after.split_once(": "))?;
+    let tail = tail.trim_start_matches(':').trim();
+    Some(format!("model: {} · {effort}{}{}", model_short(model), if after.contains(" for the rest of the session") { " from here on" } else { ":" },
+        if tail.is_empty() { String::new() } else { format!(" {tail}") }))
+}
+
+/// The lane's notice at a session's start, said plainly: "lane default: opus-5-5 medium · repo profile (…)" is "started
+/// on Opus 5.5 · medium · repo profile (…)" (it read as a debug line at the top of every recording, design review 5).
+pub fn lane_notice(text: &str) -> Option<String> {
+    let rest = text.strip_prefix("lane ")?.split_once(": ")?.1;
+    let (model_effort, profile) = rest.split_once(" · ").unwrap_or((rest, ""));
+    let (model, effort) = model_effort.rsplit_once(' ').unwrap_or((model_effort, ""));
+    Some(format!("started on {}{}{}", model_short(model), if effort.is_empty() { String::new() } else { format!(" · {effort}") },
+        if profile.is_empty() { String::new() } else { format!(" · {profile}") }))
 }
 
 /// Files the agent touched, most recent first: tool paths plus file-looking words in shell commands.
@@ -1555,7 +1587,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
         // a long notice (a provider's error) shows its start until clicked, then all of it
         // a provider's error reads as its message ("provider error: [404] … not found"), the raw reply on a click
         Block::Notice { text, error } => {
-            let shown = if open { text.clone() } else { readable_notice(text).unwrap_or_else(|| text.clone()) };
+            let shown = if open { text.clone() } else { readable_notice(text).or_else(|| lane_notice(text)).or_else(|| model_notice(text)).unwrap_or_else(|| text.clone()) };
             vec![(
                 Line::from(vec![
                     Span::styled(if *error { "! " } else { "· " }, st(if *error { th.err } else { th.warn })),
@@ -1681,7 +1713,9 @@ fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, open: bool, width: u
     match o.prompt {
         PromptStyle::Bar => {
             let bar = || Span::styled("▎ ", st(th.accent));
-            let label = if first { "task" } else { "you" };
+            // every message of yours is "you" (the first was "task", design review 5)
+            let _ = first;
+            let label = "you";
             out.push((Line::from(vec![bar(), Span::styled(label, st(th.accent).add_modifier(Modifier::BOLD))]), vec![bar()]));
             for (mut l, mut cont) in md.into_iter().take(keep) {
                 l.spans.insert(0, bar());
@@ -1777,7 +1811,18 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
                 (format!("{mark} {}", x["content"].as_str().unwrap_or_default()), c)
             })
             .collect(),
-        _ if open => t.result.as_deref().unwrap_or_default().lines().map(|l| (l.to_string(), if t.error { th.err } else { th.dim })).collect(),
+        // a JSON reply laid out, and a line past three screen widths cut: one 4,000-character line of a gh query filled
+        // the screen as a wall (design review 5)
+        _ if open => {
+            let raw = t.result.as_deref().unwrap_or_default();
+            let pretty = raw.trim_start().starts_with(['{', '[']).then(|| serde_json::from_str::<serde_json::Value>(raw).ok()).flatten()
+                .and_then(|j| serde_json::to_string_pretty(&j).ok());
+            let room = width.max(40) * 3;
+            pretty.as_deref().unwrap_or(raw).lines().map(|l| {
+                let l = if l.chars().count() > room { format!("{}…", l.chars().take(room).collect::<String>()) } else { l.to_string() };
+                (l, if t.error { th.err } else { th.dim })
+            }).collect()
+        }
         _ => vec![],
     };
     // a click opens one call whole; ctrl-o opens all, each up to a screenful
@@ -2377,6 +2422,15 @@ pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'st
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn models_and_the_lane_read_as_words() {
+        assert_eq!([super::model_short("claude-opus-5-5"), super::model_short("fable-5-2"), super::model_short("claude-haiku-4-5-20251001"), super::model_short("gpt-6.2-sol")],
+            ["Opus 5.5", "Fable 5.2", "Haiku 4.5", "gpt-6.2-sol"].map(String::from));
+        assert_eq!(super::model_notice("model: claude-fable-5-2 at high for the rest of the session (the conversation goes on; its cache is rebuilt once)").as_deref(),
+            Some("model: Fable 5.2 · high from here on (the conversation goes on; its cache is rebuilt once)"));
+        assert_eq!(super::lane_notice("lane default: opus-5-5 medium · repo profile (4150 tracked files)").as_deref(), Some("started on Opus 5.5 · medium · repo profile (4150 tracked files)"));
+    }
+
     #[test]
     fn readable_notice_takes_the_message() {
         let raw = r#"provider · provider error in stream: {"message":"[404]: Antigravity upstream error (404): Requested entity was not found.","type":"invalid_request_error","code"#;

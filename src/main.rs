@@ -2706,6 +2706,11 @@ fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earl
         }
         s.model = live.model.clone();
     }
+    // the plan's windows as last read anywhere: the replay above applied the conversation's own last reading as if it came
+    // now, so an old conversation showed its days-old 5 hours and week as current (design review 5)
+    if let Some((h5, d7, at, reset)) = labels::dir().ok().and_then(|d| session::last_limits(&d.join("sessions"))) {
+        (s.limits, s.limits_at, s.limits_reset) = (Some((h5, d7)), Some(at), reset);
+    }
     s.apply(&notice, t);
     Ok(())
 }

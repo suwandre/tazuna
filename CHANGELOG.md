@@ -16,6 +16,21 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.181 (2026-11-19): real recordings read better
+
+From design review 5, run on real recordings and a real core (read-only) as well as test data.
+
+- An expanded tool result that is JSON is laid out (it was one line of thousands of characters, a wall of text), and a
+  line past three screen widths is cut with "…"; the rest stays "+N lines".
+- Claude's models read as names everywhere the terminal shows one: "Opus 5.5", "Fable 5.2" (were "opus-5-5").
+- The session's first notices say what they mean: "started on Opus 5.5 · medium · repo profile (…)" for "lane default:
+  opus-5-5 medium · …", and a model switch reads "model: Fable 5.2 · high from here on (…)". Older recordings show the same.
+- Every message of yours is labelled "you" (the first was "task").
+- Aurora wraps its transcript at 120 columns: at 200 a line of prose ran to 190 characters.
+- A resumed conversation shows the plan's windows as last read anywhere, not its own last reading as if it came now
+  (an old conversation showed a days-old 5 hours and week as current). The app server's view carries `limits_at`.
+- No metric moves: drawing, wording and the plan reading.
+
 ## 0.1.180 (2026-11-19): the terminal's first screen, narrow windows, overlays
 
 From design review 4, which went through every screen and overlay of both apps (before and after renders compared).
