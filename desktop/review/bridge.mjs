@@ -39,7 +39,7 @@ async function invoke(cmd, a) {
   if (cmd === "stop") { stop(a.tid); return null; }
   if (["send", "interrupt", "trust", "new_chat", "set_profile", "update_install", "plugins_enable", "widgets_new", "widgets_remove", "plugins_import"].includes(cmd)) { log.push(`refused ${cmd}`); throw `refused in review: ${cmd}`; }
   if (cmd === "plugin:app|version") return "review";
-  if (cmd === "widgets_list") return [];
+  if (cmd === "widgets_list" || cmd === "pick_files") return [];  // as the app's: a cancelled picker is an empty list
   if (cmd === "update_check") return null;
   return null;
 }

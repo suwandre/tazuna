@@ -1,4 +1,4 @@
-import { TriangleAlert } from "lucide-react";
+import { RotateCw, TriangleAlert } from "lucide-react";
 import { openUsage } from "./Rail";
 import { usd, type Usage } from "../lib/types";
 import { useEffect, useState } from "react";
@@ -22,13 +22,14 @@ const ink: Record<Level, string> = { ok: "text-ink", low: "text-warn", out: "tex
 function Here({ here }: { here: Item[] }) {
   const b = "font-medium text-ink-2";
   if (!here.length) return <>Usage</>;
-  // one reset: the window closest to stopping you when one runs low, else the soonest ("resets in 2 h 14 min")
-  const timed = here.filter((i) => i.resetsAt != null);
-  const key = timed.some((i) => i.level !== "ok") ? [...timed].sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0))[0] : [...timed].sort((a, b) => a.resetsAt! - b.resetsAt!)[0];
-  const reset = key && <span className="text-faint" title={exactly(key.resetsAt)}>resets {whenReset(key.resetsAt)}</span>;
-  if (here[0].provider === "Claude") return <>Claude plan{here.map((i) => <span key={i.key} className="flex items-center gap-1.5"><Meter pct={i.pct ?? 0} /><span className={b}>{i.value}</span>{i.name.replace(/^Claude plan, /, "").replace("5 hours", "5 h")}</span>)}{reset}</>;
+  // each window with its own reset after a small ↻ ("5 h ↻ 3 h 34 min", "week ↻ Sat 3am"); the words and the exact time
+  // on hover. Until desktop 0.1.83 one reset for the bar, so the 5 hours' was missing beside a full week (the user)
+  const reset = (i: Item) => i.resetsAt != null && (
+    <span className="flex items-center gap-1 text-faint" title={`Resets ${whenReset(i.resetsAt)}: ${exactly(i.resetsAt)}`}>
+      <RotateCw size={10} strokeWidth={2} aria-hidden="true" /><span className="sr-only">resets</span>{whenReset(i.resetsAt)!.replace(/^in /, "")}</span>);
+  if (here[0].provider === "Claude") return <>Claude plan{here.map((i) => <span key={i.key} className="flex items-center gap-1.5"><Meter pct={i.pct ?? 0} /><span className={b}>{i.value}</span>{i.name.replace(/^Claude plan, /, "").replace("5 hours", "5 h")}{reset(i)}</span>)}</>;
   const i = here[0];
-  if (i.pct != null) return <>{i.name.split(",")[0]}<Meter pct={i.pct} /><span className={b}>{i.value}</span>{i.name.split(", ")[1]}{reset}</>;
+  if (i.pct != null) return <>{i.name.split(",")[0]}<Meter pct={i.pct} /><span className={b}>{i.value}</span>{i.name.split(", ")[1]}{reset(i)}</>;
   return <>{i.name} {i.value ? <span className={b}>{i.value.replace(/ (left|over)$/, "")}</span> : <span className="text-faint">balance not reported</span>}{i.value && <span className="text-faint">{i.value.match(/ (left|over)$/)?.[1]}</span>}</>;
 }
 
@@ -71,13 +72,23 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [] }:
         <button onClick={openUsage} aria-describedby="usage-card" className={button}>
           <span className={`size-1.5 rounded-full ${tone[here.length && here.every((i) => i.level === "unknown") ? "unknown" : worst(here)]}`} aria-hidden="true" /><Here here={here} />
         </button>
-        {others.length > 0 && (
-          <button onClick={openUsage} aria-describedby="usage-card" className={`flex flex-none items-center gap-1.5 rounded-full border px-2 leading-[18px] ${worst(others) === "out" ? "border-bad/45 text-bad" : "border-warn/45 text-warn"} hover:bg-hover`}>
-            <TriangleAlert size={12} strokeWidth={1.75} />{others.length === 1 ? others[0].short : `${others.length} accounts need you`}
-          </button>
-        )}
         <Card all={accounts} here={here} />
       </span>
+      {/* the badge says what it means and what to do, on its own hover (it opened the account card too, the user) */}
+      {others.length > 0 && (
+        <span className="group/adv relative flex flex-none">
+          <button onClick={openUsage} aria-describedby="usage-advice" className={`flex flex-none items-center gap-1.5 rounded-full border px-2 leading-[18px] ${worst(others) === "out" ? "border-bad/45 text-bad" : "border-warn/45 text-warn"} hover:bg-hover`}>
+            <TriangleAlert size={12} strokeWidth={1.75} />{others.length === 1 ? others[0].short : `${others.length} accounts need you`}
+          </button>
+          <span className="invisible absolute bottom-full left-0 z-30 pb-2 opacity-0 transition-opacity duration-150 group-hover/adv:visible group-hover/adv:opacity-100 group-focus-within/adv:visible group-focus-within/adv:opacity-100">
+            <span id="usage-advice" role="tooltip" className="block w-[320px] whitespace-normal rounded-xl border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-2 shadow-composer">
+              {others.map((o) => <span key={o.key} className="mb-1.5 flex items-start gap-2 last:mb-0">
+                <span className={`mt-[7px] size-1.5 flex-none rounded-full ${tone[o.level]}`} aria-hidden="true" />{o.advice ?? o.short}</span>)}
+              <span className="mt-2 block border-t border-line-soft pt-1.5 text-[11.5px] text-faint">Click for usage and spending</span>
+            </span>
+          </span>
+        </span>
+      )}
       <span className="flex-1" />
       {!idle && <span className={`${item} max-[900px]:hidden`} title="This conversation's context">context <span className={b}>{u.contextPct}%</span> of {u.contextMax}</span>}
       {!idle && <span className={`${item} max-[1100px]:hidden`} title="Input read from the cache in this conversation">cache <span className={b}>{u.cachedPct}%</span></span>}

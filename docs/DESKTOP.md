@@ -265,6 +265,12 @@ provider". Under each window the account and plan were cut to "…" in 200 px, w
 review's in-page check (review/audit.cjs) now also flags text cut to "…" that nothing lets you read whole; on real data
 it found only the start page's recent titles besides, which now have it on hover.
 
+0.1.83 (the user): every window in the status bar with its own reset after a small ↻ ("5% 5 h ↻ 3 h 30 min ▬ 96% week ↻
+Sat 2:59am"; the words and the exact time on hover), where one reset stood for the bar and the 5 hours' was missing. The
+badge for another account has its own hover, what it means and what to do ("Your OpenRouter credit is $0.17 past zero.
+Add credit, or runs on OpenRouter will fail."; a Claude window from 90%: "Once it is full Claude stops, or bills extra
+usage if you turned that on. It resets on Sat 3am."); it opened the account card, the same as the plan beside it.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
