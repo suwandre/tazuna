@@ -2,7 +2,7 @@
 // models, accounts and settings, with the in-page checks on each screen. Read-only: the bridge refuses anything that
 // sends or changes. Screens and report.json go to the out dir.
 //   node review/bridge.mjs & npm run dev
-//   [BRIDGE=http://127.0.0.1:4721] node review/real.cjs http://localhost:1420 /tmp/tazuna-real "/path/to/project" ["/another"]
+//   BRIDGE_TOKEN=<the bridge's token> [BRIDGE=http://127.0.0.1:4721] node review/real.cjs http://localhost:1420 /tmp/tazuna-real "/path/to/project" ["/another"]
 const { chromium } = require(process.env.PW || "playwright");
 const fs = require("fs"), path = require("path");
 const audit = require("./audit.cjs");
@@ -12,6 +12,7 @@ fs.mkdirSync(OUT, { recursive: true });
   const b = await chromium.launch(), report = {};
   const ctx = await b.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
   if (process.env.BRIDGE) await ctx.addInitScript(`window.TAZUNA_BRIDGE = ${JSON.stringify(process.env.BRIDGE)};`);
+  await ctx.addInitScript(`window.TAZUNA_BRIDGE_TOKEN = ${JSON.stringify(process.env.BRIDGE_TOKEN || "")};`);
   await ctx.addInitScript(fs.readFileSync(path.join(__dirname, "real.js"), "utf8"));
   await ctx.addInitScript(`localStorage.setItem("tazuna.projects", ${JSON.stringify(JSON.stringify(PROJECTS))});`);
   const p = await ctx.newPage(), errs = [];
