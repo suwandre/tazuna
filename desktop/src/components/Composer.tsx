@@ -212,10 +212,18 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
   const current = c.models?.choices.find((m) => m.current);
   // above the whole box: from the pill it covered the box's own text (review 1)
   const at = useRef<HTMLSpanElement>(null);
-  const [lift, setLift] = useState(0);
+  // above the box where it fits, else below it: on the start page the box sits high and the picker was cut off at the
+  // top (desktop 0.1.72); its height is what the scrolling page around it has room for
+  const [place, setPlace] = useState({ lift: 0, down: false, max: 420 });
   const toggle = () => {
     const card = at.current?.closest("[data-composer]");
-    setLift(card && at.current ? Math.max(0, at.current.getBoundingClientRect().top - card.getBoundingClientRect().top) : 0);
+    if (card && at.current) {
+      let clip: Element | null = card.parentElement;
+      while (clip && clip !== document.body && !/auto|scroll|hidden/.test(getComputedStyle(clip).overflowY)) clip = clip.parentElement;
+      const pill = at.current.getBoundingClientRect(), box = card.getBoundingClientRect(), view = (clip ?? document.body).getBoundingClientRect();
+      const above = box.top - view.top - 12, below = view.bottom - box.bottom - 12, down = above < 320 && below > above;
+      setPlace({ lift: Math.max(0, down ? box.bottom - pill.bottom : pill.top - box.top), down, max: Math.max(160, Math.min(420, down ? below : above)) });
+    }
     c.onModels?.(); setOpen(!open);
   };
   return (
@@ -226,7 +234,7 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
         <ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
       </button>
       {open && <ModelPicker models={c.models ?? null} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }}
-        efforts={current?.efforts ?? []} effort={c.session.effort} onEffort={c.onPickEffort} lift={lift} />}
+        efforts={current?.efforts ?? []} effort={c.session.effort} onEffort={c.onPickEffort} {...place} />}
     </span>
   );
 }

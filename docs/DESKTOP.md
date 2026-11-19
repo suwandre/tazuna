@@ -175,6 +175,9 @@ one period at a time (24 hours, 7 days), each cause with its share as a bar and 
 as a chip, the top skills, subagents and MCP servers as tags. The 7/30/90 days choice moved from the page's header to
 Spending, the section it changes (with "How your runs went"): in the header it read as changing "Right now" too.
 
+0.1.73: the model picker opens below the message box where there is no room above it (the start page, whose box sits
+high, cut it off at the top), and its height is what the page has room for.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
