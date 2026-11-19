@@ -159,7 +159,8 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
         onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
       {projects.length > 0 && <div className={groupHead}>Projects</div>}
       {projects.map((p) => {
-        const key = p.path ?? p.name, shown = fold[key] ?? false;
+        // the open project shows its conversations unless folded by hand
+        const key = p.path ?? p.name, shown = fold[key] ?? p.open;
         return (
         <div key={key}>
           <div className={`flex items-center rounded-md text-ink-2 ${p.path && p.path === active ? "bg-selected text-ink" : ""}`}>

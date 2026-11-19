@@ -183,7 +183,9 @@ function useCore() {
     const dirs = [home, ...projects].filter((d): d is string => !!d);
     if (inTauri && dirs.length) core.sessions(dirs).catch(() => {});
   };
-  useEffect(() => { if (view) refreshSessions(); }, [turns, folder, home, projects.length]);
+  // also once the conversation on screen has its view: one opened before its core answered (a project picked right after
+  // launch) skipped the fetch, and the sidebar and start page stayed empty until another switch (desktop 0.1.76)
+  useEffect(() => { if (view) refreshSessions(); }, [turns, folder, home, projects.length, active, !!view]);
   const list = Object.values(threads).filter((t) => !t.side).sort((a, b) => b.used - a.used);
   const side = Object.values(threads).find((t) => t.side === active);
   /** The thread on screen started again in its folder (after trusting the folder: its settings load at start). */
@@ -548,7 +550,8 @@ export default function App() {
   // a new conversation before its first message: the start screen, with the composer in its middle (design review 2,
   // prototype mockups/v3.html)
   const fresh = inTauri && !!view && !busy && !view.asking && !editing && !view.blocks.some((b) => b.kind === "prompt");
-  const startRecent: StartItem[] = Object.entries(sessions).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)",
+  // in a project, its own conversations; in a chat, everything by when it last ran
+  const startRecent: StartItem[] = Object.entries(sessions).filter(([dir]) => !folder || dir === folder).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)",
     place: dir === home ? "chat" : base(dir), dir: dir === home ? null : dir, at: r.last_at }))).sort((a, b) => b.at - a.at).slice(0, 3);
   const where = { label: folder ? base(folder) : "Chat", folder: !!folder, pickFolder: pick,
     choices: [{ label: "Chat", hint: "no folder: a general question", path: null as string | null }, ...projects.slice(0, 6).map((p) => ({ label: base(p), hint: p, path: p as string | null }))],

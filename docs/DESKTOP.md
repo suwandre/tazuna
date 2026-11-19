@@ -202,6 +202,10 @@ a strip of the window's background beside it); the start page sits in the middle
 from the top left a tall window empty in its lower half); a lone "Start in a project" card spans the width. The sweep
 has this new user's window now.
 
+0.1.76: the conversation lists load once the conversation on screen has its view. A project opened before its core had
+answered (right after launch) skipped the fetch, so the sidebar and the start page stayed empty until a switch to a chat.
+In a project the start page offers that project's own recent conversations, and the open project's list is unfolded.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

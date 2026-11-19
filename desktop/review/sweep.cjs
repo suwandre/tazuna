@@ -79,6 +79,15 @@ const log = [];
     await step(p, "new-user-tall", async () => {});
     log.push(`new-user sidebar ${await p.evaluate(() => Math.round(document.querySelector("aside[aria-label=Conversations]").getBoundingClientRect().width))} px (248 wanted)`);
     await ctx.close(); }
+  // a core that answers late, and a project opened before it did: the lists were never fetched (desktop 0.1.76)
+  { const slow = `(() => { const go = () => { const T = window.__TAURI_INTERNALS__; if (!T) return setTimeout(go, 0); const v = T.view.bind(T); T.view = (tid, m) => setTimeout(() => v(tid, m), 700); }; go(); })();`;
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: "dark", userAgent: "Mozilla/5.0 (X11; Linux x86_64) Chrome/140" });
+    await ctx.addInitScript(MOCK); await ctx.addInitScript(slow);
+    const p = await ctx.newPage();
+    await p.goto(BASE); await p.evaluate(() => localStorage.setItem("tazuna.setup", "1")); await p.reload(); await p.waitForTimeout(150);
+    await step(p, "project-opened-early", async () => { await side(p).locator('button[title="/Users/x/api-gateway"]').click(); await p.waitForTimeout(2500); });
+    log.push(`project opened early: ${await side(p).locator("a").count()} conversations in the sidebar (some wanted)`);
+    await ctx.close(); }
   { const [ctx, p] = await ctxOf({ setup: false }); await step(p, "first-run-setup", async () => { await p.waitForTimeout(600); }); await ctx.close(); }
   fs.writeFileSync(`${OUT}/log.txt`, log.join("\n"));
   console.log(log.filter((l) => !l.startsWith("ok")).join("\n") || "every step ok", `· ${log.length} steps in ${OUT}`);
