@@ -1596,6 +1596,8 @@ impl Live {
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
             "claude_version": self.claude_version, "cwd": self.cwd, "session_id": self.session_id, "recording": self.rec_path,
             "host": host(),
+            // which API the own loop ran on (none on claude): the usage page names it
+            "provider": self.provider.as_ref().map(|(u, _)| crate::models::provider_name(u)),
         })
     }
 

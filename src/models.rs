@@ -175,17 +175,30 @@ pub fn provider_of(c: &Choice) -> String {
     if on_omniroute(c) {
         return "OmniRoute".into();
     }
-    match c.route.as_ref().map(|r| host_of(&r.0)) {
+    match c.route.as_ref() {
         None => "Claude".into(),
-        Some("subrouter.ai") => "SubRouter".into(),
-        Some("mortera.cloud") => "Mortera".into(),
-        Some("openrouter.ai") => "OpenRouter".into(),
-        Some("kenari.id") => "Kenari".into(),
-        Some("api.mistral.ai") => "Mistral".into(),
-        Some("api.cheaperinference.com") => "Cheaper Inference".into(),
         // a machine of the user's (an address, not a name): the route's own name for it ("qwen3.8-flash-next@pc": pc)
-        Some(h) if h == "localhost" || h.parse::<std::net::IpAddr>().is_ok() => c.label.rsplit_once(" · ").map_or(h.to_string(), |(_, n)| n.to_string()),
-        Some(h) => h.to_string(),
+        Some(r) if matches!(host_of(&r.0), "localhost") || host_of(&r.0).parse::<std::net::IpAddr>().is_ok() => {
+            c.label.rsplit_once(" · ").map_or(host_of(&r.0).to_string(), |(_, n)| n.to_string())
+        }
+        Some(r) => provider_name(&r.0),
+    }
+}
+
+/// A provider by its API's address: "SubRouter" for https://subrouter.ai/v1 (the run log records it since 0.1.182, so the
+/// usage page can say where an API run ran).
+pub fn provider_name(url: &str) -> String {
+    if url == OMNIROUTE {
+        return "OmniRoute".into();
+    }
+    match host_of(url) {
+        "subrouter.ai" => "SubRouter".into(),
+        "mortera.cloud" => "Mortera".into(),
+        "openrouter.ai" => "OpenRouter".into(),
+        "kenari.id" => "Kenari".into(),
+        "api.mistral.ai" => "Mistral".into(),
+        "api.cheaperinference.com" => "Cheaper Inference".into(),
+        h => h.to_string(),
     }
 }
 

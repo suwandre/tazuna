@@ -2566,7 +2566,7 @@ fn usage_rows(log: &str, since: u64, labels: &str, recordings: bool) -> Vec<serd
         let real = m["mode"] == "live" && !realuse::skipped_folder(m["cwd"].as_str().unwrap_or_default()) && !realuse::probe(prompt) && !nothing
             && !prompt.starts_with("(claude continued") && !(prompt.starts_with('/') && prompt.split_whitespace().count() <= 2);
         json!([r["ts"], m["model"], m["version"], plan, r["cost_usd"], t["input"], t["cache_write"], t["cache_read"],
-            t["output"], r["stop"], r["verify"]["status"], m["cache_ttl"], m["mode"], real, strong, soft])
+            t["output"], r["stop"], r["verify"]["status"], m["cache_ttl"], m["mode"], real, strong, soft, m["provider"]])
     }).collect()
 }
 

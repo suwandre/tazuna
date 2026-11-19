@@ -1242,15 +1242,63 @@ pub fn model_short(m: &str) -> String {
     if m.is_empty() {
         return "connecting…".into();
     }
-    // Claude's as people say them, as the desktop app does: "claude-opus-5-5" is "Opus 5.5" (design review 5)
-    let m = m.strip_prefix("claude-").unwrap_or(m);
-    if let Some((fam, ver)) = m.split_once('-') && ["opus", "sonnet", "haiku", "fable"].contains(&fam) {
+    pretty_model(m)
+}
+
+/// A model's name as people say it, from its id, by the desktop app's rule (desktop/src/lib/types.ts modelLabel, whose
+/// MODEL_NAMES are the cases of both): "claude-opus-5-5" is "Opus 5.5", "deepseek-v4.1-flash-1017-fast" "DeepSeek V4.1
+/// Flash 1017 Fast", "gpt-6.1-sol" "GPT-6.1 Sol" (design review 6: only Claude's were named, the rest showed their id).
+pub fn pretty_model(id: &str) -> String {
+    let m = id.trim().split_whitespace().next().unwrap_or_default();
+    let bare = m.strip_prefix("claude-").unwrap_or(m);
+    if let Some((fam, ver)) = bare.split_once('-') && ["opus", "sonnet", "haiku", "fable"].contains(&fam) {
         let v: Vec<&str> = ver.split('-').take_while(|p| p.len() <= 2 && p.chars().all(|c| c.is_ascii_digit())).take(2).collect();
         if !v.is_empty() {
             return format!("{}{} {}", fam[..1].to_uppercase(), &fam[1..], v.join("."));
         }
     }
-    m.to_string()
+    const BRAND: [(&str, &str); 21] = [("zai", "Z.ai"), ("deepseek", "DeepSeek"), ("gpt", "GPT"), ("glm", "GLM"), ("qwen", "Qwen"), ("gemini", "Gemini"), ("gemma", "Gemma"),
+        ("grok", "Grok"), ("mistral", "Mistral"), ("codestral", "Codestral"), ("devstral", "Devstral"), ("ernie", "ERNIE"), ("nemotron", "Nemotron"),
+        ("kimi", "Kimi"), ("llama", "Llama"), ("muse", "Muse"), ("minimax", "MiniMax"), ("phi", "Phi"), ("olmo", "OLMo"), ("hermes", "Hermes"), ("sonar", "Sonar")];
+    const UPPER: [&str; 9] = ["ud", "vl", "hc", "it", "xxs", "xs", "moe", "r1", "v3"];
+    let (route, rest) = m.split_once('/').unwrap_or(("", m));
+    let free = rest.ends_with(":free");
+    let mut rest = rest.trim_end_matches(":free").to_string();
+    if route == "agy" {
+        for l in ["-low", "-medium", "-high", "-xhigh", "-max"] {
+            if let Some(r) = rest.strip_suffix(l) { rest = r.to_string(); break; }
+        }
+    }
+    let t: Vec<&str> = rest.split('-').filter(|w| !w.is_empty()).collect();
+    let digit = |s: &str| s.chars().next().is_some_and(|c| c.is_ascii_digit());
+    let (mut out, mut i): (Vec<String>, usize) = (vec![], 0);
+    while i < t.len() {
+        let mut w = t[i].to_string();
+        let versionish = !w.contains('.') && (w.chars().all(|c| c.is_ascii_digit()) || (w.starts_with(['v', 'V']) && digit(&w[1..]))
+            || (w.chars().last().is_some_and(|c| c.is_ascii_digit()) && w.chars().next().is_some_and(|c| c.is_ascii_alphabetic())));
+        if versionish && t.get(i + 1).is_some_and(|n| n.len() == 1 && digit(n)) {
+            w = format!("{w}.{}", t[i + 1]);
+            i += 1;
+        }
+        let lower = w.to_lowercase();
+        let brand = BRAND.iter().find(|(b, _)| lower == *b || (lower.starts_with(b) && digit(&lower[b.len()..])));
+        let short_code = lower.len() <= 8 && lower.chars().any(|c| c.is_ascii_digit()) && lower.chars().any(|c| c.is_ascii_alphabetic())
+            && lower.chars().take_while(|c| c.is_ascii_alphabetic()).count() <= 3 && lower.chars().skip_while(|c| c.is_ascii_alphabetic()).next().is_some_and(|c| c.is_ascii_digit());
+        let word = match brand {
+            Some((b, name)) => format!("{name}{}", &w[b.len()..]),
+            None if UPPER.contains(&lower.as_str()) || short_code => w.to_uppercase(),
+            None if lower.starts_with('v') && digit(&lower[1..]) => format!("V{}", &w[1..]),
+            None => { let mut c = w.chars(); c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect()) }
+        };
+        if let Some(last) = out.last_mut() && (last == "GPT" || last == "GLM") && digit(&word) {
+            last.push('-');
+            last.push_str(&word);
+        } else {
+            out.push(word);
+        }
+        i += 1;
+    }
+    out.join(" ") + if free { " (free)" } else { "" }
 }
 
 /// A model switch said as 0.1.181 says it, for recordings made before: "model: claude-fable-5-2 at high for the rest of
@@ -2423,9 +2471,23 @@ pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'st
 #[cfg(test)]
 mod tests {
     #[test]
+    fn model_names_match_the_desktop_app() {
+        // the cases of desktop/src/lib/types.ts MODEL_NAMES
+        for (id, want) in [("claude-opus-5-5", "Opus 5.5"), ("claude-haiku-4-5-20251001", "Haiku 4.5"), ("haiku", "Haiku"),
+            ("deepseek-v4.1-flash-1017-fast", "DeepSeek V4.1 Flash 1017 Fast"), ("deepseek-v4-1-flash-1017", "DeepSeek V4.1 Flash 1017"),
+            ("gpt-6.1-sol", "GPT-6.1 Sol"), ("gpt-5", "GPT-5"), ("glm-5.3-flash-ultrafast", "GLM-5.3 Flash Ultrafast"), ("mistral-small-2603", "Mistral Small 2603"),
+            ("codestral-2508", "Codestral 2508"), ("grok-4.7", "Grok 4.7"), ("agy/gemini-4-hydrogen-high", "Gemini 4 Hydrogen"), ("muse-ember", "Muse Ember"),
+            ("baidu/ernie-5.5-flash-preview:free", "ERNIE 5.5 Flash Preview (free)"), ("ernie-5-5-flash-preview", "ERNIE 5.5 Flash Preview"),
+            ("nemotron-3.5-super-vl", "Nemotron 3.5 Super VL"), ("qwen3.8-flash-next-unsloth-ud-iq3_xxs", "Qwen3.8 Flash Next Unsloth UD IQ3_XXS"),
+            ("qwen3-8-omni-flash", "Qwen3.8 Omni Flash"), ("gemma-3-4b-it", "Gemma 3 4B IT"), ("codestral-2508 off 0.3,0.03,0.9", "Codestral 2508"), ("zai-glm-5.3", "Z.ai GLM-5.3")] {
+            assert_eq!(super::pretty_model(id), want, "{id}");
+        }
+    }
+
+    #[test]
     fn models_and_the_lane_read_as_words() {
         assert_eq!([super::model_short("claude-opus-5-5"), super::model_short("fable-5-2"), super::model_short("claude-haiku-4-5-20251001"), super::model_short("gpt-6.2-sol")],
-            ["Opus 5.5", "Fable 5.2", "Haiku 4.5", "gpt-6.2-sol"].map(String::from));
+            ["Opus 5.5", "Fable 5.2", "Haiku 4.5", "GPT-6.2 Sol"].map(String::from));
         assert_eq!(super::model_notice("model: claude-fable-5-2 at high for the rest of the session (the conversation goes on; its cache is rebuilt once)").as_deref(),
             Some("model: Fable 5.2 · high from here on (the conversation goes on; its cache is rebuilt once)"));
         assert_eq!(super::lane_notice("lane default: opus-5-5 medium · repo profile (4150 tracked files)").as_deref(), Some("started on Opus 5.5 · medium · repo profile (4150 tracked files)"));

@@ -16,6 +16,15 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.182 (2026-11-19): models by name, API runs by provider
+
+- Every model reads by its name in the terminal, by the desktop app's rule (the cases are shared): "DeepSeek V4.1 Flash
+  1017 Fast" for deepseek-v4.1-flash-1017-fast, "GPT-6.1 Sol", "GLM-5.3 Flash Ultrafast", "Gemini 4 Hydrogen" for
+  agy/gemini-4-hydrogen-high. Until now only Claude's were named.
+- The run log records which provider an API run used (`meta.provider`: "SubRouter", "Mortera", "OmniRoute", …), and the
+  app server's usage rows carry it, so the desktop's usage page can say where a run ran.
+- No metric moves.
+
 ## 0.1.181 (2026-11-19): real recordings read better
 
 From design review 5, run on real recordings and a real core (read-only) as well as test data.
