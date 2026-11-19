@@ -1,4 +1,4 @@
-import { ExternalLink, X } from "lucide-react";
+import { ChevronRight, ExternalLink, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { core, type Accounts } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
@@ -30,10 +30,10 @@ const windowName = (label: string) => {
   return m ? (m[1] === "all models" ? "Week" : `Week · ${m[1]}`) : l.charAt(0).toUpperCase() + l.slice(1);
 };
 
-function Section({ title, note, children }: { title: string; note?: ReactNode; children: ReactNode }) {
+function Section({ title, note, action, children }: { title: string; note?: ReactNode; action?: ReactNode; children: ReactNode }) {
   return (
     <section className="mt-6 first:mt-0">
-      <h3 className="text-[13px] font-semibold text-ink">{title}</h3>
+      <div className="flex items-center gap-3"><h3 className="flex-1 text-[13px] font-semibold text-ink">{title}</h3>{action}</div>
       {note && <p className="mt-0.5 text-[12px] leading-relaxed text-muted">{note}</p>}
       <div className="mt-2.5 divide-y divide-line-soft overflow-hidden rounded-lg border border-line bg-card">{children}</div>
     </section>
@@ -89,9 +89,6 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Usage" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-[780px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-3 border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Usage</span>
-          <span className="flex rounded-md border border-line p-0.5 text-[12px]">
-            {RANGES.map((d) => <button key={d} onClick={() => setDays(d)} className={`rounded px-2 py-0.5 ${d === days ? "bg-selected text-ink" : "text-muted hover:bg-hover"}`}>{d} days</button>)}
-          </span>
           <button onClick={onClose} title="Close (Esc)" aria-label="Close" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
         </div>
         <div className="overflow-auto bg-sidebar px-6 pb-7 pt-5">
@@ -99,7 +96,12 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
             <RightNow acc={acc} limits={limits} balance={balance} />
           </Section>
 
-          <Section title="Spending" note={`The last ${days} days from the run log. Claude on your plan is counted at API prices, not billed.`}>
+          {/* the range by the sections it changes, not in the page's header: there it read as changing "Right now" too,
+              which it never did (the user, desktop 0.1.72) */}
+          <Section title="Spending" action={
+            <span role="radiogroup" aria-label="Days" className="flex rounded-md border border-line p-0.5 text-[12px]">
+              {RANGES.map((d) => <button key={d} role="radio" aria-checked={d === days} onClick={() => setDays(d)} className={`rounded px-2 py-0.5 ${d === days ? "bg-selected text-ink" : "text-muted hover:bg-hover"}`}>{d} days</button>)}
+            </span>} note={`The last ${days} days from the run log. Claude on your plan is counted at API prices, not billed.`}>
             {!s ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div> : <>
               <div className="grid grid-cols-3 divide-x divide-line-soft">
                 <Figure label="Paid APIs, billed" value={s.api > 0 ? money(s.api) : "Nothing billed in these days"} quiet={s.api <= 0} note={`${apiRuns} runs`} />
@@ -119,7 +121,7 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
             </>}
           </Section>
 
-          <Section title="How your runs went" note={<>Read from what happened next, with nothing for you to label. A clear miss: you stopped or rewound it, it ended in an error,
+          <Section title="How your runs went" note={<>The same {days} days as Spending, read from what happened next, with nothing for you to label. A clear miss: you stopped or rewound it, it ended in an error,
             its change was thrown away, or your next message corrected it or asked the same again. Pushback: "wait, …", "why …?", "progress?".</>}>
             {!s ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div>
               : s.byVersion.length === 0 ? <div className="px-3.5 py-2.5 text-[12.5px] text-muted">No runs of your own in these days.</div> : <>
@@ -164,11 +166,78 @@ function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; 
             <button onClick={() => core.openLink(c.page).catch(() => {})} className="flex items-center gap-1 rounded-md border border-line px-2 py-0.5 text-[12px] text-ink">Open its page<ExternalLink size={12} strokeWidth={1.5} /></button></>}
       </div>
     ))}
-    {acc && acc.plan_notes.length > 0 && (
-      <details className="px-3.5 py-2.5 text-[12.5px]"><summary className="cursor-pointer text-muted hover:text-ink">What's contributing to your Claude usage</summary>
-        <pre className="mt-1.5 whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-muted">{acc.plan_notes.filter((n) => !n.startsWith("Approximate")).join("\n")}</pre></details>
-    )}
+    {acc && acc.plan_notes.length > 0 && <Contributing notes={acc.plan_notes} />}
   </>;
+}
+
+type Period = { period: string; stats: string; items: { pct: number; title: string; detail?: string; run?: string }[]; tops: { label: string; items: [string, string][] }[] };
+
+/** claude's "What's contributing to your usage?" lines as periods: "Last 24h · 865 requests · 7 sessions", then
+ * "  98%  Start fresh when you switch tasks · run /clear" and "  Top skills: /a 3%, /b 1%". */
+export function periods(notes: string[]): Period[] {
+  const out: Period[] = [];
+  for (const n of notes) {
+    const head = n.match(/^Last (\S+) · (.*)$/);
+    if (head) { out.push({ period: head[1], stats: head[2], items: [], tops: [] }); continue; }
+    const p = out.at(-1);
+    const item = n.match(/^\s*(\d+)%\s+(.*?)(?: · (.*))?$/);
+    const top = n.match(/^\s*Top ([^:]+):\s*(.*)$/);
+    if (p && item) {
+      const run = item[3]?.match(/^run (\/\S+)$/)?.[1];
+      p.items.push({ pct: +item[1], title: item[2], detail: run ? undefined : item[3], run });
+    } else if (p && top) p.tops.push({ label: top[1], items: top[2].split(/,\s*/).map((x) => { const m = x.match(/^(.*?)\s+(\d+%)$/); return m ? [m[1], m[2]] : [x, ""]; }) });
+  }
+  return out;
+}
+
+/** What made the plan's use, as claude's /usage tells it: one period at a time, each cause with its share as a bar and
+ * the command that helps as a chip, the top skills, subagents and MCP servers as tags. Until desktop 0.1.72 claude's text
+ * as it came, indented lines under a "What's contributing" fold (the user: "cluttered and ugly"). */
+function Contributing({ notes }: { notes: string[] }) {
+  const all = useMemo(() => periods(notes), [notes]);
+  const [at, setAt] = useState(0);
+  const p = all[Math.min(at, all.length - 1)];
+  const name = (x: string) => x.replace(/^(\d+)h$/, "$1 hours").replace(/^(\d+)d$/, "$1 days");
+  const lead = "w-[96px] flex-none";
+  return (
+    <details className="group">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 text-[12.5px] text-ink-2 hover:bg-hover [&::-webkit-details-marker]:hidden">
+        <ChevronRight size={14} strokeWidth={1.5} className="flex-none text-faint transition-transform group-open:rotate-90" />
+        <span className="flex-1">What's contributing to your Claude usage</span>
+        <span className="text-[11.5px] text-faint">approximate · this machine only</span>
+      </summary>
+      {!p ? <pre className="border-t border-line-soft px-3.5 py-2.5 whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-muted">{notes.filter((n) => !n.startsWith("Approximate")).join("\n")}</pre> : (
+        <div className="border-t border-line-soft pb-1.5">
+          <div className="flex items-center gap-3 px-3.5 pb-1 pt-2.5">
+            {all.length > 1 && <span role="radiogroup" aria-label="Period" className="flex rounded-md border border-line p-0.5 text-[12px]">
+              {all.map((q, i) => <button key={q.period} role="radio" aria-checked={q === p} onClick={() => setAt(i)}
+                className={`rounded px-2 py-0.5 ${q === p ? "bg-selected text-ink" : "text-muted hover:bg-hover"}`}>Last {name(q.period)}</button>)}</span>}
+            <span className="ml-auto text-[11.5px] tabular-nums text-faint">{p.stats}</span>
+          </div>
+          {p.items.map((it) => (
+            <div key={it.title} className="flex items-center gap-3.5 px-3.5 py-[7px] text-[12.5px]">
+              <span className={`${lead} flex items-center gap-2`} title={`${it.pct}% of the period's use`}>
+                <span className="w-9 text-right font-medium tabular-nums text-ink">{it.pct}%</span>
+                <span className="h-1 flex-1 overflow-hidden rounded bg-line"><i className="block h-full rounded bg-accent" style={{ width: `${Math.min(100, it.pct)}%` }} /></span>
+              </span>
+              <span className="min-w-0 flex-1"><span className="block text-ink">{it.title}</span>{it.detail && <span className="block text-[11.5px] text-faint">{it.detail}</span>}</span>
+              {it.run && <code className="flex-none rounded-[5px] border border-line bg-sidebar px-1.5 py-px font-mono text-[11.5px] text-muted" title={`run ${it.run} in Claude Code`}>{it.run}</code>}
+            </div>
+          ))}
+          {p.tops.length > 0 && <div className="mx-3.5 mt-1 space-y-1.5 border-t border-line-soft pt-2.5 pb-1">
+            {p.tops.map((t) => (
+              <div key={t.label} className="flex items-baseline gap-3.5 text-[12px]">
+                <span className={`${lead} text-faint`}>{t.label.charAt(0).toUpperCase() + t.label.slice(1)}</span>
+                <span className="flex min-w-0 flex-wrap gap-1.5">{t.items.map(([n, pct]) => (
+                  <span key={n} className="rounded-md border border-line-soft bg-sidebar px-1.5 py-px"><span className="text-ink-2">{n}</span>{pct && <span className="ml-1 tabular-nums text-faint">{pct}</span>}</span>
+                ))}</span>
+              </div>
+            ))}
+          </div>}
+        </div>
+      )}
+    </details>
+  );
 }
 
 /** One bar per day from a shared baseline, the plan's part and the paid part stacked; hover or focus shows the day. */

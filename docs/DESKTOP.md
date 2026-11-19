@@ -170,6 +170,11 @@ their bars and what is left, SubRouter's balance, this conversation's context, c
 on the plan or the cost opens the usage page. It replaces the plan bar by the send button and the cost in the header
 (each number once). A narrow window drops the cache and the version first.
 
+0.1.72: the usage page's "What's contributing to your Claude usage" laid out, where it was claude's text as it came:
+one period at a time (24 hours, 7 days), each cause with its share as a bar and its hint below, the command that helps
+as a chip, the top skills, subagents and MCP servers as tags. The 7/30/90 days choice moved from the page's header to
+Spending, the section it changes (with "How your runs went"): in the header it read as changing "Right now" too.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
