@@ -39,7 +39,7 @@ fs.mkdirSync(OUT, { recursive: true });
   report.errors = errs;
   fs.writeFileSync(`${OUT}/report.json`, JSON.stringify(report, null, 1));
   const flags = Object.entries(report).filter(([, v]) => v && typeof v === "object" && "contrast" in v)
-    .flatMap(([k, v]) => [...v.clipped.map((c) => `${k}: cut ${c}`), ...Object.keys(v.contrast).map((c) => `${k}: contrast ${c}`), ...(v.overflowX ? [`${k}: wider than the window`] : [])]);
+    .flatMap(([k, v]) => [...v.clipped.map((c) => `${k}: cut ${c}`), ...(v.unreadable ?? []).map((c) => `${k}: cut, no way to read it ${c}`), ...Object.keys(v.contrast).map((c) => `${k}: contrast ${c}`), ...(v.overflowX ? [`${k}: wider than the window`] : [])]);
   console.log(flags.join("\n") || "no cut text, contrast or overflow", `\npicker focus: ${report.pickerFocus} · rows after opening five: ${report.openAfterFive} · page errors: ${errs.length}`);
   await b.close();
 })();

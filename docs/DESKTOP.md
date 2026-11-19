@@ -259,6 +259,12 @@ window's (the conversation's own too, where it said only "this conversation"), a
 OmniRoute's the same way (OmniRoute's had no reset in the card; the page wrote dates only). A window from 90% is red on
 the usage page as in the status bar.
 
+0.1.82: the usage page's accounts in groups under headings written out whole: "Claude plan", each OmniRoute account
+("OmniRoute | agy | someone@example.com | Antigravity starter quota") with its windows by name below, "Credit with each
+provider". Under each window the account and plan were cut to "…" in 200 px, with no way to read them (the user). The
+review's in-page check (review/audit.cjs) now also flags text cut to "…" that nothing lets you read whole; on real data
+it found only the start page's recent titles besides, which now have it on hover.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

@@ -56,7 +56,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
             <section className="overflow-hidden rounded-xl border border-line bg-card">
               <div className={head}>Pick up where you left off</div>
               {recent.map((s) => (
-                <button key={s.id} onClick={() => onResume(s)} className={row}>
+                <button key={s.id} onClick={() => onResume(s)} title={s.title} className={row}>
                   <span className="min-w-0 flex-1"><span className="block truncate text-ink">{s.title}</span><span className="block truncate text-[11.5px] text-faint">{s.place}</span></span>
                   <span className="flex-none text-[11.5px] tabular-nums text-faint">{age(s.at)}</span>
                 </button>

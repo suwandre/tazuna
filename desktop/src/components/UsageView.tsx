@@ -5,7 +5,7 @@ import { useDialog } from "../lib/dialog";
 import { summarize, type Day, type Row } from "../lib/usage";
 import { modelLabel } from "../lib/types";
 import { exactly, parseReset, whenReset } from "../lib/health";
-import { Parts, Sep } from "./Sep";
+import { Sep } from "./Sep";
 
 // The usage page (Cmd-Shift-U, the menu, a click on the plan bar or the cost): what each account has left right now
 // (Claude's plan from claude's own /usage, OmniRoute's accounts, the providers' credits: src/accounts.rs), what the last
@@ -36,12 +36,12 @@ function Section({ title, note, action, children }: { title: string; note?: Reac
 }
 
 /** One account's window: its name and whose, the bar (amber from 75%), the share used and when it resets. */
-function Meter({ name, of, used, at }: { name: string; of: ReactNode; used: number | null; at?: number }) {
+function Meter({ name, of, used, at }: { name: string; of?: ReactNode; used: number | null; at?: number }) {
   const resets = whenReset(at);
   const pct = Math.max(0, Math.min(100, used ?? 0));
   return (
     <div className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
-      <span className="w-[200px] flex-none"><span className="block truncate text-ink" title={name}>{name}</span><span className="block truncate text-[11.5px] text-faint">{of}</span></span>
+      <span className="w-[200px] flex-none"><span className="block truncate text-ink" title={name}>{name}</span>{of && <span className="block truncate text-[11.5px] text-faint">{of}</span>}</span>
       <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded bg-line"><i className={`block h-full rounded ${pct >= 90 ? "bg-bad" : pct >= 75 ? "bg-warn" : "bg-accent"}`} style={{ width: `${pct}%` }} /></span>
       <span className="w-[220px] flex-none truncate text-right tabular-nums text-muted"><span className="font-medium text-ink">{used == null ? "–" : `${Math.round(used)}%`}</span>{resets && <><Sep /><span title={exactly(at)}>resets {resets}</span></>}</span>
     </div>
@@ -162,6 +162,9 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
   );
 }
 
+/** A group's heading in the account list: the account written out whole, wrapping, never cut. */
+const groupHead = "flex flex-wrap items-center gap-y-0.5 bg-field/40 px-3.5 py-1.5 text-[11.5px] text-muted";
+
 /** An OmniRoute provider as people say it: its id "openai-compatible-chat-585fa18d-…" is "OpenAI-compatible". */
 const who = (p: string) => (p.startsWith("openai-compatible") ? "OpenAI-compatible" : p);
 
@@ -173,15 +176,27 @@ function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; 
   const credits = acc?.credits ?? (balance != null ? [{ provider: "SubRouter", left: `$${balance.toFixed(2)} left`, page: "https://subrouter.ai" }] : []);
   if (!plan.length && !credits.length && !acc?.omniroute.length) return <div className="px-3.5 py-2.5 text-[12.5px] text-muted">No account readings: claude is not logged in to a subscription, and no provider key is set.</div>;
   return <>
-    {plan.map((r) => <Meter key={r.label} name={windowName(r.label)} of="Claude plan" used={r.used} at={parseReset(r.resets)} />)}
-    {acc?.omniroute.flatMap((a) => a.windows.map((w, i) => w.unlimited
-      ? <div key={`${a.provider}${a.name}${i}`} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]"><span className="w-[200px] flex-none"><span className="block text-ink">{[w.group, w.window].filter(Boolean).join(", ")}</span>
-          <Parts className="block truncate text-[11.5px] text-faint" items={["OmniRoute", who(a.provider), a.name.split("@")[0], a.plan]} /></span><span className="text-muted">unlimited</span></div>
-      : <Meter key={`${a.provider}${a.name}${i}`} name={[w.group, w.window].filter(Boolean).join(", ").replace(/^quota$/, "Quota") || "Quota"} used={w.used} at={w.resets ? Date.parse(w.resets) : undefined}
-          of={<Parts items={["OmniRoute", who(a.provider), a.name.split("@")[0], a.plan, a.status !== "valid" && `login ${a.status}`]} />} />))}
+    {/* each account a group under its heading, as OmniRoute's (until desktop 0.1.82 "Claude plan" and "credit" under every row) */}
+    {plan.length > 0 && <div className={groupHead}><span className="font-medium text-ink-2">Claude plan</span></div>}
+    {plan.map((r) => <Meter key={r.label} name={windowName(r.label)} used={r.used} at={parseReset(r.resets)} />)}
+    {/* each OmniRoute account under its own heading, written out whole and wrapping (provider, account, plan, login); its
+        windows below by name alone. In one 200 px line under each window the account and plan were cut to "…" with no way
+        to read them (the user, desktop 0.1.80) */}
+    {acc?.omniroute.map((a) => (
+      <div key={`${a.provider}${a.name}`}>
+        <div className={groupHead}>
+          <span className="font-medium text-ink-2">OmniRoute</span><Sep />{who(a.provider)}{a.name && <><Sep /><span className="break-all">{a.name}</span></>}
+          {a.plan && <><Sep />{a.plan}</>}{a.status !== "valid" && <><Sep /><span className="text-bad">login {a.status}</span></>}
+        </div>
+        {a.windows.map((w, i) => w.unlimited
+          ? <div key={i} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]"><span className="w-[200px] flex-none text-ink">{[w.group, w.window].filter(Boolean).join(", ") || "Quota"}</span><span className="text-muted">unlimited</span></div>
+          : <Meter key={i} name={[w.group, w.window].filter(Boolean).join(", ").replace(/^quota$/, "Quota") || "Quota"} used={w.used} at={w.resets ? Date.parse(w.resets) : undefined} />)}
+      </div>
+    ))}
+    {credits.length > 0 && <div className={groupHead}><span className="font-medium text-ink-2">Credit with each provider</span></div>}
     {credits.map((c) => (
       <div key={c.provider} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
-        <span className="w-[200px] flex-none"><span className="block text-ink">{c.provider}</span><span className="block text-[11.5px] text-faint">credit</span></span>
+        <span className="w-[200px] flex-none text-ink">{c.provider}</span>
         {c.left ? <><span className="flex-1" /><span className={`tabular-nums ${/ over /.test(c.left) || c.left.startsWith("-") ? "text-bad" : "text-muted"}`}><span className="font-medium text-ink">{c.left.replace(/ (left|over).*/, "")}</span>{c.left.match(/ (left|over).*/)?.[0]}</span></>
           : <><span className="flex-1 text-faint">its API does not report a balance</span>
             <button onClick={() => core.openLink(c.page).catch(() => {})} className="flex items-center gap-1 rounded-md border border-line px-2 py-0.5 text-[12px] text-ink">Open its page<ExternalLink size={12} strokeWidth={1.5} /></button></>}
