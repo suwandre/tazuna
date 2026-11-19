@@ -32,8 +32,12 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     ]);
     split_row(f, top, Line::from(Span::styled("tazuna", st(th.faint).add_modifier(Modifier::ITALIC))), right, None);
     // the plan's windows and SubRouter's balance under it: on the one row they ran past the 92-column column
-    if let Some((t, color)) = limits_str(s, th) {
-        split_row(f, under, Line::default(), Line::from(Span::styled(t, st(color))), None);
+    if plan_spans(s, th).is_some() || balance_str(s).is_some() {
+        let mut spans = plan_spans(s, th).map(|p| [vec![Span::styled("Claude ", st(th.dim))], p].concat()).unwrap_or_default();
+        if let Some(b) = balance_str(s) {
+            spans.extend([Span::styled(if spans.is_empty() { "" } else { " · " }, st(th.faint)), Span::styled(b, st(th.dim))]);
+        }
+        split_row(f, under, Line::default(), Line::from(spans), None);
     }
 
     let (last_block, trows, top_line) = render_transcript(f, body, transcript(s, v, th, &OPTS, body.width as usize), v.scroll);

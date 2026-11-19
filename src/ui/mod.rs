@@ -79,6 +79,21 @@ impl Design {
     pub fn next(self) -> Design {
         Self::ALL[(self as usize + 1) % Self::ALL.len()]
     }
+
+    /// The design the terminal opens in without --design: the last one chosen with ctrl-t, else Cockpit for someone
+    /// who has run tazuna before (a run log) and Aurora on a fresh install, the calmest of the four (design review
+    /// 2026-11-19; until 0.1.179 every start was Cockpit).
+    pub fn saved() -> Design {
+        let Ok(dir) = crate::labels::dir() else { return Design::Aurora };
+        let n = std::fs::read_to_string(dir.join("design")).ok().and_then(|t| t.trim().parse().ok());
+        n.and_then(Design::from_number).unwrap_or(if dir.join("runs.jsonl").exists() { Design::Cockpit } else { Design::Aurora })
+    }
+
+    pub fn save(self) {
+        if let Ok(dir) = crate::labels::dir() {
+            let _ = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join("design"), format!("{}\n", self as usize + 1)));
+        }
+    }
 }
 
 pub struct View {
@@ -1094,7 +1109,7 @@ pub fn usd(x: f64) -> String {
 }
 
 /// Claude's plan windows and SubRouter's balance on one line ("5h 13% · 7d 21% · SubRouter $8.82 left"), and the colour
-/// to show it in: warning at 70%, error at 85% (where the benchmark guard pauses).
+/// to show it in by the fuller window: amber from 75%, red from 90% (Timeline's one-colour line; the others colour each).
 pub fn limits_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
     match (plan_str(s, th), balance_str(s)) {
         (Some((p, color)), Some(b)) => Some((format!("{p} · {b}"), color)),
@@ -1102,6 +1117,43 @@ pub fn limits_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
         (None, Some(b)) => Some((b, th.dim)),
         (None, None) => None,
     }
+}
+
+/// A notice that carries a provider's raw error ("provider error in stream: {\"message\":\"[404]: … not found.\", …}",
+/// cut at 300 characters, so no longer JSON) as its message alone: "provider error: [404]: … not found.".
+pub fn readable_notice(text: &str) -> Option<String> {
+    let (before, rest) = text.split_once("provider error in stream: ")?;
+    let start = rest.find("\"message\":\"")? + "\"message\":\"".len();
+    let mut msg = String::new();
+    let mut chars = rest[start..].chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => if let Some(n) = chars.next() { msg.push(if n == 'n' { ' ' } else { n }) },
+            '"' => break,
+            c => msg.push(c),
+        }
+    }
+    // a retry's notice already starts "provider · "
+    let before = before.strip_suffix("provider · ").unwrap_or(before);
+    (!msg.trim().is_empty()).then(|| format!("{before}provider error: {}", msg.trim()))
+}
+
+/// The plan's windows as spans, each in its own colour (dim, amber from 75%, red from 90%, as the desktop app's): one
+/// colour by the higher made "5h 13%" red beside a week at 85% (2026-11-19).
+pub fn plan_spans(s: &Session, th: &Theme) -> Option<Vec<Span<'static>>> {
+    let (h5, d7) = s.limits?;
+    let c = |x: f64| if x >= 90.0 { th.err } else if x >= 75.0 { th.warn } else { th.dim };
+    Some(vec![Span::styled(format!("5h {h5:.0}%"), st(c(h5))), Span::styled(" · ", st(th.faint)), Span::styled(format!("7d {d7:.0}%"), st(c(d7))),
+        Span::styled(limits_age(s), st(th.faint))])
+}
+
+/// How old the plan's reading is, when 10 minutes or more: " · 2h ago".
+fn limits_age(s: &Session) -> String {
+    s.limits_at.map(|t| crate::session::unix_now().saturating_sub(t)).filter(|a| *a >= 600).map_or(String::new(), |a| match a {
+        0..3600 => format!(" · {}m ago", a / 60),
+        3600..86_400 => format!(" · {}h ago", a / 3600),
+        _ => format!(" · {}d ago", a / 86_400),
+    })
 }
 
 /// "SubRouter $8.82 left", where a SubRouter key is set.
@@ -1114,15 +1166,10 @@ pub fn plan_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
     let mut parts = vec![];
     let mut color = th.dim;
     if let Some((h5, d7)) = s.limits {
-        color = match h5.max(d7) { x if x >= 85.0 => th.err, x if x >= 70.0 => th.warn, _ => th.dim };
+        color = match h5.max(d7) { x if x >= 90.0 => th.err, x if x >= 75.0 => th.warn, _ => th.dim };
         // the windows are the whole account's (Claude Code beside tazuna counts too), so no "this session" share: a
         // "(+2%)" read as tazuna's (2026-11-02). Claude reports them only now and then: an older reading says how old.
-        let age = s.limits_at.map(|t| crate::session::unix_now().saturating_sub(t)).filter(|a| *a >= 600).map_or(String::new(), |a| match a {
-            0..3600 => format!(" · {}m ago", a / 60),
-            3600..86_400 => format!(" · {}h ago", a / 3600),
-            _ => format!(" · {}d ago", a / 86_400),
-        });
-        // named: a second subscription (Codex, say) would get a line of its own
+        let age = limits_age(s);
         parts.push(format!("Claude 5h {h5:.0}% · 7d {d7:.0}%{age}"));
     }
     (!parts.is_empty()).then(|| (parts.join(" · "), color))
@@ -1456,15 +1503,19 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
         Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o, open, width),
         Block::Verify(x) => verify_lines(x, v, th),
         // a long notice (a provider's error) shows its start until clicked, then all of it
-        Block::Notice { text, error } => vec![(
-            Line::from(vec![
-                Span::styled(if *error { "! " } else { "· " }, st(if *error { th.err } else { th.warn })),
-                Span::styled(if open || text.chars().count() <= NOTICE_CHARS { text.clone() } else {
-                    format!("{}… (+{} chars · click to show)", text.chars().take(NOTICE_CHARS).collect::<String>(), text.chars().count() - NOTICE_CHARS)
-                }, st(if *error { th.err } else { th.dim }).add_modifier(Modifier::ITALIC)),
-            ]),
-            vec![Span::raw("  ")],
-        )],
+        // a provider's error reads as its message ("provider error: [404] … not found"), the raw reply on a click
+        Block::Notice { text, error } => {
+            let shown = if open { text.clone() } else { readable_notice(text).unwrap_or_else(|| text.clone()) };
+            vec![(
+                Line::from(vec![
+                    Span::styled(if *error { "! " } else { "· " }, st(if *error { th.err } else { th.warn })),
+                    Span::styled(if open || shown.chars().count() <= NOTICE_CHARS { shown } else {
+                        format!("{}… (+{} chars · click to show)", shown.chars().take(NOTICE_CHARS).collect::<String>(), shown.chars().count() - NOTICE_CHARS)
+                    }, st(if *error { th.err } else { th.dim })),
+                ]),
+                vec![Span::raw("  ")],
+            )]
+        }
         Block::Text { text, live } => {
             let mut out = markdown(text, th, width.saturating_sub(if o.marker.is_empty() { 0 } else { 2 }));
             if out.is_empty() {
@@ -1519,25 +1570,19 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
                 (None, Some(e)) => facts.push(format!("{e:.0} tok/s end to end")),
                 (None, None) => {}
             }
-            vec![
-                (
-                    Line::from(vec![
-                        Span::styled(format!("{glyph} {word}"), st(color).add_modifier(Modifier::BOLD)),
-                        Span::styled(
-                            format!("   {}m {:02}s · {} turn{} · {}", d.secs as u64 / 60, d.secs as u64 % 60, d.turns, if d.turns == 1 { "" } else { "s" }, usd(d.cost)),
-                            st(th.text),
-                        ),
-                    ]),
-                    vec![],
-                ),
-                (
-                    Line::from(Span::styled(
-                        format!("  {}", facts.join(" · ")),
-                        st(th.dim),
-                    )),
-                    vec![],
-                ),
-            ]
+            // one short line under each answer: how long and what it cost (design review, 2026-11-19). The second
+            // line of numbers was the whole conversation's so far, the same under every answer and wrapping onto two
+            // lines: it shows when the line is clicked, or with everything expanded.
+            let took = if d.secs < 60.0 { format!("{:.0} s", d.secs) } else { format!("{} min {:02} s", d.secs as u64 / 60, d.secs as u64 % 60) };
+            let mut first = vec![Span::styled(format!("{glyph} {word}"), st(color).add_modifier(Modifier::BOLD)), Span::styled(format!("  {took} · {}", usd(d.cost)), st(th.dim))];
+            if !open {
+                first.push(Span::styled("  ▸", st(th.faint)));
+            }
+            let mut out = vec![(Line::from(first), vec![])];
+            if open {
+                out.push((Line::from(Span::styled(format!("  so far: {}", facts.join(" · ")), st(th.dim))), vec![Span::raw("  ")]));
+            }
+            out
         }
     }
 }
@@ -2281,6 +2326,13 @@ pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'st
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn readable_notice_takes_the_message() {
+        let raw = r#"provider · provider error in stream: {"message":"[404]: Antigravity upstream error (404): Requested entity was not found.","type":"invalid_request_error","code"#;
+        assert_eq!(super::readable_notice(raw).as_deref(), Some("provider error: [404]: Antigravity upstream error (404): Requested entity was not found."));
+        assert_eq!(super::readable_notice("route · HTTP 403: refused"), None);
+    }
+
     use super::*;
 
     #[test]

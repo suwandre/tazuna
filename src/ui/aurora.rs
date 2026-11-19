@@ -48,8 +48,12 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Span::styled(cost_str(s), st(th.ok)),
     ]);
     let mut left = left;
-    if let Some((t, color)) = limits_str(s, th) {
-        left.spans.extend([sep(), Span::styled(t, st(color))]);
+    if let Some(plan) = plan_spans(s, th) {
+        left.spans.extend([sep(), Span::styled("Claude ", st(th.dim))]);
+        left.spans.extend(plan);
+    }
+    if let Some(b) = balance_str(s) {
+        left.spans.extend([sep(), Span::styled(b, st(th.dim))]);
     }
     let play = if v.paused { "⏸ paused".to_string() } else { format!("▶ {:.1}×", v.speed) };
     let right = Line::from(vec![Span::styled(play, st(th.dim)), Span::styled(format!("  {} ", times_str(s, v)), st(th.text))]);

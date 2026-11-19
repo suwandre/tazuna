@@ -271,7 +271,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         raw_timing: false,
         snapshot: None,
         size: (110, 36),
-        design: Design::Cockpit,
+        design: Design::saved(),
         model: None,
         effort: None,
         allow_non_git: false,
@@ -3733,6 +3733,7 @@ fn run_live(
             }
             KeyCode::Char('t') if ctrl => {
                 v.design = v.design.next();
+                v.design.save();
                 fx.boot = true;
             }
             // the whole screen drawn again: anything another program wrote over it is gone

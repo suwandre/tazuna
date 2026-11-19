@@ -16,6 +16,25 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.179 (2026-11-19): a calmer terminal
+
+From a design review of the terminal against Claude Code, Codex, OpenCode, pi, omp and Hermes; checked as before and
+after renders of one recording in all four designs.
+
+- The line under each answer is short: "✔ Done  5 s · $0 ▸". The second line of numbers (input, calls, cache, speed)
+  was the whole conversation's so far, the same under every answer and wrapping onto two lines; it shows on a click on
+  the line, or with everything expanded (`e`), as "so far: …".
+- A provider's error reads as its message, "provider error: [404]: … not found.", where it was its raw JSON reply cut
+  at 300 characters. A click shows the whole reply. The engine's error text is unchanged (retries match on it).
+- Claude's plan windows each take their own colour: grey, amber from 75%, red from 90%, as in the desktop app. One
+  colour by the fuller window showed "5h 13%" red beside a week at 85%. Timeline keeps one colour for its line, at the
+  same thresholds.
+- Notices are no longer italic.
+- Cockpit's tokens panel is one line, "no model calls yet", until the first call (an empty chart with a lone "0").
+- The terminal opens in the design last chosen with `ctrl-t`. Without one: Cockpit for someone who has used tazuna
+  before, Aurora on a fresh install, the calmest of the four. `--design` still decides first.
+- No metric moves: drawing only.
+
 ## 0.1.178 (2026-11-19): saved conversations carry their model
 
 - The app server's `sessions` list gives each saved conversation its latest run's model, so the desktop sidebar marks

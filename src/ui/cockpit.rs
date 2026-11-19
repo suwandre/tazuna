@@ -56,7 +56,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let [p_session, p_context, p_tokens, p_cost, p_tools, p_files] = Layout::vertical([
         Constraint::Length(5),
         Constraint::Length(6),
-        Constraint::Length(8),
+        // the tokens chart once there are calls: before the first, one line (an empty chart with a lone "0" read as broken)
+        Constraint::Length(if s.turn_usage.is_empty() { 3 } else { 8 }),
         Constraint::Length(5),
         Constraint::Length(tools.len().max(1) as u16 + 3),
         Constraint::Min(3),
@@ -115,80 +116,86 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let b = hot_panel("tokens", th, under_mouse(v, p_tokens) && !s.turn_usage.is_empty());
     let a = b.inner(p_tokens).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_tokens);
-    let [t1, chart, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)]).areas(a);
-    // a y axis beside the bars: the tallest bar's value on top, 0 at the bottom (a user could not read the bare bars)
-    let [axis, spark] = Layout::horizontal([Constraint::Length(5), Constraint::Min(1)]).areas(chart);
-    f.render_widget(
-        Paragraph::new(Line::from(vec![
-            // sent: every call's whole input added up (each call sends the conversation again), not the context's size
-            Span::styled("↑ ", st(th.faint)),
-            Span::styled(human(s.usage.total_in()), st(th.text)),
-            Span::styled(" sent  ↓ ", st(th.faint)),
-            Span::styled(human(s.usage.output), st(th.text)),
-            Span::styled(" out", st(th.faint)),
-        ])),
-        t1,
-    );
-    let data: Vec<u64> = s.turn_usage.iter().map(|u| u.output).collect();
-    let first = data.len().saturating_sub(spark.width as usize);
-    let top = data[first..].iter().copied().max().unwrap_or(0);
-    // one bar per model call, the newest on the right; the mouse over a bar names that call, a click lists them all
-    let label = match v.hover_call.filter(|i| *i < data.len()) {
-        Some(i) => {
-            let c = s.calls.get(i);
-            let mut l = vec![Span::styled(format!("#{} ", i + 1), st(th.faint)), Span::styled(human(data[i]), st(th.text)), Span::styled(" out", st(th.faint))];
-            if let Some(ms) = c.and_then(|c| c.ttft_ms) {
-                l.extend([Span::styled(" · ", st(th.faint)), Span::styled(format!("{:.1}s", ms / 1000.0), st(th.text)), Span::styled(" first", st(th.faint))]);
+    let mut bars_at = None;
+    if s.turn_usage.is_empty() {
+        f.render_widget(Paragraph::new(Span::styled("no model calls yet", st(th.faint))), a);
+    } else {
+        let [t1, chart, caption, pace] = Layout::vertical([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1), Constraint::Length(1)]).areas(a);
+        // a y axis beside the bars: the tallest bar's value on top, 0 at the bottom (a user could not read the bare bars)
+        let [axis, spark] = Layout::horizontal([Constraint::Length(5), Constraint::Min(1)]).areas(chart);
+        f.render_widget(
+            Paragraph::new(Line::from(vec![
+                // sent: every call's whole input added up (each call sends the conversation again), not the context's size
+                Span::styled("↑ ", st(th.faint)),
+                Span::styled(human(s.usage.total_in()), st(th.text)),
+                Span::styled(" sent  ↓ ", st(th.faint)),
+                Span::styled(human(s.usage.output), st(th.text)),
+                Span::styled(" out", st(th.faint)),
+            ])),
+            t1,
+        );
+        let data: Vec<u64> = s.turn_usage.iter().map(|u| u.output).collect();
+        let first = data.len().saturating_sub(spark.width as usize);
+        let top = data[first..].iter().copied().max().unwrap_or(0);
+        // one bar per model call, the newest on the right; the mouse over a bar names that call, a click lists them all
+        let label = match v.hover_call.filter(|i| *i < data.len()) {
+            Some(i) => {
+                let c = s.calls.get(i);
+                let mut l = vec![Span::styled(format!("#{} ", i + 1), st(th.faint)), Span::styled(human(data[i]), st(th.text)), Span::styled(" out", st(th.faint))];
+                if let Some(ms) = c.and_then(|c| c.ttft_ms) {
+                    l.extend([Span::styled(" · ", st(th.faint)), Span::styled(format!("{:.1}s", ms / 1000.0), st(th.text)), Span::styled(" first", st(th.faint))]);
+                }
+                if let Some(c) = c.filter(|c| c.gen_ms > 0.0) {
+                    l.extend([Span::styled(" · ", st(th.faint)), Span::styled(format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0), st(th.text)), Span::styled(" tok/s", st(th.faint))]);
+                }
+                Line::from(l)
             }
-            if let Some(c) = c.filter(|c| c.gen_ms > 0.0) {
-                l.extend([Span::styled(" · ", st(th.faint)), Span::styled(format!("{:.0}", c.out as f64 / c.gen_ms * 1000.0), st(th.text)), Span::styled(" tok/s", st(th.faint))]);
-            }
-            Line::from(l)
+            None if data.is_empty() => Line::from(Span::styled("output per model call", st(th.faint))),
+            None => Line::from(Span::styled(format!("out per call · #{}–{} · click", first + 1, data.len()), st(th.faint))),
+        };
+        f.render_widget(Paragraph::new(label), caption);
+        let mut ylab = vec![Line::from(Span::styled(format!("{:>4}", human(top)), st(th.faint)))];
+        ylab.extend((1..axis.height.saturating_sub(1)).map(|_| Line::default()));
+        if axis.height > 1 {
+            ylab.push(Line::from(Span::styled(format!("{:>4}", "0"), st(th.faint))));
         }
-        None if data.is_empty() => Line::from(Span::styled("output per model call", st(th.faint))),
-        None => Line::from(Span::styled(format!("out per call · #{}–{} · click", first + 1, data.len()), st(th.faint))),
-    };
-    f.render_widget(Paragraph::new(label), caption);
-    let mut ylab = vec![Line::from(Span::styled(format!("{:>4}", human(top)), st(th.faint)))];
-    ylab.extend((1..axis.height.saturating_sub(1)).map(|_| Line::default()));
-    if axis.height > 1 {
-        ylab.push(Line::from(Span::styled(format!("{:>4}", "0"), st(th.faint))));
+        f.render_widget(Paragraph::new(ylab), axis);
+        // the call in flight, live: the wait for its first token, then how fast it writes (≈: its output is estimated until
+        // it ends); between calls the last one's exact figures
+        let secs = |ms: f64| format!("{:.1}s", ms / 1000.0);
+        let pace_line = match (s.in_flight(), s.calls.last()) {
+            (Some((start, None, _)), _) => vec![Span::styled("waiting for first token · ", st(th.faint)), Span::styled(secs(v.clock_ms - start), st(th.text))],
+            (Some((start, Some(first), est)), _) => {
+                let rate = if v.clock_ms - first > 500.0 { format!("≈{:.0}", est / (v.clock_ms - first) * 1000.0) } else { "…".into() };
+                vec![Span::styled(rate, st(th.text)), Span::styled(" tok/s · ", st(th.faint)), Span::styled(secs(first - start), st(th.text)), Span::styled(" to first token", st(th.faint))]
+            }
+            // between calls the session's figures, as the run's summary line has them: the last call's alone (743 tok/s beside
+            // the summary's 788, a user asking which was right, 2026-11-12) are one click away, on the chart above
+            (None, Some(_)) => {
+                let (ttft, tps, e2e) = crate::session::speed(&s.calls);
+                let mut l = vec![];
+                if let Some(r) = tps {
+                    l.extend([Span::styled(format!("{r:.0}"), st(th.text)), Span::styled(" tok/s writing", st(th.faint))]);
+                }
+                if let Some(e) = e2e {
+                    l.extend([Span::styled(if l.is_empty() { "" } else { " · " }, st(th.faint)), Span::styled(format!("{e:.0}"), st(th.text)),
+                        Span::styled(if tps.is_some() { " end to end" } else { " tok/s end to end" }, st(th.faint))]);
+                }
+                if let Some(t) = ttft {
+                    l.extend([Span::styled(if l.is_empty() { "" } else { " · " }, st(th.faint)), Span::styled(secs(t), st(th.text)), Span::styled(" to first token", st(th.faint))]);
+                }
+                l
+            }
+            (None, None) => vec![],
+        };
+        f.render_widget(Paragraph::new(Line::from(pace_line)), pace);
+        let bars = data[first..].iter().enumerate().map(|(k, &n)| {
+            let b = SparklineBar::from(n);
+            if v.hover_call == Some(first + k) { b.style(Some(st(th.warn))) } else { b }
+        });
+        f.render_widget(Sparkline::default().data(bars).max(top.max(1)).style(st(th.accent2)), spark);
+        bars_at = Some((spark, first));
     }
-    f.render_widget(Paragraph::new(ylab), axis);
-    // the call in flight, live: the wait for its first token, then how fast it writes (≈: its output is estimated until
-    // it ends); between calls the last one's exact figures
-    let secs = |ms: f64| format!("{:.1}s", ms / 1000.0);
-    let pace_line = match (s.in_flight(), s.calls.last()) {
-        (Some((start, None, _)), _) => vec![Span::styled("waiting for first token · ", st(th.faint)), Span::styled(secs(v.clock_ms - start), st(th.text))],
-        (Some((start, Some(first), est)), _) => {
-            let rate = if v.clock_ms - first > 500.0 { format!("≈{:.0}", est / (v.clock_ms - first) * 1000.0) } else { "…".into() };
-            vec![Span::styled(rate, st(th.text)), Span::styled(" tok/s · ", st(th.faint)), Span::styled(secs(first - start), st(th.text)), Span::styled(" to first token", st(th.faint))]
-        }
-        // between calls the session's figures, as the run's summary line has them: the last call's alone (743 tok/s beside
-        // the summary's 788, a user asking which was right, 2026-11-12) are one click away, on the chart above
-        (None, Some(_)) => {
-            let (ttft, tps, e2e) = crate::session::speed(&s.calls);
-            let mut l = vec![];
-            if let Some(r) = tps {
-                l.extend([Span::styled(format!("{r:.0}"), st(th.text)), Span::styled(" tok/s writing", st(th.faint))]);
-            }
-            if let Some(e) = e2e {
-                l.extend([Span::styled(if l.is_empty() { "" } else { " · " }, st(th.faint)), Span::styled(format!("{e:.0}"), st(th.text)),
-                    Span::styled(if tps.is_some() { " end to end" } else { " tok/s end to end" }, st(th.faint))]);
-            }
-            if let Some(t) = ttft {
-                l.extend([Span::styled(if l.is_empty() { "" } else { " · " }, st(th.faint)), Span::styled(secs(t), st(th.text)), Span::styled(" to first token", st(th.faint))]);
-            }
-            l
-        }
-        (None, None) => vec![],
-    };
-    f.render_widget(Paragraph::new(Line::from(pace_line)), pace);
-    let bars = data[first..].iter().enumerate().map(|(k, &n)| {
-        let b = SparklineBar::from(n);
-        if v.hover_call == Some(first + k) { b.style(Some(st(th.warn))) } else { b }
-    });
-    f.render_widget(Sparkline::default().data(bars).max(top.max(1)).style(st(th.accent2)), spark);
 
     // cost
     let b = panel("cost", th);
@@ -201,8 +208,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             // the plan's windows and SubRouter's balance on lines of their own: on one line the sidebar cut the balance
             // to "$8" (2026-11-02)
             // each account named in its own colour, its numbers beside it
-            match plan_str(s, th) {
-                Some((t, color)) => Line::from(vec![Span::styled("Claude", st(th.warn).add_modifier(Modifier::BOLD)), Span::styled(t.trim_start_matches("Claude").to_string(), st(color))]),
+            match plan_spans(s, th) {
+                Some(plan) => Line::from([vec![Span::styled("Claude ", st(th.warn).add_modifier(Modifier::BOLD))], plan].concat()),
                 None => Line::from(Span::styled(if s.exact_cost.is_some() { "exact (reported)" } else { "estimate (list prices)" }, st(th.faint))),
             },
             match balance_str(s) {
@@ -277,7 +284,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
-    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, files: Some(p_files), tool_rows, tokens: Some(p_tokens), bars: Some((spark, first)), top_line, composer: Some(composer.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() }
+    Areas { pulse: p_tools, last_block, transcript: inner, rows: trows, files: Some(p_files), tool_rows, tokens: Some(p_tokens), bars: bars_at, top_line, composer: Some(composer.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() }
 }
 
 fn kv(k: &str, v: &str, th: &Theme) -> Span<'static> {
