@@ -5,7 +5,45 @@ import type { Accounts, ModelChoice } from "./tazuna";
 
 export type Level = "ok" | "low" | "out" | "unknown";
 /** One line of the card: a plan's window, a provider's credit, an OmniRoute window. */
-export type Item = { key: string; provider: string; name: string; note?: string; pct?: number; value?: string; level: Level; short: string; page?: string };
+export type Item = { key: string; provider: string; name: string; note?: string; pct?: number; value?: string; level: Level; short: string; page?: string;
+  /** when its window starts again (ms since 1970), where known */
+  resetsAt?: number };
+
+const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+
+/** claude's /usage reset ("Nov 21 at 2:59am (Europe/Berlin)", "5:29pm (Europe/Berlin)": your own time zone) as a time. */
+export function parseReset(text: string, now = Date.now()): number | undefined {
+  const m = text.match(/(?:([A-Za-z]{3})\w*\s+(\d{1,2})\s+at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)/i);
+  if (!m) return undefined;
+  const d = new Date(now);
+  let h = Number(m[3]) % 12;
+  if (m[5].toLowerCase() === "pm") h += 12;
+  d.setHours(h, Number(m[4] ?? 0), 0, 0);
+  if (m[1]) {
+    const mo = MONTHS.indexOf(m[1].toLowerCase());
+    if (mo < 0) return undefined;
+    d.setMonth(mo, Number(m[2]));
+    if (d.getTime() < now - 86_400_000) d.setFullYear(d.getFullYear() + 1);
+  } else if (d.getTime() < now) d.setDate(d.getDate() + 1);
+  return d.getTime();
+}
+
+/** When a window resets, as Claude says it: "in 42 min" and "in 2 h 14 min" within a day, "Thu 3am" within the week,
+ * "Nov 26" later (design review 6: the status bar had dropped it, the card and the usage page each wrote it their way). */
+export function whenReset(at: number | undefined, now = Date.now()): string | undefined {
+  if (at == null || Number.isNaN(at)) return undefined;
+  const mins = Math.round((at - now) / 60_000);
+  if (mins <= 0) return "now";
+  if (mins < 60) return `in ${mins} min`;
+  if (mins < 24 * 60) return `in ${Math.floor(mins / 60)} h${mins % 60 ? ` ${mins % 60} min` : ""}`;
+  const d = new Date(at), h = d.getHours(), m = d.getMinutes();
+  const time = `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""}${h < 12 ? "am" : "pm"}`;
+  if (mins < 7 * 24 * 60) return `${d.toLocaleString("en-US", { weekday: "short" })} ${time}`;
+  return `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()}`;
+}
+
+/** The exact time, for a hover: "Thursday, November 21, 3:00 AM". */
+export const exactly = (at?: number) => (at == null ? undefined : new Date(at).toLocaleString("en-US", { weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit" }));
 
 // a window from 75% is running low, from 90% about to stop you (the meters' amber and red); credit under $2 is low
 // ponytail: a fixed $2, a threshold from your own daily spend when that matters
@@ -16,13 +54,14 @@ const windowOf = (label: string) => { const l = label.replace(/^Current /, ""); 
 
 /** Every account as items, from the accounts reading, or the plan's windows and SubRouter's balance a conversation carries
  * until the first reading arrives. */
-export function items(acc: Accounts | null, fallback: { plan5h: number | null; planWeek: number | null; reset: string; balance?: number | null }): Item[] {
+export function items(acc: Accounts | null, fallback: { plan5h: number | null; planWeek: number | null; resetAt?: number | null; balance?: number | null }, now = Date.now()): Item[] {
   const out: Item[] = [];
-  const plan = acc?.plan ?? (fallback.plan5h != null ? [{ label: "Current session", used: fallback.plan5h, resets: fallback.reset }, ...(fallback.planWeek != null ? [{ label: "Current week (all models)", used: fallback.planWeek, resets: "" }] : [])] : []);
+  const plan = acc?.plan ?? (fallback.plan5h != null ? [{ label: "Current session", used: fallback.plan5h, resets: "" }, ...(fallback.planWeek != null ? [{ label: "Current week (all models)", used: fallback.planWeek, resets: "" }] : [])] : []);
   for (const r of plan) {
-    const w = windowOf(r.label), resets = r.resets.split(" (")[0];
-    out.push({ key: `claude:${w}`, provider: "Claude", name: `Claude plan, ${w}`, note: resets ? `resets ${resets.replace(/^in /, "in ")}` : undefined, pct: r.used, value: `${Math.round(r.used)}%`,
-      level: byPct(r.used), short: `Claude ${w} ${Math.round(r.used)}%` });
+    const w = windowOf(r.label);
+    const resetsAt = parseReset(r.resets, now) ?? (w === "5 hours" && fallback.resetAt ? fallback.resetAt * 1000 : undefined);
+    out.push({ key: `claude:${w}`, provider: "Claude", name: `Claude plan, ${w}`, note: resetsAt ? `resets ${whenReset(resetsAt, now)}` : undefined, pct: r.used, value: `${Math.round(r.used)}%`,
+      level: byPct(r.used), short: `Claude ${w} ${Math.round(r.used)}%`, resetsAt });
   }
   const credits = acc?.credits ?? (fallback.balance != null ? [{ provider: "SubRouter", left: `$${fallback.balance.toFixed(2)} left`, page: "https://subrouter.ai" }] : []);
   for (const c of credits) {
@@ -39,7 +78,9 @@ export function items(acc: Accounts | null, fallback: { plan5h: number | null; p
     // id like "openai-compatible-chat-585fa18d-…" is said as what it is
     const what = (w.group || w.window || "quota").replace(/ Models$/, ""), login = a.status !== "valid";
     const who = a.provider.startsWith("openai-compatible") ? "OpenAI-compatible" : a.provider, acct = a.name ? a.name.split("@")[0] : "";
-    out.push({ key: `omni:${a.provider}:${a.name}:${w.group}:${w.window}`, provider: "OmniRoute", name: `OmniRoute ${who}, ${what}`, note: login ? `${acct ? `${acct}, ` : ""}login ${a.status}` : [acct, w.window].filter(Boolean).join(", ") || undefined,
+    const resetsAt = w.resets ? Date.parse(w.resets) : undefined;
+    out.push({ key: `omni:${a.provider}:${a.name}:${w.group}:${w.window}`, provider: "OmniRoute", name: `OmniRoute ${who}, ${what}`, resetsAt: Number.isNaN(resetsAt) ? undefined : resetsAt,
+      note: login ? `${acct ? `${acct}, ` : ""}login ${a.status}` : [acct, resetsAt && !Number.isNaN(resetsAt) ? `resets ${whenReset(resetsAt, now)}` : w.window].filter(Boolean).join(", ") || undefined,
       pct: w.used, value: `${Math.round(w.used)}%`, level: login ? "out" : byPct(w.used), short: login ? `OmniRoute ${a.provider} login ${a.status}` : `OmniRoute ${what} ${Math.round(w.used)}%` });
   }
   return out;
@@ -64,7 +105,12 @@ export function demo() {
   const acc: Accounts = { plan: [{ label: "Current session", used: 34, resets: "in 4 h" }, { label: "Current week (all models)", used: 93, resets: "Nov 21 at 3am (Europe/Berlin)" }], plan_notes: [],
     credits: [{ provider: "SubRouter", left: "$12.40 left", page: "" }, { provider: "OpenRouter", left: "$0.17 over its credit", page: "" }, { provider: "Mortera", left: null, page: "" }],
     omniroute: [{ provider: "agy", name: "a", plan: "Ultra", status: "valid", windows: [{ group: "Gemini Models", window: "weekly", used: 12, resets: null, unlimited: false }] }] };
-  const all = items(acc, { plan5h: null, planWeek: null, reset: "" });
+  const all = items(acc, { plan5h: null, planWeek: null });
+  // resets: in a day as a countdown, in a week by its day, later by its date
+  const t0 = new Date(2026, 10, 19, 15, 0).getTime();
+  const r = [whenReset(t0 + 42 * 60_000, t0), whenReset(t0 + 134 * 60_000, t0), whenReset(new Date(2026, 10, 21, 3, 0).getTime(), t0), whenReset(new Date(2026, 10, 26, 17, 13).getTime(), t0),
+    whenReset(parseReset("Nov 21 at 2:59am (Europe/Berlin)", t0), t0), whenReset(parseReset("5:29pm (Europe/Berlin)", t0), t0)];
+  if (r.join("|") !== "in 42 min|in 2 h 14 min|Sat 3am|Nov 26|Sat 2:59am|in 2 h 29 min") throw new Error(`resets: ${r.join("|")}`);
   const lv = Object.fromEntries(all.map((i) => [i.key, i.level]));
   const ok = lv["claude:5 hours"] === "ok" && lv["claude:week"] === "out" && lv["credit:SubRouter"] === "ok" && lv["credit:OpenRouter"] === "out" && lv["credit:Mortera"] === "unknown"
     && mine(all, { provider: "SubRouter" } as ModelChoice, "deepseek-v4.1-flash")[0]?.key === "credit:SubRouter"

@@ -252,6 +252,13 @@ the usage page.
   plainer wording on the usage page and in Settings' About.
 - The model picker's prices evenly: "0.021 / 0.064" for "0.0213 / 0.0639", "free" for "0 / 0".
 
+0.1.81: when each window starts again, as Claude says it: "in 2 h 14 min" within a day, "Sat 3am" within the week,
+"Nov 26" later, the exact time on hover (lib/health.ts `whenReset`). The status bar shows one: the window closest to
+stopping you when one runs low (the week at 96%), else the soonest; it had none since 0.1.79. The card shows every
+window's (the conversation's own too, where it said only "this conversation"), and the usage page writes Claude's and
+OmniRoute's the same way (OmniRoute's had no reset in the card; the page wrote dates only). A window from 90% is red on
+the usage page as in the status bar.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

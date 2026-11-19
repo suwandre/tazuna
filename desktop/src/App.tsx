@@ -520,7 +520,7 @@ export default function App() {
   }, [haveView]);
   const usage = { ...(view ? viewUsage(view) : inTauri ? NO_USAGE : demo.usage),
     ...(planView?.limits ? { plan5h: Math.round(planView.limits[0]), planWeek: Math.round(planView.limits[1]), plan5hReset: resetIn(planView.limits_reset) } : {}) };
-  const accts = accountItems(accounts, { plan5h: usage.plan5h, planWeek: usage.planWeek, reset: usage.plan5hReset, balance: view?.balance });
+  const accts = accountItems(accounts, { plan5h: usage.plan5h, planWeek: usage.planWeek, resetAt: planView?.limits_reset, balance: view?.balance });
   const hereAccts = accountOf(accts, models?.choices.find((c) => c.current), view?.model ?? "");
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
   // when the reply now running began, as this window first saw it: the fold's "Working 12 s" keeps counting across a switch

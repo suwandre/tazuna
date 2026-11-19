@@ -1,7 +1,8 @@
 import { TriangleAlert } from "lucide-react";
 import { openUsage } from "./Rail";
 import { usd, type Usage } from "../lib/types";
-import { worst, type Item, type Level } from "../lib/health";
+import { useEffect, useState } from "react";
+import { exactly, whenReset, worst, type Item, type Level } from "../lib/health";
 
 // The status bar along the window's bottom: on the left the account this conversation runs on (the plan's 5 hours and
 // week on Claude, the credit on SubRouter, the window on OmniRoute) and, when another account is running low or stopped,
@@ -21,9 +22,13 @@ const ink: Record<Level, string> = { ok: "text-ink", low: "text-warn", out: "tex
 function Here({ here }: { here: Item[] }) {
   const b = "font-medium text-ink-2";
   if (!here.length) return <>Usage</>;
-  if (here[0].provider === "Claude") return <>Claude plan{here.map((i) => <span key={i.key} className="flex items-center gap-1.5"><Meter pct={i.pct ?? 0} /><span className={b}>{i.value}</span>{i.name.replace(/^Claude plan, /, "").replace("5 hours", "5 h")}</span>)}</>;
+  // one reset: the window closest to stopping you when one runs low, else the soonest ("resets in 2 h 14 min")
+  const timed = here.filter((i) => i.resetsAt != null);
+  const key = timed.some((i) => i.level !== "ok") ? [...timed].sort((a, b) => (b.pct ?? 0) - (a.pct ?? 0))[0] : [...timed].sort((a, b) => a.resetsAt! - b.resetsAt!)[0];
+  const reset = key && <span className="text-faint" title={exactly(key.resetsAt)}>resets {whenReset(key.resetsAt)}</span>;
+  if (here[0].provider === "Claude") return <>Claude plan{here.map((i) => <span key={i.key} className="flex items-center gap-1.5"><Meter pct={i.pct ?? 0} /><span className={b}>{i.value}</span>{i.name.replace(/^Claude plan, /, "").replace("5 hours", "5 h")}</span>)}{reset}</>;
   const i = here[0];
-  if (i.pct != null) return <>{i.name.split(",")[0]}<Meter pct={i.pct} /><span className={b}>{i.value}</span>{i.name.split(", ")[1]}</>;
+  if (i.pct != null) return <>{i.name.split(",")[0]}<Meter pct={i.pct} /><span className={b}>{i.value}</span>{i.name.split(", ")[1]}{reset}</>;
   return <>{i.name} {i.value ? <span className={b}>{i.value.replace(/ (left|over)$/, "")}</span> : <span className="text-faint">balance not reported</span>}{i.value && <span className="text-faint">{i.value.match(/ (left|over)$/)?.[1]}</span>}</>;
 }
 
@@ -36,7 +41,7 @@ function Card({ all, here }: { all: Item[]; here: Item[] }) {
         {all.map((i) => (
           <span key={i.key} className={`grid grid-cols-[1fr_70px_96px] items-center gap-2.5 px-3.5 py-[5px] ${here.includes(i) ? "bg-accent-soft" : ""}`}>
             <span className="min-w-0"><span className="block truncate text-ink">{i.name}</span>
-              <span className="block truncate text-[11.5px] text-faint">{here.includes(i) ? "this conversation" : i.note}</span></span>
+              <span className="block truncate text-[11.5px] text-faint" title={exactly(i.resetsAt)}>{here.includes(i) ? ["this conversation", i.note].filter(Boolean).join(", ") : i.note}</span></span>
             <span>{i.pct != null && <span className="block h-1 w-[70px] overflow-hidden rounded-sm bg-line-strong"><i className={`block h-full ${i.level === "out" ? "bg-bad" : i.level === "low" ? "bg-warn" : "bg-accent"}`} style={{ width: `${Math.min(100, i.pct)}%` }} /></span>}</span>
             <span className={`text-right tabular-nums ${i.level === "ok" ? "text-ink" : ink[i.level]}`}>{i.value ?? <span className="text-faint">not reported</span>}</span>
           </span>
@@ -57,6 +62,9 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [] }:
   const button = `${item} rounded px-1 -mx-1 hover:bg-hover hover:text-ink`;
   const b = "font-medium text-ink-2";
   const others = accounts.filter((i) => !here.includes(i) && (i.level === "low" || i.level === "out"));
+  // the countdown moves on by itself
+  const [, tick] = useState(0);
+  useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(t); }, []);
   return (
     <footer aria-label="Status" className="relative z-20 flex h-7 flex-none items-center gap-4 overflow-x-clip overflow-y-visible whitespace-nowrap border-t border-line bg-sidebar px-3.5 text-[12px] tabular-nums text-muted">
       <span className="group/use relative flex flex-none items-center gap-3">

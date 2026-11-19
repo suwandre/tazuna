@@ -4,6 +4,7 @@ import { core, type Accounts, type ModelChoice } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
 import { summarize, type Day, type Row } from "../lib/usage";
 import { modelLabel } from "../lib/types";
+import { exactly, parseReset, whenReset } from "../lib/health";
 import { Parts, Sep } from "./Sep";
 
 // The usage page (Cmd-Shift-U, the menu, a click on the plan bar or the cost): what each account has left right now
@@ -15,15 +16,6 @@ const RANGES = [7, 30, 90];
 const big = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`);
 // totals in cents: "$0" for nothing, "< $0.01" below a cent ("$0.000072" beside "$0.26" in one column, design review 5)
 const money = (n: number) => (n <= 0 ? "$0" : n < 0.01 ? "< $0.01" : n >= 100 ? `$${Math.round(n)}` : `$${n.toFixed(2)}`);
-
-/** OmniRoute's resets (UTC ISO strings) as claude's /usage writes its own, in local time: "Nov 25 at 11:03am", "Nov 21
- * at 3am". One format for every reset on the page (until desktop 0.1.74 "in 5 d" beside "Nov 21 at 3am"). */
-const until = (iso: string | null) => {
-  const t = iso ? new Date(iso) : null;
-  if (!t || Number.isNaN(t.getTime())) return null;
-  const h = t.getHours(), m = t.getMinutes();
-  return `${t.toLocaleString("en-US", { month: "short" })} ${t.getDate()} at ${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""}${h < 12 ? "am" : "pm"}`;
-};
 
 /** claude's window names, shorter: "Current session" is the 5 hours, "Current week (Fable)" the week on Fable. */
 const windowName = (label: string) => {
@@ -44,13 +36,14 @@ function Section({ title, note, action, children }: { title: string; note?: Reac
 }
 
 /** One account's window: its name and whose, the bar (amber from 75%), the share used and when it resets. */
-function Meter({ name, of, used, resets }: { name: string; of: ReactNode; used: number | null; resets?: string | null }) {
+function Meter({ name, of, used, at }: { name: string; of: ReactNode; used: number | null; at?: number }) {
+  const resets = whenReset(at);
   const pct = Math.max(0, Math.min(100, used ?? 0));
   return (
     <div className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
       <span className="w-[200px] flex-none"><span className="block truncate text-ink" title={name}>{name}</span><span className="block truncate text-[11.5px] text-faint">{of}</span></span>
-      <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded bg-line"><i className={`block h-full rounded ${pct >= 75 ? "bg-warn" : "bg-accent"}`} style={{ width: `${pct}%` }} /></span>
-      <span className="w-[220px] flex-none truncate text-right tabular-nums text-muted"><span className="font-medium text-ink">{used == null ? "–" : `${Math.round(used)}%`}</span>{resets && <><Sep />resets {resets}</>}</span>
+      <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded bg-line"><i className={`block h-full rounded ${pct >= 90 ? "bg-bad" : pct >= 75 ? "bg-warn" : "bg-accent"}`} style={{ width: `${pct}%` }} /></span>
+      <span className="w-[220px] flex-none truncate text-right tabular-nums text-muted"><span className="font-medium text-ink">{used == null ? "–" : `${Math.round(used)}%`}</span>{resets && <><Sep /><span title={exactly(at)}>resets {resets}</span></>}</span>
     </div>
   );
 }
@@ -180,11 +173,11 @@ function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; 
   const credits = acc?.credits ?? (balance != null ? [{ provider: "SubRouter", left: `$${balance.toFixed(2)} left`, page: "https://subrouter.ai" }] : []);
   if (!plan.length && !credits.length && !acc?.omniroute.length) return <div className="px-3.5 py-2.5 text-[12.5px] text-muted">No account readings: claude is not logged in to a subscription, and no provider key is set.</div>;
   return <>
-    {plan.map((r) => <Meter key={r.label} name={windowName(r.label)} of="Claude plan" used={r.used} resets={r.resets.split(" (")[0]} />)}
+    {plan.map((r) => <Meter key={r.label} name={windowName(r.label)} of="Claude plan" used={r.used} at={parseReset(r.resets)} />)}
     {acc?.omniroute.flatMap((a) => a.windows.map((w, i) => w.unlimited
       ? <div key={`${a.provider}${a.name}${i}`} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]"><span className="w-[200px] flex-none"><span className="block text-ink">{[w.group, w.window].filter(Boolean).join(", ")}</span>
           <Parts className="block truncate text-[11.5px] text-faint" items={["OmniRoute", who(a.provider), a.name.split("@")[0], a.plan]} /></span><span className="text-muted">unlimited</span></div>
-      : <Meter key={`${a.provider}${a.name}${i}`} name={[w.group, w.window].filter(Boolean).join(", ").replace(/^quota$/, "Quota") || "Quota"} used={w.used} resets={until(w.resets)}
+      : <Meter key={`${a.provider}${a.name}${i}`} name={[w.group, w.window].filter(Boolean).join(", ").replace(/^quota$/, "Quota") || "Quota"} used={w.used} at={w.resets ? Date.parse(w.resets) : undefined}
           of={<Parts items={["OmniRoute", who(a.provider), a.name.split("@")[0], a.plan, a.status !== "valid" && `login ${a.status}`]} />} />))}
     {credits.map((c) => (
       <div key={c.provider} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
