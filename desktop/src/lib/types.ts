@@ -1,7 +1,9 @@
 // What the window shows. Today filled from demo data; next from tazuna's app server (the same events the CLI renders).
 export type Thread = { id: string; title: string; project?: string; running?: boolean;
   /** where it ran (a project's name, or "chat") and when it last did (seconds since 1970): the row's second line */
-  place?: string; at?: number };
+  place?: string; at?: number;
+  /** the model it ran on: its provider's mark beside the name */
+  model?: string };
 export type Project = { name: string; path?: string; open: boolean; pending?: number; threads: Thread[] };
 /** One step before the answer: a tool call (with what it was given and what came back) or a stretch of thinking. */
 export type ToolStep = {

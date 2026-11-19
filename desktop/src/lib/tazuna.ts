@@ -53,7 +53,9 @@ export type Hook = { cwd: string; after_turn: string | null; note: string };
 export type WorktreeMade = { ask_setup?: boolean; script?: string; id?: string; setup_skipped?: string; error?: string; path?: string; branch?: string; port?: number; copied?: string[]; setup?: { ok: boolean; tail: string } | null };
 export type Review = { scope: string; turn?: number | null; base?: string | null; text: string };
 export type Diff = { turn: number; path: string; text: string };
-export type SessionRow = { id: string; first: string; last_at: number; messages: number };
+export type SessionRow = { id: string; first: string; last_at: number; messages: number;
+  /** its latest run's model (core 0.1.178 on; empty for an older core) */
+  model?: string };
 export type Sessions = { dirs: { dir: string; list: SessionRow[] }[] };
 
 export type ModelChoice = {

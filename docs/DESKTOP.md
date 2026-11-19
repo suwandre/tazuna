@@ -160,6 +160,11 @@ rounded boxes (the ring is in the base layer now, so a field whose box shows the
 fields turn their border accent); a change card's Diff opens the review view at that file (one diff view, with line
 numbers, Stage and Revert); the side chat's box takes the main one's focus border and send button; the palette names the
 permission modes with what each does.
+0.1.70: from the comparison with the harnesses installed on the Mac (Claude, T3 Code, MonoCode, DeepSeek Harness, Hermes):
+the model and its effort in one pill ("Opus 5.5 · high"), the effort levels at the top of its picker, which opens above
+the whole box (it covered the box's text); a copy button on each answer, beside its numbers; each conversation in the
+sidebar marked with its provider (a letter: C Claude, D DeepSeek, O OpenAI, G Gemini, M Mistral…; core 0.1.178 sends the
+model).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

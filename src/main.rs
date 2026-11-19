@@ -1310,6 +1310,8 @@ fn app_server(a: &Args) -> Result<()> {
                             };
                             let found: Vec<serde_json::Value> = dirs.iter().map(|d| json!({"dir": d, "list": sessions_of(&base, d).iter().take(30).map(|e| json!({
                                 "id": e.id, "first": e.first.chars().take(120).collect::<String>(), "last_at": e.last_at, "messages": e.messages,
+                                // its latest run's model: the desktop's sidebar marks each conversation with its provider
+                                "model": e.model,
                             })).collect::<Vec<_>>()})).collect();
                             let mut o = out.lock();
                             let _ = writeln!(o, "{}", json!({"type": "sessions", "dirs": found}));

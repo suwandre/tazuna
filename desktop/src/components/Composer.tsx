@@ -92,7 +92,7 @@ export function Composer({ session, usage, where, busy, onSend, onStop, models, 
     <footer className="px-7 pb-[22px] pt-2.5">
       <div className="mx-auto max-w-[700px]"><Slot name="composer.dock" props={{}} /></div>
       {above}
-      <div className="mx-auto max-w-[700px] rounded-xl border border-line-strong bg-card py-2 pl-4 pr-3 pt-3 shadow-composer focus-within:border-accent">
+      <div data-composer className="mx-auto max-w-[700px] rounded-xl border border-line-strong bg-card py-2 pl-4 pr-3 pt-3 shadow-composer focus-within:border-accent">
         <textarea ref={box} rows={1} autoFocus aria-label="Message" value={text} onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Tab" && e.shiftKey && onMode) { e.preventDefault(); nextMode(); } if (e.key === "Escape" && busy) onStop?.(); if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}
           placeholder={busy ? "Type your next message: it goes after this reply" : "Ask anything, or describe a change…"} className="max-h-[40vh] w-full resize-none overflow-y-auto bg-transparent pb-3 pt-0.5 text-ink outline-none placeholder:text-faint" />
@@ -206,15 +206,27 @@ export function ModePill({ composer: c }: { composer: ComposerBag }) {
   );
 }
 
+/** The model and its effort in one pill ("Opus 5.5 · high"), both chosen in its picker: the effort levels at the top. */
 export function ModelPill({ composer: c }: { composer: ComposerBag }) {
   const [open, setOpen] = useState(false);
   const current = c.models?.choices.find((m) => m.current);
+  // above the whole box: from the pill it covered the box's own text (review 1)
+  const at = useRef<HTMLSpanElement>(null);
+  const [lift, setLift] = useState(0);
+  const toggle = () => {
+    const card = at.current?.closest("[data-composer]");
+    setLift(card && at.current ? Math.max(0, at.current.getBoundingClientRect().top - card.getBoundingClientRect().top) : 0);
+    c.onModels?.(); setOpen(!open);
+  };
   return (
-    <span className="relative">
-      <button disabled={c.busy || !c.onPickModel} onClick={() => { c.onModels?.(); setOpen(!open); }} title="Model" className={pill}>
+    <span ref={at} className="relative">
+      <button disabled={c.busy || !c.onPickModel} onClick={toggle} title="Model and effort" className={pill}>
         <Zap size={14} strokeWidth={1.5} />{current?.label ?? c.session.model}
+        {c.session.effort && <span className="text-faint">· {c.session.effort}</span>}
+        <ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
       </button>
-      {open && <ModelPicker models={c.models ?? null} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }} />}
+      {open && <ModelPicker models={c.models ?? null} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }}
+        efforts={current?.efforts ?? []} effort={c.session.effort} onEffort={c.onPickEffort} lift={lift} />}
     </span>
   );
 }

@@ -124,7 +124,7 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 ## Components we own
 Sidebar item (two lines), open row, group heading, project group, thread dot (idle, running), badge; header crumb, cost and
 panel button; message (user, agent, chat), work fold, tool step, change card, metadata line, routed tag; composer with
-pills, plan bar and card, and send; work panel section (Changes, Checks, Pull request), usage bar. Reuse these before adding new ones; add new ones here when they are made.
+pills (where, mode, model with its effort), plan bar and card, and send; provider mark; answer copy; work panel section (Changes, Checks, Pull request), usage bar. Reuse these before adding new ones; add new ones here when they are made.
 
 ## Motion
 - CSS transitions of 120-200 ms with the easing above; panels slide, toasts fade.

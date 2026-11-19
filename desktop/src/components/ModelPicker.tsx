@@ -4,7 +4,12 @@ import type { ModelChoice, Models } from "../lib/tazuna";
 
 // The model picker over the composer: the terminal's /model catalog, grouped by provider. With nothing typed it lists the
 // models usable now; typing searches all of them, and a row that needs a key or trust says what to do.
-export function ModelPicker({ models, onPick, onClose }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void }) {
+export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onEffort, lift = 0 }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
+  /** the current model's effort levels, chosen at the top (one pill for model and effort since desktop 0.1.70, as Claude,
+   * MonoCode and DeepSeek Harness have it) */
+  efforts?: string[]; effort?: string; onEffort?: (e: string) => void;
+  /** px from the pill's top to the composer's: the picker opens above the whole box, not over its text */
+  lift?: number }) {
   const [q, setQ] = useState("");
   const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -22,11 +27,22 @@ export function ModelPicker({ models, onPick, onClose }: { models: Models | null
     return { groups: [...groups], hidden: f ? Math.max(0, rows.length - 300) : all.length - rows.length };
   }, [models, q]);
   return (
-    <div ref={box} className="absolute bottom-full left-0 z-10 mb-2 flex max-h-[420px] w-[460px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+    <div ref={box} style={{ marginBottom: lift + 8 }} className="absolute bottom-full left-0 z-10 flex max-h-[420px] w-[460px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
       <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-muted">
         <Search size={14} strokeWidth={1.5} />
         <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search models and providers" className="flex-1 bg-transparent text-ink outline-none placeholder:text-faint" />
       </div>
+      {efforts.length > 1 && onEffort && (
+        <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-[12px]">
+          <span className="text-faint">Effort</span>
+          <span role="radiogroup" aria-label="Effort" className="flex flex-wrap rounded-md border border-line p-0.5">
+            {efforts.map((e) => (
+              <button key={e} role="radio" aria-checked={e === effort} onClick={() => onEffort(e)}
+                className={`rounded px-2 py-0.5 ${e === effort ? "bg-selected text-ink" : "text-muted hover:text-ink"}`}>{e}</button>
+            ))}
+          </span>
+        </div>
+      )}
       {models?.rebuild && <div className="border-b border-line-soft px-3 py-1.5 text-[12px] text-warn">Switching between Claude models: {models.rebuild}</div>}
       <div className="overflow-auto py-1">
         {!models && <div className="px-3 py-2 text-[12.5px] text-faint">Loading…</div>}

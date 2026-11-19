@@ -16,6 +16,11 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.178 (2026-11-19): saved conversations carry their model
+
+- The app server's `sessions` list gives each saved conversation its latest run's model, so the desktop sidebar marks
+  each conversation with its provider.
+
 ## 0.1.177 (2026-11-19): a chat's follow-up stays a chat
 
 - After the router answers a message as a chat, a short follow-up ("which exact model?") is a chat again, with that

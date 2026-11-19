@@ -1,6 +1,7 @@
 // tazuna's own parts, registered in the window's spots the same way a plugin registers (docs/PLUGINS.md): a plugin can
 // replace any of them by registering its id, or hide it. Imported once by main.tsx.
-import { AttachButton, EffortPill, ModelPill, ModePill, WherePill } from "./components/Composer";
+// EffortPill (a pill of its own until desktop 0.1.70) stays exported for a plugin that wants it back
+import { AttachButton, ModelPill, ModePill, WherePill } from "./components/Composer";
 import { ChangesSection, ChecksSection, PrSection, Timeline } from "./components/Rail";
 import { NewChatButton, OpenFolderButton, SettingsRow } from "./components/Sidebar";
 import { Step } from "./components/Step";
@@ -20,7 +21,6 @@ slots.register({ id: "rail.timeline", slot: "rail", order: 50, source: own, rend
 slots.register({ id: "composer.where", slot: "composer.pills", order: 5, source: own, render: WherePill });
 slots.register({ id: "composer.mode", slot: "composer.pills", order: 10, source: own, render: ModePill });
 slots.register({ id: "composer.model", slot: "composer.pills", order: 20, source: own, render: ModelPill });
-slots.register({ id: "composer.effort", slot: "composer.pills", order: 30, source: own, render: EffortPill });
 slots.register({ id: "composer.attach", slot: "composer.pills", order: 40, source: own, render: AttachButton });
 
 slots.register({ id: "sidebar.new-chat", slot: "sidebar.top", order: 10, source: own, render: NewChatButton });

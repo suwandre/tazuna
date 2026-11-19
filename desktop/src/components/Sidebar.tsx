@@ -2,6 +2,7 @@ import { ChevronRight, FolderOpen, LoaderCircle, Pencil, Plus, Search, X } from 
 import { createContext, useContext, useState } from "react";
 import { Slot } from "../lib/slots";
 import type { Project, Thread } from "../lib/types";
+import { ProviderMark } from "./ProviderMark";
 
 const icon = { size: 16, strokeWidth: 1.5 };
 
@@ -57,7 +58,7 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
       {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-accent shadow-[0_0_0_3px_var(--accent-soft)]" : "bg-faint"}`} />}
       {twoLines ? (
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-ink">{t.title}</span>
+          <span className="flex items-center gap-1.5"><ProviderMark model={t.model} /><span className="truncate text-ink">{t.title}</span></span>
           <span className="flex gap-2 text-[11.5px] text-faint"><span className="truncate">{t.place}</span><span className="ml-auto flex-none tabular-nums group-hover:hidden">{age(t.at)}</span></span>
         </span>
       ) : <span className="flex-1 truncate">{t.title}</span>}
@@ -69,7 +70,7 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
   );
 }
 
-type Open = { tid: string; title: string; place: string; state: "working" | "asking" | "idle" | "stopped"; id?: string | null };
+type Open = { tid: string; title: string; place: string; state: "working" | "asking" | "idle" | "stopped"; id?: string | null; model?: string };
 
 /** A conversation open now: its name, then where it runs and what it needs; a spinner while it works. */
 function OpenRow({ o, active, onSwitch, onClose }: { o: Open; active: boolean; onSwitch?: (tid: string) => void; onClose?: (tid: string) => void }) {
@@ -80,6 +81,7 @@ function OpenRow({ o, active, onSwitch, onClose }: { o: Open; active: boolean; o
         <span className="flex items-center gap-1.5 text-ink">
           {o.state === "working" ? <LoaderCircle size={12} strokeWidth={2} className="flex-none animate-spin text-accent" aria-hidden="true" />
             : o.state !== "asking" && <span className={`size-1.5 flex-none rounded-full ${STATE[o.state][0]}`} />}
+          <ProviderMark model={o.model} />
           <span className="truncate">{o.title}</span>
           {o.state === "asking" && <span className="ml-auto flex-none rounded-full border border-warn/45 px-1.5 text-[10.5px] font-medium leading-4 text-warn">asks</span>}
         </span>

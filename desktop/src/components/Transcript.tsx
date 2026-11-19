@@ -1,4 +1,4 @@
-import { ChevronRight, FileText, LoaderCircle, MessageCircle, Pencil } from "lucide-react";
+import { Check, ChevronRight, Copy, FileText, LoaderCircle, MessageCircle, Pencil } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
 import { usd, type Call, type Change, type Message, type ToolStep } from "../lib/types";
@@ -249,15 +249,35 @@ function Calls({ calls }: { calls: Call[] }) {
   );
 }
 
+/** Copies an answer's text as markdown (DeepSeek Harness puts copy under each answer; tazuna had only selecting it). */
+function CopyAnswer({ text }: { text: string }) {
+  const [done, setDone] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(text); }
+    catch {
+      // a webview without the clipboard API: the old way, through a selected field
+      const t = document.createElement("textarea");
+      t.value = text; document.body.appendChild(t); t.select(); document.execCommand("copy"); t.remove();
+    }
+    setDone(true); setTimeout(() => setDone(false), 1500);
+  };
+  return (
+    <button onClick={copy} title="Copy the answer (markdown)" className="inline-flex items-center gap-1 rounded px-1 hover:bg-hover hover:text-ink">
+      {done ? <Check size={12} strokeWidth={1.75} className="text-ok" /> : <Copy size={12} strokeWidth={1.5} />}{done ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
 export function MessageMeta({ message: m }: { message: Message }) {
   const [open, setOpen] = useState(false);
   if (m.role !== "agent" || !m.meta) return null;
   const n = m.meta.calls?.length ?? 0;
+  const text = m.prose.filter((p) => !p.startsWith("⚠ ")).join("\n\n");
   return (
     // the answer's numbers show on its hover (or focus, or with its calls open): under every answer they were the busiest
     // line on the screen, and the thread's cost stays in the header
     <div className={`mt-2 text-[12px] tabular-nums text-faint transition-opacity duration-150 ${open ? "" : "opacity-0 focus-within:opacity-100 group-hover:opacity-100"}`}>
-      {meta(m.meta)}
+      {text && <><CopyAnswer text={text} /> · </>}{meta(m.meta)}
       {n > 0 && <> · <button onClick={() => setOpen(!open)} aria-expanded={open} title="Each model call of this reply: tokens, timing and cost"
         className="rounded px-1 hover:bg-hover hover:text-ink">{n} call{n === 1 ? "" : "s"} {open ? "▾" : "▸"}</button></>}
       {open && m.meta.calls && <Calls calls={m.meta.calls} />}

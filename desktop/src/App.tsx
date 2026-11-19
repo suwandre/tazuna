@@ -594,7 +594,7 @@ export default function App() {
         projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
         onNewChat={() => open(null)} onOpenFolder={pick} onOpenProject={(p) => p.path && open(p.path)}
         onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")} onSettings={() => setOverlay("settings")}
-        open={inTauri ? threads.filter((t) => t.tid === active || t.view?.blocks.some((b) => b.kind === "prompt")).map((t) => ({ tid: t.tid, id: t.view?.session_id, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
+        open={inTauri ? threads.filter((t) => t.tid === active || t.view?.blocks.some((b) => b.kind === "prompt")).map((t) => ({ tid: t.tid, id: t.view?.session_id, model: t.view?.model, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
           state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
         activeTid={active} onSwitch={show} onClose={close}
         onRename={inTauri ? (t, title) => core.rename(t.id, title).then(refreshSessions) : undefined}
@@ -738,7 +738,7 @@ const base = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path
 /** One of tazuna's worktrees (src/worktree.rs: <data>/worktrees/<repository>/wt-<name>). */
 const isWorktree = (path: string) => /[\\/]worktrees[\\/][^\\/]+[\\/]wt-[a-z0-9]+$/.test(path);
 
-const rowsOf = (rows?: SessionRow[], place = "chat", project?: string) => (rows ?? []).map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)", place, project, at: r.last_at }));
+const rowsOf = (rows?: SessionRow[], place = "chat", project?: string) => (rows ?? []).map((r) => ({ id: r.id, title: r.first.split("\n")[0] || "(no message)", place, project, at: r.last_at, model: r.model }));
 
 /** An open conversation's name: its first message, else a new one's. */
 const titleOf = (t: Thread) => (t.view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text?.split("\n")[0] || "New conversation";
