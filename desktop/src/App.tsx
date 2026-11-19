@@ -592,7 +592,7 @@ export default function App() {
     <div className="flex h-screen flex-col overflow-hidden">
     <div className="grid min-h-0 flex-1 overflow-hidden"
       style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", side ? "380px" : panelOpen ? "300px" : null].filter(Boolean).join(" ") }}>
-      {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-ink/15" />}
+      {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-scrim" />}
       <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-composer" : "hidden") : "flex min-h-0"}>
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
         chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
@@ -627,21 +627,21 @@ export default function App() {
           onEdit={inTauri ? (e, text) => {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
-          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} onSendToAgent={(text) => core.send(text, true)}
+          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} onSendToAgent={(text) => core.send(text, true)} onRetry={(text) => core.send(text)}
           onDiff={(turn, path) => (inTauri ? setReviewing({ scope: "turn", turn, path }) : core.diff(turn, path))} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />}
         </div>
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {reviewing && <ReviewView start={reviewing} turns={(view?.changes ?? []).filter((c) => !c.undone).map((c) => c.turn)}
           onClose={() => setReviewing(null)} onSend={(text) => core.send(text, true)} />}
         {view?.untrusted && (
-          <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
+          <div className="mx-auto mb-2 flex w-full max-w-[756px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
             <span className="flex-1">This folder's settings run code ({view.untrusted}). tazuna works here without them until you trust it.</span>
             <button onClick={() => core.trust().then(restart)} className="rounded-md border border-line-strong px-2.5 py-1 font-medium text-ink hover:bg-hover">Trust folder</button>
           </div>
         )}
-        {error && <div className="mx-auto mb-2 max-w-[700px] px-7 text-[12.5px] text-bad">{error}</div>}
+        {error && <div className="mx-auto mb-2 max-w-[756px] px-7 text-[12.5px] text-bad">{error}</div>}
         {folder && wtNotes[folder] && (
-          <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
+          <div className="mx-auto mb-2 flex w-full max-w-[756px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
             <span className="flex-1">Worktree ready. {wtNotes[folder]}.</span>
             <button onClick={() => setWtNotes((m) => { const { [folder]: _, ...rest } = m; return rest; })} className="text-muted hover:text-ink">Dismiss</button>
           </div>
@@ -675,7 +675,7 @@ export default function App() {
           </div>
         )}
         {inTauri && safeMode() && userWidgets.some((w) => w.kind === "plugin") && (
-          <div className="mx-auto mb-2 max-w-[700px] px-7 text-[12.5px] text-muted">Safe mode: plugins are off (Settings turns them back on).</div>
+          <div className="mx-auto mb-2 max-w-[756px] px-7 text-[12.5px] text-muted">Safe mode: plugins are off (Settings turns them back on).</div>
         )}
         {ready[active] && (
           <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] text-ink-2">
@@ -709,7 +709,7 @@ export default function App() {
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
-    <StatusBar usage={usage} version={appVersion} />
+    <StatusBar usage={usage} version={appVersion} idle={fresh} />
     </div>
   );
 }

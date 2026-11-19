@@ -62,7 +62,7 @@ and its error shows in Settings.
 | `sidebar.footer` | the sidebar's bottom row (Settings). props: { planLeft } | sidebar.settings (a new version shows as a snackbar since 0.1.60) |
 | `message.user` | how one of your messages is drawn. props: { message, index } | message.user.default |
 | `message.text` | how an answer's text is drawn (one entry: replace 'message.text.markdown' to restyle answers). props: { text } | message.text.markdown |
-| `message.after` | under each answer (the change card, the cost line). props: { message, index } | message.change, message.meta |
+| `message.after` | under each answer (a failed reply's error card, the change card, the cost line). props: { message, index } | message.failure, message.change, message.meta |
 | `tool.view` | how a tool step is drawn (one entry: replace 'tool.view.default'). props: { step } | tool.view.default |
 | `overlay` | anything drawn over the window (fixed position). props: { data } | (empty) |
 

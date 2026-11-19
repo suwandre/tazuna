@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { core, type Review } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
 import { numbered, parse, patchOf, type FileDiff, type Piece } from "../lib/unidiff";
+import { code } from "../lib/markdown";
 
 type Comment = { path: string; line: number; text: string; quote: string };
 
@@ -43,8 +44,8 @@ export function ReviewView({ start, turns, onClose, onSend }: {
       className={`rounded-md px-2.5 py-1 text-[12px] ${scope.scope === s && scope.turn === turn ? "bg-selected text-ink" : "text-muted hover:bg-hover"}`}>{label}</button>
   );
   return (
-    <div onMouseDown={onClose} className="fixed inset-0 z-20 flex bg-ink/20 p-8">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Review changes" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="flex min-h-0 w-full flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+    <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-20 flex bg-scrim p-8">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Review changes" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex min-h-0 w-full flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-1.5 border-b border-line-soft px-4 py-2.5">
           <span className="mr-2 font-medium">Review</span>
           {tab("uncommitted", "Uncommitted")}{tab("branch", "Branch")}
@@ -87,7 +88,8 @@ export function ReviewView({ start, turns, onClose, onSend }: {
                           className={`group flex cursor-pointer ${l.line[0] === "+" ? "bg-ok/10" : l.line[0] === "-" ? "bg-bad/10" : ""} hover:bg-accent-soft`}>
                           <span className="w-10 flex-none select-none pr-2 text-right text-faint">{l.old ?? ""}</span>
                           <span className="w-10 flex-none select-none pr-2 text-right text-faint">{l.new ?? ""}</span>
-                          <span className={`min-w-0 flex-1 whitespace-pre-wrap break-all pr-3 ${l.line[0] === "+" ? "text-ok" : l.line[0] === "-" ? "text-bad" : "text-ink-2"}`}>{l.line || " "}</span>
+                          {/* the code in its colours, the +/- in the change's (until desktop 0.1.74 a whole line green or red) */}
+                          <span className="min-w-0 flex-1 whitespace-pre-wrap break-all pr-3 text-ink-2"><span className={l.line[0] === "+" ? "text-ok" : l.line[0] === "-" ? "text-bad" : ""}>{l.line[0] ?? " "}</span>{code(l.line.slice(1), 0, false)}</span>
                           <MessageSquare size={12} strokeWidth={1.5} className={`mr-2 mt-1 flex-none ${c ? "text-accent" : "invisible text-faint group-hover:visible group-focus-visible:visible"}`} />
                         </div>
                         {c && !(writing && writing.path === file.path && writing.line === at) && (

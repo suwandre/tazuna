@@ -33,9 +33,9 @@ export function Setup({ onSettings, onClose }: { onSettings: () => void; onClose
   );
   const button = "flex-none rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover";
   return (
-    <div onMouseDown={onClose} className="fixed inset-0 z-30 grid place-items-center bg-ink/15 p-10">
+    <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Set up tazuna" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
-        className="flex max-h-full w-[600px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+        className="tz-dialog flex max-h-full w-[600px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Set up tazuna</span>
           <button onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>

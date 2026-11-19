@@ -178,6 +178,25 @@ Spending, the section it changes (with "How your runs went"): in the header it r
 0.1.73: the model picker opens below the message box where there is no room above it (the start page, whose box sits
 high, cut it off at the top), and its height is what the page has room for.
 
+0.1.74 (design review 4, every screen and menu on test data; before and after compared side by side):
+- One placement rule for every menu on the composer (usePlace): the permission and folder menus open above the whole box
+  where they fit, else below it. The permission menu was cut off on the start page and covered the box's text elsewhere.
+- A reply that failed shows an error card: the provider's message in words, Retry, its raw reply on request. The raw
+  JSON was printed as the answer, after a "⚠", and a failed reply otherwise ended with nothing; a stopped one says so.
+- Answers: # and ## are headings (all headings were bold paragraphs); a numbered list goes on from its number after a
+  code block (it restarted at 1); lists nest; code blocks show their language and a copy button; table columns align as
+  their |--:| line says; *italic*.
+- The backdrop behind a dialog darkens in both themes (the ink at 15% turned the dark window grey); dialogs, menus and
+  the palette come up with a short motion, as toasts and the work panel did. The usage page keeps one height.
+- One format for every reset on the usage page ("resets Nov 25 at 12:03pm"; OmniRoute's read "in 5 d"); the status bar
+  says "5 h · resets in 2 h 14 min" and shows no context and cache before a conversation; money as "$0.41".
+- Models by name ("Opus 5.5") in the usage tables, the sidebar's second line (instead of a letter in a box) and the
+  model button before the list arrives. The picker labels its columns and names the provider once.
+- The text column is as wide as the message box; the start page's rows ring their focus inside the card; the palette
+  marks the typed words and lists its keys; the review's diff keeps the code's colours; ⌘\ in the shortcut sheet;
+  plainer Settings wording.
+- `desktop/review/sweep.cjs` takes the screenshots of all of this on test data (`review/mock.js`): run before a release.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

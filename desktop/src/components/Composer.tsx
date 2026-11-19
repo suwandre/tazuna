@@ -1,7 +1,7 @@
 import { ArrowUp, Check, ChevronDown, FolderOpen, Gauge, MessageCircle, Paperclip, Plus, Shield, Square, Zap } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
-import { usd, type Session, type Usage } from "../lib/types";
+import { modelLabel, usd, type Session, type Usage } from "../lib/types";
 import { Bar, openUsage } from "./Rail";
 import { Slot } from "../lib/slots";
 import { EffortMenu, Menu, ModelPicker } from "./ModelPicker";
@@ -170,7 +170,7 @@ export function WherePill({ composer: c }: { composer: ComposerBag }) {
       </button>
       {open && (
         // downward: on the start screen the box sits under the heading, which an upward menu covered
-        <Menu onClose={() => setOpen(false)} width={280} down>
+        <Menu onClose={() => setOpen(false)} width={280}>
           {w.choices.map((ch) => (
             <button key={ch.path ?? "chat"} onClick={() => { setOpen(false); w.pick(ch.path); }} title={ch.hint} className="flex w-full items-center gap-2 px-3 py-[6px] text-left hover:bg-hover">
               <span className="w-3.5 flex-none text-accent">{ch.label === w.label && <Check size={14} strokeWidth={1.75} />}</span>
@@ -210,31 +210,16 @@ export function ModePill({ composer: c }: { composer: ComposerBag }) {
 export function ModelPill({ composer: c }: { composer: ComposerBag }) {
   const [open, setOpen] = useState(false);
   const current = c.models?.choices.find((m) => m.current);
-  // above the whole box: from the pill it covered the box's own text (review 1)
-  const at = useRef<HTMLSpanElement>(null);
-  // above the box where it fits, else below it: on the start page the box sits high and the picker was cut off at the
-  // top (desktop 0.1.72); its height is what the scrolling page around it has room for
-  const [place, setPlace] = useState({ lift: 0, down: false, max: 420 });
-  const toggle = () => {
-    const card = at.current?.closest("[data-composer]");
-    if (card && at.current) {
-      let clip: Element | null = card.parentElement;
-      while (clip && clip !== document.body && !/auto|scroll|hidden/.test(getComputedStyle(clip).overflowY)) clip = clip.parentElement;
-      const pill = at.current.getBoundingClientRect(), box = card.getBoundingClientRect(), view = (clip ?? document.body).getBoundingClientRect();
-      const above = box.top - view.top - 12, below = view.bottom - box.bottom - 12, down = above < 320 && below > above;
-      setPlace({ lift: Math.max(0, down ? box.bottom - pill.bottom : pill.top - box.top), down, max: Math.max(160, Math.min(420, down ? below : above)) });
-    }
-    c.onModels?.(); setOpen(!open);
-  };
+  const toggle = () => { c.onModels?.(); setOpen(!open); };
   return (
-    <span ref={at} className="relative">
+    <span className="relative">
       <button disabled={c.busy || !c.onPickModel} onClick={toggle} title="Model and effort" className={pill}>
-        <Zap size={14} strokeWidth={1.5} />{current?.label ?? c.session.model}
+        <Zap size={14} strokeWidth={1.5} />{current?.label ?? modelLabel(c.session.model)}
         {c.session.effort && <span className="text-faint">· {c.session.effort}</span>}
         <ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
       </button>
       {open && <ModelPicker models={c.models ?? null} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }}
-        efforts={current?.efforts ?? []} effort={c.session.effort} onEffort={c.onPickEffort} {...place} />}
+        efforts={current?.efforts ?? []} effort={c.session.effort} onEffort={c.onPickEffort} />}
     </span>
   );
 }

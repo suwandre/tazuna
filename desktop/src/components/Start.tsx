@@ -15,7 +15,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
   composer: ReactNode; recent: StartItem[]; projects: StartProject[];
   onResume: (s: StartItem) => void; onProject: (path: string) => void; onFolder: () => void;
 }) {
-  const row = "flex w-full items-center gap-2.5 border-t border-line-soft px-3.5 py-[7px] text-left hover:bg-hover";
+  const row = "flex w-full items-center gap-2.5 border-t border-line-soft px-3.5 py-[7px] text-left hover:bg-hover focus-visible:outline-offset-[-2px]";
   const head = "flex px-3.5 pb-1.5 pt-2.5 text-[11.5px] font-medium text-faint";
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center overflow-auto px-7 pb-10 pt-[12vh]">

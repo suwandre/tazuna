@@ -1,18 +1,36 @@
 import { Check, Search } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { ModelChoice, Models } from "../lib/tazuna";
 
 // The model picker over the composer: the terminal's /model catalog, grouped by provider. With nothing typed it lists the
 // models usable now; typing searches all of them, and a row that needs a key or trust says what to do.
-export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onEffort, lift = 0, down, max = 420 }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
+/** Where a popover on the composer opens: above the whole message box where it fits, else below it, as tall as the page
+ * around it has room for. Every menu there uses it: the start page's box sits high, and the model picker (desktop 0.1.73)
+ * and then the permission menu were cut off at the top; above a conversation's box a menu covered its text. */
+export function usePlace(box: RefObject<HTMLElement | null>, want = 420): { style: CSSProperties; side: string } {
+  const [p, setP] = useState<{ down: boolean; lift: number; max: number } | null>(null);
+  useLayoutEffect(() => {
+    const el = box.current, anchor = el?.parentElement;
+    if (!el || !anchor) return;
+    const card = anchor.closest("[data-composer]") ?? anchor;
+    let clip: Element | null = card.parentElement;
+    while (clip && clip !== document.body && !/auto|scroll|hidden/.test(getComputedStyle(clip).overflowY)) clip = clip.parentElement;
+    const a = anchor.getBoundingClientRect(), b = card.getBoundingClientRect(), v = (clip ?? document.body).getBoundingClientRect();
+    const above = b.top - v.top - 12, below = v.bottom - b.bottom - 12, need = Math.min(want, el.scrollHeight);
+    const down = above < need && below > above;
+    setP({ down, lift: Math.max(0, down ? b.bottom - a.bottom : a.top - b.top), max: Math.max(120, Math.min(want, down ? below : above)) });
+  }, [box, want]);
+  if (!p) return { style: { visibility: "hidden" }, side: "bottom-full" };
+  return p.down ? { style: { marginTop: p.lift + 8, maxHeight: p.max }, side: "top-full origin-top" } : { style: { marginBottom: p.lift + 8, maxHeight: p.max }, side: "bottom-full origin-bottom" };
+}
+
+export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onEffort }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
   /** the current model's effort levels, chosen at the top (one pill for model and effort since desktop 0.1.70, as Claude,
    * MonoCode and DeepSeek Harness have it) */
-  efforts?: string[]; effort?: string; onEffort?: (e: string) => void;
-  /** px from the pill's edge to the composer's: the picker opens above (or, `down`, below) the whole box, not over its
-   * text; `max` is its height where the page has less room than 420 px */
-  lift?: number; down?: boolean; max?: number }) {
+  efforts?: string[]; effort?: string; onEffort?: (e: string) => void }) {
   const [q, setQ] = useState("");
   const box = useRef<HTMLDivElement>(null);
+  const place = usePlace(box);
   useEffect(() => {
     const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) onClose(); };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -28,7 +46,7 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
     return { groups: [...groups], hidden: f ? Math.max(0, rows.length - 300) : all.length - rows.length };
   }, [models, q]);
   return (
-    <div ref={box} style={down ? { marginTop: lift + 8, maxHeight: max } : { marginBottom: lift + 8, maxHeight: max }} className={`absolute ${down ? "top-full" : "bottom-full"} left-0 z-10 flex w-[460px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer`}>
+    <div ref={box} style={place.style} className={`tz-pop absolute ${place.side} left-0 z-10 flex w-[460px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer`}>
       <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-muted">
         <Search size={14} strokeWidth={1.5} />
         <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search models and providers" className="flex-1 bg-transparent text-ink outline-none placeholder:text-faint" />
@@ -45,7 +63,11 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
         </div>
       )}
       {models?.rebuild && <div className="border-b border-line-soft px-3 py-1.5 text-[12px] text-warn">Switching between Claude models: {models.rebuild}</div>}
-      <div className="overflow-auto py-1">
+      <div className="overflow-auto pb-1">
+        {/* what the numbers on the right are (until desktop 0.1.74 only a hover said: "8.4 (12)", "0.14 / 0.56") */}
+        {groups.length > 0 && <div className="sticky top-0 z-[1] flex items-center gap-2 bg-card px-3 pb-0.5 pt-1.5 text-[11px] text-faint">
+          <span className="flex-1" /><span className="w-[64px] text-right" title="tazuna bench: judge score out of 10 (runs)">score</span>
+          <span className="w-[112px] text-right" title="dollars per million tokens: input / output">$ / M in · out</span></div>}
         {!models && <div className="px-3 py-2 text-[12.5px] text-faint">Loading…</div>}
         {groups.map(([provider, rows]) => (
           <div key={provider}>
@@ -55,11 +77,12 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
                 className="flex w-full items-center gap-2 px-3 py-[5px] text-left hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent">
                 <span className="w-3.5 flex-none text-accent">{c.current && <Check size={14} strokeWidth={1.75} />}</span>
                 <span className="min-w-0 flex-1">
-                  <span className={`block truncate ${c.why_not ? "text-faint" : "text-ink"}`}>{c.label}</span>
+                  {/* the group already names the provider: "gpt-6.2-sol", not "gpt-6.2-sol · subrouter" under SubRouter */}
+                  <span className={`block truncate ${c.why_not ? "text-faint" : "text-ink"}`}>{c.label.replace(new RegExp(` · ${provider.replace(/[^\w]/g, ".")}$`, "i"), "")}</span>
                   <span className="block truncate text-[11.5px] text-faint">{c.why_not ?? c.place}</span>
                 </span>
-                {c.bench && <span className="flex-none whitespace-nowrap font-mono text-[11px] text-faint" title="tazuna bench: judge score (runs)">{c.bench}</span>}
-                <span className="w-[112px] flex-none whitespace-nowrap text-right font-mono text-[11px] text-muted" title="$ per million tokens: input / output">{c.price}</span>
+                <span className="w-[64px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-faint" title="tazuna bench: judge score (runs)">{c.bench}</span>
+                <span className="w-[112px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-muted" title="$ per million tokens: input / output">{c.price === "plan" ? "on your plan" : c.price}</span>
               </button>
             ))}
           </div>
@@ -70,9 +93,10 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
   );
 }
 
-/** A small menu over the composer that closes on a click outside or Esc. */
-export function Menu({ children, onClose, width = 240, down }: { children: React.ReactNode; onClose: () => void; width?: number; down?: boolean }) {
+/** A small menu on the composer that closes on a click outside or Esc, placed as the model picker is (usePlace). */
+export function Menu({ children, onClose, width = 240 }: { children: React.ReactNode; onClose: () => void; width?: number }) {
   const box = useRef<HTMLDivElement>(null);
+  const place = usePlace(box);
   useEffect(() => {
     const away = (e: MouseEvent) => { if (box.current && !box.current.contains(e.target as Node)) onClose(); };
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -80,7 +104,7 @@ export function Menu({ children, onClose, width = 240, down }: { children: React
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
   }, [onClose]);
-  return <div ref={box} style={{ width }} className={`absolute left-0 z-10 rounded-xl border border-line-strong bg-card py-1 shadow-composer ${down ? "top-full mt-2" : "bottom-full mb-2"}`}>{children}</div>;
+  return <div ref={box} style={{ width, ...place.style }} className={`tz-pop absolute ${place.side} left-0 z-10 overflow-y-auto rounded-xl border border-line-strong bg-card py-1 shadow-composer`}>{children}</div>;
 }
 
 /** The current model's effort levels. */

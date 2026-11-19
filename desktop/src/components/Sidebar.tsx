@@ -2,7 +2,7 @@ import { ChevronRight, FolderOpen, LoaderCircle, Pencil, Plus, Search, X } from 
 import { createContext, useContext, useState } from "react";
 import { Slot } from "../lib/slots";
 import type { Project, Thread } from "../lib/types";
-import { ProviderMark } from "./ProviderMark";
+import { modelLabel } from "../lib/types";
 
 const icon = { size: 16, strokeWidth: 1.5 };
 
@@ -40,13 +40,13 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
     return (
       <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onBlur={() => setMode("view")}
         onKeyDown={(e) => { if (e.key === "Enter" && title.trim()) { onRename?.(title.trim()); setMode("view"); } if (e.key === "Escape") setMode("view"); }}
-        className={`mx-[2px] rounded-md border border-line-strong bg-card px-[7px] py-[5px] text-ink outline-none ${sub ? "ml-6" : ""}`} />
+        className={`mx-[2px] rounded-md border border-line-strong bg-card px-[7px] ${sub ? "ml-6 py-[5px]" : "py-[11px]"} text-ink outline-none`} />
     );
   }
   if (mode === "hide") {
     return (
       <div className={`flex items-center gap-2 rounded-md bg-field px-[9px] py-1.5 text-[12px] ${sub ? "pl-7" : ""}`}>
-        <span className="flex-1 truncate text-ink-2">Remove from the list?</span>
+        <span className="flex-1 truncate text-ink-2" title="Remove from the list (its recording stays)">Remove?</span>
         <button onClick={() => { onHide?.(); setMode("view"); }} className="font-medium text-bad">Remove</button>
         <button onClick={() => setMode("view")} className="text-muted">Cancel</button>
       </div>
@@ -58,8 +58,9 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
       {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-accent shadow-[0_0_0_3px_var(--accent-soft)]" : "bg-faint"}`} />}
       {twoLines ? (
         <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5"><ProviderMark model={t.model} /><span className="truncate text-ink">{t.title}</span></span>
-          <span className="flex gap-2 text-[11.5px] text-faint"><span className="truncate">{t.place}</span><span className="ml-auto flex-none tabular-nums group-hover:hidden">{age(t.at)}</span></span>
+          {/* the model by name on the second line: a letter in a box ("C", "G", "O") said nothing (design review 4) */}
+          <span className="block truncate text-ink">{t.title}</span>
+          <span className="flex gap-2 text-[11.5px] text-faint"><span className="truncate">{[t.place, modelLabel(t.model)].filter(Boolean).join(" · ")}</span><span className="ml-auto flex-none tabular-nums group-hover:hidden">{age(t.at)}</span></span>
         </span>
       ) : <span className="flex-1 truncate">{t.title}</span>}
       {onRename && <span className="hidden flex-none gap-0.5 group-hover:flex">
@@ -81,11 +82,10 @@ function OpenRow({ o, active, onSwitch, onClose }: { o: Open; active: boolean; o
         <span className="flex items-center gap-1.5 text-ink">
           {o.state === "working" ? <LoaderCircle size={12} strokeWidth={2} className="flex-none animate-spin text-accent" aria-hidden="true" />
             : o.state !== "asking" && <span className={`size-1.5 flex-none rounded-full ${STATE[o.state][0]}`} />}
-          <ProviderMark model={o.model} />
           <span className="truncate">{o.title}</span>
           {o.state === "asking" && <span className="ml-auto flex-none rounded-full border border-warn/45 px-1.5 text-[10.5px] font-medium leading-4 text-warn">asks</span>}
         </span>
-        <span className="block truncate text-[11.5px] text-faint">{o.place}{o.state === "asking" ? " · waiting for your answer" : o.state === "stopped" ? " · stopped" : ""}</span>
+        <span className="block truncate text-[11.5px] text-faint">{[o.place, modelLabel(o.model)].filter(Boolean).join(" · ")}{o.state === "asking" ? " · waiting for your answer" : o.state === "stopped" ? " · stopped" : ""}</span>
       </span>
       <button title="Close (the conversation stays in the lists)" aria-label={`Close ${o.title}`} onClick={(e) => { e.stopPropagation(); onClose?.(o.tid); }}
         className="hidden flex-none rounded p-0.5 text-faint hover:bg-hover hover:text-ink group-hover:block"><X size={12} strokeWidth={1.5} /></button>

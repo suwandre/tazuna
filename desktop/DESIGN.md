@@ -25,6 +25,7 @@ colors:
     ok: "#3b7d4f"
     bad: "#b4473a"
     warn: "#a76a14"
+    scrim: "#1d1b1640"
   dark:
     canvas: "#171613"
     main: "#1b1a17"
@@ -47,6 +48,7 @@ colors:
     ok: "#7cc08f"
     bad: "#e08b7f"
     warn: "#e0b46a"
+    scrim: "#0000008c"
 typography:
   ui: { family: "Geist", fallback: "system-ui, sans-serif", size: 13.5px, line-height: 1.5 }
   mono: { family: "Geist Mono", fallback: "ui-monospace, monospace", size: 12.5px }
@@ -125,10 +127,14 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 ## Components we own
 Sidebar item (two lines), open row, group heading, project group, thread dot (idle, running), badge; header crumb, cost and
 panel button; message (user, agent, chat), work fold, tool step, change card, metadata line, routed tag; composer with
-pills (where, mode, model with its effort), plan bar and card, and send; provider mark; answer copy; work panel section (Changes, Checks, Pull request), usage bar. Reuse these before adding new ones; add new ones here when they are made.
+pills (where, mode, model with its effort) and send, their menus placed by one rule (usePlace: above the whole box where it
+fits, else below it); answer copy; error card (the provider's message in words, Retry, its raw reply on request); code
+block with its language and copy; work panel section (Changes, Checks, Pull request), usage bar, status bar. Reuse these before adding new ones; add new ones here when they are made.
 
 ## Motion
 - CSS transitions of 120-200 ms with the easing above; panels slide, toasts fade.
+- Every dialog comes up over its backdrop (`tz-dialog`, the backdrop `tz-fade`); a menu or popover opens from its button
+  (`tz-pop`). The backdrop is `scrim`: darker in both themes, never the ink colour (in dark mode that lightened the window).
 - No animated backgrounds, particles, glow or shimmer; streaming text is not animated per token.
 - Honour `prefers-reduced-motion`.
 

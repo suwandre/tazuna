@@ -92,8 +92,8 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
   const input = "rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none focus:border-accent placeholder:font-sans placeholder:text-faint";
   const button = "rounded-md border border-line px-2.5 py-1 text-[12px] text-ink disabled:opacity-40";
   return (
-    <div onMouseDown={onClose} className="fixed inset-0 z-30 grid place-items-center bg-ink/15 p-10">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-[720px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+    <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex max-h-full w-[720px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Settings</span>
           <button onClick={onClose} title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
@@ -132,7 +132,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
             </Section>
 
             <Section title="Paid API spend" note="Models on a provider's API cost money; Claude on your plan does not.">
-              <Row title="Cap per 24 hours" note={<>tazuna sends nothing to paid APIs once the last 24 hours reach it. Last 24 hours: <span className="font-mono text-ink">${(st.spent_24h ?? 0).toFixed(2)}</span>. Empty: no cap.</>}>
+              <Row title="Cap per 24 hours" note={<>tazuna sends nothing to paid APIs once the last 24 hours reach it. Last 24 hours: <span className="font-medium tabular-nums text-ink">${(st.spent_24h ?? 0).toFixed(2)}</span>. Empty: no cap.</>}>
                 <span className="text-ink-2">$</span>
                 <input value={cap ?? (st.spend_cap == null ? "" : String(st.spend_cap))} onChange={(e) => setCap(e.target.value)} placeholder="no cap" inputMode="decimal" aria-label="Cap in dollars per 24 hours" className={`w-24 ${input}`} />
                 <button disabled={cap == null || (cap.trim() !== "" && !(Number(cap) >= 0))} onClick={() => core.setSpendCap(cap!.trim() === "" ? null : Number(cap)).then(() => { setCap(null); refresh(); })} className={button}>Save</button>
@@ -180,15 +180,15 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
             )}
 
             <Section title="Quick chat from anywhere">
-              <Row title="Shortcut" note={hotkeyNote || "Brings tazuna up with a new chat, from any app. Like Alt+Space or CmdOrCtrl+Shift+K; empty: off."}>
+              <Row title="Shortcut" note={hotkeyNote || "Brings tazuna up with a new chat, from any app: for example Alt+Space or Cmd+Shift+K. Empty: off."}>
                 <input value={keysNow} onChange={(e) => setKeysNow(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") saveHotkey(); }} aria-label="Shortcut"
                   placeholder="none" spellCheck={false} className={`w-40 ${input}`} />
                 <button onClick={saveHotkey} className={button}>Save</button>
               </Row>
             </Section>
 
-            <Section title="Panels and plugins" note={<>Panels are sandboxed: they only show the conversation's numbers. Plugins run inside tazuna's window with the same reach: they
-              can change any part of it and send messages to the agent, which can act on your files. Enable only plugins you made or trust. <code>/create …</code> builds either.</>}>
+            <Section title="Panels and plugins" note={<>A panel only shows the conversation's numbers. A plugin can change any part of the window and send the agent
+              messages, so enable only plugins you made or trust. <code>/create</code> in a conversation makes either.</>}>
               {items.length === 0 && <div className="px-4 py-2.5 text-[12.5px] text-faint">No panels or plugins yet.</div>}
               {items.map((w) => (
                 <Row key={w.id} title={w.title} note={<span className="block truncate">{w.kind === "panel" ? "panel · sandboxed" : w.state === "enabled" ? "plugin · on"

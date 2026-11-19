@@ -30,7 +30,7 @@ export function Approval({ asking, onAnswer, keys = true }: { asking: NonNullabl
   const what = asking.what;
   const btn = "rounded-md px-2.5 py-1 text-[12px] font-medium disabled:opacity-50";
   return (
-    <div className="mx-auto mb-2 w-full max-w-[700px] px-7">
+    <div className="mx-auto mb-2 w-full max-w-[756px] px-7">
       <div className="rounded-lg border border-line-strong bg-card px-3.5 py-3">
         <div className="mb-1.5 flex items-center gap-2 text-[12.5px] text-ink-2">
           <ShieldQuestion size={15} strokeWidth={1.5} className="text-warn" />

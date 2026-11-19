@@ -30,9 +30,9 @@ export function BestOfStart({ choices, onStart, onClose }: { choices: ModelChoic
   const usable = choices.filter((c) => !c.why_not);
   const ok = task.trim() && picked.length >= 2;
   return (
-    <div onMouseDown={onClose} className="fixed inset-0 z-30 grid place-items-center bg-ink/15 p-10">
+    <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Try on several models" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
-        className="flex max-h-full w-[600px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+        className="tz-dialog flex max-h-full w-[600px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Try on several models</span>
           <button onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
@@ -91,9 +91,9 @@ export function LanesView({ lanes, views, onOpen, onKeep, onClose }: {
   const rows = lanes.lanes.map((l) => ({ l, s: laneStats(l.tid ? views[l.tid] : null) }));
   const cheapest = Math.min(...rows.filter((r) => r.s && !r.s.running).map((r) => r.s!.cost));
   return (
-    <div onMouseDown={onClose} className="fixed inset-0 z-30 grid place-items-center bg-ink/15 p-10">
+    <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Lanes" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
-        className="flex max-h-full w-[820px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+        className="tz-dialog flex max-h-full w-[820px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="min-w-0 flex-1"><span className="font-medium">Lanes</span> <span className="truncate text-[12px] text-muted">· {lanes.task}</span></span>
           <button onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>

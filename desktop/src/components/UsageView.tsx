@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { core, type Accounts } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
 import { summarize, type Day, type Row } from "../lib/usage";
-import { usd } from "../lib/types";
+import { modelLabel, usd } from "../lib/types";
 
 // The usage page (Cmd-Shift-U, the menu, a click on the plan bar or the cost): what each account has left right now
 // (Claude's plan from claude's own /usage, OmniRoute's accounts, the providers' credits: src/accounts.rs), what the last
@@ -12,14 +12,15 @@ import { usd } from "../lib/types";
 // not a big "$0.000".
 const RANGES = [7, 30, 90];
 const big = (n: number) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)} M` : n >= 1e3 ? `${Math.round(n / 1e3)}k` : `${n}`);
-const money = (n: number) => (n >= 100 ? `$${Math.round(n)}` : n >= 1 ? `$${n.toFixed(2)}` : usd(n));
+const money = (n: number) => (n >= 100 ? `$${Math.round(n)}` : n >= 0.01 ? `$${n.toFixed(2)}` : usd(n));
 
-/** OmniRoute's resets come as UTC ISO strings: "in 6 d", "in 5 h", "in 12 min". */
+/** OmniRoute's resets (UTC ISO strings) as claude's /usage writes its own, in local time: "Nov 25 at 11:03am", "Nov 21
+ * at 3am". One format for every reset on the page (until desktop 0.1.74 "in 5 d" beside "Nov 21 at 3am"). */
 const until = (iso: string | null) => {
-  const t = iso ? new Date(iso).getTime() : NaN;
-  if (Number.isNaN(t)) return null;
-  const m = Math.max(0, Math.round((t - Date.now()) / 60000));
-  return m >= 1440 ? `in ${Math.floor(m / 1440)} d` : m >= 60 ? `in ${Math.floor(m / 60)} h` : `in ${m} min`;
+  const t = iso ? new Date(iso) : null;
+  if (!t || Number.isNaN(t.getTime())) return null;
+  const h = t.getHours(), m = t.getMinutes();
+  return `${t.toLocaleString("en-US", { month: "short" })} ${t.getDate()} at ${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""}${h < 12 ? "am" : "pm"}`;
 };
 
 /** claude's window names, shorter: "Current session" is the 5 hours, "Current week (Fable)" the week on Fable. */
@@ -47,7 +48,7 @@ function Meter({ name, of, used, resets }: { name: string; of: string; used: num
     <div className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
       <span className="w-[200px] flex-none"><span className="block truncate text-ink" title={name}>{name}</span><span className="block truncate text-[11.5px] text-faint">{of}</span></span>
       <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded bg-line"><i className={`block h-full rounded ${pct >= 75 ? "bg-warn" : "bg-accent"}`} style={{ width: `${pct}%` }} /></span>
-      <span className="w-[170px] flex-none truncate text-right tabular-nums text-muted"><span className="font-medium text-ink">{used == null ? "–" : `${Math.round(used)}%`}</span>{resets ? ` · ${resets}` : ""}</span>
+      <span className="w-[220px] flex-none truncate text-right tabular-nums text-muted"><span className="font-medium text-ink">{used == null ? "–" : `${Math.round(used)}%`}</span>{resets ? ` · resets ${resets}` : ""}</span>
     </div>
   );
 }
@@ -85,8 +86,8 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
   const num = `${td} text-right tabular-nums`;
   const apiRuns = s ? s.byModel.filter((m) => !m.plan).reduce((a, m) => a + m.runs, 0) : 0, planRuns = s ? s.byModel.filter((m) => m.plan).reduce((a, m) => a + m.runs, 0) : 0;
   return (
-    <div onMouseDown={onClose} className="fixed inset-0 z-30 grid place-items-center bg-ink/15 p-10">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Usage" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="flex max-h-full w-[780px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+    <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Usage" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex h-full max-h-[900px] w-[780px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-3 border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Usage</span>
           <button onClick={onClose} title="Close (Esc)" aria-label="Close" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
@@ -113,7 +114,7 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
                 <table className="w-full text-[12.5px]"><thead><tr><th className={th}>Model</th><th className={th}>Runs on</th>
                   <th className={`${th} text-right`}>Runs</th><th className={`${th} text-right`}>Cost</th><th className={`${th} text-right`}>From cache</th></tr></thead>
                   <tbody>{s.byModel.map((m) => (
-                    <tr key={`${m.plan}${m.model}`}><td className={`${td} font-mono text-[12px]`}>{m.model}</td>
+                    <tr key={`${m.plan}${m.model}`}><td className={td} title={m.model}>{modelLabel(m.model)}</td>
                       <td className={td}><span className="rounded-full border border-line px-2 text-[11px] text-muted">{m.plan ? "Claude plan" : "API"}</span></td>
                       <td className={num}>{m.runs}</td><td className={num}>{money(m.cost)}</td><td className={num}>{m.cachePct}%</td></tr>
                   ))}</tbody></table>
@@ -132,8 +133,8 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
                 <th className={`${th} text-right`}>Runs</th><th className={`${th} text-right`}>Clear misses</th><th className={`${th} text-right`}>Pushback</th>
                 <th className={th}>Mostly</th></tr></thead>
                 <tbody>{s.byVersion.slice(0, 20).map((v) => (
-                  <tr key={`${v.version}${v.model}`}><td className={`${td} font-mono text-[12px]`}>{v.version}</td>
-                    <td className={`${td} font-mono text-[12px] text-ink-2`}>{v.model}</td><td className={num}>{v.runs}</td><td className={num}>{v.missPct}%</td>
+                  <tr key={`${v.version}${v.model}`}><td className={td}>{v.version}</td>
+                    <td className={`${td} text-ink-2`} title={v.model}>{modelLabel(v.model)}</td><td className={num}>{v.runs}</td><td className={num}>{v.missPct}%</td>
                     <td className={num}>{v.softPct}%</td><td className={`${td} text-[12px] text-muted`}>{v.top}</td></tr>
                 ))}</tbody></table>
             </>}
@@ -161,7 +162,7 @@ function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; 
     {credits.map((c) => (
       <div key={c.provider} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
         <span className="w-[200px] flex-none"><span className="block text-ink">{c.provider}</span><span className="block text-[11.5px] text-faint">credit</span></span>
-        {c.left ? <><span className="flex-1" /><span className={`tabular-nums ${c.left.startsWith("-") ? "text-bad" : "text-muted"}`}><span className="font-medium text-ink">{c.left.replace(/ left.*/, "")}</span>{c.left.match(/ left.*/)?.[0]}</span></>
+        {c.left ? <><span className="flex-1" /><span className={`tabular-nums ${/ over /.test(c.left) || c.left.startsWith("-") ? "text-bad" : "text-muted"}`}><span className="font-medium text-ink">{c.left.replace(/ (left|over).*/, "")}</span>{c.left.match(/ (left|over).*/)?.[0]}</span></>
           : <><span className="flex-1 text-faint">its API does not report a balance</span>
             <button onClick={() => core.openLink(c.page).catch(() => {})} className="flex items-center gap-1 rounded-md border border-line px-2 py-0.5 text-[12px] text-ink">Open its page<ExternalLink size={12} strokeWidth={1.5} /></button></>}
       </div>

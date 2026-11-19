@@ -18,12 +18,29 @@ export type Call = { tools: string; fresh: number; cached: number; out: number; 
 export type Meta = { cost: number; tokens: number; cachedPct?: number; secs: number; calls?: Call[] };
 export type Message =
   | { role: "user"; text: string; queued?: boolean; edit?: { cp: number; block: number } }
-  | { role: "agent"; prose: string[]; tools?: ToolStep[]; change?: Change; meta?: Meta; routedChat?: boolean; ask?: string };
+  | { role: "agent"; prose: string[]; tools?: ToolStep[]; change?: Change; meta?: Meta; routedChat?: boolean; ask?: string;
+      /** a reply that ended without its answer: the provider's error in words (and as it came), or stopped by you */
+      failure?: Failure;
+      /** errors the reply met and went on past, as the core wrote them */
+      notes?: string[] };
+/** `text` is the error's message alone ("[404]: … not found."), `raw` the notice as the core wrote it; both empty for a
+ * reply you stopped without an error */
+export type Failure = { text: string; raw: string; stopped: boolean; /** the message it answered, for Retry */ ask: string };
 export type Usage = { contextPct: number; contextUsed: string; contextMax: string; plan5h: number | null; plan5hReset: string; planWeek: number | null;
   threadCost: number; threadTurns: number; cachedPct: number; saved: number; today: number; todayTurns: number; todaySeries: number[];
   /** SubRouter's balance in dollars, where a key is set */
   balance?: number | null };
 export type Session = { model: string; effort: string; mode: string; branch: string; changed: number; lastCost: number };
+
+/** A model's name as people say it: "claude-opus-5-5" is "Opus 5.5"; others keep their id without the route
+ * ("agy/gemini-4-hydrogen" is "gemini-4-hydrogen"). The picker's labels come from the core; this is for the places that
+ * only have the id (the usage tables, the composer before the list arrives, the sidebar). */
+export function modelLabel(id?: string | null): string {
+  if (!id) return "";
+  const c = id.match(/^(?:claude-)?(opus|sonnet|haiku|fable)-(\d+)(?:[-.](\d+))?/i);
+  if (c) return `${c[1][0].toUpperCase()}${c[1].slice(1).toLowerCase()} ${c[2]}${c[3] ? `.${c[3]}` : ""}`;
+  return id.replace(/^[\w-]+\//, "");
+}
 
 /** Dollars as tazuna shows them: three decimals, or two significant digits below a tenth of a cent ($0.00012), so a cheap
  * turn does not read as free. */

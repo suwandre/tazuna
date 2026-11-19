@@ -51,9 +51,9 @@ function ToastDialog({ t }: { t: Toast }) {
     return () => window.removeEventListener("keydown", esc, true);
   }, [t.id]);
   return (
-    <div onMouseDown={close} className="tz-fade fixed inset-0 z-50 grid place-items-center bg-black/45 p-10">
+    <div onMouseDown={close} className="tz-fade fixed inset-0 z-50 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="alertdialog" aria-modal="true" aria-labelledby={`toast-${t.id}`} aria-describedby={t.detail ? `toast-${t.id}-detail` : undefined}
-        tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-enter w-[420px] rounded-xl border border-line-strong bg-card p-5 shadow-composer">
+        tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog w-[420px] rounded-xl border border-line-strong bg-card p-5 shadow-composer">
         <div className="flex items-start gap-3">
           <span className="mt-0.5">{icon(t, 20)}</span>
           <div className="min-w-0 flex-1">

@@ -16,6 +16,8 @@
   --ok: #3b7d4f; --bad: #b4473a; --warn: #a76a14;
 --code-string: #7a5a1c; --code-number: #8a4a6b; --code-keyword: var(--accent-ink); --code-comment: var(--faint);
   --shadow-composer: 0 1px 2px #2321190d, 0 4px 14px #23211908;
+  /* behind a dialog: darker in both themes (until desktop 0.1.74 the ink at 15%, which in dark lightened the window to grey) */
+  --scrim: #1d1b1640;
   color-scheme: light;
 }
 .dark {
@@ -26,6 +28,7 @@
   --ok: #7cc08f; --bad: #e08b7f; --warn: #e0b46a;
 --code-string: #d6b878; --code-number: #d9a0c0; --code-keyword: var(--accent-ink); --code-comment: var(--faint);
   --shadow-composer: none;
+  --scrim: #0000008c;
   color-scheme: dark;
 }
 
@@ -35,7 +38,7 @@
   --color-ink: var(--ink); --color-ink-2: var(--ink-2); --color-muted: var(--muted); --color-faint: var(--faint);
   --color-line: var(--line); --color-line-soft: var(--line-soft); --color-line-strong: var(--line-strong);
   --color-accent: var(--accent); --color-accent-ink: var(--accent-ink); --color-accent-soft: var(--accent-soft); --color-on-accent: var(--on-accent);
-  --color-ok: var(--ok); --color-bad: var(--bad); --color-warn: var(--warn);
+  --color-ok: var(--ok); --color-bad: var(--bad); --color-warn: var(--warn); --color-scrim: var(--scrim);
   --font-ui: "Geist", system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
   --font-prose: "Source Serif 4 Variable", Georgia, serif;
@@ -81,6 +84,12 @@ button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
 /* a dimmed backdrop comes in (a modal snackbar) */
 @keyframes tz-fade { from { opacity: 0; } }
 .tz-fade { animation: tz-fade .15s ease-out; }
+/* a dialog comes up over its backdrop, a menu or popover opens from its button (until desktop 0.1.74 they appeared at once,
+   while toasts and the side panel moved) */
+@keyframes tz-dialog { from { opacity: 0; transform: translateY(8px) scale(.985); } }
+.tz-dialog { animation: tz-dialog .17s cubic-bezier(.2, .8, .3, 1); }
+@keyframes tz-pop { from { opacity: 0; transform: scale(.97); } }
+.tz-pop { animation: tz-pop .12s ease-out; }
 /* what is still going on moves (a step running, the reply thinking): a light sweep over the words, dots that count */
 @keyframes tz-sweep { from { background-position: 100% 0; } to { background-position: -100% 0; } }
 .tz-live { background: linear-gradient(90deg, var(--muted) 35%, var(--ink) 50%, var(--muted) 65%) 0 0 / 200% 100%;
@@ -93,6 +102,20 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); cursor: d
 .prose-answer :not(pre) > code { font-size: 0.84em; background: var(--field); border-radius: 4px; padding: 1px 4px; }
 .prose-answer pre { margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--card);
   font-size: 12.5px; line-height: 1.55; overflow-x: auto; }
+/* a fenced block: its language and copy over it, one bordered box */
+.prose-answer .code-block { margin: 0 0 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); overflow: hidden; }
+.prose-answer .code-block pre { margin: 0; border: 0; border-radius: 0; background: none; }
+.prose-answer .code-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 4px 12px;
+  border-bottom: 1px solid var(--line-soft); font-family: var(--font-ui); font-size: 11.5px; color: var(--faint); }
+.prose-answer .code-head button { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 5px; color: var(--muted); }
+.prose-answer .code-head button:hover { background: var(--hover); color: var(--ink); }
+/* headings as headings: # and ## titles, ### and deeper a bold lead-in */
+.prose-answer h2 { font-size: 21px; line-height: 1.3; font-weight: 600; margin: 22px 0 8px; letter-spacing: -0.01em; }
+.prose-answer h3 { font-size: 18px; line-height: 1.35; font-weight: 600; margin: 18px 0 6px; }
+.prose-answer h4 { font-size: 15.5px; font-weight: 700; margin: 14px 0 4px; }
+.prose-answer > :first-child { margin-top: 0; }
+.prose-answer li > ul, .prose-answer li > ol { margin: 2px 0 4px; }
+.prose-answer ul ul { list-style: circle; }
 .prose-answer ul, .prose-answer ol { margin: 0 0 10px; padding-left: 22px; }
 .prose-answer ul { list-style: disc; } .prose-answer ol { list-style: decimal; }
 .prose-answer li { margin: 2px 0; }

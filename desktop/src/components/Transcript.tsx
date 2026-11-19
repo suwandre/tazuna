@@ -1,6 +1,7 @@
-import { Check, ChevronRight, Copy, FileText, LoaderCircle, MessageCircle, Pencil } from "lucide-react";
+import { CircleAlert, Check, ChevronRight, Copy, FileText, LoaderCircle, MessageCircle, Pencil, RotateCcw, Square } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
+import { readableError } from "../lib/fromView";
 import { usd, type Call, type Change, type Message, type ToolStep } from "../lib/types";
 
 function inlineCode(text: string) {
@@ -28,6 +29,8 @@ type Props = {
   editFrom?: number;
   /** follows the rail's "tazuna-jump" (not the side chat's transcript) */
   jumps?: boolean;
+  /** sends a failed reply's message again */
+  onRetry?: (text: string) => void;
 };
 
 const STATUS: Record<string, string> = { A: "added", D: "deleted", M: "changed" };
@@ -94,14 +97,14 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
     <section ref={box} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}
       className="min-h-0 flex-1 overflow-auto pb-3 pt-7">
       {hidden > 0 && (
-        <div className="mx-auto mb-5 max-w-[700px] px-7">
+        <div className="mx-auto mb-5 max-w-[756px] px-7">
           <button onClick={() => { stick.current = false; setLimit((l) => l + 40); }} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-muted hover:bg-hover">
             Show {Math.min(40, hidden)} earlier messages <span className="text-faint">({hidden} not shown)</span>
           </button>
         </div>
       )}
       {messages.slice(hidden).map((m, i, shown) => (
-        <div key={hidden + i} data-msg={hidden + i} className={`group mx-auto mb-[22px] max-w-[700px] px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
+        <div key={hidden + i} data-msg={hidden + i} className={`group mx-auto mb-[22px] max-w-[756px] px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
           {m.role === "user" ? <Slot name="message.user" props={{ message: m, index: hidden + i }} only /> : (
             <>
               {/* no "tazuna" over each answer (nor "You" over each message): the field block says which is yours */}
@@ -175,7 +178,7 @@ function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; sec
 function Working({ what, since }: { what: string; since?: number }) {
   const [start] = useState(() => since ?? Date.now());
   return (
-    <div role="status" className="mx-auto flex max-w-[700px] items-center gap-2 px-7 text-[12.5px] text-muted">
+    <div role="status" className="mx-auto flex max-w-[756px] items-center gap-2 px-7 text-[12.5px] text-muted">
       <LoaderCircle size={13} strokeWidth={1.75} className="animate-spin text-accent" aria-hidden="true" />
       <span className="tz-live">{what}</span><span className="tz-dots -ml-2" aria-hidden="true"><span>.</span><span>.</span><span>.</span></span>
       <span className="tabular-nums text-faint"><Ticking since={start} /></span>
@@ -214,6 +217,35 @@ export function UserMessage({ message: m }: { message: Message }) {
       {m.queued && <div className="mt-1 text-[11.5px] text-faint">Queued: goes after this reply</div>}
     </>
   );
+}
+
+/** Why a reply ended without its answer: the provider's error in words, its reply as it came on request, and Retry; a
+ * reply you stopped says only that. Until desktop 0.1.74 the error was its raw JSON in the answer's font, after a "⚠". */
+export function MessageFailure({ message: m }: { message: Message }) {
+  const { busy, onRetry } = useTranscript();
+  const [raw, setRaw] = useState(false);
+  if (m.role !== "agent") return null;
+  const notes = (m.notes ?? []).filter((n) => n !== m.failure?.raw);
+  const f = m.failure;
+  return <>
+    {notes.map((n, i) => <div key={i} className="mb-2 flex items-start gap-2 text-[12.5px] text-bad"><CircleAlert size={14} strokeWidth={1.5} className="mt-0.5 flex-none" />{readableError(n)}</div>)}
+    {f && !f.text && <div className="mt-1 flex items-center gap-1.5 text-[12.5px] text-muted"><Square size={11} strokeWidth={2} className="fill-current text-warn" />Stopped</div>}
+    {f && f.text && (
+      <div role="alert" className="mt-1 rounded-lg border border-bad/35 bg-bad/[0.06] px-3.5 py-2.5 text-[13px]">
+        <div className="flex items-start gap-2.5">
+          <CircleAlert size={16} strokeWidth={1.5} className="mt-px flex-none text-bad" />
+          <div className="min-w-0 flex-1">
+            <div className="font-medium text-ink">{f.stopped ? "Stopped after an error from the provider" : "The provider could not answer"}</div>
+            <div className="mt-0.5 text-ink-2">{f.text}</div>
+            {f.raw && f.raw !== f.text && <button onClick={() => setRaw(!raw)} aria-expanded={raw} className="mt-1 text-[12px] text-muted hover:text-ink">{raw ? "Hide" : "Show"} its reply {raw ? "▾" : "▸"}</button>}
+            {raw && <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] text-muted">{f.raw}</pre>}
+          </div>
+          {onRetry && f.ask && <button disabled={busy} onClick={() => onRetry(f.ask)} title="Send the same message again"
+            className="flex flex-none items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-50"><RotateCcw size={12} strokeWidth={1.75} />Retry</button>}
+        </div>
+      </div>
+    )}
+  </>;
 }
 
 export function MessageChange({ message: m }: { message: Message }) {
@@ -272,7 +304,7 @@ export function MessageMeta({ message: m }: { message: Message }) {
   const [open, setOpen] = useState(false);
   if (m.role !== "agent" || !m.meta) return null;
   const n = m.meta.calls?.length ?? 0;
-  const text = m.prose.filter((p) => !p.startsWith("⚠ ")).join("\n\n");
+  const text = m.prose.join("\n\n");
   return (
     // the answer's numbers show on its hover (or focus, or with its calls open): under every answer they were the busiest
     // line on the screen, and the thread's cost stays in the header

@@ -2,6 +2,14 @@
 import type { View } from "./tazuna";
 import type { Call, Message, ToolStep, Usage } from "./types";
 
+/** A provider's error as its message alone: "provider · provider error in stream: {\"message\":\"[404]: … not found.\", …}"
+ * (cut at 300 characters, so not always JSON) is "[404]: … not found.". The terminal reads it the same way (src/ui/mod.rs). */
+export function readableError(text: string): string {
+  const m = text.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/);
+  const msg = m ? m[1].replace(/\\n/g, " ").replace(/\\(.)/g, "$1") : text.replace(/^[\w ]+ · /, "").replace(/ · trying again in \d+\s*s$/, "");
+  return msg.trim();
+}
+
 function target(input: Record<string, unknown>): string {
   for (const k of ["file_path", "command", "pattern", "path", "url", "query", "skill", "description"]) {
     const v = input[k];
@@ -32,12 +40,14 @@ export function messages(v: View): Message[] {
   // the calls not yet given to a reply: each done block takes those that began before it
   const pending = calls(v);
   let agent: Extract<Message, { role: "agent" }> | null = null, ask = "";
+  // the last error a reply met (an error notice, or a provider's retry): what a failed or stopped reply shows
+  let lastError = "";
   // a message sent during a reply waits in the core's queue: shown after that reply ends, not above it
   let open = false;
   const queue: string[] = [];
   const edits = new Map((v.edit_points ?? []).map((e) => [e.block, e]));
   let at = 0;
-  const prompt = (text: string, block = at) => { out.push({ role: "user", text, edit: edits.get(block) }); agent = null; ask = text; open = true; };
+  const prompt = (text: string, block = at) => { out.push({ role: "user", text, edit: edits.get(block) }); agent = null; ask = text; open = true; lastError = ""; };
   const current = () => (agent ??= (out.push({ role: "agent", prose: [], tools: [] }), out[out.length - 1] as Extract<Message, { role: "agent" }>));
   const changeAt = new Map((v.changes ?? []).map((c) => [c.at_block, c]));
   for (const [k, b] of v.blocks.entries()) {
@@ -63,6 +73,9 @@ export function messages(v: View): Message[] {
       const mine = pending.splice(0, n).map(({ block: _, ...c }) => c);
       current().meta = { cost: b.cost, tokens: total, cachedPct: read ? Math.round((100 * u.cache_read) / read) : undefined, secs: Math.round(b.secs),
         calls: mine.length ? mine : undefined };
+      // a reply that ended without its answer says why, where a provider's error before it said (until desktop 0.1.74 the
+      // error was its raw JSON, as the answer's text, and a failed reply ended with nothing)
+      if (!b.ok || b.stopped) current().failure = { text: lastError ? readableError(lastError) : b.stopped ? "" : "The reply ended without an answer.", raw: lastError, stopped: b.stopped, ask };
       const c = changeAt.get(k);
       if (c) current().change = { turn: c.turn, files: c.files, undone: c.undone, canUndo: c.can_undo };
       agent = null;
@@ -70,7 +83,12 @@ export function messages(v: View): Message[] {
       const next = queue.shift();
       if (next !== undefined) prompt(next);
     }
-    else if (b.kind === "notice" && b.error) { current().prose.push(`⚠ ${b.text}`); }
+    else if (b.kind === "notice" && (b.error || /provider error|HTTP \d{3}/.test(b.text))) {
+      lastError = b.text;
+      // an error the reply went on past (a tool server that failed to start) stays in sight, in words; a provider's retry
+      // shows only if the reply then fails
+      if (b.error) (current().notes ??= []).push(b.text);
+    }
   }
   for (const text of queue) out.push({ role: "user", text, queued: true });
   return out;
