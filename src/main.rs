@@ -2447,12 +2447,12 @@ struct Earlier {
 }
 
 impl Earlier {
-    /// "8m ago · 2 messages · fix the login (4cb8a388)"
+    /// "8m ago · 2 messages · fix the login" (until 0.1.180 with "(4cb8a388)" after it: an id said nothing to a reader)
     fn row(&self) -> String {
         let ago = session::unix_now().saturating_sub(self.last_at) / 60;
         let when = if ago < 60 { format!("{ago}m") } else if ago < 1440 { format!("{}h", ago / 60) } else { format!("{}d", ago / 1440) };
-        format!("{when} ago · {} message{} · {}  ({})", self.messages, if self.messages == 1 { "" } else { "s" },
-            session::shown(self.first.lines().next().unwrap_or_default(), 100), &self.id[..8.min(self.id.len())])
+        format!("{when} ago · {} message{} · {}", self.messages, if self.messages == 1 { "" } else { "s" },
+            session::shown(self.first.lines().next().unwrap_or_default(), 100))
     }
 }
 
@@ -3822,6 +3822,10 @@ fn run_live(
                 // (until 0.1.55 it stopped with "did you mean /resume?"; a user found that the wrong way round)
                 if let Some(first) = text.strip_prefix('/').filter(|w| !w.is_empty() && !w.contains(char::is_whitespace)).and_then(|w| short_command(w, &s.commands)) {
                     text = format!("/{first}");
+                }
+                // /help is what everyone types first: the key list (until 0.1.180 "unknown command /help")
+                if text == "/help" || text == "/?" {
+                    text = "/keys".into();
                 }
                 // a word that is no command at all (a typo, "/nwe"): said here, with the nearest one, instead of going to the
                 // model as a message (claude took "/nwe" and the run had to be stopped, 2026-11-12)

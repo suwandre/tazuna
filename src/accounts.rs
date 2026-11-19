@@ -39,6 +39,12 @@ fn parse_plan(text: &str) -> Option<(Vec<PlanRow>, Vec<String>)> {
     (!rows.is_empty()).then_some((rows, notes))
 }
 
+/// An account's plan as a reader says it: OmniRoute's "default_claude_max_5x" is "Claude Max 5x"; "Ultra" stays.
+fn plan_name(id: &str) -> String {
+    id.trim_start_matches("default_").split('_').filter(|w| !w.is_empty())
+        .map(|w| { let mut c = w.chars(); c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect()) }).collect::<Vec<_>>().join(" ")
+}
+
 /// The plan's 5-hour and weekly use as claude's rate-limit event carries them, for the meters a session shows.
 pub fn rate_event(rows: &[PlanRow]) -> Option<Value> {
     let find = |p: &str| rows.iter().find(|r| r.label.to_lowercase().contains(p)).map(|r| r.used / 100.0);
@@ -65,7 +71,8 @@ pub fn credits() -> Vec<Value> {
             "OpenRouter" => get(&http(15), "https://openrouter.ai/api/v1/credits", &key).and_then(|v| {
                 let (total, used) = (v["data"]["total_credits"].as_f64()?, v["data"]["total_usage"].as_f64()?);
                 let left = total - used;
-                Some(format!("{}${:.2} left of ${total:.2}", if left < 0.0 { "-" } else { "" }, left.abs()))
+                // spent past its credit: "$0.17 over", where it read "-$0.17 left of $0.00" (design review 4)
+                Some(if left < 0.0 { format!("${:.2} over its credit", -left) } else { format!("${left:.2} left of ${total:.2}") })
             }),
             _ => None,
         };
@@ -95,7 +102,7 @@ pub fn omniroute() -> Vec<Value> {
         if windows.is_empty() && let Some(r) = p["percentRemaining"].as_f64() {
             windows.push(json!({"group": "", "window": "quota", "used": 100.0 - r, "resets": p["resetAt"], "unlimited": false}));
         }
-        json!({"provider": p["provider"], "name": p["name"], "plan": detail["plan"], "status": p["tokenStatus"], "windows": windows})
+        json!({"provider": p["provider"], "name": p["name"], "plan": detail["plan"].as_str().map(plan_name), "status": p["tokenStatus"], "windows": windows})
     }).collect()
 }
 
@@ -193,7 +200,7 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
         for c in &credits {
             let name = c["provider"].as_str().unwrap_or_default();
             match (c["left"].as_str(), c["page"].as_str()) {
-                (Some(left), _) => push(format!("  {name:<20}{left}"), if left.starts_with('-') { Bad } else { Plain }, None),
+                (Some(left), _) => push(format!("  {name:<20}{left}"), if left.contains(" over ") { Bad } else { Plain }, None),
                 (None, Some(page)) => {
                     let host = page.trim_start_matches("https://").trim_start_matches("http://");
                     push(format!("  {name:<20}{host}"), Plain, Some(page.to_string()));
@@ -245,7 +252,7 @@ mod tests {
         let e = rate_event(&rows).unwrap();
         assert_eq!((e["rate_limit_info"]["unifiedWindows"]["five_hour"]["utilization"].as_f64(), e["rate_limit_info"]["unifiedWindows"]["seven_day"]["utilization"].as_f64()), (Some(0.14), Some(0.78)));
         let shown = lines(&json!({"plan": [{"label": "Current session", "used": 14.0, "resets": "5:29pm (Europe/Berlin)"}, {"label": "Current week (Fable)", "used": 95.0, "resets": "Nov 21"}],
-            "credits": [{"provider": "Mortera", "left": null, "page": "https://mortera.cloud"}, {"provider": "OpenRouter", "left": "-$0.17 left of $0.00", "page": "https://openrouter.ai/keys"}],
+            "credits": [{"provider": "Mortera", "left": null, "page": "https://mortera.cloud"}, {"provider": "OpenRouter", "left": "$0.17 over its credit", "page": "https://openrouter.ai/keys"}],
             "omniroute": [{"provider": "agy", "name": "a", "plan": "Ultra", "status": "valid", "windows": [{"group": "Gemini Models", "window": "weekly", "used": 1.4, "resets": "2099-11-25T11:03:10.000Z"}]}]}));
         let row = |t: &str| shown.iter().find(|l| l.0.contains(t)).unwrap_or_else(|| panic!("no row with {t}: {shown:?}"));
         use crate::ui::Tone::{Bad, Head, Plain, Rule};
@@ -257,6 +264,7 @@ mod tests {
         let g = row("Gemini Models · weekly");
         assert!(g.1 == Plain && g.0.contains(" in ") && g.0.chars().position(|c| c == '░') == row("5-hour session").0.chars().position(|c| c == '█'), "bars line up across sections: {g:?}");
         assert_eq!(until("2026-11-25T11:03:10.000Z", iso_secs("2026-11-18T10:00:00Z").unwrap()).as_deref(), Some("in 7 d 1 h"));
+        assert_eq!((plan_name("default_claude_max_5x"), plan_name("Ultra")), ("Claude Max 5x".into(), "Ultra".into()));
         assert_eq!(window_name("Current week (all models)"), "Week · all models");
     }
 }

@@ -425,7 +425,7 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64) -> (Option
     let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
     f.render_widget(Clear, area);
     let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(format!(" {} · {}↑↓ scroll · ←→ or shift+wheel sideways · esc or click outside closes ", p.title,
+        .title(Span::styled(format!(" {} · {}↑↓ ←→ scroll · esc closes ", p.title,
             if p.details.iter().any(Option::is_some) { "click a row: all of it · " } else { "" }), st(th.accent).add_modifier(Modifier::BOLD)));
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -693,7 +693,10 @@ fn draw_sessions(f: &mut Frame, p: &SessionsPanel, th: &Theme) {
     }
     for (i, row) in p.rows.iter().enumerate().skip(first).take(room) {
         let (mark, style) = if i == p.selected { ("›", st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED)) } else { (" ", st(th.text)) };
-        lines.push(Line::from(Span::styled(format!("{mark} {}", plain(row).replace('\n', " ⏎ ")).chars().take(inner.width as usize).collect::<String>(), style)));
+        let text = format!("{mark} {}", plain(row).replace('\n', " ⏎ "));
+        // a row past the edge ends in "…", not mid-word
+        let text = if text.chars().count() > inner.width as usize { format!("{}…", text.chars().take((inner.width as usize).saturating_sub(1)).collect::<String>()) } else { text };
+        lines.push(Line::from(Span::styled(text, style)));
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -798,7 +801,7 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     let width = |head: &str, f: &dyn Fn(&ModelRow) -> usize| p.rows.iter().map(f).chain([head.chars().count()]).max().unwrap_or(0);
     let pw = width("$/M in / out", &|r| r.price.chars().count());
     let bw = width("bench (runs)", &|r| r.bench.chars().count());
-    let aw = width("AA", &|r| r.aa.chars().count());
+    let aw = width("AA index", &|r| r.aa.chars().count());
     let longest = width("model", &|r| r.label.chars().count());
     let keys = if let Some((_, _, _, k, _)) = &p.effort {
         k
@@ -832,7 +835,8 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
             let text = format!("{mark}{dot} {label:<room$} {n}");
             let color = if *ok || i == 0 { th.text } else { th.faint };
             let style = match (i == p.group, p.in_models) {
-                (true, false) => st(color).add_modifier(Modifier::BOLD | Modifier::REVERSED),
+                // the accent fill of the slash menu and /resume (until 0.1.180 a grey one here)
+                (true, false) => st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED),
                 (true, true) => st(th.accent).add_modifier(Modifier::BOLD),
                 _ => st(color),
             };
@@ -920,7 +924,7 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
         f.render_widget(Paragraph::new(lines), right);
         return;
     }
-    let mut lines: Vec<Line<'static>> = vec![search, Line::from(Span::styled(cols(" ", "model", "$/M in / out", "bench (runs)", "AA"), st(th.faint)))];
+    let mut lines: Vec<Line<'static>> = vec![search, Line::from(Span::styled(cols(" ", "model", "$/M in / out", "bench (runs)", "AA index"), st(th.faint)))];
     for (i, r) in p.rows.iter().enumerate().skip(first).take(room) {
         let on = i == p.selected && (p.in_models || !two);
         let mark = if on { "›" } else if r.current { "•" } else { " " };
@@ -1185,8 +1189,21 @@ pub fn clock_str(ms: f64) -> String {
 }
 
 /// The session's elapsed time and, beside it, the agent's working time (message to last token): "26:51 · 06:08 working".
+/// "03:12 · 01:40 working": the session's time and the part spent working; before any work only the first (a "00:00
+/// working" on an idle session read as stuck, design review 4).
 pub fn times_str(s: &Session, v: &View) -> String {
-    format!("{} · {} working", clock_str(v.clock_ms - v.since_ms), clock_str(s.busy(v.clock_ms)))
+    let busy = s.busy(v.clock_ms);
+    if busy < 1000.0 { clock_str(v.clock_ms - v.since_ms) } else { format!("{} · {} working", clock_str(v.clock_ms - v.since_ms), clock_str(busy)) }
+}
+
+/// The replay's speed ("▶ 4.0×", "⏸ paused"); nothing in a live session, where it is no control of the user's (until
+/// 0.1.180 a live Aurora, Zen and Timeline showed "▶ 1.0×", and Zen the replay's keys "1-4 · e · q").
+pub fn play_str(v: &View, paused: &str) -> String {
+    match (v.live, v.paused) {
+        (true, _) => String::new(),
+        (false, true) => paused.into(),
+        (false, false) => format!("▶ {:.1}×", v.speed),
+    }
 }
 
 pub fn human(n: u64) -> String {
@@ -1318,8 +1335,23 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
     let mut last_rows = 0;
     let mut i = 0;
     let mut prev_turn = 0;
+    // a live session before its first message opens on who and where it is, as Claude Code's does; the lane's notice
+    // ("lane default: opus-5-5 medium · repo profile (…)") is in it (until 0.1.180 that debug line was the whole screen)
+    // (once the lane is known, and only while nothing but notices has come)
+    let fresh = v.live && s.blocks.iter().all(|b| matches!(b, Block::Notice { .. }))
+        && s.blocks.iter().any(|b| matches!(b, Block::Notice { text, .. } if text.starts_with("lane ")));
+    if fresh {
+        for l in welcome(s, th) {
+            lines.push(l);
+            owners.push(None);
+        }
+    }
     while i < s.blocks.len() {
         let b = &s.blocks[i];
+        if fresh && matches!(b, Block::Notice { text, .. } if text.starts_with("lane ")) {
+            i += 1;
+            continue;
+        }
         let meta = s.meta[i];
         // a run of tool calls collapses into one line in grouped designs
         let foldable = |b: &Block| matches!(b, Block::Tool(_) | Block::Thinking { .. });
@@ -1487,6 +1519,24 @@ pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): 
 }
 
 /// The whole transcript as the current design draws it at `width`, for copying a selection that runs off screen.
+/// The first screen of a live session: tazuna and its version, the model, where it runs and what it read there, a first
+/// thing to try.
+fn welcome(s: &Session, th: &Theme) -> Vec<Line<'static>> {
+    let lane = s.blocks.iter().find_map(|b| match b { Block::Notice { text, .. } if text.starts_with("lane ") => Some(text.clone()), _ => None });
+    let profile = lane.as_deref().and_then(|t| t.split_once(" · ")).map(|(_, p)| p.to_string()).unwrap_or_default();
+    let home = crate::platform::home().map(|h| h.display().to_string()).unwrap_or_default();
+    let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
+    let cwd = if !home.is_empty() && cwd.starts_with(&home) { format!("~{}", &cwd[home.len()..]) } else { cwd };
+    let plan = if s.limits.is_some() { " · Claude plan" } else { "" };
+    vec![
+        Line::from(vec![Span::styled(" ◆ ", st(th.accent)), Span::styled("tazuna", st(th.text).add_modifier(Modifier::BOLD)), Span::styled(format!(" {}", env!("CARGO_PKG_VERSION")), st(th.faint))]),
+        Line::from(vec![Span::raw("   "), Span::styled(model_short(&s.model), st(th.text)), Span::styled(format!(" · {}{plan}", s.effort), st(th.dim))]),
+        Line::from(vec![Span::raw("   "), Span::styled(cwd, st(th.dim)), Span::styled(if profile.is_empty() { String::new() } else { format!(" · {profile}") }, st(th.faint))]),
+        Line::default(),
+        Line::from(vec![Span::raw("   "), Span::styled("Try \"how is this repo laid out?\" · /keys for every key", st(th.faint))]),
+    ]
+}
+
 pub fn transcript_lines(s: &Session, v: &View, width: u16) -> Vec<Line<'static>> {
     let th = v.design.theme();
     let o = match v.design {
@@ -2140,7 +2190,8 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
             spans.push(Span::styled(format!("   {t}"), st(th.ok)));
         } else {
             let used: usize = spans.iter().map(|s| s.content.width()).sum::<usize>() + 3;
-            let keys = if v.live { fitted_keys(LIVE_KEYS, (width as usize).saturating_sub(used)) } else { REPLAY_KEYS.to_string() };
+            // two hints and the way to the rest: seven of them read as a manual in the message box (design review 4)
+            let keys = if v.live { fitted_keys("shift-tab mode · @ files · /keys all", (width as usize).saturating_sub(used)) } else { REPLAY_KEYS.to_string() };
             spans.push(Span::styled(format!("   {keys}"), st(th.faint)));
         }
     }

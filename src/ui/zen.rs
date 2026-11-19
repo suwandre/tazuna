@@ -51,8 +51,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     };
     let right = Line::from(vec![
         Span::styled(format!("{glyph} {label}"), st(color)),
-        Span::styled(if v.paused { "   paused".to_string() } else { format!("   {:.1}×", v.speed) }, st(th.faint)),
-        Span::styled("   1-4 · e · q", st(th.faint)),
+        Span::styled(if v.live { String::new() } else { format!("   {}", play_str(v, "paused")) }, st(th.faint)),
+        Span::styled(if v.live { "" } else { "   1-4 · e · q" }, st(th.faint)),
     ]);
     split_row(f, input, left, right, None);
 

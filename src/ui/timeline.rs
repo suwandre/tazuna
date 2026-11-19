@@ -50,7 +50,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     if let Some((text, color)) = limits_str(s, th) {
         left.spans.push(seg(text, color, th.surface));
     }
-    let play = if v.paused { "⏸".to_string() } else { format!("▶ {:.1}×", v.speed) };
+    let play = play_str(v, "⏸");
     let right = Line::from(vec![Span::styled(format!("{play}  "), st(th.dim)), seg(times_str(s, v), th.bg, th.accent)]);
     split_row(f, status, left, right, Some(th.bg));
 

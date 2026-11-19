@@ -38,19 +38,31 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Span::styled(" ▣ TAZUNA ", Style::new().fg(th.bg).bg(th.accent).add_modifier(Modifier::BOLD)),
         Span::styled(" cockpit", st(th.faint)),
     ]);
-    let right = Line::from(vec![
+    // a terminal under 110 columns (80x24, macOS Terminal's own size) has no room for the instrument column: the
+    // transcript gets the width and the header the cost (until 0.1.180 the column took half of 80 and answers wrapped at 38)
+    let narrow = body.width < 110;
+    let mut right = vec![
         Span::styled(format!("{glyph} {label}"), st(color)),
         Span::styled("   ", st(th.faint)),
         Span::styled(model_short(&s.model), st(th.text)),
         Span::styled(format!(" · {} ", s.effort), st(th.warn)),
-    ]);
-    split_row(f, header, left, right, Some(th.surface));
+    ];
+    if narrow {
+        right.splice(1..1, [Span::styled("   ", st(th.faint)), Span::styled(cost_str(s), st(th.ok))]);
+    }
+    split_row(f, header, left, Line::from(right), Some(th.surface));
 
-    let [main, side] = Layout::horizontal([Constraint::Min(40), Constraint::Length(SIDEBAR)]).areas(body);
+    let [main, side] = Layout::horizontal([Constraint::Min(40), Constraint::Length(if narrow { 0 } else { SIDEBAR })]).areas(body);
     let frame = panel("transcript", th);
     let inner = frame.inner(main).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(frame, main);
     let (last_block, trows, top_line) = render_transcript(f, inner, transcript(s, v, th, &OPTS, inner.width as usize), v.scroll);
+    if narrow {
+        let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.border));
+        let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
+        f.render_widget(Paragraph::new(hint).block(b), composer);
+        return Areas { pulse: header, last_block, transcript: inner, rows: trows, top_line, composer: Some(composer.inner(Margin { horizontal: 1, vertical: 1 })), ..Default::default() };
+    }
 
     let tools = tool_tally(s);
     let [p_session, p_context, p_tokens, p_cost, p_tools, p_files] = Layout::vertical([

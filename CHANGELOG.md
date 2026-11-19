@@ -16,6 +16,27 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.180 (2026-11-19): the terminal's first screen, narrow windows, overlays
+
+From design review 4, which went through every screen and overlay of both apps (before and after renders compared).
+
+- A live session opens on who and where it is: tazuna's version, the model and effort, the plan, the folder and what was
+  read there, and one thing to try. The lane's notice ("lane default: opus-5-5 medium · repo profile (…)") was the whole
+  first screen.
+- A live session shows no replay controls: Aurora's and Timeline's status line dropped "▶ 1.0×", Zen dropped "1.0×" and
+  the replay keys "1-4 · e · q" (in a live session 1 and q are typed). The session's time shows "working" only once
+  there was work ("00:03", not "00:03 · 00:00 working").
+- Cockpit under 110 columns (80x24 is the macOS Terminal's own size) leaves out its instrument column: the transcript
+  takes the width and the header shows the cost. The column took half of 80 columns and answers wrapped at 38.
+- `/help` (and `/?`) shows the key list; it said "unknown command /help".
+- The message box shows three hints ("shift-tab mode · @ files · /keys all"), not seven.
+- Several shift-tabs change one "mode:" line in the transcript instead of adding one line each.
+- `/resume` rows lose the session id after them; a row past the panel's edge ends in "…".
+- `/usage`: a shorter title; a credit spent past zero reads "$0.17 over its credit" (was "-$0.17 left of $0.00"); an
+  OmniRoute plan id reads as a name ("default_claude_max_5x" is "Claude Max 5x").
+- `/model`: the selected provider has the accent fill of the other lists (it was grey); the "AA" column is "AA index".
+- No metric moves: drawing and wording only.
+
 ## 0.1.179 (2026-11-19): a calmer terminal
 
 From a design review of the terminal against Claude Code, Codex, OpenCode, pi, omp and Hermes; checked as before and

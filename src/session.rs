@@ -636,7 +636,11 @@ impl Session {
             }
             (Some("harness_mode"), _) => {
                 self.mode = mode_name(e["mode"].as_str().unwrap_or_default()).to_string();
-                self.push(Block::Notice { text: format!("mode: {}", self.mode), error: false });
+                // shift-tab through the modes changes one line, not one line a press (design review 4)
+                match self.blocks.last_mut() {
+                    Some(Block::Notice { text, .. }) if text.starts_with("mode: ") => *text = format!("mode: {}", self.mode),
+                    _ => self.push(Block::Notice { text: format!("mode: {}", self.mode), error: false }),
+                }
             }
             (Some("harness_info"), _) => self.push_aside(Block::Notice { text: s(&e["text"]), error: false }),
             // the own loop's reasoning before a message: a thinking row like claude's, its size estimated (~4 characters a token)
