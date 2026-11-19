@@ -16,6 +16,19 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.184 (2026-11-19): /keys, /mcp and /model read as panels
+
+From design review 7.
+
+- `/keys` (and `/help`) is a panel in columns, in parts (writing, while it works, the screen, commands); it was one notice
+  line cut at "… +111 chars". `/mcp` the same: whether MCP is on, the servers, the commands with what each does.
+- `/model` names its models ("DeepSeek V4.1 Flash 1017, fast", "GPT-6.1 Sol") and says prices evenly ("0.017 / 0.068",
+  "free"), as the desktop app's picker.
+- `/usage` says a reset as the desktop app does: "in 3 h 4 min" within a day, "Sat 2:59am" within the week, "Nov 26"
+  later (the local time zone through libc on macOS and Linux; Windows keeps claude's own words). Commas for its middle
+  dots; the "from claude's own /usage: no model call" line is gone.
+- No metric moves: drawing and wording.
+
 ## 0.1.183 (2026-11-19): each answer's own cost
 
 From design review 6.

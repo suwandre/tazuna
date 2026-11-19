@@ -2354,6 +2354,38 @@ fn tool_calls(s: &Session, name: &str) -> ui::ListPanel {
 /// and its speed.
 const ACCOUNTS: &str = "usage · your accounts";
 
+/// A command's answer as a panel of rows (/keys, /mcp): a heading per part, rows in columns, nothing cut.
+fn info_panel(title: &str, rows: Vec<(String, ui::Tone)>) -> ui::ListPanel {
+    ui::ListPanel { pending: false, title: title.into(), head: String::new(), links: vec![None; rows.len()], details: vec![None; rows.len()], rows,
+        scroll: 0, link_from: 0, hscroll: 0, open: Default::default() }
+}
+
+/// /keys (and /help): every key and command, in parts.
+fn keys_rows() -> Vec<(String, ui::Tone)> {
+    use ui::Tone::{Head, Plain, Rule};
+    let parts: [(&str, &[(&str, &str)]); 3] = [
+        ("Writing", &[("enter", "send"), ("\\⏎ or ctrl-j", "a new line"), ("tab", "complete a /command or an @file"), ("@", "a file of this folder"),
+            ("!cmd", "run cmd in the shell"), ("ctrl-v", "paste an image"), ("ctrl-g", "write the message in your editor"), ("ctrl-x", "put the message aside, or back"),
+            ("↑ ↓", "your earlier messages"), ("shift-tab", "the next permission mode")]),
+        ("While it works", &[("esc", "stop"), ("ctrl-b", "the tasks running in the background")]),
+        ("The screen", &[("ctrl-t", "the next design"), ("ctrl-o", "open or fold every step"), ("ctrl-l", "draw the screen again"), ("drag", "select and copy"),
+            ("click", "a line in full")]),
+    ];
+    let mut rows = vec![];
+    for (head, keys) in parts {
+        if !rows.is_empty() {
+            rows.push((String::new(), Plain));
+        }
+        rows.extend([(head.to_string(), Head), (String::new(), Rule)]);
+        rows.extend(keys.iter().map(|(k, what)| (format!("  {k:<16}{what}"), Plain)));
+    }
+    rows.extend([(String::new(), Plain), ("Commands".into(), Head), (String::new(), Rule)]);
+    for c in ["model", "effort", "usage", "resume", "rewind", "diff", "new", "mcp", "boss", "loop", "vim", "changelog", "keys"] {
+        rows.push((format!("  /{c:<15}{}", crate::editor::describe(c)), Plain));
+    }
+    rows
+}
+
 /// `/usage`: every account's lines (accounts.rs); None: still reading them, said in the panel with a spinner.
 #[inline(never)]
 fn accounts_panel(v: Option<&serde_json::Value>) -> ui::ListPanel {
@@ -3011,7 +3043,7 @@ fn run_live(
                         (true, p) if p != "Claude" && p != "SubRouter" && !c.label.contains(" · ") => format!("{} · {}", c.label, p.to_lowercase()),
                         _ => c.label.clone(),
                     };
-                    ui::ModelRow { label, place: c.place.clone(), price: c.price.clone(), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
+                    ui::ModelRow { label: ui::pretty_label(&label), place: c.place.clone(), price: ui::even_price(&c.price), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
                         state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3, models::State::NotOnKey => 4 },
                         why: models::why_not(c).unwrap_or_default(), stale: c.stale, current: models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
                 }).collect(),
@@ -4121,12 +4153,21 @@ fn run_live(
                             Ok(false) => info(&mut s, format!("no server {name}")),
                             Err(e) => info(&mut s, format!("{e:#}")),
                         },
-                        _ => info(&mut s, format!(
-                            "MCP {}. Servers for every model (~/.config/tazuna/mcp.json){}:\n{}\n/mcp on · /mcp off · /mcp add NAME URL · /mcp add NAME COMMAND [ARGS] · /mcp login NAME · /mcp remove NAME",
-                            if live.connectors { "on" } else { "off" },
-                            if live.provider.is_some() { "" } else { "; on claude your claude.ai connectors too" },
-                            mcpc::list()
-                        )),
+                        _ => {
+                            use ui::Tone::{Dim, Head, Plain, Rule};
+                            let mut rows = vec![(format!("MCP is {}", if live.connectors { "on" } else { "off" }), Head), (String::new(), Rule)];
+                            rows.extend(mcpc::list().lines().map(|l| (format!("  {}", l.trim()), Plain)));
+                            rows.push(("  servers for every model, from ~/.config/tazuna/mcp.json".into(), Dim));
+                            if live.provider.is_none() {
+                                rows.push(("  on Claude your claude.ai connectors come too".into(), Dim));
+                            }
+                            rows.extend([(String::new(), Plain), ("Commands".into(), Head), (String::new(), Rule)]);
+                            for (c, what) in [("/mcp on", "use the servers"), ("/mcp off", "leave them out"), ("/mcp add NAME URL", "a server at a URL"),
+                                ("/mcp add NAME COMMAND [ARGS]", "a server this machine runs"), ("/mcp login NAME", "log in to a server"), ("/mcp remove NAME", "take a server off the list")] {
+                                rows.push((format!("  {c:<30}{what}"), Plain));
+                            }
+                            v.list = Some(info_panel("mcp", rows));
+                        }
                     }
                     continue;
                 }
@@ -4209,9 +4250,9 @@ fn run_live(
                     }
                     continue;
                 }
+                // a panel in columns, as /usage (until 0.1.184 one notice line cut at "… +111 chars", design review 7)
                 if text == "/keys" {
-                    let all = ui::LIVE_KEYS.split(" · ").collect::<Vec<_>>().join("\n");
-                    s.apply(&json!({"type": "harness_info", "text": format!("keys:\n{all}")}), live.elapsed_ms());
+                    v.list = Some(info_panel("keys", keys_rows()));
                     continue;
                 }
                 if text == "/rewind" {

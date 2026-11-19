@@ -143,12 +143,93 @@ fn until(iso: &str, now: i64) -> Option<String> {
     Some(if d > 0 { format!("in {d} d {h} h") } else if h > 0 { format!("in {h} h {m} min") } else { format!("in {m} min") })
 }
 
+/// This machine's offset from UTC in seconds at `now`: the C library's local time on unix; elsewhere none, and /usage
+/// keeps claude's own words for its resets.
+fn local_offset(now: i64) -> Option<i64> {
+    #[cfg(unix)]
+    {
+        // SAFETY: localtime_r writes only into `tm`, which lives here
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        let t = now as libc::time_t;
+        if unsafe { libc::localtime_r(&t, &mut tm) }.is_null() {
+            return None;
+        }
+        Some(tm.tm_gmtoff as i64)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = now;
+        None
+    }
+}
+
+const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/// (year, month 1-12, day) of a day count since 1970-01-01 (Howard Hinnant's civil_from_days).
+fn civil(days: i64) -> (i64, i64, i64) {
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let (d, m) = (doy - (153 * mp + 2) / 5 + 1, if mp < 10 { mp + 3 } else { mp - 9 });
+    (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+/// When a window resets, as the desktop app says it (lib/health.ts whenReset): "in 2 h 14 min" within a day, "Sat 3am"
+/// within the week, "Nov 26" later; `at` and `now` in seconds since 1970, `off` the local offset (design review 7).
+fn when(at: i64, now: i64, off: i64) -> String {
+    let mins = (at - now + 30) / 60;
+    if mins <= 0 {
+        return "now".into();
+    }
+    if mins < 60 {
+        return format!("in {mins} min");
+    }
+    if mins < 24 * 60 {
+        return if mins % 60 == 0 { format!("in {} h", mins / 60) } else { format!("in {} h {} min", mins / 60, mins % 60) };
+    }
+    let local = at + off;
+    let days = local.div_euclid(86_400);
+    let (_, m, d) = civil(days);
+    if mins < 7 * 24 * 60 {
+        let (h, mi) = (local.rem_euclid(86_400) / 3600, local.rem_euclid(3600) / 60);
+        let weekday = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"][days.rem_euclid(7) as usize];
+        let time = format!("{}{}{}", if h % 12 == 0 { 12 } else { h % 12 }, if mi > 0 { format!(":{mi:02}") } else { String::new() }, if h < 12 { "am" } else { "pm" });
+        return format!("{weekday} {time}");
+    }
+    format!("{} {d}", MONTHS[(m - 1) as usize])
+}
+
+/// claude's /usage reset in your own time ("Nov 21 at 2:59am", "5:29pm") as seconds since 1970, given the local offset.
+fn claude_reset(text: &str, now: i64, off: i64) -> Option<i64> {
+    let t = text.trim();
+    let (date, time) = match t.split_once(" at ") { Some((d, tm)) => (Some(d), tm), None => (None, t) };
+    let (clock, pm) = if let Some(c) = time.strip_suffix("pm") { (c, true) } else { (time.strip_suffix("am")?, false) };
+    let (h, mi) = match clock.split_once(':') { Some((h, m)) => (h.parse::<i64>().ok()?, m.parse::<i64>().ok()?), None => (clock.parse::<i64>().ok()?, 0) };
+    let h = h % 12 + if pm { 12 } else { 0 };
+    let today = (now + off).div_euclid(86_400);
+    let day = match date {
+        Some(d) => {
+            let (mon, dd) = d.split_once(' ')?;
+            let m = MONTHS.iter().position(|x| x.eq_ignore_ascii_case(&mon[..3.min(mon.len())]))? as i64 + 1;
+            let (y, ..) = civil(today);
+            let at = |y: i64| iso_secs(&format!("{y:04}-{m:02}-{:02}T00:00:00Z", dd.parse::<i64>().ok()?)).map(|s| s / 86_400);
+            let first = at(y)?;
+            if first < today - 1 { at(y + 1)? } else { first }
+        }
+        None => if h * 3600 + mi * 60 < (now + off).rem_euclid(86_400) { today + 1 } else { today },
+    };
+    Some(day * 86_400 + h * 3600 + mi * 60 - off)
+}
+
 /// claude's window names, shorter: "Current session" is the 5-hour one, "Current week (Fable)" the week on Fable.
 fn window_name(label: &str) -> String {
     let l = label.trim_start_matches("Current ");
     match l.split_once(" (") {
         _ if l == "session" => "5-hour session".into(),
-        Some((w, rest)) => format!("{}{} · {}", w[..1].to_uppercase(), &w[1..], rest.trim_end_matches(')')),
+        Some((w, rest)) => format!("{}{}, {}", w[..1].to_uppercase(), &w[1..], rest.trim_end_matches(')')),
         None => format!("{}{}", l[..1].to_uppercase(), &l[1..]),
     }
 }
@@ -163,7 +244,11 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let mut out: Vec<(String, crate::ui::Tone, Option<String>)> = vec![];
     let mut push = |text: String, tone, link: Option<String>| out.push((text, tone, link));
-    // a meter's row: its name from `indent`, its bar at one column for all (column 35: "Claude & GPT Models · weekly" fits)
+    let off = local_offset(now);
+    // a reset as the desktop says it where the time zone is known, else as claude or OmniRoute gave it
+    let reset_claude = |text: &str| off.and_then(|o| claude_reset(text, now, o).map(|at| when(at, now, o))).unwrap_or_else(|| text.to_string());
+    let reset_iso = |iso: &str| match off { Some(o) => iso_secs(iso).map(|at| when(at, now, o)), None => until(iso, now) };
+    // a meter's row: its name from `indent`, its bar at one column for all (column 35: "Claude & GPT Models, weekly" fits)
     let meter = |indent: usize, name: &str, used: f64, resets: &str| {
         format!("{:indent$}{name:<w$} {} {used:>4.0}%{}", "", bar(used, 20), if resets.is_empty() { String::new() } else { format!("   resets {resets}") }, w = 34 - indent)
     };
@@ -175,7 +260,7 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
                 let used = r["used"].as_f64().unwrap_or(0.0);
                 // "Nov 18 at 5:29pm (Europe/Berlin)": the zone is the user's own
                 let resets = r["resets"].as_str().unwrap_or_default().split(" (").next().unwrap_or_default();
-                push(meter(2, &window_name(r["label"].as_str().unwrap_or_default()), used, resets), if used >= 90.0 { Bad } else { Plain }, None);
+                push(meter(2, &window_name(r["label"].as_str().unwrap_or_default()), used, &reset_claude(resets)), if used >= 90.0 { Bad } else { Plain }, None);
             }
             // what claude says contributes, for the last day (its last 7 days repeat the same advice)
             let notes: Vec<&str> = v["plan_notes"].as_array().into_iter().flatten().filter_map(Value::as_str)
@@ -183,12 +268,11 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
             if !notes.is_empty() {
                 push(String::new(), Plain, None);
                 push("  What's contributing (approximate, this machine only)".into(), Dim, None);
+                // claude's own lines, its middle dots as commas ("Last 24h, 1179 requests, 7 sessions")
                 for n in notes {
-                    push(format!("    {}", n.trim()), Dim, None);
+                    push(format!("    {}", n.trim().replace(" · ", ", ")), Dim, None);
                 }
             }
-            push(String::new(), Plain, None);
-            push("  from claude's own /usage: no model call".into(), Dim, None);
         }
         None => push("  no reading: is claude installed and logged in to a subscription?".into(), Dim, None),
     }
@@ -208,7 +292,7 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
                 (None, None) => push(format!("  {name:<20}no balance to read"), Dim, None),
             }
         }
-        push("  without a balance API: their page, a click away".into(), Dim, None);
+        push("  no balance from their APIs: their page is a click away".into(), Dim, None);
     }
     let accounts = v["omniroute"].as_array().cloned().unwrap_or_default();
     if !accounts.is_empty() {
@@ -219,20 +303,20 @@ pub fn lines(v: &Value) -> Vec<(String, crate::ui::Tone, Option<String>)> {
             if i > 0 {
                 push(String::new(), Plain, None);
             }
-            let plan = a["plan"].as_str().map_or(String::new(), |p| format!(" · {p}"));
-            let status = if a["status"] == "valid" { String::new() } else { format!(" · login {}", a["status"].as_str().unwrap_or("?")) };
+            let plan = a["plan"].as_str().map_or(String::new(), |p| format!(", {p}"));
+            let status = if a["status"] == "valid" { String::new() } else { format!(", login {}", a["status"].as_str().unwrap_or("?")) };
             let provider = a["provider"].as_str().unwrap_or("?");
             let provider = if provider.starts_with("openai-compatible") { "OpenAI-compatible" } else { provider };
-            push(format!("  {provider} · {}{plan}{status}", a["name"].as_str().unwrap_or_default()), Plain, None);
+            push(format!("  {provider}, {}{plan}{status}", a["name"].as_str().unwrap_or_default()), Plain, None);
             for w in a["windows"].as_array().into_iter().flatten() {
                 let what = [w["group"].as_str().unwrap_or_default(), w["window"].as_str().unwrap_or_default()].iter()
-                    .filter(|x| !x.is_empty()).copied().collect::<Vec<_>>().join(" · ");
+                    .filter(|x| !x.is_empty()).copied().collect::<Vec<_>>().join(", ");
                 if w["unlimited"] == true {
                     push(format!("    {what:<30} unlimited"), Plain, None);
                     continue;
                 }
                 let used = w["used"].as_f64().unwrap_or(0.0);
-                let resets = w["resets"].as_str().and_then(|r| until(r, now)).unwrap_or_default();
+                let resets = w["resets"].as_str().and_then(reset_iso).unwrap_or_default();
                 push(meter(4, &what, used, &resets), if used >= 90.0 { Bad } else { Plain }, None);
             }
         }
@@ -259,14 +343,20 @@ mod tests {
         let row = |t: &str| shown.iter().find(|l| l.0.contains(t)).unwrap_or_else(|| panic!("no row with {t}: {shown:?}"));
         use crate::ui::Tone::{Bad, Head, Plain, Rule};
         assert_eq!((row("Claude plan").1, shown[1].1), (Head, Rule), "a section: its heading, a line across");
-        assert!(row("5-hour session").0.contains("14%") && row("5-hour session").0.ends_with("resets 5:29pm"), "the zone dropped: {:?}", row("5-hour session"));
-        assert_eq!(row("Week · Fable").1, Bad, "a window at 90% or more is red");
+        assert!(row("5-hour session").0.contains("14%") && row("5-hour session").0.contains("resets ") && !row("5-hour session").0.contains("Europe"), "the zone dropped: {:?}", row("5-hour session"));
+        assert_eq!(row("Week, Fable").1, Bad, "a window at 90% or more is red");
         assert_eq!((row("Mortera").2.as_deref(), &row("Mortera").0[LINK_FROM..]), (Some("https://mortera.cloud"), "mortera.cloud"), "its page, a click away");
         assert_eq!(row("OpenRouter").1, Bad, "below zero");
-        let g = row("Gemini Models · weekly");
-        assert!(g.1 == Plain && g.0.contains(" in ") && g.0.chars().position(|c| c == '░') == row("5-hour session").0.chars().position(|c| c == '█'), "bars line up across sections: {g:?}");
+        let g = row("Gemini Models, weekly");
+        assert!(g.1 == Plain && g.0.contains("resets ") && g.0.chars().position(|c| c == '░') == row("5-hour session").0.chars().position(|c| c == '█'), "bars line up across sections: {g:?}");
         assert_eq!(until("2026-11-25T11:03:10.000Z", iso_secs("2026-11-18T10:00:00Z").unwrap()).as_deref(), Some("in 7 d 1 h"));
+        // the desktop's words for a reset, at UTC+1 on Thursday 2026-11-19 15:00 local
+        let (off, now) = (3600, iso_secs("2026-11-19T14:00:00Z").unwrap());
+        assert_eq!([when(now + 42 * 60, now, off), when(now + 134 * 60, now, off), when(iso_secs("2026-11-21T02:00:00Z").unwrap(), now, off), when(iso_secs("2026-11-26T16:13:00Z").unwrap(), now, off)],
+            ["in 42 min", "in 2 h 14 min", "Sat 3am", "Nov 26"].map(String::from));
+        assert_eq!(claude_reset("Nov 21 at 2:59am", now, off), iso_secs("2026-11-21T01:59:00Z"));
+        assert_eq!(claude_reset("5:29pm", now, off), iso_secs("2026-11-19T16:29:00Z"), "a time alone is today's, or tomorrow's once past");
         assert_eq!((plan_name("default_claude_max_5x"), plan_name("Ultra")), ("Claude Max 5x".into(), "Ultra".into()));
-        assert_eq!(window_name("Current week (all models)"), "Week · all models");
+        assert_eq!(window_name("Current week (all models)"), "Week, all models");
     }
 }

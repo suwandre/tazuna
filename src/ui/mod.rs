@@ -1312,6 +1312,34 @@ pub fn model_notice(text: &str) -> Option<String> {
         if tail.is_empty() { String::new() } else { format!(" {tail}") }))
 }
 
+/// A /model row's label by name: "deepseek-v4.1-flash-1017 · fast" is "DeepSeek V4.1 Flash 1017, fast"; a label that is
+/// already a name ("Opus 5.5") stays (design review 7: the desktop's picker named them, the terminal's showed ids).
+pub fn pretty_label(label: &str) -> String {
+    let (name, rest) = label.split_once(" · ").unwrap_or((label, ""));
+    let n = if name.contains(' ') { name.to_string() } else { pretty_model(name) };
+    if rest.is_empty() { n } else { format!("{n}, {rest}") }
+}
+
+/// "$ per M in / out" said evenly, as the desktop's picker: "0.017 / 0.068" for "0.0169 / 0.0677", "free" for "0 / 0".
+pub fn even_price(p: &str) -> String {
+    let n: Vec<Option<f64>> = p.split('/').map(|x| x.trim().parse::<f64>().ok()).collect();
+    let [Some(a), Some(b)] = n[..] else { return p.to_string() };
+    if a == 0.0 && b == 0.0 {
+        return "free".into();
+    }
+    let one = |x: f64| {
+        if x == 0.0 {
+            "0".to_string()
+        } else if x >= 1.0 {
+            format!("{x:.2}").trim_end_matches('0').trim_end_matches('.').to_string()
+        } else {
+            let digits = (1 - x.log10().floor() as i32).max(0) as usize;
+            format!("{x:.digits$}").trim_end_matches('0').trim_end_matches('.').to_string()
+        }
+    };
+    format!("{} / {}", one(a), one(b))
+}
+
 /// The lane's notice at a session's start, said plainly: "lane default: opus-5-5 medium · repo profile (…)" is "started
 /// on Opus 5.5 · medium · repo profile (…)" (it read as a debug line at the top of every recording, design review 5).
 pub fn lane_notice(text: &str) -> Option<String> {
@@ -2237,7 +2265,6 @@ pub fn wrap(mut line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Ve
 }
 
 const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
-pub const LIVE_KEYS: &str = "enter send · \\⏎ or ctrl-j new line · shift-tab mode · tab complete / @ · !cmd shell · ctrl-v image · ctrl-g editor · ctrl-b tasks · ctrl-x stash · ctrl-l redraw · /model · /boss · /mcp · /diff · /new · /resume · /rewind · /loop · /usage · /vim · ↑↓ history · esc stop · drag copies · ctrl-t design · ctrl-o expand";
 
 /// As many whole key hints as fit in `room` columns, most used first; "/keys all" ends them when some are left out.
 fn fitted_keys(keys: &str, room: usize) -> String {
@@ -2474,6 +2501,14 @@ pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'st
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn model_rows_read_as_names_and_even_prices() {
+        assert_eq!(super::pretty_label("deepseek-v4.1-flash-1017 · fast"), "DeepSeek V4.1 Flash 1017, fast");
+        assert_eq!(super::pretty_label("Opus 5.5"), "Opus 5.5");
+        assert_eq!([super::even_price("0.0169 / 0.0677"), super::even_price("0 / 0"), super::even_price("1.4 / 4.4"), super::even_price("0.15 / 0.6"), super::even_price("plan")],
+            ["0.017 / 0.068", "free", "1.4 / 4.4", "0.15 / 0.6", "plan"].map(String::from));
+    }
+
     #[test]
     fn model_names_match_the_desktop_app() {
         // the cases of desktop/src/lib/types.ts MODEL_NAMES
