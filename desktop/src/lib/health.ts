@@ -9,7 +9,10 @@ export type Item = { key: string; provider: string; name: string; note?: string;
   /** when its window starts again (ms since 1970), where known */
   resetsAt?: number;
   /** what it means and what to do, for an account running low or stopped (the badge's tooltip) */
-  advice?: string };
+  advice?: string;
+  /** the account it belongs to, written out whole ("Claude plan", "OmniRoute agy, someone@…, Ultra", "Credit"), and its
+   * own name under that heading ("week", "Gemini", "OpenRouter"): the card groups them as the usage page does */
+  group: string; label: string };
 
 const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
 
@@ -63,7 +66,7 @@ export function items(acc: Accounts | null, fallback: { plan5h: number | null; p
   for (const r of plan) {
     const w = windowOf(r.label);
     const resetsAt = parseReset(r.resets, now) ?? (w === "5 hours" && fallback.resetAt ? fallback.resetAt * 1000 : undefined);
-    out.push({ key: `claude:${w}`, provider: "Claude", name: `Claude plan, ${w}`, note: resetsAt ? `resets ${whenReset(resetsAt, now)}` : undefined, pct: r.used, value: `${Math.round(r.used)}%`,
+    out.push({ key: `claude:${w}`, provider: "Claude", name: `Claude plan, ${w}`, group: "Claude plan", label: w.charAt(0).toUpperCase() + w.slice(1), note: resetsAt ? `resets ${whenReset(resetsAt, now)}` : undefined, pct: r.used, value: `${Math.round(r.used)}%`,
       level: byPct(r.used), short: `Claude ${w} ${Math.round(r.used)}%`, resetsAt,
       // past 100% Claude stops, or bills extra usage where it is turned on (it went on silently into extra usage, 2026-11)
       advice: r.used >= 90 ? `Your Claude ${w} is at ${Math.round(r.used)}%. Once it is full Claude stops, or bills extra usage if you turned that on.${until(resetsAt)}`
@@ -74,7 +77,7 @@ export function items(acc: Accounts | null, fallback: { plan5h: number | null; p
     const over = c.left?.match(/^\$([\d.]+) over/), left = c.left?.match(/^-?\$([\d.]+) left/);
     const amount = over ? -Number(over[1]) : left ? Number(left[1]) * (c.left!.startsWith("-") ? -1 : 1) : null;
     const level: Level = amount == null ? "unknown" : amount <= 0 ? "out" : amount < 2 ? "low" : "ok";
-    out.push({ key: `credit:${c.provider}`, provider: c.provider, name: c.provider, note: amount == null ? "no balance from its API" : "credit",
+    out.push({ key: `credit:${c.provider}`, provider: c.provider, name: c.provider, group: "Credit with each provider", label: c.provider, note: amount == null ? "no balance from its API" : undefined,
       value: amount == null ? undefined : amount < 0 ? `$${(-amount).toFixed(2)} over` : `$${amount.toFixed(2)} left`, level, page: c.page,
       advice: amount == null ? undefined : amount <= 0 ? `Your ${c.provider} credit is ${amount < 0 ? `$${(-amount).toFixed(2)} past zero` : "used up"}. Add credit, or runs on ${c.provider} will fail.`
         : `${c.provider} has $${amount.toFixed(2)} left. Add credit soon, or runs on ${c.provider} will stop.`,
@@ -88,7 +91,8 @@ export function items(acc: Accounts | null, fallback: { plan5h: number | null; p
     const who = a.provider.startsWith("openai-compatible") ? "OpenAI-compatible" : a.provider, acct = a.name ? a.name.split("@")[0] : "";
     const resetsAt = w.resets ? Date.parse(w.resets) : undefined;
     out.push({ key: `omni:${a.provider}:${a.name}:${w.group}:${w.window}`, provider: "OmniRoute", name: `OmniRoute ${who}, ${what}`, resetsAt: Number.isNaN(resetsAt) ? undefined : resetsAt,
-      note: login ? `${acct ? `${acct}, ` : ""}login ${a.status}` : [acct, resetsAt && !Number.isNaN(resetsAt) ? `resets ${whenReset(resetsAt, now)}` : w.window].filter(Boolean).join(", ") || undefined,
+      group: ["OmniRoute", who, a.name, a.plan].filter(Boolean).join(", "), label: what === "quota" ? "Quota" : what,
+      note: login ? `login ${a.status}` : resetsAt && !Number.isNaN(resetsAt) ? `resets ${whenReset(resetsAt, now)}` : w.window && w.window.toLowerCase() !== what.toLowerCase() ? w.window : undefined,
       pct: w.used, value: `${Math.round(w.used)}%`, level: login ? "out" : byPct(w.used), short: login ? `OmniRoute ${a.provider} login ${a.status}` : `OmniRoute ${what} ${Math.round(w.used)}%`,
       advice: login ? `Your OmniRoute ${who} login${acct ? ` (${acct})` : ""} is ${a.status}. Log in again in OmniRoute, or runs on it will fail.`
         : `OmniRoute ${who} ${what}${acct ? ` (${acct})` : ""} is at ${Math.round(w.used)}%. Runs on it stop once it is full.${until(Number.isNaN(resetsAt) ? undefined : resetsAt)}` });

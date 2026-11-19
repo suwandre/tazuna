@@ -78,13 +78,19 @@ export const MODEL_NAMES: [string, string][] = [
   ["nemotron-3.5-super-vl", "Nemotron 3.5 Super VL"], ["qwen3.8-flash-next-unsloth-ud-iq3_xxs", "Qwen3.8 Flash Next Unsloth UD IQ3_XXS"],
   ["qwen3-8-omni-flash", "Qwen3.8 Omni Flash"], ["gemma-3-4b-it", "Gemma 3 4B IT"], ["codestral-2508 off 0.3,0.03,0.9", "Codestral 2508"], ["zai-glm-5.3", "Z.ai GLM-5.3"],
 ];
+export function demoTitles() {
+  const got = [titleFrom("github.com/acme/app/pull/1476 good to approve now?"), titleFrom("https://acme.atlassian.net/browse/T-1214\nwhat is this about?"), titleFrom("acme.atlassian.net/T-1214")];
+  if (got.join("|") !== "app PR #1476 good to approve now?|Jira T-1214: what is this about?|Jira T-1214") throw new Error(`titles: ${got.join("|")}`);
+  console.log("titles ok");
+}
+
 export function demoModels() {
   const bad = MODEL_NAMES.filter(([id, want]) => modelLabel(id) !== want).map(([id, want]) => `${id}: ${modelLabel(id)} (wanted ${want})`);
   if (bad.length) throw new Error(bad.join("\n"));
   console.log("model names ok");
 }
 
-/** A link as a few words: a GitHub pull request is "application PR #1521", an issue "repo issue #12", a repo
+/** A link as a few words: a GitHub pull request is "app PR #1521", an issue "repo issue #12", a repo
  * "owner/repo", a Claude artifact "Claude artifact", anything else its host and last path part. */
 export function linkName(u: string): string {
   try {
@@ -92,18 +98,21 @@ export function linkName(u: string): string {
     if (host === "github.com" && p.length >= 4 && (p[2] === "pull" || p[2] === "issues")) return `${p[1]} ${p[2] === "pull" ? "PR" : "issue"} #${p[3]}`;
     if (host === "github.com" && p.length >= 2) return `${p[0]}/${p[1]}`;
     if (/(^|\.)claude\.ai$/.test(host) && p[0] === "artifact") return "Claude artifact";
+    if (host.endsWith(".atlassian.net")) { const k = u.match(/\b([A-Z][A-Z0-9]*-\d+)\b/); if (k) return `Jira ${k[1]}`; }
     return p.length ? `${host}/${decodeURIComponent(p[p.length - 1]).slice(0, 40)}` : host;
   } catch { return u; }
 }
 
 /** A conversation's name from its first message: its first line with each link said in words, and when that line was only
- * a link, the next line after it ("application PR #1485: good to approve?"). Until desktop 0.1.77 the first line as
+ * a link, the next line after it ("app PR #1485: good to approve?"). Until desktop 0.1.77 the first line as
  * typed, so a list of pasted links read "https://github.com/acme/a…" eight times (design review 5). */
 export function titleFrom(text?: string | null): string {
   const lines = (text ?? "").replace(/^\[tazuna: [^\]]*\]\n\n/, "").split("\n").map((l) => l.trim()).filter(Boolean);
   if (!lines.length) return "";
-  const said = (l: string) => l.replace(/https?:\/\/[^\s<>()]+/g, (u) => linkName(u.replace(/[.,;:!?)]+$/, ""))).replace(/\s+/g, " ").trim();
-  const onlyLink = /^https?:\/\/\S+$/.test(lines[0]);
+  // a link pasted without its scheme ("github.com/acme/app/pull/1476") reads as one too (design review 7)
+  const said = (l: string) => l.replace(/(?:https?:\/\/|\b(?=(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)*\.(?:com|net|org|io|ai|dev|de)\/))[^\s<>()]+/gi,
+    (u) => linkName((/^https?:/i.test(u) ? u : `https://${u}`).replace(/[.,;:!?)]+$/, ""))).replace(/\s+/g, " ").trim();
+  const onlyLink = /^(https?:\/\/)?[a-z0-9.-]+\.[a-z]{2,}\/\S+$/i.test(lines[0]);
   return onlyLink && lines[1] ? `${said(lines[0])}: ${said(lines[1])}` : said(lines[0]);
 }
 

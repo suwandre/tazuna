@@ -284,13 +284,18 @@ function Bars({ days }: { days: Day[] }) {
   const d = at == null ? null : days[at];
   return (
     <div className="relative px-3.5 pb-2.5 pt-3.5">
-      <div className="flex h-[110px] items-end gap-[3px]" onMouseLeave={() => setAt(null)}>
+      {/* one stop for the keyboard, the arrows along the days (each bar was a stop of its own and a click did nothing,
+          design review 7) */}
+      <div className="flex h-[110px] items-end gap-[3px] rounded-sm" onMouseLeave={() => setAt(null)} tabIndex={0} role="group"
+        aria-label={d ? `${d.day}: ${money(d.plan + d.api)}, ${d.runs} runs` : `Spending per day, ${days[0].day} to ${days[days.length - 1].day}: arrows move along the days`}
+        onFocus={() => setAt((a) => a ?? days.length - 1)} onBlur={() => setAt(null)}
+        onKeyDown={(e) => { const n = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : e.key === "Home" ? -days.length : e.key === "End" ? days.length : 0;
+          if (n) { e.preventDefault(); setAt((a) => Math.max(0, Math.min(days.length - 1, (a ?? days.length - 1) + n))); } }}>
         {days.map((day, i) => (
-          <button key={day.day} onMouseEnter={() => setAt(i)} onFocus={() => setAt(i)} onBlur={() => setAt(null)}
-            aria-label={`${day.day}: ${money(day.plan + day.api)}, ${day.runs} runs`} className="flex h-full min-w-0 flex-1 flex-col justify-end">
+          <span key={day.day} onMouseEnter={() => setAt(i)} aria-hidden="true" className="flex h-full min-w-0 flex-1 flex-col justify-end">
             <span className={`block w-full rounded-t-[3px] bg-accent-soft outline outline-1 -outline-offset-1 outline-accent/35 ${at === i ? "opacity-80" : ""}`} style={{ height: day.api ? `${Math.max(2, (100 * day.api) / max)}%` : 0 }} />
             <span className={`block w-full ${day.api ? "" : "rounded-t-[3px]"} ${at === i ? "bg-accent-ink" : "bg-accent"}`} style={{ height: day.plan ? `${Math.max(2, (100 * day.plan) / max)}%` : 0 }} />
-          </button>
+          </span>
         ))}
       </div>
       <div className="mt-1.5 flex justify-between text-[11px] tabular-nums text-faint"><span>{days[0].day.slice(5)}</span><span>max {money(max)} a day</span><span>{days[days.length - 1].day.slice(5)}</span></div>

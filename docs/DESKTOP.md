@@ -214,7 +214,7 @@ In a project the start page offers that project's own recent conversations, and 
   gives the focus back to its button; the permission and folder menus move with the arrow keys.
 - The status bar's plan is the account's newest reading, not the open conversation's own (it changed with each
   conversation opened, up to days old).
-- Conversation names say what a pasted link is: "PR #1521 · application", "Claude artifact", with the next line when the
+- Conversation names say what a pasted link is: "app PR #1521", "Claude artifact", with the next line when the
   first was only a link (eight rows read "https://github.com/acme/a…").
 - Opening another conversation closes the idle one on screen (it stays in the lists); the one on screen stays in Recent,
   marked; projects stay folded until unfolded (0.1.76 listed each project conversation twice).
@@ -270,6 +270,13 @@ Sat 2:59am"; the words and the exact time on hover), where one reset stood for t
 badge for another account has its own hover, what it means and what to do ("Your OpenRouter credit is $0.17 past zero.
 Add credit, or runs on OpenRouter will fail."; a Claude window from 90%: "Once it is full Claude stops, or bills extra
 usage if you turned that on. It resets on Sat 3am."); it opened the account card, the same as the plan beside it.
+
+0.1.84 (design review 7, with an interaction crawl: every control on every screen hovered and clicked on real data):
+- The status bar's account card in groups, as the usage page (Claude plan, credit, each OmniRoute account written out
+  whole), every line wrapping; a flat list of 13 rows cut "OmniRoute OpenAI-compatibl…" and the resets.
+- The spending chart is one stop for the keyboard, the arrows along the days; each of its 30 to 90 bars was a stop and a
+  click on one did nothing.
+- A link pasted without its scheme names itself too ("app PR #1476"), and a Jira issue as "Jira T-1214".
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

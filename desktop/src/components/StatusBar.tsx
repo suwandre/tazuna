@@ -33,18 +33,25 @@ function Here({ here }: { here: Item[] }) {
   return <>{i.name} {i.value ? <span className={b}>{i.value.replace(/ (left|over)$/, "")}</span> : <span className="text-faint">balance not reported</span>}{i.value && <span className="text-faint">{i.value.match(/ (left|over)$/)?.[1]}</span>}</>;
 }
 
-/** Every account, the conversation's own marked, the ones that need you in their colour. */
+/** Every account, the conversation's own marked, the ones that need you in their colour: in groups under their account
+ * written out whole, as the usage page has them, every line wrapping (a flat list of 13 rows cut "OmniRoute
+ * OpenAI-compatibl…" and "this conversation, resets Sat 2:59…", design review 7). */
 function Card({ all, here }: { all: Item[]; here: Item[] }) {
+  const groups = [...new Set(all.map((i) => i.group))];
   return (
     <span className="invisible absolute bottom-full left-2 z-30 pb-2 opacity-0 transition-opacity duration-150 group-hover/use:visible group-hover/use:opacity-100 group-focus-within/use:visible group-focus-within/use:opacity-100">
-      <span id="usage-card" role="tooltip" className="block w-[400px] rounded-xl border border-line-strong bg-card py-1.5 text-[12.5px] text-ink-2 shadow-composer">
-        <span className="block px-3.5 pb-1 pt-1.5 text-[11.5px] font-medium text-faint">Your accounts</span>
-        {all.map((i) => (
-          <span key={i.key} className={`grid grid-cols-[1fr_70px_96px] items-center gap-2.5 px-3.5 py-[5px] ${here.includes(i) ? "bg-accent-soft" : ""}`}>
-            <span className="min-w-0"><span className="block truncate text-ink">{i.name}</span>
-              <span className="block truncate text-[11.5px] text-faint" title={exactly(i.resetsAt)}>{here.includes(i) ? ["this conversation", i.note].filter(Boolean).join(", ") : i.note}</span></span>
-            <span>{i.pct != null && <span className="block h-1 w-[70px] overflow-hidden rounded-sm bg-line-strong"><i className={`block h-full ${i.level === "out" ? "bg-bad" : i.level === "low" ? "bg-warn" : "bg-accent"}`} style={{ width: `${Math.min(100, i.pct)}%` }} /></span>}</span>
-            <span className={`text-right tabular-nums ${i.level === "ok" ? "text-ink" : ink[i.level]}`}>{i.value ?? <span className="text-faint">not reported</span>}</span>
+      <span id="usage-card" role="tooltip" className="block max-h-[70vh] w-[400px] overflow-y-auto whitespace-normal rounded-xl border border-line-strong bg-card pb-1.5 text-[12.5px] text-ink-2 shadow-composer">
+        {groups.map((g) => (
+          <span key={g} className="block">
+            <span className="block bg-field/40 px-3.5 py-1 text-[11.5px] text-muted [overflow-wrap:anywhere]">{g}</span>
+            {all.filter((i) => i.group === g).map((i) => (
+              <span key={i.key} className={`grid grid-cols-[1fr_70px_96px] items-center gap-2.5 px-3.5 py-[5px] ${here.includes(i) ? "bg-accent-soft" : ""}`}>
+                <span className="min-w-0"><span className="block text-ink">{i.label}</span>
+                  {(here.includes(i) || i.note) && <span className="block text-[11.5px] text-faint" title={exactly(i.resetsAt)}>{[here.includes(i) && "this conversation", i.note].filter(Boolean).join(", ")}</span>}</span>
+                <span>{i.pct != null && <span className="block h-1 w-[70px] overflow-hidden rounded-sm bg-line-strong"><i className={`block h-full ${i.level === "out" ? "bg-bad" : i.level === "low" ? "bg-warn" : "bg-accent"}`} style={{ width: `${Math.min(100, i.pct)}%` }} /></span>}</span>
+                <span className={`text-right tabular-nums ${i.level === "ok" ? "text-ink" : ink[i.level]}`}>{i.value ?? <span className="text-faint">not reported</span>}</span>
+              </span>
+            ))}
           </span>
         ))}
         {all.length === 0 && <span className="block px-3.5 py-1.5 text-faint">Reading your accounts…</span>}
