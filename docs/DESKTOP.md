@@ -234,6 +234,14 @@ In a project the start page offers that project's own recent conversations, and 
   the picker, Settings, the PR view. The lanes are "Claude plan" and "API providers" (were "Claude (plan)", "own loop (API)").
 - The status bar's usage: three variants in desktop/mockups/v5.html, for the user to choose.
 
+0.1.79: the status bar's usage is variant A of mockups/v5.html. On the left the account the conversation runs on (the
+plan's 5 hours and week on Claude, the credit on SubRouter, Mortera or OpenRouter, the window on OmniRoute), its dot in
+its standing's colour; beside it one badge when another account needs you: its name and reading when it is one
+("OpenRouter $0.17 over"), a count when more. Hover: every account, the conversation's own marked. A standing per account
+(lib/health.ts: fine, running low from 75% or under $2, stopped from 90%, at $0 or a lapsed login), not one score: 93% of
+a week and $12.40 left add up to nothing anyone can act on. The readings come at the start, every 15 minutes and with
+the usage page.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
