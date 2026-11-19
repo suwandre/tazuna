@@ -28,7 +28,8 @@ import { StatusBar } from "./components/StatusBar";
 import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
 import { messages as viewMessages, queued, resetIn, usage as viewUsage } from "./lib/fromView";
-import { titleFrom, type Usage } from "./lib/types";
+import { modelLabel, titleFrom, type Usage } from "./lib/types";
+import { Parts } from "./components/Sep";
 
 const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
 import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Diff, type ModelChoice, type Models, type SessionRow, type View } from "./lib/tazuna";
@@ -453,7 +454,7 @@ export default function App() {
         const parts = [`Branch ${w.branch}`, `ports ${w.port}-${(w.port ?? 0) + 9} (TAZUNA_PORT)`, w.copied?.length ? `copied ${w.copied.join(", ")}` : "no local files to copy"];
         if (w.setup) parts.push(w.setup.ok ? "setup ran" : `setup failed: ${w.setup.tail.split("\n").slice(-2).join(" ")}`);
         if (w.setup_skipped) parts.push(w.setup_skipped);
-        setWtNotes((m) => ({ ...m, [w.path!]: parts.join(" · ") }));
+        setWtNotes((m) => ({ ...m, [w.path!]: parts.join("; ") }));
         if (seenWorktrees.current.has(w.path)) return;
         seenWorktrees.current.add(w.path);
         const model = laneQueue.current.shift(), ls = lanesRef.current;
@@ -541,10 +542,10 @@ export default function App() {
       { id: "review-branch", group: "Review", label: "Review the branch against its base", keywords: "diff pr", run: () => setReviewing({ scope: "branch" }) });
     if (view) {
       // each mode with what it does (the palette listed bare "auto, ask, edits", review 3)
-      a.push(...MODES.map(([m, about]) => ({ id: `m:${m}`, group: "Permission mode", label: `${m.charAt(0).toUpperCase()}${m.slice(1)}`, hint: m === view.mode ? `current · ${about}` : about, keywords: `mode permission ${m}`, run: () => core.setMode(m) })));
+      a.push(...MODES.map(([m, about]) => ({ id: `m:${m}`, group: "Permission mode", label: `${m.charAt(0).toUpperCase()}${m.slice(1)}`, hint: m === view.mode ? `${about} (now)` : about, keywords: `mode permission ${m}`, run: () => core.setMode(m) })));
       const cur = models?.choices.find((c) => c.current);
       a.push(...(cur?.efforts ?? []).map((e) => ({ id: `e:${e}`, group: "Effort", label: e, hint: e === view.effort ? "current" : undefined, keywords: "effort thinking", run: () => core.setEffort(e) })));
-      a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: c.label, hint: c.current ? "current" : c.place, keywords: `model ${c.provider}`, run: () => core.setModel(c) })));
+      a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: modelLabel(c.model), hint: c.current ? "current" : c.place, keywords: `model ${c.provider}`, run: () => core.setModel(c) })));
     }
     a.push({ id: "create-behaviour", group: "Creator mode", label: "Make a command, skill or tool…", hint: "/create what it should do", keywords: "skill command mcp tool creator",
         run: () => setDraft({ text: "/create ", n: Date.now() }) });
@@ -613,7 +614,7 @@ export default function App() {
       <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-composer" : "hidden") : "flex min-h-0"}>
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
         chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
-        projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
+        projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} / ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
         onNewChat={() => open(null)} onOpenFolder={pick} onOpenProject={(p) => p.path && open(p.path)}
         onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")} onSettings={() => setOverlay("settings")}
         open={inTauri ? threads.filter((t) => t.tid === active || t.view?.blocks.some((b) => b.kind === "prompt")).map((t) => ({ tid: t.tid, id: t.view?.session_id, model: t.view?.model, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
@@ -629,7 +630,7 @@ export default function App() {
             {narrow && <button onClick={() => setNavOpen(true)} aria-label="Conversations" title="Conversations" className="-ml-3 grid size-7 flex-none place-items-center rounded-md text-muted hover:text-ink"><PanelLeft size={16} strokeWidth={1.5} /></button>}
             <span className="flex-none text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} title={title} className="tz-enter truncate text-[inherit] font-[inherit]">{title}</h1></div>
           <div className="flex flex-none items-center gap-1.5">
-            <HeaderCtx.Provider value={{ modelLabel: models?.choices.find((c) => c.current)?.label ?? session.model, effort: session.effort,
+            <HeaderCtx.Provider value={{ modelLabel: modelLabel(models?.choices.find((c) => c.current)?.model ?? session.model), effort: session.effort,
               branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
               side: inTauri && view?.session_id ? () => (side ? closeSide(active) : openSide(active)) : undefined, sideOpen: !!side,
               pr: pr ? prChip(pr) : null, openPr: () => setShowPr(true), cost: usage.threadCost, panelOpen: panelOpen && !side, togglePanel: side ? undefined : togglePanel }}>
@@ -704,7 +705,7 @@ export default function App() {
             <button onClick={() => enableReady(active)} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Enable</button>
           </div>
         )}
-        {codeView && <DiffView diff={{ turn: 0, path: `${codeView.title} · plugin.js`, text: codeView.text }} plain onClose={() => setCodeView(null)} />}
+        {codeView && <DiffView diff={{ turn: 0, path: `${codeView.title} / plugin.js`, text: codeView.text }} plain onClose={() => setCodeView(null)} />}
         {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
         {!fresh && !failed && composer}
       </main>
@@ -720,7 +721,7 @@ export default function App() {
       <Toaster />
       {showPr && inTauri && <PrView pr={pr ?? null} worktree={inWorktree} onClose={() => setShowPr(false)} onRefresh={() => core.prIn(active).catch(() => {})}
         onSend={(text) => { setShowPr(false); core.send(text, true).catch(() => {}); }} onRemoveWorktree={() => { setShowPr(false); setWt({ remove: { path: folder! } }); }} />}
-      {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} />}
+      {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} choices={models?.choices} />}
       {overlay === "setup" && inTauri && <Setup onSettings={() => { localStorage.setItem(SETUP, "1"); setOverlay("settings"); }}
         onClose={() => { localStorage.setItem(SETUP, "1"); setOverlay(null); }} />}
       {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} items={userWidgets} onEdit={editPanel}
@@ -774,11 +775,11 @@ export const HeaderCtx = createContext<{ modelLabel: string; effort: string; bra
 
 function ModelChip() {
   const h = useContext(HeaderCtx);
-  return <span className="rounded-full border border-line bg-field px-2.5 py-1 text-[12px] text-ink-2">{h.modelLabel}{h.effort && ` · ${h.effort}`}</span>;
+  return <span className="rounded-full border border-line bg-field px-2.5 py-1 text-[12px] text-ink-2"><Parts items={[h.modelLabel, h.effort]} /></span>;
 }
 function BranchChip() {
   const h = useContext(HeaderCtx);
-  return h.branch ? <span className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2">{h.branch} · {h.changed} changed</span> : null;
+  return h.branch ? <span className="rounded-full border border-line px-2.5 py-1 text-[12px] text-ink-2"><Parts items={[h.branch, `${h.changed} changed`]} /></span> : null;
 }
 function ReviewChip() {
   const h = useContext(HeaderCtx);

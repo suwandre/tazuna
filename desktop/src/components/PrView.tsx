@@ -3,6 +3,7 @@ import { useEffect, useRef } from "react";
 import { core } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
 import { checksOf, fromCollaborator, oneLine, type Pr, OPEN_PR } from "../lib/pr";
+import { Sep } from "./Sep";
 
 // The PR panel (docs/DESKTOP.md 0.3): the pull request of this folder's branch through gh. Its checks, reviews and
 // comments; a failing check or the review comments go to the agent in one click; no PR yet: ask tazuna to open one.
@@ -56,7 +57,7 @@ export function PrView({ pr, worktree, onClose, onSend, onRefresh, onRemoveWorkt
               <div className="mt-3 flex items-center gap-2 rounded-md border border-line px-3 py-2"><span className="flex-1 text-ink-2">Merged. This worktree's work is in; its branch stays.</span>
                 <button onClick={onRemoveWorktree} className="rounded-md border border-line-strong px-2.5 py-1 text-ink hover:bg-hover">Remove the worktree</button></div>
             )}
-            <div className={h}>Checks {checks.length > 0 && `· ${checks.filter((c) => c.state === "passed").length} of ${checks.length} passed`}</div>
+            <div className={h}>Checks {checks.length > 0 && <span className="font-normal text-faint"><Sep />{checks.filter((c) => c.state === "passed").length} of {checks.length} passed</span>}</div>
             {checks.length === 0 && <div className="text-faint">None reported.</div>}
             {checks.map((c, i) => (
               <div key={i} className="flex items-center gap-2 border-b border-line-soft py-1.5 last:border-0">
@@ -68,12 +69,12 @@ export function PrView({ pr, worktree, onClose, onSend, onRefresh, onRemoveWorkt
             ))}
             {failing.length > 1 && <button onClick={() => onSend(`These CI checks fail on PR #${pr.number} (${pr.url}): ${failing.map((c) => `"${c.name}"`).join(", ")}. Read their logs (gh pr checks ${pr.number}, gh run view <run id> --log-failed) and fix the causes.`)}
               className="mt-2 rounded-md border border-line-strong px-2.5 py-1 text-[12px] text-ink hover:bg-hover">Fix all {failing.length}</button>}
-            <div className={h}>Reviews and comments {notes.length > 0 && `· ${notes.length}`}</div>
+            <div className={h}>Reviews and comments {notes.length > 0 && <span className="ml-1 tabular-nums font-normal text-faint">{notes.length}</span>}</div>
             {notes.length === 0 && <div className="text-faint">None yet.</div>}
             {notes.slice(0, 60).map((n, i) => (
               <div key={i} className="border-b border-line-soft py-2 last:border-0">
-                <div className="mb-0.5 text-[11.5px] text-faint"><span className="text-ink-2">{n.who}</span> · <span className="font-mono">{n.where}</span>
-                  {!n.trusted && <span> · not sent to tazuna (no write access to the repository)</span>}</div>
+                <div className="mb-0.5 text-[11.5px] text-faint"><span className="text-ink-2">{n.who}</span><Sep /><span className="font-mono">{n.where}</span>
+                  {!n.trusted && <><Sep /><span>not sent to tazuna (no write access to the repository)</span></>}</div>
                 <div className="whitespace-pre-wrap text-ink-2">{n.body.trim().slice(0, 1200)}</div>
               </div>
             ))}

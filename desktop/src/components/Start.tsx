@@ -1,6 +1,7 @@
 import { CircleAlert, FolderOpen, MessageSquare, Plus, RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
 import { age } from "./Sidebar";
+import { Sep } from "./Sep";
 
 // A new conversation before its first message (the second design review, prototype mockups/v3.html): the message box in
 // the middle under a question, a way back into recent work and into a project, the keys worth knowing. Until desktop
@@ -68,7 +69,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
               <button key={p.path} onClick={() => onProject(p.path)} title={p.path} className={row}>
                 <FolderOpen size={14} strokeWidth={1.5} className="flex-none text-muted" />
                 <span className="min-w-0 flex-1"><span className="block truncate text-ink">{p.name}</span>
-                  <span className="block truncate text-[11.5px] text-faint">{p.path.replace(/^\/(Users|home)\/[^/]+/, "~")}{p.count ? ` · ${p.count} conversation${p.count === 1 ? "" : "s"}` : ""}</span></span>
+                  <span className="block truncate text-[11.5px] text-faint"><span className="flex min-w-0"><span className="truncate">{p.path.replace(/^\/(Users|home)\/[^/]+/, "~")}</span>{p.count ? <span className="flex flex-none items-center"><Sep />{p.count} conversation{p.count === 1 ? "" : "s"}</span> : null}</span></span></span>
               </button>
             ))}
             <button onClick={onFolder} className={row}>

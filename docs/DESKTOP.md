@@ -223,6 +223,17 @@ In a project the start page offers that project's own recent conversations, and 
   "toolsearch ×3, guide"); the usage page's model table shows the eight most used, the rest on request; a provider's Save
   shows once a key is typed; the sidebar's row buttons are 24 px; a long first message folds to six lines.
 
+0.1.78 (the user's four points with design review 6):
+- The usage page's model table names the provider of each API run ("SubRouter", "Mistral", "OmniRoute"; recorded since
+  CLI 0.1.182, inferred for older runs where only one provider serves the model, else "API") and every model by its name
+  ("DeepSeek V4.1 Flash 1017 Fast", not deepseek-v4.1-flash-1017-fast). The same names in the model picker, its button,
+  the header and the palette (one rule, `modelLabel`, with the terminal's `pretty_model` on the same cases).
+- "Show all 32 models" and "Show fewer" are a full-width button with a chevron (it read as a line of text).
+- No middle dots: a stat sits under or beside its value ("3% clear misses", then "3% pushback  468 runs"), and items of one
+  line are apart by a hairline (`Sep`, `Parts`): sidebar rows, the line under an answer, the steps' line, chips, pills,
+  the picker, Settings, the PR view. The lanes are "Claude plan" and "API providers" (were "Claude (plan)", "own loop (API)").
+- The status bar's usage: three variants in desktop/mockups/v5.html, for the user to choose.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

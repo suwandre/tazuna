@@ -4,7 +4,7 @@
 // conversation's), else its price per million tokens.
 import type { ModelChoice, View } from "./tazuna";
 import type { Row } from "./usage";
-import { usd } from "./types";
+import { modelLabel, usd } from "./types";
 
 export type RouteLine = { text: string; paid: boolean; low?: string; offer?: ModelChoice; est?: number };
 
@@ -25,7 +25,7 @@ export function routeLine(c: ModelChoice | undefined, v: View | null, rows: Row[
   if (!c) return null;
   if (!c.url) {
     const used = v?.limits ? Math.round(v.limits[0]) : null;
-    const line: RouteLine = { text: `${c.label} · your plan${used != null ? `, ${used}% of 5 hours used` : ""}`, paid: false };
+    const line: RouteLine = { text: `${modelLabel(c.model)} on your Claude plan${used != null ? `, ${used}% of 5 hours used` : ""}`, paid: false };
     if (used != null && used >= 90) {
       line.low = "The plan's 5 hours are nearly used up.";
       // the own-loop model you used most in the last 30 days, if it can be picked now
@@ -36,7 +36,7 @@ export function routeLine(c: ModelChoice | undefined, v: View | null, rows: Row[
     }
     return line;
   }
-  if (isFree(c)) return { text: `${c.label} · ${c.provider} · free`, paid: false };
+  if (isFree(c)) return { text: `${modelLabel(c.model)} on ${c.provider}, free`, paid: false };
   const est = estimate(c, v, rows);
-  return { text: `${c.label} · ${c.provider} · paid, ${est != null ? `about ${usd(est)} a message` : `$${c.price} per million tokens`}`, paid: true, est };
+  return { text: `${modelLabel(c.model)} on ${c.provider}, paid, ${est != null ? `about ${usd(est)} a message` : `$${c.price} per million tokens`}`, paid: true, est };
 }

@@ -56,7 +56,7 @@ export async function installUpdate() {
 export const progressText = (s: UpdateState) => {
   const mb = (n: number) => (n / 1e6).toFixed(1);
   return s.stage === "installing" ? "Installing… tazuna restarts by itself"
-    : `Downloading${s.version ? ` ${s.version}` : ""} · ${mb(s.got ?? 0)}${s.total ? ` of ${mb(s.total)}` : ""} MB`;
+    : `Downloading${s.version ? ` ${s.version}` : ""}: ${mb(s.got ?? 0)}${s.total ? ` of ${mb(s.total)}` : ""} MB`;
 };
 
 export function watchUpdates() {

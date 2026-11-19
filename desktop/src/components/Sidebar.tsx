@@ -3,6 +3,7 @@ import { createContext, useContext, useState } from "react";
 import { Slot } from "../lib/slots";
 import type { Project, Thread } from "../lib/types";
 import { modelLabel } from "../lib/types";
+import { Parts } from "./Sep";
 
 const icon = { size: 16, strokeWidth: 1.5 };
 
@@ -61,7 +62,7 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
         <span className="min-w-0 flex-1">
           {/* the model by name on the second line: a letter in a box ("C", "G", "O") said nothing (design review 4) */}
           <span className="block truncate text-ink">{t.title}</span>
-          <span className="flex gap-2 text-[11.5px] text-faint"><span className="truncate">{[t.place, modelLabel(t.model)].filter(Boolean).join(" · ")}</span><span className="ml-auto flex-none tabular-nums group-hover:hidden">{age(t.at)}</span></span>
+          <span className="flex gap-2 text-[11.5px] text-faint"><Parts className="truncate" items={[t.place, modelLabel(t.model)]} /><span className="ml-auto flex-none tabular-nums group-hover:hidden">{age(t.at)}</span></span>
         </span>
       ) : <span className="flex-1 truncate">{t.title}</span>}
       {onRename && <span className="hidden flex-none gap-0.5 group-hover:flex">
@@ -86,7 +87,7 @@ function OpenRow({ o, active, onSwitch, onClose }: { o: Open; active: boolean; o
           <span className="truncate">{o.title}</span>
           {o.state === "asking" && <span className="ml-auto flex-none rounded-full border border-warn/45 px-1.5 text-[10.5px] font-medium leading-4 text-warn">asks</span>}
         </span>
-        <span className="block truncate text-[11.5px] text-faint">{[o.place, modelLabel(o.model)].filter(Boolean).join(" · ")}{o.state === "asking" ? " · waiting for your answer" : o.state === "stopped" ? " · stopped" : ""}</span>
+        <Parts className="block truncate text-[11.5px] text-faint" items={[o.place, modelLabel(o.model), o.state === "asking" && "waiting for your answer", o.state === "stopped" && "stopped"]} />
       </span>
       <button title="Close (the conversation stays in the lists)" aria-label={`Close ${o.title}`} onClick={(e) => { e.stopPropagation(); onClose?.(o.tid); }}
         className="hidden size-6 flex-none place-items-center rounded text-faint hover:bg-hover hover:text-ink group-hover:grid"><X size={12} strokeWidth={1.5} /></button>

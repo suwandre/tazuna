@@ -1,9 +1,10 @@
-import { ChevronRight, ExternalLink, X } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { core, type Accounts } from "../lib/tazuna";
+import { core, type Accounts, type ModelChoice } from "../lib/tazuna";
 import { useDialog } from "../lib/dialog";
 import { summarize, type Day, type Row } from "../lib/usage";
 import { modelLabel } from "../lib/types";
+import { Parts, Sep } from "./Sep";
 
 // The usage page (Cmd-Shift-U, the menu, a click on the plan bar or the cost): what each account has left right now
 // (Claude's plan from claude's own /usage, OmniRoute's accounts, the providers' credits: src/accounts.rs), what the last
@@ -29,7 +30,7 @@ const windowName = (label: string) => {
   const l = label.replace(/^Current /, "");
   if (l === "session") return "5 hours";
   const m = l.match(/^week \((.*)\)$/);
-  return m ? (m[1] === "all models" ? "Week" : `Week · ${m[1]}`) : l.charAt(0).toUpperCase() + l.slice(1);
+  return m ? (m[1] === "all models" ? "Week" : `Week, ${m[1]}`) : l.charAt(0).toUpperCase() + l.slice(1);
 };
 
 function Section({ title, note, action, children }: { title: string; note?: ReactNode; action?: ReactNode; children: ReactNode }) {
@@ -43,34 +44,47 @@ function Section({ title, note, action, children }: { title: string; note?: Reac
 }
 
 /** One account's window: its name and whose, the bar (amber from 75%), the share used and when it resets. */
-function Meter({ name, of, used, resets }: { name: string; of: string; used: number | null; resets?: string | null }) {
+function Meter({ name, of, used, resets }: { name: string; of: ReactNode; used: number | null; resets?: string | null }) {
   const pct = Math.max(0, Math.min(100, used ?? 0));
   return (
     <div className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
       <span className="w-[200px] flex-none"><span className="block truncate text-ink" title={name}>{name}</span><span className="block truncate text-[11.5px] text-faint">{of}</span></span>
       <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded bg-line"><i className={`block h-full rounded ${pct >= 75 ? "bg-warn" : "bg-accent"}`} style={{ width: `${pct}%` }} /></span>
-      <span className="w-[220px] flex-none truncate text-right tabular-nums text-muted"><span className="font-medium text-ink">{used == null ? "–" : `${Math.round(used)}%`}</span>{resets ? ` · resets ${resets}` : ""}</span>
+      <span className="w-[220px] flex-none truncate text-right tabular-nums text-muted"><span className="font-medium text-ink">{used == null ? "–" : `${Math.round(used)}%`}</span>{resets && <><Sep />resets {resets}</>}</span>
     </div>
   );
 }
 
-/** A figure in a strip of three: its label, the number (or a quiet line when there is nothing), a note. */
-function Figure({ label, value, note, quiet }: { label: string; value: string; note?: string; quiet?: boolean }) {
+/** A figure in a strip: its label, the number with what it is beside it ("3%  clear misses"), and the smaller numbers
+ * under it each with its word ("3% pushback   467 runs"), or a quiet line when there is nothing. Until desktop 0.1.78 one
+ * caption strung them with middle dots ("clear misses · 3% pushback · 467 runs", design review 6). */
+function Figure({ label, value, caption, more = [], quiet }: { label: string; value: string; caption?: string; more?: [string, string][]; quiet?: boolean }) {
   return (
     <div className="min-w-0 px-3.5 py-3">
       <div className="text-[11.5px] text-faint">{label}</div>
-      {quiet ? <div className="pt-1.5 text-[13px] text-muted">{value}</div> : <div className="mt-0.5 text-[20px] font-semibold tabular-nums tracking-[-0.02em] text-ink">{value}</div>}
-      {note && !quiet && <div className="mt-0.5 truncate text-[11.5px] text-muted">{note}</div>}
+      {quiet ? <div className="pt-1.5 text-[13px] text-muted">{value}</div> : <>
+        <div className="mt-0.5 flex items-baseline gap-2"><span className="text-[20px] font-semibold tabular-nums tracking-[-0.02em] text-ink">{value}</span>
+          {caption && <span className="truncate text-[12px] text-muted">{caption}</span>}</div>
+        {more.length > 0 && <div className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-[12px]">{more.map(([n, what]) => (
+          <span key={what} className="whitespace-nowrap"><span className="font-medium tabular-nums text-ink-2">{n}</span> <span className="text-faint">{what}</span></span>))}</div>}
+      </>}
     </div>
   );
 }
 
-export function UsageView({ onClose, limits, balance }: { onClose: () => void; limits?: [number, number] | null; balance?: number | null }) {
+export function UsageView({ onClose, limits, balance, choices = [] }: { onClose: () => void; limits?: [number, number] | null; balance?: number | null;
+  /** the model catalog: names the provider of an API run the run log did not record (one recorded since 0.1.182) */
+  choices?: ModelChoice[] }) {
   const [rows, setRows] = useState<Row[] | null>(null);
   const [acc, setAcc] = useState<Accounts | null | undefined>(undefined);
   const dialog = useDialog();
   const [days, setDays] = useState(30);
   const [allModels, setAllModels] = useState(false);
+  const providerOf = (model: string) => {
+    if (model.startsWith("agy/")) return "OmniRoute";
+    const ps = new Set(choices.filter((c) => c.model === model).map((c) => c.provider));
+    return ps.size === 1 ? [...ps][0] : null;
+  };
   // asked once when opened (the window re-renders on every streamed view; onClose is new each time)
   const close = useRef(onClose);
   close.current = onClose;
@@ -107,22 +121,26 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
             </span>} note={`The last ${days} days from the run log. Claude on your plan is counted at API prices, not billed.`}>
             {!s ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div> : <>
               <div className="grid grid-cols-3 divide-x divide-line-soft">
-                <Figure label="Paid APIs, billed" value={s.api > 0 ? money(s.api) : "Nothing billed in these days"} quiet={s.api <= 0} note={`${apiRuns} runs`} />
-                <Figure label="Claude plan, at API prices" value={s.plan > 0 ? money(s.plan) : "No plan runs in these days"} quiet={s.plan <= 0} note={`not billed · ${planRuns} runs`} />
-                <Figure label="From the cache" value={s.read ? `${Math.round((100 * s.cached) / s.read)}%` : "Nothing read yet"} quiet={!s.read} note={`of input · ${big(s.cached)} tokens`} />
+                <Figure label="API providers" value={s.api > 0 ? money(s.api) : "Nothing billed in these days"} quiet={s.api <= 0} caption="billed" more={[[`${apiRuns}`, "runs"]]} />
+                <Figure label="Claude plan" value={s.plan > 0 ? money(s.plan) : "No plan runs in these days"} quiet={s.plan <= 0} caption="at API prices, not billed" more={[[`${planRuns}`, "runs"]]} />
+                <Figure label="From the cache" value={s.read ? `${Math.round((100 * s.cached) / s.read)}%` : "Nothing read yet"} quiet={!s.read} caption="of the input" more={[[big(s.cached), "tokens"]]} />
               </div>
               <Bars days={s.days} />
               {s.byModel.length > 0 && (
-                <table className="w-full text-[12.5px]"><thead><tr><th className={th}>Model</th><th className={th}>Runs on</th>
+                <table className="w-full text-[12.5px]"><thead><tr><th className={th}>Model</th><th className={th}>Provider</th>
                   <th className={`${th} text-right`}>Runs</th><th className={`${th} text-right`}>Cost</th><th className={`${th} text-right`}>From cache</th></tr></thead>
                   <tbody>{(allModels ? s.byModel : s.byModel.slice(0, 8)).map((m) => (
-                    <tr key={`${m.plan}${m.model}`}><td className={td} title={m.model}>{modelLabel(m.model)}</td>
-                      <td className={td}><span className="rounded-full border border-line px-2 text-[11px] text-muted">{m.plan ? "Claude plan" : "API"}</span></td>
+                    <tr key={`${m.plan}${m.model}${m.provider}`}><td className={td} title={m.model}>{modelLabel(m.model)}</td>
+                      <td className={`${td} text-muted`}>{m.plan ? "Claude plan" : m.provider ?? providerOf(m.model) ?? <span className="text-faint" title="An API run from before tazuna 0.1.182, which did not record its provider; several providers serve this model">Not recorded</span>}</td>
                       <td className={num}>{m.runs}</td><td className={num}>{money(m.cost)}</td><td className={num}>{m.cachePct}%</td></tr>
                   ))}</tbody>
                   {/* the eight most used, the rest on request: every model ever tried made a list of 40 (design review 5) */}
-                  {s.byModel.length > 8 && <tfoot><tr><td colSpan={5} className="px-3.5 py-2"><button onClick={() => setAllModels(!allModels)} className="text-[12px] text-muted hover:text-ink">
-                    {allModels ? "Show the eight most used" : `Show all ${s.byModel.length} models`}</button></td></tr></tfoot>}
+                  {/* a button that looks like one: it read as a line of text until hovered (design review 6) */}
+                  {s.byModel.length > 8 && <tfoot><tr><td colSpan={5} className="border-t border-line-soft p-2">
+                    <button onClick={() => setAllModels(!allModels)} aria-expanded={allModels}
+                      className="flex w-full items-center justify-center gap-1.5 rounded-md border border-line bg-field/60 py-1.5 text-[12.5px] text-ink-2 hover:bg-hover hover:text-ink">
+                      {allModels ? "Show fewer" : `Show all ${s.byModel.length} models`}
+                      <ChevronDown size={14} strokeWidth={1.75} className={`transition-transform duration-150 ${allModels ? "rotate-180" : ""}`} /></button></td></tr></tfoot>}
                 </table>
               )}
             </>}
@@ -133,7 +151,7 @@ export function UsageView({ onClose, limits, balance }: { onClose: () => void; l
             {!s ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div>
               : s.byVersion.length === 0 ? <div className="px-3.5 py-2.5 text-[12.5px] text-muted">No runs of your own in these days.</div> : <>
               {s.lanes.length > 0 && <div className="grid divide-x divide-line-soft" style={{ gridTemplateColumns: `repeat(${s.lanes.length}, minmax(0, 1fr))` }}>
-                {s.lanes.map((l) => <Figure key={l.lane} label={l.lane} value={`${l.missPct}%`} note={`clear misses · ${l.softPct}% pushback · ${l.runs} runs`} />)}
+                {s.lanes.map((l) => <Figure key={l.lane} label={l.lane} value={`${l.missPct}%`} caption="clear misses" more={[[`${l.softPct}%`, "pushback"], [`${l.runs}`, "runs"]]} />)}
               </div>}
               <table className="w-full text-[12.5px]"><thead><tr><th className={th}>Version</th><th className={th}>Model</th>
                 <th className={`${th} text-right`}>Runs</th><th className={`${th} text-right`}>Clear misses</th><th className={`${th} text-right`}>Pushback</th>
@@ -162,9 +180,9 @@ function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; 
     {plan.map((r) => <Meter key={r.label} name={windowName(r.label)} of="Claude plan" used={r.used} resets={r.resets.split(" (")[0]} />)}
     {acc?.omniroute.flatMap((a) => a.windows.map((w, i) => w.unlimited
       ? <div key={`${a.provider}${a.name}${i}`} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]"><span className="w-[200px] flex-none"><span className="block text-ink">{[w.group, w.window].filter(Boolean).join(" · ")}</span>
-          <span className="block truncate text-[11.5px] text-faint">OmniRoute · {a.provider}{a.plan ? ` · ${a.plan}` : ""}</span></span><span className="text-muted">unlimited</span></div>
-      : <Meter key={`${a.provider}${a.name}${i}`} name={[w.group, w.window].filter(Boolean).join(" · ")} used={w.used} resets={until(w.resets)}
-          of={`OmniRoute · ${a.provider}${a.plan ? ` · ${a.plan}` : ""}${a.status !== "valid" ? ` · login ${a.status}` : ""}`} />))}
+          <Parts className="block truncate text-[11.5px] text-faint" items={["OmniRoute", a.provider, a.plan]} /></span><span className="text-muted">unlimited</span></div>
+      : <Meter key={`${a.provider}${a.name}${i}`} name={[w.group, w.window].filter(Boolean).join(", ")} used={w.used} resets={until(w.resets)}
+          of={<Parts items={["OmniRoute", a.provider, a.plan, a.status !== "valid" && `login ${a.status}`]} />} />))}
     {credits.map((c) => (
       <div key={c.provider} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
         <span className="w-[200px] flex-none"><span className="block text-ink">{c.provider}</span><span className="block text-[11.5px] text-faint">credit</span></span>
@@ -211,7 +229,7 @@ function Contributing({ notes }: { notes: string[] }) {
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 text-[12.5px] text-ink-2 hover:bg-hover [&::-webkit-details-marker]:hidden">
         <ChevronRight size={14} strokeWidth={1.5} className="flex-none text-faint transition-transform group-open:rotate-90" />
         <span className="flex-1">What's contributing to your Claude usage</span>
-        <span className="text-[11.5px] text-faint">approximate · this machine only</span>
+        <span className="text-[11.5px] text-faint">approximate, this machine only</span>
       </summary>
       {!p ? <pre className="border-t border-line-soft px-3.5 py-2.5 whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-muted">{notes.filter((n) => !n.startsWith("Approximate")).join("\n")}</pre> : (
         <div className="border-t border-line-soft pb-1.5">
@@ -273,8 +291,8 @@ function Bars({ days }: { days: Day[] }) {
         <div className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-line-strong bg-card px-2.5 py-1.5 text-[12px] shadow-composer"
           style={{ left: `${Math.min(88, Math.max(12, ((at! + 0.5) / days.length) * 100))}%` }}>
           <div className="font-semibold tabular-nums text-ink">{money(d.plan + d.api)}</div>
-          <div className="text-muted">{d.day} · {d.runs} runs</div>
-          {d.plan > 0 && d.api > 0 && <div className="tabular-nums text-muted">plan {money(d.plan)} · API {money(d.api)}</div>}
+          <div className="text-muted">{d.day}, {d.runs} runs</div>
+          {d.plan > 0 && d.api > 0 && <div className="tabular-nums text-muted">plan {money(d.plan)}, API {money(d.api)}</div>}
         </div>
       )}
     </div>

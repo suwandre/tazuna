@@ -2,6 +2,7 @@ import { Brain, Check, ChevronRight, LoaderCircle, X } from "lucide-react";
 import { Markdown } from "../lib/markdown";
 import { useEffect, useState } from "react";
 import type { ToolStep } from "../lib/types";
+import { Sep } from "./Sep";
 
 const box = "mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] leading-[1.5] text-ink-2 select-text";
 
@@ -24,7 +25,7 @@ function Given({ name, input }: { name: string; input: Record<string, unknown> }
   // a read in words: which file, which lines
   if (/^(Read|read)$/.test(n) && (str("file_path") ?? str("path")) != null) {
     const from = Number(input.offset ?? 1) || 1, count = Number(input.limit ?? 0);
-    return <div className={line}>{str("file_path") ?? str("path")}{count ? ` · lines ${from}–${from + count - 1}` : ""}</div>;
+    return <div className={line}>{str("file_path") ?? str("path")}{count ? `, lines ${from}–${from + count - 1}` : ""}</div>;
   }
   return <Fields value={input} />;
 }
@@ -103,7 +104,7 @@ export function Step({ t }: { t: ToolStep }) {
           : t.ok ? <Check size={14} strokeWidth={1.5} className="flex-none text-ok" />
           : <X size={14} strokeWidth={1.75} className="flex-none text-bad" aria-label="failed" />}
         <span className={t.running ? "tz-live" : ""}>{t.running ? (NOW[t.verb] ?? t.verb) : t.verb}</span> {t.target && <span className="truncate font-mono text-[11.5px] text-ink-2">{t.target}</span>}
-        {t.detail && <span className="text-faint">· {t.detail}</span>}
+        {t.detail && <span className="flex items-center text-faint"><Sep />{t.detail}</span>}
         {/* the time beside the step, not at the far right (the eye went 600 px for it) */}
         {!thinking && <span className="flex-none whitespace-nowrap text-[12px] tabular-nums text-faint">{t.running ? <Elapsed secs={t.secs} /> : `${t.secs.toFixed(1)} s`}</span>}
         {more && <ChevronRight size={13} strokeWidth={1.5} className={`flex-none text-faint transition-transform duration-150 ${open ? "rotate-90" : ""}`} />}

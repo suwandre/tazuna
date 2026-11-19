@@ -23,7 +23,7 @@ export function StatusBar({ usage: u, version, idle }: { usage: Usage; version: 
       {u.plan5h != null && (
         <button onClick={openUsage} title="Claude plan · Usage (⌘⇧U)" className={button}>
           <span className={`size-1.5 rounded-full ${u.plan5h >= 90 ? "bg-warn" : "bg-ok"}`} aria-hidden="true" />Claude plan
-          <Meter pct={u.plan5h} /><span className={b}>{u.plan5h}%</span>5 h{u.plan5hReset && <span className="text-faint">· resets {u.plan5hReset}</span>}
+          <Meter pct={u.plan5h} /><span className={b}>{u.plan5h}%</span>5 h{u.plan5hReset && <span className="mr-1.5 text-faint">resets {u.plan5hReset}</span>}
           {u.planWeek != null && <><Meter pct={u.planWeek} /><span className={b}>{u.planWeek}%</span>week</>}
         </button>
       )}

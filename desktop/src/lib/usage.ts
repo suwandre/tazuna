@@ -3,25 +3,26 @@
 // The rest ran on the own loop against a provider's API: billed.
 
 /** [ts, model, version, plan, cost, input, cache write, cache read, output, stop, verify, cache ttl, mode, real use, strong
- * signals, soft signals] (src/main.rs usage_rows; the signals from src/realuse.rs) */
+ * signals, soft signals, provider] (src/main.rs usage_rows; the signals from src/realuse.rs; the provider of an API run
+ * since 0.1.182, "SubRouter") */
 export type Row = [number, string | null, string | null, boolean, number | null, number | null, number | null, number | null, number | null, string | null, string | null, string | null, string | null,
-  boolean?, string[]?, string[]?];
+  boolean?, string[]?, string[]?, (string | null)?];
 
-export type Run = { ts: number; day: string; model: string; version: string; plan: boolean; cost: number; read: number; cached: number; real: boolean; strong: string[]; soft: string[] };
+export type Run = { ts: number; day: string; model: string; version: string; plan: boolean; cost: number; read: number; cached: number; real: boolean; strong: string[]; soft: string[]; provider: string | null };
 
 const dayOf = (ts: number) => { const d = new Date(ts * 1000); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; };
 
 /** One run. The cache's share is in tokens, not dollars: worked back from each run's cost, Anthropic's price ratios gave input
  * prices from a tenth to twenty times the list (2026-11-16, 560 runs), so a dollar figure would be invented. */
 export function run(r: Row): Run {
-  const [ts, model, version, plan, cost, input, write, read, , , , , , real, strong, soft] = r;
+  const [ts, model, version, plan, cost, input, write, read, , , , , , real, strong, soft, provider] = r;
   const i = input ?? 0, w = write ?? 0, cr = read ?? 0;
   return { ts, day: dayOf(ts), model: model || "(default)", version: version || "?", plan, cost: cost ?? 0, read: i + w + cr, cached: cr,
-    real: !!real, strong: strong ?? [], soft: soft ?? [] };
+    real: !!real, strong: strong ?? [], soft: soft ?? [], provider: provider ?? null };
 }
 
 export type Day = { day: string; plan: number; api: number; runs: number };
-export type ByModel = { model: string; plan: boolean; runs: number; cost: number; cachePct: number };
+export type ByModel = { model: string; plan: boolean; provider: string | null; runs: number; cost: number; cachePct: number };
 export type ByVersion = { version: string; model: string; runs: number; missPct: number; softPct: number; top: string };
 export type Lane = { lane: string; runs: number; missPct: number; softPct: number };
 
@@ -38,10 +39,10 @@ export function summarize(rows: Row[], days: number, now = Date.now() / 1000) {
   for (let k = days - 1; k >= 0; k--) { const d = dayOf(now - k * 86400); byDay.set(d, { day: d, plan: 0, api: 0, runs: 0 }); }
   for (const r of runs) { const d = byDay.get(r.day); if (d) { d[r.plan ? "plan" : "api"] += r.cost; d.runs++; } }
   const models = new Map<string, Run[]>();
-  for (const r of runs) { const k = `${r.plan}|${r.model}`; models.set(k, [...(models.get(k) ?? []), r]); }
+  for (const r of runs) { const k = `${r.plan}|${r.model}|${r.provider ?? ""}`; models.set(k, [...(models.get(k) ?? []), r]); }
   const byModel: ByModel[] = [...models.values()].map((rs) => {
     const read = sum(rs, (r) => r.read);
-    return { model: rs[0].model, plan: rs[0].plan, runs: rs.length, cost: sum(rs, (r) => r.cost), cachePct: read ? Math.round((100 * sum(rs, (r) => r.cached)) / read) : 0 };
+    return { model: rs[0].model, plan: rs[0].plan, provider: rs[0].provider, runs: rs.length, cost: sum(rs, (r) => r.cost), cachePct: read ? Math.round((100 * sum(rs, (r) => r.cached)) / read) : 0 };
   }).sort((a, b) => b.cost - a.cost);
   // real use only (your own work, src/realuse.rs): how often a run missed (strong signals) or met pushback (soft only)
   const mine = runs.filter((r) => r.real);
@@ -55,7 +56,7 @@ export function summarize(rows: Row[], days: number, now = Date.now() / 1000) {
     const top = [...count.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([s, n]) => `${s} ${n}`).join(", ");
     return { version: rs[0].version, model: rs[0].model, ...rate(rs), top };
   }).sort((a, b) => newer(a.version, b.version) || b.runs - a.runs);
-  const lanes: Lane[] = [["Claude (plan)", mine.filter((r) => r.plan)], ["own loop (API)", mine.filter((r) => !r.plan)]]
+  const lanes: Lane[] = [["Claude plan", mine.filter((r) => r.plan)], ["API providers", mine.filter((r) => !r.plan)]]
     .filter(([, rs]) => (rs as Run[]).length).map(([lane, rs]) => ({ lane: lane as string, ...rate(rs as Run[]) }));
   return {
     runs: runs.length, api: sum(runs.filter((r) => !r.plan), (r) => r.cost), plan: sum(runs.filter((r) => r.plan), (r) => r.cost),

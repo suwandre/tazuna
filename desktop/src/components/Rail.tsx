@@ -4,6 +4,7 @@ import { Slot } from "../lib/slots";
 import { tokens, widgetUrl, type UserWidget } from "../lib/widgets";
 import { OPEN_PR, checksOf, type Pr } from "../lib/pr";
 import type { ChangedFile, Message, Usage } from "../lib/types";
+import { Sep } from "./Sep";
 
 // The right column is the work panel (the design review of 2026-11-18): what the agent changed, the checks it ran, the
 // branch's pull request, then your messages and the user's own panels; it closes (⌘\), and a plain chat opens without
@@ -114,7 +115,7 @@ export function PrSection() {
       {p.none ? <div className="py-0.5 text-[12.5px] text-muted">No pull request for this branch yet.</div> : <>
         <div className="truncate py-0.5 text-[12.5px] text-ink" title={p.title}>{p.title}</div>
         <div className="text-[12.5px] text-muted">{p.state === "MERGED" ? "Merged" : p.state === "CLOSED" ? "Closed" : p.isDraft ? "Draft" : "Open"}
-          {cs.length > 0 && <> · {failed ? <span className="text-bad">{failed} failed</span> : running ? `${running} running` : <span className="text-ok">checks passed</span>}</>}</div>
+          {cs.length > 0 && <><Sep />{failed ? <span className="text-bad">{failed} failed</span> : running ? `${running} running` : <span className="text-ok">checks passed</span>}</>}</div>
       </>}
       {p.none ? w.ask && <div className="mt-2 flex gap-1.5"><button onClick={() => w.ask!(OPEN_PR)} title="tazuna commits what is ready, pushes the branch and opens it with gh" className={btn}>Ask tazuna to open one</button></div>
         : w.openPr && <div className="mt-2 flex gap-1.5"><button onClick={w.openPr} className={btn}>Checks and reviews</button></div>}

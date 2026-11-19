@@ -1,6 +1,7 @@
 import { Check, Search } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { ModelChoice, Models } from "../lib/tazuna";
+import { modelLabel } from "../lib/types";
 
 // The model picker over the composer: the terminal's /model catalog, grouped by provider. With nothing typed it lists the
 // models usable now; typing searches all of them, and a row that needs a key or trust says what to do.
@@ -47,7 +48,7 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
   }, [onClose]);
   const { groups, hidden } = useMemo(() => {
     const all = models?.choices ?? [], f = q.trim().toLowerCase();
-    const rows = f ? all.filter((c) => `${c.label} ${c.place}`.toLowerCase().includes(f)) : all.filter((c) => !c.why_not);
+    const rows = f ? all.filter((c) => `${c.label} ${modelLabel(c.model)} ${c.place}`.toLowerCase().includes(f)) : all.filter((c) => !c.why_not);
     const groups = new Map<string, ModelChoice[]>();
     for (const c of rows.slice(0, 300)) groups.set(c.provider, [...(groups.get(c.provider) ?? []), c]);
     return { groups: [...groups], hidden: f ? Math.max(0, rows.length - 300) : all.length - rows.length };
@@ -73,8 +74,8 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
       <div className="overflow-auto pb-1">
         {/* what the numbers on the right are (until desktop 0.1.74 only a hover said: "8.4 (12)", "0.14 / 0.56") */}
         {groups.length > 0 && <div className="sticky top-0 z-[1] flex items-center gap-2 bg-card px-3 pb-0.5 pt-1.5 text-[11px] text-faint">
-          <span className="flex-1" /><span className="w-[64px] text-right" title="tazuna bench: judge score out of 10 (runs)">score</span>
-          <span className="w-[112px] text-right" title="dollars per million tokens: input / output">$ / M in · out</span></div>}
+          <span className="flex-1" /><span className="w-[64px] text-right" title="tazuna bench: judge score out of 10 (runs)">Score</span>
+          <span className="w-[112px] text-right" title="dollars per million tokens: input / output">$ per M, in / out</span></div>}
         {!models && <div className="px-3 py-2 text-[12.5px] text-faint">Loading…</div>}
         {groups.map(([provider, rows]) => (
           <div key={provider}>
@@ -84,9 +85,10 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
                 className="flex w-full items-center gap-2 px-3 py-[5px] text-left hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent">
                 <span className="w-3.5 flex-none text-accent">{c.current && <Check size={14} strokeWidth={1.75} />}</span>
                 <span className="min-w-0 flex-1">
-                  {/* the group already names the provider: "gpt-6.2-sol", not "gpt-6.2-sol · subrouter" under SubRouter */}
-                  <span className={`block truncate ${c.why_not ? "text-faint" : "text-ink"}`}>{c.label.replace(new RegExp(` · ${provider.replace(/[^\w]/g, ".")}$`, "i"), "")}</span>
-                  <span className="block truncate text-[11.5px] text-faint">{c.why_not ?? c.place}</span>
+                  {/* its name, not its id ("GPT-6.2 Sol", not "gpt-6.2-sol · subrouter"); the group names the provider */}
+                  <span className={`block truncate ${c.why_not ? "text-faint" : "text-ink"}`} title={c.model}>{modelLabel(c.model)}</span>
+                  {/* the group names the provider: a row's second line only says why it cannot run (it repeated "api.mistral.ai") */}
+                  {c.why_not && <span className="block truncate text-[11.5px] text-faint">{c.why_not}</span>}
                 </span>
                 <span className="w-[64px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-faint" title="tazuna bench: judge score (runs)">{c.bench}</span>
                 <span className="w-[112px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-muted" title="$ per million tokens: input / output">{c.price === "plan" ? "on your plan" : c.price}</span>

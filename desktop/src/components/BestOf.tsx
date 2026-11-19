@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useDialog } from "../lib/dialog";
 import type { ModelChoice, View } from "../lib/tazuna";
 import { usd } from "../lib/types";
+import { Parts, Sep } from "./Sep";
 
 // Best-of-N (docs/DESKTOP.md 1.1): one task on several models, each in a worktree of its own, compared on cost, time,
 // what each changed and whether its checks passed: price to performance on the spot.
@@ -47,7 +48,7 @@ export function BestOfStart({ choices, onStart, onClose }: { choices: ModelChoic
               <label key={id(c)} className="flex items-center gap-2 py-1">
                 <input type="checkbox" checked={on} disabled={!on && picked.length >= 4}
                   onChange={() => setPicked((p) => (on ? p.filter((x) => x !== id(c)) : [...p, id(c)]))} />
-                <span className="text-ink">{c.label}</span><span className="text-[12px] text-muted">{c.place}{c.price ? ` · ${c.price}` : ""}</span>
+                <span className="text-ink">{c.label}</span><Parts className="text-[12px] text-muted" items={[c.place, c.price]} />
               </label>
             );
           })}
@@ -95,7 +96,7 @@ export function LanesView({ lanes, views, onOpen, onKeep, onClose }: {
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Lanes" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
         className="tz-dialog flex max-h-full w-[820px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center border-b border-line-soft px-5 py-3">
-          <span className="min-w-0 flex-1"><span className="font-medium">Lanes</span> <span className="truncate text-[12px] text-muted">· {lanes.task}</span></span>
+          <span className="min-w-0 flex-1"><span className="font-medium">Lanes</span> <span className="truncate text-[12px] text-muted"><Sep />{lanes.task}</span></span>
           <button onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
         </div>
         <div className="overflow-auto px-5 py-3">
@@ -110,7 +111,7 @@ export function LanesView({ lanes, views, onOpen, onKeep, onClose }: {
                   <td className="py-2 pr-3 text-muted">{!l.tid ? "starting…" : !s ? "starting…" : s.running ? "working…" : s.error ? "ended with an error" : "done"}</td>
                   <td className={`py-2 pr-3 text-right font-mono ${s && !s.running && s.cost === cheapest ? "text-ok" : ""}`}>{s ? usd(s.cost) : "–"}</td>
                   <td className="py-2 pr-3 text-right font-mono">{s && s.secs ? `${Math.round(s.secs)} s` : "–"}</td>
-                  <td className="py-2 pr-3 text-right font-mono">{s ? `${s.files} files · +${s.added} −${s.removed}` : "–"}</td>
+                  <td className="py-2 pr-3 text-right font-mono">{s ? `${s.files} files, +${s.added} −${s.removed}` : "–"}</td>
                   <td className={`py-2 pr-3 ${s?.check === "passed" ? "text-ok" : s?.check === "failed" ? "text-bad" : "text-muted"}`}>{s ? s.check : "–"}</td>
                   <td className="py-2 text-right whitespace-nowrap">
                     {l.tid && <button onClick={() => onOpen(l.tid!)} className="rounded-md border border-line px-2 py-0.5 text-[12px] text-ink-2 hover:bg-hover">Open</button>}

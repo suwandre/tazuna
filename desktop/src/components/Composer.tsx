@@ -1,10 +1,10 @@
 import { ArrowUp, Check, ChevronDown, FolderOpen, Gauge, MessageCircle, Paperclip, Plus, Shield, Square, Zap } from "lucide-react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { quotePath, type ModelChoice, type Models } from "../lib/tazuna";
-import { modelLabel, usd, type Session, type Usage } from "../lib/types";
-import { Bar, openUsage } from "./Rail";
+import { modelLabel, type Session } from "../lib/types";
 import { Slot } from "../lib/slots";
 import { EffortMenu, Menu, ModelPicker } from "./ModelPicker";
+import { Sep } from "./Sep";
 
 /** What the controls under the message box get (the `composer.pills` spot's props): the session, the catalog and the
  * calls they make, and `attach` to put file paths into the box. */
@@ -20,8 +20,6 @@ export type ComposerBag = {
 
 type Props = {
   session: Session; threadCost: number; busy?: boolean; onSend?: (text: string) => void; onStop?: () => void;
-  /** the plan, context and cost for the ring beside the send button */
-  usage?: Usage;
   /** a new conversation: where it runs (a chat or a project), changed from the box */
   where?: Where;
   /** the model catalog (null until asked for); onModels asks for it when the picker opens */
@@ -55,7 +53,7 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, usage, where, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey }: Props) {
+export function Composer({ session, where, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   const box = useRef<HTMLTextAreaElement>(null);
   // the box grows with what is typed, up to 40% of the window, then scrolls (it was one line, and earlier lines went out
@@ -99,7 +97,6 @@ export function Composer({ session, usage, where, busy, onSend, onStop, models, 
         <div className="flex items-center gap-1.5">
           <Slot name="composer.pills" props={{ composer: bag }} />
           <span className="flex-1" />
-          {usage && <PlanRing u={usage} last={session.lastCost} />}
           {busy && !text.trim()
             ? <button onClick={onStop} title="Stop (Esc)" className="grid size-[30px] flex-none place-items-center rounded-full bg-ink text-canvas"><Square size={12} strokeWidth={2} fill="currentColor" /></button>
             // solid only when there is something to send (a faded accent read as broken)
@@ -109,49 +106,6 @@ export function Composer({ session, usage, where, busy, onSend, onStop, models, 
       </div>
       {below && <div className="mx-auto mt-1.5 max-w-[700px] px-1">{below}</div>}
     </footer>
-  );
-}
-
-/** Beside the send button: a bar for the plan's 5 hours (or the context, where no plan reading is known), its card on
- * hover or focus (the plan's windows, this conversation's context and cost, SubRouter's balance), the usage page on a
- * click. The plan, the costs and the context were each shown two or three times (rail, header, the line under the box);
- * now here once, and on the usage page. */
-function PlanRing({ u, last }: { u: Usage; last: number }) {
-  const pct = u.plan5h ?? u.contextPct;
-  const meter = (label: string, value: string, p?: number) => (
-    <div className="py-[3px]">
-      <div className="flex items-baseline gap-3"><span className="flex-none text-ink-2">{label}</span><span className="ml-auto truncate text-[12px] tabular-nums text-muted">{value}</span></div>
-      {p != null && <div className="mt-1"><Bar pct={p} /></div>}
-    </div>
-  );
-  const head = "mb-0.5 mt-2.5 text-[11.5px] font-medium text-faint first:mt-0";
-  return (
-    <span className="group/ring relative">
-      {/* a short bar, not a ring: at this size a ring read as one more spinner beside the working ones */}
-      <button onClick={openUsage} aria-describedby="plan-card" aria-label={`${u.plan5h != null ? "Plan" : "Context"} ${pct}% used: usage`}
-        className="flex flex-none items-center gap-1.5 rounded-full px-2 py-[5px] text-[12px] tabular-nums text-muted hover:bg-hover hover:text-ink">
-        <span className="block h-[5px] w-6 overflow-hidden rounded-full bg-line-strong" aria-hidden="true">
-          <i className={`block h-full rounded-full ${pct >= 90 ? "bg-warn" : "bg-accent"}`} style={{ width: `${Math.min(100, pct)}%` }} />
-        </span>
-        {pct}%
-      </button>
-      {/* the card: over the ring with a bridge of padding, so the pointer can move onto it */}
-      <span className="invisible absolute bottom-full right-0 z-30 pb-2 opacity-0 transition-opacity duration-150 group-focus-within/ring:visible group-focus-within/ring:opacity-100 group-hover/ring:visible group-hover/ring:opacity-100">
-        <span id="plan-card" role="tooltip" className="block w-[300px] rounded-xl border border-line-strong bg-card px-3.5 py-3 text-left text-[12.5px] shadow-composer">
-          {u.plan5h != null && <>
-            <span className={`block ${head}`}>Claude plan</span>
-            {meter("5 hours", `${u.plan5h}%${u.plan5hReset ? ` · resets ${u.plan5hReset}` : ""}`, u.plan5h)}
-            {u.planWeek != null && meter("Week", `${u.planWeek}%`, u.planWeek)}
-          </>}
-          <span className={`block ${head}`}>This conversation</span>
-          {meter("Context", `${u.contextPct}% of ${u.contextMax}`, u.contextPct)}
-          {meter("Cost", `${usd(u.threadCost)} · last ${usd(last)}`)}
-          {meter("From the cache", `${u.cachedPct}% · ${u.threadTurns} ${u.threadTurns === 1 ? "turn" : "turns"}`)}
-          {u.balance != null && meter("SubRouter balance", `$${u.balance.toFixed(2)}`)}
-          <span className="mt-2.5 flex items-center border-t border-line-soft pt-2 text-ink">All accounts and usage<kbd className="ml-auto rounded-[5px] border border-line px-[5px] font-mono text-[11px] text-faint">⌘⇧U</kbd></span>
-        </span>
-      </span>
-    </span>
   );
 }
 
@@ -214,8 +168,8 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
   return (
     <span className="relative">
       <button disabled={c.busy || !c.onPickModel} onClick={toggle} title="Model and effort" className={pill}>
-        <Zap size={14} strokeWidth={1.5} />{current?.label ?? modelLabel(c.session.model)}
-        {c.session.effort && <span className="text-faint">· {c.session.effort}</span>}
+        <Zap size={14} strokeWidth={1.5} />{modelLabel(current?.model ?? c.session.model)}
+        {c.session.effort && <span className="flex items-center text-faint"><Sep />{c.session.effort}</span>}
         <ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
       </button>
       {open && <ModelPicker models={c.models ?? null} onClose={() => setOpen(false)} onPick={(m) => { setOpen(false); c.onPickModel?.(m); }}

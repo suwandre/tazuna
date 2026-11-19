@@ -3,14 +3,15 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
 import { readableError } from "../lib/fromView";
 import { usd, type Call, type Change, type Message, type ToolStep } from "../lib/types";
+import { Parts, Sep } from "./Sep";
 
 function inlineCode(text: string) {
   return text.split(/(`[^`]+`)/).map((part, i) => part.startsWith("`") ? <code key={i}>{part.slice(1, -1)}</code> : part);
 }
 
 function meta(m: { cost: number; tokens: number; cachedPct?: number; secs: number }) {
-  const tokens = m.tokens >= 1000 ? `${(m.tokens / 1000).toFixed(1)}k` : `${m.tokens}`;
-  return [usd(m.cost), `${tokens} tokens`, m.cachedPct != null ? `${m.cachedPct}% cached` : null, `${m.secs} s`].filter(Boolean).join(" · ");
+  const tokens = m.tokens >= 1e6 ? `${(m.tokens / 1e6).toFixed(1)}M` : m.tokens >= 1000 ? `${(m.tokens / 1000).toFixed(1)}k` : `${m.tokens}`;
+  return [usd(m.cost), `${tokens} tokens`, m.cachedPct != null ? `${m.cachedPct}% cached` : null, `${m.secs} s`];
 }
 
 // one "thinking" from send to the first output (no "starting", then "waiting", then "thinking")
@@ -111,7 +112,7 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
               {m.routedChat && (
                 <div className="mb-1.5">
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2 py-px text-[11.5px] text-muted">
-                    <MessageCircle size={13} strokeWidth={1.5} /> answered as a chat · <button disabled={busy} onClick={() => m.ask && rest.onSendToAgent?.(m.ask)} className="font-medium text-accent-ink disabled:opacity-50">send to agent</button>
+                    <MessageCircle size={13} strokeWidth={1.5} /> answered as a chat<Sep /><button disabled={busy} onClick={() => m.ask && rest.onSendToAgent?.(m.ask)} className="font-medium text-accent-ink disabled:opacity-50">send to agent</button>
                   </span>
                 </div>
               )}
@@ -167,7 +168,7 @@ function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; sec
         <ChevronRight size={13} strokeWidth={1.5} className={`flex-none transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
         {live && !asking && <LoaderCircle size={13} strokeWidth={1.75} className="flex-none animate-spin text-accent" aria-hidden="true" />}
         <span className={`flex-none ${live && asking ? "font-medium text-warn" : ""}`}>{live ? (asking ? "Waiting for you" : <>Working{since && <> <Ticking since={since} /></>}</>) : `Worked${took}`}</span>
-        {what && <span className="truncate text-faint">· {what}</span>}
+        {what && <span className="flex min-w-0 items-center truncate text-faint"><Sep />{what}</span>}
       </button>
       {shown && (
         <div className="tz-enter ml-[5px] mt-1 flex flex-col gap-0.5 border-l border-line pl-3.5">
@@ -320,8 +321,8 @@ export function MessageMeta({ message: m }: { message: Message }) {
     // the answer's numbers show on its hover (or focus, or with its calls open): under every answer they were the busiest
     // line on the screen, and the thread's cost stays in the header
     <div className={`mt-2 text-[12px] tabular-nums text-faint transition-opacity duration-150 ${open ? "" : "opacity-0 focus-within:opacity-100 group-hover:opacity-100"}`}>
-      {text && <><CopyAnswer text={text} /> · </>}{meta(m.meta)}
-      {n > 0 && <> · <button onClick={() => setOpen(!open)} aria-expanded={open} title="Each model call of this reply: tokens, timing and cost"
+      <Parts items={[text && <CopyAnswer key="c" text={text} />, ...meta(m.meta)]} />
+      {n > 0 && <><Sep /><button onClick={() => setOpen(!open)} aria-expanded={open} title="Each model call of this reply: tokens, timing and cost"
         className="rounded px-1 hover:bg-hover hover:text-ink">{n} call{n === 1 ? "" : "s"} {open ? "▾" : "▸"}</button></>}
       {open && m.meta.calls && <Calls calls={m.meta.calls} />}
     </div>

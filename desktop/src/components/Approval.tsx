@@ -1,6 +1,7 @@
 import { ShieldQuestion } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { View } from "../lib/tazuna";
+import { Sep } from "./Sep";
 
 // tazuna's permission question over the composer: allow once, always (this command or tool, for the session), or
 // decline. y / a / n answer from the keyboard; nothing answers in the first 600 ms, so a key meant for something else
@@ -35,8 +36,8 @@ export function Approval({ asking, onAnswer, keys = true }: { asking: NonNullabl
         <div className="mb-1.5 flex items-center gap-2 text-[12.5px] text-ink-2">
           <ShieldQuestion size={15} strokeWidth={1.5} className="text-warn" />
           tazuna asks to use <span className="font-medium text-ink">{tool}</span>
-          {asking.queued > 0 && <span className="text-faint">· {asking.queued} more waiting</span>}
-          {asking.reviewing && <span role="status" className="text-muted">· the reviewer is checking it; you can answer first</span>}
+          {asking.queued > 0 && <span className="flex items-center text-faint"><Sep />{asking.queued} more waiting</span>}
+          {asking.reviewing && <span role="status" className="flex items-center text-muted"><Sep />the reviewer is checking it; you can answer first</span>}
         </div>
         <pre className="mb-2.5 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[12px] text-ink select-text">{what}</pre>
         <div className="flex items-center gap-1.5">

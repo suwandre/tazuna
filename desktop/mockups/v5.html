@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tazuna desktop · usage in the status bar (v5 prototype)</title>
+<!-- The status bar's usage (design review 6, the user: "defaulting to Claude plan might not be best when the user wants to
+     use API providers"). Three variants and three conversations, switched at the bottom right; hover the usage item for
+     its card. Not the app. -->
+<style>
+
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2") format("woff2"); font-weight: 400; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Medium.woff2") format("woff2"); font-weight: 500; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-SemiBold.woff2") format("woff2"); font-weight: 600; }
+@font-face { font-family: "Geist Mono"; src: url("../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; }
+@font-face { font-family: "Source Serif 4"; src: url("../node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2") format("woff2"); font-weight: 200 900; }
+
+:root {
+  --canvas:#f6f4ef; --main:#fbfaf7; --sidebar:#f3f0e9; --card:#fffefb; --field:#efebe3; --hover:#e7e3db; --selected:#e6e1f2;
+  --ink:#23221e; --ink-2:#3f3c35; --muted:#5b574f; --faint:#69655d; --line:#e3ded3; --line-soft:#ece8df; --line-strong:#d8d2c5;
+  --accent:#3d4aa8; --accent-ink:#2f3a8f; --accent-soft:#e7e8f6; --on-accent:#fff; --ok:#3b7d4f; --bad:#b4473a; --warn:#a76a14;
+  --shadow:0 1px 2px #2321190d, 0 4px 14px #23211908; --pop:0 8px 28px #2321191f, 0 1px 3px #23211914;
+  --ui:"Geist", system-ui, sans-serif; --mono:"Geist Mono", ui-monospace, monospace; --prose:"Source Serif 4", Georgia, serif;
+  }
+.dark {
+  --canvas:#171613; --main:#1b1a17; --sidebar:#151411; --card:#211f1b; --field:#2a2823; --hover:#302e29; --selected:#2b2c45;
+  --ink:#ece8df; --ink-2:#d2cdc2; --muted:#afaa9e; --faint:#9a958d; --line:#2f2c27; --line-soft:#25231f; --line-strong:#3a3731;
+  --accent:#8f9bf0; --accent-ink:#aab3f5; --accent-soft:#272a44; --on-accent:#14152a; --ok:#7cc08f; --bad:#e08b7f; --warn:#e0b46a;
+  --shadow:0 1px 2px #0000004d, 0 4px 14px #00000033; --pop:0 10px 30px #00000080, 0 1px 3px #0000004d;
+}
+* { box-sizing: border-box; margin: 0; }
+body { font: 13.5px/1.5 var(--ui); color: var(--ink); background: var(--canvas); height: 100vh; display: flex; flex-direction: column; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: default; }
+.app { flex: 1; display: grid; grid-template-columns: 248px 1fr; min-height: 0; }
+.side { background: var(--sidebar); border-right: 1px solid var(--line); padding: 14px 10px; color: var(--faint); font-size: 12.5px; }
+.side b { display: block; color: var(--ink); font-weight: 600; margin: 0 8px 14px; }
+.side .r { padding: 6px 9px; border-radius: 6px; } .side .r.on { background: var(--selected); color: var(--ink); }
+.side .r small { display: block; font-size: 11.5px; color: var(--faint); }
+.main { background: var(--main); display: flex; flex-direction: column; }
+.main header { padding: 10px 28px; border-bottom: 1px solid var(--line-soft); font-weight: 500; }
+.main header span { color: var(--muted); font-weight: 400; }
+.body { flex: 1; display: grid; place-items: center; color: var(--faint); font-size: 12.5px; }
+.box { margin: 0 auto 14px; width: min(700px, 90%); border: 1px solid var(--line-strong); border-radius: 12px; background: var(--card); padding: 12px 16px; color: var(--faint); }
+.box .pill { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--ink-2); background: var(--field); }
+.hair { display: inline-block; width: 1px; height: .85em; background: var(--line-strong); margin: 0 6px; transform: translateY(.1em); }
+footer { height: 28px; flex: none; display: flex; align-items: center; gap: 16px; padding: 0 14px; border-top: 1px solid var(--line); background: var(--sidebar); font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; position: relative; }
+footer .item { display: flex; align-items: center; gap: 6px; border-radius: 4px; padding: 0 4px; margin: 0 -4px; }
+footer .item:hover { background: var(--hover); color: var(--ink); }
+footer b { font-weight: 500; color: var(--ink-2); }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+.m { display: inline-block; width: 30px; height: 4px; border-radius: 2px; background: var(--line-strong); overflow: hidden; } .m i { display: block; height: 100%; background: var(--accent); } .m i.warn { background: var(--warn); } .m i.bad { background: var(--bad); }
+.mini { display: inline-flex; flex-direction: column; gap: 1px; } .mini .m { width: 22px; height: 3px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); color: var(--warn); border-radius: 999px; padding: 0 8px; line-height: 18px; }
+.chip.bad { border-color: color-mix(in srgb, var(--bad) 45%, transparent); color: var(--bad); }
+.spacer { flex: 1; }
+.label { color: var(--faint); }
+/* the card over the usage item */
+.card { position: absolute; bottom: 34px; left: 10px; width: 340px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--card); box-shadow: var(--pop); padding: 6px 0; font-size: 12.5px; color: var(--ink-2); white-space: normal; opacity: 0; transform: translateY(4px); transition: opacity .15s, transform .15s; pointer-events: none; }
+.usage:hover + .card, .card:hover, .pin .card { opacity: 1; transform: none; pointer-events: auto; }
+.card h4 { font: 500 11.5px var(--ui); color: var(--faint); padding: 8px 14px 4px; }
+.card .row { display: grid; grid-template-columns: 1fr 70px 96px; align-items: center; gap: 10px; padding: 5px 14px; }
+.card .row .n { color: var(--ink); } .card .row .n small { display: block; color: var(--faint); font-size: 11.5px; }
+.card .row .v { text-align: right; } .card .row .v b { color: var(--ink); font-weight: 500; }
+.card .row.here { background: var(--accent-soft); }
+.card .row .tag { font-size: 10.5px; color: var(--accent-ink); font-weight: 500; }
+.card .foot { border-top: 1px solid var(--line-soft); margin-top: 6px; padding: 8px 14px 4px; display: flex; justify-content: space-between; color: var(--ink); }
+.card .foot kbd { font: 11px var(--mono); color: var(--faint); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; }
+.card .bar { width: 70px; height: 4px; border-radius: 2px; background: var(--line-strong); overflow: hidden; } .card .bar i { display: block; height: 100%; background: var(--accent); } .card .bar i.warn { background: var(--warn); }
+.v-A .vb, .v-A .vc, .v-B .va, .v-B .vc, .v-C .va, .v-C .vb { display: none !important; }
+.s-claude .on-sub, .s-claude .on-omni, .s-sub .on-claude, .s-sub .on-omni, .s-omni .on-claude, .s-omni .on-sub { display: none !important; }
+.note { position: fixed; left: 270px; top: 56px; max-width: 520px; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; font-size: 12.5px; color: var(--muted); box-shadow: var(--shadow); }
+.note b { color: var(--ink); font-weight: 600; }
+.proto { position: fixed; right: 12px; bottom: 40px; z-index: 20; display: flex; flex-direction: column; gap: 2px; padding: 8px 6px 6px; width: 200px; border: 1px dashed var(--line-strong); border-radius: 10px; background: var(--card); box-shadow: var(--pop); font-size: 12px; color: var(--muted); }
+.proto button { padding: 3px 8px; border-radius: 6px; color: var(--ink-2); text-align: left; } .proto button:hover { background: var(--hover); } .proto button.on { background: var(--selected); color: var(--ink); }
+.proto > span { padding: 6px 8px 2px; font: 500 11.5px var(--ui); color: var(--faint); }
+</style>
+</head>
+<body class="dark v-A s-sub">
+<div class="app">
+  <aside class="side"><b>tazuna</b>
+    <div class="r on-claude on">Fix the flaky retry test<small>api-gateway<span class="hair"></span>Opus 5.5</small></div>
+    <div class="r on-sub on">Bump the TLS library<small>api-gateway<span class="hair"></span>DeepSeek V4.1 Flash, SubRouter</small></div>
+    <div class="r on-omni on">Why is the CI build slow?<small>api-gateway<span class="hair"></span>Gemini 4 Hydrogen, OmniRoute</small></div>
+    <div class="r">Names for a grey cat<small>chat<span class="hair"></span>GPT-6.2 Sol</small></div>
+  </aside>
+  <main class="main">
+    <header><span>api-gateway /</span> <span class="on-claude" style="color:var(--ink)">Fix the flaky retry test</span><span class="on-sub" style="color:var(--ink)">Bump the TLS library</span><span class="on-omni" style="color:var(--ink)">Why is the CI build slow?</span></header>
+    <div class="body"><div class="note">
+      <span class="va"><b>A · This conversation's account.</b> The status bar shows the account the open conversation runs on: the plan on Claude, the balance on SubRouter, the window on OmniRoute. Another account shows only when it needs you (OpenRouter is past its credit). Hover for every account. <b>My pick.</b></span>
+      <span class="vb"><b>B · Every account, small.</b> "Usage" and one small meter per account, its colour saying how it stands. Shows everything at once, but at this size the meters say little without the card.</span>
+      <span class="vc"><b>C · The one closest to its limit.</b> "Usage" and the account nearest to stopping you, then how many others are fine. Calm, but it may show the Claude week while you work on SubRouter.</span>
+      <br><br>Why not one score for everything: 93% of a week and $12.40 left do not add up to a number you can act on, and a total hides the account that is about to stop you.
+    </div></div>
+    <div class="box">Ask anything, or describe a change…<br>
+      <span class="pill on-claude">Opus 5.5<span class="hair"></span>high</span><span class="pill on-sub">DeepSeek V4.1 Flash<span class="hair"></span>high</span><span class="pill on-omni">Gemini 4 Hydrogen<span class="hair"></span>high</span></div>
+  </main>
+</div>
+<footer>
+  <!-- A: the conversation's own account -->
+  <button class="item usage va"><span class="on-claude" style="display:contents"><span class="dot warn"></span>Claude plan <span class="m"><i style="width:34%"></i></span><b>34%</b>5 h <span class="m"><i class="warn" style="width:93%"></i></span><b>93%</b>week</span><span class="on-sub" style="display:contents"><span class="dot"></span>SubRouter <b>$12.40</b><span class="label">left</span></span><span class="on-omni" style="display:contents"><span class="dot"></span>OmniRoute <span class="m"><i style="width:12%"></i></span><b>12%</b>Gemini, this week</span></button>
+  <!-- B: every account -->
+  <button class="item usage vb"><span class="label">Usage</span>
+    <span class="mini" title="Claude plan"><span class="m"><i style="width:34%"></i></span><span class="m"><i class="warn" style="width:93%"></i></span></span>Claude
+    <span class="dot"></span>SubRouter <span class="dot bad"></span>OpenRouter <span class="m"><i style="width:12%"></i></span>OmniRoute</button>
+  <!-- C: the closest to its limit -->
+  <button class="item usage vc"><span class="dot warn"></span><span class="label">Usage</span> Claude week <span class="m"><i class="warn" style="width:93%"></i></span><b>93%</b><span class="hair"></span><span class="label">4 more accounts fine</span></button>
+  <div class="card">
+    <h4>Your accounts</h4>
+    <div class="row" data-acct="claude"><span class="n">Claude plan, 5 hours <small>resets in 4 h 7 min</small></span><span class="bar"><i style="width:34%"></i></span><span class="v"><b>34%</b></span></div>
+    <div class="row" data-acct="claude"><span class="n">Claude plan, week <small>resets Nov 21 at 3am</small></span><span class="bar"><i class="warn" style="width:93%"></i></span><span class="v"><b>93%</b></span></div>
+    <div class="row" data-acct="sub"><span class="n">SubRouter <small>credit</small></span><span></span><span class="v"><b>$12.40</b> left</span></div>
+    <div class="row"><span class="n">OpenRouter <small>credit</small></span><span></span><span class="v" style="color:var(--bad)"><b style="color:var(--bad)">$0.17</b> over</span></div>
+    <div class="row" data-acct="omni"><span class="n">OmniRoute, Gemini <small>resets Nov 26</small></span><span class="bar"><i style="width:12%"></i></span><span class="v"><b>12%</b></span></div>
+    <div class="row"><span class="n">Mortera <small>no balance from its API</small></span><span></span><span class="v" style="color:var(--accent-ink)">Open page</span></div>
+    <div class="foot"><span>Usage and spending</span><kbd>⌘⇧U</kbd></div>
+  </div>
+  <span class="va chip bad">OpenRouter $0.17 over</span>
+  <span class="spacer"></span>
+  <span>context <b>22%</b> of 1M</span><span>cache <b>92%</b></span><span>this chat <b>$12.13</b></span><span class="label">tazuna 0.1.78</span>
+</footer>
+<div class="proto" aria-label="Prototype controls">
+  <span>variant</span>
+  <button data-v="A" class="on">A · this conversation's</button><button data-v="B">B · every account</button><button data-v="C">C · closest to its limit</button>
+  <span>conversation on</span>
+  <button data-s="claude">Opus 5.5 · Claude plan</button><button data-s="sub" class="on">DeepSeek · SubRouter</button><button data-s="omni">Gemini · OmniRoute</button>
+  <span>look</span>
+  <button data-pin>keep the card open</button><button data-dark class="on">dark</button>
+</div>
+<script>
+const mark = () => { const sc = (document.body.className.match(/s-(\w+)/) || [])[1];
+  document.querySelectorAll(".card .row").forEach((r) => { r.classList.toggle("here", r.dataset.acct === sc); const sm = r.querySelector("small"); if (sm) { sm.dataset.t ??= sm.textContent; sm.textContent = r.dataset.acct === sc ? `this conversation, ${sm.dataset.t}` : sm.dataset.t; } }); };
+const set = (group, value, prefix) => { document.body.className = document.body.className.split(" ").filter((c) => !c.startsWith(prefix)).concat(`${prefix}${value}`).join(" ");
+  document.querySelectorAll(`[data-${group}]`).forEach((b) => b.classList.toggle("on", b.dataset[group] === value)); mark(); };
+document.querySelectorAll("[data-v]").forEach((b) => b.onclick = () => set("v", b.dataset.v, "v-"));
+document.querySelectorAll("[data-s]").forEach((b) => b.onclick = () => set("s", b.dataset.s, "s-"));
+document.querySelector("[data-pin]").onclick = (e) => { document.body.classList.toggle("pin"); e.target.classList.toggle("on"); };
+document.querySelector("[data-dark]").onclick = (e) => { document.body.classList.toggle("dark"); e.target.classList.toggle("on"); };
+const q = new URLSearchParams(location.search); if (q.get("v")) set("v", q.get("v"), "v-"); if (q.get("s")) set("s", q.get("s"), "s-"); if (q.has("pin")) document.body.classList.add("pin");
+mark();
+</script>
+</body>
+</html>

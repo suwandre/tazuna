@@ -6,6 +6,7 @@ import { checkUpdate, installUpdate, progressText, useUpdate } from "../lib/upda
 import { safeMode } from "../lib/plugins";
 import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Settings } from "../lib/tazuna";
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
+import { Parts } from "./Sep";
 
 // Settings: provider keys (saved by tazuna, never shown again), the data policy for this session, the router. The
 // terminal's /login, /data and /route in one page. Each part is a section: a heading, a line on what it is for, and a card
@@ -192,8 +193,8 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
               messages, so enable only plugins you made or trust. <code>/create</code> in a conversation makes either.</>}>
               {items.length === 0 && <div className="px-4 py-2.5 text-[12.5px] text-faint">No panels or plugins yet.</div>}
               {items.map((w) => (
-                <Row key={w.id} title={w.title} note={<span className="block truncate">{w.kind === "panel" ? "panel · sandboxed" : w.state === "enabled" ? "plugin · on"
-                  : w.state === "changed" ? "plugin · its code changed since you enabled it: look before enabling again" : "plugin · off"}{w.about ? ` · ${w.about}` : ""}</span>}>
+                <Row key={w.id} title={w.title} note={<Parts className="block truncate" items={[w.kind === "panel" ? "Panel, sandboxed" : w.state === "enabled" ? "Plugin, on"
+                  : w.state === "changed" ? "Plugin: its code changed since you enabled it, look before enabling again" : "Plugin, off", w.about]} />}>
                   {w.kind === "plugin" && <button onClick={() => (w.state === "enabled" ? onEnable?.(w, false) : read(w))}
                     className={`${button} ${w.state === "enabled" ? "text-ink-2" : "border-line-strong"}`}>{w.state === "enabled" ? "Turn off" : "Read and enable"}</button>}
                   <button onClick={() => widgets.share(w.id).then((p) => p && setPlugNote(`Saved ${w.title} to ${p}: anyone can add it with "Add from a file".`)).catch((e) => setPlugNote(`Not saved: ${e}`))}
@@ -228,7 +229,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
                 {!gallery.items && !gallery.error && <div className="px-4 py-2.5 text-[12.5px] text-faint">Loading the gallery…</div>}
                 {gallery.error && <div className="px-4 py-2.5 text-[12.5px] text-bad">{gallery.error}</div>}
                 {gallery.items?.map((g) => (
-                  <Row key={g.file} title={<>{g.title} <span className="text-[11.5px] font-normal text-faint">· {g.kind}{g.author ? ` · by ${g.author}` : ""}</span></>} note={g.about}>
+                  <Row key={g.file} title={<>{g.title} <Parts className="text-[11.5px] font-normal text-faint" items={[g.kind, g.author && `by ${g.author}`]} /></>} note={g.about}>
                     <button disabled={asked.current.has(g.file)} onClick={() => { asked.current.add(g.file); setAskedN((n) => n + 1); core.galleryGet(g.file); }}
                       className={button}>{asked.current.has(g.file) ? "Adding…" : "Add"}</button>
                   </Row>
