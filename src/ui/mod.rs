@@ -1,4 +1,4 @@
-//! Rendering. Four designs share one transcript builder and differ in palette, chrome and layout.
+//! Rendering. Four designs share one transcript builder and one palette, and differ in chrome and layout.
 
 mod aurora;
 mod cockpit;
@@ -16,45 +16,75 @@ use ratatui::{
 use tachyonfx::{Effect, Interpolation::*, Motion, fx};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
+/// The colours, named as the desktop app's tokens (desktop/DESIGN.md) so both apps read as one. How they are used:
+/// `accent` for the live state or the thing to act on, `ok` and `err` for results only, `warn` for limits, risk and a
+/// question that waits for you; the text levels are `text`, `ink2` (names and labels), `dim` and `faint`.
 pub struct Theme {
     pub bg: Color,
     pub surface: Color,
+    /// Behind code, as the desktop's `field`.
+    pub field: Color,
     pub border: Color,
     pub text: Color,
+    pub ink2: Color,
     pub dim: Color,
     pub faint: Color,
     pub accent: Color,
-    pub accent2: Color,
     pub warn: Color,
     pub err: Color,
     pub ok: Color,
-    pub code: Color,
 }
 
-const fn rgb(r: u8, g: u8, b: u8) -> Color {
-    Color::Rgb(r, g, b)
+const fn hex(c: u32) -> Color {
+    Color::Rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
 }
 
-const AURORA: Theme = Theme {
-    bg: rgb(13, 15, 20), surface: rgb(20, 23, 31), border: rgb(44, 49, 63), text: rgb(214, 218, 226), dim: rgb(122, 129, 148),
-    faint: rgb(72, 78, 95), accent: rgb(139, 156, 255), accent2: rgb(94, 234, 212), warn: rgb(246, 193, 119), err: rgb(235, 111, 146),
-    ok: rgb(156, 207, 145), code: rgb(186, 196, 222),
+// One palette for the four designs: they differ in arrangement, not hue. Until 0.1.184 each had its own (navy and cyan,
+// teal and violet, grey and pink, neon magenta and yellow), none of them the desktop app's (design review, 2026-11-19).
+// bg canvas, surface card, border line-strong (the hairline `line` is lost on a terminal's cell grid), dim muted.
+const DARK: Theme = Theme {
+    bg: hex(0x171613), surface: hex(0x211f1b), field: hex(0x2a2823), border: hex(0x3a3731), text: hex(0xece8df), ink2: hex(0xd2cdc2),
+    dim: hex(0xafaa9e), faint: hex(0x9a958d), accent: hex(0x8f9bf0), warn: hex(0xe0b46a), err: hex(0xe08b7f), ok: hex(0x7cc08f),
 };
-const COCKPIT: Theme = Theme {
-    bg: rgb(9, 12, 18), surface: rgb(15, 20, 30), border: rgb(34, 46, 66), text: rgb(205, 216, 232), dim: rgb(110, 128, 156),
-    faint: rgb(58, 72, 96), accent: rgb(86, 214, 255), accent2: rgb(181, 140, 255), warn: rgb(255, 196, 92), err: rgb(255, 99, 120),
-    ok: rgb(98, 230, 160), code: rgb(170, 200, 235),
+const LIGHT: Theme = Theme {
+    bg: hex(0xf6f4ef), surface: hex(0xfffefb), field: hex(0xefebe3), border: hex(0xd8d2c5), text: hex(0x23221e), ink2: hex(0x3f3c35),
+    dim: hex(0x5b574f), faint: hex(0x69655d), accent: hex(0x3d4aa8), warn: hex(0xa76a14), err: hex(0xb4473a), ok: hex(0x3b7d4f),
 };
-const ZEN: Theme = Theme {
-    bg: rgb(25, 23, 30), surface: rgb(33, 31, 40), border: rgb(52, 49, 62), text: rgb(224, 219, 232), dim: rgb(144, 138, 158),
-    faint: rgb(88, 83, 100), accent: rgb(235, 188, 186), accent2: rgb(156, 207, 216), warn: rgb(246, 193, 119), err: rgb(235, 111, 146),
-    ok: rgb(170, 200, 160), code: rgb(200, 192, 214),
-};
-const TIMELINE: Theme = Theme {
-    bg: rgb(7, 7, 11), surface: rgb(17, 17, 26), border: rgb(40, 40, 60), text: rgb(222, 222, 232), dim: rgb(120, 120, 145),
-    faint: rgb(62, 62, 84), accent: rgb(0, 229, 255), accent2: rgb(255, 64, 160), warn: rgb(255, 214, 0), err: rgb(255, 70, 90),
-    ok: rgb(124, 255, 132), code: rgb(190, 205, 255),
-};
+
+/// `--theme light`, and a terminal that does not say it takes 24-bit colour: set once at start (`setup_colors`).
+static LIGHT_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static INDEXED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The theme, and whether colours go out as 24-bit: only where the terminal says so (COLORTERM truecolor or 24bit;
+/// macOS Terminal before 26 sets none and shows 24-bit colours wrong), else as the nearest of the 256.
+pub fn setup_colors(light: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    LIGHT_ON.store(light, Relaxed);
+    INDEXED.store(!matches!(std::env::var("COLORTERM").as_deref(), Ok("truecolor" | "24bit")), Relaxed);
+}
+
+/// The frame's colours as the nearest of the 256, where the terminal takes no more. On the drawn cells, not on the
+/// theme: the effects mix colours of their own.
+pub fn fit_colors(buf: &mut ratatui::buffer::Buffer) {
+    if !INDEXED.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+    let fit = |c: Color| if let Color::Rgb(r, g, b) = c { Color::Indexed(to_256(r, g, b)) } else { c };
+    for cell in &mut buf.content {
+        (cell.fg, cell.bg) = (fit(cell.fg), fit(cell.bg));
+    }
+}
+
+/// The nearest xterm colour: of the 6x6x6 cube (16-231) or the 24 greys (232-255), whichever is closer.
+fn to_256(r: u8, g: u8, b: u8) -> u8 {
+    const STEPS: [i32; 6] = [0, 95, 135, 175, 215, 255];
+    let near = |x: u8| (0..6).min_by_key(|&i| (STEPS[i] - x as i32).abs()).unwrap_or(0);
+    let off = |x: i32, y: i32, z: i32| (x - r as i32).pow(2) + (y - g as i32).pow(2) + (z - b as i32).pow(2);
+    let (ri, gi, bi) = (near(r), near(g), near(b));
+    let grey = ((r as i32 + g as i32 + b as i32) / 3 - 3).clamp(0, 235) / 10;
+    let level = 8 + 10 * grey.min(23);
+    if off(level, level, level) < off(STEPS[ri], STEPS[gi], STEPS[bi]) { (232 + grey.min(23)) as u8 } else { (16 + 36 * ri + 6 * gi + bi) as u8 }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Design {
@@ -67,8 +97,9 @@ pub enum Design {
 impl Design {
     pub const ALL: [Design; 4] = [Design::Aurora, Design::Cockpit, Design::Zen, Design::Timeline];
 
+    /// One palette for every design (they differ in arrangement); the light one with `--theme light`.
     pub fn theme(self) -> &'static Theme {
-        [&AURORA, &COCKPIT, &ZEN, &TIMELINE][self as usize]
+        if LIGHT_ON.load(std::sync::atomic::Ordering::Relaxed) { &LIGHT } else { &DARK }
     }
 
     /// `n` is 1-based, as typed on the keyboard.
@@ -1026,15 +1057,15 @@ pub fn block_fx(d: Design) -> Effect {
         Design::Aurora => fx::fade_from_fg(bg, (380, QuadOut)),
         Design::Cockpit => fx::fade_from_fg(bg, (240, QuadOut)),
         Design::Zen => fx::fade_from_fg(bg, (750, SineOut)),
-        Design::Timeline => fx::parallel(&[fx::fade_from_fg(bg, (200, QuadOut)), fx::ping_pong(fx::hsl_shift_fg([0.0, 25.0, 30.0], (150, QuadOut)))]),
+        Design::Timeline => fx::parallel(&[fx::fade_from_fg(bg, (200, QuadOut)), fx::ping_pong(fx::hsl_shift_fg([0.0, 0.0, 14.0], (150, QuadOut)))]),
     }
 }
 
 pub fn pulse_fx(d: Design) -> Effect {
+    // lighter for a moment, the hue and saturation as they are: a flash of another colour is not in the palette
     let shift = match d {
-        Design::Zen => [0.0, 0.0, 10.0],
-        Design::Timeline => [0.0, 40.0, 30.0],
-        _ => [0.0, 15.0, 22.0],
+        Design::Zen => [0.0, 0.0, 8.0],
+        _ => [0.0, 0.0, 14.0],
     };
     fx::ping_pong(fx::hsl_shift_fg(shift, (170, QuadOut)))
 }
@@ -1042,10 +1073,10 @@ pub fn pulse_fx(d: Design) -> Effect {
 pub fn done_fx(d: Design) -> Effect {
     let bg = d.theme().bg;
     match d {
-        Design::Aurora => fx::sequence(&[fx::coalesce((650, ExpoOut)), fx::ping_pong(fx::hsl_shift_fg([30.0, 15.0, 18.0], (300, SineInOut)))]),
+        Design::Aurora => fx::sequence(&[fx::coalesce((650, ExpoOut)), fx::ping_pong(fx::hsl_shift_fg([0.0, 0.0, 12.0], (300, SineInOut)))]),
         Design::Cockpit => fx::sweep_in(Motion::LeftToRight, 20, 0, bg, (600, QuadOut)),
         Design::Zen => fx::fade_from_fg(bg, (1200, SineInOut)),
-        Design::Timeline => fx::sequence(&[fx::coalesce((500, ExpoOut)), fx::ping_pong(fx::hsl_shift_fg([0.0, 40.0, 25.0], (220, QuadOut)))]),
+        Design::Timeline => fx::sequence(&[fx::coalesce((500, ExpoOut)), fx::ping_pong(fx::hsl_shift_fg([0.0, 0.0, 14.0], (220, QuadOut)))]),
     }
 }
 
@@ -1065,23 +1096,47 @@ pub fn spinner(clock_ms: f64) -> &'static str {
     SPINNER[(clock_ms / 80.0) as usize % SPINNER.len()]
 }
 
-/// Glyph, label and color for what the agent is doing right now.
+/// Glyph, label and color for what the agent is doing right now. Every working state takes the accent (the one live
+/// state); a question, a refused call and a failed run each read as what they are, where all three said "thinking" or
+/// "done" (design review, 2026-11-19).
 pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Color) {
     let spin = spinner(v.clock_ms);
+    // a permission question: nothing runs until it is answered, so no spinner
+    if v.asking.is_some() {
+        return ("●", "needs you".into(), th.warn);
+    }
+    if let Some(secs) = s.retry_in(v.clock_ms) {
+        return (spin, format!("retrying in {}", wait_str(secs)), th.err);
+    }
     match s.activity {
         // the turn is over, but claude's background work goes on: say so where "done" would be (ctrl-b lists it)
-        Activity::Ready | Activity::Done if v.bg_running > 0 => (spin, format!("{} working in background · ctrl-b", v.bg_running), th.accent2),
+        Activity::Ready | Activity::Done if v.bg_running > 0 => (spin, format!("{} working in background · ctrl-b", v.bg_running), th.accent),
         Activity::Ready => ("●", "ready".into(), th.dim),
         // keep-alive pings and no output (the own loop's provider queueing it): said, so it does not look like tazuna hangs
         Activity::Waiting if s.waiting_note.is_some() => (spin, "provider still processing (no output yet)".into(), th.warn),
         // from Enter to the first output it reads "thinking" throughout: "starting", "waiting for model" and then "thinking"
         // a second or more later looked like three different hold-ups (2026-11-16)
-        Activity::Starting | Activity::Waiting | Activity::Thinking => (spin, "thinking".into(), th.warn),
+        Activity::Starting | Activity::Waiting | Activity::Thinking => (spin, "thinking".into(), th.accent),
         Activity::Writing => (spin, "writing".into(), th.accent),
-        Activity::Tool => (spin, format!("running {}", last_tool_name(s)), th.accent2),
-        Activity::Verifying => (spin, "verifying".into(), th.accent2),
+        Activity::Tool => (spin, format!("running {}", last_tool_name(s)), th.accent),
+        Activity::Verifying => (spin, "verifying".into(), th.accent),
+        Activity::Done if matches!(s.blocks.iter().rev().find_map(|b| if let Block::Done(d) = b { Some(d) } else { None }), Some(d) if !d.ok && !d.stopped) => {
+            ("✗", "failed".into(), th.err)
+        }
         Activity::Done => ("✓", "done".into(), th.ok),
     }
+}
+
+/// A wait in the units the line under an answer uses: "8 s", "4 min 52 s".
+fn wait_str(secs: f64) -> String {
+    let s = secs.ceil() as u64;
+    if s < 60 { format!("{s} s") } else { format!("{} min {:02} s", s / 60, s % 60) }
+}
+
+/// The call the permission question is about: the newest one without a result, while a question is open. It waits for
+/// the user, so it draws no spinner.
+fn asked(t: &Tool, s: &Session, v: &View) -> bool {
+    v.asking.is_some() && s.blocks.iter().rev().find_map(|b| if let Block::Tool(x) = b { Some(x) } else { None }).is_some_and(|x| std::ptr::eq(x, t) && x.result.is_none())
 }
 
 fn last_tool_name(s: &Session) -> String {
@@ -1489,7 +1544,7 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
             if o.timeline {
                 let lead = if k == 0 {
                     // the node replaces the step's own status glyph
-                    if matches!(b, Block::Tool(_) | Block::Thinking { .. } | Block::Verify(_)) && !l.spans.is_empty() {
+                    if matches!(b, Block::Tool(_) | Block::Thinking { .. } | Block::Verify(_) | Block::Retry(_)) && !l.spans.is_empty() {
                         let glyph_w = l.spans.remove(0).width();
                         // continuation rows lose the same width so they stay aligned
                         if let Some(first) = cont.first_mut() {
@@ -1497,7 +1552,7 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
                             *first = Span::raw(" ".repeat(pad));
                         }
                     }
-                    let (node, c) = node(b, v, th);
+                    let (node, c) = node(b, s, v, th);
                     vec![Span::styled(format!("{} ", clock_str(meta.at_ms)), st(th.faint)), Span::styled(node, st(c)), Span::raw(" ")]
                 } else {
                     vec![Span::raw("      "), Span::styled("│", st(th.border)), Span::raw(" ")]
@@ -1578,21 +1633,27 @@ fn lerp(a: Color, b: Color, t: f64) -> Color {
     }
 }
 
-fn node(b: &Block, v: &View, th: &Theme) -> (&'static str, Color) {
+fn node(b: &Block, s: &Session, v: &View, th: &Theme) -> (&'static str, Color) {
     match b {
-        Block::Prompt(_) => ("◇", th.accent),
-        Block::Text { .. } => ("●", th.accent),
-        Block::Thinking { live: true, .. } => (spinner(v.clock_ms), th.warn),
-        Block::Thinking { .. } => ("◌", th.warn),
-        Block::Tool(t) if t.result.is_none() => (spinner(v.clock_ms), th.warn),
+        Block::Prompt(_) => ("◇", th.ink2),
+        Block::Text { live: true, .. } => ("●", th.accent),
+        Block::Text { .. } => ("●", th.dim),
+        Block::Thinking { live: true, .. } => (spinner(v.clock_ms), th.accent),
+        Block::Thinking { .. } => ("◌", th.faint),
+        Block::Tool(t) if asked(t, s, v) => ("?", th.warn),
+        Block::Tool(t) if t.result.is_none() => (spinner(v.clock_ms), th.accent),
         Block::Tool(t) if t.error => ("✗", th.err),
-        Block::Tool(_) => ("◆", th.accent2),
-        Block::Done(_) => ("★", th.ok),
-        Block::Verify(x) if x.ok.is_none() => (spinner(v.clock_ms), th.accent2),
+        Block::Tool(_) => ("◆", th.dim),
+        Block::Done(d) if d.stopped => ("■", th.dim),
+        Block::Done(d) if d.ok => ("★", th.ok),
+        Block::Done(_) => ("✗", th.err),
+        Block::Verify(x) if x.ok.is_none() => (spinner(v.clock_ms), th.accent),
         Block::Verify(x) if x.ok == Some(true) => ("✓", th.ok),
         Block::Verify(_) => ("✗", th.err),
         Block::Notice { error: true, .. } => ("!", th.err),
-        Block::Notice { .. } => ("·", th.warn),
+        Block::Notice { .. } => ("·", th.faint),
+        Block::Retry(r) if r.next_ms.is_some() || r.gave_up => ("!", th.err),
+        Block::Retry(_) => ("·", th.faint),
     }
 }
 
@@ -1670,13 +1731,40 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             let shown = if open { text.clone() } else { readable_notice(text).or_else(|| lane_notice(text)).or_else(|| model_notice(text)).unwrap_or_else(|| text.clone()) };
             vec![(
                 Line::from(vec![
-                    Span::styled(if *error { "! " } else { "· " }, st(if *error { th.err } else { th.warn })),
+                    Span::styled(if *error { "! " } else { "· " }, st(if *error { th.err } else { th.faint })),
                     Span::styled(if open || shown.chars().count() <= NOTICE_CHARS { shown } else {
                         format!("{}… (+{} chars · click to show)", shown.chars().take(NOTICE_CHARS).collect::<String>(), shown.chars().count() - NOTICE_CHARS)
                     }, st(if *error { th.err } else { th.dim })),
                 ]),
                 vec![Span::raw("  ")],
             )]
+        }
+        // a refused call being tried again: what failed, which try, what happens next and the key that stops it, in the
+        // error colour while it lasts; the provider's own words when the block is opened
+        Block::Retry(r) => {
+            let loud = r.next_ms.is_some() || r.gave_up;
+            let color = if loud { th.err } else { th.dim };
+            let tries = if r.tries == 1 { "1 try".to_string() } else { format!("{} tries", r.tries) };
+            let (state, next) = match (r.next_ms, r.gave_up) {
+                (Some(t), _) => (format!("try {} failed", r.tries), format!("trying again in {} · esc stops", wait_str((t - v.clock_ms) / 1000.0))),
+                (None, true) => (format!("gave up after {tries}"), "send the message again, or pick another model with /model".to_string()),
+                (None, false) => (format!("{tries} failed"), String::new()),
+            };
+            let mut out = vec![(
+                Line::from(vec![
+                    Span::styled(if loud { "! " } else { "· " }, st(if loud { th.err } else { th.faint })),
+                    Span::styled(r.why.clone(), st(color).add_modifier(if loud { Modifier::BOLD } else { Modifier::empty() })),
+                    Span::styled(format!("  {state}"), st(color)),
+                    Span::styled(if open { "  ▾" } else { "  ▸" }, st(th.faint)),
+                ]),
+                vec![Span::raw("  ")],
+            )];
+            for (text, c) in [(next, th.dim), (if open { r.raw.clone() } else { String::new() }, th.faint)] {
+                if !text.is_empty() {
+                    out.push((Line::from(vec![Span::raw("  "), Span::styled(text, st(c))]), vec![Span::raw("  ")]));
+                }
+            }
+            out
         }
         Block::Text { text, live } => {
             let mut out = markdown(text, th, width.saturating_sub(if o.marker.is_empty() { 0 } else { 2 }));
@@ -1685,7 +1773,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             }
             if !o.marker.is_empty() {
                 for (i, (l, cont)) in out.iter_mut().enumerate() {
-                    l.spans.insert(0, if i == 0 { Span::styled(format!("{} ", o.marker), st(th.accent)) } else { Span::raw("  ") });
+                    l.spans.insert(0, if i == 0 { Span::styled(format!("{} ", o.marker), st(if *live { th.accent } else { th.faint })) } else { Span::raw("  ") });
                     cont.insert(0, Span::raw("  "));
                 }
             }
@@ -1698,7 +1786,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
         }
         Block::Thinking { tokens, live, exact, .. } => {
             let glyph = if *live { spinner(v.clock_ms) } else { "✻" };
-            let mut spans = vec![Span::styled(format!("{glyph} "), st(th.warn)), Span::styled("thinking", st(th.dim).add_modifier(Modifier::ITALIC))];
+            let mut spans = vec![Span::styled(format!("{glyph} "), st(if *live { th.accent } else { th.faint })), Span::styled("thinking", st(th.dim).add_modifier(Modifier::ITALIC))];
             // claude reports thinking in steps of 50-200 tokens about once a second: while live, the count runs up to
             // each new total over the second after it, as Claude Code's does
             let shown = if *live { s.thinking_shown(*tokens, v.clock_ms) } else { *tokens };
@@ -1710,7 +1798,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
         Block::Tool(t) => tool_lines(t, s, v, th, o, open, width),
         Block::Done(d) => {
             let (glyph, word, color) = match (d.stopped, d.ok) {
-                (true, _) => ("■", "Stopped", th.warn),
+                (true, _) => ("■", "Stopped", th.dim),
                 (false, true) => ("✔", "Done", th.ok),
                 (false, false) => ("✗", "Failed", th.err),
             };
@@ -1755,7 +1843,7 @@ fn verify_lines(x: &crate::session::Verify, v: &View, th: &Theme) -> Vec<Prefixe
     let (glyph, color, state) = match x.ok {
         _ if x.no_tests => ("·", th.faint, "no tests found".to_string()),
         _ if x.timed_out => ("·", th.faint, format!("timed out after {:.0}s · not verified", x.secs)),
-        None => (spinner(v.clock_ms), th.accent2, "running…".to_string()),
+        None => (spinner(v.clock_ms), th.accent, "running…".to_string()),
         Some(true) => ("✓", th.ok, format!("passed · {:.1}s", x.secs)),
         Some(false) => ("✗", th.err, format!("failed · {:.1}s", x.secs)),
     };
@@ -1763,7 +1851,7 @@ fn verify_lines(x: &crate::session::Verify, v: &View, th: &Theme) -> Vec<Prefixe
     let mut out = vec![(
         Line::from(vec![
             Span::styled(format!("{glyph} "), st(color)),
-            Span::styled("verify", st(th.accent2).add_modifier(Modifier::BOLD)),
+            Span::styled("verify", st(th.ink2).add_modifier(Modifier::BOLD)),
             Span::styled(format!(" {}{round}", x.cmd), st(th.dim)),
             Span::styled(format!("  · {state}"), st(th.faint)),
         ]),
@@ -1792,11 +1880,11 @@ fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, open: bool, width: u
     let mut out: Vec<Prefixed> = Vec::new();
     match o.prompt {
         PromptStyle::Bar => {
-            let bar = || Span::styled("▎ ", st(th.accent));
+            let bar = || Span::styled("▎ ", st(th.faint));
             // every message of yours is "you" (the first was "task", design review 5)
             let _ = first;
             let label = "you";
-            out.push((Line::from(vec![bar(), Span::styled(label, st(th.accent).add_modifier(Modifier::BOLD))]), vec![bar()]));
+            out.push((Line::from(vec![bar(), Span::styled(label, st(th.ink2).add_modifier(Modifier::BOLD))]), vec![bar()]));
             for (mut l, mut cont) in md.into_iter().take(keep) {
                 l.spans.insert(0, bar());
                 cont.insert(0, bar());
@@ -1824,12 +1912,14 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
     let arg = |k: &str| tool_arg(t, k);
     let name = short_name(&t.name);
     let (glyph, gcolor) = match (&t.result, t.error) {
-        (None, _) => (spinner(v.clock_ms), th.warn),
+        (None, _) if asked(t, s, v) => ("?", th.warn),
+        (None, _) => (spinner(v.clock_ms), th.accent),
         (Some(_), false) => ("✓", th.ok),
         (Some(_), true) => ("✗", th.err),
     };
     let mut meta = match (&t.result, name) {
-        (Some(_), _) if t.error => "error".to_string(),
+        // a failed command says how it ended ("exit 1"), anything else "error"
+        (Some(r), _) if t.error => crate::session::exit_line(r).and_then(|l| l.strip_prefix("[exit ")).map_or("error".to_string(), |c| format!("exit {}", c.trim_end_matches(']'))),
         (Some(_), "edit") => format!("-{} +{}", arg("old").lines().count(), arg("new").lines().count()),
         (Some(_), "write") => lines_n(arg("content").lines().count()),
         (Some(r), _) => lines_n(r.lines().count()),
@@ -1860,7 +1950,7 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
     let fits = 2 + name.width().max(6) + 1 + summary.width() + meta.width() <= width;
     let mut head = vec![
         Span::styled(format!("{glyph} "), st(gcolor)),
-        Span::styled(format!("{name:<6}"), st(th.accent2).add_modifier(Modifier::BOLD)),
+        Span::styled(format!("{name:<6}"), st(th.ink2).add_modifier(Modifier::BOLD)),
         Span::styled(format!(" {summary}"), st(th.dim)),
     ];
     if fits {
@@ -1885,7 +1975,7 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
             .map(|x| {
                 let (mark, c) = match x["status"].as_str() {
                     Some("completed") => ("☑", th.ok),
-                    Some("in_progress") => ("◐", th.warn),
+                    Some("in_progress") => ("◐", th.accent),
                     _ => ("☐", th.dim),
                 };
                 (format!("{mark} {}", x["content"].as_str().unwrap_or_default()), c)
@@ -1951,7 +2041,10 @@ fn group_lines(blocks: &[Block], s: &Session, v: &View, th: &Theme) -> Vec<Prefi
         (n, false) => format!("ran {n} tools"),
     };
     let mut spans = vec![
-        Span::styled(if busy { format!("{} ", spinner(v.clock_ms)) } else { "⌁ ".into() }, st(th.accent2)),
+        // the call a question is about waits for the user: no spinner
+        if running.is_some_and(|t| asked(t, s, v)) { Span::styled("? ", st(th.warn)) } else {
+            Span::styled(if busy { format!("{} ", spinner(v.clock_ms)) } else { "⌁ ".into() }, st(if busy { th.accent } else { th.faint }))
+        },
         Span::styled(what, st(th.dim)),
         Span::styled(if tools.is_empty() { String::new() } else { format!("   {mix}   {}", lines_n(lines)) }, st(th.faint)),
     ];
@@ -1993,21 +2086,21 @@ fn markdown(text: &str, th: &Theme, width: usize) -> Vec<Prefixed> {
             continue;
         }
         if in_code {
-            out.push((Line::from(Span::styled(format!(" {raw} "), Style::new().fg(th.code).bg(th.surface))), vec![]));
+            out.push((Line::from(Span::styled(format!(" {raw} "), Style::new().fg(th.ink2).bg(th.field))), vec![]));
             continue;
         }
         let t = raw.trim_start();
         if let Some(h) = t.strip_prefix('#') {
-            out.push((Line::from(Span::styled(h.trim_start_matches('#').trim().to_string(), st(th.accent).add_modifier(Modifier::BOLD))), vec![]));
+            out.push((Line::from(Span::styled(h.trim_start_matches('#').trim().to_string(), st(th.text).add_modifier(Modifier::BOLD))), vec![]));
         } else if let Some((num, item)) = t.split_once(". ").filter(|(n, _)| (1..=3).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit())) {
             // numbered item: wrapped rows hang under the text, not the number
             let indent = " ".repeat(raw.len() - t.len());
-            let mut spans = vec![Span::raw(indent.clone()), Span::styled(format!("{num}. "), st(th.accent))];
+            let mut spans = vec![Span::raw(indent.clone()), Span::styled(format!("{num}. "), st(th.dim))];
             spans.extend(inline(item, th));
             out.push((Line::from(spans), vec![Span::raw(format!("{indent}{}", " ".repeat(num.len() + 2)))]));
         } else if let Some(item) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
             let indent = " ".repeat(raw.len() - t.len());
-            let mut spans = vec![Span::raw(indent.clone()), Span::styled("• ", st(th.accent))];
+            let mut spans = vec![Span::raw(indent.clone()), Span::styled("• ", st(th.dim))];
             spans.extend(inline(item, th));
             out.push((Line::from(spans), vec![Span::raw(format!("{indent}  "))]));
         } else {
@@ -2021,7 +2114,9 @@ fn inline(s: &str, th: &Theme) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
     for (i, part) in s.split('`').enumerate() {
         if i % 2 == 1 {
-            spans.push(Span::styled(part.to_string(), Style::new().fg(th.accent2).bg(th.surface)));
+            // code in a sentence: ink on the field, as the desktop app's (every identifier in a second accent read as
+            // a page of links, design review 2026-11-19)
+            spans.push(Span::styled(part.to_string(), Style::new().fg(th.text).bg(th.field)));
             continue;
         }
         for (j, seg) in part.split("**").enumerate() {
@@ -2299,7 +2394,7 @@ pub fn composer_line(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
         }
         spans.push(Span::styled(placeholder.to_string(), st(th.faint)));
         if v.live && v.mode != "auto" {
-            spans.push(Span::styled(format!("  [{}]", v.mode), st(th.warn)));
+            spans.push(Span::styled(format!("  [{}]", v.mode), st(th.dim)));
         }
         if !v.vim.is_empty() {
             spans.push(Span::styled(format!("  [{}]", v.vim), st(th.accent)));
@@ -2328,11 +2423,15 @@ const COMPOSER_MAX_ROWS: usize = 6;
 /// The composer box: typed text on real lines (wrapped to `width`, the box's inside), or the one-line placeholder.
 pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Vec<Line<'static>> {
     if let Some(q) = &v.asking {
+        // the answers are what to act on: the brightest text of the row, their keys in the accent (they were the
+        // dimmest on screen, design review 2026-11-19)
         let q: String = q.chars().take((width as usize).saturating_sub(40)).collect();
+        let key = |k: &'static str| Span::styled(k, st(th.accent).add_modifier(Modifier::BOLD));
+        let word = |w: &'static str| Span::styled(w, st(th.text).add_modifier(Modifier::BOLD));
         return vec![Line::from(vec![
             Span::styled(" ? ", st(th.warn).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("allow {q}"), st(th.text).add_modifier(Modifier::BOLD)),
-            Span::styled("   y yes · a always · n no", st(th.faint)),
+            Span::styled(format!("allow {q}"), st(th.ink2)),
+            Span::raw("   "), key("y"), word(" yes   "), key("a"), word(" always   "), key("n"), word(" no"),
         ])];
     }
     if !(v.live && !v.input.is_empty()) {
@@ -2454,6 +2553,10 @@ fn hint_row(v: &View, th: &Theme, width: u16) -> Option<Line<'static>> {
     if let Some((t, _)) = &v.toast {
         return Some(Line::from(Span::styled(format!("   {t}"), st(th.ok))));
     }
+    // what `!` does, while it is typed: it is not a shell alone, the output goes to the model and a turn starts
+    if v.input.starts_with('!') {
+        return Some(Line::from(Span::styled(format!("   {SHELL_HINT}"), st(th.dim))));
+    }
     if v.hints.is_empty() {
         return None;
     }
@@ -2472,6 +2575,9 @@ fn hint_row(v: &View, th: &Theme, width: u16) -> Option<Line<'static>> {
 
 const CURSOR: char = '▍';
 
+/// Under a message that starts with `!`.
+const SHELL_HINT: &str = "! runs it here, then sends the output to the model: a turn starts";
+
 /// The input with the cursor drawn in at its position.
 fn with_cursor(v: &View) -> String {
     let at = v.cursor.min(v.input.len());
@@ -2486,7 +2592,7 @@ pub fn composer_height(v: &View, outer_width: u16) -> u16 {
     }
     let room = (outer_width as usize).saturating_sub(2 + 4).max(1);
     let rows: usize = with_cursor(v).split('\n').map(|l| l.width().div_ceil(room).max(1)).sum();
-    rows.clamp(1, COMPOSER_MAX_ROWS) as u16 + 2 + u16::from(!v.hints.is_empty() || v.toast.is_some())
+    rows.clamp(1, COMPOSER_MAX_ROWS) as u16 + 2 + u16::from(!v.hints.is_empty() || v.toast.is_some() || v.input.starts_with('!'))
 }
 
 /// Left and right content on one row.
@@ -2944,6 +3050,51 @@ mod tests {
         v.hover_call = Some(first + 2);
         let (side, _) = render(&v);
         assert!(side.contains(&format!("#{}", first + 3)) && rect.width > 10, "{side}");
+    }
+
+    #[test]
+    fn a_question_a_retry_and_a_failure_each_read_as_a_state() {
+        let mut s = Session::new("", "medium");
+        let on = |s: &mut Session, e: serde_json::Value, at: f64| s.apply(&e, at);
+        on(&mut s, serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "c1", "name": "edit", "input": {"path": "main.rs", "old": "a", "new": "b"}}]}}), 1.0);
+        let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let render = |s: &Session, v: &View| {
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30)).unwrap();
+            term.draw(|f| { draw(f, s, v); }).unwrap();
+            let buf = term.backend().buffer().clone();
+            (0..buf.area.height).map(|y| (0..120).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>()).collect::<Vec<_>>().join("\n")
+        };
+        // a permission question: the status says so without a spinner, the call is neither ticked nor spinning
+        v.asking = Some("edit: main.rs".into());
+        let th = v.design.theme();
+        assert_eq!(activity(&s, &v, th), ("●", "needs you".to_string(), th.warn));
+        let screen = render(&s, &v);
+        assert!(screen.contains("? edit") && screen.contains("y yes") && screen.contains("edit ×1   …") && !screen.contains("✓"), "{screen}");
+        // a refused call: one block that counts down, its raw text only when opened
+        v.asking = None;
+        on(&mut s, serde_json::json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "content": "ok"}]}}), 2.0);
+        for (at, wait) in [(1000.0, 2), (3000.0, 8)] {
+            on(&mut s, serde_json::json!({"type": "system", "subtype": "call_retry", "message": format!("HTTP 429: Rate limit reached (rate_limit_error) · trying again in {wait}s")}), at);
+        }
+        v.clock_ms = 5000.0;
+        assert_eq!(activity(&s, &v, th), (spinner(5000.0), "retrying in 6 s".to_string(), th.err));
+        let screen = render(&s, &v);
+        assert!(screen.contains("! the provider is rate limiting this model  try 2 failed") && screen.contains("trying again in 6 s · esc stops"), "{screen}");
+        assert!(!screen.contains("Rate limit reached") && screen.contains("edit ×1   ✓"), "{screen}");
+        v.expand_all = true;
+        assert!(render(&s, &v).contains("HTTP 429: Rate limit reached (rate_limit_error)"), "opened: the provider's own words");
+        // the last try fails: the block and the status say failed
+        on(&mut s, serde_json::json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "[provider error: HTTP 429: Rate limit reached (rate_limit_error)]"}), 9000.0);
+        assert_eq!(activity(&s, &v, th), ("✗", "failed".to_string(), th.err));
+        assert!(render(&s, &v).contains("gave up after 3 tries"));
+    }
+
+    #[test]
+    fn colours_fall_back_to_the_256() {
+        // the palette's three backgrounds stay apart as greys, the accent stays a blue of the cube
+        let idx = |c: Color| if let Color::Rgb(r, g, b) = c { to_256(r, g, b) } else { 0 };
+        assert_eq!([DARK.bg, DARK.surface, DARK.field, DARK.border].map(idx), [233, 234, 235, 237]);
+        assert_eq!((idx(DARK.accent), to_256(0, 0, 0), to_256(255, 255, 255), to_256(255, 0, 0)), (105, 16, 231, 196));
     }
 
     #[test]

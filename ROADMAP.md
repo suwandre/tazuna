@@ -302,6 +302,12 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-19: one palette for the terminal and the window. The four terminal designs each had their own colours
+  (navy and cyan, teal and violet, grey and pink, neon magenta), none the window's paper and indigo; a review against
+  the other harnesses' terminals (opencode, Claude Code, Codex) found that the least finished part. All four now draw
+  from desktop/DESIGN.md's tokens (dark by default, `--theme light`, 256 colours where the terminal does not say it has
+  more) and differ in arrangement only; DESIGN.md's colour rules hold in the terminal too (one accent, ok and bad for
+  results, warn for limits). Terminal 0.1.185, with the review's other fixes; the window's are desktop 0.1.87.
 - 2026-11-17: OmniRoute (a gateway the user runs on their machine) joins the providers with every route it offers,
   its Claude Code subscription route included: the user chooses between Claude through it and Claude through the CLI.
   tazuna's own rule stands for tazuna's own code (Claude only through the official `claude` CLI, no copied headers, no

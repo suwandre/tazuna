@@ -16,6 +16,31 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.185 (2026-11-19): one palette with the window, and states that say what they are
+
+From design review 8, against the other harnesses' terminals (opencode, Claude Code, Codex).
+
+- One palette. The four designs each had their own colours (navy and cyan, teal and violet, grey and pink, neon magenta);
+  all four now draw from the desktop app's tokens (desktop/DESIGN.md: warm near-black, one indigo accent, ok and bad for
+  results, warn for limits) and differ in arrangement only. Inline code is ink on a quiet field, not the accent on every
+  name. `--theme light` for a light terminal; 256 colours where the terminal does not say it has more (`COLORTERM`).
+- Waiting for your answer is a state: the header and the session panel say "needs you" in the warn colour with no
+  spinner (they said "thinking"), the choices are the brightest text on the line (they were the dimmest), the call asked
+  about shows "?" and is not ticked until it has run. Zen drew no question at all; it does now.
+- A command that fails shows a red ✗ and its exit code in the transcript, the tools panel and the calls list. On the own
+  loop it had the same green tick as a success: the tool server says a failure only in the result's last line, and the
+  display now reads it there (what the model receives is unchanged).
+- A provider error is one block that updates in place: what failed in words, the try, the wait counting down, "esc
+  stops", the provider's own text on expand; the status says "retrying in 3 s", then "failed". It was a dim line per
+  retry, each cut at "(+198 chars)", under a status that said "thinking".
+- `!cmd` says what it does: `/keys`, `/help`, the README and a hint row while the line starts with `!` say that the
+  output goes to the model and starts a turn (it read as "run cmd in the shell"), and the output shows once (it showed
+  twice).
+- For the desktop app's message box (desktop 0.1.87): the core answers `complete` with the commands a sent message runs,
+  each with what it does, and the repository's files.
+- No metric moves: drawing, wording and one read-only answer to the window. Not rendered: the claude CLI path of the ✗
+  and of "needs you" (shared code), the light theme and 256 colours in three of the four designs.
+
 ## 0.1.184 (2026-11-19): /keys, /mcp and /model read as panels
 
 From design review 7.

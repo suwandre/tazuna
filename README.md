@@ -154,8 +154,9 @@ UI: 190 MB, 0.45 s to start (2026-10-08). A whole agent run: 21-22 MB on the own
   enough. Servers that need a login get one in the browser, as tazuna itself; on Claude your claude.ai connectors come
   along. The list is `~/.config/tazuna/mcp.json`, in Claude Code's format.
 - **A terminal UI that stays small.** Four designs (`ctrl-t`, remembered; cockpit shows context, cache, cost, tools and
-  files as they change), click and drag in the message box, `@` for files, images with `ctrl-v`, `!cmd` for the shell,
-  `/diff`, `/rewind`, `/resume`, and permission modes on `shift-tab` (auto, ask, edits, plan).
+  files as they change), click and drag in the message box, `@` for files, images with `ctrl-v`, `!cmd` to run a
+  command and send its output to the model, `/diff`, `/rewind`, `/resume`, and permission modes on `shift-tab` (auto,
+  ask, edits, plan).
 - **Recordings.** Every session is saved to `~/.local/share/tazuna/sessions/` and replays like a video:
   `tazuna <file>.jsonl`.
 - **And:** `/loop` builds the open items of a `TODO.md` one by one, `/jira ABC-123` puts a ticket in the message without

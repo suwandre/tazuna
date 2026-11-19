@@ -14,6 +14,21 @@ pub enum Block {
     Notice { text: String, error: bool },
     /// tazuna running the tests after claude said it was done.
     Verify(Verify),
+    /// A model call the provider refused, tried again by the own loop: one block for all its tries. Each try was a
+    /// notice line of its own, cut mid-sentence, under a status that still said "thinking" (design review, 2026-11-19).
+    Retry(Retry),
+}
+
+pub struct Retry {
+    /// What failed, in words; `raw`: the provider's own text, shown when the block is opened.
+    pub why: String,
+    pub raw: String,
+    /// Tries that failed so far.
+    pub tries: u32,
+    /// When the next try starts (ms into the session); None once the retrying is over.
+    pub next_ms: Option<f64>,
+    /// The last try failed as well: the run ended on this error.
+    pub gave_up: bool,
 }
 
 pub struct Verify {
@@ -197,6 +212,8 @@ pub struct Session {
     first_token: Option<f64>,
     /// The own loop's provider is sending keep-alive comments and no output yet (cleared when the call answers or ends).
     pub waiting_note: Option<String>,
+    /// The retry block of the call being tried again now (its place in `blocks`); None once it answered or the run ended.
+    retry: Option<usize>,
     /// Each subagent's own messages, by the call that started it: ctrl-b opens one as a conversation of its own.
     pub sub_events: std::collections::HashMap<String, Vec<(f64, Value)>>,
     call_est: f64,
@@ -273,6 +290,10 @@ pub fn last_limits(dir: &std::path::Path) -> Option<(f64, f64, u64, Option<u64>)
     None
 }
 
+/// tazuna's own slash commands, beside claude's in a session's list. Most are the terminal's (panels, switches): the
+/// window lists only the ones a sent message runs (main.rs, "complete").
+pub const OWN_COMMANDS: [&str; 28] = ["agent", "good", "bad", "boss", "changelog", "chat", "create", "data", "diff", "effort", "explorer", "hook", "jira", "keys", "login", "loop", "mcp", "model", "new", "preset", "profile", "resume", "review", "route", "verify", "rewind", "usage", "vim"];
+
 impl Session {
     pub fn new(prompt: &str, effort: &str) -> Self {
         Session {
@@ -312,6 +333,7 @@ impl Session {
             first_token: None,
             sub_events: Default::default(),
             waiting_note: None,
+            retry: None,
             call_est: 0.0,
             call_deltas: 0,
             call_thinking: vec![],
@@ -424,6 +446,9 @@ impl Session {
             Block::Done(d) => json!({"kind": "done", "ok": d.ok, "secs": d.secs, "turns": d.turns, "cost": d.cost, "usage": usage(&d.usage), "stopped": d.stopped,
                 "run_cost": d.run_cost, "run_usage": usage(&d.run_usage)}),
             Block::Notice { text, error } => json!({"kind": "notice", "text": text, "error": error}),
+            // the app has no block of its own for it: a notice, an error once the run ended on it
+            Block::Retry(r) => json!({"kind": "notice", "error": r.gave_up, "text": format!("{}: {} {} failed{} ({})", r.why, r.tries,
+                if r.tries == 1 { "try" } else { "tries" }, if r.next_ms.is_some() { ", trying again" } else { "" }, r.raw)}),
             Block::Verify(v) => json!({"kind": "verify", "cmd": v.cmd, "ok": v.ok, "secs": v.secs, "round": v.round, "no_tests": v.no_tests,
                 "timed_out": v.timed_out, "output": cut(&v.output, 4000)}),
         }).collect();
@@ -469,7 +494,23 @@ impl Session {
 
     fn push(&mut self, b: Block) {
         self.end_live();
+        self.end_retry();
         self.push_aside(b);
+    }
+
+    /// The call that was tried again answered, or the run ended: its block stops counting down.
+    fn end_retry(&mut self) {
+        if let Some(Block::Retry(r)) = self.retry.take().and_then(|i| self.blocks.get_mut(i)) {
+            r.next_ms = None;
+        }
+    }
+
+    /// Seconds until the own loop tries a refused model call again; None while no call is being retried.
+    pub fn retry_in(&self, now_ms: f64) -> Option<f64> {
+        match self.retry.and_then(|i| self.blocks.get(i)) {
+            Some(Block::Retry(r)) => r.next_ms.map(|t| ((t - now_ms) / 1000.0).max(0.0)),
+            _ => None,
+        }
     }
 
     /// A block beside the model's stream (tazuna's own notices: "copied 12 chars", a hint): the text or thinking being
@@ -522,7 +563,7 @@ impl Session {
                 self.price_m = e["price_per_m"].as_array().filter(|p| p.len() == 3).map(|p| (p[0].as_f64().unwrap_or(0.0), p[1].as_f64().unwrap_or(0.0), p[2].as_f64().unwrap_or(0.0)));
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
-                cmds.extend(["agent", "good", "bad", "boss", "changelog", "chat", "create", "data", "diff", "effort", "explorer", "hook", "jira", "keys", "login", "loop", "mcp", "model", "new", "preset", "profile", "resume", "review", "route", "verify", "rewind", "usage", "vim"].map(String::from));
+                cmds.extend(OWN_COMMANDS.map(String::from));
                 cmds.sort();
                 cmds.dedup();
                 self.commands = cmds;
@@ -541,12 +582,25 @@ impl Session {
             (Some("system"), Some("compact_boundary")) => {
                 self.push(Block::Notice { text: "── context compacted: earlier turns are now a summary ──".into(), error: false });
             }
+            // a refused call that is tried again ("HTTP 429: … · trying again in 8s"): the block of the call's earlier
+            // tries is updated, a first try starts one
+            (Some("system"), Some("call_retry")) if e["message"].is_string() => {
+                let msg = s(&e["message"]);
+                let (raw, secs) = msg.rsplit_once(" · trying again in ").map_or((msg.as_str(), 0.0), |(w, t)| (w, t.trim_end_matches('s').parse().unwrap_or(0.0)));
+                let (why, raw, next_ms) = (retry_words(raw), shown(raw, 4000), Some(at_ms + secs * 1000.0));
+                match self.retry.and_then(|i| self.blocks.get_mut(i)) {
+                    Some(Block::Retry(r)) => (r.why, r.raw, r.next_ms, r.tries) = (why, raw, next_ms, r.tries + 1),
+                    _ => {
+                        self.push(Block::Retry(Retry { why, raw, tries: 1, next_ms, gave_up: false }));
+                        self.retry = Some(self.blocks.len() - 1);
+                    }
+                }
+            }
             // the own loop's provider events: shown, not only in the session file (a pool that went down and a conversation
             // that moved were invisible until a run looked stuck, 2026-10-28)
             (Some("system"), Some(sub)) if e["message"].is_string() => {
                 let what = match sub {
                     "route_switch" => "route",
-                    "call_retry" => "provider",
                     "group_switch" => "provider group",
                     "conversation_moved" => "conversation moved to another pool, without its reasoning",
                     "thinking_dropped" => "the provider refused the thinking: sent again without it",
@@ -755,8 +809,11 @@ impl Session {
                     let error = c["is_error"].as_bool().unwrap_or(false);
                     self.ready_at = Some(at_ms);
                     if let Some(t) = self.tool_mut(&s(&c["tool_use_id"])) {
+                        // a command that ran and failed is a failure on screen too: the lean tool server reports it as
+                        // text alone ("[exit 1]", which every provider's model reads the same), and the step was ticked
+                        // green (design review, 2026-11-19)
+                        t.error = error || (t.name.to_lowercase().ends_with("bash") && exit_line(&text).is_some());
                         t.result = Some(text);
-                        t.error = error;
                         t.done_ms = Some(at_ms);
                         self.finished_tools += 1;
                     }
@@ -811,7 +868,11 @@ impl Session {
                 // filter refused a question, 2026-11-05)
                 if !ok && !stopped {
                     if let Some(why) = e["result"].as_str().filter(|r| !r.trim().is_empty()) {
-                        self.push(Block::Notice { text: failure_reason(why), error: true });
+                        // the call that was being tried again failed for good: its block says so, not a second one
+                        match self.retry.and_then(|i| self.blocks.get_mut(i)) {
+                            Some(Block::Retry(r)) => (r.why, r.raw, r.tries, r.gave_up) = (failure_reason(why), shown(why, 4000), r.tries + 1, true),
+                            _ => self.push(Block::Notice { text: failure_reason(why), error: true }),
+                        }
                     }
                 }
                 let (cost, usage) = (self.cost(), self.usage);
@@ -1034,6 +1095,23 @@ pub fn failure_reason(result: &str) -> String {
     }
 }
 
+/// What a refused model call that is tried again says: the usual refusals in words, else the provider's own.
+fn retry_words(why: &str) -> String {
+    let status = why.split("HTTP ").nth(1).and_then(|r| r.get(..3)).and_then(|c| c.parse::<u16>().ok());
+    match status {
+        Some(429) => "the provider is rate limiting this model".into(),
+        Some(c @ 500..) => format!("the provider failed (HTTP {c})"),
+        _ if why.contains("timeout") || why.contains("timed out") => "the provider did not answer in time".into(),
+        _ => failure_reason(why),
+    }
+}
+
+/// The last line of a command's output when it says the command failed: "[exit 1]", "[timed out after 120s; …]" (the
+/// lean tool server ends a failed command's output with one).
+pub fn exit_line(output: &str) -> Option<&str> {
+    output.trim_end().lines().last().filter(|l| l.starts_with("[exit ") || l.starts_with("[timed out after "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1097,21 +1175,43 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_command_and_a_call_given_up_read_as_failures() {
+        let mut s = Session::new("", "medium");
+        let run = |s: &mut Session, id: &str, out: &str| {
+            s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id, "name": "bash", "input": {"command": "x"}}]}}), 1.0);
+            s.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id, "content": out, "is_error": false}]}}), 2.0);
+        };
+        run(&mut s, "c1", "cat: nope.txt: No such file or directory\n\n[exit 1]");
+        run(&mut s, "c2", "the log says [exit 1] somewhere\nok");
+        let errors: Vec<bool> = s.blocks.iter().filter_map(|b| if let Block::Tool(t) = b { Some(t.error) } else { None }).collect();
+        assert_eq!(errors, [true, false], "the exit code on the output's last line decides");
+        // the last try fails too: the retry block carries the end, no second error under it
+        s.apply(&json!({"type": "system", "subtype": "call_retry", "message": "HTTP 503: down · trying again in 2s"}), 3.0);
+        s.apply(&json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "[provider error: HTTP 503: down]"}), 4.0);
+        let n = s.blocks.len();
+        let (Block::Retry(r), Block::Done(d)) = (&s.blocks[n - 2], &s.blocks[n - 1]) else { panic!() };
+        assert!(r.gave_up && r.tries == 2 && r.next_ms.is_none() && !d.ok, "{} {}", r.why, r.tries);
+    }
+
+    #[test]
     fn shows_the_own_loops_provider_events() {
         let mut s = Session::new("", "medium");
         s.apply(&json!({"type": "system", "subtype": "conversation_moved", "message": "responses_source_unavailable"}), 1.0);
         let Block::Notice { text, .. } = s.blocks.last().unwrap() else { panic!() };
         assert_eq!(text, "conversation moved to another pool, without its reasoning · responses_source_unavailable");
-        // a call tried again is said, not hidden behind "waiting for first token"
+        // a call tried again is said, not hidden behind "waiting for first token": one block for all its tries
         s.apply(&json!({"type": "system", "subtype": "call_retry", "message": "HTTP 429: busy · trying again in 30s"}), 1.5);
-        let Block::Notice { text, .. } = s.blocks.last().unwrap() else { panic!() };
-        assert_eq!(text, "provider · HTTP 429: busy · trying again in 30s");
+        s.apply(&json!({"type": "system", "subtype": "call_retry", "message": "HTTP 429: busy · trying again in 60s"}), 2000.0);
+        let Block::Retry(r) = s.blocks.last().unwrap() else { panic!() };
+        assert_eq!((r.why.as_str(), r.raw.as_str(), r.tries, r.next_ms), ("the provider is rate limiting this model", "HTTP 429: busy", 2, Some(62_000.0)));
+        assert_eq!(s.retry_in(52_000.0), Some(10.0));
         let n = s.blocks.len();
         s.apply(&json!({"type": "system", "subtype": "hook_response", "message": "x"}), 2.0);
         assert_eq!(s.blocks.len(), n, "other system events stay out of the transcript");
         // the own loop sends whole messages, no content blocks: its text and tool calls are drawn from them, once
         s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 3.0);
         s.apply(&json!({"type": "reasoning", "text": "Ambiguous; likely run the tests."}), 3.5);
+        assert_eq!(s.retry_in(4.0), None, "the call answered: no retry is going on");
         s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "I'll run the tests."},
             {"type": "tool_use", "id": "c1", "name": "bash", "input": {"command": "cargo test"}}]}}), 4.0);
         s.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "content": "94 passed"}]}}), 5.0);

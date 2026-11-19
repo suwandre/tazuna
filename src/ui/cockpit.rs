@@ -35,7 +35,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let (glyph, label, color) = activity(s, v, th);
 
     let left = Line::from(vec![
-        Span::styled(" ▣ TAZUNA ", Style::new().fg(th.bg).bg(th.accent).add_modifier(Modifier::BOLD)),
+        Span::styled(" ▣ TAZUNA ", Style::new().fg(th.text).bg(th.field).add_modifier(Modifier::BOLD)),
         Span::styled(" cockpit", st(th.faint)),
     ]);
     // a terminal under 110 columns (80x24, macOS Terminal's own size) has no room for the instrument column: the
@@ -45,10 +45,10 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         Span::styled(format!("{glyph} {label}"), st(color)),
         Span::styled("   ", st(th.faint)),
         Span::styled(model_short(&s.model), st(th.text)),
-        Span::styled(format!("  {} ", s.effort), st(th.warn)),
+        Span::styled(format!("  {} ", s.effort), st(th.dim)),
     ];
     if narrow {
-        right.splice(1..1, [Span::styled("   ", st(th.faint)), Span::styled(cost_str(s), st(th.ok))]);
+        right.splice(1..1, [Span::styled("   ", st(th.faint)), Span::styled(cost_str(s), st(th.ink2))]);
     }
     split_row(f, header, left, Line::from(right), Some(th.surface));
 
@@ -113,14 +113,14 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     // the session's share, and the last call's (what Claude Code's cache meters show: one call after a short exchange
     // reads ~99%, the whole session less, since every call writes what is new once)
     let last = s.last_call_hit().map_or(String::new(), |h| format!(" · last {:.0}%", h * 100.0));
-    gauge(f, g2, s.usage.cache_hit(), &format!("{:<12}{} {:.0}%{last}", "cache read", human(s.usage.cache_read), s.usage.cache_hit() * 100.0), if misses == 0 { th.ok } else { th.warn }, th);
+    gauge(f, g2, s.usage.cache_hit(), &format!("{:<12}{} {:.0}%{last}", "cache read", human(s.usage.cache_read), s.usage.cache_hit() * 100.0), if misses == 0 { th.accent } else { th.warn }, th);
     f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!("{:<12}", "cache write"), st(th.text)), Span::styled(human(s.usage.cache_write), st(th.text)), Span::styled(miss, st(th.warn))])), g3);
     // how long the cache stays warm: after that the next call writes the whole context again
     if let (Some(left), Some(ttl)) = (s.cache_left(v.clock_ms), s.cache_ttl_ms) {
         let life = if ttl >= 3_600_000.0 { "1h" } else { "5m" };
         // expired: what the next message costs, before it is sent (Session::rebuild)
         let cold = s.rebuild().map_or(String::new(), |(t, _)| format!(" · next re-reads {}", human(t)));
-        let (text, color) = if left > 0.0 { (format!("{} of {life}", clock_str(left)), th.ok) } else { (format!("expired ({life}){cold}"), th.warn) };
+        let (text, color) = if left > 0.0 { (format!("{} of {life}", clock_str(left)), th.dim) } else { (format!("expired ({life}){cold}"), th.warn) };
         f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!("{:<12}", "cache life"), st(th.text)), Span::styled(text, st(color))])), g4);
     }
 
@@ -203,9 +203,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         f.render_widget(Paragraph::new(Line::from(pace_line)), pace);
         let bars = data[first..].iter().enumerate().map(|(k, &n)| {
             let b = SparklineBar::from(n);
-            if v.hover_call == Some(first + k) { b.style(Some(st(th.warn))) } else { b }
+            if v.hover_call == Some(first + k) { b.style(Some(st(th.text))) } else { b }
         });
-        f.render_widget(Sparkline::default().data(bars).max(top.max(1)).style(st(th.accent2)), spark);
+        f.render_widget(Sparkline::default().data(bars).max(top.max(1)).style(st(th.dim)), spark);
         bars_at = Some((spark, first));
     }
 
@@ -216,16 +216,16 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let per_turn = if s.turns > 0 { s.cost() / s.turns as f64 } else { 0.0 };
     f.render_widget(
         Paragraph::new(vec![
-            Line::from(vec![Span::styled(cost_str(s), st(th.ok).add_modifier(Modifier::BOLD)), Span::styled(format!("   {}/turn", usd(per_turn)), st(th.dim))]),
+            Line::from(vec![Span::styled(cost_str(s), st(th.text).add_modifier(Modifier::BOLD)), Span::styled(format!("   {}/turn", usd(per_turn)), st(th.dim))]),
             // the plan's windows and SubRouter's balance on lines of their own: on one line the sidebar cut the balance
             // to "$8" (2026-11-02)
             // each account named in its own colour, its numbers beside it
             match plan_spans(s, th) {
-                Some(plan) => Line::from([vec![Span::styled("Claude ", st(th.warn).add_modifier(Modifier::BOLD))], plan].concat()),
+                Some(plan) => Line::from([vec![Span::styled("Claude ", st(th.ink2).add_modifier(Modifier::BOLD))], plan].concat()),
                 None => Line::from(Span::styled(if s.exact_cost.is_some() { "exact (reported)" } else { "estimate (list prices)" }, st(th.faint))),
             },
             match balance_str(s) {
-                Some(b) => Line::from(vec![Span::styled("SubRouter", st(th.accent2).add_modifier(Modifier::BOLD)), Span::styled(b.trim_start_matches("SubRouter").to_string(), st(th.dim))]),
+                Some(b) => Line::from(vec![Span::styled("SubRouter", st(th.ink2).add_modifier(Modifier::BOLD)), Span::styled(b.trim_start_matches("SubRouter").to_string(), st(th.dim))]),
                 None => Line::default(),
             },
         ]),
@@ -244,12 +244,17 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let mut rows: Vec<Line> = tools
         .iter()
         .enumerate()
-        .map(|(i, (n, c, err, secs))| {
+        .map(|(i, (n, c, err, secs, open))| {
             let name: String = if n.width() > nw { format!("{}…", n.chars().take(nw - 1).collect::<String>()) } else { n.clone() };
             Line::from(vec![
-                Span::styled(format!("{name:<nw$} "), st(th.accent2).add_modifier(Modifier::BOLD)),
+                Span::styled(format!("{name:<nw$} "), st(th.ink2).add_modifier(Modifier::BOLD)),
                 Span::styled(format!("×{c:<3}"), st(th.text)),
-                Span::styled(if *err > 0 { format!(" ✗{err:<2}") } else { " ✓  ".into() }, st(if *err > 0 { th.err } else { th.ok })),
+                // ticked once every call has run: a call still running, or waiting for a yes, showed "✓" already
+                match (*err, *open) {
+                    (1.., _) => Span::styled(format!(" ✗{err:<2}"), st(th.err)),
+                    (0, 1..) => Span::styled(" …  ", st(th.faint)),
+                    (0, 0) => Span::styled(" ✓  ", st(th.ok)),
+                },
                 // the total and the average a call (a user asked for both: 14 Agent calls at 1842 s said little alone)
                 Span::styled(format!("{:>6}", dur(*secs)), st(th.faint)),
                 Span::styled(format!(" ⌀{}", dur(secs / *c.max(&1) as f64)), st(th.dim)),
@@ -314,22 +319,23 @@ fn gauge(f: &mut Frame, area: Rect, ratio: f64, label: &str, color: Color, th: &
     );
 }
 
-/// (tool, calls, failures, total seconds), in first-use order.
-fn tool_tally(s: &Session) -> Vec<(String, usize, usize, f64)> {
-    let mut out: Vec<(String, usize, usize, f64)> = Vec::new();
+/// (tool, calls, failures, total seconds, calls without a result yet), in first-use order.
+fn tool_tally(s: &Session) -> Vec<(String, usize, usize, f64, usize)> {
+    let mut out: Vec<(String, usize, usize, f64, usize)> = Vec::new();
     for b in &s.blocks {
         let Block::Tool(t) = b else { continue };
         let n = super::plain(short_name(&t.name));
         let i = match out.iter().position(|r| r.0 == n) {
             Some(i) => i,
             None => {
-                out.push((n, 0, 0, 0.0));
+                out.push((n, 0, 0, 0.0, 0));
                 out.len() - 1
             }
         };
         out[i].1 += 1;
         out[i].2 += t.error as usize;
         out[i].3 += t.secs().unwrap_or(0.0);
+        out[i].4 += t.result.is_none() as usize;
     }
     out
 }

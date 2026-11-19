@@ -4,6 +4,8 @@
 //!          (without --model/--effort the router picks: tiny repos Sonnet medium, escalating to Opus high if tests
 //!          fail; otherwise Opus medium)
 //!          [--verify "<cmd>" | --no-verify]   # after claude says done, tazuna runs the tests (auto-detected by default)
+//!          [--theme light|dark]   # the screen's palette (default dark); a terminal that does not announce 24-bit
+//!                                 # colour (COLORTERM) gets the nearest of the 256
 //!          [--bash-cap N]   # shrink bash output longer than N chars (default 8000; 0 = off)
 //!          [--no-diagnostics]  # do not tell claude about type/compile errors right after its edits
 //!          [--self-review]  # finish rules in the prompt, and one self-review turn before verification
@@ -140,6 +142,8 @@ struct Args {
     snapshot: Option<usize>,
     size: (u16, u16),
     design: Design,
+    /// `--theme light`: the light palette (the dark one is the default).
+    light: bool,
     /// None: the router decides.
     model: Option<String>,
     effort: Option<String>,
@@ -272,6 +276,7 @@ fn parse(argv: Vec<String>) -> Result<Args> {
         snapshot: None,
         size: (110, 36),
         design: Design::saved(),
+        light: false,
         model: None,
         effort: None,
         allow_non_git: false,
@@ -330,6 +335,11 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--raw-timing" => a.raw_timing = true,
             "--snapshot" => a.snapshot = Some(val()?.parse()?),
             "--design" => a.design = Design::from_number(val()?.parse()?).context("--design 1-4")?,
+            "--theme" => a.light = match val()?.as_str() {
+                "light" => true,
+                "dark" => false,
+                t => bail!("--theme light|dark, not {t}"),
+            },
             "--model" => a.model = Some(val()?),
             "--effort" => a.effort = Some(val()?),
             "--allow-non-git" => a.allow_non_git = true,
@@ -587,6 +597,7 @@ fn main() -> Result<()> {
     if let Some(n) = a.log {
         return runlog::print_recent(&base, n);
     }
+    ui::setup_colors(a.light);
     match (&a.path, a.snapshot) {
         (Some(p), Some(n)) => snapshot(Replay::load(p, a.raw_timing)?, n, a.size, a.design),
         (Some(p), None) => {
@@ -1159,9 +1170,9 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 46] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+        const OPS: [&str; 47] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
             "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
-            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get", "accounts"];
+            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get", "accounts", "complete"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1500,6 +1511,18 @@ fn app_server(a: &Args) -> Result<()> {
                             let note = cmd["after_turn"].as_str().and_then(|c| hooks::set_after_turn(&cwd, c).err()).map(|e| format!("{e:#}")).unwrap_or_default();
                             let mut o = out.lock();
                             let _ = writeln!(o, "{}", json!({"type": "hook", "cwd": cwd, "after_turn": hooks::after_turn(&cwd), "note": note}));
+                            let _ = o.flush();
+                        }
+                        // what `/` and `@` complete to in the window's message box: the commands a sent message runs with
+                        // what each does, as the terminal's menu (claude's and the user's own; of tazuna's own only /agent
+                        // and /create, the rest are the terminal's panels and switches), and the repo's files (tracked, and new ones
+                        // git does not ignore: a file the agent just made is one you ask about)
+                        Some("complete") => {
+                            let cmds: Vec<String> = s.commands.iter().filter(|c| !session::OWN_COMMANDS.contains(&c.as_str()) || matches!(c.as_str(), "agent" | "create")).cloned().collect();
+                            let files: Vec<String> = std::process::Command::new("git").args(["ls-files", "-co", "--exclude-standard"]).current_dir(&cwd).output()
+                                .map(|o| String::from_utf8_lossy(&o.stdout).lines().take(20_000).map(String::from).collect()).unwrap_or_default();
+                            let mut o = out.lock();
+                            let _ = writeln!(o, "{}", json!({"type": "complete", "commands": editor::command_menu("", &cmds, &live.my_commands()), "files": files}));
                             let _ = o.flush();
                         }
                         Some("tazuna_chat_event") => {
@@ -2064,6 +2087,7 @@ impl Fx {
         }
         let area = f.area();
         self.mgr.process_effects(dt.into(), f.buffer_mut(), area);
+        ui::fit_colors(f.buffer_mut());
         areas
     }
 }
@@ -2360,12 +2384,22 @@ fn info_panel(title: &str, rows: Vec<(String, ui::Tone)>) -> ui::ListPanel {
         scroll: 0, link_from: 0, hscroll: 0, open: Default::default() }
 }
 
+/// `!cmd`: runs it in the current folder and returns the message that hands the command and its output to the model.
+// ponytail: blocks the UI while it runs; fine for git status/ls, a thread when long commands matter
+#[inline(never)]
+fn shell_message(cmd: &str) -> Result<String> {
+    let (code, out, _) = verify::run_raw(&std::env::current_dir()?, cmd);
+    let out: String = out.chars().take(8000).collect();
+    let code = code.map_or("timeout".into(), |c| c.to_string());
+    Ok(format!("I ran `{cmd}` myself (exit {code}). Output:\n```\n{}\n```", out.trim_end()))
+}
+
 /// /keys (and /help): every key and command, in parts.
 fn keys_rows() -> Vec<(String, ui::Tone)> {
     use ui::Tone::{Head, Plain, Rule};
     let parts: [(&str, &[(&str, &str)]); 3] = [
         ("Writing", &[("enter", "send"), ("\\⏎ or ctrl-j", "a new line"), ("tab", "complete a /command or an @file"), ("@", "a file of this folder"),
-            ("!cmd", "run cmd in the shell"), ("ctrl-v", "paste an image"), ("ctrl-g", "write the message in your editor"), ("ctrl-x", "put the message aside, or back"),
+            ("!cmd", "run cmd here, then send its output to the model (a turn starts)"), ("ctrl-v", "paste an image"), ("ctrl-g", "write the message in your editor"), ("ctrl-x", "put the message aside, or back"),
             ("↑ ↓", "your earlier messages"), ("shift-tab", "the next permission mode")]),
         ("While it works", &[("esc", "stop"), ("ctrl-b", "the tasks running in the background")]),
         ("The screen", &[("ctrl-t", "the next design"), ("ctrl-o", "open or fold every step"), ("ctrl-l", "draw the screen again"), ("drag", "select and copy"),
@@ -4327,25 +4361,21 @@ fn run_live(
                         }
                     }
                 }
-                // `!cmd`: run it here, show the output, and hand both to claude (like Claude Code's shell mode)
-                // only what the user typed may attach image files; command output and tickets never do
-                let typed = !text.starts_with('!') && !jira;
-                let text = match text.strip_prefix('!') {
-                    Some(cmd) => {
-                        // ponytail: blocks the UI while it runs; fine for git status/ls, a thread when long commands matter
-                        let (code, out, _) = verify::run_raw(&std::env::current_dir()?, cmd.trim());
-                        let out: String = out.chars().take(8000).collect();
-                        let code = code.map_or("timeout".into(), |c| c.to_string());
-                        s.apply(&json!({"type": "harness_info", "text": format!("$ {} (exit {code})\n{out}", cmd.trim())}), live.elapsed_ms());
-                        format!("I ran `{}` myself (exit {code}). Output:\n```\n{out}\n```", cmd.trim())
-                    }
-                    None => text,
-                };
                 normal = false; // the next message starts in insert mode
+                // before `!cmd` runs: its output is a message to the model, which must be one the code may go to
                 if let Some(why) = untrusted_in_use(live) {
                     s.apply(&json!({"type": "harness_notice", "text": why, "error": true}), live.elapsed_ms());
                     continue;
                 }
+                // `!cmd`: run it here and hand the command and its output to the model as your message (like Claude Code's
+                // shell mode). The message is where the output shows: a notice above it repeated the whole of it, flattened
+                // to one cut line (design review, 2026-11-19).
+                // only what the user typed may attach image files; command output and tickets never do
+                let typed = !text.starts_with('!') && !jira;
+                let text = match text.strip_prefix('!') {
+                    Some(cmd) => shell_message(cmd.trim())?,
+                    None => text,
+                };
                 // `/agent TEXT`: to the agent, past the router
                 let (text, forced) = match text.strip_prefix("/agent ") {
                     Some(rest) => (rest.trim().to_string(), true),

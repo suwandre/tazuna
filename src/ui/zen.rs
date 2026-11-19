@@ -1,4 +1,4 @@
-//! Zen: a centered, borderless column in a warm muted palette. Tool runs fold into one line; numbers stay in one quiet row.
+//! Zen: a centered, borderless column. Tool runs fold into one line; numbers stay in one quiet row.
 
 use super::*;
 use ratatui::layout::{Constraint, Layout};
@@ -28,7 +28,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         // zen's narrow column: time, cost and the plan; the token totals are in the other designs and the run summary
         Span::styled(times_str(s, v), st(th.dim)),
         dot(),
-        Span::styled(cost_str(s), st(th.accent)),
+        Span::styled(cost_str(s), st(th.ink2)),
     ]);
     split_row(f, top, Line::from(Span::styled("tazuna", st(th.faint).add_modifier(Modifier::ITALIC))), right, None);
     // the plan's windows and SubRouter's balance under it: on the one row they ran past the 92-column column
@@ -44,7 +44,10 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
 
     f.render_widget(Paragraph::new(Span::styled("─".repeat(rule.width as usize), st(th.border))), rule);
     let (glyph, label, color) = activity(s, v, th);
-    let left = if v.live && !v.input.is_empty() {
+    // a permission question takes the row, as in the other designs' message box (zen drew none: the run just stood still)
+    let left = if v.asking.is_some() {
+        composer_rows(v, th, "›", "", input.width.saturating_sub(12)).remove(0) // less the status on the right
+    } else if v.live && !v.input.is_empty() {
         composer_line(v, th, "›", "", input.width / 2)
     } else {
         Line::from(vec![Span::styled("› ", st(th.accent)), Span::styled("say something…", st(th.faint).add_modifier(Modifier::ITALIC))])

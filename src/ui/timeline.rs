@@ -1,4 +1,4 @@
-//! Timeline: neon on black. Every step on a time gutter, turn dividers with token and cost deltas, tool durations.
+//! Timeline: every step on a time gutter, turn dividers with token and cost deltas, tool durations.
 
 use super::*;
 use ratatui::{
@@ -19,9 +19,9 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             .areas(f.area());
 
     let left = Line::from(vec![
-        seg("TAZUNA".into(), th.bg, th.accent),
+        seg("TAZUNA".into(), th.text, th.border),
         seg(model_short(&s.model), th.text, th.surface),
-        seg(s.effort.to_uppercase(), th.bg, th.accent2),
+        seg(s.effort.to_uppercase(), th.dim, th.field),
     ]);
     let right = Line::from(vec![Span::styled("timeline ", st(th.faint))]);
     split_row(f, header, left, right, None);
@@ -29,7 +29,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let area = body.inner(Margin { horizontal: 1, vertical: 0 });
     let (last_block, trows, top_line) = render_transcript(f, area, transcript(s, v, th, &OPTS, area.width as usize), v.scroll);
 
-    let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.accent2).add_modifier(Modifier::DIM));
+    let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.border));
     let hint = composer_rows(v, th, "❯", "Message tazuna…", composer.width.saturating_sub(2));
     f.render_widget(Paragraph::new(hint).block(b), composer);
 
@@ -44,14 +44,14 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         seg(format!("↑{} ↓{}", human(u.total_in()), human(u.output)), th.text, th.surface),
         seg(ctx, th.text, th.border),
         seg(format!("CACHE {:.0}%", u.cache_hit() * 100.0), th.text, th.surface),
-        seg(cost_str(s), th.bg, th.ok),
+        seg(cost_str(s), th.text, th.border),
     ]);
     let mut left = left;
     if let Some((text, color)) = limits_str(s, th) {
         left.spans.push(seg(text, color, th.surface));
     }
     let play = play_str(v, "⏸");
-    let right = Line::from(vec![Span::styled(format!("{play}  "), st(th.dim)), seg(times_str(s, v), th.bg, th.accent)]);
+    let right = Line::from(vec![Span::styled(format!("{play}  "), st(th.dim)), seg(times_str(s, v), th.text, th.surface)]);
     split_row(f, status, left, right, Some(th.bg));
 
     let mut pulse = status;
