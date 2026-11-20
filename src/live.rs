@@ -324,6 +324,25 @@ fn base64(bytes: &[u8]) -> String {
     out
 }
 
+/// claude's slash commands by folder, as its last init there listed them (in the data directory).
+const CLAUDE_COMMANDS: &str = "claude-commands.json";
+
+/// The commands kept for `cwd` in `file`, if any.
+fn claude_commands(file: &std::path::Path, cwd: &str) -> Option<Vec<String>> {
+    let all: Value = serde_json::from_slice(&std::fs::read(file).ok()?).ok()?;
+    serde_json::from_value(all.get(cwd)?.clone()).ok()
+}
+
+/// Keeps `cmds` for `cwd` in `file`, beside the other folders' lists; unchanged lists are not written again.
+fn save_claude_commands(file: &std::path::Path, cwd: &str, cmds: &[String]) {
+    let mut all: Value = std::fs::read(file).ok().and_then(|b| serde_json::from_slice(&b).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}));
+    if all[cwd] == json!(cmds) {
+        return;
+    }
+    all[cwd] = json!(cmds);
+    let _ = std::fs::write(file, all.to_string());
+}
+
 /// What "always" covers: one exact command for shells (a later command can be anything), the whole tool otherwise.
 fn always_key(req: &Value) -> String {
     let tool = req["request"]["tool_name"].as_str().unwrap_or_default();
@@ -709,6 +728,21 @@ impl Live {
     /// The user's commands (behave.rs) that count here: name and what each does.
     pub fn my_commands(&self) -> Vec<(String, String)> {
         crate::behave::commands(&self.cwd, self.behave_scope()).into_iter().map(|c| (c.name, c.description)).collect()
+    }
+
+    /// The slash commands for the menu: the session's (tazuna's own, and claude's once its init came), and on Claude
+    /// before that init the ones claude's last init in this folder listed (claude-commands.json), else its common
+    /// built-in ones. Without them the window's menu held only /create and /agent before a first turn (the user,
+    /// 2026-11-20).
+    pub fn commands(&self, session: &[String]) -> Vec<String> {
+        let mut all = session.to_vec();
+        if self.provider.is_none() && session.iter().all(|c| crate::session::OWN_COMMANDS.contains(&c.as_str())) {
+            let kept = crate::labels::dir().ok().and_then(|d| claude_commands(&d.join(CLAUDE_COMMANDS), &self.cwd.to_string_lossy()));
+            all.extend(kept.unwrap_or_else(|| crate::editor::CLAUDE_COMMON.map(String::from).to_vec()));
+        }
+        all.sort();
+        all.dedup();
+        all
     }
 
     /// Whose commands and skills count (behave.rs), as claude's own settings sources would have them.
@@ -1217,6 +1251,12 @@ impl Live {
                         self.session_id = e["session_id"].as_str().map(String::from);
                         self.claude_version = e["claude_code_version"].as_str().map(String::from);
                         if self.mode != "headless" {
+                            // claude's commands and skills here, for the menu of the next conversation in this folder
+                            // before its first turn (the own loop's list is empty: nothing to keep)
+                            let cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
+                            if !cmds.is_empty() && let Ok(d) = crate::labels::dir() {
+                                save_claude_commands(&d.join(CLAUDE_COMMANDS), &self.cwd.to_string_lossy(), &cmds);
+                            }
                             let state = crate::labels::dir().map(|d| d.join("claude-version")).unwrap_or_default();
                             for text in crate::versions::notices(self.claude_version.as_deref(), e["model"].as_str(), &state, self.opened) {
                                 out.push(self.record(json!({"type": "harness_info", "text": text})));
@@ -2131,6 +2171,22 @@ mod tests {
     }
 
     #[test]
+    fn claude_commands_are_kept_by_folder() {
+        let file = std::env::temp_dir().join(format!("tazuna-cmds-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&file);
+        assert_eq!(super::claude_commands(&file, "/a"), None);
+        super::save_claude_commands(&file, "/a", &["compact".into(), "my-skill".into()]);
+        super::save_claude_commands(&file, "/b", &["init".into()]);
+        assert_eq!(super::claude_commands(&file, "/a").unwrap(), ["compact", "my-skill"]);
+        assert_eq!(super::claude_commands(&file, "/b").unwrap(), ["init"]);
+        assert_eq!(super::claude_commands(&file, "/c"), None);
+        std::fs::write(&file, "not json").unwrap();
+        super::save_claude_commands(&file, "/a", &["clear".into()]);
+        assert_eq!(super::claude_commands(&file, "/a").unwrap(), ["clear"]);
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
     fn message_ids_are_version_4_uuids() {
         let (a, b) = (super::new_uuid(), super::new_uuid());
         assert_ne!(a, b);
@@ -2217,6 +2273,20 @@ mod tests {
         assert!(starts_turn(&json!({"type": "assistant", "message": {}})));
         assert!(!starts_turn(&json!({"type": "result"})));
         assert!(!starts_turn(&json!({"type": "system", "subtype": "init"})));
+    }
+
+    #[test]
+    fn claudes_commands_come_before_its_first_turn_on_claude_only() {
+        let mut live = Live::new("", "").unwrap();
+        let own: Vec<String> = crate::session::OWN_COMMANDS.map(String::from).to_vec();
+        // on Claude before its init: claude's too (kept or common ones), "compact" among them either way
+        assert!(live.commands(&own).len() > own.len());
+        // once claude listed its own, the session's list stands
+        let listed = [own.clone(), vec!["my-skill".to_string()]].concat();
+        assert_eq!(live.commands(&listed).len(), listed.len());
+        // another provider: claude's commands do not run there
+        live.provider = Some(("https://api.example".into(), "KEY".into()));
+        assert_eq!(live.commands(&own), { let mut o = own.clone(); o.sort(); o });
     }
 
     #[test]

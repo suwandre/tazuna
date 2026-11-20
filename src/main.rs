@@ -1531,7 +1531,7 @@ fn app_server(a: &Args) -> Result<()> {
                         // and /create, the rest are the terminal's panels and switches), and the repo's files (tracked, and new ones
                         // git does not ignore: a file the agent just made is one you ask about)
                         Some("complete") => {
-                            let cmds: Vec<String> = s.commands.iter().filter(|c| !session::OWN_COMMANDS.contains(&c.as_str()) || matches!(c.as_str(), "agent" | "create")).cloned().collect();
+                            let cmds: Vec<String> = live.commands(&s.commands).into_iter().filter(|c| !session::OWN_COMMANDS.contains(&c.as_str()) || matches!(c.as_str(), "agent" | "create")).collect();
                             let files: Vec<String> = std::process::Command::new("git").args(["ls-files", "-co", "--exclude-standard"]).current_dir(&cwd).output()
                                 .map(|o| String::from_utf8_lossy(&o.stdout).lines().take(20_000).map(String::from).collect()).unwrap_or_default();
                             let mut o = out.lock();
@@ -3026,7 +3026,7 @@ fn run_live(
             // the box holds only `/...`: the command menu over it; anything else: the one-line hints (`@` files)
             // the user's own commands (behave.rs) too, with their descriptions, on every model
             let menu = ed.text.strip_prefix('/').filter(|t| !t.contains(char::is_whitespace)).map(|t| {
-                editor::command_menu(t, &s.commands, &live.my_commands())
+                editor::command_menu(t, &live.commands(&s.commands), &live.my_commands())
             }).unwrap_or_default();
             if menu.first().map(|m| &m.0) != v.menu.first().map(|m| &m.0) || menu.len() != v.menu.len() {
                 v.menu_sel = 0;

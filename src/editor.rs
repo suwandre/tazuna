@@ -420,6 +420,10 @@ pub fn command_menu(prefix: &str, commands: &[String], mine: &[(String, String)]
     starts.chain(inside).take(60).map(|c| (format!("/{c}"), about(c))).collect()
 }
 
+/// claude's common built-in commands (those `describe` knows): the menu's guess on Claude before claude has listed its
+/// own (live.rs, `commands`).
+pub const CLAUDE_COMMON: [&str; 10] = ["agents", "clear", "compact", "config", "context", "fast", "init", "output-style", "rename", "security-review"];
+
 /// What a slash command does, in a few words: tazuna's own, then claude's common ones; anything else is one of claude's
 /// commands or skills from the repo or the user.
 pub fn describe(cmd: &str) -> &'static str {
