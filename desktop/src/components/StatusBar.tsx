@@ -1,8 +1,9 @@
-import { ArrowUpCircle, Check, LoaderCircle, RefreshCw, RotateCw, TriangleAlert } from "lucide-react";
+import { ArrowUpCircle, Check, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react";
 import { openUsage } from "./Rail";
 import { usd, type Usage } from "../lib/types";
 import { useEffect, useState } from "react";
-import { exactly, whenReset, worst, type Item, type Level } from "../lib/health";
+import { exactly, untilShort, whenReset, worst, type Item, type Level } from "../lib/health";
+import { Sep } from "./Sep";
 import { checkUpdate, useUpdate } from "../lib/update";
 
 // The status bar along the window's bottom: on the left the account this conversation runs on (the plan's 5 hours and
@@ -19,18 +20,19 @@ function Meter({ pct }: { pct: number }) {
 const tone: Record<Level, string> = { ok: "bg-ok", low: "bg-warn", out: "bg-bad", unknown: "bg-faint" };
 const ink: Record<Level, string> = { ok: "text-ink", low: "text-warn", out: "text-bad", unknown: "text-faint" };
 
-/** The account's reading in the bar: "Claude plan ▬ 34% 5 h ▬ 93% week", "SubRouter $12.40 left", "OmniRoute ▬ 12% Gemini". */
+/** The account's reading in the bar: "Claude ▬ 34% 3h 34m | ▬ 93% 1d 2h", "SubRouter $12.40 left", "OmniRoute ▬ 12% Gemini 4d 2h". */
 function Here({ here }: { here: Item[] }) {
   const b = "font-medium text-ink-2";
   if (!here.length) return <>Usage</>;
-  // each window with its own reset after a small ↻ ("5 h ↻ 3 h 34 min", "week ↻ Sat 3am"); the words and the exact time
-  // on hover. Until desktop 0.1.83 one reset for the bar, so the 5 hours' was missing beside a full week (the user)
-  const reset = (i: Item) => i.resetsAt != null && (
-    <span className="flex items-center gap-1 text-faint" title={`Resets ${whenReset(i.resetsAt)}: ${exactly(i.resetsAt)}`}>
-      <RotateCw size={10} strokeWidth={2} aria-hidden="true" /><span className="sr-only">resets</span>{whenReset(i.resetsAt)!.replace(/^in /, "")}</span>);
-  if (here[0].provider === "Claude") return <>Claude plan{here.map((i) => <span key={i.key} className="flex items-center gap-1.5"><Meter pct={i.pct ?? 0} /><span className={b}>{i.value}</span>{i.name.replace(/^Claude plan, /, "").replace("5 hours", "5 h")}{reset(i)}</span>)}</>;
+  // A window is its meter, how full it is and how long until it resets, nothing else: "36% 2h 8m", the 5 hours first,
+  // then the week, as MonoCode's bar has it (the user, 2026-11-20: "way too much text"). Until desktop 0.1.91 each also
+  // carried its name and a ↻ before the time ("36% 5 h ↻ 2 h 8 min 79% week ↻ Sat 3am"). Which window, when exactly and
+  // the words are on its hover, and in the card.
+  const about = (i: Item) => `${i.label}: ${i.value} used. ${i.over ? "This window is over: a new one starts with your next message." : i.resetsAt != null ? `Resets ${whenReset(i.resetsAt)} (${exactly(i.resetsAt)}).` : ""}`;
+  const until = (i: Item) => (i.over ? <span className="text-faint">new</span> : i.resetsAt != null && <span className="text-faint">{untilShort(i.resetsAt)}</span>);
+  if (here[0].provider === "Claude") return <>Claude{here.map((i, n) => <span key={i.key} title={about(i)} className="flex items-center gap-1.5">{n > 0 && <Sep />}<Meter pct={i.pct ?? 0} /><span className={b}>{i.value}</span>{until(i)}</span>)}</>;
   const i = here[0];
-  if (i.pct != null) return <>{i.name.split(",")[0]}<Meter pct={i.pct} /><span className={b}>{i.value}</span>{i.name.split(", ")[1]}{reset(i)}</>;
+  if (i.pct != null) return <span title={about(i)} className="flex items-center gap-1.5">{i.name.split(",")[0]}<Meter pct={i.pct} /><span className={b}>{i.value}</span>{i.name.split(", ")[1]}{until(i)}</span>;
   return <>{i.name} {i.value ? <span className={b}>{i.value.replace(/ (left|over)$/, "")}</span> : <span className="text-faint">balance not reported</span>}{i.value && <span className="text-faint">{i.value.match(/ (left|over)$/)?.[1]}</span>}</>;
 }
 

@@ -62,7 +62,9 @@ localStorage.setItem("tazuna.projects", JSON.stringify([PROJ]));
 })();
 
 (() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T);
-  window.__ACCOUNTS__ = { plan: [{ label: "Current session", used: 36, resets: "Nov 18 at 5:30pm (Europe/Berlin)" }, { label: "Current week (all models)", used: 79, resets: "Nov 21 at 3am (Europe/Berlin)" }],
+  // resets as claude writes them, from now: the 5 hours in 2 h 14 min, the week in 1 day 2 hours
+  const resets = (ms) => { const d = new Date(Date.now() + ms), h = d.getHours(); return `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()} at ${h % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")}${h < 12 ? "am" : "pm"} (Europe/Berlin)`; };
+  window.__ACCOUNTS__ = { plan: [{ label: "Current session", used: 36, resets: resets(134 * 60_000) }, { label: "Current week (all models)", used: 79, resets: resets(26 * 3600_000) }],
     plan_notes: ["Approximate · sessions on this machine only", "Last 24h · 865 requests · 7 sessions", "  98%  Review sessions active over many hours · whole sessions with requests in 8 or more separate hours", "  94%  Start fresh when you switch tasks · run /clear", "  13%  Compact before you step away · run /compact", "  Top skills: /ticket 6%",
       "Last 7d · 5894 requests · 60 sessions", "  98%  Check which models your subagents use · share covers whole sessions, not only subagents", "  91%  Review sessions active over many hours · whole sessions with requests in 8 or more separate hours", "  88%  Start fresh when you switch tasks · run /clear", "  11%  Compact before you step away · run /compact", "  Top skills: /code-review 3%, /ticket 1%, /find-docs 1%", "  Top subagents: general-purpose 2%, explorer 1%", "  Top MCP servers: playwright 1%, docs 1%"],
     credits: [{ provider: "SubRouter", left: "$12.40 left", page: "https://subrouter.ai" }, { provider: "Mortera", left: null, page: "https://mortera.cloud" }],

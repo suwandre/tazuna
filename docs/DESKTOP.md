@@ -339,6 +339,17 @@ refresh shows the plan's numbers in under two seconds where it took 5.7 (the cor
 and sends it first, tazuna 0.1.186's notes; the bar takes that line, `accounts_plan`, and keeps the other accounts as
 they were until theirs come a moment later). Timed in the real window, stamped when the button's state changes.
 
+0.1.91 (with tazuna 0.1.187; the user, three things from one afternoon):
+- The status bar's usage in MonoCode's few characters: "Claude ▬ 36% 2h 14m | ▬ 79% 1d 2h", a window being its meter,
+  how full it is and how long until it resets. It read "Claude plan ▬ 36% 5 h ↻ 2 h 14 min ▬ 79% week ↻ Sat 3am": each
+  window's name and a ↻ before its time ("way too much text"). Which window and the exact time are on its hover and in
+  the card. The meters stay (their amber and red are the warning); no logo, the word.
+- A window whose reset has passed reads "0% new" (a new one starts with the next message): claude's usage page goes on
+  saying what the finished window held, and the bar said "100% 5 h, resets now" through two refreshes. A reset further
+  off than its window is long is one that has passed (a time with no date was read as tomorrow's).
+- A step cut off by a stop is "■ Asked a subagent | stopped 1.4 s" and counts no further (tazuna 0.1.187's notes).
+- review/mock.js: the plan's resets move with the clock (its fixed dates had passed).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

@@ -1,4 +1,4 @@
-import { Brain, Check, ChevronRight, LoaderCircle, X } from "lucide-react";
+import { Brain, Check, ChevronRight, LoaderCircle, Square, X } from "lucide-react";
 import { Markdown } from "../lib/markdown";
 import { useEffect, useState } from "react";
 import type { ToolStep } from "../lib/types";
@@ -101,10 +101,13 @@ export function Step({ t }: { t: ToolStep }) {
         {/* still going: the icon moves and the words shimmer (the CLI's spinner, here) */}
         {thinking ? <Brain size={14} strokeWidth={1.5} className={`flex-none ${t.running ? "animate-pulse text-accent" : "text-faint"}`} />
           : t.running ? <LoaderCircle size={14} strokeWidth={1.75} className="flex-none animate-spin text-accent" />
+          // cut off when its reply was stopped: neither done nor failed
+          : t.stopped ? <Square size={10} strokeWidth={2} fill="currentColor" className="mx-0.5 flex-none text-faint" aria-label="stopped" />
           : t.ok ? <Check size={14} strokeWidth={1.5} className="flex-none text-ok" />
           : <X size={14} strokeWidth={1.75} className="flex-none text-bad" aria-label="failed" />}
         <span className={t.running ? "tz-live" : ""}>{t.running ? (NOW[t.verb] ?? t.verb) : t.verb}</span> {t.target && <span className="truncate font-mono text-[11.5px] text-ink-2">{t.target}</span>}
         {t.detail && <span className="flex items-center text-faint"><Sep />{t.detail}</span>}
+        {t.stopped && <span className="flex items-center text-faint"><Sep />stopped</span>}
         {/* the time beside the step, not at the far right (the eye went 600 px for it) */}
         {!thinking && <span className="flex-none whitespace-nowrap text-[12px] tabular-nums text-faint">{t.running ? <Elapsed secs={t.secs} /> : `${t.secs.toFixed(1)} s`}</span>}
         {more && <ChevronRight size={13} strokeWidth={1.5} className={`flex-none text-faint transition-transform duration-150 ${open ? "rotate-90" : ""}`} />}

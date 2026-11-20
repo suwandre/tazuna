@@ -18,7 +18,7 @@ export type ViewBlock =
   | { kind: "prompt"; text: string }
   | { kind: "text"; text: string; live: boolean }
   | { kind: "thinking"; tokens: number; live: boolean; text?: string }
-  | { kind: "tool"; id: string; name: string; input: Record<string, unknown> | null; result?: string; error: boolean; secs?: number; running: boolean }
+  | { kind: "tool"; id: string; name: string; input: Record<string, unknown> | null; result?: string; error: boolean; secs?: number; running: boolean; stopped?: boolean }
   | { kind: "done"; ok: boolean; secs: number; turns: number; cost: number; usage: Usage; stopped: boolean;
       /** this reply's own share of the totals (core 0.1.183; before, only the totals) */
       run_cost?: number; run_usage?: Usage }

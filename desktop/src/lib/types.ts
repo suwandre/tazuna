@@ -8,6 +8,8 @@ export type Project = { name: string; path?: string; open: boolean; pending?: nu
 /** One step before the answer: a tool call (with what it was given and what came back) or a stretch of thinking. */
 export type ToolStep = {
   verb: string; target: string; detail?: string; secs: number; ok: boolean; running?: boolean;
+  /** cut off when its reply was stopped: it has no result */
+  stopped?: boolean;
   kind?: "tool" | "thinking"; name?: string; input?: Record<string, unknown> | null; result?: string; text?: string;
 };
 export type ChangedFile = { path: string; added: number | null; removed: number | null; status: string };

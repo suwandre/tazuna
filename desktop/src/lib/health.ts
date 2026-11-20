@@ -8,6 +8,8 @@ export type Level = "ok" | "low" | "out" | "unknown";
 export type Item = { key: string; provider: string; name: string; note?: string; pct?: number; value?: string; level: Level; short: string; page?: string;
   /** when its window starts again (ms since 1970), where known */
   resetsAt?: number;
+  /** a plan's window whose reset has passed: it reads 0%, and a new one starts with the next message */
+  over?: boolean;
   /** what it means and what to do, for an account running low or stopped (the badge's tooltip) */
   advice?: string;
   /** the account it belongs to, written out whole ("Claude plan", "OmniRoute agy, someone@…, Ultra", "Credit"), and its
@@ -31,6 +33,14 @@ export function parseReset(text: string, now = Date.now()): number | undefined {
     if (d.getTime() < now - 86_400_000) d.setFullYear(d.getFullYear() + 1);
   } else if (d.getTime() < now) d.setDate(d.getDate() + 1);
   return d.getTime();
+}
+
+/** The time to a reset in the bar's few characters: "42m", "4h 59m", "5h", "1d 2h" (MonoCode's bar says it so; the
+ * words are on hover). */
+export function untilShort(at: number | undefined, now = Date.now()): string | undefined {
+  if (at == null || Number.isNaN(at)) return undefined;
+  const mins = Math.max(0, Math.round((at - now) / 60_000)), d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60;
+  return d ? `${d}d${h ? ` ${h}h` : ""}` : h ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
 }
 
 /** When a window resets, as Claude says it: "in 42 min" and "in 2 h 14 min" within a day, "Thu 3am" within the week,
@@ -65,12 +75,19 @@ export function items(acc: Accounts | null, fallback: { plan5h: number | null; p
   const plan = acc?.plan ?? (fallback.plan5h != null ? [{ label: "Current session", used: fallback.plan5h, resets: "" }, ...(fallback.planWeek != null ? [{ label: "Current week (all models)", used: fallback.planWeek, resets: "" }] : [])] : []);
   for (const r of plan) {
     const w = windowOf(r.label);
-    const resetsAt = parseReset(r.resets, now) ?? (w === "5 hours" && fallback.resetAt ? fallback.resetAt * 1000 : undefined);
-    out.push({ key: `claude:${w}`, provider: "Claude", name: `Claude plan, ${w}`, group: "Claude plan", label: w.charAt(0).toUpperCase() + w.slice(1), note: resetsAt ? `resets ${whenReset(resetsAt, now)}` : undefined, pct: r.used, value: `${Math.round(r.used)}%`,
-      level: byPct(r.used), short: `Claude ${w} ${Math.round(r.used)}%`, resetsAt,
+    let resetsAt = parseReset(r.resets, now) ?? (w === "5 hours" && fallback.resetAt ? fallback.resetAt * 1000 : undefined);
+    // a reset further off than its window is long is one that has passed (a time alone is read as tomorrow's, a date
+    // more than a day back as next year's)
+    if (resetsAt && resetsAt - now > (w === "5 hours" ? 5.5 * 3600_000 : 7.5 * 86_400_000)) resetsAt = now - 1;
+    // Its reset has passed: the window is over. claude goes on saying what it held ("100% used") until the next message
+    // starts a new one, and the bar said "100% 5 h, resets now" through two refreshes (the user, 2026-11-20).
+    const over = resetsAt != null && resetsAt <= now, used = over ? 0 : r.used;
+    out.push({ key: `claude:${w}`, provider: "Claude", name: `Claude plan, ${w}`, group: "Claude plan", label: w.charAt(0).toUpperCase() + w.slice(1), over,
+      note: over ? "over: a new one starts with your next message" : resetsAt ? `resets ${whenReset(resetsAt, now)}` : undefined, pct: used, value: `${Math.round(used)}%`,
+      level: byPct(used), short: `Claude ${w} ${Math.round(used)}%`, resetsAt,
       // past 100% Claude stops, or bills extra usage where it is turned on (it went on silently into extra usage, 2026-11)
-      advice: r.used >= 90 ? `Your Claude ${w} is at ${Math.round(r.used)}%. Once it is full Claude stops, or bills extra usage if you turned that on.${until(resetsAt)}`
-        : `Your Claude ${w} is at ${Math.round(r.used)}%.${until(resetsAt)}` });
+      advice: used >= 90 ? `Your Claude ${w} is at ${Math.round(used)}%. Once it is full Claude stops, or bills extra usage if you turned that on.${until(resetsAt)}`
+        : `Your Claude ${w} is at ${Math.round(used)}%.${until(resetsAt)}` });
   }
   const credits = acc?.credits ?? (fallback.balance != null ? [{ provider: "SubRouter", left: `$${fallback.balance.toFixed(2)} left`, page: "https://subrouter.ai" }] : []);
   for (const c of credits) {
@@ -138,6 +155,14 @@ export function demo() {
   const used = (a: Accounts | null) => a!.plan!.map((r) => r.used).join(",");
   if (used(withLive(fable, 1000_000, { limits: [41, 94], limits_at: 1001 })) !== "41,94,15" || used(withLive(fable, 1000_000, { limits: [41, 94], limits_at: 999 })) !== "34,93,15"
     || withLive(fable, 1000_000, { limits: [41, 94], limits_at: 1001, limits_reset: 5000 })!.plan![0].resets !== "" || withLive(null, 0, { limits: [1, 2], limits_at: 9 }) !== null) throw new Error("withLive");
+  // a window whose reset has passed reads 0% and says so; a passed time with no date is today's for the 5 hours
+  const past = items({ ...acc, plan: [{ label: "Current session", used: 100, resets: "Nov 19 at 2:30pm (Europe/Berlin)" }, { label: "Current week (all models)", used: 83, resets: "Nov 21 at 3am (Europe/Berlin)" }] },
+    { plan5h: null, planWeek: null }, new Date(2026, 10, 19, 15, 0).getTime());
+  const timeOnly = items({ ...acc, plan: [{ label: "Current session", used: 100, resets: "2:30pm (Europe/Berlin)" }] }, { plan5h: null, planWeek: null }, new Date(2026, 10, 19, 15, 0).getTime());
+  if (!(past[0].over && past[0].value === "0%" && past[0].level === "ok" && !past[1].over && past[1].value === "83%" && timeOnly[0].over)) throw new Error("a window that is over");
+  const t9 = new Date(2026, 10, 19, 15, 0).getTime();
+  const shorts = [untilShort(t9 + 42 * 60_000, t9), untilShort(t9 + 299 * 60_000, t9), untilShort(t9 + 300 * 60_000, t9), untilShort(t9 + 26 * 3600_000, t9), untilShort(t9 - 5000, t9)].join("|");
+  if (shorts !== "42m|4h 59m|5h|1d 2h|0m") throw new Error(`untilShort: ${shorts}`);
   // resets: in a day as a countdown, in a week by its day, later by its date
   const t0 = new Date(2026, 10, 19, 15, 0).getTime();
   const r = [whenReset(t0 + 42 * 60_000, t0), whenReset(t0 + 134 * 60_000, t0), whenReset(new Date(2026, 10, 21, 3, 0).getTime(), t0), whenReset(new Date(2026, 10, 26, 17, 13).getTime(), t0),
