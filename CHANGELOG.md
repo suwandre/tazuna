@@ -42,6 +42,17 @@ Design review 9 (the user: "really check every tab, every click"):
   in the window.
 - No metric moves: what a resumed conversation shows, and words on the screen.
 
+The user's picks from the prototype (desktop/mockups/v6.html):
+
+- The terminal opens in zen for anyone who never picked a design (aurora on a fresh install and cockpit with a run log
+  until now); a design chosen with ctrl-t stays. Zen's header is one row (model, cost, the plan, the balance, where they
+  fit; the two clocks went), and a run of tool calls folded into one line no longer fades in again at each call (it sat
+  near the background for most of a run).
+- The terminal draws a task list's boxes (☑, ☐) and ~~struck~~ text; marks that do not pair up stay as written.
+- The app server marks a conversation the user renamed (`named` in its sessions list), so the window shows that name as
+  given.
+- No metric moves: the screen's look.
+
 ## 0.1.188 (2026-11-20): the window can open a subagent's own conversation
 
 The user: "wouldn't it make sense to also be able to see the background chat", as the terminal's ctrl-b shows it.

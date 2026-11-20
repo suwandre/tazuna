@@ -111,13 +111,14 @@ impl Design {
         Self::ALL[(self as usize + 1) % Self::ALL.len()]
     }
 
-    /// The design the terminal opens in without --design: the last one chosen with ctrl-t, else Cockpit for someone
-    /// who has run tazuna before (a run log) and Aurora on a fresh install, the calmest of the four (design review
-    /// 2026-11-19; until 0.1.179 every start was Cockpit).
+    /// The design the terminal opens in without --design: the last one chosen with ctrl-t, else Zen: a transcript and
+    /// one quiet row, as Claude Code, Codex, pi and OpenCode open (design review 9, the user's choice 2026-11-20; until
+    /// 0.1.189 Cockpit for someone with a run log and Aurora on a fresh install, and until 0.1.179 always Cockpit). A
+    /// choice made with ctrl-t stays.
     pub fn saved() -> Design {
-        let Ok(dir) = crate::labels::dir() else { return Design::Aurora };
+        let Ok(dir) = crate::labels::dir() else { return Design::Zen };
         let n = std::fs::read_to_string(dir.join("design")).ok().and_then(|t| t.trim().parse().ok());
-        n.and_then(Design::from_number).unwrap_or(if dir.join("runs.jsonl").exists() { Design::Cockpit } else { Design::Aurora })
+        n.and_then(Design::from_number).unwrap_or(Design::Zen)
     }
 
     pub fn save(self) {
@@ -1059,6 +1060,13 @@ pub fn block_fx(d: Design) -> Effect {
         Design::Zen => fx::fade_from_fg(bg, (750, SineOut)),
         Design::Timeline => fx::parallel(&[fx::fade_from_fg(bg, (200, QuadOut)), fx::ping_pong(fx::hsl_shift_fg([0.0, 0.0, 14.0], (150, QuadOut)))]),
     }
+}
+
+/// Whether the newest block only grows a folded run of tool calls (zen draws one line for them): that line is already on
+/// screen, and fading it in again at each call kept it near the background for most of a run (design review 9).
+pub fn grows_a_fold(d: Design, s: &Session) -> bool {
+    let fold = |b: &Block| matches!(b, Block::Tool(_) | Block::Thinking { .. });
+    d == Design::Zen && s.blocks.len() > 1 && s.blocks[s.blocks.len() - 2..].iter().all(fold)
 }
 
 pub fn pulse_fx(d: Design) -> Effect {
@@ -2120,7 +2128,13 @@ fn markdown(text: &str, th: &Theme, width: usize) -> Vec<Prefixed> {
             out.push((Line::from(spans), vec![Span::raw(format!("{indent}{}", " ".repeat(num.len() + 2)))]));
         } else if let Some(item) = t.strip_prefix("- ").or_else(|| t.strip_prefix("* ")) {
             let indent = " ".repeat(raw.len() - t.len());
-            let mut spans = vec![Span::raw(indent.clone()), Span::styled("• ", st(th.dim))];
+            // a task list's boxes, drawn: "- [x] done" showed its brackets (design review 9)
+            let (mark, item) = match item.get(..4) {
+                Some("[x] " | "[X] ") => (Span::styled("☑ ", st(th.ok)), &item[4..]),
+                Some("[ ] ") => (Span::styled("☐ ", st(th.faint)), &item[4..]),
+                _ => (Span::styled("• ", st(th.dim)), item),
+            };
+            let mut spans = vec![Span::raw(indent.clone()), mark];
             spans.extend(inline(item, th));
             out.push((Line::from(spans), vec![Span::raw(format!("{indent}  "))]));
         } else {
@@ -2147,9 +2161,14 @@ fn inline(s: &str, th: &Theme) -> Vec<Span<'static>> {
                     spans.push(Span::styled(text, bold.fg(th.accent).add_modifier(Modifier::UNDERLINED)));
                     continue;
                 }
-                // *emphasis* in italics: its asterisks showed (design review 9)
-                for (run, em) in emphasis(&text) {
-                    spans.push(Span::styled(run, if em { bold.add_modifier(Modifier::ITALIC) } else { bold }));
+                // *emphasis* in italics and ~~struck~~ text struck: their marks showed (design review 9); a lone "~~"
+                // stays as written
+                let struck = text.matches("~~").count() % 2 == 0;
+                for (k, piece) in if struck { text.split("~~").collect() } else { vec![text.as_str()] }.into_iter().enumerate() {
+                    let base = if k % 2 == 1 { bold.add_modifier(Modifier::CROSSED_OUT) } else { bold };
+                    for (run, em) in emphasis(piece) {
+                        spans.push(Span::styled(run, if em { base.add_modifier(Modifier::ITALIC) } else { base }));
+                    }
                 }
             }
         }
@@ -2928,6 +2947,17 @@ mod tests {
         let rows: Vec<&String> = narrow.iter().filter(|l| l.starts_with(['┌', '│', '├', '└'])).collect();
         assert!(rows.len() > 6 && rows.iter().all(|l| l.width() == rows[0].width() && l.width() <= 44), "{narrow:#?}");
         assert_eq!(text(10).iter().filter(|l| l.contains('│')).count(), 0, "too narrow: rows as plain lines");
+    }
+
+    #[test]
+    fn task_boxes_and_struck_text_are_drawn() {
+        let th = Design::Zen.theme();
+        let text = |md: &str| markdown(md, th, 80).iter().map(|(l, _)| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>()).collect::<Vec<_>>();
+        assert_eq!(text("- [x] done item\n- [ ] open item\n- plain"), ["☑ done item", "☐ open item", "• plain"]);
+        let line = &markdown("and ~~struck~~ text", th, 80)[0].0;
+        assert!(line.spans.iter().any(|s| s.content == "struck" && s.style.add_modifier.contains(Modifier::CROSSED_OUT)));
+        // marks that do not pair up are left as written
+        assert_eq!(text("a ~~ b ~~ c ~~ d"), ["a ~~ b ~~ c ~~ d"]);
     }
 
     #[test]

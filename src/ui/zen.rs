@@ -10,34 +10,34 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let full = f.area();
     let w = full.width.saturating_sub(4).min(MAX_WIDTH);
     let col = Rect { x: full.x + (full.width - w) / 2, width: w, ..full };
+
+    // one quiet row: the model, the cost, then the plan's windows and SubRouter's balance where they fit beside them;
+    // the two clocks went (the status at the bottom says what runs), and the plan wrapped onto a second row at 120
+    // columns (design review 9). A row that does not fit puts the plan under it, as before.
+    let gap = || Span::raw("   ");
+    let mut right = vec![Span::styled(model_short(&s.model), st(th.dim)), Span::styled(format!(" {}", s.effort), st(th.faint)), gap(),
+        Span::styled(cost_str(s), st(th.ink2))];
+    let mut extra: Vec<Span> = plan_spans(s, th).map(|p| [vec![Span::styled("Claude ", st(th.dim))], p].concat()).unwrap_or_default();
+    if let Some(b) = balance_str(s) {
+        extra.extend([Span::raw(if extra.is_empty() { "" } else { "   " }), Span::styled(b, st(th.dim))]);
+    }
+    let one_row = Line::from([right.clone(), vec![gap()], extra.clone()].concat()).width() + "tazuna".len() + 4 <= w as usize;
+    if one_row && !extra.is_empty() {
+        right.push(gap());
+        right.append(&mut extra);
+    }
     let [top, under, body, _, rule, input] = Layout::vertical([
         Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(if one_row || extra.is_empty() { 0 } else { 1 }),
         Constraint::Min(3),
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Length(1),
     ])
     .areas(col);
-
-    let dot = || Span::raw("    ");
-    let right = Line::from(vec![
-        Span::styled(model_short(&s.model), st(th.dim)),
-        Span::styled(format!(" {}", s.effort), st(th.faint)),
-        dot(),
-        // zen's narrow column: time, cost and the plan; the token totals are in the other designs and the run summary
-        Span::styled(times_str(s, v), st(th.dim)),
-        dot(),
-        Span::styled(cost_str(s), st(th.ink2)),
-    ]);
-    split_row(f, top, Line::from(Span::styled("tazuna", st(th.faint).add_modifier(Modifier::ITALIC))), right, None);
-    // the plan's windows and SubRouter's balance under it: on the one row they ran past the 92-column column
-    if plan_spans(s, th).is_some() || balance_str(s).is_some() {
-        let mut spans = plan_spans(s, th).map(|p| [vec![Span::styled("Claude ", st(th.dim))], p].concat()).unwrap_or_default();
-        if let Some(b) = balance_str(s) {
-            spans.extend([Span::raw(if spans.is_empty() { "" } else { "    " }), Span::styled(b, st(th.dim))]);
-        }
-        split_row(f, under, Line::default(), Line::from(spans), None);
+    split_row(f, top, Line::from(Span::styled("tazuna", st(th.faint).add_modifier(Modifier::ITALIC))), Line::from(right), None);
+    if !one_row && !extra.is_empty() {
+        split_row(f, under, Line::default(), Line::from(extra), None);
     }
 
     let (last_block, trows, top_line) = render_transcript(f, body, transcript(s, v, th, &OPTS, body.width as usize), v.scroll);

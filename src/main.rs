@@ -1329,6 +1329,7 @@ fn app_server(a: &Args) -> Result<()> {
                                 "id": e.id, "first": e.first.chars().take(120).collect::<String>(), "last_at": e.last_at, "messages": e.messages,
                                 // its latest run's model: the desktop's sidebar marks each conversation with its provider
                                 "model": e.model,
+                                "named": e.named,
                             })).collect::<Vec<_>>()})).collect();
                             let mut o = out.lock();
                             let _ = writeln!(o, "{}", json!({"type": "sessions", "dirs": found}));
@@ -2110,7 +2111,7 @@ impl Fx {
         }
         if s.new_blocks != self.blocks {
             self.blocks = s.new_blocks;
-            if let Some(r) = areas.last_block {
+            if let Some(r) = areas.last_block.filter(|_| !ui::grows_a_fold(d, s)) {
                 self.mgr.add_unique_effect("block", ui::block_fx(d).with_area(r));
             }
         }
@@ -2552,6 +2553,8 @@ struct Earlier {
     last_at: u64,
     messages: usize,
     recordings: Vec<std::path::PathBuf>,
+    /// `first` is a name the user gave it (the desktop's rename): the window shows it as it is, not shortened
+    named: bool,
 }
 
 impl Earlier {
@@ -2578,7 +2581,7 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
         }
         let (ts, rec) = (r["ts"].as_u64().unwrap_or(0), m["recording"].as_str().map(std::path::PathBuf::from));
         let i = out.iter().position(|s| s.id == sid).unwrap_or_else(|| {
-            out.push(Earlier { id: sid.to_string(), model: String::new(), first: r["prompt"].as_str().unwrap_or_default().to_string(), last_at: ts, messages: 0, recordings: vec![] });
+            out.push(Earlier { id: sid.to_string(), model: String::new(), first: r["prompt"].as_str().unwrap_or_default().to_string(), last_at: ts, messages: 0, recordings: vec![], named: false });
             last_line.push(0);
             out.len() - 1
         });
@@ -2598,6 +2601,7 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
     both.into_iter().map(|(_, e)| e).filter(|e| names[&e.id]["hidden"] != true).map(|mut e| {
         if let Some(t) = names[&e.id]["title"].as_str() {
             e.first = t.to_string();
+            e.named = true;
         }
         e
     }).collect()

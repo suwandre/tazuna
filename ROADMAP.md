@@ -302,6 +302,12 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-20: the terminal opens in zen for anyone who never picked a design (it was aurora on a fresh install and cockpit
+  with a run log); a choice made with ctrl-t stays. Design review 9 set tazuna beside Claude Code, Codex, pi and OpenCode:
+  each opens on a transcript and one status row, and cockpit's seven boxes of mostly zeros was the heaviest of all.
+  The user chose it with the prototype (desktop/mockups/v6.html). In the window, the review became a pane, saved
+  conversations got short titles (by rules, no model call: token cost stays zero) under date groups, and the usage
+  page folds what needs no look.
 - 2026-11-19: one palette for the terminal and the window. The four terminal designs each had their own colours
   (navy and cyan, teal and violet, grey and pink, neon magenta), none the window's paper and indigo; a review against
   the other harnesses' terminals (opencode, Claude Code, Codex) found that the least finished part. All four now draw
