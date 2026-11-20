@@ -402,6 +402,31 @@ etc?"):
   Add and Cancel; the usage page folding idle accounts, providers without a balance, and how the runs went. Seen on test
   data (the sweep, both themes, a comment written and sent, split) and on the real core (titles, date groups, usage).
 
+0.1.95 (with tazuna 0.1.191; design review 10, set beside Claude, T3 Code, MonoCode, ZCode and DeepSeek Harness and the
+terminals of Claude Code, Codex, opencode and pi; the user picked from the prototype mockups/v7.html, "lets do all of these"):
+- A mark of its own: 手 (te, the hand of 手綱) drawn in the icons' round stroke, its last stroke ending in a rein's loop
+  (components/Mark.tsx). It is the app icon (app-icon.svg, paper on indigo on macOS's icon grid; the ≡ read as a menu
+  button), the sidebar's tile (a system font's 手 until now) and, as two cells, the terminal's welcome.
+- Paper on the desk: the conversation is one sheet (12 px corners, a hairline and a soft shadow, 8 px from the window's
+  edges), and so is a side chat or a subagent beside it; the sidebar, the work panel and the status bar lie on the desk
+  without borders, and the work panel's parts are sections apart by a rule, not cards.
+- The sidebar: what needs you or works lifts out (Needs you, Working); a conversation open with nothing to do stays under
+  its day with an accent dot and × closes it (the row you clicked jumped into an "Open" group); rows slide to their new
+  place (200 ms, kept by the conversation's id); the list fades at both ends (headings were sliced under Open folder); a
+  list whose rows all say the same place drops it; a gear for Settings (an "S" in a circle read as an avatar).
+- The message box: one pill style (the where-pill was dashed, the mode pill had no chevron), and no mode pill or Mode key in
+  a plain chat, where nothing asks for permission.
+- Answers: tables with rules between rows and a quiet header (a full grid); TeX drawn as MathML by the system
+  (lib/math.tsx, a subset: scripts, \frac, \sqrt, Greek, operators, \text): $…$ only with a backslash, ^ or _ inside, so
+  "$5 and $10" stays money, and \(…\), $$…$$, \[…\]. A reply's steps unfold and fold in height.
+- The status bar names another account that needs you quietly (a dot in its colour, faint words), not as a red chip on
+  every screen.
+- The review: a wrapped line hangs under its own indent; the usage page: the paid part of a day solid over the plan's light
+  part (a pixel-high dark cap before), days as "Nov 6" (were "11-06" and "2026-11-06"); the last middle dots are hairlines.
+- The side chat's box sits on the main box's line. Already so, and left: the long draft's 40% cap; the start page names
+  the project when it runs in one.
+- Seen on test data (the sweep, 88 steps in Chromium, both themes, three sizes; the answer with math in WebKit), out/review-10.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

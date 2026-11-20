@@ -1,16 +1,20 @@
 // Markdown for model answers: code fences (coloured, with their language and a copy button), headings, lists (nested,
 // numbered from where they start), quotes, tables (aligned as their |:--:| line says), paragraphs, `code`, **bold**,
-// *italic*, links. React elements only, never raw HTML, so a reply cannot inject markup; a link opens in the browser through the
+// *italic*, links, TeX between $…$, \(…\), $$…$$ or \[…\] (lib/math.tsx). React elements only, never raw HTML, so a reply cannot inject markup; a link opens in the browser through the
 // core's opener (http and https only), never inside the window.
 import { useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
+import { isTex, math } from "./math";
 import { core, inTauri } from "./tazuna";
 
 const open = (url: string) => (inTauri ? core.openLink(url) : window.open(url, "_blank", "noopener"));
 
 function inline(text: string): ReactNode[] {
-  return text.split(/(`[^`\n]+`|!\[[^\]\n]*\]\([^)\s]+\)|\*\*[^*\n]+\*\*|(?<![\w*])\*(?![\s*])[^*\n]+(?<![\s*])\*(?![\w*])|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/).map((p, i) => {
+  return text.split(/(`[^`\n]+`|\$[^$\n]*[\\^_][^$\n]*\$|\\\(.+?\\\)|!\[[^\]\n]*\]\([^)\s]+\)|\*\*[^*\n]+\*\*|(?<![\w*])\*(?![\s*])[^*\n]+(?<![\s*])\*(?![\w*])|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/).map((p, i) => {
     if (p.startsWith("`") && p.endsWith("`") && p.length > 1) return <code key={i}>{p.slice(1, -1)}</code>;
+    // TeX: only $…$ that hold a backslash, ^ or _ ("$5 and $10" stays money), and \(…\)
+    if (p.length > 2 && p.startsWith("$") && p.endsWith("$") && isTex(p.slice(1, -1))) return math(p.slice(1, -1), false, i);
+    if (p.startsWith("\\(") && p.endsWith("\\)")) return math(p.slice(2, -2), false, i);
     // what is inside bold or italic is read again: **`file.ts` lines 3-4** showed its backticks (design review 5)
     if (p.startsWith("**") && p.endsWith("**") && p.length > 3) return <strong key={i}>{inline(p.slice(2, -2))}</strong>;
     if (/^\*[^*].*\*$/.test(p)) return <em key={i}>{inline(p.slice(1, -1))}</em>;
@@ -99,6 +103,16 @@ export function Markdown({ text }: { text: string }) {
       out.push(<CodeBlock key={out.length} lang={lang} lines={body} />);
       continue;
     }
+    // a display formula: $$…$$ or \[…\], on one line or several
+    const opens = line.trim().startsWith("$$") ? "$$" : line.trim().startsWith("\\[") ? "\\]" : null;
+    if (opens) {
+      flush();
+      let body = line.trim().slice(2);
+      const closes = (t: string) => t.trimEnd().endsWith(opens);
+      while (!closes(body) && i + 1 < lines.length) body += "\n" + lines[++i];
+      out.push(<div key={out.length} className="math-block">{math(body.trimEnd().replace(opens === "$$" ? /\$\$$/ : /\\\]$/, ""), true)}</div>);
+      continue;
+    }
     // a table: a row of cells, then a |---|:--:|--:| line that also says how each column aligns
     if (line.trim().startsWith("|") && /^\s*\|?\s*:?-{2,}/.test(lines[i + 1] ?? "")) {
       flush();
@@ -143,6 +157,9 @@ export async function demo() {
   const html = renderToStaticMarkup(<Markdown text={"## Why\n\nFix `add` *now*:\n\n1. first\n\n```py\nreturn a + b # sum\n\nx = \"s\"\n```\n\n2. second\n   - nested\n   - **two**\n3. third\n\n> quoted\n\n| a | b |\n|---|--:|\n| 1 | [docs](https://example.com) |\n\nsee https://tazuna.dev."} />);
   if (!renderToStaticMarkup(<Markdown text="**`a.ts` lines 1-2:** fix" />).includes("<strong><code>a.ts</code> lines 1-2:</strong>")) throw new Error("markdown: code in bold");
   if (/<img|!\[/.test(renderToStaticMarkup(<Markdown text="See ![the chart](out/c.png) here" />))) throw new Error("markdown: an image is its words, nothing loaded");
+  if (!renderToStaticMarkup(<Markdown text="total $T = \\sum_i t_i$, and \\(x^2\\)" />).includes("<math")) throw new Error("markdown: inline TeX");
+  if (renderToStaticMarkup(<Markdown text="it costs $5 and $10 a month" />).includes("<math")) throw new Error("markdown: money is not math");
+  if (!renderToStaticMarkup(<Markdown text={"$$\n\\frac{a}{b}\n$$"} />).includes('display="block"')) throw new Error("markdown: display TeX");
   for (const want of ["<h3>Why</h3>", "<em>now</em>", '<ol start="2"><li>second<ul><li>nested</li><li><strong>two</strong></li></ul></li><li>third</li></ol>',
     '<div class="code-head"><span>py</span>', "<pre>", "<blockquote>", 'style="text-align:right"', 'href="https://example.com"', 'href="https://tazuna.dev"',
     "tok-comment", "tok-string", "tok-keyword"]) {

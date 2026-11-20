@@ -14,6 +14,8 @@ export type Where = { label: string; folder: boolean; choices: { label: string; 
 
 export type ComposerBag = {
   where?: Where;
+  /** a plain chat (no project): the model alone, so no permission pill (design review 10) */
+  chat?: boolean;
   session: Session; busy?: boolean; models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void;
   onPickEffort?: (e: string) => void; onMode?: (mode: string) => void; onPickFiles?: () => Promise<string[]>; attach: (paths: string[]) => void;
   /** counts the `/model` (or `/effort`) asks: the model picker opens at each new one */
@@ -24,6 +26,8 @@ type Props = {
   session: Session; threadCost: number; busy?: boolean; onSend?: (text: string) => void; onStop?: () => void;
   /** a new conversation: where it runs (a chat or a project), changed from the box */
   where?: Where;
+  /** a plain chat (no project) */
+  chat?: boolean;
   /** the model catalog (null until asked for); onModels asks for it when the picker opens */
   models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void; onPickEffort?: (e: string) => void;
   onMode?: (mode: string) => void;
@@ -86,7 +90,7 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {} }: Props) {
+export function Composer({ session, where, chat, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {} }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
@@ -139,7 +143,7 @@ export function Composer({ session, where, busy, onSend, onStop, models, onModel
     return () => { off.then((f) => f()); };
   }, [onDrop]);
   const nextMode = () => { const i = MODES.findIndex(([m]) => m === session.mode); onMode?.(MODES[(i + 1) % MODES.length][0]); };
-  const bag: ComposerBag = { where, session, busy, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
+  const bag: ComposerBag = { where, chat, session, busy, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
   // a message sent during a reply waits behind it (the core queues it, as the terminal does)
   // attachments go in the message as paths after its text (quoted when they hold a space): the core sends images as images
   const send = () => { if (!files.length && run(text.trim())) return; const t = [text.trim(), ...files.map(quotePath)].filter(Boolean).join(" "); if (!t) return; onSend?.(t); setText(""); setFiles([]); };
@@ -243,7 +247,7 @@ export function WherePill({ composer: c }: { composer: ComposerBag }) {
   return (
     <span className="relative">
       <button onClick={() => setOpen(!open)} title="Where it runs: a chat, or a project's folder"
-        className={`${pill} border-dashed border-line-strong bg-transparent`}>
+        className={pill}>
         {w.folder ? <FolderOpen size={14} strokeWidth={1.5} /> : <MessageCircle size={14} strokeWidth={1.5} />}{w.label}<ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
       </button>
       {open && (
@@ -265,10 +269,12 @@ export function WherePill({ composer: c }: { composer: ComposerBag }) {
 
 export function ModePill({ composer: c }: { composer: ComposerBag }) {
   const [open, setOpen] = useState(false);
+  // a plain chat runs the model alone: nothing there asks for a permission (shift-tab and the palette still reach it)
+  if (c.chat) return null;
   return (
     <span className="relative">
       <button disabled={!c.onMode} onClick={() => setOpen(!open)} title="Permission mode (shift-tab)" className={pill}>
-        <Shield size={14} strokeWidth={1.5} />{c.session.mode}
+        <Shield size={14} strokeWidth={1.5} />{c.session.mode}<ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
       </button>
       {open && (
         <Menu onClose={() => setOpen(false)} width={320}>

@@ -144,7 +144,8 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
           <details className="group mt-6 overflow-hidden rounded-lg border border-line bg-card">
             <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 text-[12.5px] hover:bg-hover [&::-webkit-details-marker]:hidden">
               <ChevronRight size={14} strokeWidth={1.5} className="flex-none text-faint transition-transform group-open:rotate-90" />
-              <span className="flex-1"><span className="font-medium text-ink-2">How the runs went</span><span className="text-faint"> · for tuning tazuna: clear misses and pushback by version and model</span></span>
+              {/* the hint under its title, not after a middle dot (design review 10) */}
+              <span className="flex-1"><span className="block font-medium text-ink-2">How the runs went</span><span className="block text-[11.5px] text-faint">For tuning tazuna: clear misses and pushback by version and model</span></span>
             </summary>
             <p className="border-t border-line-soft px-3.5 py-2.5 text-[12px] leading-relaxed text-muted">The same {days} days as Spending, read from what happened next, with nothing for you to label. A clear miss: you stopped or rewound it, it ended in an error,
             its change was thrown away, or your next message corrected it or asked the same again. Pushback: "wait, …", "why …?", "progress?".</p>
@@ -229,7 +230,7 @@ function Fold({ label, note, right, children }: { label: string; note?: string; 
     <details className="group">
       <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 text-[12.5px] text-ink-2 hover:bg-hover [&::-webkit-details-marker]:hidden">
         <ChevronRight size={14} strokeWidth={1.5} className="flex-none text-faint transition-transform group-open:rotate-90" />
-        <span className="flex-1">{label}{note && <span className="text-faint"> · {note}</span>}</span>
+        <span className="flex flex-1 items-center">{label}{note && <><Sep /><span className="text-faint">{note}</span></>}</span>
         {right && <span className="text-[11.5px] text-faint">{right}</span>}
       </summary>
       <div className="divide-y divide-line-soft border-t border-line-soft">{children}</div>
@@ -320,6 +321,9 @@ function Contributing({ notes }: { notes: string[] }) {
 }
 
 /** One bar per day from a shared baseline, the plan's part and the paid part stacked; hover or focus shows the day. */
+// a day as every other date in the window says it: "Nov 6", not "2026-11-06" or "11-06" (design review 10)
+const dayName = (iso: string) => new Date(`${iso}T00:00`).toLocaleDateString([], { month: "short", day: "numeric" });
+
 function Bars({ days }: { days: Day[] }) {
   const [at, setAt] = useState<number | null>(null);
   const max = Math.max(...days.map((d) => d.plan + d.api), 0);
@@ -330,27 +334,29 @@ function Bars({ days }: { days: Day[] }) {
       {/* one stop for the keyboard, the arrows along the days (each bar was a stop of its own and a click did nothing,
           design review 7) */}
       <div className="flex h-[110px] items-end gap-[3px] rounded-sm" onMouseLeave={() => setAt(null)} tabIndex={0} role="group"
-        aria-label={d ? `${d.day}: ${money(d.plan + d.api)}, ${d.runs} runs` : `Spending per day, ${days[0].day} to ${days[days.length - 1].day}: arrows move along the days`}
+        aria-label={d ? `${dayName(d.day)}: ${money(d.plan + d.api)}, ${d.runs} runs` : `Spending per day, ${dayName(days[0].day)} to ${dayName(days[days.length - 1].day)}: arrows move along the days`}
         onFocus={() => setAt((a) => a ?? days.length - 1)} onBlur={() => setAt(null)}
         onKeyDown={(e) => { const n = e.key === "ArrowLeft" ? -1 : e.key === "ArrowRight" ? 1 : e.key === "Home" ? -days.length : e.key === "End" ? days.length : 0;
           if (n) { e.preventDefault(); setAt((a) => Math.max(0, Math.min(days.length - 1, (a ?? days.length - 1) + n))); } }}>
         {days.map((day, i) => (
           <span key={day.day} onMouseEnter={() => setAt(i)} aria-hidden="true" className="flex h-full min-w-0 flex-1 flex-col justify-end">
-            <span className={`block w-full rounded-t-[3px] bg-accent-soft outline outline-1 -outline-offset-1 outline-accent/35 ${at === i ? "opacity-80" : ""}`} style={{ height: day.api ? `${Math.max(2, (100 * day.api) / max)}%` : 0 }} />
-            <span className={`block w-full ${day.api ? "" : "rounded-t-[3px]"} ${at === i ? "bg-accent-ink" : "bg-accent"}`} style={{ height: day.plan ? `${Math.max(2, (100 * day.plan) / max)}%` : 0 }} />
+            {/* the paid part solid on top, the plan's (counted at API prices, not billed) light under it: one colour in two
+                strengths; the paid part was a dark pixel-high cap nobody could see (design review 10) */}
+            <span className={`block w-full rounded-t-[3px] ${at === i ? "bg-accent-ink" : "bg-accent"}`} style={{ height: day.api ? `${Math.max(3, (100 * day.api) / max)}%` : 0 }} />
+            <span className={`block w-full ${day.api ? "" : "rounded-t-[3px]"} ${at === i ? "bg-[color-mix(in_srgb,var(--accent)_55%,var(--card))]" : "bg-[color-mix(in_srgb,var(--accent)_38%,var(--card))]"}`} style={{ height: day.plan ? `${Math.max(2, (100 * day.plan) / max)}%` : 0 }} />
           </span>
         ))}
       </div>
-      <div className="mt-1.5 flex justify-between text-[11px] tabular-nums text-faint"><span>{days[0].day.slice(5)}</span><span>max {money(max)} a day</span><span>{days[days.length - 1].day.slice(5)}</span></div>
+      <div className="mt-1.5 flex justify-between text-[11px] tabular-nums text-faint"><span>{dayName(days[0].day)}</span><span>max {money(max)} a day</span><span>{dayName(days[days.length - 1].day)}</span></div>
       <div className="mt-1.5 flex gap-3.5 text-[11.5px] text-muted">
-        <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-accent" />Claude plan</span>
-        <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-accent-soft outline outline-1 -outline-offset-1 outline-accent/35" />paid APIs</span>
+        <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-[color-mix(in_srgb,var(--accent)_38%,var(--card))]" />Claude plan, at API prices</span>
+        <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-accent" />Paid APIs</span>
       </div>
       {d && (
         <div className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-line-strong bg-card px-2.5 py-1.5 text-[12px] shadow-composer"
           style={{ left: `${Math.min(88, Math.max(12, ((at! + 0.5) / days.length) * 100))}%` }}>
           <div className="font-semibold tabular-nums text-ink">{money(d.plan + d.api)}</div>
-          <div className="text-muted">{d.day}, {d.runs} runs</div>
+          <div className="text-muted">{dayName(d.day)}, {d.runs} runs</div>
           {d.plan > 0 && d.api > 0 && <div className="tabular-nums text-muted">plan {money(d.plan)}, API {money(d.api)}</div>}
         </div>
       )}

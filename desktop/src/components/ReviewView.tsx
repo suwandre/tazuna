@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { core, type Review } from "../lib/tazuna";
 import { numbered, parse, patchOf, patchOfFile, sideBySide, wordMarks, type FileDiff } from "../lib/unidiff";
 import { code } from "../lib/markdown";
+import { Parts, Sep } from "./Sep";
 
 type Comment = { path: string; line: number; text: string; quote: string };
 type Writing = { path: string; line: number; quote: string; text: string };
@@ -81,6 +82,8 @@ export function ReviewView({ start, turns, onClose, onSend }: {
     const body: ReactNode = m && m[1] > m[0]
       ? <>{code(text.slice(0, m[0]), 0, false)}<mark className={`rounded-sm text-inherit ${kind === "+" ? "bg-ok/25" : "bg-bad/25"}`}>{code(text.slice(m[0], m[1]), 1, false)}</mark>{code(text.slice(m[1]), 2, false)}</>
       : code(text, 0, false);
+    // a wrapped line hangs under its own indent, two columns in (design review 10: it went back to the code's first column)
+    const lead = (text.match(/^[ \t]*/)?.[0] ?? "").replace(/\t/g, "    ").length + 2;
     const comment = () => kind !== "\\" && setWriting({ path: f.path, line: at, quote: l.line, text: c?.text ?? "" });
     return (
       <div onClick={comment} role="button" tabIndex={0} aria-label={`${c ? "Edit the comment on" : "Comment on"} line ${at}: ${l.line.slice(0, 80)}`}
@@ -89,7 +92,7 @@ export function ReviewView({ start, turns, onClose, onSend }: {
         {num !== "new" && <span className="w-10 flex-none select-none pr-2 text-right text-faint">{l.old ?? ""}</span>}
         {num !== "old" && <span className="w-10 flex-none select-none pr-2 text-right text-faint">{l.new ?? ""}</span>}
         <span className={`w-4 flex-none select-none ${kind === "+" ? "text-ok" : kind === "-" ? "text-bad" : "text-faint"}`}>{kind === " " ? "" : kind}</span>
-        <span className="min-w-0 flex-1 whitespace-pre-wrap pr-3 text-ink-2 [overflow-wrap:anywhere]">{body}</span>
+        <span className="min-w-0 flex-1 whitespace-pre-wrap pr-3 text-ink-2 [overflow-wrap:anywhere] [tab-size:4]" style={{ paddingLeft: `${lead}ch`, textIndent: `-${lead}ch` }}>{body}</span>
         <MessageSquare size={12} strokeWidth={1.5} className={`mr-2 mt-1 flex-none ${c ? "text-accent" : "invisible text-faint group-hover:visible group-focus-visible:visible"}`} />
       </div>
     );
@@ -111,7 +114,7 @@ export function ReviewView({ start, turns, onClose, onSend }: {
               placeholder={`Ask tazuna to change line ${at}…`}
               className="block w-full resize-none rounded-t-lg bg-transparent px-3 py-2 text-[13px] text-ink outline-none placeholder:text-faint" />
             <div className="flex items-center gap-2 border-t border-line-soft px-3 py-1.5 text-[11.5px] text-faint">
-              <span className="flex-1">Goes with your other comments when you send them · ⌘↵</span>
+              <span className="flex flex-1 items-center">Goes with your other comments when you send them<Sep />⌘↵</span>
               <button onClick={() => setWriting(null)} className={`${textButton} text-muted`}>Cancel</button>
               <button onClick={() => keep(writing)} className="rounded-md border border-line px-2.5 py-0.5 text-[12px] text-ink hover:bg-hover">{c ? "Save" : "Add comment"}</button>
             </div>
@@ -159,9 +162,10 @@ export function ReviewView({ start, turns, onClose, onSend }: {
               </button>
             );
           })}
-          {files.length > 0 && <div className="mt-2 border-t border-line-soft px-2 pt-2 text-[11.5px] text-faint">
-            {files.length} file{files.length === 1 ? "" : "s"} · <span className="text-ok">+{added}</span> <span className="text-bad">−{removed}</span>
-            {comments.length > 0 && ` · ${comments.length} comment${comments.length === 1 ? "" : "s"}`}</div>}
+          {/* hairlines, not middle dots (design review 10) */}
+          {files.length > 0 && <Parts className="mt-2 flex border-t border-line-soft px-2 pt-2 text-[11.5px] text-faint"
+            items={[`${files.length} file${files.length === 1 ? "" : "s"}`, <span key="n"><span className="text-ok">+{added}</span> <span className="text-bad">−{removed}</span></span>,
+              comments.length > 0 && `${comments.length} comment${comments.length === 1 ? "" : "s"}`]} />}
         </nav>
         <div className="min-w-0 flex-1 overflow-auto px-5 py-4">
           {files.map((f) => (

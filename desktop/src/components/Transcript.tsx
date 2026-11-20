@@ -1,5 +1,5 @@
 import { ArrowDown, CircleAlert, Check, ChevronRight, Copy, FileText, Info, LoaderCircle, MessageCircle, Pencil, RotateCcw, Square } from "lucide-react";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
 import { readableError } from "../lib/fromView";
 import { usd, type Call, type Change, type Message, type ToolStep } from "../lib/types";
@@ -174,9 +174,26 @@ function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; sec
   const shown = open ?? live;
   const what = workSummary(tools);
   const took = secs == null ? "" : ` ${dur(secs)}`;
+  // a click unfolds the steps in height and folds them back the same way (design review 10: they appeared and went at once)
+  const body = useRef<HTMLDivElement>(null), clicked = useRef(false);
+  const still = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  useLayoutEffect(() => {
+    const el = body.current;
+    if (!el || !clicked.current || still()) return;
+    clicked.current = false;
+    // clipped only while it moves: a step's focus ring reaches past the column
+    el.style.overflow = "hidden";
+    el.animate([{ height: "0px", opacity: 0 }, { height: `${el.scrollHeight}px`, opacity: 1 }], { duration: 180, easing: "cubic-bezier(0.2, 0, 0, 1)" }).onfinish = () => { el.style.overflow = ""; };
+  }, [shown]);
+  const toggle = () => {
+    const el = body.current;
+    if (shown && el && !still()) { el.style.overflow = "hidden"; el.animate([{ height: `${el.scrollHeight}px` }, { height: "0px", opacity: 0 }], { duration: 150, easing: "cubic-bezier(0.2, 0, 0, 1)" }).onfinish = () => setOpen(false); return; }
+    clicked.current = !shown;
+    setOpen(!shown);
+  };
   return (
     <div className="mb-2.5">
-      <button onClick={() => setOpen(!shown)} aria-expanded={shown} title={shown ? "Fold the steps" : "Show each step"}
+      <button onClick={toggle} aria-expanded={shown} title={shown ? "Fold the steps" : "Show each step"}
         className="-ml-1.5 inline-flex max-w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-[12.5px] text-muted hover:bg-hover hover:text-ink">
         <ChevronRight size={13} strokeWidth={1.5} className={`flex-none transition-transform duration-150 ${shown ? "rotate-90" : ""}`} />
         {live && !asking && <LoaderCircle size={13} strokeWidth={1.75} className="flex-none animate-spin text-accent" aria-hidden="true" />}
@@ -184,7 +201,7 @@ function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; sec
         {what && <span className="flex min-w-0 items-center truncate text-faint"><Sep />{what}</span>}
       </button>
       {shown && (
-        <div className="tz-enter ml-[5px] mt-1 flex flex-col gap-0.5 border-l border-line pl-3.5">
+        <div ref={body} className="ml-[5px] mt-1 flex flex-col gap-0.5 border-l border-line pl-3.5">
           {/* a short thought with nothing to read is no step of its own (rows of "Thought ~14 tokens" between the commands) */}
           {tools.filter((t) => !(t.kind === "thinking" && !t.running && !t.text?.trim() && !/k tokens/.test(t.detail ?? ""))).map((t, j) => <Slot key={j} name="tool.view" props={{ step: t }} only />)}
         </div>

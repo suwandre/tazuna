@@ -29,13 +29,15 @@ export type Work = {
 };
 export const WorkCtx = createContext<Work>({ files: [], checks: [] });
 
-/** One section of the panel: a heading with an icon and a figure on the right, its body under a line. */
+/** One section of the panel: a heading with an icon and a figure on the right, its body under it; sections lie on the desk
+ * apart by a rule, not as bordered cards (design review 10: the conversation is the one sheet; cards beside it were boxes
+ * on the same fill). */
 export function Section({ icon, title, right, children }: { icon?: ReactNode; title: string; right?: ReactNode; children?: ReactNode }) {
   return (
-    <section className="rounded-lg border border-line bg-card">
-      <div className="flex items-center gap-2 px-3 py-2.5 font-medium text-ink">{icon}<span className="flex-1">{title}</span>
+    <section className="border-b border-line pb-3.5 last:border-b-0">
+      <div className="flex items-center gap-2 py-1 font-medium text-ink">{icon}<span className="flex-1">{title}</span>
         {right != null && <span className="min-w-0 truncate text-[12px] font-normal tabular-nums text-faint">{right}</span>}</div>
-      {children && <div className="border-t border-line-soft px-3 pb-2.5 pt-1.5">{children}</div>}
+      {children && <div className="pt-1">{children}</div>}
     </section>
   );
 }
@@ -158,7 +160,7 @@ export function UserPanel({ w, data, onEdit, onRemove }: { w: UserWidget; data: 
     return () => window.removeEventListener("message", on);
   }, []);
   return (
-    <div className="group rounded-lg border border-line bg-card px-3.5 py-3">
+    <div className="group border-b border-line pb-3.5 last:border-b-0">
       <div className="mb-2 flex items-center gap-1 text-[11.5px] font-medium text-faint">
         <span className="flex-1 truncate">{w.title}</span>
         {sure ? <>
@@ -179,7 +181,7 @@ export function Rail({ usage, data, messages }: { usage: Usage; data?: unknown; 
   return (
     // 300 px wide whatever its column is: the column slides open and shut (App's grid), the cards do not reflow in it.
     // With no card (a plain chat) it says so, not a blank column.
-    <aside aria-label="The work" className="tz-enter flex min-h-0 w-[300px] flex-col gap-3 overflow-y-auto border-l border-line bg-sidebar px-3.5 py-4 empty:after:text-[12.5px] empty:after:leading-relaxed empty:after:text-faint empty:after:content-['Nothing_here_for_a_plain_chat._In_a_project_this_shows_its_changes,_checks_and_pull_request.']">
+    <aside aria-label="The work" className="tz-enter flex min-h-0 w-[300px] flex-col gap-3.5 overflow-y-auto py-4 pl-2.5 pr-4 empty:after:text-[12.5px] empty:after:leading-relaxed empty:after:text-faint empty:after:content-['Nothing_here_for_a_plain_chat._In_a_project_this_shows_its_changes,_checks_and_pull_request.']">
       <Slot name="rail" props={{ usage, data, messages }} />
     </aside>
   );

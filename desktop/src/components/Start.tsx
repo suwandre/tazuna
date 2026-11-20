@@ -81,7 +81,8 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
       )}
       <div className="mt-5 flex gap-4 text-[11.5px] text-faint">
         {/* Search's key is on the sidebar's search field already */}
-        {([["Mode", "⇧Tab"], ["Shortcuts", "⌘/"]] as const).map(([what, keys]) => (
+        {/* no Mode in a chat: nothing there asks for permission (its pill went too, design review 10) */}
+        {([...(place ? [["Mode", "⇧Tab"]] : []), ["Shortcuts", "⌘/"]] as const).map(([what, keys]) => (
           <span key={what}>{what} <kbd className="ml-1 rounded-[5px] border border-line px-[5px] font-mono text-[11px]">{keys}</kbd></span>
         ))}
       </div>

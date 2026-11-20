@@ -22,7 +22,7 @@ export function SideChat({ view, onSend, onStop, onAnswer, onClose }: {
     return () => window.removeEventListener("keydown", esc);
   }, [busy, onClose]);
   return (
-    <aside data-side aria-label="Side chat" className="flex min-h-0 flex-col border-l border-line bg-sidebar">
+    <aside data-side aria-label="Side chat" className="mr-2 mt-2 flex min-h-0 flex-col overflow-hidden rounded-xl bg-main shadow-sheet">
       <div className="flex items-start gap-2 border-b border-line-soft px-4 py-3">
         <span className="flex-1"><span className="font-medium">Side chat</span>
           <span className="block text-[11.5px] text-muted">Knows this conversation. Nothing here goes back to it, and it changes no files.</span></span>
@@ -31,7 +31,8 @@ export function SideChat({ view, onSend, onStop, onAnswer, onClose }: {
       {messages.length === 0 && !busy && <div className="px-4 pt-4 text-[12.5px] text-faint">{!view ? "Starting…" : ready ? "Ask about the conversation: what it decided and why, what is left, what a step did." : "Not in plan mode, so nothing is sent."}</div>}
       <Transcript messages={messages} busy={busy} activity={view?.asking ? undefined : view?.activity} jumps={false} />
       {view?.asking && <Approval asking={view.asking} onAnswer={onAnswer} keys={false} />}
-      <div className="px-3 pb-3">
+      {/* the box's bottom on the main box's line (both 22 px over the sheet's edge; design review 10) */}
+      <div className="px-3 pb-[22px]">
         <div className="flex items-end gap-2 rounded-xl border border-line-strong bg-card py-2 pl-3 pr-2 shadow-composer focus-within:border-accent">
           <textarea rows={2} autoFocus value={text} onChange={(e) => setText(e.target.value)} placeholder="Ask on the side…"
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); send(); } }}

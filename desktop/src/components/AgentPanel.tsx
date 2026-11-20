@@ -14,7 +14,7 @@ export function AgentPanel({ view, task, title, running, onStop, onClose }: {
 }) {
   const messages = view ? viewMessages(view) : [];
   return (
-    <aside data-side aria-label="Subagent" className="tz-enter flex min-h-0 w-[440px] flex-col border-l border-line bg-sidebar">
+    <aside data-side aria-label="Subagent" className="tz-enter mr-2 mt-2 flex min-h-0 w-[432px] flex-col overflow-hidden rounded-xl bg-main shadow-sheet">
       <div className="flex items-start gap-2 border-b border-line-soft px-4 py-3">
         <span className="min-w-0 flex-1"><span className="block truncate font-medium" title={title}>{title || "Subagent"}</span>
           <Parts className="block truncate text-[11.5px] text-muted" items={[task?.agent || "subagent", running ? "working" : task?.status ?? "ended",

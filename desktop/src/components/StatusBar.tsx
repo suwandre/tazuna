@@ -1,4 +1,4 @@
-import { ArrowUpCircle, Check, LoaderCircle, RefreshCw, TriangleAlert } from "lucide-react";
+import { ArrowUpCircle, Check, LoaderCircle, RefreshCw } from "lucide-react";
 import { openUsage } from "./Rail";
 import { usd, type Usage } from "../lib/types";
 import { useEffect, useState } from "react";
@@ -113,7 +113,7 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [], o
   const [, tick] = useState(0);
   useEffect(() => { const t = setInterval(() => tick((n) => n + 1), 30_000); return () => clearInterval(t); }, []);
   return (
-    <footer aria-label="Status" className="relative z-20 flex h-7 flex-none items-center gap-4 overflow-x-clip overflow-y-visible whitespace-nowrap border-t border-line bg-sidebar px-3.5 text-[12px] tabular-nums text-muted">
+    <footer aria-label="Status" className="relative z-20 flex h-7 flex-none items-center gap-4 overflow-x-clip overflow-y-visible whitespace-nowrap bg-desk px-3.5 text-[12px] tabular-nums text-muted">
       <span className="group/use relative flex flex-none items-center gap-3">
         <button onClick={openUsage} aria-describedby="usage-card" className={button}>
           <span className={`size-1.5 rounded-full ${tone[here.length && here.every((i) => i.level === "unknown") ? "unknown" : worst(here)]}`} aria-hidden="true" /><Here here={here} />
@@ -135,9 +135,11 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [], o
           ("OpenRouter $0.17 over +2"), each in the hover; one badge, not one each, and not "3 accounts need you" */}
       {others.length > 0 && (
         <span className="group/adv relative flex flex-none">
-          <span tabIndex={0} aria-describedby="usage-advice" className={`flex flex-none cursor-default items-center gap-1.5 rounded-full border px-2 leading-[18px] ${worst(others) === "out" ? "border-bad/45 text-bad" : "border-warn/45 text-warn"}`}>
-            <TriangleAlert size={12} strokeWidth={1.75} aria-hidden="true" />{others[0].short}
-            {others.length > 1 && <span className="rounded-full bg-current/15 px-1.5 text-[11px] font-medium leading-4">+{others.length - 1}</span>}
+          {/* quiet: an account this conversation does not run on is a dot in its colour and faint words, not a red chip on
+              every screen (design review 10: "OpenRouter $0.17 over +2" shouted while the conversation ran on Claude) */}
+          <span tabIndex={0} aria-describedby="usage-advice" className="flex flex-none cursor-default items-center gap-1.5 rounded px-1 -mx-1 text-faint hover:text-ink-2">
+            <span className={`size-1.5 flex-none rounded-full ${tone[worst(others)]}`} aria-hidden="true" />{others[0].short}
+            {others.length > 1 && <span className="tabular-nums">+{others.length - 1}</span>}
           </span>
           <span className="invisible absolute bottom-full left-0 z-30 pb-2 opacity-0 transition-opacity duration-150 group-hover/adv:visible group-hover/adv:opacity-100 group-focus-within/adv:visible group-focus-within/adv:opacity-100">
             <span id="usage-advice" role="tooltip" className="block w-[340px] whitespace-normal rounded-xl border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-2 shadow-composer">

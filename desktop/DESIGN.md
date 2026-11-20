@@ -26,6 +26,7 @@ colors:
     bad: "#b4473a"
     warn: "#a76a14"
     scrim: "#1d1b1640"
+    desk: "#efebe3"
   dark:
     canvas: "#171613"
     main: "#1b1a17"
@@ -49,6 +50,7 @@ colors:
     bad: "#e08b7f"
     warn: "#e0b46a"
     scrim: "#0000008c"
+    desk: "#121110"
 typography:
   ui: { family: "Geist", fallback: "system-ui, sans-serif", size: 13.5px, line-height: 1.5 }
   mono: { family: "Geist Mono", fallback: "ui-monospace, monospace", size: 12.5px }
@@ -60,6 +62,7 @@ radius: { sm: 6px, md: 7px, lg: 10px, xl: 14px, pill: 999px }
 elevation:
   none: none
   composer: "0 1px 2px #2321190d, 0 4px 14px #23211908"
+  sheet: { light: "0 0 0 1px #2321190a, 0 1px 2px #2321190f, 0 8px 28px #2321190d", dark: "0 0 0 1px #ffffff0d, 0 1px 2px #00000066, 0 10px 30px #00000059" }
   pop: { light: "0 2px 6px #2321190f, 0 14px 36px #23211924", dark: "0 0 0 1px #ffffff0a, 0 10px 32px #00000080", dark-fill: "#282622" }
 layout: { sidebar: 248px, rail: 232px, reading: 700px, gutter: 28px }
 motion: { fast: 120ms, base: 160ms, slow: 200ms, easing: "cubic-bezier(0.2, 0, 0, 1)" }
@@ -73,6 +76,13 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 
 ## Character
 - Paper and ink: a warm cream canvas, warm near-black text, one indigo accent (ai-iro; tazuna means "reins").
+- Paper on the desk (design review 10, prototype `mockups/v7.html`): the window is the desk (`desk`); the conversation is one
+  sheet on it (`main`, 12 px corners, the `sheet` shadow, 8 px from the window's edges), and so is a side chat or a subagent
+  beside it. The sidebar, the work panel and the status bar lie on the desk with no border of their own; the work panel's
+  parts are sections apart by a rule, not cards.
+- One mark: 手 (te, the hand of 手綱) drawn in the icons' round stroke, its last stroke ending in a rein's loop
+  (`components/Mark.tsx`). The app icon (`app-icon.svg`, paper on indigo on macOS's grid), the sidebar (22 px tile) and the
+  terminal's welcome (two cells, `▐手▌`) use it; nothing else stands for tazuna.
 - Quiet structure: hairline borders, not shadows, for everything that sits on the page. What floats over it (a menu, a
   popover, a dialog, a tooltip) has the `pop` shadow, and in dark a fill one step lighter than a card: a menu over a card
   of the same fill read as part of it (design review 8, desktop 0.1.87). The composer keeps its own soft shadow.
@@ -83,6 +93,9 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - `accent` marks the one thing to act on or the live state: the send button, the running thread, progress fills, the
   context ring. Never decoration, never more than one accented control per area.
 - `ok` and `bad` only for results (diff counts, passed or failed checks). `warn` only for limits and risk.
+- Tables in answers: rules between rows, a quiet header (11.5 px, faint), numbers in tabular figures; no grid.
+- TeX in answers is drawn as MathML by the system (`lib/math.tsx`): `$…$` only when it holds a backslash, ^ or _ (money
+  stays money), `\(…\)`, `$$…$$` and `\[…\]`.
 - Code in answers has its own four tokens (`code-keyword` = accent-ink, `code-string` ochre, `code-number` plum,
   `code-comment` = faint, italic), so syntax never borrows the result colours.
 - Text levels: `ink` for content, `ink-2` for secondary content, `muted` for supporting text, `faint` for labels and
@@ -103,6 +116,8 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - Three columns: sidebar 248 px, main (header, transcript, composer), the work panel 300 px. The work panel is open in a
   project and closed in a plain chat; ⌘\ and the header's button switch it. (Design review, 2026-11-18, prototype
   `mockups/v2.html`.)
+- The status bar names an account this conversation does not run on, when it needs you, quietly: a dot in its colour and faint
+  words ("OpenRouter $0.17 over +2"), the advice on hover.
 - Each number shows once. The model and effort: the composer's one pill. The plan (5 hours and week, what is left), the
   SubRouter balance, this conversation's context, cache and cost, and the app's version: the status bar along the window's
   bottom (prototype `mockups/v4.html`, variant B, 2026-11-19), a click on the plan or the cost opening the usage page. An
@@ -126,9 +141,11 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   as meters (amber from 75%); accounts with nothing used fold into one line ("4 windows at 0%"), and so do providers
   whose API tells no balance (their pages inside); a zero is a quiet line, not a big number; the daily bars stack the plan
   and paid parts. How the runs went (for tuning tazuna) is folded at the bottom, closed (design review 9, mockups/v6.html).
-- The sidebar groups the conversations open now by what they need (Needs you, Working, Open), then every saved one under
-  the day it last ran (Today, Yesterday, This week, Earlier), two lines each: its title; its project and when (today its
-  age, yesterday its time, this week its day, then its date). No model on the row. Projects last, folded.
+- The sidebar lifts out what needs you or works (Needs you, Working); every saved conversation sits under the day it last
+  ran (Today, Yesterday, This week, Earlier), two lines each: its title; its project and when (today its age, yesterday its
+  time, this week its day, then its date). One open with nothing to do stays under its day with an accent dot (× closes
+  it); "Open" is only for one the lists do not hold. A list where every row has the same place drops it (one line, the
+  time on the right). No model on the row. Projects last, folded. The list fades at both ends.
 - A conversation's title is its first message made short by rules (no polite opening, its first sentence, about 60
   characters at most, a capital); a name the user gave stays as given. The header shows the title, then in faint what the
   title left out of the first message.
@@ -144,9 +161,10 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   Pull request (state, CI, Checks and reviews), your messages, then the user's own panels.
 
 ## Components we own
-Sidebar item (two lines), open row, group heading, project group, thread dot (idle, running), badge; header crumb, cost and
+Mark (`components/Mark.tsx`); sidebar item (two lines, or one when its place repeats), open row, group heading, project group, thread dot (idle, running), badge; header crumb, cost and
 panel button; message (user, agent, chat), work fold, tool step, change card, metadata line, routed tag; composer with
-pills (where, mode, model with its effort) and send, their menus placed by one rule (usePlace: above the whole box where it
+pills (where, mode, model with its effort; one style: filled, an icon, a chevron where a menu opens; no mode in a plain
+chat) and send, their menus placed by one rule (usePlace: above the whole box where it
 fits, else below it); completion menu and attachment chip (Composer), answer images, jump to latest, tooltip (`.tz-tip`: every `title` shows
 in it, lib/chrome.ts); answer copy; error card (the provider's message in words, Retry, its raw reply on request); code
 block with its language and copy; work panel section (Changes, Checks, Pull request), usage bar, status bar. Reuse these before adding new ones; add new ones here when they are made.
@@ -155,7 +173,10 @@ block with its language and copy; work panel section (Changes, Checks, Pull requ
 - CSS transitions of 120-200 ms with the easing above; panels slide, toasts fade.
 - Every dialog comes up over its backdrop (`tz-dialog`, the backdrop `tz-fade`); a menu or popover opens from its button
   (`tz-pop`). The backdrop is `scrim`: darker in both themes, never the ink colour (in dark mode that lightened the window).
-- No animated backgrounds, particles, glow or shimmer; streaming text is not animated per token.
+- No animated backgrounds, particles or glow; streaming text is not animated per token. The one shimmer: the light sweep over
+  a running step's words (`tz-live`).
+- Rows move, they do not jump: a sidebar row that changes group slides there (200 ms, kept by the conversation's id); a
+  reply's steps unfold and fold in height (180 ms and 150 ms).
 - What closes fades out where it was (`tz-out`, 110 ms; lib/chrome.ts does it for every menu and dialog), and the work
   panel's column slides open and shut.
 - Selected text is the accent at 30%, not the system's blue.

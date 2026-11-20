@@ -669,7 +669,7 @@ export default function App() {
     } satisfies Record<string, [string, () => void]> : {}),
   } : {};
   const composer = (
-        <Composer key={active} commands={windowCommands} where={fresh ? where : undefined} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
+        <Composer key={active} commands={windowCommands} where={fresh ? where : undefined} chat={inTauri && !folder} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
             onSend={(text) => {
               if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk(text); return; }
               sendNow(text);
@@ -711,8 +711,10 @@ export default function App() {
   const said = title.replace(/…$/, "").toLowerCase();
   const more = firstAsked.toLowerCase().startsWith(said) ? firstAsked.slice(said.length).replace(/^[\s.?!,;:]+/, "") : firstAsked === title ? "" : firstAsked;
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
-    <div className="grid min-h-0 flex-1 overflow-hidden"
+    // paper on the desk (design review 10): the window is the desk; the conversation (and a side chat or subagent beside it)
+    // is a sheet on it; the sidebar, the work panel and the status bar lie on the desk
+    <div className="flex h-screen flex-col overflow-hidden bg-desk">
+    <div data-tauri-drag-region className="grid min-h-0 flex-1 overflow-hidden"
       // the right column is always a track (0 px when shut), so it slides: a track that came and went was a jump cut
       style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", reviewing ? "0px" : agentHere ? "440px" : side ? "380px" : panelOpen ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
       {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-scrim" />}
@@ -730,7 +732,7 @@ export default function App() {
         planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
       </div>
       {/* relative: the review is a pane over the conversation (header and box too), not a dialog over the window */}
-      <main className="relative flex min-h-0 min-w-0 flex-col bg-main">
+      <main className={`relative mr-2 mt-2 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-main shadow-sheet ${narrow ? "ml-2" : ""}`}>
         <header data-tauri-drag-region className="flex items-center justify-between gap-3 border-b border-line-soft py-2.5 pl-7 pr-4">
           <div className="flex min-w-0 items-center gap-2 font-medium">
             {narrow && <button onClick={() => setNavOpen(true)} aria-label="Conversations" title="Conversations" className="-ml-3 grid size-7 flex-none place-items-center rounded-md text-muted hover:text-ink"><PanelLeft size={16} strokeWidth={1.5} /></button>}

@@ -1,7 +1,8 @@
-import { ChevronRight, FolderOpen, LoaderCircle, Pencil, Plus, Search, X } from "lucide-react";
-import { createContext, useContext, useState } from "react";
+import { ChevronRight, FolderOpen, LoaderCircle, Pencil, Plus, Search, Settings, X } from "lucide-react";
+import { createContext, useContext, useLayoutEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
 import type { Project, Thread } from "../lib/types";
+import { Mark } from "./Mark";
 import { Parts } from "./Sep";
 
 const icon = { size: 16, strokeWidth: 1.5 };
@@ -54,8 +55,12 @@ export function when(at?: number, now = Date.now()): string {
 
 const groupHead = "flex items-center px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint";
 
-function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
+function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose, noPlace }: {
   t: Thread; active: boolean; sub?: boolean; onClick?: () => void; onRename?: (title: string) => void; onHide?: () => void;
+  /** open now with nothing to do: it stays under its day, marked, and × closes it (design review 10: it jumped into "Open") */
+  opened?: boolean; onClose?: () => void;
+  /** every row of the list is in the same place: the place is not repeated under each title */
+  noPlace?: boolean;
 }) {
   const [mode, setMode] = useState<"view" | "rename" | "hide">("view");
   const [title, setTitle] = useState(t.title);
@@ -77,21 +82,26 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
       </div>
     );
   }
-  const twoLines = !sub && (t.place || t.at);
+  const place = noPlace ? "" : t.place;
+  const twoLines = !sub && !!place;
+  const dot = opened && <span title="Open" className="size-1.5 flex-none rounded-full bg-accent" />;
   return (
-    <a onClick={onClick} {...press(onClick)} title={t.full ?? t.title} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
+    <a data-flip={t.id} onClick={onClick} {...press(onClick)} title={t.full ?? t.title} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
       {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-accent shadow-[0_0_0_3px_var(--accent-soft)]" : "bg-faint"}`} />}
       {twoLines ? (
         <span className="min-w-0 flex-1">
           {/* where it ran and when, under its title: the model left the row (design review 9: "DeepSeek V4.1 Flas…" took
               the title's room on every row); it is in the conversation and the palette */}
-          <span className="block truncate text-ink">{t.title}</span>
-          <span className="flex gap-2 text-[11.5px] text-faint"><span className="truncate">{t.place}</span><span className="ml-auto flex-none tabular-nums group-hover:hidden">{when(t.at)}</span></span>
+          <span className="flex items-center gap-1.5 text-ink">{dot}<span className="truncate">{t.title}</span></span>
+          <span className="flex gap-2 text-[11.5px] text-faint"><span className="truncate">{place}</span><span className="ml-auto flex-none tabular-nums group-hover:hidden">{when(t.at)}</span></span>
         </span>
-      ) : <span className="flex-1 truncate">{t.title}</span>}
+      ) : <span className="flex min-w-0 flex-1 items-center gap-1.5">{dot}<span className="truncate">{t.title}</span>
+          {!sub && <span className="ml-auto flex-none text-[11.5px] tabular-nums text-faint group-hover:hidden">{when(t.at)}</span>}</span>}
       {onRename && <span className="hidden flex-none gap-0.5 group-hover:flex">
         <button title="Rename" onClick={(e) => { e.stopPropagation(); setTitle(t.title); setMode("rename"); }} className={icon}><Pencil size={12} strokeWidth={1.5} /></button>
-        <button title="Remove from the list (its recording stays)" onClick={(e) => { e.stopPropagation(); setMode("hide"); }} className={icon}><X size={12} strokeWidth={1.5} /></button>
+        {opened && onClose
+          ? <button title="Close (the conversation stays in the lists)" aria-label={`Close ${t.title}`} onClick={(e) => { e.stopPropagation(); onClose(); }} className={icon}><X size={12} strokeWidth={1.5} /></button>
+          : <button title="Remove from the list (its recording stays)" onClick={(e) => { e.stopPropagation(); setMode("hide"); }} className={icon}><X size={12} strokeWidth={1.5} /></button>}
       </span>}
     </a>
   );
@@ -102,7 +112,7 @@ type Open = { tid: string; title: string; place: string; state: "working" | "ask
 /** A conversation open now: its name, then where it runs and what it needs; a spinner while it works. */
 function OpenRow({ o, active, onSwitch, onClose }: { o: Open; active: boolean; onSwitch?: (tid: string) => void; onClose?: (tid: string) => void }) {
   return (
-    <a onClick={() => onSwitch?.(o.tid)} {...press(() => onSwitch?.(o.tid))} title={`${o.title} (${STATE[o.state][1]})`}
+    <a data-flip={o.id ?? o.tid} onClick={() => onSwitch?.(o.tid)} {...press(() => onSwitch?.(o.tid))} title={`${o.title} (${STATE[o.state][1]})`}
       className={`group flex items-center gap-2 rounded-md px-[9px] py-[5px] text-ink-2 hover:bg-hover ${active ? "bg-selected text-ink" : ""}`}>
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5 text-ink">
@@ -150,19 +160,40 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
   // a click opened it and nothing folded it again); the name opens the project
   const [fold, setFold] = useState<Record<string, boolean>>({});
   const needs = open.filter((o) => o.state === "asking"), working = open.filter((o) => o.state === "working");
-  const idle = open.length > 1 ? open.filter((o) => o.state === "idle" || o.state === "stopped") : [];
-  // a conversation in a group above shows there only; the one on screen alone stays in Recent, marked (until desktop 0.1.77
-  // it left Recent and was nowhere)
-  const opened = new Set([...needs, ...working, ...idle].map((o) => o.id).filter(Boolean));
-  const recent = [...chats.map((t) => ({ t, p: undefined as Project | undefined })), ...projects.flatMap((p) => p.threads.map((t) => ({ t, p })))]
-    .filter(({ t }) => !opened.has(t.id)).sort((a, b) => (b.t.at ?? 0) - (a.t.at ?? 0)).slice(0, 20);
+  // only what needs you or works lifts a conversation out of its day; one open with nothing to do stays under its day, marked
+  // by a dot (design review 10: the row you clicked jumped into an "Open" group). A conversation in a group above shows
+  // there only.
+  const lifted = new Set([...needs, ...working].map((o) => o.id).filter(Boolean));
+  const all = [...chats.map((t) => ({ t, p: undefined as Project | undefined })), ...projects.flatMap((p) => p.threads.map((t) => ({ t, p })))]
+    .filter(({ t }) => !lifted.has(t.id)).sort((a, b) => (b.t.at ?? 0) - (a.t.at ?? 0));
+  const recent = all.slice(0, 20);
+  const idleOpen = new Map(open.filter((o) => (o.state === "idle" || o.state === "stopped") && o.id).map((o) => [o.id!, o]));
+  // an open one the lists do not hold (older than the twenty, or not saved yet) keeps a group of its own
+  const shown = new Set(recent.map(({ t }) => t.id));
+  const idle = open.length > 1 ? open.filter((o) => (o.state === "idle" || o.state === "stopped") && !(o.id && shown.has(o.id))) : [];
+  // a list where every row says the same place ("tazuna" twenty times) does not repeat it under each title
+  const samePlace = recent.length > 1 && recent.every(({ t }) => t.place === recent[0].t.place);
+  // rows slide to where they go (a conversation that starts working lifts into Working), not a jump cut: each row's top is
+  // kept by its conversation's id, and a row that moved animates from the old one (design review 10)
+  const listRef = useRef<HTMLDivElement>(null), tops = useRef(new Map<string, number>());
+  useLayoutEffect(() => {
+    const box = listRef.current;
+    if (!box) return;
+    const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches, next = new Map<string, number>();
+    for (const el of box.querySelectorAll<HTMLElement>("[data-flip]")) {
+      const key = el.dataset.flip!, top = el.offsetTop, was = tops.current.get(key);
+      next.set(key, top);
+      if (!still && was !== undefined && Math.abs(was - top) > 1) el.animate([{ transform: `translateY(${was - top}px)` }, { transform: "none" }], { duration: 200, easing: "cubic-bezier(0.2, 0, 0, 1)" });
+    }
+    tops.current = next;
+  });
   return (
     // the column's whole width, whatever its rows: with a short list it shrank to them and left a strip of the window's
     // background between it and the conversation (desktop 0.1.75)
-    <aside aria-label="Conversations" className="flex min-w-0 flex-1 flex-col gap-0.5 overflow-hidden border-r border-line bg-sidebar px-2.5 py-3.5">
+    <aside aria-label="Conversations" className="flex min-w-0 flex-1 flex-col gap-0.5 overflow-hidden bg-desk px-2.5 py-3.5">
       {macOverlay && <div data-tauri-drag-region className="-mx-2.5 -mt-3.5 h-[38px] flex-none" />}
       <div data-tauri-drag-region className="flex items-center gap-2 px-2 pb-3 pt-0.5 font-semibold tracking-[-0.01em]">
-        <span className="grid size-[22px] place-items-center rounded-sm bg-accent text-[12px] font-bold text-on-accent">手</span>
+        <Mark size={22} />
         <span>tazuna</span>
       </div>
       <button onClick={onSearch} className="mb-1 flex items-center gap-2 rounded-md border border-line bg-field px-[9px] py-[7px] text-left text-muted hover:bg-hover">
@@ -172,7 +203,9 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
       <Slot name="sidebar.top" props={{}} />
       {/* rows keep their height and the list scrolls (*:shrink-0): a row's truncate hides its overflow, so in a full list the
           flex column squeezed every row to fit and they overlapped (desktop 0.1.64, with many saved conversations) */}
-      <div className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto *:shrink-0">
+      {/* relative: the rows' offsetTop for the sliding; tz-edges fades the list at its ends, so a row cut by the scroll reads
+          as more to come, not as a sliced heading (design review 10) */}
+      <div ref={listRef} className="tz-edges relative flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto *:shrink-0">
       {/* the conversations open now by what they need: an answer from you, time to work, nothing (when more than one is open);
           then every saved one by when it last ran, its project and age under its name; then the projects (2026-11-18) */}
       {([["Needs you", needs], ["Working", working], ["Open", idle]] as const).map(([head, list]) => list.length > 0 && (
@@ -185,8 +218,12 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
         const list = recent.filter(({ t }) => dayOf(t.at) === day);
         return list.length > 0 && <div key={day} className="flex flex-col gap-0.5">
           <div className={groupHead}>{day}</div>
-          {list.map(({ t, p }) => <ThreadRow key={t.id} t={t} active={t.id === active} onClick={() => onOpenThread?.(t, p)}
-            onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
+          {list.map(({ t, p }) => {
+            const o = idleOpen.get(t.id);
+            return <ThreadRow key={t.id} t={t} active={o ? o.tid === activeTid : t.id === active} noPlace={samePlace} opened={!!o && open.length > 1}
+              onClick={() => (o ? onSwitch?.(o.tid) : onOpenThread?.(t, p))} onClose={o && (() => onClose?.(o.tid))}
+              onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />;
+          })}
         </div>;
       })}
       {projects.length > 0 && <div className={groupHead}>Projects</div>}
@@ -241,7 +278,8 @@ export function SettingsRow() {
   return (
     <div className="border-t border-line pt-1.5">
       <button onClick={onSettings} className="group flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-muted transition-colors hover:bg-hover hover:text-ink">
-        <span className="grid size-[22px] place-items-center rounded-full border border-line bg-field text-[11px] text-ink-2">S</span>
+        {/* a gear: the "S" in a circle read as someone's avatar (design review 10) */}
+        <Settings {...icon} />
         <span>Settings</span>
         {/* planLeft stays in the context for a plugin; the plan's figures are by the composer now */}
         <Kbd>⌘,</Kbd>
