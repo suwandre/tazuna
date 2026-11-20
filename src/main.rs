@@ -1484,7 +1484,14 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("accounts") => {
                             let tx = hook_tx.clone();
                             std::thread::spawn(move || {
-                                let mut v = accounts::all();
+                                // the plan first, on its own line, as soon as it is read: the window's bar shows it then
+                                let mut v = accounts::all_then(|plan| {
+                                    let mut early = plan.clone();
+                                    early["type"] = json!("accounts_plan");
+                                    let mut o = std::io::stdout().lock();
+                                    let _ = writeln!(o, "{early}");
+                                    let _ = o.flush();
+                                });
                                 let rows: Vec<accounts::PlanRow> = v["plan"].as_array().into_iter().flatten().map(|r| accounts::PlanRow {
                                     label: r["label"].as_str().unwrap_or_default().to_string(), used: r["used"].as_f64().unwrap_or(0.0), resets: String::new() }).collect();
                                 if let Some(ev) = accounts::rate_event(&rows) {

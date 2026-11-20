@@ -16,6 +16,26 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.186 (2026-11-20): the accounts reading in a second, not five
+
+The user: a refresh of the usage "takes like a few seconds".
+
+- Claude's plan is asked over the CLI's stream (`claude -p --input-format stream-json`, the one message `/usage`) and
+  taken as soon as its line is there. As `claude -p /usage --output-format json` the same page came only once the CLI had
+  closed down. No model call either way (cost 0, 0 turns); the CLI closes down off the reading's thread, and none is left
+  running.
+- The plan, the providers' credits and OmniRoute's accounts are read at once, and OmniRoute's accounts each at once (four
+  were asked in a row); the window gets the plan on a line of its own (`accounts_plan`) as soon as it is read.
+
+| The accounts reading (`/usage`, the window's refresh), this Mac, 3-4 runs each | 0.1.185 | 0.1.186 |
+|---|---|---|
+| Claude's plan read | 4.7-6.8 s | 1.2 s |
+| Everything (4 credits, 4 OmniRoute accounts) | 4.7-6.8 s | 1.3-1.5 s |
+| The window, a click on refresh to the numbers (dev build) | 5.7 s | 1.7-1.9 s |
+
+The CLI starts about half a second slower under the app than from a terminal (cause not found; the app's own messages
+take 5-25 ms). Under a second would take a CLI kept running for it (0.8 s a read, about 400 MB while idle): not done.
+
 ## 0.1.185 (2026-11-19): one palette with the window, and states that say what they are
 
 From design review 8, against the other harnesses' terminals (opencode, Claude Code, Codex).

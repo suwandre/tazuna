@@ -18,11 +18,22 @@ pub struct PlanRow {
 pub fn claude_plan() -> Option<(Vec<PlanRow>, Vec<String>)> {
     // no project's settings or MCP servers (their hooks and commands would run), from the home folder: on Linux the
     // temporary folder is shared, and another user could leave a .claude/ or .mcp.json there (security review, 2026-11-18)
-    let out = std::process::Command::new("claude")
-        .args(["-p", "/usage", "--output-format", "json", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config"])
-        .current_dir(crate::platform::home()?).stdin(std::process::Stdio::null()).stderr(std::process::Stdio::null()).output().ok()?;
-    let v: Value = serde_json::from_slice(&out.stdout).ok()?;
-    parse_plan(v["result"].as_str()?)
+    // Asked over the CLI's stream and taken as soon as its line is there: about 1.2 s. As `-p /usage --output-format json`
+    // the same page came only once the CLI had closed down, 4.9 s (both measured 2026-11-20; the user: a refresh "takes
+    // like a few seconds"). The question is the only input (stdin is closed after it), so a CLI that cannot answer ends
+    // as before; its closing down is waited for off this thread.
+    use std::io::{BufRead, Write};
+    use std::process::Stdio;
+    let mut child = std::process::Command::new("claude")
+        .args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config"])
+        .current_dir(crate::platform::home()?).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let asked = child.stdin.take().and_then(|mut i| writeln!(i, "{}", json!({"type": "user", "message": {"role": "user", "content": "/usage"}})).ok());
+    let page = asked.and(child.stdout.take()).and_then(|o| {
+        std::io::BufReader::new(o).lines().map_while(Result::ok).filter_map(|l| serde_json::from_str::<Value>(&l).ok())
+            .find(|e| e["type"] == "result").and_then(|e| e["result"].as_str().map(String::from))
+    });
+    std::thread::spawn(move || { let _ = child.wait(); });
+    parse_plan(&page?)
 }
 
 fn parse_plan(text: &str) -> Option<(Vec<PlanRow>, Vec<String>)> {
@@ -87,7 +98,8 @@ pub fn omniroute() -> Vec<Value> {
     let Some(key) = crate::models::key("OMNIROUTE_API_KEY") else { return vec![] };
     let agent = http(25);
     let Some(list) = get(&agent, "http://localhost:20128/api/usage/quota", &key) else { return vec![] };
-    list["providers"].as_array().into_iter().flatten().map(|p| {
+    // each account's own page at once (each asks its provider: four in a row took over a second)
+    let one = |p: &Value| {
         let id = p["connectionId"].as_str().unwrap_or_default();
         let detail = (!id.is_empty()).then(|| get(&agent, &format!("http://localhost:20128/api/usage/{id}"), &key)).flatten().unwrap_or_default();
         let mut windows = vec![];
@@ -103,17 +115,31 @@ pub fn omniroute() -> Vec<Value> {
             windows.push(json!({"group": "", "window": "quota", "used": 100.0 - r, "resets": p["resetAt"], "unlimited": false}));
         }
         json!({"provider": p["provider"], "name": p["name"], "plan": detail["plan"].as_str().map(plan_name), "status": p["tokenStatus"], "windows": windows})
-    }).collect()
+    };
+    let accounts: Vec<&Value> = list["providers"].as_array().into_iter().flatten().collect();
+    std::thread::scope(|s| accounts.iter().map(|p| s.spawn(|| one(p))).collect::<Vec<_>>().into_iter().filter_map(|h| h.join().ok()).collect())
 }
 
 /// All of it, for the desktop's usage page (the app server's `accounts` op).
 pub fn all() -> Value {
-    let plan = claude_plan();
-    json!({
-        "plan": plan.as_ref().map(|(rows, _)| rows.iter().map(|r| json!({"label": r.label, "used": r.used, "resets": r.resets})).collect::<Vec<_>>()),
-        "plan_notes": plan.as_ref().map(|(_, n)| n.clone()).unwrap_or_default(),
-        "credits": credits(),
-        "omniroute": omniroute(),
+    all_then(|_| {})
+}
+
+/// The same, with the plan handed to `early` as soon as it is read (about a second): the credits and OmniRoute's accounts
+/// ask other servers and take as long again, and the plan is what a refresh is looked at for. The three are read at once,
+/// so the whole takes as long as the slowest, not their sum.
+pub fn all_then(early: impl FnOnce(&Value)) -> Value {
+    std::thread::scope(|s| {
+        let (c, o) = (s.spawn(credits), s.spawn(omniroute));
+        let plan = claude_plan();
+        let mut v = json!({
+            "plan": plan.as_ref().map(|(rows, _)| rows.iter().map(|r| json!({"label": r.label, "used": r.used, "resets": r.resets})).collect::<Vec<_>>()),
+            "plan_notes": plan.as_ref().map(|(_, n)| n.clone()).unwrap_or_default(),
+        });
+        early(&v);
+        v["credits"] = json!(c.join().unwrap_or_default());
+        v["omniroute"] = json!(o.join().unwrap_or_default());
+        v
     })
 }
 
