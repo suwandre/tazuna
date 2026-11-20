@@ -350,6 +350,21 @@ they were until theirs come a moment later). Timed in the real window, stamped w
 - A step cut off by a stop is "■ Asked a subagent | stopped 1.4 s" and counts no further (tazuna 0.1.187's notes).
 - review/mock.js: the plan's resets move with the clock (its fixed dates had passed).
 
+0.1.92 (with tazuna 0.1.188; the user: "see the background chat (the subagent that the main agent spawned)", as the
+terminal's ctrl-b):
+- A subagent's own conversation opens beside the one that started it (components/AgentPanel.tsx, the side chat's
+  column): what it was asked, each step, what it wrote, drawn as any conversation and read only; it follows the agent
+  while it runs (asked again every 1.5 s) and has a Stop for it. From "Open" on any "Asked a subagent" step, also in a
+  resumed conversation, and from the row below.
+- While claude's work goes on after a reply, a row over the message box says so: "Subagent in the background", what it
+  is doing, its tokens, "Watch" (a command in the background the same, without the conversation). The conversation
+  looked idle while a reviewer ran and spent the plan.
+- claude passes on a subagent's steps and messages, not its reasoning (none in the recordings): the panel shows what it
+  did and said.
+- Checked on a real session's recording through the core (three subagents' conversations of 40 to 112 steps; the one
+  stopped before it began has none) and on test data (review/mock.js has one working; the sweep opens it). Not seen: the
+  real window, and one followed live (that takes a real reply).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

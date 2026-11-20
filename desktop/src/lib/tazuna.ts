@@ -27,7 +27,7 @@ export type ViewBlock =
 type Usage = { input: number; cache_write: number; cache_read: number; output: number };
 export type View = {
   blocks: ViewBlock[]; model: string; effort: string; cwd: string; profile: string; mode: string; activity: string;
-  cost: number; usage: Usage; turns: number; context: number; context_window?: number; limits?: [number, number]; limits_at?: number | null; limits_reset?: number | null; balance?: number | null;
+  cost: number; usage: Usage; turns: number; context: number; context_window?: number; tasks?: Task[]; limits?: [number, number]; limits_at?: number | null; limits_reset?: number | null; balance?: number | null;
   /** what an untrusted folder's config would run (it runs lean until trusted) */
   untrusted?: string | null;
   /** the conversation's session: claude's id, or the own loop's ("own-...") (null before the first reply) */
@@ -70,6 +70,9 @@ export type Accounts = {
   omniroute: { provider: string; name: string; plan: string | null; status: string; windows: { group: string; window: string; used: number | null; resets: string | null; unlimited: boolean | null }[] }[];
 };
 export type Models = { choices: ModelChoice[]; rebuild: string | null };
+/** A background task of claude's (a subagent, a command), as the core's view lists them: `calls` are the calls that
+ * started and continued it (a step's id), `secs` how long it took once ended. */
+export type Task = { id: string; kind: string; agent: string; description: string; status: string; running: boolean; doing: string; tokens: number; tools: number; calls: string[]; secs: number | null };
 
 export const core = {
   /** Commands from now on go to thread `tid`. */
@@ -162,6 +165,11 @@ export const core = {
   /** what each account has left (src/accounts.rs): Claude's plan from claude's own /usage (no model call), the providers'
    * credits, OmniRoute's connected accounts; takes a few seconds */
   accounts: () => to("op", { msg: { op: "accounts" } }),
+  /** a subagent's own conversation, by the call that started it (the step's id): answered as an `agent` line */
+  agentIn: (tid: string, call: string) => invoke("op", { tid, msg: { op: "agent", call } }),
+  onAgent: (cb: (a: { call: string; view: View }, tid: string) => void) => on<{ call: string; view: View }>("agent", cb),
+  /** stops one background task; the reply and the other tasks go on */
+  taskStopIn: (tid: string, task: string) => invoke("op", { tid, msg: { op: "task_stop", task } }),
   onAccounts: (cb: (a: Accounts) => void) => on<Accounts>("accounts", cb),
   /** the plan alone, a second or so before the rest of an accounts reading (the credits and OmniRoute ask other servers) */
   onAccountsPlan: (cb: (a: Pick<Accounts, "plan" | "plan_notes">) => void) => on<Pick<Accounts, "plan" | "plan_notes">>("accounts_plan", cb),

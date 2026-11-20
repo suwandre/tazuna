@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
+import { LoaderCircle, MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
+import { AgentPanel } from "./components/AgentPanel";
 import { Approval } from "./components/Approval";
 import { Composer, DRAFT, MODES, type Completions } from "./components/Composer";
 import { DiffView } from "./components/DiffView";
@@ -485,6 +486,30 @@ export default function App() {
   const [createAsk, setCreateAsk] = useState<string | null>(null);
   const [creations, setCreations] = useState<Record<string, { state: string; dir?: string }>>({});
   useEffect(() => { if (!inTauri) return; const off = core.onCreation((c, tid) => setCreations((m) => ({ ...m, [tid]: c }))); return () => { off.then((f) => f()); }; }, []);
+  // A subagent's own conversation beside this one (the terminal's ctrl-b): opened from its step or from the row that says
+  // it is working in the background, by the call that started it. Asked for when opened and, while it runs, every 1.5 s.
+  // ponytail: the whole of it each time; only what is new once a long agent's makes the window slow
+  const [agent, setAgent] = useState<{ tid: string; call: string } | null>(null);
+  const [agentViews, setAgentViews] = useState<Record<string, View>>({});
+  useEffect(() => { if (!inTauri) return; const off = core.onAgent((a) => setAgentViews((m) => ({ ...m, [a.call]: a.view }))); return () => { off.then((f) => f()); }; }, []);
+  useEffect(() => {
+    const open = (e: Event) => setAgent({ tid: active, call: String((e as CustomEvent).detail) });
+    window.addEventListener("tazuna-agent", open);
+    return () => window.removeEventListener("tazuna-agent", open);
+  }, [active]);
+  const tasks = view?.tasks ?? [];
+  const agentHere = agent?.tid === active ? agent : null, agentTask = agentHere ? tasks.find((t) => t.calls.includes(agentHere.call)) : undefined;
+  // a subagent with no task of its own (one that ran inside the reply) runs as long as its step does
+  const agentStep = agentHere && (view?.blocks.find((b) => b.kind === "tool" && b.id === agentHere.call) as { running?: boolean; input?: Record<string, unknown> | null } | undefined);
+  const agentRunning = agentTask ? agentTask.running : !!agentStep?.running;
+  useEffect(() => {
+    if (!agentHere) return;
+    const ask = () => { core.agentIn(agentHere.tid, agentHere.call).catch(() => {}); };
+    ask();
+    if (!agentRunning) return;
+    const t = setInterval(ask, 1500);
+    return () => clearInterval(t);
+  }, [agentHere?.call, agentHere?.tid, agentRunning]);
   // what `/` and `@` complete to in each conversation, asked when one is first typed there
   const [complete, setComplete] = useState<Record<string, Completions>>({});
   useEffect(() => { if (!inTauri) return; const off = core.onComplete((c, tid) => setComplete((m) => ({ ...m, [tid]: c }))); return () => { off.then((f) => f()); }; }, []);
@@ -658,7 +683,7 @@ export default function App() {
     <div className="flex h-screen flex-col overflow-hidden">
     <div className="grid min-h-0 flex-1 overflow-hidden"
       // the right column is always a track (0 px when shut), so it slides: a track that came and went was a jump cut
-      style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", side ? "380px" : panelOpen ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
+      style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", agentHere ? "440px" : side ? "380px" : panelOpen ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
       {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-scrim" />}
       <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-composer" : "hidden") : "flex min-h-0"}>
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
@@ -756,10 +781,32 @@ export default function App() {
           </div>
         )}
         {codeView && <DiffView diff={{ turn: 0, path: `${codeView.title} / plugin.js`, text: codeView.text }} plain onClose={() => setCodeView(null)} />}
+        {/* claude's work that goes on after the reply: a subagent or a command in the background. The conversation looked
+            idle while one ran and spent the plan (the user, 2026-11-20); the terminal says "1 working in background" */}
+        {tasks.some((t) => t.running) && (
+          <div className="mx-auto mb-2 flex w-full max-w-[756px] flex-col gap-1 px-7">
+            {tasks.filter((t) => t.running).map((t) => {
+              const isAgent = t.kind === "local_agent" && t.calls.length > 0;
+              return (
+                <button key={t.id} disabled={!isAgent} onClick={() => setAgent({ tid: active, call: t.calls[0] })} title={isAgent ? "See what it is doing: its reasoning, steps and answers" : undefined}
+                  className="flex w-full items-center gap-2 rounded-lg border border-line bg-card px-3 py-1.5 text-left text-[12.5px] text-ink-2 disabled:cursor-default">
+                  <LoaderCircle size={13} strokeWidth={1.75} className="flex-none animate-spin text-accent" aria-hidden="true" />
+                  <span className="flex-none text-ink">{isAgent ? "Subagent" : "Command"} in the background</span>
+                  <span className="min-w-0 flex-1 truncate text-muted">{t.doing || t.description}</span>
+                  {t.tokens > 0 && <span className="flex-none tabular-nums text-faint">{(t.tokens / 1000).toFixed(1)}k tokens</span>}
+                  {isAgent && <span className="flex-none text-accent-ink">Watch</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
         {!fresh && !failed && composer}
       </main>
-      {side ? <SideChat key={side.tid} view={side.view} onClose={() => closeSide(active)} onStop={() => core.interruptIn(side.tid)}
+      {agentHere ? <div className="flex min-h-0 justify-end overflow-hidden"><AgentPanel key={agentHere.call} view={agentViews[agentHere.call] ?? null} task={agentTask} running={agentRunning}
+          title={agentTask?.description || String(agentStep?.input?.description ?? "")} onClose={() => setAgent(null)}
+          onStop={agentTask ? () => { core.taskStopIn(agentHere.tid, agentTask.id).catch(() => {}); } : undefined} /></div>
+        : side ? <SideChat key={side.tid} view={side.view} onClose={() => closeSide(active)} onStop={() => core.interruptIn(side.tid)}
           onSend={(text) => core.sendIn(side.tid, text).catch(() => {})} onAnswer={(allow, always) => core.opIn(side.tid, { op: "answer", allow, always })} />
         : panelOpen && <div className="flex min-h-0 justify-end overflow-hidden"><WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} /></WorkCtx.Provider></div>}
       <Slot name="overlay" props={{ data }} />

@@ -157,15 +157,24 @@ localStorage.setItem("tazuna.projects", JSON.stringify([PROJ]));
     + [[94, "npm ci"], [61, "type check"], [48, "tests"], [27, "lint"]].map(([v, l], i) => `<rect x="${70 + i * 140}" y="${260 - v * 2.2}" width="84" height="${v * 2.2}" rx="4" fill="${i ? "#3a3731" : "#8f9bf0"}"/><text x="${112 + i * 140}" y="286" fill="#afaa9e" font-family="sans-serif" font-size="15" text-anchor="middle">${l}</text><text x="${112 + i * 140}" y="${250 - v * 2.2}" fill="#ece8df" font-family="sans-serif" font-size="15" text-anchor="middle">${v} s</text>`).join("") + "</svg>");
   const p3 = { type: "view", from: 0, model: "mistral-large-3", effort: "high", cwd: "/Users/x/api-gateway", profile: "repo", mode: "auto", session_id: "p3", cost: 0.012, turns: 1, activity: "Done", context: 18000,
     usage: { input: 3000, cache_write: 0, cache_read: 14000, output: 700 },
+    // a subagent still working after the reply ended (desktop 0.1.92): the row over the message box, and its own conversation
+    tasks: [{ id: "t1", kind: "local_agent", agent: "general-purpose", description: "Review the chart script", status: "running", running: true, doing: "Reading tools/ci-chart.mjs", tokens: 48200, tools: 7, calls: ["ag1"], secs: null }],
     blocks: [{ kind: "prompt", text: "Chart where the CI time goes and save it as a picture." },
       { kind: "tool", id: "g1", name: "Bash", input: { command: "node tools/ci-chart.mjs" }, result: "wrote out/ci-time.svg", error: false, secs: 1.4, running: false },
-      { kind: "text", text: "Done. The chart is in `out/ci-time.svg`: `npm ci` is the tallest bar at 94 s, ahead of the type check and the tests." },
+      { kind: "tool", id: "ag1", name: "Agent", input: { description: "Review the chart script", subagent_type: "general-purpose", run_in_background: true }, result: "Async agent launched successfully.", error: false, secs: 0.9, running: false },
+      { kind: "text", text: "Done. The chart is in `out/ci-time.svg`: `npm ci` is the tallest bar at 94 s, ahead of the type check and the tests. A reviewer is going through the script in the background." },
       { kind: "done", ok: true, turns: 1, stopped: false, cost: 0.012, secs: 964, usage: { input: 3000, cache_write: 0, cache_read: 14000, output: 700 } }] };
   T.invoke = async (cmd, args) => {
     const m = (msg) => setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg }), 20);
     if (cmd === "image_data") { if (/ci-time\.svg$|\.png$/.test(args.path)) return chart; throw "no such file"; }
     if (cmd === "pick_files") return ["/Users/x/Desktop/Screenshot 2026-11-19 at 21.04.png", "/Users/x/api-gateway/docs/retry-policy.md"];
     if (cmd === "op" && args.msg.op === "resume" && args.msg.id === "p3") { m(p3); return null; }
+    if (cmd === "op" && args.msg.op === "agent") { m({ type: "agent", call: args.msg.call, view: { ...p3, session_id: null, tasks: [], activity: "Tool", blocks: [
+      { kind: "prompt", text: "Review tools/ci-chart.mjs: does it read the timings correctly, and is the SVG it writes valid? Report what you find; change nothing." },
+      { kind: "tool", id: "s1", name: "Read", input: { file_path: "tools/ci-chart.mjs" }, result: "…", error: false, secs: 0.1, running: false },
+      { kind: "tool", id: "s2", name: "Bash", input: { command: "node tools/ci-chart.mjs --check" }, result: "4 bars, 640x320", error: false, secs: 1.2, running: false },
+      { kind: "text", text: "The script reads the four timings from `ci-timings.json` and sorts them, so the tallest bar is always first. Checking the SVG it writes next." },
+      { kind: "tool", id: "s3", name: "Bash", input: { command: "xmllint --noout out/ci-time.svg" }, result: null, error: false, secs: 3.4, running: true }] } }); return null; }
     if (cmd === "op" && args.msg.op === "complete") { m({ type: "complete",
       commands: [["/agent", "Send to the coding agent, past the chat router"], ["/clear", "Start a new conversation in this folder"], ["/compact", "Summarize the conversation so far to free context"],
         ["/create", "Make a command, skill or tool for every model"], ["/init", "Write a CLAUDE.md for this repository"], ["/review", "Review a pull request"],

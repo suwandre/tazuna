@@ -59,6 +59,9 @@ const log = [];
     await step(p, `${T}-at`, async () => { await msg.fill("Why does @ret"); await p.waitForTimeout(300); });
     await step(p, `${T}-attach`, async () => { await msg.fill("What is wrong in this screenshot?"); await p.getByTitle(/Attach files/).click(); });
     await step(p, `${T}-image`, async () => { await open(p, "Speed up the CI build"); await p.mouse.move(640, 300); });
+    // a subagent working in the background: its row over the message box, then its own conversation beside this one (0.1.92)
+    await step(p, `${T}-subagent`, async () => { await p.getByRole("button", { name: /Subagent in the background/ }).click(); await p.waitForTimeout(600); });
+    await p.getByRole("button", { name: "Close", exact: true }).click().catch(() => {});
     await open(p, "Why is the CI build");
     await step(p, `${T}-mode-menu-thread`, async () => { await p.getByTitle("Permission mode (shift-tab)").click(); }); await esc(p);
     await step(p, `${T}-palette`, async () => { await p.keyboard.press("Control+k"); await p.keyboard.type("fix"); }); await esc(p);

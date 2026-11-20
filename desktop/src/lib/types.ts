@@ -10,6 +10,8 @@ export type ToolStep = {
   verb: string; target: string; detail?: string; secs: number; ok: boolean; running?: boolean;
   /** cut off when its reply was stopped: it has no result */
   stopped?: boolean;
+  /** the call's id: a subagent's own conversation is asked for by it */
+  id?: string;
   kind?: "tool" | "thinking"; name?: string; input?: Record<string, unknown> | null; result?: string; text?: string;
 };
 export type ChangedFile = { path: string; added: number | null; removed: number | null; status: string };

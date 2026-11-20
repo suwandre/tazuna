@@ -95,9 +95,12 @@ export function Step({ t }: { t: ToolStep }) {
   const [open, setOpen] = useState(false);
   const thinking = t.kind === "thinking";
   const more = thinking ? !!t.text?.trim() : !!(t.input && Object.keys(t.input).length) || !!t.result;
+  // a subagent: its own conversation opens beside this one (App listens for "tazuna-agent")
+  const agent = !thinking && (t.name === "Agent" || t.name === "Task") && !!t.id && !t.stopped;
   return (
     <div className="text-[12.5px] text-muted">
-      <button disabled={!more} onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 py-0.5 text-left disabled:cursor-default">
+      <div className="flex items-center gap-2">
+      <button disabled={!more} onClick={() => setOpen(!open)} className="flex min-w-0 items-center gap-2 py-0.5 text-left disabled:cursor-default">
         {/* still going: the icon moves and the words shimmer (the CLI's spinner, here) */}
         {thinking ? <Brain size={14} strokeWidth={1.5} className={`flex-none ${t.running ? "animate-pulse text-accent" : "text-faint"}`} />
           : t.running ? <LoaderCircle size={14} strokeWidth={1.75} className="flex-none animate-spin text-accent" />
@@ -112,6 +115,9 @@ export function Step({ t }: { t: ToolStep }) {
         {!thinking && <span className="flex-none whitespace-nowrap text-[12px] tabular-nums text-faint">{t.running ? <Elapsed secs={t.secs} /> : `${t.secs.toFixed(1)} s`}</span>}
         {more && <ChevronRight size={13} strokeWidth={1.5} className={`flex-none text-faint transition-transform duration-150 ${open ? "rotate-90" : ""}`} />}
       </button>
+      {agent && <button onClick={() => window.dispatchEvent(new CustomEvent("tazuna-agent", { detail: t.id }))} title="See what this subagent did: its reasoning, steps and answers"
+        className="flex-none rounded px-1.5 py-px text-[12px] text-accent-ink">{t.running ? "Watch" : "Open"}</button>}
+      </div>
       {open && (thinking ? <div className={`${box} font-serif`}>{t.text}</div> : <>
         {t.input && Object.keys(t.input).length > 0 && <Given name={t.name ?? ""} input={t.input} />}
         {t.result && <Result name={t.name ?? ""} text={t.result} ok={t.ok} />}
