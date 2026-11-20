@@ -389,6 +389,12 @@ etc?"):
 - Seen on the real core (review/bridge.mjs) in a project's new conversation: the menu with 24 entries, `/mc` and Enter
   on Settings' MCP page, `/model` on the picker, `/resume` on the palette, no page errors. Not seen: light theme and
   the small window sizes.
+- Design review 9, the quick fixes: a saved conversation whose model is gone shows its messages and a muted line that
+  says so (it opened empty under a red "/model to the model it used first"); the status bar names its two windows ("5h",
+  "wk"), and hides context and cache while they are 0; only Search keeps its key chip (New chat, Open folder and
+  Settings show theirs on hover, the start page's Open folder card and Search hint lost theirs: eight chips on the
+  start screen read as a cheat sheet); an error says its code once; the jump-to-latest button sits on a fade, not on a
+  message's words. Seen on test data (the sweep, both themes) and on the real core with saved conversations.
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

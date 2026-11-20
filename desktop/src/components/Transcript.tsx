@@ -1,4 +1,4 @@
-import { ArrowDown, CircleAlert, Check, ChevronRight, Copy, FileText, LoaderCircle, MessageCircle, Pencil, RotateCcw, Square } from "lucide-react";
+import { ArrowDown, CircleAlert, Check, ChevronRight, Copy, FileText, Info, LoaderCircle, MessageCircle, Pencil, RotateCcw, Square } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
 import { readableError } from "../lib/fromView";
@@ -129,8 +129,10 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
         </div>
       ))}
       {busy && !folded && activity && doing[activity] && <Working what={doing[activity]} since={rest.since} />}
+      {/* the text fades out under the button: on the page as it was, it sat on a message's words ("public API s↓ame",
+          design review 9) */}
       {away && (
-        <div className="pointer-events-none sticky bottom-1 z-[1] flex justify-center">
+        <div className="pointer-events-none sticky bottom-0 z-[1] -mt-14 flex h-14 items-end justify-center bg-linear-to-t from-main from-35% to-transparent pb-1.5">
           <button onClick={() => { stick.current = true; box.current?.scrollTo({ top: box.current.scrollHeight, behavior: "smooth" }); }} title="Jump to the latest" aria-label="Jump to the latest"
             className="tz-enter pointer-events-auto grid size-8 place-items-center rounded-full border border-line-strong bg-card text-ink-2 shadow-[var(--shadow-pop)]"><ArrowDown size={15} strokeWidth={1.75} /></button>
         </div>
@@ -252,6 +254,7 @@ export function MessageFailure({ message: m }: { message: Message }) {
   const notes = (m.notes ?? []).filter((n) => n !== m.failure?.raw);
   const f = m.failure;
   return <>
+    {m.info?.map((n, i) => <div key={`i${i}`} className="mt-1 flex items-start gap-2 text-[12.5px] text-muted"><Info size={14} strokeWidth={1.5} className="mt-0.5 flex-none" />{n}</div>)}
     {notes.map((n, i) => <div key={i} className="mb-2 flex items-start gap-2 text-[12.5px] text-bad"><CircleAlert size={14} strokeWidth={1.5} className="mt-0.5 flex-none" />{readableError(n)}</div>)}
     {f && !f.text && <div className="mt-1 flex items-center gap-1.5 text-[12.5px] text-muted"><Square size={11} strokeWidth={2} className="fill-current text-warn" />Stopped</div>}
     {f && f.text && (

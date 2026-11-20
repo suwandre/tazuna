@@ -7,8 +7,10 @@ import { Parts } from "./Sep";
 
 const icon = { size: 16, strokeWidth: 1.5 };
 
-function Kbd({ children }: { children: string }) {
-  return <kbd className="ml-auto rounded-[5px] border border-line px-[5px] py-px font-mono text-[11px] text-faint">{children}</kbd>;
+/** A row's key. Only Search shows its own all the time; the others come with the row's hover or focus: eight key chips on
+ * the start screen read as a cheat sheet (design review 9). The shortcut sheet (⌘/) has them all. */
+function Kbd({ children, always }: { children: string; always?: boolean }) {
+  return <kbd className={`ml-auto rounded-[5px] border border-line px-[5px] py-px font-mono text-[11px] text-faint ${always ? "" : "opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"}`}>{children}</kbd>;
 }
 
 /** A row that holds buttons of its own (rename, close) cannot be a button itself: it acts as one, for the keyboard and the
@@ -142,7 +144,7 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
         <span>tazuna</span>
       </div>
       <button onClick={onSearch} className="mb-1 flex items-center gap-2 rounded-md border border-line bg-field px-[9px] py-[7px] text-left text-muted hover:bg-hover">
-        <Search {...icon} /><span>Search</span><Kbd>⌘K</Kbd>
+        <Search {...icon} /><span>Search</span><Kbd always>⌘K</Kbd>
       </button>
       <SidebarCtx.Provider value={{ onNewChat, onOpenFolder, onSettings, planLeft }}>
       <Slot name="sidebar.top" props={{}} />
@@ -196,13 +198,13 @@ export const SidebarCtx = createContext<{ onNewChat?: () => void; onOpenFolder?:
 
 export function NewChatButton() {
   const { onNewChat } = useContext(SidebarCtx);
-  return <button onClick={onNewChat} className="flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
+  return <button onClick={onNewChat} className="group flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
     <Plus {...icon} /><span>New chat</span><Kbd>⌘N</Kbd></button>;
 }
 
 export function OpenFolderButton() {
   const { onOpenFolder } = useContext(SidebarCtx);
-  return <button onClick={onOpenFolder} className="flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
+  return <button onClick={onOpenFolder} className="group flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-ink transition-colors hover:bg-hover">
     <FolderOpen {...icon} /><span>Open folder</span><Kbd>⌘O</Kbd></button>;
 }
 
@@ -211,7 +213,7 @@ export function SettingsRow() {
   const { onSettings } = useContext(SidebarCtx);
   return (
     <div className="border-t border-line pt-1.5">
-      <button onClick={onSettings} className="flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-muted transition-colors hover:bg-hover hover:text-ink">
+      <button onClick={onSettings} className="group flex w-full items-center gap-2 rounded-md px-[9px] py-[7px] text-left text-muted transition-colors hover:bg-hover hover:text-ink">
         <span className="grid size-[22px] place-items-center rounded-full border border-line bg-field text-[11px] text-ink-2">S</span>
         <span>Settings</span>
         {/* planLeft stays in the context for a plugin; the plan's figures are by the composer now */}

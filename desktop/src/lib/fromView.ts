@@ -7,7 +7,8 @@ import type { Call, Message, ToolStep, Usage } from "./types";
 export function readableError(text: string): string {
   const m = text.match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/);
   const msg = m ? m[1].replace(/\\n/g, " ").replace(/\\(.)/g, "$1") : text.replace(/^[\w ]+ · /, "").replace(/ · trying again in \d+\s*s$/, "");
-  return msg.trim();
+  // "[404]: Antigravity upstream error (404): …" says its code twice: the first goes (design review 9; src/ui/mod.rs too)
+  return msg.trim().replace(/^\[(\d{3})\]:\s*(?=.*\b\1\b)/, "");
 }
 
 function target(input: Record<string, unknown>): string {
@@ -57,6 +58,9 @@ export function messages(v: View): Message[] {
     if (b.kind === "prompt") { if (open) queue.push(b.text); else prompt(b.text); }
     // the router answered it as a chat (app server, 0.1.127's router): the reply carries the tag and the ask, for "send to agent"
     else if (b.kind === "notice" && b.text.startsWith("answered as a chat")) { Object.assign(current(), { routedChat: true, ask }); }
+    // a saved conversation shown but not continued (its model cannot run here now): said under it, in words (design
+    // review 9: it opened empty under a red "/model to the model it used first")
+    else if (b.kind === "notice" && !b.error && b.text.startsWith("This conversation ran on ")) { (current().info ??= []).push(b.text); }
     else if (b.kind === "text") { if (b.text.trim()) current().prose.push(b.text); }
     else if (b.kind === "tool") {
       const t: ToolStep = { kind: "tool", id: b.id, name: b.name, verb: verb(b.name), target: target(b.input ?? {}), secs: b.secs ?? 0, ok: !b.error,

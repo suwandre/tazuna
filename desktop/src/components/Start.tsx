@@ -75,13 +75,13 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
             <button onClick={onFolder} className={row}>
               <Plus size={14} strokeWidth={1.5} className="flex-none text-muted" />
               <span className="min-w-0 flex-1"><span className="block text-ink">Open a folder…</span><span className="block text-[11.5px] text-faint">any project on this machine</span></span>
-              <kbd className="flex-none rounded-[5px] border border-line px-[5px] font-mono text-[11px] text-faint">⌘O</kbd>
             </button>
           </section>
         </div>
       )}
       <div className="mt-5 flex gap-4 text-[11.5px] text-faint">
-        {([["Search", "⌘K"], ["Mode", "⇧Tab"], ["Shortcuts", "⌘/"]] as const).map(([what, keys]) => (
+        {/* Search's key is on the sidebar's search field already */}
+        {([["Mode", "⇧Tab"], ["Shortcuts", "⌘/"]] as const).map(([what, keys]) => (
           <span key={what}>{what} <kbd className="ml-1 rounded-[5px] border border-line px-[5px] font-mono text-[11px]">{keys}</kbd></span>
         ))}
       </div>

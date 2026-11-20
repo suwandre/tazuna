@@ -30,7 +30,9 @@ function Here({ here }: { here: Item[] }) {
   // the words are on its hover, and in the card.
   const about = (i: Item) => `${i.label}: ${i.value} used. ${i.over ? "This window is over: a new one starts with your next message." : i.resetsAt != null ? `Resets ${whenReset(i.resetsAt)} (${exactly(i.resetsAt)}).` : ""}`;
   const until = (i: Item) => (i.over ? <span className="text-faint">new</span> : i.resetsAt != null && <span className="text-faint">{untilShort(i.resetsAt)}</span>);
-  if (here[0].provider === "Claude") return <>Claude{here.map((i, n) => <span key={i.key} title={about(i)} className="flex items-center gap-1.5">{n > 0 && <Sep />}<Meter pct={i.pct ?? 0} /><span className={b}>{i.value}</span>{until(i)}</span>)}</>;
+  // which window each is, in two letters ("5h", "wk"): two unnamed meters read as one number twice (design review 9)
+  const tag = (l: string) => (l === "5 hours" ? "5h" : l.replace(/^week,? ?/i, "wk ").trim());
+  if (here[0].provider === "Claude") return <>Claude{here.map((i, n) => <span key={i.key} title={about(i)} className="flex items-center gap-1.5">{n > 0 && <Sep />}<span className="text-faint">{tag(i.label)}</span><Meter pct={i.pct ?? 0} /><span className={b}>{i.value}</span>{until(i)}</span>)}</>;
   const i = here[0];
   if (i.pct != null) return <span title={about(i)} className="flex items-center gap-1.5">{i.name.split(",")[0]}<Meter pct={i.pct} /><span className={b}>{i.value}</span>{i.name.split(", ")[1]}{until(i)}</span>;
   return <>{i.name} {i.value ? <span className={b}>{i.value.replace(/ (left|over)$/, "")}</span> : <span className="text-faint">balance not reported</span>}{i.value && <span className="text-faint">{i.value.match(/ (left|over)$/)?.[1]}</span>}</>;
@@ -147,8 +149,9 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [], o
         </span>
       )}
       <span className="flex-1" />
-      {!idle && <span className={`${item} max-[900px]:hidden`} title="This conversation's context">context <span className={b}>{u.contextPct}%</span> of {u.contextMax}</span>}
-      {!idle && <span className={`${item} max-[1100px]:hidden`} title="Input read from the cache in this conversation">cache <span className={b}>{u.cachedPct}%</span></span>}
+      {/* a zero says nothing yet (a conversation before its first reply, a provider that reports no cache): not shown */}
+      {!idle && u.contextPct > 0 && <span className={`${item} max-[900px]:hidden`} title="This conversation's context">context <span className={b}>{u.contextPct}%</span> of {u.contextMax}</span>}
+      {!idle && u.cachedPct > 0 && <span className={`${item} max-[1100px]:hidden`} title="Input read from the cache in this conversation">cache <span className={b}>{u.cachedPct}%</span></span>}
       {u.threadCost > 0 && <button onClick={openUsage} title="This conversation's cost · Usage" className={button}>this chat <span className={b}>{usd(u.threadCost)}</span></button>}
       {version && <Version version={version} />}
     </footer>

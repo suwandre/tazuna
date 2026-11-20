@@ -26,7 +26,9 @@ export type Message =
       /** a reply that ended without its answer: the provider's error in words (and as it came), or stopped by you */
       failure?: Failure;
       /** errors the reply met and went on past, as the core wrote them */
-      notes?: string[] };
+      notes?: string[];
+      /** what the core says about the conversation itself, not an error: a saved one whose model cannot run here now */
+      info?: string[] };
 /** `text` is the error's message alone ("[404]: … not found."), `raw` the notice as the core wrote it; both empty for a
  * reply you stopped without an error */
 export type Failure = { text: string; raw: string; stopped: boolean; /** the message it answered, for Retry */ ask: string };
