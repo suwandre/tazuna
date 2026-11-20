@@ -1177,7 +1177,7 @@ pub fn usd(x: f64) -> String {
     }
 }
 
-/// Claude's plan windows and SubRouter's balance on one line ("5h 13% · 7d 21% · SubRouter $8.82 left"), and the colour
+/// Claude's plan windows and SubRouter's balance on one line ("5h 13% · wk 21% · SubRouter $8.82 left"), and the colour
 /// to show it in by the fuller window: amber from 75%, red from 90% (Timeline's one-colour line; the others colour each).
 pub fn limits_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
     match (plan_str(s, th), balance_str(s)) {
@@ -1220,7 +1220,7 @@ fn without_repeated_code(msg: &str) -> &str {
 pub fn plan_spans(s: &Session, th: &Theme) -> Option<Vec<Span<'static>>> {
     let (h5, d7) = s.limits?;
     let c = |x: f64| if x >= 90.0 { th.err } else if x >= 75.0 { th.warn } else { th.dim };
-    Some(vec![Span::styled(format!("5h {h5:.0}%"), st(c(h5))), Span::raw("  "), Span::styled(format!("7d {d7:.0}%"), st(c(d7))),
+    Some(vec![Span::styled(format!("5h {h5:.0}%"), st(c(h5))), Span::raw("  "), Span::styled(format!("wk {d7:.0}%"), st(c(d7))),
         Span::styled(limits_age(s), st(th.faint))])
 }
 
@@ -1238,7 +1238,8 @@ pub fn balance_str(s: &Session) -> Option<String> {
     s.balance.map(|b| format!("SubRouter {} left", usd(b)))
 }
 
-/// The plan's windows alone: "5h 12% · 7d 14% (2h ago)".
+/// The plan's windows alone: "5h 12% · wk 14% (2h ago)". The week reads "wk" as in the window's status bar (it was "7d"
+/// here and "wk" there, design review 9).
 pub fn plan_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
     let mut parts = vec![];
     let mut color = th.dim;
@@ -1247,7 +1248,7 @@ pub fn plan_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
         // the windows are the whole account's (Claude Code beside tazuna counts too), so no "this session" share: a
         // "(+2%)" read as tazuna's (2026-11-02). Claude reports them only now and then: an older reading says how old.
         let age = limits_age(s);
-        parts.push(format!("Claude 5h {h5:.0}% · 7d {d7:.0}%{age}"));
+        parts.push(format!("Claude 5h {h5:.0}% · wk {d7:.0}%{age}"));
     }
     (!parts.is_empty()).then(|| (parts.join(" · "), color))
 }

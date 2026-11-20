@@ -16,6 +16,12 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.190 (2026-11-20): the week reads "wk" in the terminal too
+
+- The plan's week window reads "wk 92%" in every terminal design, as in the desktop's status bar; it was "7d" here and
+  "wk" there (the user, after design review 9).
+- No metric moves: two letters on the screen.
+
 ## 0.1.189 (2026-11-20): claude's commands in the `/` menu before a first turn, saved conversations whose model is gone
 
 The user: "for the tazuna desktop, is it only supposed to have 2 commands? what about for mcp, for other commands etc?"
