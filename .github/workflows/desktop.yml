@@ -54,6 +54,28 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
           # for the smoke only: software OpenGL (a runner has no GPU) and a screenshot tool
           sudo apt-get install -y libgl1-mesa-dri libegl1 imagemagick
+      # The macOS app is signed with tazuna's own certificate (self-signed: secrets MACOS_CERTIFICATE, a base64 .p12, and
+      # MACOS_CERTIFICATE_PASSWORD), so every build is the same app to macOS: "dev.tazuna.desktop, signed by this
+      # certificate". Unsigned (ad hoc), a build's identity was its own hash, and macOS asked for the Desktop folder again
+      # after every update (the user, 2026-11-20). It is not Apple's signing: the first open of a download still warns.
+      # Without the secret (a fork) the build is ad hoc as before.
+      - name: tazuna's signing certificate (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MAC_CERT: ${{ secrets.MACOS_CERTIFICATE }}
+          MAC_CERT_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          [ -n "$MAC_CERT" ] || { echo "no certificate: an ad hoc build"; exit 0; }
+          K="$RUNNER_TEMP/tazuna-sign.keychain-db"
+          echo "$MAC_CERT" | base64 --decode > "$RUNNER_TEMP/tazuna-sign.p12"
+          security create-keychain -p ci "$K"
+          security set-keychain-settings -lut 3600 "$K"
+          security unlock-keychain -p ci "$K"
+          security import "$RUNNER_TEMP/tazuna-sign.p12" -k "$K" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$K" > /dev/null
+          security list-keychains -d user -s "$K" $(security list-keychains -d user | tr -d '"')
+          rm "$RUNNER_TEMP/tazuna-sign.p12"
+          echo "APPLE_SIGNING_IDENTITY=tazuna desktop" >> "$GITHUB_ENV"
       - name: build (the app and the tazuna it carries)
         working-directory: desktop
         shell: bash
@@ -68,6 +90,17 @@ jobs:
           else
             npx tauri build
           fi
+      # what macOS will know the app by: with the certificate it must be the app's id and the certificate, not a hash
+      - name: the app's signature (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MAC_CERT: ${{ secrets.MACOS_CERTIFICATE }}
+        run: |
+          app=desktop/src-tauri/target/release/bundle/macos/tazuna.app
+          codesign --verify --deep --strict "$app"
+          req=$(codesign -d -r- "$app" 2>&1 | tail -1)
+          echo "$req"
+          [ -z "$MAC_CERT" ] || echo "$req" | grep -q 'identifier "dev.tazuna.desktop" and certificate leaf' || { echo "not signed with tazuna's certificate"; exit 1; }
       # the app opened once on each system: it must start the tazuna it carries (an app server for a chat) within 30 s.
       # Linux runs under Xvfb with software rendering (no GPU on a runner), WebKit's GPU compositing off, 24-bit colour.
       - name: open the app (smoke)

@@ -208,7 +208,10 @@ function useCore() {
   };
   // where the box's draft is kept: the conversation's id once known (a resumed one's from the start), else its folder's
   const draftKey = cur ? view?.session_id ?? cur.resume ?? `new:${folder ?? "chat"}` : undefined;
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, side, openSide, closeSide, forget };
+  // a saved conversation being opened: its core is up and its messages are still on their way (the core's first view is
+  // empty, the resumed one follows)
+  const resuming = !!cur?.resume && !error && !!view && view.session_id !== cur.resume && !view.blocks.some((b) => b.kind === "prompt");
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, side, openSide, closeSide, forget, resuming };
 }
 
 /** Light or dark: the choice in Settings (lib/chrome.ts keeps it; until desktop 0.1.87 a flip lasted until the window
@@ -268,7 +271,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, side, openSide, closeSide, forget } = useCore();
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, resuming, side, openSide, closeSide, forget } = useCore();
   useEffect(() => setEditing(null), [active]);
   useEffect(watchUpdates, []);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
@@ -635,7 +638,9 @@ export default function App() {
   };
   // a new conversation before its first message: the start screen, with the composer in its middle (design review 2,
   // prototype mockups/v3.html)
-  const fresh = inTauri && !!view && !busy && !view.asking && !editing && !view.blocks.some((b) => b.kind === "prompt");
+  // Not while a saved conversation's messages are on their way: the start screen showed for a moment before them, each
+  // time one was opened (the user, 2026-11-20: "quickly flashes the main new chat page")
+  const fresh = inTauri && !!view && !busy && !view.asking && !editing && !resuming && !view.blocks.some((b) => b.kind === "prompt");
   // in a project, its own conversations; in a chat, everything by when it last ran
   const startRecent: StartItem[] = Object.entries(sessions).filter(([dir]) => !folder || dir === folder).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: titleFrom(r.first) || "(no message)",
     place: dir === home ? "chat" : base(dir), dir: dir === home ? null : dir, at: r.last_at }))).sort((a, b) => b.at - a.at).slice(0, 3);

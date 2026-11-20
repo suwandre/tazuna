@@ -365,6 +365,19 @@ terminal's ctrl-b):
   stopped before it began has none) and on test data (review/mock.js has one working; the sweep opens it). Not seen: the
   real window, and one followed live (that takes a real reply).
 
+0.1.93 (the user: "every single time I reinstall an update and open a chat it keeps asking me this", and the new-chat
+page flashing before the chat):
+- The macOS app is signed with tazuna's own certificate (self-signed, free; .github/workflows/desktop.yml). macOS knows
+  an app by its signature: ad hoc, that was each build's own hash, so every update was a new app and it asked for the
+  Desktop folder again. Signed, it is "dev.tazuna.desktop and this certificate" in every build (two test binaries signed
+  so had the same requirement; the app built here with it verifies and starts). One more question on the first signed
+  update, then none: that last part is seen only after two signed updates. Not Apple's signing (still no $99): a
+  download's first open warns as before. The certificate is beside the updater's key (~/.tauri/tazuna-macos-signing.*)
+  and in the repository's secrets; without it macOS asks once more after the next update, no more than that.
+- Opening a saved conversation no longer shows the start screen for a moment first: its core comes up empty and its
+  messages follow, and the window drew "What are we working on?" in between (0.8 s with a slow one, in the test; long
+  enough to see while macOS asked its question).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
