@@ -1913,6 +1913,8 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
     let name = short_name(&t.name);
     let (glyph, gcolor) = match (&t.result, t.error) {
         (None, _) if asked(t, s, v) => ("?", th.warn),
+        // cut off when its run was stopped: it has an end and no result
+        (None, _) if t.done_ms.is_some() => ("■", th.dim),
         (None, _) => (spinner(v.clock_ms), th.accent),
         (Some(_), false) => ("✓", th.ok),
         (Some(_), true) => ("✗", th.err),
@@ -1923,6 +1925,7 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
         (Some(_), "edit") => format!("-{} +{}", arg("old").lines().count(), arg("new").lines().count()),
         (Some(_), "write") => lines_n(arg("content").lines().count()),
         (Some(r), _) => lines_n(r.lines().count()),
+        (None, _) if t.done_ms.is_some() => "stopped".to_string(),
         (None, _) => String::new(),
     };
     if let Some((n, last)) = &t.sub {

@@ -16,6 +16,16 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.187 (2026-11-20): a call cut off by a stop ends with its run
+
+The user: a stopped reply's "Asked a subagent" went on counting, 502 s and rising, in the desktop app.
+
+- A call still open when its run ends (a stop, an error) gets no result from claude, and had no end: its spinner turned
+  on in the terminal and its seconds ran on in the window. The run's end now ends it, as stopped ("■ … stopped", not a
+  tick and not a cross); the window's view says `stopped` for it. In the recording the stop came 1.4 s after the call
+  began, before claude had started any subagent: nothing was running.
+- No metric moves: what is drawn for a call that never finished.
+
 ## 0.1.186 (2026-11-20): the accounts reading in a second, not five
 
 The user: a refresh of the usage "takes like a few seconds".

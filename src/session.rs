@@ -442,7 +442,7 @@ impl Session {
             Block::Text { text, live } => json!({"kind": "text", "text": text, "live": live}),
             Block::Thinking { tokens, live, exact, text } => json!({"kind": "thinking", "tokens": tokens, "live": live, "exact": exact, "text": text.chars().take(20_000).collect::<String>()}),
             Block::Tool(t) => json!({"kind": "tool", "id": t.id, "name": t.name, "input": t.input, "result": t.result.as_deref().map(|r| cut(r, 4000)),
-                "error": t.error, "secs": t.secs(), "running": t.done_ms.is_none(), "sub": t.sub.as_ref().map(|(n, last)| json!({"calls": n, "last": last}))}),
+                "error": t.error, "secs": t.secs(), "running": t.done_ms.is_none(), "stopped": t.done_ms.is_some() && t.result.is_none(), "sub": t.sub.as_ref().map(|(n, last)| json!({"calls": n, "last": last}))}),
             Block::Done(d) => json!({"kind": "done", "ok": d.ok, "secs": d.secs, "turns": d.turns, "cost": d.cost, "usage": usage(&d.usage), "stopped": d.stopped,
                 "run_cost": d.run_cost, "run_usage": usage(&d.run_usage)}),
             Block::Notice { text, error } => json!({"kind": "notice", "text": text, "error": error}),
@@ -823,6 +823,14 @@ impl Session {
             (Some("result"), _) => {
                 self.waiting_note = None;
                 self.end_live();
+                // a call still open when the run ends was cut off (a stop, an error) and gets no result: it ends here, as
+                // stopped. It kept its spinner in the terminal and went on counting seconds in the window: "Asked a
+                // subagent 502 s" under a reply stopped 1.4 s after the call began (the user, 2026-11-20)
+                for b in &mut self.blocks {
+                    if let Block::Tool(t) = b && t.done_ms.is_none() {
+                        t.done_ms = Some(at_ms);
+                    }
+                }
                 (self.call_start, self.first_token) = (None, None); // a stopped call never ends with message_delta
                 // a slash command answered without a model turn (/cost, /context …): its text is the only output
                 let text = s(&e["result"]);
@@ -1172,6 +1180,19 @@ mod tests {
         assert_eq!(shown(&"x".repeat(10), 4), "xxxx… (+6 chars)");
         assert_eq!(shown("echo hi\u{202E}fr- mr", 100), "echo hi�fr- mr", "a right-to-left override cannot reverse what is shown");
         assert_eq!(shown("a\u{200B}b\u{2028}c", 100), "a�b�c");
+    }
+
+    #[test]
+    fn a_call_cut_off_by_a_stop_ends_with_the_run() {
+        let mut s = Session::new("", "medium");
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "done", "name": "Bash", "input": {"command": "x"}}]}}), 1000.0);
+        s.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "done", "content": "ok", "is_error": false}]}}), 2000.0);
+        s.apply(&json!({"type": "stream_event", "event": {"type": "content_block_start", "content_block": {"type": "tool_use", "id": "cut", "name": "Agent"}}}), 3000.0);
+        let state = |s: &Session| -> Vec<(bool, bool, Option<f64>)> { s.view()["blocks"].as_array().unwrap().iter().filter(|b| b["kind"] == "tool")
+            .map(|b| (b["running"] == true, b["stopped"] == true, b["secs"].as_f64())).collect() };
+        assert_eq!(state(&s), [(false, false, Some(1.0)), (true, false, None)], "before the stop it runs");
+        s.apply(&json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": ""}), 4400.0);
+        assert_eq!(state(&s), [(false, false, Some(1.0)), (false, true, Some(1.4))], "the run ended: the open call ends with it, as stopped, at its 1.4 s");
     }
 
     #[test]
