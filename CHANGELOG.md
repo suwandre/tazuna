@@ -16,7 +16,7 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
-## 0.1.189 (2026-11-20): claude's commands in the `/` menu before a first turn
+## 0.1.189 (2026-11-20): claude's commands in the `/` menu before a first turn, saved conversations whose model is gone
 
 The user: "for the tazuna desktop, is it only supposed to have 2 commands? what about for mcp, for other commands etc?"
 (a new conversation's `/` menu held /create and /agent only).
@@ -27,6 +27,20 @@ The user: "for the tazuna desktop, is it only supposed to have 2 commands? what 
   in a folder claude has not run in, its ten common built-in ones (`/compact`, `/context`, `/init`…). Another provider
   gets none: claude's commands do not run there.
 - No metric moves: the menu's list, read from a small file when it opens.
+
+Design review 9 (the user: "really check every tab, every click"):
+
+- A saved conversation whose model cannot run here now (its key gone, the model off the list) opened empty, under "this
+  conversation ran on the own loop: /model to the model it used first": most of the user's own-loop conversations. Its
+  messages are now shown, with what happened in words ("This conversation ran on ERNIE 5.5 Flash Preview (no longer in
+  the model list): its messages are shown, and a message from here starts a new conversation on Opus 5.5."). The
+  terminal's /resume and the window's open both go through it.
+- A free own-loop model no longer reads "on your Claude plan" at the start, nor "≈$0 on Claude plan" in the cost: the
+  plan is named only on Claude, and only when it was used.
+- The terminal draws `*emphasis*` in italics (its asterisks showed); `a * b`, `2*3*4` and `*.rs` stay as written.
+- A provider's message that says its code twice ("[404]: Antigravity upstream error (404): …") loses the first, here and
+  in the window.
+- No metric moves: what a resumed conversation shows, and words on the screen.
 
 ## 0.1.188 (2026-11-20): the window can open a subagent's own conversation
 

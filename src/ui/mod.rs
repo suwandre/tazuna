@@ -1151,7 +1151,9 @@ pub fn cost_str(s: &Session) -> String {
         None => format!("≈{}", usd(s.cost())),
         Some(_) if paid > 0.0 && plan > 0.0 => format!("{about}{} + {} on Claude plan", usd(paid), usd(plan)),
         Some(_) if paid > 0.0 => format!("{about}{}", usd(paid)),
-        Some(c) => format!("{about}{} on Claude plan", usd(c)),
+        // nothing on the plan (the own loop's free models): just the sum, which said "$0 on Claude plan" (design review 9)
+        Some(c) if plan > 0.0 => format!("{about}{} on Claude plan", usd(c)),
+        Some(c) => format!("{about}{}", usd(c)),
     }
 }
 
@@ -1194,7 +1196,15 @@ pub fn readable_notice(text: &str) -> Option<String> {
     }
     // a retry's notice already starts "provider · "
     let before = before.strip_suffix("provider · ").unwrap_or(before);
-    (!msg.trim().is_empty()).then(|| format!("{before}provider error: {}", msg.trim()))
+    let msg = without_repeated_code(msg.trim());
+    (!msg.is_empty()).then(|| format!("{before}provider error: {msg}"))
+}
+
+/// A provider's message without a leading "[404]: " when the code comes again in it: "[404]: Antigravity upstream error
+/// (404): …" said 404 twice (design review 9). The window does the same (desktop/src/lib/fromView.ts, readableError).
+fn without_repeated_code(msg: &str) -> &str {
+    let rest = msg.strip_prefix('[').and_then(|r| r.split_once("]: ")).filter(|(code, rest)| code.len() == 3 && code.bytes().all(|b| b.is_ascii_digit()) && rest.contains(*code));
+    rest.map_or(msg, |(_, rest)| rest)
 }
 
 /// The plan's windows as spans, each in its own colour (dim, amber from 75%, red from 90%, as the desktop app's): one
@@ -1289,6 +1299,12 @@ pub fn tool_arg<'a>(t: &'a Tool, key: &str) -> &'a str {
         k => return t.input[k].as_str().unwrap_or_default(),
     };
     keys.iter().find_map(|k| t.input[*k].as_str()).unwrap_or_default()
+}
+
+/// Whether `model` runs on claude (the plan) rather than the own loop: claude's ids and its short names.
+pub fn on_claude(model: &str) -> bool {
+    let m = model.to_ascii_lowercase();
+    m.starts_with("claude-") || matches!(m.split('[').next(), Some("opus" | "sonnet" | "haiku" | "fable"))
 }
 
 pub fn model_short(m: &str) -> String {
@@ -1696,7 +1712,8 @@ fn welcome(s: &Session, th: &Theme) -> Vec<Line<'static>> {
     let home = crate::platform::home().map(|h| h.display().to_string()).unwrap_or_default();
     let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
     let cwd = if !home.is_empty() && cwd.starts_with(&home) { format!("~{}", &cwd[home.len()..]) } else { cwd };
-    let plan = if s.limits.is_some() { ", on your Claude plan" } else { "" };
+    // on Claude only: a free own-loop model read "Mock Model  medium, on your Claude plan" (design review 9)
+    let plan = if s.limits.is_some() && on_claude(&s.model) { ", on your Claude plan" } else { "" };
     let profile = match profile.split_once(" (") {
         Some((_, inner)) => inner.trim_end_matches(')').replace(" tracked files", " files").replace("; repo config: ", ", ").replace("2 other .claude entries", "2 more .claude files"),
         None => profile,
@@ -2123,15 +2140,45 @@ fn inline(s: &str, th: &Theme) -> Vec<Span<'static>> {
             continue;
         }
         for (j, seg) in part.split("**").enumerate() {
-            let style = if j % 2 == 1 { st(th.text).add_modifier(Modifier::BOLD) } else { st(th.text) };
+            let bold = if j % 2 == 1 { st(th.text).add_modifier(Modifier::BOLD) } else { st(th.text) };
             for (text, url) in links(seg) {
                 // a link shows its title only, underlined; the address is attached where it is drawn (`link_cells`)
-                spans.push(Span::styled(text, if url.is_some() { style.fg(th.accent).add_modifier(Modifier::UNDERLINED) } else { style }));
+                if url.is_some() {
+                    spans.push(Span::styled(text, bold.fg(th.accent).add_modifier(Modifier::UNDERLINED)));
+                    continue;
+                }
+                // *emphasis* in italics: its asterisks showed (design review 9)
+                for (run, em) in emphasis(&text) {
+                    spans.push(Span::styled(run, if em { bold.add_modifier(Modifier::ITALIC) } else { bold }));
+                }
             }
         }
     }
     spans.retain(|s| !s.content.is_empty());
     spans
+}
+
+/// Text split into plain runs and `*emphasised*` ones (true), without their asterisks. An asterisk counts only where
+/// emphasis can start or end: not before or after a space, and a closing one not inside a word, so `a * b`, `2*3*4` and
+/// `*.rs` stay as they are.
+fn emphasis(s: &str) -> Vec<(String, bool)> {
+    let c: Vec<char> = s.chars().collect();
+    let opens = |i: usize| c[i] == '*' && c.get(i + 1).is_some_and(|n| !n.is_whitespace() && *n != '*') && (i == 0 || !c[i - 1].is_alphanumeric());
+    let closes = |i: usize| c[i] == '*' && i > 0 && !c[i - 1].is_whitespace() && c.get(i + 1).is_none_or(|n| !n.is_alphanumeric());
+    let (mut out, mut plain, mut i) = (vec![], String::new(), 0);
+    while i < c.len() {
+        if opens(i) && let Some(end) = (i + 2..c.len()).find(|&k| closes(k)) {
+            out.push((std::mem::take(&mut plain), false));
+            out.push((c[i + 1..end].iter().collect(), true));
+            i = end + 1;
+            continue;
+        }
+        plain.push(c[i]);
+        i += 1;
+    }
+    out.push((plain, false));
+    out.retain(|(t, _)| !t.is_empty());
+    out
 }
 
 /// Text split into plain runs and links: `[title](https://...)` as its title, a bare http(s) address as itself.
@@ -2644,7 +2691,8 @@ mod tests {
     #[test]
     fn readable_notice_takes_the_message() {
         let raw = r#"provider · provider error in stream: {"message":"[404]: Antigravity upstream error (404): Requested entity was not found.","type":"invalid_request_error","code"#;
-        assert_eq!(super::readable_notice(raw).as_deref(), Some("provider error: [404]: Antigravity upstream error (404): Requested entity was not found."));
+        assert_eq!(super::readable_notice(raw).as_deref(), Some("provider error: Antigravity upstream error (404): Requested entity was not found."));
+        assert_eq!(super::without_repeated_code("[429]: slow down"), "[429]: slow down", "a code said once stays");
         assert_eq!(super::readable_notice("route · HTTP 403: refused"), None);
     }
 
@@ -2770,6 +2818,16 @@ mod tests {
     }
 
     #[test]
+    fn the_plan_is_named_only_on_claude() {
+        assert!(super::on_claude("claude-opus-5-5") && super::on_claude("opus") && super::on_claude("sonnet[1m]"));
+        assert!(!super::on_claude("mock-model") && !super::on_claude("deepseek-v4.1-flash") && !super::on_claude(""));
+        // a free own-loop model: $0, not "$0 on Claude plan"
+        let mut s = crate::session::Session::new("", "");
+        s.apply(&serde_json::json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0}), 1.0);
+        assert_eq!(super::cost_str(&s), "$0");
+    }
+
+    #[test]
     fn the_command_menu_lists_commands_over_the_box() {
         let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: "/re".into(), cursor: 3, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
         let cmds: Vec<String> = ["new", "resume", "review", "rewind", "security-review"].map(String::from).to_vec();
@@ -2870,6 +2928,16 @@ mod tests {
         let rows: Vec<&String> = narrow.iter().filter(|l| l.starts_with(['┌', '│', '├', '└'])).collect();
         assert!(rows.len() > 6 && rows.iter().all(|l| l.width() == rows[0].width() && l.width() <= 44), "{narrow:#?}");
         assert_eq!(text(10).iter().filter(|l| l.contains('│')).count(), 0, "too narrow: rows as plain lines");
+    }
+
+    #[test]
+    fn emphasis_is_italic_and_lone_asterisks_stay() {
+        assert_eq!(super::emphasis("which is *expected*."), [("which is ".to_string(), false), ("expected".to_string(), true), (".".to_string(), false)]);
+        for plain in ["a * b", "2*3*4", "see *.rs and *.toml", "*"] {
+            assert_eq!(super::emphasis(plain), [(plain.to_string(), false)], "{plain}");
+        }
+        let l = links("nested bullet with a link: [the Rust book](https://doc.rust-lang.org/book/ch01-02-hello-world.html)");
+        assert_eq!(l.iter().find(|(_, u)| u.is_some()).map(|(t, _)| t.as_str()), Some("the Rust book"), "{l:?}");
     }
 
     #[test]

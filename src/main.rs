@@ -2791,6 +2791,16 @@ fn resume_choice(live: &live::Live, e: &Earlier) -> Option<models::Choice> {
     cs.iter().filter(fits).find(|c| c.model == e.model).or_else(|| if own { None } else { cs.iter().find(fits) }).cloned()
 }
 
+/// Why `model` cannot run here now, in a few words ("no SubRouter key", "not trusted"), from the picker's reasons.
+fn unavailable_because(model: &str) -> String {
+    let c = app_catalog().ok().and_then(|cs| cs.into_iter().find(|c| c.model == model));
+    match c.as_ref().and_then(models::why_not) {
+        Some(why) => why.split(['.', ':']).next().unwrap_or_default().to_string(),
+        None if c.is_some() => "not available here now".into(),
+        None => "no longer in the model list".into(),
+    }
+}
+
 /// `/new` and `/resume` (the terminal's and the app's): a fresh conversation, or an earlier one continued with its
 /// messages replayed from the recordings, on the model it needs.
 fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earlier>) -> Result<()> {
@@ -2798,7 +2808,16 @@ fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earl
         let (t, e) = apply_choice(live, &c, None)?;
         s.apply(&e, t);
     }
-    let (t, notice) = live.restart(earlier.map(|e| e.id.clone()))?;
+    // a conversation whose model cannot run here now (its key gone, the model gone) is shown, not continued: before 0.1.189
+    // it opened empty, under "this conversation ran on the own loop: /model to the model it used first" (design review 9;
+    // most of the user's own-loop conversations)
+    let shown_only = earlier.filter(|e| if e.id.starts_with("own-") { live.provider.is_none() || live.model != e.model } else { live.provider.is_some() });
+    let (t, mut notice) = live.restart(earlier.filter(|_| shown_only.is_none()).map(|e| e.id.clone()))?;
+    if let Some(e) = shown_only {
+        notice = json!({"type": "harness_notice", "error": false, "text": format!(
+            "This conversation ran on {} ({}): its messages are shown, and a message from here starts a new conversation on {}.",
+            ui::model_short(&e.model), unavailable_because(&e.model), ui::model_short(&live.model))});
+    }
     *s = s.fresh();
     if let Some(e) = earlier {
         for p in &e.recordings {
