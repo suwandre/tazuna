@@ -163,6 +163,8 @@ export const core = {
    * credits, OmniRoute's connected accounts; takes a few seconds */
   accounts: () => to("op", { msg: { op: "accounts" } }),
   onAccounts: (cb: (a: Accounts) => void) => on<Accounts>("accounts", cb),
+  /** the plan alone, a second or so before the rest of an accounts reading (the credits and OmniRoute ask other servers) */
+  onAccountsPlan: (cb: (a: Pick<Accounts, "plan" | "plan_notes">) => void) => on<Pick<Accounts, "plan" | "plan_notes">>("accounts_plan", cb),
   send: (text: string, agent = false) => to("send", { text, agent }),
   trust: () => to("trust"),
   pickFolder: () => invoke<string | null>("pick_folder"),

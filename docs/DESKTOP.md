@@ -334,6 +334,11 @@ said "week 99%" where the live one said 72%. Seen in the real window against the
   conversation's newer numbers in the bar, one when the reply ends, none through an idle hour, one when the window comes
   back, none when it comes back again at once, the button always); the real window does get its focus event.
 
+0.1.90 (with tazuna 0.1.186; the user: the refresh "takes like a few seconds", MonoCode's feels instant): a click on
+refresh shows the plan's numbers in under two seconds where it took 5.7 (the core reads the plan over the CLI's stream
+and sends it first, tazuna 0.1.186's notes; the bar takes that line, `accounts_plan`, and keeps the other accounts as
+they were until theirs come a moment later). Timed in the real window, stamped when the button's state changes.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

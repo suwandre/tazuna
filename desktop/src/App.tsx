@@ -517,7 +517,12 @@ export default function App() {
   const [accounts, setAccounts] = useState<Accounts | null>(null);
   // when the reading came, and whether one is on its way (it gives up waiting after 45 s: the core may not answer)
   const [acct, setAcct] = useState<{ at?: number; busy: boolean }>({ busy: false });
-  useEffect(() => { const off = core.onAccounts((a) => { setAccounts(a); setAcct({ at: Date.now(), busy: false }); }); return () => { off.then((f) => f()); }; }, []);
+  useEffect(() => {
+    const off = core.onAccounts((a) => { setAccounts(a); setAcct({ at: Date.now(), busy: false }); });
+    // the plan comes first, about a second in: the bar has it then, the other accounts as they were until theirs come
+    const offPlan = core.onAccountsPlan((p) => { setAccounts((a) => ({ credits: [], omniroute: [], ...a, ...p })); setAcct({ at: Date.now(), busy: false }); });
+    return () => { off.then((f) => f()); offPlan.then((f) => f()); };
+  }, []);
   const askedAt = useRef(0);
   /** `auto`: one the window asks for by itself, at most once a minute. */
   const readAccounts = (auto = false) => {
