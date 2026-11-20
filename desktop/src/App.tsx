@@ -29,7 +29,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
 import { messages as viewMessages, queued, resetIn, usage as viewUsage } from "./lib/fromView";
 import { modelLabel, titleFrom, type Usage } from "./lib/types";
-import { items as accountItems, mine as accountOf } from "./lib/health";
+import { items as accountItems, mine as accountOf, withLive } from "./lib/health";
 import { Parts } from "./components/Sep";
 
 const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
@@ -508,27 +508,46 @@ export default function App() {
   // the plan's windows are the account's: the newest reading of any open conversation, not the one on screen (a resumed
   // conversation showed its own days-old reading, design review 5)
   const planView = threads.map((t) => t.view).filter((v) => v?.limits).sort((a, b) => (b!.limits_at ?? 0) - (a!.limits_at ?? 0))[0];
-  // every account's reading for the status bar: at the start, every 15 minutes, whenever the usage page asks, and from
-  // the bar's refresh button (claude's /usage takes seconds, no model call)
+  // every account's reading for the status bar (claude's own /usage: the CLI for a few seconds, no model call). Asked
+  // for when something may have moved it, not by the clock (until desktop 0.1.89 at the start and every 15 minutes: the
+  // bar stood still through a long reply, and read on while nothing ran): at the start, when a reply ends, when the
+  // window comes back after a while (other programs spend the same plan), every 15 minutes while a reply runs, from the
+  // usage page and from the bar's button. Idle, nothing. Between readings the plan's 5 hours and week come from the
+  // conversations themselves (withLive).
   const [accounts, setAccounts] = useState<Accounts | null>(null);
   // when the reading came, and whether one is on its way (it gives up waiting after 45 s: the core may not answer)
   const [acct, setAcct] = useState<{ at?: number; busy: boolean }>({ busy: false });
   useEffect(() => { const off = core.onAccounts((a) => { setAccounts(a); setAcct({ at: Date.now(), busy: false }); }); return () => { off.then((f) => f()); }; }, []);
-  const readAccounts = () => {
+  const askedAt = useRef(0);
+  /** `auto`: one the window asks for by itself, at most once a minute. */
+  const readAccounts = (auto = false) => {
+    if (!inTauri || (auto && Date.now() - askedAt.current < 60_000)) return;
+    askedAt.current = Date.now();
     setAcct((a) => ({ ...a, busy: true }));
-    core.accounts().catch(() => {});
+    core.accounts().catch(() => setAcct((a) => ({ ...a, busy: false })));
     setTimeout(() => setAcct((a) => (a.busy ? { ...a, busy: false } : a)), 45_000);
   };
   const haveView = !!view;
+  useEffect(() => { if (haveView) readAccounts(); }, [haveView]);
+  // the replies running now, in any open conversation: one fewer is a reply that ended
+  const working = threads.filter((t) => busyView(t.view)).length, workedBefore = useRef(0);
+  useEffect(() => { if (working < workedBefore.current) readAccounts(true); workedBefore.current = working; }, [working]);
   useEffect(() => {
-    if (!inTauri || !haveView) return;
-    readAccounts();
-    const t = setInterval(readAccounts, 15 * 60_000);
+    if (!working) return;
+    const t = setInterval(() => readAccounts(true), 15 * 60_000);
     return () => clearInterval(t);
-  }, [haveView]);
+  }, [working > 0]);
+  useEffect(() => {
+    const back = () => { if (Date.now() - askedAt.current > 3 * 60_000) readAccounts(true); };
+    window.addEventListener("focus", back);
+    return () => window.removeEventListener("focus", back);
+  }, []);
+  const accountsNow = withLive(accounts, acct.at, planView);
+  // when the numbers on screen were read: the full reading, or a conversation's newer one
+  const readAt = accountsNow === accounts ? acct.at : (planView!.limits_at ?? 0) * 1000;
   const usage = { ...(view ? viewUsage(view) : inTauri ? NO_USAGE : demo.usage),
     ...(planView?.limits ? { plan5h: Math.round(planView.limits[0]), planWeek: Math.round(planView.limits[1]), plan5hReset: resetIn(planView.limits_reset) } : {}) };
-  const accts = accountItems(accounts, { plan5h: usage.plan5h, planWeek: usage.planWeek, resetAt: planView?.limits_reset, balance: view?.balance });
+  const accts = accountItems(accountsNow, { plan5h: usage.plan5h, planWeek: usage.planWeek, resetAt: planView?.limits_reset, balance: view?.balance });
   const hereAccts = accountOf(accts, models?.choices.find((c) => c.current), view?.model ?? "");
   const busy = !!view && !["Ready", "Done"].includes(view.activity);
   // when the reply now running began, as this window first saw it: the fold's "Working 12 s" keeps counting across a switch
@@ -755,7 +774,7 @@ export default function App() {
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
     <StatusBar usage={usage} version={appVersion} idle={fresh || failed} accounts={accts} here={hereAccts}
-      onRefresh={inTauri && haveView ? readAccounts : undefined} refreshing={acct.busy} readAt={acct.at} />
+      onRefresh={inTauri && haveView ? () => readAccounts() : undefined} refreshing={acct.busy} readAt={readAt} />
     </div>
   );
 }

@@ -321,6 +321,19 @@ end of the status bar's account reading (two arrows; the single one marks a rese
 came ("read 4 min ago"). The reading came only at the start and every 15 minutes: a stored one from an hour before
 said "week 99%" where the live one said 72%. Seen in the real window against the real accounts (5.7 s).
 
+0.1.89 (the user: "it was stuck at 15%, then I refreshed it once and it became 21%"): the status bar's usage follows the work, not the clock.
+- Between full readings the plan's 5 hours and week come from the conversations themselves (lib/health.ts, `withLive`):
+  claude's rate-limit event during a reply, which the core already kept and the bar ignored once the first full reading
+  had come. Free. In 101 stored recordings it comes about three times a turn, 55 s apart at the median while a reply
+  runs. The week on one model is not in it and waits for a full reading.
+- The full reading (`claude -p /usage`: the CLI for about six seconds, no model call) is asked for when a reply ends, when
+  the window comes back after three minutes or more (other programs spend the same plan), every 15 minutes while a reply
+  runs, from the usage page and from the bar's button; an automatic one at most once a minute. Idle, none: it was every
+  15 minutes whatever happened.
+- Checked with a clock the test moves (12 cases: one reading at the start, none 10 minutes into a reply, one at 16, the
+  conversation's newer numbers in the bar, one when the reply ends, none through an idle hour, one when the window comes
+  back, none when it comes back again at once, the button always); the real window does get its focus event.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

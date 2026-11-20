@@ -100,6 +100,19 @@ export function items(acc: Accounts | null, fallback: { plan5h: number | null; p
   return out;
 }
 
+/** The accounts reading with the plan's 5 hours and week as a conversation's newer reading has them. A conversation gets
+ * them from claude's own rate-limit event while a reply runs: free, and they move as it works. The full reading
+ * (`claude -p /usage`) starts the CLI for a few seconds, so it is asked for only at times (App.tsx), and until desktop
+ * 0.1.89 it hid the newer numbers once it had come: the bar stood at 15% through a long reply (the user). The week on one
+ * model is not in that event and stays as read. `accAt`: when the full reading came, in ms. */
+export function withLive(acc: Accounts | null, accAt: number | undefined, live: { limits?: [number, number]; limits_at?: number | null; limits_reset?: number | null } | null | undefined): Accounts | null {
+  if (!acc?.plan || !live?.limits || !((live.limits_at ?? 0) * 1000 > (accAt ?? 0))) return acc;
+  const [h5, week] = live.limits;
+  // the 5 hours' reset from the newer reading too, where it has one (items() takes it from its fallback for a row with none)
+  return { ...acc, plan: acc.plan.map((r) => (r.label === "Current session" ? { ...r, used: h5, resets: live.limits_reset ? "" : r.resets }
+    : r.label === "Current week (all models)" ? { ...r, used: week } : r)) };
+}
+
 /** The items of the account the conversation runs on: the plan for Claude, its credit for an API provider, the matching
  * OmniRoute window (Gemini's for a Gemini model). */
 export function mine(all: Item[], choice: ModelChoice | undefined, model: string): Item[] {
@@ -120,6 +133,11 @@ export function demo() {
     credits: [{ provider: "SubRouter", left: "$12.40 left", page: "" }, { provider: "OpenRouter", left: "$0.17 over its credit", page: "" }, { provider: "Mortera", left: null, page: "" }],
     omniroute: [{ provider: "agy", name: "a", plan: "Ultra", status: "valid", windows: [{ group: "Gemini Models", window: "weekly", used: 12, resets: null, unlimited: false }] }] };
   const all = items(acc, { plan5h: null, planWeek: null });
+  // a conversation's newer reading replaces the 5 hours and the week, an older one nothing; the week on one model stays
+  const fable = { ...acc, plan: [...acc.plan!, { label: "Current week (Fable)", used: 15, resets: "" }] };
+  const used = (a: Accounts | null) => a!.plan!.map((r) => r.used).join(",");
+  if (used(withLive(fable, 1000_000, { limits: [41, 94], limits_at: 1001 })) !== "41,94,15" || used(withLive(fable, 1000_000, { limits: [41, 94], limits_at: 999 })) !== "34,93,15"
+    || withLive(fable, 1000_000, { limits: [41, 94], limits_at: 1001, limits_reset: 5000 })!.plan![0].resets !== "" || withLive(null, 0, { limits: [1, 2], limits_at: 9 }) !== null) throw new Error("withLive");
   // resets: in a day as a countdown, in a week by its day, later by its date
   const t0 = new Date(2026, 10, 19, 15, 0).getTime();
   const r = [whenReset(t0 + 42 * 60_000, t0), whenReset(t0 + 134 * 60_000, t0), whenReset(new Date(2026, 10, 21, 3, 0).getTime(), t0), whenReset(new Date(2026, 10, 26, 17, 13).getTime(), t0),
