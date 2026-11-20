@@ -21,7 +21,7 @@ type PluginProps = {
 
 // The page's parts, one on screen at a time, chosen in the list on its left (until desktop 0.1.87 one scroll of eight parts
 // in a 720 px dialog, with nothing to say where you were; design review 8). The last one open comes back.
-const TAB = "tazuna.settings.tab";
+export const TAB = "tazuna.settings.tab";
 const TabCtx = createContext("");
 
 export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, onChanged }: { onClose: () => void } & PluginProps) {

@@ -8,7 +8,7 @@ import { ReviewView } from "./components/ReviewView";
 import { Palette, Shortcuts, type Action } from "./components/Palette";
 import { creatorMessage, dryRun, summary, widgetData, widgetId, widgets, type UserWidget } from "./lib/widgets";
 import { footprint, load, onPaletteChange, pluginActions, safeMode, setActions, setData, unload } from "./lib/plugins";
-import { SettingsView } from "./components/SettingsView";
+import { SettingsView, TAB } from "./components/SettingsView";
 import { SideChat } from "./components/SideChat";
 import { UsageView } from "./components/UsageView";
 import { PrView } from "./components/PrView";
@@ -251,6 +251,9 @@ function useOverlay() {
 export default function App() {
   const flipTheme = useTheme();
   const [overlay, setOverlay] = useOverlay();
+  // what the palette opens with (`/resume` opens it on the conversations); empty again once it closes
+  const [paletteQ, setPaletteQ] = useState("");
+  useEffect(() => { if (overlay !== "palette") setPaletteQ(""); }, [overlay]);
   // "edit from here": the message being edited (its checkpoint, its block, the files tazuna changed since, whether they
   // go back too) and the text put in the box
   const [editing, setEditing] = useState<{ cp: number; block: number; files: number; keep: boolean } | null>(null);
@@ -647,8 +650,26 @@ export default function App() {
   const where = { label: folder ? base(folder) : "Chat", folder: !!folder, pickFolder: pick,
     choices: [{ label: "Chat", hint: "no folder: a general question", path: null as string | null }, ...projects.slice(0, 6).map((p) => ({ label: base(p), hint: p, path: p as string | null }))],
     pick: (path: string | null) => { if (path !== folder) open(path); } };
+  // the terminal's panels and switches, typed in the box (or taken from its `/` menu), open the window's own. Before, the
+  // menu held only /create and /agent here, and a typed `/mcp` went on to the agent (the user, 2026-11-20).
+  const settingsAt = (tab: string) => { localStorage.setItem(TAB, tab); setOverlay("settings"); };
+  const find = (q: string) => { setPaletteQ(q); setOverlay("palette"); };
+  const windowCommands: Record<string, [string, () => void]> = inTauri ? {
+    new: ["A fresh conversation", () => open(folder)],
+    resume: ["Continue an earlier conversation", () => find("resume")],
+    mcp: ["Your MCP servers for every model", () => settingsAt("Tools from MCP servers")],
+    login: ["Save a provider's API key", () => settingsAt("Providers")],
+    data: ["Which providers may see your code", () => settingsAt("Privacy and routing")],
+    route: ["Whether general questions may go to a chat", () => settingsAt("Privacy and routing")],
+    usage: ["Cost by day and model, cache, plan", () => setOverlay("usage")],
+    keys: ["All keyboard shortcuts", () => setOverlay("shortcuts")],
+    ...(folder ? {
+      diff: ["Review the uncommitted changes", () => setReviewing({ scope: "uncommitted" })],
+      hook: ["A command of yours after each turn that changed files", () => settingsAt("After each turn")],
+    } satisfies Record<string, [string, () => void]> : {}),
+  } : {};
   const composer = (
-        <Composer key={active} where={fresh ? where : undefined} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
+        <Composer key={active} commands={windowCommands} where={fresh ? where : undefined} draftKey={draftKey} session={session} threadCost={usage.threadCost} busy={busy}
             onSend={(text) => {
               if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk(text); return; }
               sendNow(text);
@@ -815,7 +836,7 @@ export default function App() {
           onSend={(text) => core.sendIn(side.tid, text).catch(() => {})} onAnswer={(allow, always) => core.opIn(side.tid, { op: "answer", allow, always })} />
         : panelOpen && <div className="flex min-h-0 justify-end overflow-hidden"><WorkCtx.Provider value={work}><Rail usage={usage} data={data} messages={messages} /></WorkCtx.Provider></div>}
       <Slot name="overlay" props={{ data }} />
-      {overlay === "palette" && <Palette actions={actions()} onClose={() => setOverlay(null)} />}
+      {overlay === "palette" && <Palette actions={actions()} query={paletteQ} onClose={() => setOverlay(null)} />}
       {overlay === "shortcuts" && <Shortcuts onClose={() => setOverlay(null)} />}
       {bestOf && <BestOfStart choices={models?.choices ?? []} onStart={(task, ms) => { setBestOf(false); startLanes(task, ms); }} onClose={() => setBestOf(false)} />}
       {showLanes && lanes && <LanesView lanes={lanes} views={Object.fromEntries(threads.map((t) => [t.tid, t.view]))}

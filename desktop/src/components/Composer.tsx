@@ -16,6 +16,8 @@ export type ComposerBag = {
   where?: Where;
   session: Session; busy?: boolean; models?: Models | null; onModels?: () => void; onPickModel?: (c: ModelChoice) => void;
   onPickEffort?: (e: string) => void; onMode?: (mode: string) => void; onPickFiles?: () => Promise<string[]>; attach: (paths: string[]) => void;
+  /** counts the `/model` (or `/effort`) asks: the model picker opens at each new one */
+  picker?: number;
 };
 
 type Props = {
@@ -42,6 +44,8 @@ type Props = {
   /** where the box's text is kept (the conversation's id, or "new:<folder>" before it has one): it comes back after a
    * restart, and goes along when the conversation gets its id */
   draftKey?: string;
+  /** the window's own commands (`/mcp`, `/model`…): what each does, and what runs when one is taken or sent alone */
+  commands?: Record<string, [about: string, run: () => void]>;
 };
 
 export const DRAFT = "tazuna.draft.";
@@ -54,11 +58,11 @@ type Pick = { text: string; label: string; about: string };
 
 /** What the word at the caret completes to: commands when the box holds only `/…`, files for an `@…` word anywhere. As the
  * terminal ranks them (src/editor.rs): a name that starts with the typed text first, then one that holds it. */
-export function completions(text: string, caret: number, c: Completions | null | undefined): { from: number; items: Pick[] } | null {
+export function completions(text: string, caret: number, c: Completions | null | undefined, extra: [string, string][] = []): { from: number; items: Pick[] } | null {
   const head = text.slice(0, caret);
   const slash = /^\/(\S*)$/.exec(head);
   if (slash) {
-    const q = slash[1].toLowerCase(), all = [...OWN, ...(c?.commands ?? []).filter(([n]) => !OWN.some(([o]) => o === n))];
+    const mine = [...OWN, ...extra], q = slash[1].toLowerCase(), all = [...mine, ...(c?.commands ?? []).filter(([n]) => !mine.some(([o]) => o === n))];
     const hit = (start: boolean) => all.filter(([n]) => { const i = n.slice(1).toLowerCase().indexOf(q); return start ? i === 0 : i > 0; });
     return { from: 0, items: [...hit(true), ...hit(false)].slice(0, 40).map(([n, about]) => ({ text: `${n} `, label: n, about })) };
   }
@@ -82,20 +86,28 @@ export const MODES: [string, string][] = [
 // one line always (a narrow window wrapped "Opus 5.5" onto two), and readable while a reply runs (faded, they read as broken)
 const pill = "inline-flex flex-none items-center gap-1.5 whitespace-nowrap rounded-full border border-line bg-field px-2.5 py-[3px] text-[12px] text-ink-2 enabled:hover:bg-hover enabled:hover:text-ink disabled:cursor-default disabled:text-muted";
 
-export function Composer({ session, where, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey, complete, onComplete, onImage }: Props) {
+export function Composer({ session, where, busy, onSend, onStop, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, onDrop, draft, above, below, draftKey, complete, onComplete, onImage, commands = {} }: Props) {
   const [text, setText] = useState(() => (draftKey && localStorage.getItem(DRAFT + draftKey)) || "");
   // attachments are chips over the text, with a thumbnail for an image (until desktop 0.1.87 their paths were typed into
   // the message, and a screenshot was a line of path)
   const [files, setFiles] = useState<string[]>([]);
   // the menu over the box for the `/` or `@` word at the caret; Esc shuts it until the text changes
   const [caret, setCaret] = useState(text.length), [sel, setSel] = useState(0), [shut, setShut] = useState(false);
-  const found = useMemo(() => (shut ? null : completions(text, caret, complete)), [text, caret, complete, shut]);
+  // the box's own: `/model` and `/effort` open the model pill's picker (the effort levels are at its top)
+  const [picker, setPicker] = useState(0);
+  const ask = () => setPicker((n) => n + 1);
+  const mine: Record<string, [string, () => void]> = onPickModel ? { model: ["Pick the model and its effort", ask], effort: ["The model's effort level", ask], ...commands } : commands;
+  const extra = useMemo(() => Object.entries(mine).map(([n, [about]]) => [`/${n}`, about] as [string, string]), [commands, !!onPickModel]);
+  const found = useMemo(() => (shut ? null : completions(text, caret, complete, extra)), [text, caret, complete, shut, extra]);
   const menu = found?.items.length ? found : null;
   useEffect(() => { setSel(0); }, [menu?.items.length, menu?.from]);
   const asked = useRef(false);
   // asked for at the first `/` or `@` of each message: a conversation's commands are known once its first turn ran
   useEffect(() => { if (!text) asked.current = false; else if (!asked.current && /(^\/|(^|\s)@)/.test(text)) { asked.current = true; onComplete?.(); } }, [text]);
+  // a window command runs when taken: it opens a panel, and has nothing to type after it
+  const run = (cmd: string) => { const name = cmd.startsWith("/") ? cmd.slice(1) : ""; if (!Object.hasOwn(mine, name)) return false; setText(""); mine[name][1](); return true; };
   const take = (p: Pick) => {
+    if (run(p.label)) return;
     const next = text.slice(0, menu!.from) + p.text + text.slice(caret), at = menu!.from + p.text.length;
     setText(next); setCaret(at);
     requestAnimationFrame(() => { box.current?.focus(); box.current?.setSelectionRange(at, at); });
@@ -127,10 +139,10 @@ export function Composer({ session, where, busy, onSend, onStop, models, onModel
     return () => { off.then((f) => f()); };
   }, [onDrop]);
   const nextMode = () => { const i = MODES.findIndex(([m]) => m === session.mode); onMode?.(MODES[(i + 1) % MODES.length][0]); };
-  const bag: ComposerBag = { where, session, busy, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, attach: (p) => { attach(p); } };
+  const bag: ComposerBag = { where, session, busy, models, onModels, onPickModel, onPickEffort, onMode, onPickFiles, attach: (p) => { attach(p); }, picker };
   // a message sent during a reply waits behind it (the core queues it, as the terminal does)
   // attachments go in the message as paths after its text (quoted when they hold a space): the core sends images as images
-  const send = () => { const t = [text.trim(), ...files.map(quotePath)].filter(Boolean).join(" "); if (!t) return; onSend?.(t); setText(""); setFiles([]); };
+  const send = () => { if (!files.length && run(text.trim())) return; const t = [text.trim(), ...files.map(quotePath)].filter(Boolean).join(" "); if (!t) return; onSend?.(t); setText(""); setFiles([]); };
   const ready = !!text.trim() || files.length > 0;
   return (
     <footer className="px-7 pb-[22px] pt-2.5">
@@ -177,6 +189,9 @@ export function demo() {
     ["why @ret", "retry.ts,retry.test.ts"], ["why @try", "retry.ts,entry.ts,retry.test.ts"], ["mail a@b.c", null], ["@zzz", ""], ["plain", null]];
   for (const [text, exp] of want) if (labels(text) !== exp) throw new Error(`completions(${text}): ${labels(text)}, wanted ${exp}`);
   if (completions("why @ret", 8, null) !== null || labels("/", 1) === null) throw new Error("completions: no list yet");
+  // the window's own commands after /create and /agent, one of the core's list with the same name only once
+  const mine = completions("/", 1, { ...c, commands: [...c.commands, ["/mcp", "claude's"]] }, [["/mcp", "window"], ["/model", "window"]])!.items;
+  if (mine.map((i) => i.label).join(",") !== "/create,/agent,/mcp,/model,/compact,/review,/security-review" || mine[2].about !== "window") throw new Error("completions: window commands");
   const at = completions("why @ret now", 8, c)!;
   if (at.from !== 4 || at.items[0].text !== "@src/retry.ts ") throw new Error("completions: what is taken");
   console.log("completions ok");
@@ -274,6 +289,7 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
   const [open, setOpen] = useState(false);
   const current = c.models?.choices.find((m) => m.current);
   const toggle = () => { c.onModels?.(); setOpen(!open); };
+  useEffect(() => { if (c.picker && !c.busy && c.onPickModel) { c.onModels?.(); setOpen(true); } }, [c.picker]);
   return (
     <span className="relative">
       <button disabled={c.busy || !c.onPickModel} onClick={toggle} title="Model and effort" className={pill}>

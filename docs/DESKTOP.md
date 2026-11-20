@@ -378,6 +378,18 @@ page flashing before the chat):
   messages follow, and the window drew "What are we working on?" in between (0.8 s with a slow one, in the test; long
   enough to see while macOS asked its question).
 
+0.1.94 (with tazuna 0.1.189; the user: "is it only supposed to have 2 commands? what about for mcp, for other commands
+etc?"):
+- The terminal's panels and switches are commands in the box too, and open the window's own: `/model` and `/effort` the
+  model picker under the box, `/mcp`, `/login`, `/data`, `/route` (and `/hook` in a project) their Settings page,
+  `/usage` and `/keys` their views, `/new` a new conversation here, `/resume` the palette on the conversations, `/diff`
+  (in a project) the review of uncommitted changes. Taken from the menu or sent alone, one runs at once and leaves the
+  box empty; nothing goes to the agent. Before, a typed `/mcp` went on to it.
+- With core 0.1.189 the menu has claude's commands and skills before a conversation's first turn too.
+- Seen on the real core (review/bridge.mjs) in a project's new conversation: the menu with 24 entries, `/mc` and Enter
+  on Settings' MCP page, `/model` on the picker, `/resume` on the palette, no page errors. Not seen: light theme and
+  the small window sizes.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

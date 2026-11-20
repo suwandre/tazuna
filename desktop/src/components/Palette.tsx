@@ -15,8 +15,8 @@ function marked(label: string, q: string) {
   return label.split(re).map((p, i) => (i % 2 ? <mark key={i} className="rounded-[2px] bg-accent-soft text-ink">{p}</mark> : p));
 }
 
-export function Palette({ actions, onClose }: { actions: Action[]; onClose: () => void }) {
-  const [q, setQ] = useState("");
+export function Palette({ actions, onClose, query = "" }: { actions: Action[]; onClose: () => void; query?: string }) {
+  const [q, setQ] = useState(query);
   const [sel, setSel] = useState(0);
   const dialog = useDialog();
   const list = useRef<HTMLDivElement>(null);
