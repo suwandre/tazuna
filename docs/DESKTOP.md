@@ -395,6 +395,12 @@ etc?"):
   Settings show theirs on hover, the start page's Open folder card and Search hint lost theirs: eight chips on the
   start screen read as a cheat sheet); an error says its code once; the jump-to-latest button sits on a fade, not on a
   message's words. Seen on test data (the sweep, both themes) and on the real core with saved conversations.
+- Design review 9, the user's picks from the prototype (mockups/v6.html): saved conversations under Today, Yesterday,
+  This week and Earlier with short titles (by rules, no model call; a renamed one keeps its name), no model on the row,
+  and the header saying what the title left out; the review as a pane over the conversation (Esc goes back), every
+  file's diff one under another, changed words marked, Unified or Split, Stage and Revert per file too, comments with
+  Add and Cancel; the usage page folding idle accounts, providers without a balance, and how the runs went. Seen on test
+  data (the sweep, both themes, a comment written and sent, split) and on the real core (titles, date groups, usage).
 
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).

@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tazuna · design review 9 prototypes (v6)</title>
+<!-- Design review 9 (2026-11-20), part 2: short titles with date groups, the review pane, a simpler usage page, and the
+     terminal's default design. Screens and variants are switched in the panel at the bottom right. Not the app. -->
+<style>
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2") format("woff2"); font-weight: 400; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Medium.woff2") format("woff2"); font-weight: 500; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-SemiBold.woff2") format("woff2"); font-weight: 600; }
+@font-face { font-family: "Geist Mono"; src: url("../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; }
+@font-face { font-family: "Source Serif 4"; src: url("../node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2") format("woff2"); font-weight: 200 900; }
+:root {
+  --canvas:#f6f4ef; --main:#fbfaf7; --sidebar:#f3f0e9; --card:#fffefb; --field:#efebe3; --hover:#e7e3db; --selected:#e6e1f2;
+  --ink:#23221e; --ink-2:#3f3c35; --muted:#5b574f; --faint:#69655d; --line:#e3ded3; --line-soft:#ece8df; --line-strong:#d8d2c5;
+  --accent:#3d4aa8; --accent-ink:#2f3a8f; --accent-soft:#e7e8f6; --on-accent:#fff; --ok:#3b7d4f; --bad:#b4473a; --warn:#a76a14;
+  --add-bg:#e6f0e4; --add-word:#c4dfc0; --del-bg:#f6e4e0; --del-word:#ecc2b9;
+  --shadow:0 1px 2px #2321190d, 0 4px 14px #23211908; --pop:0 2px 6px #2321190f, 0 14px 36px #23211924; --popfill:var(--card);
+  --ui:"Geist", system-ui, sans-serif; --mono:"Geist Mono", ui-monospace, monospace; --prose:"Source Serif 4", Georgia, serif;
+}
+.dark {
+  --canvas:#171613; --main:#1b1a17; --sidebar:#151411; --card:#211f1b; --field:#2a2823; --hover:#302e29; --selected:#2b2c45;
+  --ink:#ece8df; --ink-2:#d2cdc2; --muted:#afaa9e; --faint:#9a958d; --line:#2f2c27; --line-soft:#25231f; --line-strong:#3a3731;
+  --accent:#8f9bf0; --accent-ink:#aab3f5; --accent-soft:#272a44; --on-accent:#14152a; --ok:#7cc08f; --bad:#e08b7f; --warn:#e0b46a;
+  --add-bg:#1f2a20; --add-word:#2f4a31; --del-bg:#2e1f1c; --del-word:#553029;
+  --shadow:0 1px 2px #0000004d, 0 4px 14px #00000033; --pop:0 0 0 1px #ffffff0a, 0 10px 32px #00000080; --popfill:#282622;
+}
+* { box-sizing: border-box; margin: 0; }
+body { font: 13.5px/1.5 var(--ui); color: var(--ink); background: var(--canvas); height: 100vh; overflow: hidden; -webkit-font-smoothing: antialiased; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: default; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.faint { color: var(--faint); } .muted { color: var(--muted); }
+.hair { display: inline-block; width: 1px; height: .8em; background: var(--line-strong); margin: 0 6px; transform: translateY(.08em); }
+kbd { font: 11px var(--mono); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; color: var(--faint); }
+
+/* the window */
+.win { height: 100vh; display: flex; flex-direction: column; }
+.cols { flex: 1; min-height: 0; display: grid; grid-template-columns: 248px 1fr; }
+.side { background: var(--sidebar); border-right: 1px solid var(--line); padding: 12px 10px 10px; display: flex; flex-direction: column; min-height: 0; }
+.brand { display: flex; align-items: center; gap: 8px; padding: 2px 8px 12px; font-weight: 600; letter-spacing: -.01em; }
+.brand i { font-style: normal; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; }
+.search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--field); border-radius: 7px; padding: 7px 9px; color: var(--muted); margin-bottom: 4px; }
+.search kbd { margin-left: auto; }
+.act { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: 7px; }
+.act:hover { background: var(--hover); }
+.ico { width: 15px; height: 15px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.list { flex: 1; overflow: auto; margin: 10px -4px 0; padding: 0 4px; }
+.grp { display: flex; justify-content: space-between; padding: 12px 9px 4px; font-size: 11.5px; font-weight: 500; color: var(--faint); }
+.row { position: relative; display: block; padding: 5px 9px; border-radius: 7px; color: var(--ink-2); }
+.row:hover { background: var(--hover); }
+.row.on { background: var(--selected); color: var(--ink); }
+.row .t { display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .t span.x { overflow: hidden; text-overflow: ellipsis; }
+.row .s { display: flex; gap: 6px; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+.row .s .age { margin-left: auto; font-variant-numeric: tabular-nums; }
+.row.one { display: flex; align-items: center; gap: 8px; padding: 6px 9px; }
+.row.one .t { flex: 1; min-width: 0; }
+.row.one .p { flex: none; font-size: 11.5px; color: var(--faint); max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .n { flex: none; font-size: 11px; color: var(--faint); border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; line-height: 16px; }
+.dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); flex: none; }
+.spin { width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--accent); border-right-color: transparent; flex: none; }
+.badge { flex: none; font-size: 11px; color: var(--warn); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); border-radius: 999px; padding: 0 6px; line-height: 16px; margin-left: auto; }
+.tip { position: absolute; left: 8px; top: 100%; z-index: 5; width: 260px; background: var(--popfill); box-shadow: var(--pop); border: 1px solid var(--line-strong); border-radius: 8px; padding: 7px 10px; font-size: 12px; color: var(--ink-2); white-space: normal; }
+.settings { border-top: 1px solid var(--line); padding-top: 6px; }
+.main { background: var(--main); display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.head { height: 48px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 28px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+.head .crumb { color: var(--muted); } .head .ttl { font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.head .full { font-size: 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; margin-left: 4px; }
+.scroll { flex: 1; overflow: auto; min-height: 0; }
+.doc { max-width: 756px; margin: 0 auto; padding: 28px 28px 20px; }
+.you { display: inline-block; background: var(--field); border-radius: 10px; padding: 9px 14px; color: var(--ink); }
+.fold { margin: 14px 0 10px; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+.prose { font: 15.5px/1.62 var(--prose); color: var(--ink); }
+.prose p + p { margin-top: 10px; }
+.prose code { font: 12.5px var(--mono); background: var(--field); padding: 1px 5px; border-radius: 4px; }
+.composer { margin: 0 auto 22px; width: min(700px, calc(100% - 56px)); border: 1px solid var(--line-strong); border-radius: 12px; background: var(--card); padding: 12px 12px 8px 16px; box-shadow: var(--shadow); color: var(--faint); }
+.pills { display: flex; gap: 6px; margin-top: 12px; align-items: center; }
+.pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12px; color: var(--ink-2); background: var(--field); }
+.send { margin-left: auto; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); display: grid; place-items: center; }
+.status { height: 28px; flex: none; display: flex; align-items: center; gap: 14px; padding: 0 14px; border-top: 1px solid var(--line); background: var(--sidebar); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.status b { font-weight: 500; color: var(--ink-2); }
+.meter { display: inline-block; width: 30px; height: 4px; border-radius: 2px; background: var(--line-strong); overflow: hidden; vertical-align: middle; }
+.meter i { display: block; height: 100%; background: var(--accent); } .meter i.w { background: var(--warn); } .meter i.b { background: var(--bad); }
+.sdot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); display: inline-block; }
+
+/* review pane */
+.rv { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.rvhead { height: 48px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 16px 0 12px; border-bottom: 1px solid var(--line); }
+.back { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 6px; color: var(--muted); }
+.back:hover { background: var(--hover); color: var(--ink); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; padding: 2px; gap: 2px; background: var(--field); }
+.seg button { padding: 2px 10px; border-radius: 5px; font-size: 12.5px; color: var(--muted); }
+.seg button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px #0000001a; }
+.primary { background: var(--accent); color: var(--on-accent); border-radius: 7px; padding: 4px 12px; font-weight: 500; font-size: 12.5px; }
+.ghost { border: 1px solid var(--line); border-radius: 7px; padding: 3px 10px; font-size: 12.5px; color: var(--ink-2); }
+.rvbody { flex: 1; min-height: 0; display: grid; grid-template-columns: 232px 1fr; }
+.files { border-right: 1px solid var(--line-soft); padding: 10px 8px; overflow: auto; background: var(--main); }
+.files .f { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; font-size: 12.5px; }
+.files .f.on { background: var(--selected); }
+.files .f .st { font: 11px var(--mono); width: 14px; color: var(--warn); } .files .f .st.a { color: var(--ok); }
+.files .f .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.files .f .nm small { color: var(--faint); font-size: 11.5px; margin-left: 4px; }
+.plus { color: var(--ok); font-variant-numeric: tabular-nums; } .minus { color: var(--bad); font-variant-numeric: tabular-nums; }
+.files .tot { font-size: 11.5px; color: var(--faint); padding: 10px 8px 0; border-top: 1px solid var(--line-soft); margin-top: 8px; }
+.diffs { overflow: auto; padding: 14px 18px 40px; }
+.dfile { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin-bottom: 16px; background: var(--card); }
+.dfile > .fh { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--field); font: 12.5px var(--mono); }
+.dfile > .fh .sp { flex: 1; }
+.tb { font: 12px var(--ui); color: var(--muted); padding: 2px 8px; border-radius: 5px; } .tb:hover { background: var(--hover); color: var(--ink); } .tb.bad { color: var(--bad); }
+.hunk { display: flex; align-items: center; gap: 8px; padding: 4px 12px; font: 12px var(--mono); color: var(--faint); background: color-mix(in srgb, var(--accent-soft) 45%, transparent); border-bottom: 1px solid var(--line-soft); }
+.hunk .sp { flex: 1; }
+table.d { width: 100%; border-collapse: collapse; font: 12.5px/19px var(--mono); table-layout: fixed; }
+table.d td { padding: 0 8px; white-space: pre; overflow: hidden; vertical-align: top; }
+table.d td.ln { width: 44px; text-align: right; color: var(--faint); user-select: none; padding-right: 10px; font-size: 11.5px; }
+table.d td.sg { width: 18px; color: var(--faint); padding: 0 4px; }
+table.d tr.add td { background: var(--add-bg); } table.d tr.del td { background: var(--del-bg); }
+table.d tr.add td.sg { color: var(--ok); } table.d tr.del td.sg { color: var(--bad); }
+table.d ins { text-decoration: none; background: var(--add-word); border-radius: 3px; }
+table.d del { text-decoration: none; background: var(--del-word); border-radius: 3px; }
+table.d tr:hover td.ln { color: var(--ink); }
+table.d td.c { position: relative; }
+.cmt-add { display: inline-grid; place-items: center; width: 15px; height: 15px; border-radius: 4px; background: var(--accent); color: var(--on-accent); font: 600 12px/1 var(--ui); vertical-align: -2px; }
+.thread { padding: 8px 12px 10px 80px; background: var(--main); border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+.cbox { border: 1px solid var(--line-strong); border-radius: 9px; background: var(--card); max-width: 620px; }
+.cbox .cb { padding: 8px 12px; font: 13px/1.5 var(--ui); color: var(--ink); }
+.cbox .cf { display: flex; gap: 8px; align-items: center; padding: 6px 8px 6px 12px; border-top: 1px solid var(--line-soft); font-size: 12px; color: var(--faint); }
+.cbox .cf .sp { flex: 1; }
+.cbox.edit { border-color: var(--accent); }
+.cbox.edit .cb { color: var(--faint); min-height: 54px; }
+.saved { display: flex; gap: 8px; align-items: flex-start; max-width: 620px; font-size: 13px; }
+.saved .who { flex: none; font-size: 11.5px; color: var(--faint); padding-top: 1px; }
+.saved .txt { flex: 1; color: var(--ink-2); }
+.split { display: grid; grid-template-columns: 1fr 1fr; }
+.split > div + div { border-left: 1px solid var(--line-soft); }
+
+/* usage */
+.scrim { position: fixed; inset: 0; background: #1d1b1640; display: grid; place-items: center; padding: 30px; z-index: 10; }
+.dark .scrim { background: #0000008c; }
+.dlg { width: 780px; max-height: calc(100vh - 60px); display: flex; flex-direction: column; background: var(--card); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--pop); overflow: hidden; }
+.dlg .dh { display: flex; align-items: center; padding: 14px 20px; border-bottom: 1px solid var(--line); font-weight: 500; }
+.dlg .dh .sp { flex: 1; }
+.dlg .db { overflow: auto; padding: 18px 24px 26px; }
+.sec { margin-bottom: 22px; }
+.sec h3 { font: 500 13.5px var(--ui); margin-bottom: 2px; display: flex; align-items: center; gap: 10px; }
+.sec h3 .sp { flex: 1; }
+.sec > p { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+.cardx { border: 1px solid var(--line); border-radius: 10px; background: var(--main); overflow: hidden; }
+.cardx .lab { padding: 7px 14px; font-size: 11.5px; color: var(--muted); background: color-mix(in srgb, var(--field) 50%, transparent); border-bottom: 1px solid var(--line-soft); }
+.urow { display: grid; grid-template-columns: 150px 1fr 160px; gap: 14px; align-items: center; padding: 9px 14px; border-bottom: 1px solid var(--line-soft); font-size: 13px; }
+.urow:last-child { border-bottom: 0; }
+.urow .bar { height: 6px; border-radius: 3px; background: var(--line-strong); overflow: hidden; } .urow .bar i { display: block; height: 100%; background: var(--accent); }
+.urow .bar i.w { background: var(--warn); } .urow .bar i.b { background: var(--bad); }
+.urow .v { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12.5px; } .urow .v b { color: var(--ink); font-weight: 500; }
+.urow.fold { grid-template-columns: 1fr auto; color: var(--muted); cursor: default; }
+.urow.fold:hover { background: var(--hover); }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); }
+.tiles > div { padding: 12px 14px; } .tiles > div + div { border-left: 1px solid var(--line-soft); }
+.tiles small { display: block; font-size: 11.5px; color: var(--muted); }
+.tiles strong { font: 600 22px var(--ui); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.tiles strong + span { font-size: 12px; color: var(--faint); margin-left: 4px; }
+.bars { display: flex; align-items: flex-end; gap: 5px; height: 96px; padding: 10px 14px 0; border-top: 1px solid var(--line-soft); }
+.bars i { flex: 1; background: var(--accent); border-radius: 2px 2px 0 0; opacity: .85; }
+.bars i.p { background: color-mix(in srgb, var(--accent) 45%, var(--field)); }
+.axis { display: flex; justify-content: space-between; padding: 4px 14px 10px; font-size: 11px; color: var(--faint); }
+table.t { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+table.t th { text-align: left; font-weight: 500; color: var(--muted); font-size: 11.5px; padding: 7px 14px; border-bottom: 1px solid var(--line-soft); }
+table.t td { padding: 7px 14px; border-bottom: 1px solid var(--line-soft); } table.t tr:last-child td { border-bottom: 0; }
+table.t .r { text-align: right; }
+.disc { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: 13px; }
+.disc .sp { flex: 1; }
+
+/* the terminal comparison */
+.cli { height: 100vh; overflow: auto; padding: 22px 26px 120px; background: var(--canvas); }
+.cli h2 { font: 600 16px var(--ui); margin-bottom: 4px; }
+.cli > p { color: var(--muted); font-size: 13px; max-width: 900px; margin-bottom: 16px; }
+.cgrid { display: grid; grid-template-columns: 120px repeat(3, minmax(0, 1fr)); gap: 10px 12px; align-items: start; }
+.cgrid .h { font-weight: 500; font-size: 12.5px; color: var(--ink-2); }
+.cgrid .h small { display: block; font-weight: 400; color: var(--faint); }
+.cgrid .st { font-size: 12.5px; color: var(--muted); padding-top: 6px; }
+.cgrid img { width: 100%; border-radius: 8px; border: 1px solid var(--line); display: block; }
+.term { background: #171613; color: #d2cdc2; border-radius: 8px; border: 1px solid var(--line); font: 14px/17px Menlo, "SF Mono", monospace; padding: 12px 16px; white-space: pre; overflow: hidden; }
+.term .f { color: #9a958d; } .term .a { color: #8f9bf0; } .term .ok { color: #7cc08f; } .term .w { color: #e0b46a; } .term .b { color: #e08b7f; } .term .i { font-style: italic; } .term .bold { font-weight: 700; color: #ece8df; }
+.term .u { text-decoration: underline; color: #8f9bf0; }
+.notes { max-width: 980px; margin-top: 18px; font-size: 13px; color: var(--ink-2); }
+.notes li { margin: 4px 0 4px 18px; }
+
+/* the prototype's own panel */
+.proto { position: fixed; right: 14px; bottom: 40px; z-index: 50; width: 300px; background: #111; color: #eee; border-radius: 12px; padding: 10px 12px 12px; font: 12px/1.45 system-ui, sans-serif; box-shadow: 0 10px 30px #0008; }
+.proto b { display: block; font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: .06em; margin: 8px 0 4px; }
+.proto b:first-child { margin-top: 0; }
+.proto .opts { display: flex; flex-wrap: wrap; gap: 4px; }
+.proto button { background: #2a2a2a; color: #ddd; border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+.proto button.on { background: #5b67d8; color: #fff; }
+.proto p { color: #bbb; margin-top: 8px; }
+.proto .min { position: absolute; right: 10px; top: 8px; color: #888; cursor: pointer; }
+.proto.small > :not(.min):not(b:first-child) { display: none; }
+</style>
+</head>
+<body class="dark">
+<div id="app"></div>
+<div class="proto" id="proto"></div>
+<script>
+const NOW = new Date(2026, 10, 20, 15, 10).getTime(), H = 3600e3, D = 24 * H;
+const svg = {
+  search: '<svg class="ico" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  plus: '<svg class="ico" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>',
+  folder: '<svg class="ico" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  chev: '<svg class="ico" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m9 6 6 6-6 6"/></svg>',
+  down: '<svg class="ico" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="m6 9 6 6 6-6"/></svg>',
+  back: '<svg class="ico" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="m15 18-6-6 6-6"/></svg>',
+  shield: '<svg class="ico" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M12 3 5 6v6c0 4 3 7 7 9 4-2 7-5 7-9V6z"/></svg>',
+  zap: '<svg class="ico" viewBox="0 0 24 24" style="width:13px;height:13px"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>',
+  up: '<svg class="ico" viewBox="0 0 24 24" style="width:15px;height:15px"><path d="M12 19V5M6 11l6-6 6 6"/></svg>',
+  ext: '<svg class="ico" viewBox="0 0 24 24" style="width:12px;height:12px"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></svg>',
+  msg: '<svg class="ico" viewBox="0 0 24 24" style="width:14px;height:14px"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></svg>',
+};
+const S = { screen: "titles", theme: "dark", titles: "a", review: "a", usage: "a", cli: "compare", runq: false, idle: false, tip: true };
+
+// ── conversations: what the user typed first, and the short title made from it ─────────────────────────────────────
+const conv = [
+  { first: "Bump the TLS library to the latest minor", title: "Bump the TLS library", place: "api-gateway", model: "Opus 5.5", at: NOW - 2 * 60e3, state: "asks" },
+  { first: "The retry test fails on CI but passes locally. Can you find out why and fix it?", title: "Fix the flaky retry test", place: "api-gateway", model: "Opus 5.5", at: NOW - 5 * 60e3, state: "working" },
+  { first: "why is the CI build so slow? give me the top three fixes", title: "Why the CI build is slow", place: "api-gateway", model: "Opus 5.5", at: NOW - 3 * H, on: true },
+  { first: "what is your model name", title: "What is your model name", place: "tazuna", model: "DeepSeek V4.1 Flash", at: NOW - 4 * H },
+  { first: "what is your model name", title: "What is your model name", place: "tazuna", model: "GLM-5.3 Flash", at: NOW - 4.2 * H },
+  { first: "what is your model name", title: "What is your model name", place: "tazuna", model: "Qwen3.8 Omni Flash", at: NOW - 4.5 * H },
+  { first: "can you generate me a sample tradingview clone page? just an image.", title: "A sample TradingView-style page", place: "tazuna", model: "ERNIE 5.5 Flash Preview", at: NOW - 1 * D - 2 * H },
+  { first: "Names for a grey cat", title: "Names for a grey cat", place: null, model: "Gemini 4 Argon", at: NOW - 1 * D - 5 * H },
+  { first: "what is today", title: "What is today", place: null, model: "DeepSeek V4.1 Flash", at: NOW - 1 * D - 6 * H },
+  { first: "Refund for a train ticket", title: "Refund for a train ticket", place: null, model: "GPT-6.2 Sol", at: NOW - 3 * D },
+  { first: "can you please check my laptop and see if i can save some storage somehow? e.g. caches, old builds", title: "Save storage on the laptop", place: null, model: "DeepSeek V4.1 Flash", at: NOW - 4 * D },
+  { first: "Question 1: what about edge case 1? and also the empty input", title: "Edge cases in parse()", place: null, model: "Opus 5.5", at: NOW - 5 * D },
+  { first: "test", title: "test", place: null, model: "Gemini 4 Hydrogen", at: NOW - 8 * D },
+  { first: "are you the 1017 version, or the newer one?", title: "Which version is running", place: "tazuna", model: "DeepSeek V4.1 Flash", at: NOW - 9 * D },
+  { first: "Speed up the CI build", title: "Speed up the CI build", place: "api-gateway", model: "Mistral Large 3", at: NOW - 11 * D },
+];
+const ago = (t) => { const m = Math.round((NOW - t) / 60e3); return m < 60 ? `${m}m` : m < 24 * 60 ? `${Math.round(m / 60)}h` : new Date(t).toLocaleDateString("en", { month: "short", day: "numeric" }); };
+const clock = (t) => new Date(t).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+// within a date group the row says only what the group does not: today its age, yesterday its time, this week its day
+const when = (t) => ({ Today: ago(t), Yesterday: clock(t), "This week": new Date(t).toLocaleDateString("en", { weekday: "short" }) }[dayGroup(t)] ?? new Date(t).toLocaleDateString("en", { month: "short", day: "numeric" }));
+const dayGroup = (t) => { const d0 = new Date(NOW); d0.setHours(0, 0, 0, 0); const s = d0.getTime(); return t >= s ? "Today" : t >= s - D ? "Yesterday" : t >= s - 6 * D ? "This week" : "Earlier"; };
+
+function sidebar(v) {
+  const live = conv.filter((c) => c.state), rest = conv.filter((c) => !c.state);
+  const now = v === "now";
+  const name = (c) => (now ? c.first : c.title);
+  const row2 = (c, extra = "") => `<a class="row ${c.on ? "on" : ""}"><div class="t">${c.state === "working" ? '<span class="spin"></span>' : ""}<span class="x">${name(c)}</span>${c.state === "asks" ? '<span class="badge">asks</span>' : ""}</div>
+    <div class="s"><span>${c.place ?? "chat"}</span>${now ? `<span class="hair"></span><span style="overflow:hidden;text-overflow:ellipsis">${c.model}</span>` : ""}${extra}<span class="age">${now || c.state ? ago(c.at) : when(c.at)}</span></div></a>`;
+  const row1 = (c, n = 0) => `<a class="row one ${c.on ? "on" : ""}">${c.state === "working" ? '<span class="spin"></span>' : ""}<span class="t"><span class="x">${name(c)}</span></span>${n > 1 ? `<span class="n">${n}</span>` : ""}${c.state === "asks" ? '<span class="badge" style="margin-left:0">asks</span>' : `<span class="p">${c.place ?? ""}</span>`}</a>`;
+  let html = "";
+  if (now) {
+    html += `<div class="grp"><span>Needs you</span><span>1</span></div>${row2(live[0])}<div class="grp"><span>Working</span><span>1</span></div>${row2(live[1])}<div class="grp"><span>Recent</span></div>${rest.map((c) => row2(c)).join("")}`;
+  } else {
+    const r = v === "a" ? (c) => row2(c) : (c, n) => row1(c, n);
+    html += `<div class="grp"><span>Needs you</span></div>${r(live[0])}<div class="grp"><span>Working</span></div>${r(live[1])}`;
+    for (const g of ["Today", "Yesterday", "This week", "Earlier"]) {
+      let items = rest.filter((c) => dayGroup(c.at) === g);
+      if (!items.length) continue;
+      html += `<div class="grp"><span>${g}</span></div>`;
+      if (v === "c") {
+        // the same question asked again and again folds into one row with its count; a click opens the list of them
+        const seen = new Map();
+        for (const c of items) seen.set(c.title, [...(seen.get(c.title) ?? []), c]);
+        html += [...seen.values()].map((cs) => r(cs[0], cs.length)).join("");
+      } else html += items.map((c) => r(c)).join("");
+    }
+  }
+  return `<aside class="side"><div class="brand"><i>手</i>tazuna</div>
+    <div class="search">${svg.search}Search<kbd>⌘K</kbd></div>
+    <div class="act">${svg.plus}New chat</div><div class="act">${svg.folder}Open folder</div>
+    <div class="list">${html}<div class="grp" style="margin-top:6px"><span>Projects</span></div><div class="act">${svg.chev}api-gateway</div><div class="act">${svg.chev}tazuna</div></div>
+    <div class="settings"><div class="act"><span style="display:grid;place-items:center;width:22px;height:22px;border-radius:50%;border:1px solid var(--line);background:var(--field);font-size:11px">S</span>Settings</div></div></aside>`;
+}
+const statusBar = () => `<footer class="status"><span class="sdot"></span>Claude<span class="faint">5h</span><span class="meter"><i style="width:36%"></i></span><b>36%</b><span class="faint">2h 13m</span><span class="hair"></span><span class="faint">wk</span><span class="meter"><i class="w" style="width:79%"></i></span><b>79%</b><span class="faint">1d 1h</span>
+  <span style="flex:1"></span><span>context <b>13%</b> of 200k</span><span>cache <b>85%</b></span><span>this chat <b>$0.031</b></span><span class="faint">tazuna 0.1.94</span></footer>`;
+const composer = () => `<div class="composer">Ask anything, or describe a change…<span style="margin-left:8px">/ for commands, @ for files</span><div class="pills"><span class="pill">${svg.shield}auto</span><span class="pill">${svg.zap}Opus 5.5<span class="hair"></span><span class="faint">high</span>${svg.down}</span><span class="send">${svg.up}</span></div></div>`;
+
+function titlesScreen() {
+  const v = S.titles, c = conv[2];
+  const title = v === "now" ? c.first : c.title;
+  return `<div class="win"><div class="cols">${sidebar(v)}<main class="main">
+    <div class="head"><span class="crumb">${c.place}</span><span class="faint">/</span><span class="ttl">${title}</span>${v !== "now" && S.tip ? `<span class="full">— ${c.first}</span>` : ""}</div>
+    <div class="scroll"><div class="doc"><div class="you">${c.first}</div>
+      <div class="fold">${svg.chev}Worked 38 s<span class="hair"></span>read 1 file, ran 1 command, searched</div>
+      <div class="prose"><p><b>Why the build is slow.</b> Three steps take 89% of the time on the last 20 runs: <code>npm ci</code> (94 s), the type check (61 s) and the tests (48 s).</p>
+      <p>Cache the npm store keyed on <code>package-lock.json</code>, run the type check beside the tests, and split <code>gateway.e2e.test.ts</code>: about 230 s down to 120 s.</p></div></div></div>
+    ${composer()}</main></div>${statusBar()}</div>`;
+}
+
+// ── the review pane ───────────────────────────────────────────────────────────────────────────────────────────────
+const L = (o, n, sg, html, cls = "") => `<tr class="${cls}"><td class="ln">${o ?? ""}</td><td class="ln">${n ?? ""}</td><td class="sg">${sg}</td><td class="c">${html}</td></tr>`;
+// the line under the pointer offers + in its sign column, for a comment on it
+const Lc = (o, n, html, cls) => L(o, n, '<span class="cmt-add" title="Comment on this line">+</span>', html, cls);
+const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+function unified(withComment) {
+  return `<table class="d"><colgroup><col style="width:44px"><col style="width:44px"><col style="width:18px"><col></colgroup>
+  ${L(12, 12, "", esc('it("retries once after a failure", async () => {'))}
+  ${L(13, null, "−", 'const fn = vi.fn().mockRejectedValueOnce(new Error("boom"))<del></del>;', "del")}
+  ${L(14, null, "−", '<del>await retry(fn);</del>', "del")}
+  ${L(15, null, "−", 'await <del>sleep(100)</del>;', "del")}
+  ${L(null, 13, "+", '<ins>vi.useFakeTimers();</ins>', "add")}
+  ${L(null, 14, "+", 'const fn = vi.fn().mockRejectedValueOnce(new Error("boom"))<ins>.mockResolvedValue("ok")</ins>;', "add")}
+  ${L(null, 15, "+", '<ins>const p = retry(fn);</ins>', "add")}
+  ${L(null, 16, "+", '<ins>// the backoff is 80 ms with up to 25% jitter: past its longest</ins>', "add")}
+  ${(withComment ? Lc : (o, n, h, c) => L(o, n, "+", h, c))(null, 17, 'await <ins>vi.advanceTimersByTimeAsync(100)</ins>;', "add")}
+  </table>
+  ${withComment ? `<div class="thread"><div class="saved"><span class="who">You</span><span class="txt">Use the backoff's own maximum here instead of 100, so the test follows the code if the jitter changes.</span><button class="tb">Edit</button></div></div>` : ""}
+  <table class="d"><colgroup><col style="width:44px"><col style="width:44px"><col style="width:18px"><col></colgroup>
+  ${L(null, 18, "+", '<ins>await p;</ins>', "add")}
+  ${L(16, 19, "", esc("expect(fn).toHaveBeenCalledTimes(2);"))}
+  ${L(null, 20, "+", '<ins>vi.useRealTimers();</ins>', "add")}
+  ${L(17, 21, "", "});")}
+  </table>
+  ${withComment ? `<div class="thread"><div class="cbox edit"><div class="cb">Ask tazuna to change line 20…</div><div class="cf">Goes with your other comments when you send them<span class="sp"></span><button class="tb">Cancel</button><button class="ghost">Add comment</button></div></div></div>` : ""}`;
+}
+function split() {
+  const r = (n, sg, html, cls) => `<tr class="${cls}"><td class="ln">${n ?? ""}</td><td class="sg">${sg}</td><td class="c">${html}</td></tr>`;
+  const col = "<colgroup><col style='width:44px'><col style='width:18px'><col></colgroup>";
+  const left = [r(12, "", esc('it("retries once after a failure", async () => {'), ""), r(13, "−", 'const fn = vi.fn().mockRejectedValueOnce(new Error("boom"));', "del"), r(14, "−", "<del>await retry(fn);</del>", "del"), r(15, "−", "await <del>sleep(100)</del>;", "del"), r(null, "", "", ""), r(null, "", "", ""), r(null, "", "", ""), r(null, "", "", ""), r(16, "", esc("expect(fn).toHaveBeenCalledTimes(2);"), ""), r(null, "", "", ""), r(17, "", "});", "")];
+  const right = [r(12, "", esc('it("retries once after a failure", async () => {'), ""), r(13, "+", "<ins>vi.useFakeTimers();</ins>", "add"), r(14, "+", 'const fn = vi.fn().mockRejectedValueOnce(new Error("boom"))<ins>.mockResolvedValue("ok")</ins>;', "add"), r(15, "+", "<ins>const p = retry(fn);</ins>", "add"), r(16, "+", "<ins>// the backoff is 80 ms with up to 25% jitter</ins>", "add"), r(17, "+", "await <ins>vi.advanceTimersByTimeAsync(100)</ins>;", "add"), r(18, "+", "<ins>await p;</ins>", "add"), r(null, "", "", ""), r(19, "", esc("expect(fn).toHaveBeenCalledTimes(2);"), ""), r(20, "+", "<ins>vi.useRealTimers();</ins>", "add"), r(21, "", "});", "")];
+  return `<div class="split"><div><table class="d">${col}${left.join("")}</table></div><div><table class="d">${col}${right.join("")}</table></div></div>`;
+}
+function reviewScreen() {
+  const v = S.review;
+  if (v === "now") return `<img src="../../out/review-9/sweep/${S.theme === "dark" ? "d" : "l"}-review.png" style="width:100vw;height:100vh;object-fit:contain;background:var(--canvas)">`;
+  const pane = `<main class="main"><div class="rv">
+    <div class="rvhead"><button class="back">${svg.back}Conversation <kbd>Esc</kbd></button><span class="hair"></span><b style="font-weight:500">Review</b>
+      <div class="seg"><button>Uncommitted</button><button>Branch</button><button class="on">This turn</button></div>
+      <span style="flex:1"></span><div class="seg"><button class="${v === "b" ? "" : "on"}">Unified</button><button class="${v === "b" ? "on" : ""}">Split</button></div>
+      <button class="primary">Send 2 comments</button></div>
+    <div class="rvbody"><div class="files">
+      <div class="f on"><span class="st">M</span><span class="nm">retry.test.ts<small>tests/</small></span><span class="plus">+9</span><span class="minus">−3</span></div>
+      <div class="f"><span class="st">M</span><span class="nm">retry.ts<small>src/</small></span><span class="plus">+3</span></div>
+      <div class="tot">2 files · <span class="plus">+12</span> <span class="minus">−3</span> · 2 comments</div></div>
+      <div class="diffs">
+        <div class="dfile"><div class="fh">tests/retry.test.ts<span class="plus" style="font-family:var(--ui)">+9</span><span class="minus" style="font-family:var(--ui)">−3</span><span class="sp"></span><button class="tb">Stage file</button><button class="tb bad">Revert file</button></div>
+          <div class="hunk">@@ −12,6 +12,10 @@ describe("retry")<span class="sp"></span><button class="tb">Stage</button><button class="tb bad">Revert</button></div>
+          ${v === "b" ? split() : unified(true)}</div>
+        <div class="dfile"><div class="fh">src/retry.ts<span class="plus" style="font-family:var(--ui)">+3</span><span class="sp"></span><button class="tb">Stage file</button><button class="tb bad">Revert file</button></div>
+          <div class="hunk">@@ −40,6 +40,9 @@ export async function retry<span class="sp"></span><button class="tb">Stage</button><button class="tb bad">Revert</button></div>
+          <table class="d"><colgroup><col style="width:44px"><col style="width:44px"><col style="width:18px"><col></colgroup>
+          ${L(40, 40, "", "const base = opts.base ?? 80;")}${L(null, 41, "+", "<ins>/** the longest wait one attempt can take: base plus 25% jitter */</ins>", "add")}${L(null, 42, "+", "<ins>export const maxBackoff = (base = 80) =&gt; base * 1.25;</ins>", "add")}${L(null, 43, "+", "", "add")}${L(41, 44, "", "for (let i = 0; i &lt; tries; i++) {")}</table></div>
+      </div></div></div></main>`;
+  const side = v === "c" ? "" : sidebar("a").replace('class="side"', 'class="side"');
+  return `<div class="win"><div class="cols" style="${v === "c" ? "grid-template-columns:1fr" : ""}">${side}${pane}</div>${statusBar()}</div>`;
+}
+
+// ── usage ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+function usageScreen() {
+  const v = S.usage;
+  const behind = titlesScreen.call(null);
+  if (v === "now") return `<img src="../../out/review-9/sweep/${S.theme === "dark" ? "d" : "l"}-usage.png" style="width:100vw;height:100vh;object-fit:contain;background:var(--canvas)">`;
+  const u = (name, pct, cls, when) => `<div class="urow"><span>${name}</span><div class="bar"><i class="${cls}" style="width:${pct}%"></i></div><span class="v"><b>${pct}%</b> · ${when}</span></div>`;
+  const bars = [12, 30, 22, 0, 18, 26, 9, 34, 15, 0, 8, 21, 40, 11, 6, 28, 0, 14, 19, 33, 7, 25, 30, 10, 16, 0, 22, 38, 12, 20];
+  const idle = `<div class="urow"><span>Gemini models · agy</span><div class="bar"><i style="width:0"></i></div><span class="v"><b>0%</b> · resets Nov 27</span></div>
+    <div class="urow"><span>Claude &amp; GPT · agy</span><div class="bar"><i style="width:0"></i></div><span class="v"><b>0%</b> · resets Nov 27</span></div>
+    <div class="urow"><span>Quota · Muse Primary</span><div class="bar"><i style="width:0"></i></div><span class="v"><b>0%</b></span></div>
+    <div class="urow"><span>Quota · Claude Max 5x</span><div class="bar"><i style="width:0"></i></div><span class="v"><b>0%</b></span></div>`;
+  const runq = `<div class="cardx" style="margin-top:10px"><div class="tiles"><div><small>Claude plan</small><strong>8%</strong><span>clear misses</span><div class="faint" style="font-size:12px">16% pushback · 75 runs</div></div><div><small>API providers</small><strong>27%</strong><span>clear misses</span><div class="faint" style="font-size:12px">0% pushback · 15 runs</div></div><div></div></div>
+    <table class="t"><tr><th>Version</th><th>Model</th><th class="r">Runs</th><th class="r">Clear misses</th><th class="r">Pushback</th></tr>
+    <tr><td>0.1.176</td><td>Opus 5.5</td><td class="r">14</td><td class="r">14%</td><td class="r">7%</td></tr><tr><td>0.1.176</td><td>Sonnet 5.5</td><td class="r">11</td><td class="r">9%</td><td class="r">18%</td></tr><tr><td>0.1.170</td><td>DeepSeek V4.1 Flash</td><td class="r">10</td><td class="r">30%</td><td class="r">0%</td></tr></table></div>`;
+  const dlg = `<div class="scrim"><div class="dlg"><div class="dh">Usage<span class="sp"></span><span class="faint" style="font-weight:400;font-size:12px">read 2 min ago</span></div><div class="db">
+    <div class="sec"><h3>Right now</h3><p>What each account has left.</p>
+      <div class="cardx"><div class="lab">Claude plan</div>${u("5 hours", 36, "", "resets in 2 h 13 min")}${u("Week", 79, "w", "resets Sat 9:24pm")}${u("Week, Fable", 49, "", "resets Sat 9:24pm")}
+        <div class="lab">Credit</div>
+        <div class="urow"><span>SubRouter</span><span></span><span class="v"><b>$12.40</b> left</span></div>
+        <div class="urow"><span>OpenRouter</span><span class="faint" style="font-size:12.5px">paid requests stop until you add credit</span><span class="v"><b style="color:var(--bad)">$0.17 over</b> · <a style="color:var(--accent-ink)">Add credit ${svg.ext}</a></span></div>
+        <div class="urow fold" data-act="idle"><span>${S.idle ? svg.down : svg.chev} 4 more windows with no use this week <span class="faint">· 3 OmniRoute accounts</span></span><span class="faint" style="font-size:12px">all 0%</span></div>${S.idle ? idle : ""}
+        <div class="urow fold"><span>${svg.chev} 3 providers don't report a balance <span class="faint">· Mortera, Mistral, Cheaper Inference</span></span><span class="faint" style="font-size:12px">their pages</span></div></div></div>
+    <div class="sec"><h3>Spending<span class="sp"></span><div class="seg"><button>7 days</button><button class="on">30 days</button><button>90 days</button></div></h3><p>From the run log. Claude on your plan is counted at API prices, not billed.</p>
+      <div class="cardx"><div class="tiles"><div><small>Billed by API providers</small><strong>$0.41</strong><span>15 runs</span></div><div><small>Claude plan, at API prices</small><strong>$39.42</strong><span>75 runs</span></div><div><small>Input from the cache</small><strong>94%</strong><span>3.6 M tokens</span></div></div>
+        <div class="bars">${bars.map((h, i) => `<i class="${i % 7 === 3 ? "p" : ""}" style="height:${h * 2.2}px"></i>`).join("")}</div><div class="axis"><span>Oct 22</span><span>max $3.02 a day</span><span>Nov 20</span></div>
+        <table class="t"><tr><th>Model</th><th>Where</th><th class="r">Runs</th><th class="r">Cost</th></tr><tr><td>Opus 5.5</td><td class="faint">Claude plan</td><td class="r">40</td><td class="r">$26.16</td></tr><tr><td>Sonnet 5.5</td><td class="faint">Claude plan</td><td class="r">35</td><td class="r">$13.26</td></tr><tr><td>DeepSeek V4.1 Flash</td><td class="faint">SubRouter</td><td class="r">15</td><td class="r">$0.41</td></tr></table></div></div>
+    <div class="disc" data-act="runq">${S.runq ? svg.down : svg.chev}<span><b style="font-weight:500;color:var(--ink-2)">How the runs went</b> <span class="faint">· for tuning tazuna: clear misses and pushback by version and model</span></span></div>${S.runq ? runq : ""}
+    </div></div></div>`;
+  return behind + dlg;
+}
+
+// ── the terminal ──────────────────────────────────────────────────────────────────────────────────────────────────
+function cliScreen() {
+  const img = (d, s) => `<img src="../../out/review-9/cli-proto/${d}/${s}.png" loading="lazy">`;
+  const states = [["1-start", "Start"], ["2-slash", "/ menu"], ["3-working", "Working"], ["6-approval", "Approval"], ["4-done", "Answer"], ["5-80x24", "80×24"]];
+  if (S.cli === "tweaked") return `<div class="cli"><h2>Zen as the default, with three fixes</h2>
+    <p>The same answer as "Answer" in the comparison. Above: zen today. Below: the proposal, drawn by hand (not the terminal): the header on one line (the two clocks go, the plan reads "5h 9% · wk 91%"), the running step legible (it faded to almost nothing while its effect ran), and ~~strikethrough~~ and task boxes drawn.</p>
+    <div style="display:flex;flex-wrap:wrap;gap:14px;align-items:start"><div><div class="st" style="margin-bottom:6px">Zen today</div><div style="width:1031px">${img("zen", "4-done").replace("<img", '<img style="width:1031px;border-radius:8px;border:1px solid var(--line)"')}</div></div>
+    <div><div class="st" style="margin-bottom:6px">Proposed (drawn by hand)</div>
+    <div class="term" style="width:1031px;height:632px;padding:10px 128px"><div style="display:flex;gap:12px"><span class="f i">tazuna</span><span style="flex:1"></span><span class="bold">Mock Model</span><span class="f">medium</span><span class="f">≈$0 · 5h 9% ·</span><span class="b">wk 91%</span></div><span class="f">…</span>
+<span class="bold">Steps</span>
+
+1. Listed the folder
+2. Edited the file
+   <span class="f">•</span> kept the <span style="background:#2a2823">fn main</span> signature
+   <span class="f">•</span> nested bullet with a link: <span class="u">the Rust book</span>
+     <span class="f">•</span> third level
+3. Wrote the notes
+
+<span style="background:#2a2823"> fn main() {                                                   </span>
+<span style="background:#2a2823">     println!("hello, tazuna"); // a comment that is long en…   </span>
+<span style="background:#2a2823"> }                                                             </span>
+
+<span class="f">▎</span> A quoted line: measure twice, cut once.
+
+Wide and odd characters: 日本語のテキスト, emoji, combining é, a long URL
+<span class="u">example.com/a/really/long/url/that/goes/on…</span> and <s>struck</s> text.
+
+<span class="ok">☑</span> done item
+<span class="f">☐</span> open item
+
+<span class="ok">✓ Done</span>  <span class="f">6 s · $0</span>
+
+<div style="border-top:1px solid #3a3731;margin-top:4px;padding-top:2px;display:flex"><span class="a">›</span>&nbsp;<span class="f i">say something…</span><span style="flex:1"></span><span class="ok">✓ done</span></div></div></div></div>
+    <ul class="notes"><li>Default only for people who never picked one: <b>your own choice (cockpit, kept in ~/.local/share/tazuna/design) stays</b>. Today a new user gets aurora, and someone with runs but no saved choice gets cockpit.</li>
+    <li>Ctrl-T still cycles all four; nothing is removed.</li><li>Not in this proposal: the transcript's own wording ("· started on Mock Model · medium · lean profile (set on the command line; no repo config)").</li></ul></div>`;
+  return `<div class="cli"><h2>The terminal's default design: zen, aurora, cockpit</h2>
+    <p>The same session in each, on a scripted model (no cost), 120×36 and at 80×24. Today a new user gets <b>aurora</b>, someone with runs and no saved choice <b>cockpit</b>; Claude Code, Codex, pi and OpenCode all open on a transcript with one status line, which is <b>zen</b>.</p>
+    <div class="cgrid"><span></span><span class="h">Zen <small>proposed default</small></span><span class="h">Aurora <small>default for new users today</small></span><span class="h">Cockpit <small>your saved choice</small></span>
+    ${states.map(([s, n]) => `<span class="st">${n}</span>${img("zen", s)}${img("aurora", s)}${img("cockpit", s)}`).join("")}</div></div>`;
+}
+
+// ── the panel ─────────────────────────────────────────────────────────────────────────────────────────────────────
+const SCREENS = { titles: ["Sidebar and titles", { now: "Now", a: "A · titles, two lines", b: "B · titles, one line", c: "C · B, repeats folded" }],
+  review: ["Review", { now: "Now", a: "A · unified, in the window", b: "B · split", c: "C · focus (no sidebar)" }],
+  usage: ["Usage", { now: "Now", a: "A · simpler" }], cli: ["Terminal", { compare: "Compare the designs", tweaked: "Zen, with fixes" }] };
+const NOTES = {
+  titles: "Titles: the first message made short, by rules on this machine (filler like \"can you please\" dropped, the first clause, at most ~6 words, a capital first). No model call, no tokens. The full first message stays the conversation's first block, and shows after the title in the header. Date groups replace the age on every row; the model leaves the row (it is in the conversation and its hover). C folds a question asked again and again into one row with its count.",
+  review: "A pane in the window, not a dialog: Esc goes back to the conversation. Words that changed are marked inside the line. Hover a line for + to comment; comments collect and go to the agent as one message (Send 2 comments). Stage and Revert per hunk and per file, in words. Split shows old and new side by side.",
+  usage: "Right now: windows with no use this week fold into one line, providers without a balance into another (their pages one click away). Spending as it is. \"How the runs went\" (clear misses, pushback) is for tuning tazuna: folded at the bottom. Click the folded rows to open them.",
+  cli: "Screens from the real terminal on the scripted model. \"Zen, with fixes\" draws three changes by hand next to zen as it is.",
+};
+function render() {
+  document.body.className = S.theme;
+  const app = document.getElementById("app");
+  app.innerHTML = { titles: titlesScreen, review: reviewScreen, usage: usageScreen, cli: cliScreen }[S.screen]();
+  const [, vs] = SCREENS[S.screen];
+  const key = S.screen;
+  document.getElementById("proto").innerHTML = `<span class="min" data-min>–</span><b>Screen</b><div class="opts">${Object.entries(SCREENS).map(([k, [n]]) => `<button data-s="${k}" class="${S.screen === k ? "on" : ""}">${n}</button>`).join("")}</div>
+    <b>Variant</b><div class="opts">${Object.entries(vs).map(([k, n]) => `<button data-v="${k}" class="${S[key] === k ? "on" : ""}">${n}</button>`).join("")}</div>
+    <b>Theme</b><div class="opts"><button data-t="dark" class="${S.theme === "dark" ? "on" : ""}">Dark</button><button data-t="light" class="${S.theme === "light" ? "on" : ""}">Light</button></div><p>${NOTES[S.screen]}</p>`;
+}
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-s],[data-v],[data-t],[data-act],[data-min]");
+  if (!t) return;
+  if (t.dataset.s) S.screen = t.dataset.s;
+  if (t.dataset.v) S[S.screen] = t.dataset.v;
+  if (t.dataset.t) S.theme = t.dataset.t;
+  if (t.dataset.act === "idle") S.idle = !S.idle;
+  if (t.dataset.act === "runq") S.runq = !S.runq;
+  if (t.dataset.min !== undefined) { document.getElementById("proto").classList.toggle("small"); return; }
+  render();
+});
+// a link can open a state directly: v6.html#screen=review&review=b&theme=light
+for (const [k, v] of new URLSearchParams(location.hash.slice(1))) if (k in S) S[k] = v === "true" ? true : v === "false" ? false : v;
+render();
+</script>
+</body>
+</html>

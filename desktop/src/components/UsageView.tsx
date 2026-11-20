@@ -139,8 +139,16 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
             </>}
           </Section>
 
-          <Section title="How your runs went" note={<>The same {days} days as Spending, read from what happened next, with nothing for you to label. A clear miss: you stopped or rewound it, it ended in an error,
-            its change was thrown away, or your next message corrected it or asked the same again. Pushback: "wait, …", "why …?", "progress?".</>}>
+          {/* how the runs went is for tuning tazuna: folded at the bottom, closed (design review 9; it was a section as
+              big as Spending, with a table per version) */}
+          <details className="group mt-6 overflow-hidden rounded-lg border border-line bg-card">
+            <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 text-[12.5px] hover:bg-hover [&::-webkit-details-marker]:hidden">
+              <ChevronRight size={14} strokeWidth={1.5} className="flex-none text-faint transition-transform group-open:rotate-90" />
+              <span className="flex-1"><span className="font-medium text-ink-2">How the runs went</span><span className="text-faint"> · for tuning tazuna: clear misses and pushback by version and model</span></span>
+            </summary>
+            <p className="border-t border-line-soft px-3.5 py-2.5 text-[12px] leading-relaxed text-muted">The same {days} days as Spending, read from what happened next, with nothing for you to label. A clear miss: you stopped or rewound it, it ended in an error,
+            its change was thrown away, or your next message corrected it or asked the same again. Pushback: "wait, …", "why …?", "progress?".</p>
+            <div className="border-t border-line-soft">
             {!s ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div>
               : s.byVersion.length === 0 ? <div className="px-3.5 py-2.5 text-[12.5px] text-muted">No runs of your own in these days.</div> : <>
               {s.lanes.length > 0 && <div className="grid divide-x divide-line-soft" style={{ gridTemplateColumns: `repeat(${s.lanes.length}, minmax(0, 1fr))` }}>
@@ -155,7 +163,8 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
                     <td className={num}>{v.softPct}%</td><td className={`${td} text-[12px] text-muted`}>{v.top}</td></tr>
                 ))}</tbody></table>
             </>}
-          </Section>
+</div>
+          </details>
         </div>
       </div>
     </div>
@@ -174,6 +183,11 @@ function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; 
   // no reading from claude's /usage: the plan as the last reply's rate limits said it, if any
   const plan = acc?.plan ?? (limits ? [{ label: "Current session", used: limits[0], resets: "" }, { label: "Current week (all models)", used: limits[1], resets: "" }] : []);
   const credits = acc?.credits ?? (balance != null ? [{ provider: "SubRouter", left: `$${balance.toFixed(2)} left`, page: "https://subrouter.ai" }] : []);
+  // an OmniRoute account with nothing used in any window (and a valid login) folds away; so do providers with no balance
+  const idle = (a: Accounts["omniroute"][number]) => a.status === "valid" && a.windows.length > 0 && a.windows.every((w) => !w.unlimited && (w.used ?? 0) === 0);
+  const busy = acc?.omniroute.filter((a) => !idle(a)) ?? [], quiet = acc?.omniroute.filter(idle) ?? [];
+  const quietWindows = quiet.reduce((n, a) => n + a.windows.length, 0);
+  const unread = credits.filter((c) => !c.left);
   if (!plan.length && !credits.length && !acc?.omniroute.length) return <div className="px-3.5 py-2.5 text-[12.5px] text-muted">No account readings: claude is not logged in to a subscription, and no provider key is set.</div>;
   return <>
     {/* each account a group under its heading, as OmniRoute's (until desktop 0.1.82 "Claude plan" and "credit" under every row) */}
@@ -182,7 +196,7 @@ function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; 
     {/* each OmniRoute account under its own heading, written out whole and wrapping (provider, account, plan, login); its
         windows below by name alone. In one 200 px line under each window the account and plan were cut to "…" with no way
         to read them (the user, desktop 0.1.80) */}
-    {acc?.omniroute.map((a) => (
+    {busy.map((a) => (
       <div key={`${a.provider}${a.name}`}>
         <div className={groupHead}>
           <span className="font-medium text-ink-2">OmniRoute</span><Sep />{who(a.provider)}{a.name && <><Sep /><span className="break-all">{a.name}</span></>}
@@ -193,17 +207,46 @@ function RightNow({ acc, limits, balance }: { acc: Accounts | null | undefined; 
           : <Meter key={i} name={[w.group, w.window].filter(Boolean).join(", ").replace(/^quota$/, "Quota") || "Quota"} used={w.used} at={w.resets ? Date.parse(w.resets) : undefined} />)}
       </div>
     ))}
+    {quiet.length > 0 && <Fold label={`${quietWindows} window${quietWindows === 1 ? "" : "s"} at 0%`} note={`${quiet.length} OmniRoute account${quiet.length === 1 ? "" : "s"}`}>
+      {quiet.map((a) => <div key={`${a.provider}${a.name}`}>
+        <div className={groupHead}><span className="font-medium text-ink-2">OmniRoute</span><Sep />{who(a.provider)}{a.name && <><Sep /><span className="break-all">{a.name}</span></>}{a.plan && <><Sep />{a.plan}</>}</div>
+        {a.windows.map((w, i) => <Meter key={i} name={[w.group, w.window].filter(Boolean).join(", ").replace(/^quota$/, "Quota") || "Quota"} used={w.used} at={w.resets ? Date.parse(w.resets) : undefined} />)}
+      </div>)}
+    </Fold>}
     {credits.length > 0 && <div className={groupHead}><span className="font-medium text-ink-2">Credit with each provider</span></div>}
-    {credits.map((c) => (
+    {credits.filter((c) => c.left).map((c) => credit(c))}
+    {unread.length > 0 && <Fold label={`${unread.length} provider${unread.length === 1 ? " doesn't" : "s don't"} report a balance`} note={unread.map((c) => c.provider).join(", ")} right="their pages">
+      {unread.map((c) => credit(c))}
+    </Fold>}
+    {acc && acc.plan_notes.length > 0 && <Contributing notes={acc.plan_notes} />}
+  </>;
+}
+
+/** Rows that need no look, folded under one line that opens on a click: accounts with nothing used, providers whose
+ * balance no API tells (design review 9: eight empty 0% bars in a row on the user's page). */
+function Fold({ label, note, right, children }: { label: string; note?: string; right?: string; children: ReactNode }) {
+  return (
+    <details className="group">
+      <summary className="flex cursor-pointer list-none items-center gap-2 px-3.5 py-2.5 text-[12.5px] text-ink-2 hover:bg-hover [&::-webkit-details-marker]:hidden">
+        <ChevronRight size={14} strokeWidth={1.5} className="flex-none text-faint transition-transform group-open:rotate-90" />
+        <span className="flex-1">{label}{note && <span className="text-faint"> · {note}</span>}</span>
+        {right && <span className="text-[11.5px] text-faint">{right}</span>}
+      </summary>
+      <div className="divide-y divide-line-soft border-t border-line-soft">{children}</div>
+    </details>
+  );
+}
+
+/** One provider's credit: what is left, or, where its API does not tell, its page. */
+function credit(c: { provider: string; left?: string | null; page: string }) {
+  return (
       <div key={c.provider} className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
         <span className="w-[200px] flex-none text-ink">{c.provider}</span>
         {c.left ? <><span className="flex-1" /><span className={`tabular-nums ${/ over /.test(c.left) || c.left.startsWith("-") ? "text-bad" : "text-muted"}`}><span className="font-medium text-ink">{c.left.replace(/ (left|over).*/, "")}</span>{c.left.match(/ (left|over).*/)?.[0]}</span></>
-          : <><span className="flex-1 text-faint">its API does not report a balance</span>
+          : <><span className="flex-1" />{/* why is on the fold these rows sit under */}
             <button onClick={() => core.openLink(c.page).catch(() => {})} className="flex items-center gap-1 rounded-md border border-line px-2 py-0.5 text-[12px] text-ink">Open its page<ExternalLink size={12} strokeWidth={1.5} /></button></>}
       </div>
-    ))}
-    {acc && acc.plan_notes.length > 0 && <Contributing notes={acc.plan_notes} />}
-  </>;
+  );
 }
 
 type Period = { period: string; stats: string; items: { pct: number; title: string; detail?: string; run?: string }[]; tops: { label: string; items: [string, string][] }[] };

@@ -57,7 +57,9 @@ export type Review = { scope: string; turn?: number | null; base?: string | null
 export type Diff = { turn: number; path: string; text: string };
 export type SessionRow = { id: string; first: string; last_at: number; messages: number;
   /** its latest run's model (core 0.1.178 on; empty for an older core) */
-  model?: string };
+  model?: string;
+  /** `first` is a name the user gave it (core 0.1.189 on): shown as it is */
+  named?: boolean };
 export type Sessions = { dirs: { dir: string; list: SessionRow[] }[] };
 
 export type ModelChoice = {

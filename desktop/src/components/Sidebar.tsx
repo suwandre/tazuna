@@ -2,7 +2,6 @@ import { ChevronRight, FolderOpen, LoaderCircle, Pencil, Plus, Search, X } from 
 import { createContext, useContext, useState } from "react";
 import { Slot } from "../lib/slots";
 import type { Project, Thread } from "../lib/types";
-import { modelLabel } from "../lib/types";
 import { Parts } from "./Sep";
 
 const icon = { size: 16, strokeWidth: 1.5 };
@@ -29,6 +28,28 @@ export function age(at?: number, now = Date.now() / 1000): string {
   if (s < 86400) return `${Math.floor(s / 3600)}h`;
   if (s < 7 * 86400) return `${Math.floor(s / 86400)}d`;
   return new Date(at * 1000).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+/** The day a conversation last ran, in the user's own time: the saved list's groups (until desktop 0.1.94 one "Recent", an
+ * age on every row). */
+export function dayOf(at?: number, now = Date.now()): "Today" | "Yesterday" | "This week" | "Earlier" {
+  const start = new Date(now);
+  start.setHours(0, 0, 0, 0);
+  const t = (at ?? 0) * 1000, s = start.getTime();
+  return t >= s ? "Today" : t >= s - 864e5 ? "Yesterday" : t >= s - 6 * 864e5 ? "This week" : "Earlier";
+}
+
+/** What a row says of when, beside its group's name: today its age ("3h"), yesterday its time, this week its day, before
+ * that its date. */
+export function when(at?: number, now = Date.now()): string {
+  if (!at) return "";
+  const d = new Date(at * 1000);
+  switch (dayOf(at, now)) {
+    case "Today": return age(at, now / 1000);
+    case "Yesterday": return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    case "This week": return d.toLocaleDateString([], { weekday: "short" });
+    default: return d.toLocaleDateString([], { month: "short", day: "numeric" });
+  }
 }
 
 const groupHead = "flex items-center px-[9px] pb-1 pt-3.5 text-[11.5px] font-medium text-faint";
@@ -58,13 +79,14 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide }: {
   }
   const twoLines = !sub && (t.place || t.at);
   return (
-    <a onClick={onClick} {...press(onClick)} title={t.title} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
+    <a onClick={onClick} {...press(onClick)} title={t.full ?? t.title} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
       {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-accent shadow-[0_0_0_3px_var(--accent-soft)]" : "bg-faint"}`} />}
       {twoLines ? (
         <span className="min-w-0 flex-1">
-          {/* the model by name on the second line: a letter in a box ("C", "G", "O") said nothing (design review 4) */}
+          {/* where it ran and when, under its title: the model left the row (design review 9: "DeepSeek V4.1 Flas…" took
+              the title's room on every row); it is in the conversation and the palette */}
           <span className="block truncate text-ink">{t.title}</span>
-          <span className="flex gap-2 text-[11.5px] text-faint"><Parts className="truncate" items={[t.place, modelLabel(t.model)]} /><span className="ml-auto flex-none tabular-nums group-hover:hidden">{age(t.at)}</span></span>
+          <span className="flex gap-2 text-[11.5px] text-faint"><span className="truncate">{t.place}</span><span className="ml-auto flex-none tabular-nums group-hover:hidden">{when(t.at)}</span></span>
         </span>
       ) : <span className="flex-1 truncate">{t.title}</span>}
       {onRename && <span className="hidden flex-none gap-0.5 group-hover:flex">
@@ -89,7 +111,7 @@ function OpenRow({ o, active, onSwitch, onClose }: { o: Open; active: boolean; o
           <span className="truncate">{o.title}</span>
           {o.state === "asking" && <span className="ml-auto flex-none rounded-full border border-warn/45 px-1.5 text-[10.5px] font-medium leading-4 text-warn">asks</span>}
         </span>
-        <Parts className="block truncate text-[11.5px] text-faint" items={[o.place, modelLabel(o.model), o.state === "asking" && "waiting for your answer", o.state === "stopped" && "stopped"]} />
+        <Parts className="block truncate text-[11.5px] text-faint" items={[o.place, o.state === "asking" && "waiting for your answer", o.state === "stopped" && "stopped"]} />
       </span>
       <button title="Close (the conversation stays in the lists)" aria-label={`Close ${o.title}`} onClick={(e) => { e.stopPropagation(); onClose?.(o.tid); }}
         className="hidden size-6 flex-none place-items-center rounded text-faint hover:bg-hover hover:text-ink group-hover:grid"><X size={12} strokeWidth={1.5} /></button>
@@ -159,9 +181,14 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
           {list.map((o) => <OpenRow key={o.tid} o={o} active={o.tid === activeTid} onSwitch={onSwitch} onClose={onClose} />)}
         </div>
       ))}
-      {recent.length > 0 && <div className={groupHead}>Recent</div>}
-      {recent.map(({ t, p }) => <ThreadRow key={t.id} t={t} active={t.id === active} onClick={() => onOpenThread?.(t, p)}
-        onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
+      {(["Today", "Yesterday", "This week", "Earlier"] as const).map((day) => {
+        const list = recent.filter(({ t }) => dayOf(t.at) === day);
+        return list.length > 0 && <div key={day} className="flex flex-col gap-0.5">
+          <div className={groupHead}>{day}</div>
+          {list.map(({ t, p }) => <ThreadRow key={t.id} t={t} active={t.id === active} onClick={() => onOpenThread?.(t, p)}
+            onRename={onRename && ((title) => onRename(t, title))} onHide={onHide && (() => onHide(t))} />)}
+        </div>;
+      })}
       {projects.length > 0 && <div className={groupHead}>Projects</div>}
       {projects.map((p) => {
         // folded until unfolded by hand: its conversations are in Recent too (unfolded on open, desktop 0.1.76 listed each twice)

@@ -29,7 +29,7 @@ import { StatusBar } from "./components/StatusBar";
 import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
 import { messages as viewMessages, queued, resetIn, usage as viewUsage } from "./lib/fromView";
-import { modelLabel, titleFrom, type Usage } from "./lib/types";
+import { modelLabel, shortTitle, titleFrom, type Usage } from "./lib/types";
 import { items as accountItems, mine as accountOf, withLive } from "./lib/health";
 import { Parts } from "./components/Sep";
 
@@ -79,7 +79,7 @@ function useCore() {
     const now = v.asking ? "asking" : busyView(v) ? "working" : "idle", before = was.current[tid];
     was.current[tid] = now;
     if (now === before || (tid === activeRef.current && document.hasFocus())) return;
-    const title = titleFrom((v.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text) || "A conversation";
+    const title = shortTitle((v.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text) || "A conversation";
     if (now === "asking") core.notify("tazuna asks", `${title}: ${v.asking!.tool.replace(/^mcp__lean__/, "")} ${v.asking!.what}`).catch(() => {});
     else if (now === "idle" && before === "working") core.notify("tazuna is done", title).catch(() => {});
   };
@@ -601,7 +601,7 @@ export default function App() {
       { id: "folder", group: "Start", label: "Open folder…", keys: "⌘O", run: pick },
       ...projects.map((p) => ({ id: `p:${p}`, group: "Projects", label: base(p), hint: p, keywords: "open project folder", run: () => open(p) })),
       ...[...(home ? (sessions[home] ?? []).map((r) => [r, null] as const) : []), ...projects.flatMap((p) => (sessions[p] ?? []).slice(0, 10).map((r) => [r, p] as const))]
-        .map(([r, dir]) => ({ id: `s:${r.id}`, group: "Conversations", label: titleFrom(r.first) || "(no message)", hint: dir ? base(dir) : "chat", keywords: "resume continue", run: () => open(dir, r.id) })),
+        .map(([r, dir]) => ({ id: `s:${r.id}`, group: "Conversations", label: shortTitle(r.first, r.named) || "(no message)", hint: dir ? base(dir) : "chat", keywords: `resume continue ${r.first}`, run: () => open(dir, r.id) })),
     ];
     if (busy) a.unshift({ id: "stop", group: "This conversation", label: "Stop the reply", keys: "Esc", run: () => core.interrupt() });
     const undo = view?.changes?.find((c) => c.can_undo);
@@ -645,7 +645,7 @@ export default function App() {
   // time one was opened (the user, 2026-11-20: "quickly flashes the main new chat page")
   const fresh = inTauri && !!view && !busy && !view.asking && !editing && !resuming && !view.blocks.some((b) => b.kind === "prompt");
   // in a project, its own conversations; in a chat, everything by when it last ran
-  const startRecent: StartItem[] = Object.entries(sessions).filter(([dir]) => !folder || dir === folder).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: titleFrom(r.first) || "(no message)",
+  const startRecent: StartItem[] = Object.entries(sessions).filter(([dir]) => !folder || dir === folder).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: shortTitle(r.first, r.named) || "(no message)",
     place: dir === home ? "chat" : base(dir), dir: dir === home ? null : dir, at: r.last_at }))).sort((a, b) => b.at - a.at).slice(0, 3);
   const where = { label: folder ? base(folder) : "Chat", folder: !!folder, pickFolder: pick,
     choices: [{ label: "Chat", hint: "no folder: a general question", path: null as string | null }, ...projects.slice(0, 6).map((p) => ({ label: base(p), hint: p, path: p as string | null }))],
@@ -704,12 +704,17 @@ export default function App() {
             onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined} />
   );
   const data = widgetData(view);
-  const title = view ? titleFrom((view.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text) || "New chat" : inTauri ? (failed ? "Could not start" : "New chat") : "Retry test fails on CI";
+  // the header: the short title, then the first message in full where it is longer (variant A of mockups/v6.html)
+  const firstAsked = titleFrom((view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text);
+  const title = view ? shortTitle(firstAsked) || "New chat" : inTauri ? (failed ? "Could not start" : "New chat") : "Retry test fails on CI";
+  // after the title, only what it left out: "— Can you find out why and fix it?", not the title's words again
+  const said = title.replace(/…$/, "").toLowerCase();
+  const more = firstAsked.toLowerCase().startsWith(said) ? firstAsked.slice(said.length).replace(/^[\s.?!,;:]+/, "") : firstAsked === title ? "" : firstAsked;
   return (
     <div className="flex h-screen flex-col overflow-hidden">
     <div className="grid min-h-0 flex-1 overflow-hidden"
       // the right column is always a track (0 px when shut), so it slides: a track that came and went was a jump cut
-      style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", agentHere ? "440px" : side ? "380px" : panelOpen ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
+      style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", reviewing ? "0px" : agentHere ? "440px" : side ? "380px" : panelOpen ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
       {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-scrim" />}
       <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-composer" : "hidden") : "flex min-h-0"}>
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
@@ -724,11 +729,13 @@ export default function App() {
         onHide={inTauri ? (t) => core.hide(t.id).then(refreshSessions) : undefined}
         planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
       </div>
-      <main className="flex min-h-0 min-w-0 flex-col bg-main">
+      {/* relative: the review is a pane over the conversation (header and box too), not a dialog over the window */}
+      <main className="relative flex min-h-0 min-w-0 flex-col bg-main">
         <header data-tauri-drag-region className="flex items-center justify-between gap-3 border-b border-line-soft py-2.5 pl-7 pr-4">
           <div className="flex min-w-0 items-center gap-2 font-medium">
             {narrow && <button onClick={() => setNavOpen(true)} aria-label="Conversations" title="Conversations" className="-ml-3 grid size-7 flex-none place-items-center rounded-md text-muted hover:text-ink"><PanelLeft size={16} strokeWidth={1.5} /></button>}
-            <span className="flex-none text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} title={title} className="tz-enter truncate text-[inherit] font-[inherit]">{title}</h1></div>
+            <span className="flex-none text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} title={firstAsked || title} className="tz-enter max-w-[60%] flex-none truncate text-[inherit] font-[inherit]">{title}</h1>
+            {view && more && <span className="min-w-0 truncate text-[12px] font-normal text-faint" aria-hidden="true">— {more}</span>}</div>
           <div className="flex flex-none items-center gap-1.5">
             <HeaderCtx.Provider value={{ modelLabel: modelLabel(models?.choices.find((c) => c.current)?.model ?? session.model), effort: session.effort,
               branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
@@ -888,10 +895,10 @@ const base = (path: string) => path.split(/[\\/]/).filter(Boolean).pop() ?? path
 /** One of tazuna's worktrees (src/worktree.rs: <data>/worktrees/<repository>/wt-<name>). */
 const isWorktree = (path: string) => /[\\/]worktrees[\\/][^\\/]+[\\/]wt-[a-z0-9]+$/.test(path);
 
-const rowsOf = (rows?: SessionRow[], place = "chat", project?: string) => (rows ?? []).map((r) => ({ id: r.id, title: titleFrom(r.first) || "(no message)", place, project, at: r.last_at, model: r.model }));
+const rowsOf = (rows?: SessionRow[], place = "chat", project?: string) => (rows ?? []).map((r) => ({ id: r.id, title: shortTitle(r.first, r.named) || "(no message)", full: titleFrom(r.first), place, project, at: r.last_at, model: r.model }));
 
 /** An open conversation's name: its first message, else a new one's. */
-const titleOf = (t: Thread) => titleFrom((t.view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text) || "New conversation";
+const titleOf = (t: Thread) => shortTitle((t.view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text) || "New conversation";
 
 /** The header's built-in chips read this (and a plugin replacing one can too). */
 export const HeaderCtx = createContext<{ modelLabel: string; effort: string; branch: string; changed: number; review?: () => void; side?: () => void; sideOpen?: boolean;

@@ -2,8 +2,10 @@
 export type Thread = { id: string; title: string; project?: string; running?: boolean;
   /** where it ran (a project's name, or "chat") and when it last did (seconds since 1970): the row's second line */
   place?: string; at?: number;
-  /** the model it ran on: its provider's mark beside the name */
-  model?: string };
+  /** the model it ran on (no longer on the row since desktop 0.1.94: in the conversation and the palette) */
+  model?: string;
+  /** its first message in full, where the title is shortened from it: the row's tooltip */
+  full?: string };
 export type Project = { name: string; path?: string; open: boolean; pending?: number; threads: Thread[] };
 /** One step before the answer: a tool call (with what it was given and what came back) or a stretch of thinking. */
 export type ToolStep = {
@@ -87,6 +89,15 @@ export const MODEL_NAMES: [string, string][] = [
 export function demoTitles() {
   const got = [titleFrom("github.com/acme/app/pull/1476 good to approve now?"), titleFrom("https://acme.atlassian.net/browse/T-1214\nwhat is this about?"), titleFrom("acme.atlassian.net/T-1214")];
   if (got.join("|") !== "app PR #1476 good to approve now?|Jira T-1214: what is this about?|Jira T-1214") throw new Error(`titles: ${got.join("|")}`);
+  const short: [string, string][] = [
+    ["can you please check my laptop and see if i can save some storage somehow? e.g. caches", "Check my laptop and see if i can save some storage somehow?"],
+    ["The retry test fails on CI but passes locally. Can you find out why and fix it?", "The retry test fails on CI but passes locally"],
+    ["what is your model name", "What is your model name"], ["hey, could you fix the login page", "Fix the login page"],
+    ["Bump the TLS library to the latest minor", "Bump the TLS library to the latest minor"], ["test", "Test"],
+    ["Refactor the session store so that every write goes through one queue and the reads never block on a disk flush", "Refactor the session store so that every write goes through…"],
+  ];
+  for (const [from, want] of short) if (shortTitle(from) !== want) throw new Error(`shortTitle(${from}): ${shortTitle(from)}, wanted ${want}`);
+  if (shortTitle("my lowercase name", true) !== "my lowercase name") throw new Error("a given name stays");
   console.log("titles ok");
 }
 
@@ -120,6 +131,22 @@ export function titleFrom(text?: string | null): string {
     (u) => linkName((/^https?:/i.test(u) ? u : `https://${u}`).replace(/[.,;:!?)]+$/, ""))).replace(/\s+/g, " ").trim();
   const onlyLink = /^(https?:\/\/)?[a-z0-9.-]+\.[a-z]{2,}\/\S+$/i.test(lines[0]);
   return onlyLink && lines[1] ? `${said(lines[0])}: ${said(lines[1])}` : said(lines[0]);
+}
+
+/** A conversation's title from its first message, made short by rules on this machine (no model call): the name from
+ * `titleFrom`, without a polite opening ("can you please …", "hey, …"), its first sentence, at most ~60 characters cut at a
+ * word, with a capital. The sidebar listed eight rows of "what is your model name" and full sentences cut at the edge
+ * (design review 9, variant A of mockups/v6.html). A name the user gave is shown as it is (`named`). */
+export function shortTitle(text?: string | null, named = false): string {
+  const t = titleFrom(text);
+  if (named || !t) return t;
+  const filler = /^(?:(?:hey|hi|hello|ok(?:ay)?|so|quick question|please|pls)\b[,:!]?\s+|(?:can|could|would|will) (?:you|u)\s+(?:please\s+)?|i (?:want|need|'d like|would like) you to\s+|help me\s+(?=\w+)(?!out\b))/i;
+  let s = t;
+  for (let i = 0; i < 4 && filler.test(s); i++) s = s.replace(filler, "");
+  // the first sentence: up to ". ", "? " or "! " (the question mark stays, a full stop goes)
+  s = s.split(/(?<=[.?!])\s+/)[0].replace(/\.$/, "").trim() || t;
+  if (s.length > 60) s = `${s.slice(0, 60).replace(/\s+\S*$/, "")}…`;
+  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 /** Dollars as tazuna shows them: cents from ten cents up ($0.41, $10.13), three decimals below ($0.042), two significant

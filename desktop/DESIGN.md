@@ -122,11 +122,20 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - A new conversation before its first message is the start screen (prototype `mockups/v3.html`): a serif question, the
   composer in the middle with a "where it runs" pill (a chat or a project), "Pick up where you left off" (the last three
   conversations) and "Start in a project", then the keys worth knowing. No $0.000 anywhere on it.
-- The usage page speaks Settings' language: sections (Right now, Spending, How your runs went), each a card of rows; every
-  account's windows as meters (amber from 75%), credits with "Open its page" where no API tells the balance; a zero is a
-  quiet line, not a big number; the daily bars stack the plan and paid parts.
-- The sidebar groups the conversations open now by what they need (Needs you, Working, Open), then Recent: every saved
-  conversation by when it last ran, two lines each (its name; its project and age). Projects last, folded.
+- The usage page speaks Settings' language: sections (Right now, Spending), each a card of rows; every account's windows
+  as meters (amber from 75%); accounts with nothing used fold into one line ("4 windows at 0%"), and so do providers
+  whose API tells no balance (their pages inside); a zero is a quiet line, not a big number; the daily bars stack the plan
+  and paid parts. How the runs went (for tuning tazuna) is folded at the bottom, closed (design review 9, mockups/v6.html).
+- The sidebar groups the conversations open now by what they need (Needs you, Working, Open), then every saved one under
+  the day it last ran (Today, Yesterday, This week, Earlier), two lines each: its title; its project and when (today its
+  age, yesterday its time, this week its day, then its date). No model on the row. Projects last, folded.
+- A conversation's title is its first message made short by rules (no polite opening, its first sentence, about 60
+  characters at most, a capital); a name the user gave stays as given. The header shows the title, then in faint what the
+  title left out of the first message.
+- The review is a pane over the conversation, header and box included (Esc or "Conversation" goes back): the scopes and
+  Unified or Split at its top, the changed files on its left (A, M, D), every file's diff one under another; the words
+  that changed inside a line are marked; Stage and Revert per piece and per file (a file's revert takes a second
+  click); a click on a line writes a comment, and the comments go to the agent as one message.
 - The transcript is a document, not two-sided bubbles: no speaker labels (your message is the field block), a reply's
   steps folded into one line ("Worked 41 s · read 2 files, ran 3 commands"; open while it runs, a click unfolds it), prose,
   then a change card (file, +/-, Diff, Review, Undo) and its metadata line (cost, tokens, cached, time) on hover.
