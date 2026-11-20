@@ -35,8 +35,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let (glyph, label, color) = activity(s, v, th);
 
     let left = Line::from(vec![
-        Span::styled(" ▣ TAZUNA ", Style::new().fg(th.text).bg(th.field).add_modifier(Modifier::BOLD)),
-        Span::styled(" cockpit", st(th.faint)),
+        Span::styled(" 手 ", Style::new().fg(th.accent).bg(th.field).add_modifier(Modifier::BOLD)),
+        Span::styled("tazuna ", Style::new().fg(th.text).bg(th.field).add_modifier(Modifier::BOLD)),
     ]);
     // a terminal under 110 columns (80x24, macOS Terminal's own size) has no room for the instrument column: the
     // transcript gets the width and the header the cost (until 0.1.180 the column took half of 80 and answers wrapped at 38)
@@ -257,7 +257,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
                 },
                 // the total and the average a call (a user asked for both: 14 Agent calls at 1842 s said little alone)
                 Span::styled(format!("{:>6}", dur(*secs)), st(th.faint)),
-                Span::styled(format!(" ⌀{}", dur(secs / *c.max(&1) as f64)), st(th.dim)),
+                Span::styled(format!(" avg {}", dur(secs / *c.max(&1) as f64)), st(th.dim)),
             ])
             .style(if hot_row == Some(i) { Style::new().bg(th.surface) } else { Style::new() })
         })

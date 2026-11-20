@@ -302,6 +302,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-21: tazuna gets a look of its own (design review 10, beside Claude, T3 Code, MonoCode, ZCode, DeepSeek Harness
+  and the terminals of Claude Code, Codex, opencode and pi): warm paper and a serif alone read as Claude's app with an
+  indigo accent, and every rival opens on a mark while tazuna had three (a ≡ icon, a font's 手, a ◆). One drawn mark (手
+  with a rein's loop) everywhere, the conversation as a sheet of paper on the desk, motion where rows and folds cut, and
+  the terminal's fades on lightness only (they passed through magenta). The user chose it from mockups/v7.html.
 - 2026-11-20: the terminal opens in zen for anyone who never picked a design (it was aurora on a fresh install and cockpit
   with a run log); a choice made with ctrl-t stays. Design review 9 set tazuna beside Claude Code, Codex, pi and OpenCode:
   each opens on a transcript and one status row, and cockpit's seven boxes of mostly zeros was the heaviest of all.

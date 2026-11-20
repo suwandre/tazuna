@@ -1415,8 +1415,15 @@ impl Live {
                     self.stdin = None;
                     self.end_runs();
                     let tail: Vec<&str> = stderr.lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect();
-                    let text = format!("claude exited ({}){}", code.map_or("signal".into(), |c| format!("code {c}")),
-                        if tail.is_empty() { String::new() } else { format!(": {}", tail.join(" · ")) });
+                    // tazuna's own loop says why it stopped in one line ("Error: 127.0.0.1:8768 lists mock-model without a
+                    // price. …"): that line alone, not "claude exited (code 1): Error: …"
+                    let said = stderr.lines().find_map(|l| l.strip_prefix("Error: ")).filter(|_| self.provider.is_some());
+                    let text = match said {
+                        Some(why) => why.to_string(),
+                        None => format!("{} exited ({}){}", if self.provider.is_some() { "the model's process" } else { "claude" },
+                            code.map_or("signal".into(), |c| format!("code {c}")),
+                            if tail.is_empty() { String::new() } else { format!(": {}", tail.join(" · ")) }),
+                    };
                     out.push(self.record(json!({"type": "harness_notice", "text": text, "error": code != Some(0)})));
                 }
             }

@@ -230,15 +230,15 @@ pub fn update_news(data: &Path) -> Option<String> {
     Some(news_text(&last, current, &items))
 }
 
-/// "tazuna updated: 0.1.151 → 0.1.167 (16 versions)" and the newest four titles, then where the rest is.
-fn news_text(from: &str, to: &str, items: &[(String, String)]) -> String {
-    let n = items.len();
-    let mut text = format!("tazuna updated: {from} → {to}{}", if n > 1 { format!(" ({n} versions)") } else { String::new() });
-    for (v, t) in items.iter().take(4) {
-        text.push_str(&format!("\n  {v}  {t}"));
+/// One line: "updated from 0.1.189: the week reads "wk" in the terminal too   /changelog", the newest version's title (the
+/// welcome above already says which version runs); several versions say how many and where the rest is. Until 0.1.191
+/// it said the new version twice and listed four titles, folded into one row by the screen.
+fn news_text(from: &str, _to: &str, items: &[(String, String)]) -> String {
+    match items {
+        [] => format!("updated from {from}   /changelog"),
+        [(_, t)] => format!("updated from {from}: {t}   /changelog"),
+        [(_, t), ..] => format!("updated from {from} ({} versions): {t}   /changelog has the rest", items.len()),
     }
-    text.push_str(if n > 4 { "\n  … and more: /changelog lists every version with its notes" } else { "\n  /changelog has the notes" });
-    text
 }
 
 /// The first line of a release's first note, where the CHANGELOG has no title for it.
@@ -549,9 +549,9 @@ mod tests {
     fn the_first_session_on_a_newer_tazuna_says_what_it_brought() {
         let items: Vec<(String, String)> = (0..6).map(|i| (format!("0.1.{}", 170 - i), format!("change {i}"))).collect();
         let text = news_text("0.1.151", "0.1.170", &items);
-        assert!(text.starts_with("tazuna updated: 0.1.151 → 0.1.170 (6 versions)") && text.contains("change 3") && !text.contains("change 4"), "{text}");
-        assert!(text.contains("/changelog lists every version"));
-        assert!(news_text("0.1.169", "0.1.170", &items[..1]).ends_with("/changelog has the notes"));
+        assert_eq!(text, "updated from 0.1.151 (6 versions): change 0   /changelog has the rest");
+        assert_eq!(news_text("0.1.169", "0.1.170", &items[..1]), "updated from 0.1.169: change 0   /changelog");
+        assert!(!text.contains("0.1.170"), "the welcome says the version once");
         // the first run ever and a run on the same version say nothing; the file then holds this version
         let dir = std::env::temp_dir().join(format!("tazuna-news-{}", std::process::id()));
         assert!(update_news(&dir).is_none() && update_news(&dir).is_none());

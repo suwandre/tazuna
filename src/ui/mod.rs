@@ -13,7 +13,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::Paragraph,
 };
-use tachyonfx::{Effect, Interpolation::*, Motion, fx};
+use tachyonfx::{ColorSpace, Effect, Interpolation::*, fx};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// The colours, named as the desktop app's tokens (desktop/DESIGN.md) so both apps read as one. How they are used:
@@ -109,6 +109,16 @@ impl Design {
 
     pub fn next(self) -> Design {
         Self::ALL[(self as usize + 1) % Self::ALL.len()]
+    }
+
+    /// Its name, said once when ctrl-t switches to it (the names left the screens' headers in design review 10).
+    pub fn name(self) -> &'static str {
+        match self {
+            Design::Aurora => "aurora",
+            Design::Cockpit => "cockpit",
+            Design::Zen => "zen",
+            Design::Timeline => "timeline",
+        }
     }
 
     /// The design the terminal opens in without --design: the last one chosen with ctrl-t, else Zen: a transcript and
@@ -437,7 +447,8 @@ fn draw_menu(f: &mut Frame, v: &View, th: &Theme, over: Rect) {
     let lines: Vec<Line> = v.menu.iter().enumerate().skip(first).take(rows as usize).map(|(i, (c, d))| {
         let on = i == sel;
         let name: String = format!(" {c:<w$}", w = name_w - 1).chars().take(name_w).collect();
-        let about: String = d.chars().take(inner.saturating_sub(name_w + 1)).collect();
+        // a description cut short ends in "…" (cockpit's narrower menu cut "(enable, disca" with nothing, design review 10)
+        let about = ellipsis(d, inner.saturating_sub(name_w + 1));
         let pad = " ".repeat(inner.saturating_sub(name.width() + about.width()));
         let style = if on { Style::new().fg(th.bg).bg(th.accent) } else { st(th.text) };
         Line::from(vec![Span::styled(name, style.add_modifier(Modifier::BOLD)), Span::styled(about, if on { style } else { st(th.faint) }), Span::styled(pad, style)])
@@ -446,6 +457,21 @@ fn draw_menu(f: &mut Frame, v: &View, th: &Theme, over: Rect) {
     let title = format!(" commands · {} · ↑↓ enter runs · tab fills in ", v.menu.len());
     f.render_widget(Paragraph::new(lines).block(Block::new().borders(Borders::ALL).border_style(st(th.border)).title(Span::styled(title, st(th.faint))))
         .style(Style::new().bg(th.bg)), area);
+}
+
+/// `t` in at most `w` columns, ending in "…" when it had to be cut.
+pub fn ellipsis(t: &str, w: usize) -> String {
+    if t.width() <= w {
+        return t.to_string();
+    }
+    let mut out = String::new();
+    for c in t.chars() {
+        if out.width() + c.width().unwrap_or(0) + 1 > w {
+            break;
+        }
+        out.push(c);
+    }
+    out + "…"
 }
 
 /// A ListPanel in the middle of the screen: its title, the column heads, the rows that fit (failed ones in red).
@@ -719,15 +745,15 @@ fn draw_sessions(f: &mut Frame, p: &SessionsPanel, th: &Theme) {
     f.render_widget(block, area);
     let room = inner.height.saturating_sub(2) as usize;
     let first = p.selected.saturating_sub(room.saturating_sub(1));
-    let mut lines: Vec<Line<'static>> = vec![Line::from(Span::styled("This repo's sessions on claude, newest first; the conversation opens where it ended.", st(th.faint))), Line::from("")];
+    let mut lines: Vec<Line<'static>> = vec![Line::from(Span::styled(ellipsis("This repo's sessions, newest first; each opens where it ended, on the model it last ran on.", inner.width as usize), st(th.faint))), Line::from("")];
     if p.rows.is_empty() {
-        lines.push(Line::from(Span::styled("no earlier claude session in this repo", st(th.faint))));
+        lines.push(Line::from(Span::styled("no earlier session in this repo", st(th.faint))));
     }
     for (i, row) in p.rows.iter().enumerate().skip(first).take(room) {
         let (mark, style) = if i == p.selected { ("›", st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED)) } else { (" ", st(th.text)) };
         let text = format!("{mark} {}", plain(row).replace('\n', " ⏎ "));
-        // a row past the edge ends in "…", not mid-word
-        let text = if text.chars().count() > inner.width as usize { format!("{}…", text.chars().take((inner.width as usize).saturating_sub(1)).collect::<String>()) } else { text };
+        // a row past the edge ends in "…"
+        let text = ellipsis(&text, inner.width as usize);
         lines.push(Line::from(Span::styled(text, style)));
     }
     f.render_widget(Paragraph::new(lines), inner);
@@ -1042,24 +1068,20 @@ pub fn plain(s: &str) -> String {
 
 // ---------------------------------------------------------------- effects
 
+// Every fade is the text coming up from the background in RGB, under 200 ms: tachyonfx blends colours in HSL by default,
+// and the accent (232°) coming from the warm background (45°) went the short way round the hue circle, through magenta,
+// for the 0.7-1.4 s the fades lasted; a finished answer dimmed for 1.2 s in zen; sweeps, coalesce and a dissolve on quit
+// came and went with it (design review 10).
+fn fade_in(d: Design, ms: u32) -> Effect {
+    fx::fade_from_fg(d.theme().bg, (ms, QuadOut)).with_color_space(ColorSpace::Rgb)
+}
+
 pub fn boot_fx(d: Design) -> Effect {
-    let bg = d.theme().bg;
-    match d {
-        Design::Aurora => fx::parallel(&[fx::sweep_in(Motion::LeftToRight, 40, 12, bg, (900, QuadOut)), fx::fade_from_fg(bg, (700, SineOut))]),
-        Design::Cockpit => fx::parallel(&[fx::slide_in(Motion::RightToLeft, 24, 4, bg, (650, QuadOut)), fx::fade_from_fg(bg, (500, QuadOut))]),
-        Design::Zen => fx::fade_from(bg, bg, (1400, SineInOut)),
-        Design::Timeline => fx::parallel(&[fx::sweep_in(Motion::UpToDown, 16, 0, bg, (800, QuadOut)), fx::fade_from_fg(bg, (600, ExpoOut))]),
-    }
+    fade_in(d, 180)
 }
 
 pub fn block_fx(d: Design) -> Effect {
-    let bg = d.theme().bg;
-    match d {
-        Design::Aurora => fx::fade_from_fg(bg, (380, QuadOut)),
-        Design::Cockpit => fx::fade_from_fg(bg, (240, QuadOut)),
-        Design::Zen => fx::fade_from_fg(bg, (750, SineOut)),
-        Design::Timeline => fx::parallel(&[fx::fade_from_fg(bg, (200, QuadOut)), fx::ping_pong(fx::hsl_shift_fg([0.0, 0.0, 14.0], (150, QuadOut)))]),
-    }
+    fade_in(d, 160)
 }
 
 /// Whether the newest block only grows a folded run of tool calls (zen draws one line for them): that line is already on
@@ -1075,21 +1097,7 @@ pub fn pulse_fx(d: Design) -> Effect {
         Design::Zen => [0.0, 0.0, 8.0],
         _ => [0.0, 0.0, 14.0],
     };
-    fx::ping_pong(fx::hsl_shift_fg(shift, (170, QuadOut)))
-}
-
-pub fn done_fx(d: Design) -> Effect {
-    let bg = d.theme().bg;
-    match d {
-        Design::Aurora => fx::sequence(&[fx::coalesce((650, ExpoOut)), fx::ping_pong(fx::hsl_shift_fg([0.0, 0.0, 12.0], (300, SineInOut)))]),
-        Design::Cockpit => fx::sweep_in(Motion::LeftToRight, 20, 0, bg, (600, QuadOut)),
-        Design::Zen => fx::fade_from_fg(bg, (1200, SineInOut)),
-        Design::Timeline => fx::sequence(&[fx::coalesce((500, ExpoOut)), fx::ping_pong(fx::hsl_shift_fg([0.0, 0.0, 14.0], (220, QuadOut)))]),
-    }
-}
-
-pub fn quit_fx() -> Effect {
-    fx::dissolve((450, QuadIn))
+    fx::ping_pong(fx::hsl_shift_fg(shift, (90, QuadOut)))
 }
 
 // ---------------------------------------------------------------- shared pieces
@@ -1529,7 +1537,7 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
     let fresh = v.live && s.blocks.iter().all(|b| matches!(b, Block::Notice { .. }))
         && s.blocks.iter().any(|b| matches!(b, Block::Notice { text, .. } if text.starts_with("lane ")));
     if fresh {
-        for l in welcome(s, th) {
+        for l in welcome(s, th, width) {
             lines.push(l);
             owners.push(None);
         }
@@ -1712,10 +1720,17 @@ pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): 
     (last, rows, start)
 }
 
+/// tazuna's mark in two cells, as the window's: 手 (te, the hand of 手綱, the reins) on the accent, between half blocks that
+/// round its tile off (design review 10; it was a ◆).
+pub fn mark(th: &Theme) -> Vec<Span<'static>> {
+    vec![Span::styled("▐", st(th.accent)), Span::styled("手", Style::new().fg(th.bg).bg(th.accent).add_modifier(Modifier::BOLD)),
+        Span::styled("▌", st(th.accent))]
+}
+
 /// The whole transcript as the current design draws it at `width`, for copying a selection that runs off screen.
 /// The first screen of a live session: tazuna and its version, the model, where it runs and what it read there, a first
 /// thing to try.
-fn welcome(s: &Session, th: &Theme) -> Vec<Line<'static>> {
+fn welcome(s: &Session, th: &Theme, width: usize) -> Vec<Line<'static>> {
     let lane = s.blocks.iter().find_map(|b| match b { Block::Notice { text, .. } if text.starts_with("lane ") => Some(text.clone()), _ => None });
     let profile = lane.as_deref().and_then(|t| t.split_once(" · ")).map(|(_, p)| p.to_string()).unwrap_or_default();
     let home = crate::platform::home().map(|h| h.display().to_string()).unwrap_or_default();
@@ -1727,12 +1742,18 @@ fn welcome(s: &Session, th: &Theme) -> Vec<Line<'static>> {
         Some((_, inner)) => inner.trim_end_matches(')').replace(" tracked files", " files").replace("; repo config: ", ", ").replace("2 other .claude entries", "2 more .claude files"),
         None => profile,
     };
+    // a line too long for the column ends in "…", the profile's words before the folder's (design review 10: cockpit's
+    // narrower transcript cut "no repo conf" mid-word)
+    let room = width.saturating_sub(6);
+    let cwd = ellipsis(&cwd, room);
+    let left = room.saturating_sub(cwd.width());
+    let profile = if profile.is_empty() || left < 4 { String::new() } else { ellipsis(&format!("  {profile}"), left) };
     vec![
-        Line::from(vec![Span::styled(" ◆ ", st(th.accent)), Span::styled("tazuna", st(th.text).add_modifier(Modifier::BOLD)), Span::styled(format!(" {}", env!("CARGO_PKG_VERSION")), st(th.faint))]),
-        Line::from(vec![Span::raw("   "), Span::styled(model_short(&s.model), st(th.text)), Span::styled(format!("  {}{plan}", s.effort), st(th.dim))]),
-        Line::from(vec![Span::raw("   "), Span::styled(cwd, st(th.dim)), Span::styled(if profile.is_empty() { String::new() } else { format!("  {profile}") }, st(th.faint))]),
+        Line::from([vec![Span::raw(" ")], mark(th), vec![Span::raw(" "), Span::styled("tazuna", st(th.text).add_modifier(Modifier::BOLD)), Span::styled(format!(" {}", env!("CARGO_PKG_VERSION")), st(th.faint))]].concat()),
+        Line::from(vec![Span::raw("      "), Span::styled(model_short(&s.model), st(th.dim)), Span::styled(format!("  {}{plan}", s.effort), st(th.faint))]),
+        Line::from(vec![Span::raw("      "), Span::styled(cwd, st(th.faint)), Span::styled(profile, st(th.faint))]),
         Line::default(),
-        Line::from(vec![Span::raw("   "), Span::styled("Try \"how is this repo laid out?\", or /keys for every key", st(th.faint))]),
+        Line::from(vec![Span::raw("      "), Span::styled(ellipsis("Try \"how is this repo laid out?\", or /keys for every key", room), st(th.faint))]),
     ]
 }
 
@@ -2115,11 +2136,24 @@ fn markdown(text: &str, th: &Theme, width: usize) -> Vec<Prefixed> {
             continue;
         }
         if in_code {
-            out.push((Line::from(Span::styled(format!(" {raw} "), Style::new().fg(th.ink2).bg(th.field))), vec![]));
+            // a wrapped line hangs under its own indent and a little more, as an editor's soft wrap (it went back to the
+            // first column, design review 10)
+            let hang = 1 + raw.chars().take_while(|c| c.is_whitespace()).count() + 4;
+            out.push((Line::from(Span::styled(format!(" {raw} "), Style::new().fg(th.ink2).bg(th.field))), vec![Span::styled(" ".repeat(hang), Style::new().bg(th.field))]));
             continue;
         }
         let t = raw.trim_start();
-        if let Some(h) = t.strip_prefix('#') {
+        if let Some(q) = t.strip_prefix('>') {
+            // a quote: a bar and its words in the second ink, as the window draws it (it printed its ">", design review 10)
+            let bar = || Span::styled("▎ ", st(th.faint));
+            let words = inline(q.trim_start_matches('>').trim_start(), th).into_iter().map(|mut w| {
+                if w.style.fg == Some(th.text) {
+                    w.style = w.style.fg(th.ink2);
+                }
+                w
+            });
+            out.push((Line::from([vec![bar()], words.collect()].concat()), vec![bar()]));
+        } else if let Some(h) = t.strip_prefix('#') {
             out.push((Line::from(Span::styled(h.trim_start_matches('#').trim().to_string(), st(th.text).add_modifier(Modifier::BOLD))), vec![]));
         } else if let Some((num, item)) = t.split_once(". ").filter(|(n, _)| (1..=3).contains(&n.len()) && n.bytes().all(|b| b.is_ascii_digit())) {
             // numbered item: wrapped rows hang under the text, not the number
@@ -3145,7 +3179,7 @@ mod tests {
             (rows.join("\n"), areas)
         };
         let (side, areas) = render(&v);
-        assert!(side.contains("×14") && side.contains("30.7m") && side.contains("⌀2.2m"), "{side}");
+        assert!(side.contains("×14") && side.contains("30.7m") && side.contains("avg 2.2m"), "{side}");
         assert!(side.contains("2.0k") && side.contains("out per call · #"), "an axis label and the caption: {side}");
         assert_eq!(areas.tool_rows.len(), 1);
         let (rect, first) = areas.bars.unwrap();
@@ -3241,6 +3275,21 @@ mod tests {
         s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 0 });
         let lines = |open: bool| block_lines(&s.blocks[0], &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
         assert!(lines(false).contains("click to show") && !lines(true).contains("click to show"));
+    }
+
+    #[test]
+    fn a_fade_runs_straight_from_the_background_to_the_colour() {
+        // tachyonfx blends in HSL by default: the accent coming up from the warm background passed through magenta (design
+        // review 10). Half-way, every channel must lie between the two ends.
+        let (d, area) = (Design::Zen, Rect::new(0, 0, 2, 1));
+        let th = d.theme();
+        let mut buf = ratatui::buffer::Buffer::empty(area);
+        buf[(0, 0)].set_symbol("x").set_fg(th.accent);
+        let mut e = boot_fx(d);
+        e.process(std::time::Duration::from_millis(60).into(), &mut buf, area);
+        let (Color::Rgb(r, g, b), Color::Rgb(r0, g0, b0), Color::Rgb(r1, g1, b1)) = (buf[(0, 0)].fg, th.bg, th.accent) else { panic!("rgb") };
+        let between = |v: u8, a: u8, z: u8| (a.min(z)..=a.max(z)).contains(&v);
+        assert!(between(r, r0, r1) && between(g, g0, g1) && between(b, b0, b1) && (r, g, b) != (r1, g1, b1), "{r},{g},{b}");
     }
 
     #[test]

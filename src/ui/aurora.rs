@@ -15,14 +15,15 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             .areas(f.area());
 
     let left = Line::from(vec![
-        Span::styled(" ◆ tazuna ", Style::new().fg(th.text).bg(th.field).add_modifier(Modifier::BOLD)),
+        Span::styled(" 手 ", Style::new().fg(th.accent).bg(th.field).add_modifier(Modifier::BOLD)),
+        Span::styled("tazuna ", Style::new().fg(th.text).bg(th.field).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(model_short(&s.model), st(th.text)),
         Span::raw("  "),
         Span::styled(s.effort.clone(), st(th.dim)),
     ]);
     let dir = s.cwd.rsplit('/').next().unwrap_or_default().to_string();
-    split_row(f, header, left, Line::from(vec![Span::styled("aurora · ", st(th.faint)), Span::styled(format!("{dir} "), st(th.dim))]), None);
+    split_row(f, header, left, Line::from(vec![Span::styled(format!("{dir} "), st(th.dim))]), None);
 
     let area = body.inner(Margin { horizontal: 2, vertical: 0 });
     // lines wrap at 120 columns at most: at 200 a line of prose ran to 190 characters (design review 5)

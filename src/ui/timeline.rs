@@ -19,12 +19,12 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             .areas(f.area());
 
     let left = Line::from(vec![
-        seg("TAZUNA".into(), th.text, th.border),
+        Span::styled(" 手 ", Style::new().fg(th.accent).bg(th.border).add_modifier(Modifier::BOLD)),
+        Span::styled("tazuna ", Style::new().fg(th.text).bg(th.border).add_modifier(Modifier::BOLD)),
         seg(model_short(&s.model), th.text, th.surface),
         seg(s.effort.to_uppercase(), th.dim, th.field),
     ]);
-    let right = Line::from(vec![Span::styled("timeline ", st(th.faint))]);
-    split_row(f, header, left, right, None);
+    split_row(f, header, left, Line::default(), None);
 
     let area = body.inner(Margin { horizontal: 1, vertical: 0 });
     let (last_block, trows, top_line) = render_transcript(f, area, transcript(s, v, th, &OPTS, area.width as usize), v.scroll);

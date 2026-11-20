@@ -1199,11 +1199,17 @@ fn connect_key(url: &str, key: &str, model: &str) -> Result<(Box<dyn FnMut(&Valu
         // a normal call answers in 15-60 s, a long reasoning one in a minute or two; 300 s let a provider that accepted a
         // call and never answered stall a run for an hour across the retries (GLM on Experiential Labs, 2026-10-12)
         .timeout_global(Some(CALL_TIMEOUT)).http_status_as_error(false).build().into();
-    // retried like model calls: one benchmark run died at startup on a model-list request that never answered
-    let (price, api) = [2, 8, 30].iter().find_map(|w| price(&http, url, &key, model).map_err(|e| {
-        eprintln!("model list failed ({e:#}); retrying in {w}s");
-        std::thread::sleep(Duration::from_secs(*w));
-    }).ok()).map_or_else(|| price(&http, url, &key, model), Ok)?;
+    // retried like model calls: one benchmark run died at startup on a model-list request that never answered. A list that
+    // answered without the model or its price says the same on every try: it ends the start at once (until 0.1.191 it was
+    // retried 40 s, its reason on stderr only, while the screen said "thinking")
+    let (price, api) = [2, 8, 30].iter().find_map(|w| match price(&http, url, &key, model) {
+        Err(e) if !e.is::<ListError>() => {
+            eprintln!("model list failed ({e:#}); retrying in {w}s");
+            std::thread::sleep(Duration::from_secs(*w));
+            None
+        }
+        r => Some(r),
+    }).unwrap_or_else(|| price(&http, url, &key, model))?;
     let url = url.to_string();
     Ok((Box::new(move |body: &Value| chat(&http, &url, &key, api, body)), api, price))
 }
@@ -1986,12 +1992,38 @@ fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price
     }
     let mut r = http.get(format!("{url}/models")).header("Authorization", format!("Bearer {key}")).call()?;
     let list: Value = serde_json::from_str(&r.body_mut().with_config().limit(50 << 20).read_to_string()?)?;
-    let m = list["data"].as_array().into_iter().flatten().find(|m| m["id"] == model).with_context(|| format!("{model} is not in {url}/models"))?;
+    let m = listed(&list, url, model)?;
     if let Some(n) = listed_max_out(m) {
         let _ = CHAT_MAX_OUT.set(n);
     }
-    let (p, openai) = parse_price(m)?;
+    let (p, openai) = parse_price(m).map_err(|_| {
+        let cap = std::env::var("TAZUNA_MAX_USD").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(MAX_USD);
+        ListError(format!("{} lists {model} without a price, which the ${cap} cap per task needs: --price IN,CACHED,OUT \
+            (USD per million) sets one, or /model picks another.", host(url)))
+    })?;
     Ok((p, api(openai)))
+}
+
+/// A model list that answered but cannot serve the run: the model is not in it, or has no price. Not retried; its words
+/// go to the screen as they are.
+#[derive(Debug)]
+struct ListError(String);
+impl std::fmt::Display for ListError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+impl std::error::Error for ListError {}
+
+/// The provider's host, for messages: "127.0.0.1:8768", "api.mistral.ai".
+fn host(url: &str) -> &str {
+    url.split("://").nth(1).unwrap_or(url).split('/').next().unwrap_or(url)
+}
+
+/// The model's entry in a provider's model list.
+fn listed<'a>(list: &'a Value, url: &str, model: &str) -> Result<&'a Value> {
+    list["data"].as_array().into_iter().flatten().find(|m| m["id"] == model)
+        .ok_or_else(|| ListError(format!("{} does not list {model}: pick another model with /model.", host(url))).into())
 }
 
 fn price_override(v: &str) -> Result<Price> {
@@ -2052,6 +2084,16 @@ mod tests {
         assert!(((i * 1e6) - 0.2).abs() < 1e-9 && c == i && ((o * 1e6) - 0.4).abs() < 1e-9 && !openai, "{i} {c} {o}");
         let free = serde_json::json!({"id": "hy4:free", "pricing": {"unit": "micro_idr_per_1m_tokens", "free": true, "input": null, "output": null}});
         assert_eq!(super::parse_price(&free).unwrap().0, (0.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_list_without_the_model_or_its_price_is_not_retried() {
+        let list = serde_json::json!({"data": [{"id": "mock-model"}]});
+        let e = super::listed(&list, "http://127.0.0.1:8768/v1", "other").unwrap_err();
+        assert!(e.is::<super::ListError>() && e.to_string() == "127.0.0.1:8768 does not list other: pick another model with /model.", "{e}");
+        let m = super::listed(&list, "http://127.0.0.1:8768/v1", "mock-model").unwrap();
+        assert!(super::parse_price(m).is_err()); // price() turns this into a ListError with the --price hint
+        assert_eq!(super::host("https://api.mistral.ai/v1"), "api.mistral.ai");
     }
 
     #[test]

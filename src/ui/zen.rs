@@ -52,7 +52,10 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     } else {
         Line::from(vec![Span::styled("› ", st(th.accent)), Span::styled("say something…", st(th.faint).add_modifier(Modifier::ITALIC))])
     };
+    // a note for a moment ("copied 12 chars", the design ctrl-t switched to): zen has no row under its input for it
+    let note = v.toast.as_ref().map_or(String::new(), |(t, _)| format!("{t}   "));
     let right = Line::from(vec![
+        Span::styled(note, st(th.ok)),
         Span::styled(format!("{glyph} {label}"), st(color)),
         Span::styled(if v.live { String::new() } else { format!("   {}", play_str(v, "paused")) }, st(th.faint)),
         Span::styled(if v.live { "" } else { "   1-4 · e · q" }, st(th.faint)),

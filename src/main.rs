@@ -2093,12 +2093,11 @@ struct Fx {
     boot: bool,
     blocks: usize,
     tools: usize,
-    results: usize,
 }
 
 impl Fx {
     fn new() -> Self {
-        Fx { mgr: EffectManager::default(), boot: true, blocks: 0, tools: 0, results: 0 }
+        Fx { mgr: EffectManager::default(), boot: true, blocks: 0, tools: 0 }
     }
 
     /// Draws one frame; returns where the transcript is and the block on each of its rows.
@@ -2118,12 +2117,6 @@ impl Fx {
         if s.finished_tools != self.tools {
             self.tools = s.finished_tools;
             self.mgr.add_unique_effect("pulse", ui::pulse_fx(d).with_area(areas.pulse));
-        }
-        if s.results != self.results {
-            self.results = s.results;
-            if let Some(r) = areas.last_block {
-                self.mgr.add_unique_effect("done", ui::done_fx(d).with_area(r));
-            }
         }
         let area = f.area();
         self.mgr.process_effects(dt.into(), f.buffer_mut(), area);
@@ -2186,7 +2179,7 @@ fn agent_session(s: &Session, t: &live::BgTask, terminal: bool) -> Session {
 
 /// A permission question ignores keys for this long after it appears.
 const ANSWER_DELAY_MS: u64 = 600;
-const QUIT_MS: u128 = 480;
+const QUIT_MS: u128 = 0; // the quit dissolve went in design review 10: tazuna ends at once
 
 fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args) -> Result<()> {
     let mut s = Session::new(&replay.prompt, &replay.effort);
@@ -2220,7 +2213,6 @@ fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args)
             };
             match k.code {
                 KeyCode::Char('q') | KeyCode::Esc => {
-                    fx.mgr.add_unique_effect("quit", ui::quit_fx());
                     quit_at = Some(Instant::now());
                 }
                 KeyCode::Char(' ') => replay.paused = !replay.paused,
@@ -2558,11 +2550,14 @@ struct Earlier {
 }
 
 impl Earlier {
-    /// "8m ago · 2 messages · fix the login" (until 0.1.180 with "(4cb8a388)" after it: an id said nothing to a reader)
+    /// "8m ago · 2 messages · fix the login · Opus 5.5" (until 0.1.180 with "(4cb8a388)" after it: an id said nothing to a
+    /// reader); the model it ran on last, where it goes on (until 0.1.191 the panel said "on claude" for every row), and
+    /// "now" under a minute, not "0m ago"
     fn row(&self) -> String {
         let ago = session::unix_now().saturating_sub(self.last_at) / 60;
-        let when = if ago < 60 { format!("{ago}m") } else if ago < 1440 { format!("{}h", ago / 60) } else { format!("{}d", ago / 1440) };
-        format!("{when} ago · {} message{} · {}", self.messages, if self.messages == 1 { "" } else { "s" },
+        let when = match ago { 0 => "now".into(), 1..60 => format!("{ago}m ago"), 60..1440 => format!("{}h ago", ago / 60), _ => format!("{}d ago", ago / 1440) };
+        let on = if self.model.is_empty() { String::new() } else { format!(" · {}", ui::model_short(&self.model)) };
+        format!("{when} · {} message{} · {}{on}", self.messages, if self.messages == 1 { "" } else { "s" },
             session::shown(self.first.lines().next().unwrap_or_default(), 100))
     }
 }
@@ -3178,8 +3173,12 @@ fn run_live(
                 hook_mark = Some(now);
                 hooks::spawn(dir, cmd, status_tx.clone());
             }
-            // what the conversation changed: after each run, and while one runs at most every 5 s (a few git calls each)
-            if e["type"] == "result" || (e["type"] == "user" && changed_at.elapsed() > Duration::from_secs(5)) {
+            // what the conversation changed: after each run, after each edit's result (cockpit's files panel said "no file
+            // changed yet" under an edit until the turn ended, design review 10), else while one runs at most every 5 s (a
+            // few git calls each)
+            let wrote = e["type"] == "user" && s.blocks.iter().rev().find_map(|b| match b { session::Block::Tool(t) if t.result.is_some() => Some(t), _ => None })
+                .is_some_and(|t| matches!(t.name.as_str(), "Edit" | "edit" | "MultiEdit" | "Write" | "write" | "NotebookEdit"));
+            if e["type"] == "result" || (e["type"] == "user" && (wrote || changed_at.elapsed() > Duration::from_secs(5))) {
                 v.changed = conversation_changes(git_start.as_ref(), &s);
                 changed_at = Instant::now();
             }
@@ -3859,17 +3858,16 @@ fn run_live(
             KeyCode::Char('c') if ctrl => match busy(&s).then(|| live.interrupt()).flatten() {
                 Some((t, e)) => s.apply(&e, t),
                 None => {
-                    fx.mgr.add_unique_effect("quit", ui::quit_fx());
                     quit_at = Some(Instant::now());
                 }
             },
             KeyCode::Char('d') if ctrl => {
-                fx.mgr.add_unique_effect("quit", ui::quit_fx());
                 quit_at = Some(Instant::now());
             }
             KeyCode::Char('t') if ctrl => {
                 v.design = v.design.next();
                 v.design.save();
+                v.toast = Some((format!("design: {} · ctrl-t for the next", v.design.name()), Instant::now()));
                 fx.boot = true;
             }
             // the whole screen drawn again: anything another program wrote over it is gone

@@ -16,6 +16,42 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.191 (2026-11-21): a mark of its own, quiet motion, and a missing price said at once
+
+Design review 10 (the user: "compare it against other harnesses… what would you add, what would you remove"), set beside
+Claude Code, Codex, opencode and pi; the user chose from the prototype (desktop/mockups/v7.html): "lets do all of these".
+
+- The welcome opens on tazuna's mark, 手 with a rein's loop in the desktop app, here as two cells (`▐手▌`, the theme's
+  accent), then the model and effort, the folder, the hint; the headers of aurora, cockpit and timeline say "手 tazuna".
+  Every other harness opens on a mark (Claude Code's mascot, Codex's `>_`, opencode's wordmark, pi's block); tazuna had a
+  ◆. A welcome line too long for the column ends in "…" (cockpit cut "no repo conf").
+- Motion on lightness only, short: one straight RGB fade from the background, 180 ms at start and 160 ms per new block.
+  The fades ran through the hue circle, so the accent passed magenta (#9f3d86 half-way in a capture), and lasted up to
+  1.4 s; the 1.2 s fade over every finished answer, the sweeps, slides, coalesce and the quit dissolve are gone. The pulse
+  stays, lighter only, 90 ms each way.
+- The design's name left the screen ("cockpit" in the title bar, "timeline", "aurora · repo"); ctrl-t says it in a toast
+  for 2.5 s.
+- A provider whose model list lacks the model or its price stops at once and says why on the screen ("127.0.0.1:8768 lists
+  mock-model without a price, which the $1 cap per task needs: --price IN,CACHED,OUT (USD per million) sets one, or
+  /model picks another."). It was retried 2 + 8 + 30 s like a network failure with the reason on stderr only, the screen
+  on "thinking" until "the model did not respond, process restarted". Network failures still retry.
+- Answers: a quote draws its bar ("▎ ", it printed ">"); a wrapped code line hangs under its own indent.
+- A cut description in the / menu and the /resume rows end in "…"; /resume says "now", not "0m ago", and no longer says
+  "on claude" for an own-loop session; cockpit's files panel counts an edit when it lands, not at the turn's end; its
+  tools panel says "avg", not "⌀".
+- The update line says the version once: "updated from 0.1.189: <the newest note>   /changelog".
+
+Tier 0 against 0.1.190 built from the same tree (3 runs each, medians; the Haiku probe skipped: no prompt or tool
+changed):
+
+| | 0.1.190 | 0.1.191 |
+|---|---|---|
+| binary | 5,685,360 B | 5,635,616 B (−49.7 KB: the effects removed) |
+| replay render | 8 ms | 8 ms |
+| startup | 7.0 ms | 7.1 ms (noise) |
+| UI CPU while animating | 1.70% | 1.67% |
+| UI memory | 7.8 MB | 7.8 MB |
+
 ## 0.1.190 (2026-11-20): the week reads "wk" in the terminal too
 
 - The plan's week window reads "wk 92%" in every terminal design, as in the desktop's status bar; it was "7d" here and
