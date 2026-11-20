@@ -16,6 +16,17 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.188 (2026-11-20): the window can open a subagent's own conversation
+
+The user: "wouldn't it make sense to also be able to see the background chat", as the terminal's ctrl-b shows it.
+
+- The app server's view lists claude's background tasks (`tasks`: a subagent or a command, what it is doing, its tokens
+  and steps, the calls that started it, whether it still runs), as the terminal's ctrl-b view has them.
+- `agent` answers with a subagent's own conversation as a view (what it was asked, its steps and answers so far), by the
+  call that started it: its task where claude made one, else the call's own messages (a subagent that ran inside the
+  reply has no task). The terminal's ctrl-b, enter, without its "esc back to the list" line. `task_stop` stops one task.
+- No metric moves: two answers to the window, read from what the session already kept.
+
 ## 0.1.187 (2026-11-20): a call cut off by a stop ends with its run
 
 The user: a stopped reply's "Asked a subagent" went on counting, 502 s and rising, in the desktop app.

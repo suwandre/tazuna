@@ -1170,9 +1170,9 @@ fn app_server(a: &Args) -> Result<()> {
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 47] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+        const OPS: [&str; 49] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
             "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
-            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get", "accounts", "complete"];
+            "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get", "accounts", "complete", "agent", "task_stop"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
             let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
             if v.get("type").is_some() || !v["op"].as_str().is_some_and(|o| OPS.contains(&o)) {
@@ -1210,6 +1210,12 @@ fn app_server(a: &Args) -> Result<()> {
             "files": t.files.iter().map(|f| json!({"path": f.path, "added": f.added, "removed": f.removed, "status": f.status.to_string()})).collect::<Vec<_>>(),
         })).collect::<Vec<_>>());
         v["untrusted"] = json!(untrusted);
+        // claude's background tasks (a subagent, a command), running and ended, as the terminal's ctrl-b lists them: the
+        // window shows the running ones and opens an agent's own conversation (the "agent" op). No running clock in it:
+        // a view goes out when something changed
+        v["tasks"] = json!(live.bg.iter().map(|t| json!({"id": t.id, "kind": t.kind, "agent": t.agent, "description": t.description, "status": t.status,
+            "running": t.ended.is_none(), "doing": t.doing, "tokens": t.tokens, "tools": t.tools, "calls": t.calls.iter().map(|c| &c.0).collect::<Vec<_>>(),
+            "secs": t.ended.map(|e| e.duration_since(t.started).as_secs())})).collect::<Vec<_>>());
         v["session_id"] = json!(live.session_id());
         // the messages "edit from here" can go back to: claude's checkpoints, each with its message's block
         v["edit_points"] = json!(edit_points(s, live).iter().enumerate().map(|(cp, b)| json!({"cp": cp, "block": b})).collect::<Vec<_>>());
@@ -1531,6 +1537,32 @@ fn app_server(a: &Args) -> Result<()> {
                             let mut o = out.lock();
                             let _ = writeln!(o, "{}", json!({"type": "complete", "commands": editor::command_menu("", &cmds, &live.my_commands()), "files": files}));
                             let _ = o.flush();
+                        }
+                        // a background agent's own conversation (the terminal's ctrl-b, enter): what it was asked, its
+                        // reasoning, steps and answers so far, as a view the window draws like any other; asked again
+                        // while it is open and the agent runs
+                        Some("agent") => {
+                            // by the call that started it (the step in the transcript): its task where claude made one, else
+                            // the call's own messages (a subagent that ran inside the reply has no task)
+                            let call = cmd["call"].as_str().unwrap_or_default();
+                            let task = live.bg.iter().find(|t| t.calls.iter().any(|c| c.0 == call)).cloned().or_else(|| s.blocks.iter().find_map(|b| match b {
+                                session::Block::Tool(t) if t.id == call && s.sub_events.contains_key(call) => Some(live::BgTask {
+                                    id: String::new(), kind: "local_agent".into(), description: t.input["description"].as_str().unwrap_or_default().into(),
+                                    status: if t.error { "failed" } else if t.done_ms.is_some() { "completed" } else { "running" }.into(), started: Instant::now(),
+                                    ended: t.done_ms.map(|_| Instant::now()), output: String::new(), agent: t.input["subagent_type"].as_str().unwrap_or_default().into(),
+                                    tokens: 0, tools: 0, doing: String::new(), calls: vec![(call.to_string(), t.input["prompt"].as_str().unwrap_or_default().to_string())] }),
+                                _ => None,
+                            }));
+                            if let Some(t) = task {
+                                let mut o = out.lock();
+                                let _ = writeln!(o, "{}", json!({"type": "agent", "call": call, "view": agent_session(&s, &t, false).view()}));
+                                let _ = o.flush();
+                            }
+                        }
+                        Some("task_stop") => {
+                            if let Some((t, e)) = cmd["task"].as_str().and_then(|id| live.stop_task(id)) {
+                                s.apply(&e, t);
+                            }
                         }
                         Some("tazuna_chat_event") => {
                             if cmd["e"]["type"] == "result" && let Some(r) = cmd["e"]["result"].as_str() {
@@ -2124,10 +2156,13 @@ fn snapshot(mut replay: Replay, n: usize, (w, h): (u16, u16), design: Design) ->
 
 /// A background agent's conversation as a session of its own (ctrl-b, enter): the prompt it was given, then its messages as
 /// claude passed them on (`Session::sub_events`), drawn like the main transcript.
-fn agent_session(s: &Session, t: &live::BgTask) -> Session {
+/// `terminal`: with the line that says how to leave it (the window has its own heading and close button).
+fn agent_session(s: &Session, t: &live::BgTask, terminal: bool) -> Session {
     let mut a = Session::new("", "");
     let what = if t.agent.is_empty() { "agent".to_string() } else { format!("{} agent", t.agent) };
-    a.apply(&json!({"type": "harness_info", "text": format!("{what} · {} · esc back to the list", t.description)}), 0.0);
+    if terminal {
+        a.apply(&json!({"type": "harness_info", "text": format!("{what} · {} · esc back to the list", t.description)}), 0.0);
+    }
     let mut last = 0.0;
     for (call, prompt) in &t.calls {
         let events = s.sub_events.get(call).map(Vec::as_slice).unwrap_or_default();
@@ -3028,7 +3063,7 @@ fn run_live(
                 Some(t) => {
                     let n = t.calls.iter().map(|(c, _)| s.sub_events.get(c).map_or(0, Vec::len)).sum::<usize>() + usize::from(t.ended.is_some());
                     if viewing.as_ref().is_some_and(|w| w.1 != n) {
-                        viewing = Some((id, n, agent_session(&s, t)));
+                        viewing = Some((id, n, agent_session(&s, t, true)));
                     }
                 }
                 None => {
@@ -4934,7 +4969,7 @@ not json"#;
         let t = live::BgTask { id: "t1".into(), kind: "local_agent".into(), description: "look at a.rs".into(), status: "completed".into(), started: Instant::now(),
             ended: Some(Instant::now()), output: String::new(), agent: "explorer".into(), tokens: 0, tools: 0, doing: String::new(),
             calls: vec![("call1".into(), "What is in src/a.rs?".into())] };
-        let a = agent_session(&s, &t);
+        let a = agent_session(&s, &t, true);
         assert_eq!(a.model, "claude-haiku-5-5");
         assert!(matches!(&a.blocks[1], session::Block::Prompt(p) if p == "What is in src/a.rs?"), "the prompt claude gave it");
         assert!(a.blocks.iter().any(|b| matches!(b, session::Block::Tool(t) if t.name == "Read" && t.result.is_some())), "its steps, finished");
