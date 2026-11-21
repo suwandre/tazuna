@@ -77,7 +77,8 @@
 //!   tazuna mcp   # the lean tool server (claude starts it; not for direct use)
 //!   tazuna engine   # tazuna's own agent loop (--provider starts it; not for direct use)
 //!
-//! Designs: 1 aurora · 2 cockpit (default) · 3 zen · 4 timeline. Live sessions are saved to
+//! Designs: 1 aurora · 2 cockpit · 3 zen · 4 timeline. Without --design: the one last chosen with ctrl-t, else zen.
+//! Live sessions are saved to
 //! ~/.local/share/tazuna/sessions/ and replay like any recording.
 
 mod diag;
@@ -3989,8 +3990,13 @@ fn run_live(
                     let i = pk.cs.iter().position(|c| models::same_model(c, &live.model)
                         && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)));
                     let levels = i.map(|i| pk.cs[i].efforts.clone()).unwrap_or_default();
-                    let r = if levels.len() < 2 {
-                        Err(anyhow::anyhow!("{} takes no effort level to choose (its API ignores it, or has one)", live.model))
+                    // what is known, said as it is: "takes no effort level" under a header that read "medium" (design
+                    // review 11). The level in the header is what tazuna sends with every call
+                    let r = if i.is_none() {
+                        Err(anyhow::anyhow!("{} is not in the model list, so its effort levels are not known: {} is sent with each call, and its API may ignore it", live.model, live.effort))
+                    } else if levels.len() < 2 {
+                        Err(anyhow::anyhow!("{} has no effort levels to choose from: {}", live.model,
+                            levels.first().map_or(format!("{} is sent with each call, and its API ignores it", live.effort), |l| format!("it runs at {l}"))))
                     } else if want.is_empty() {
                         (pk.effort_at, pk.effort_only) = (i, true);
                         pick = Some(pk);

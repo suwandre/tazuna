@@ -1548,10 +1548,15 @@ impl Live {
     /// Tests are back: pass ends the run; a failure goes back to claude while rounds remain.
     fn after_verify(&mut self, o: verify::Outcome) -> Vec<(f64, Value)> {
         self.verifying = false;
-        if o.no_tests || o.timed_out {
-            // the runner found nothing to run, or the tests outran the time limit: not verified, not failed
+        if o.no_tests || o.timed_out || o.cannot_run {
+            // the runner found nothing to run, the tests outran the time limit, or the command is not on this machine: not
+            // verified, not failed
             let mut out = vec![self.record(json!({"type": "harness_verify_done", "cmd": o.cmd, "ok": o.no_tests, "no_tests": o.no_tests,
-                "timed_out": o.timed_out, "secs": o.secs, "output": "", "final": true}))];
+                "timed_out": o.timed_out, "cannot_run": o.cannot_run, "secs": o.secs, "output": "", "final": true}))];
+            // the run log and a headless result say which (they read "claimed", as if nothing testable had changed)
+            if let (Some(run), false) = (self.runs.front_mut(), o.no_tests) {
+                run.no_verify(&o.cmd, if o.cannot_run { "could_not_run" } else { "timed_out" });
+            }
             out.extend(self.finish_front());
             return out;
         }
@@ -2398,6 +2403,26 @@ mod tests {
         let t = Instant::now();
         live.poll();
         assert!(t.elapsed() < Duration::from_secs(1), "the screen froze {:?} for the baseline", t.elapsed());
+        std::fs::remove_file(&live.rec_path).ok();
+    }
+
+    #[test]
+    fn a_test_command_that_is_not_installed_ends_the_run_without_a_fix_round() {
+        let mut live = Live::new("", "").unwrap();
+        live.runs_log = std::env::temp_dir().join(format!("tazuna-test-runs-{}.jsonl", std::process::id()));
+        live.escalate = Some(("opus".into(), "high".into()));
+        live.verifying = true;
+        live.runs.push_back(Run::new("change it", 0.0, &live.cwd));
+        let o = verify::Outcome { cmd: "cargo test --quiet".into(), ok: false, no_tests: false, timed_out: false, cannot_run: true, code: Some(127), secs: 0.1,
+            output: "sh: cargo: command not found".into(), failed: vec![], preexisting: vec![] };
+        let events: Vec<Value> = live.after_verify(o).into_iter().map(|(_, e)| e).collect();
+        let kinds: Vec<&str> = events.iter().filter_map(|e| e["type"].as_str()).collect();
+        assert_eq!(kinds, ["harness_verify_done"], "no escalation, no feedback to the model");
+        assert!(events[0]["cannot_run"] == true && events[0]["final"] == true && events[0]["ok"] == false);
+        assert!(live.runs.is_empty() && !live.escalated && !live.verifying, "the run ended");
+        let line = live.logs.last().expect("logged");
+        assert_eq!((line["verify"]["status"].as_str(), line["verify"]["cmd"].as_str(), line["verify"]["rounds"].as_u64()), (Some("could_not_run"), Some("cargo test --quiet"), Some(0)));
+        std::fs::remove_file(&live.runs_log).ok();
         std::fs::remove_file(&live.rec_path).ok();
     }
 

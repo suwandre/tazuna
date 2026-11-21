@@ -31,7 +31,7 @@ fn under_mouse(v: &View, r: Rect) -> bool {
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let ch = composer_height(v, f.area().width);
-    let [header, body, composer] = Layout::vertical([Constraint::Length(1), Constraint::Min(10), Constraint::Length(ch)]).areas(f.area());
+    let [header, body, composer] = Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(ch)]).areas(f.area());
     let (glyph, label, color) = activity(s, v, th);
 
     let left = Line::from(vec![
@@ -222,7 +222,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             // each account named in its own colour, its numbers beside it
             match plan_spans(s, th) {
                 Some(plan) => Line::from([vec![Span::styled("Claude ", st(th.ink2).add_modifier(Modifier::BOLD))], plan].concat()),
-                None => Line::from(Span::styled(if s.exact_cost.is_some() { "exact (reported)" } else { "estimate (list prices)" }, st(th.faint))),
+                None => Line::from(Span::styled(if s.exact_cost.is_some() && !s.estimated { "exact (reported)" } else { "estimate (list prices)" }, st(th.faint))),
             },
             match balance_str(s) {
                 Some(b) => Line::from(vec![Span::styled("SubRouter", st(th.ink2).add_modifier(Modifier::BOLD)), Span::styled(b.trim_start_matches("SubRouter").to_string(), st(th.dim))]),
@@ -333,7 +333,8 @@ fn tool_tally(s: &Session) -> Vec<(String, usize, usize, f64, usize)> {
             }
         };
         out[i].1 += 1;
-        out[i].2 += t.error as usize;
+        // a call the user said no to is no failure
+        out[i].2 += (t.error && !t.declined()) as usize;
         out[i].3 += t.secs().unwrap_or(0.0);
         out[i].4 += t.result.is_none() as usize;
     }

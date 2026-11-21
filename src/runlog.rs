@@ -23,6 +23,8 @@ pub struct Run {
     /// $ across all rounds (claude reports per process; the caller adds each result's share).
     cost: f64,
     verify_cmd: Option<String>,
+    /// The verification gave no result, and why ("could_not_run", "timed_out"): the log says so, not "claimed".
+    verify_none: Option<&'static str>,
     /// One entry per verification: (passed, seconds).
     verify_rounds: Vec<(bool, f64)>,
     /// Failed tests moved this run to the stronger model.
@@ -69,6 +71,7 @@ impl Run {
             git_before: git_snapshot(cwd),
             cost: 0.0,
             verify_cmd: None,
+            verify_none: None,
             verify_rounds: Vec::new(),
             escalated: false,
             types_before: None,
@@ -83,6 +86,12 @@ impl Run {
 
     pub fn add_cost(&mut self, usd: f64) {
         self.cost += usd;
+    }
+
+    /// The tests gave no result (`why`: "could_not_run" or "timed_out"): the command is kept, no round is counted.
+    pub fn no_verify(&mut self, cmd: &str, why: &'static str) {
+        self.verify_cmd = Some(cmd.to_string());
+        self.verify_none = Some(why);
     }
 
     pub fn add_verify(&mut self, cmd: &str, ok: bool, secs: f64) {
@@ -158,6 +167,7 @@ impl Run {
             _ if self.interrupted => "skipped",
             (Some((true, _)), _) => "verified",
             (Some((false, _)), _) => "verify_failed",
+            (None, _) if self.verify_none.is_some() => self.verify_none.unwrap_or_default(),
             (None, _) if result.is_none() => "skipped",
             (None, _) if meta["verify"] == "off" => "off",
             (None, _) => "claimed",

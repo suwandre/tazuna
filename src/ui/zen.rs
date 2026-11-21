@@ -26,15 +26,46 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         right.push(gap());
         right.append(&mut extra);
     }
-    let [top, under, body, _, rule, input] = Layout::vertical([
+    // the message box under the rule: the status on its right, and on its left the question, the draft on as many rows
+    // as it takes (six at most, then it scrolls) with the `@` and `/` completions under it, or the placeholder. It was one
+    // row that showed the end of a draft and no completions (design review 11).
+    let (glyph, label, color) = activity(s, v, th);
+    let typing = v.live && !v.input.is_empty() && v.asking.is_none();
+    // a note for a moment ("copied 12 chars", the design ctrl-t switched to); while typing it is the row under the draft
+    let note = if typing { String::new() } else { v.toast.as_ref().map_or(String::new(), |(t, _)| format!("{t}   ")) };
+    // a question in a narrow column has the row to itself (its "?" says who is waited for): beside "● needs you" the
+    // answers were cut to "a al" at 40 columns
+    let alone = v.asking.is_some() && col.width < 60;
+    let status = Line::from(if alone { vec![] } else { vec![
+        Span::styled(note, st(th.ok)),
+        // the permission mode when it is not auto, as the other designs' boxes say it
+        Span::styled(if v.live && v.mode != "auto" && v.asking.is_none() { format!("[{}]  ", v.mode) } else { String::new() }, st(th.dim)),
+        Span::styled(format!("{glyph} {label}"), st(color)),
+        Span::styled(if v.live { String::new() } else { format!("   {}", play_str(v, "paused")) }, st(th.faint)),
+        Span::styled(if v.live { "" } else { "   1-4 · e · q" }, st(th.faint)),
+    ] });
+    // the text starts one column left of the column, so the prompt's `›` (after a space, as composer_rows draws it) stands
+    // on the column's edge with or without a draft
+    let shift = u16::from(col.x > full.x);
+    let text_w = (col.width + shift).saturating_sub(if alone { 0 } else { status.width() as u16 + 2 });
+    // as many rows of the draft as leave the header, three rows of transcript and the completions' row on screen
+    let fixed = 8 + u16::from(!(one_row || extra.is_empty()));
+    let rows = if typing || v.asking.is_some() {
+        composer_rows_in(v, th, "›", "", text_w, (col.height.saturating_sub(fixed) as usize).clamp(1, 6))
+    } else {
+        vec![Line::from(vec![Span::styled(" › ", st(th.accent)), Span::styled("say something…", st(th.faint).add_modifier(Modifier::ITALIC))])]
+    };
+    let [top, under, _, body, _, rule, input] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Length(if one_row || extra.is_empty() { 0 } else { 1 }),
+        Constraint::Length(1), // air under the header: the transcript's first line touched it
         Constraint::Min(3),
         Constraint::Length(1),
         Constraint::Length(1),
-        Constraint::Length(1),
+        Constraint::Length(rows.len() as u16),
     ])
     .areas(col);
+    let text = Rect { x: input.x - shift, width: text_w, ..input };
     split_row(f, top, Line::from(Span::styled("tazuna", st(th.faint).add_modifier(Modifier::ITALIC))), Line::from(right), None);
     if !one_row && !extra.is_empty() {
         split_row(f, under, Line::default(), Line::from(extra), None);
@@ -43,24 +74,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let (last_block, trows, top_line) = render_transcript(f, body, transcript(s, v, th, &OPTS, body.width as usize), v.scroll);
 
     f.render_widget(Paragraph::new(Span::styled("─".repeat(rule.width as usize), st(th.border))), rule);
-    let (glyph, label, color) = activity(s, v, th);
-    // a permission question takes the row, as in the other designs' message box (zen drew none: the run just stood still)
-    let left = if v.asking.is_some() {
-        composer_rows(v, th, "›", "", input.width.saturating_sub(12)).remove(0) // less the status on the right
-    } else if v.live && !v.input.is_empty() {
-        composer_line(v, th, "›", "", input.width / 2)
-    } else {
-        Line::from(vec![Span::styled("› ", st(th.accent)), Span::styled("say something…", st(th.faint).add_modifier(Modifier::ITALIC))])
-    };
-    // a note for a moment ("copied 12 chars", the design ctrl-t switched to): zen has no row under its input for it
-    let note = v.toast.as_ref().map_or(String::new(), |(t, _)| format!("{t}   "));
-    let right = Line::from(vec![
-        Span::styled(note, st(th.ok)),
-        Span::styled(format!("{glyph} {label}"), st(color)),
-        Span::styled(if v.live { String::new() } else { format!("   {}", play_str(v, "paused")) }, st(th.faint)),
-        Span::styled(if v.live { "" } else { "   1-4 · e · q" }, st(th.faint)),
-    ]);
-    split_row(f, input, left, right, None);
+    f.render_widget(Paragraph::new(rows), text);
+    split_row(f, Rect { y: input.bottom().saturating_sub(1), height: 1, ..input }, Line::default(), status, None);
 
-    Areas { pulse: top, last_block, transcript: body, rows: trows, links: vec![], files: None, top_line, ..Default::default() }
+    Areas { pulse: top, last_block, transcript: body, rows: trows, links: vec![], files: None, top_line, composer: typing.then_some(text), ..Default::default() }
 }

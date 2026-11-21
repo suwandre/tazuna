@@ -441,22 +441,42 @@ fn draw_menu(f: &mut Frame, v: &View, th: &Theme, over: Rect) {
     let h = (rows + 2).min(over.height);
     let area = Rect { x: over.x + 1, y: over.bottom().saturating_sub(h), width: over.width.saturating_sub(2), height: h };
     let sel = v.menu_sel.min(v.menu.len().saturating_sub(1));
-    let first = sel.saturating_sub(rows.saturating_sub(1) as usize);
+    // by the rows the box shows, which may be fewer than the list's ten: in a short window the selected row scrolled out
+    // of sight under the border (design review 11)
+    let shown = h.saturating_sub(2) as usize;
+    let first = sel.saturating_sub(shown.saturating_sub(1));
     let name_w = v.menu.iter().map(|(c, _)| c.width()).max().unwrap_or(8).min(24) + 3;
     let inner = area.width.saturating_sub(2) as usize;
-    let lines: Vec<Line> = v.menu.iter().enumerate().skip(first).take(rows as usize).map(|(i, (c, d))| {
+    let lines: Vec<Line> = v.menu.iter().enumerate().skip(first).take(shown).map(|(i, (c, d))| {
         let on = i == sel;
-        let name: String = format!(" {c:<w$}", w = name_w - 1).chars().take(name_w).collect();
+        // the selected row has a mark too, as the model and session lists: with NO_COLOR the terminal library resets
+        // every attribute with its (empty) colour, so the fill alone left no row marked (design review 11)
+        let name: String = format!("{}{c:<w$}", if on { "›" } else { " " }, w = name_w - 1).chars().take(name_w).collect();
         // a description cut short ends in "…" (cockpit's narrower menu cut "(enable, disca" with nothing, design review 10)
         let about = ellipsis(d, inner.saturating_sub(name_w + 1));
         let pad = " ".repeat(inner.saturating_sub(name.width() + about.width()));
-        let style = if on { Style::new().fg(th.bg).bg(th.accent) } else { st(th.text) };
+        // reversed, as every other list's selection: the same accent fill
+        let style = if on { Style::new().fg(th.accent).bg(th.bg).add_modifier(Modifier::REVERSED) } else { st(th.text) };
         Line::from(vec![Span::styled(name, style.add_modifier(Modifier::BOLD)), Span::styled(about, if on { style } else { st(th.faint) }), Span::styled(pad, style)])
     }).collect();
-    f.render_widget(Clear, area);
-    let title = format!(" commands · {} · ↑↓ enter runs · tab fills in ", v.menu.len());
+    f.render_widget(Clear, Rect { x: over.x, width: over.width, ..area });
+    let title = format!("{} ", whole_hints(&format!(" commands · {} · ↑↓ enter runs · tab fills in", v.menu.len()), inner.saturating_sub(1)));
     f.render_widget(Paragraph::new(lines).block(Block::new().borders(Borders::ALL).border_style(st(th.border)).title(Span::styled(title, st(th.faint))))
         .style(Style::new().bg(th.bg)), area);
+}
+
+/// The hints of `keys` (apart by " · ") that fit whole in `room` columns, from the first on: a row cut at the edge read
+/// "enter ch" and "tab provi" (design review 11).
+fn whole_hints(keys: &str, room: usize) -> String {
+    let mut out = String::new();
+    for k in keys.split(" · ") {
+        let next = if out.is_empty() { k.to_string() } else { format!("{out} · {k}") };
+        if next.trim_end().width() > room {
+            break;
+        }
+        out = next;
+    }
+    out
 }
 
 /// `t` in at most `w` columns, ending in "…" when it had to be cut.
@@ -881,7 +901,7 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     let inner = block.inner(area);
     f.render_widget(block, area);
     let body = Rect::new(inner.x, inner.y, inner.width, inner.height.saturating_sub(1));
-    f.render_widget(Paragraph::new(Line::from(Span::styled(keys, st(th.faint)))), Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1));
+    f.render_widget(Paragraph::new(Line::from(Span::styled(whole_hints(keys, inner.width as usize), st(th.faint)))), Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1));
     // the left pane: All models, then the providers, ● usable now, ○ not (no key, not trusted)
     if two {
         let mut lines = vec![Line::from(Span::styled("providers", st(th.faint)))];
@@ -961,7 +981,7 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
         cut(s)
     };
     let search = if p.filter.is_empty() {
-        Line::from(Span::styled(cut(format!("{gname} · {} models · type to search", p.rows.len())), st(th.faint)))
+        Line::from(Span::styled(whole_hints(&format!("{gname} · {} models · type to search", p.rows.len()), iw), st(th.faint)))
     } else {
         Line::from(vec![Span::styled("> ", st(th.accent)), Span::styled(cut(p.filter.clone()), st(th.text)), Span::styled("▍", st(th.accent))])
     };
@@ -1139,6 +1159,9 @@ pub fn activity(s: &Session, v: &View, th: &Theme) -> (&'static str, String, Col
         Activity::Done if matches!(s.blocks.iter().rev().find_map(|b| if let Block::Done(d) = b { Some(d) } else { None }), Some(d) if !d.ok && !d.stopped) => {
             ("✗", "failed".into(), th.err)
         }
+        // stopped with esc: the row above says "■ Stopped", and the status said a green "✓ done" (design review 11)
+        // (esc while the tests ran too: the reply's own end row is a finished one)
+        Activity::Done if s.verify_cancelled || matches!(s.blocks.iter().rev().find_map(|b| if let Block::Done(d) = b { Some(d) } else { None }), Some(d) if d.stopped) => ("■", "stopped".into(), th.dim),
         Activity::Done => ("✓", "done".into(), th.ok),
     }
 }
@@ -1149,10 +1172,17 @@ fn wait_str(secs: f64) -> String {
     if s < 60 { format!("{s} s") } else { format!("{} min {:02} s", s / 60, s % 60) }
 }
 
-/// The call the permission question is about: the newest one without a result, while a question is open. It waits for
-/// the user, so it draws no spinner.
+/// The call the permission question is about, while a question is open: the open call with the question's tool and
+/// input (then its tool alone, then the oldest open call: a question is asked in the calls' order). It waits for the
+/// user, so it draws no spinner. It was the newest open call: with two edits in one message the second was marked while
+/// the question was about the first (design review 11).
 fn asked(t: &Tool, s: &Session, v: &View) -> bool {
-    v.asking.is_some() && s.blocks.iter().rev().find_map(|b| if let Block::Tool(x) = b { Some(x) } else { None }).is_some_and(|x| std::ptr::eq(x, t) && x.result.is_none())
+    if v.asking.is_none() || t.result.is_some() || t.done_ms.is_some() {
+        return false;
+    }
+    let open = || s.blocks.iter().filter_map(|b| if let Block::Tool(x) = b { Some(x) } else { None }).filter(|x| x.result.is_none() && x.done_ms.is_none());
+    let about = s.asked.front().and_then(|(tool, input)| open().find(|x| x.name == *tool && x.input == *input).or_else(|| open().find(|x| x.name == *tool)));
+    about.or_else(|| open().next()).is_some_and(|x| std::ptr::eq(x, t))
 }
 
 fn last_tool_name(s: &Session) -> String {
@@ -1275,7 +1305,9 @@ pub fn clock_str(ms: f64) -> String {
 /// working" on an idle session read as stuck, design review 4).
 pub fn times_str(s: &Session, v: &View) -> String {
     let busy = s.busy(v.clock_ms);
-    if busy < 1000.0 { clock_str(v.clock_ms - v.since_ms) } else { format!("{}  {} working", clock_str(v.clock_ms - v.since_ms), clock_str(busy)) }
+    // "worked" once it rests: "00:22  00:13 working" beside "ready" read as still running (design review 11)
+    let word = if matches!(s.activity, Activity::Ready | Activity::Done) { "worked" } else { "working" };
+    if busy < 1000.0 { clock_str(v.clock_ms - v.since_ms) } else { format!("{}  {} {word}", clock_str(v.clock_ms - v.since_ms), clock_str(busy)) }
 }
 
 /// The replay's speed ("▶ 4.0×", "⏸ paused"); nothing in a live session, where it is no control of the user's (until
@@ -1572,18 +1604,22 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
         }
         let before = lines.len();
         let gutter_w = if o.timeline { GUTTER } else { 0 };
-        let body = if grouped { group_lines(&s.blocks[i..group_end], s, v, th) } else { block_lines(b, s, v, th, o, open, width.saturating_sub(gutter_w)) };
+        let body = if grouped { group_lines(&s.blocks[i..group_end], s, v, th, o, width) } else { block_lines(b, s, v, th, o, open, width.saturating_sub(gutter_w)) };
         for (k, (mut l, mut cont)) in body.into_iter().enumerate() {
             if o.timeline {
                 let lead = if k == 0 {
                     // the node replaces the step's own status glyph
-                    if matches!(b, Block::Tool(_) | Block::Thinking { .. } | Block::Verify(_) | Block::Retry(_)) && !l.spans.is_empty() {
+                    if matches!(b, Block::Tool(_) | Block::Thinking { .. } | Block::Verify(_) | Block::Retry(_) | Block::Notice { .. }) && !l.spans.is_empty() {
                         let glyph_w = l.spans.remove(0).width();
                         // continuation rows lose the same width so they stay aligned
                         if let Some(first) = cont.first_mut() {
                             let pad = first.content.width().saturating_sub(glyph_w);
                             *first = Span::raw(" ".repeat(pad));
                         }
+                    }
+                    // the end row's glyph is in one span with its word ("✔ Done"): the node says it ("★ ✔ Done", design review 11)
+                    if let (Block::Done(_), Some(first)) = (b, l.spans.first_mut()) {
+                        *first = Span::styled(first.content.split_once(' ').map_or(String::new(), |(_, w)| w.to_string()), first.style);
                     }
                     let (node, c) = node(b, s, v, th);
                     vec![Span::styled(format!("{} ", clock_str(meta.at_ms)), st(th.faint)), Span::styled(node, st(c)), Span::raw(" ")]
@@ -1675,11 +1711,14 @@ fn node(b: &Block, s: &Session, v: &View, th: &Theme) -> (&'static str, Color) {
         Block::Thinking { .. } => ("◌", th.faint),
         Block::Tool(t) if asked(t, s, v) => ("?", th.warn),
         Block::Tool(t) if t.result.is_none() => (spinner(v.clock_ms), th.accent),
+        Block::Tool(t) if t.declined() => ("■", th.dim),
         Block::Tool(t) if t.error => ("✗", th.err),
         Block::Tool(_) => ("◆", th.dim),
         Block::Done(d) if d.stopped => ("■", th.dim),
         Block::Done(d) if d.ok => ("★", th.ok),
         Block::Done(_) => ("✗", th.err),
+        // no result is not a failure (the timeline drew a red ✗ beside "timed out · not verified")
+        Block::Verify(x) if x.no_tests || x.timed_out || x.cannot_run => ("·", th.faint),
         Block::Verify(x) if x.ok.is_none() => (spinner(v.clock_ms), th.accent),
         Block::Verify(x) if x.ok == Some(true) => ("✓", th.ok),
         Block::Verify(_) => ("✗", th.err),
@@ -1779,7 +1818,8 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             vec![(
                 Line::from(vec![
                     Span::styled(if *error { "! " } else { "· " }, st(if *error { th.err } else { th.faint })),
-                    Span::styled(if open || shown.chars().count() <= NOTICE_CHARS { shown } else {
+                    // cut only where that saves room: "(+6 chars · click to show)" took 26 to hide 6 (design review 11)
+                    Span::styled(if open || shown.chars().count() <= NOTICE_CHARS + 30 { shown } else {
                         format!("{}… (+{} chars · click to show)", shown.chars().take(NOTICE_CHARS).collect::<String>(), shown.chars().count() - NOTICE_CHARS)
                     }, st(if *error { th.err } else { th.dim })),
                 ]),
@@ -1890,6 +1930,7 @@ fn verify_lines(x: &crate::session::Verify, v: &View, th: &Theme) -> Vec<Prefixe
     let (glyph, color, state) = match x.ok {
         _ if x.no_tests => ("·", th.faint, "no tests found".to_string()),
         _ if x.timed_out => ("·", th.faint, format!("timed out after {:.0}s · not verified", x.secs)),
+        _ if x.cannot_run => ("·", th.faint, "could not run (command not found) · not verified".to_string()),
         None => (spinner(v.clock_ms), th.accent, "running…".to_string()),
         Some(true) => ("✓", th.ok, format!("passed · {:.1}s", x.secs)),
         Some(false) => ("✗", th.err, format!("failed · {:.1}s", x.secs)),
@@ -1963,16 +2004,19 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
         // cut off when its run was stopped: it has an end and no result
         (None, _) if t.done_ms.is_some() => ("■", th.dim),
         (None, _) => (spinner(v.clock_ms), th.accent),
+        (Some(_), _) if t.declined() => ("■", th.dim),
         (Some(_), false) => ("✓", th.ok),
         (Some(_), true) => ("✗", th.err),
     };
     let mut meta = match (&t.result, name) {
+        (Some(_), _) if t.declined() => "declined".to_string(),
         // a failed command says how it ended ("exit 1"), anything else "error"
         (Some(r), _) if t.error => crate::session::exit_line(r).and_then(|l| l.strip_prefix("[exit ")).map_or("error".to_string(), |c| format!("exit {}", c.trim_end_matches(']'))),
         (Some(_), "edit") => format!("-{} +{}", arg("old").lines().count(), arg("new").lines().count()),
         (Some(_), "write") => lines_n(arg("content").lines().count()),
         (Some(r), _) => lines_n(r.lines().count()),
         (None, _) if t.done_ms.is_some() => "stopped".to_string(),
+        (None, _) if asked(t, s, v) => "waits for your answer".to_string(),
         (None, _) => String::new(),
     };
     if let Some((n, last)) = &t.sub {
@@ -1990,7 +2034,7 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
     let cut = !open && summary.chars().count() > SUMMARY_CHARS;
     let summary = if cut { format!("{}…", summary.chars().take(SUMMARY_CHARS).collect::<String>()) } else { summary };
     let prompt = if matches!(name, "Agent" | "Task") { t.input["prompt"].as_str().unwrap_or_default() } else { "" };
-    let more = cut || !prompt.is_empty() || t.result.as_deref().is_some_and(|r| !r.trim().is_empty());
+    let more = cut || !prompt.is_empty() || (!t.declined() && t.result.as_deref().is_some_and(|r| !r.trim().is_empty()));
     if more && !matches!(name, "edit" | "TodoWrite") {
         meta.push_str(if open { "  ▾" } else { "  ▸" });
     }
@@ -2033,7 +2077,7 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
             .collect(),
         // a JSON reply laid out, and a line past three screen widths cut: one 4,000-character line of a gh query filled
         // the screen as a wall (design review 5)
-        _ if open => {
+        _ if open && !t.declined() => {
             let raw = t.result.as_deref().unwrap_or_default();
             let pretty = raw.trim_start().starts_with(['{', '[']).then(|| serde_json::from_str::<serde_json::Value>(raw).ok()).flatten()
                 .and_then(|j| serde_json::to_string_pretty(&j).ok());
@@ -2066,37 +2110,44 @@ fn lines_n(n: usize) -> String {
 }
 
 /// One quiet line for a run of tool calls: "⌁ ran 4 commands · bash ×3 read ×1 · 210 lines".
-fn group_lines(blocks: &[Block], s: &Session, v: &View, th: &Theme) -> Vec<Prefixed> {
+fn group_lines(blocks: &[Block], s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> Vec<Prefixed> {
     let tools: Vec<&Tool> = blocks.iter().filter_map(|b| if let Block::Tool(t) = b { Some(t) } else { None }).collect();
     let thought: u64 = blocks.iter().map(|b| if let Block::Thinking { tokens, .. } = b { *tokens } else { 0 }).sum();
     let approx = if blocks.iter().any(|b| matches!(b, Block::Thinking { exact: false, .. })) { "~" } else { "" };
     let thinking_now = matches!(blocks.last(), Some(Block::Thinking { live: true, .. }));
-    let running = tools.iter().find(|t| t.result.is_none());
+    // the call a permission question is about has not run: it waits for the answer ("? ran 1 tool … 0 lines", design review 11)
+    let waits = tools.iter().copied().find(|t| asked(t, s, v));
+    // any other open call keeps the spinner and its line
+    let running = tools.iter().copied().find(|t| t.result.is_none() && !waits.is_some_and(|w| std::ptr::eq(*t, w)));
     let mut counts: Vec<(&str, usize)> = Vec::new();
-    for t in &tools {
+    // what ran: not the one that waits, nor one the user said no to
+    // (nor, while a question is open, the calls queued behind it: "⠋ ran 2 tools" over a question about the first)
+    let did: Vec<&Tool> = tools.iter().copied().filter(|t| !(waits.is_some() && t.result.is_none()) && !t.declined()).collect();
+    for t in &did {
         let n = short_name(&t.name);
         match counts.iter_mut().find(|(k, _)| *k == n) {
             Some((_, c)) => *c += 1,
             None => counts.push((n, 1)),
         }
     }
-    let lines: usize = tools.iter().filter_map(|t| t.result.as_ref()).map(|r| r.lines().count()).sum();
-    let errors = tools.iter().filter(|t| t.error).count();
+    let lines: usize = did.iter().filter_map(|t| t.result.as_ref()).map(|r| r.lines().count()).sum();
+    let said_no = tools.iter().filter(|t| t.declined()).count();
+    let errors = did.iter().filter(|t| t.error).count();
+    let ran = did.len();
     let mix = counts.iter().map(|(n, c)| format!("{n} ×{c}")).collect::<Vec<_>>().join("  ");
-    let busy = running.is_some() || thinking_now;
-    let what = match (tools.len(), thinking_now) {
+    let busy = (running.is_some() || thinking_now) && waits.is_none();
+    let what = match (ran, thinking_now) {
+        (0, false) if said_no > 0 => format!("declined {}", tools.iter().filter(|t| t.declined()).map(|t| short_name(&t.name)).collect::<Vec<_>>().join(", ")),
         (0, _) => "thinking".to_string(),
         (n, true) => format!("ran {n} tools, thinking"),
         (1, false) => "ran 1 tool".to_string(),
         (n, false) => format!("ran {n} tools"),
     };
     let mut spans = vec![
-        // the call a question is about waits for the user: no spinner
-        if running.is_some_and(|t| asked(t, s, v)) { Span::styled("? ", st(th.warn)) } else {
-            Span::styled(if busy { format!("{} ", spinner(v.clock_ms)) } else { "⌁ ".into() }, st(if busy { th.accent } else { th.faint }))
-        },
+        // the call a question is about waits for the user: no spinner, and it is drawn under this line, not counted in it
+        Span::styled(if busy { format!("{} ", spinner(v.clock_ms)) } else { "⌁ ".into() }, st(if busy { th.accent } else { th.faint })),
         Span::styled(what, st(th.dim)),
-        Span::styled(if tools.is_empty() { String::new() } else { format!("   {mix}   {}", lines_n(lines)) }, st(th.faint)),
+        Span::styled(if ran == 0 { String::new() } else { format!("   {mix}   {}", lines_n(lines)) }, st(th.faint)),
     ];
     if thought > 0 {
         spans.push(Span::styled(format!("   thought {approx}{thought} tok"), st(th.faint)));
@@ -2104,7 +2155,20 @@ fn group_lines(blocks: &[Block], s: &Session, v: &View, th: &Theme) -> Vec<Prefi
     if errors > 0 {
         spans.push(Span::styled(format!("   {errors} failed"), st(th.err)));
     }
+    if said_no > 0 && ran > 0 {
+        spans.push(Span::styled(format!("   {said_no} declined"), st(th.faint)));
+    }
     let mut out = vec![(Line::from(spans), vec![Span::raw("  ")])];
+    if waits.is_some() && ran == 0 && thought == 0 && said_no == 0 {
+        out.clear(); // nothing ran before the question
+    }
+    // what the question is about, as the other designs show it: the command, the edit's diff, the file's content. Zen
+    // asked "allow edit: main.rs" with only the file's name above it (design review 11)
+    // a plan to approve is the text above the question, a question to the user is the question: their call's raw JSON says
+    // neither again; any other tool is its one-line summary
+    if let Some(t) = waits.filter(|t| !matches!(t.name.as_str(), "ExitPlanMode" | "AskUserQuestion")) {
+        out.extend(tool_lines(t, s, v, th, o, matches!(short_name(&t.name), "bash" | "edit" | "write"), width));
+    }
     if let Some(t) = running {
         out.push((Line::from(vec![Span::raw("  "), Span::styled(tool_summary(t, s), st(th.faint).add_modifier(Modifier::ITALIC))]), vec![Span::raw("  ")]));
     }
@@ -2526,6 +2590,14 @@ const COMPOSER_MAX_ROWS: usize = 6;
 
 /// The composer box: typed text on real lines (wrapped to `width`, the box's inside), or the one-line placeholder.
 pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16) -> Vec<Line<'static>> {
+    composer_rows_in(v, th, glyph, placeholder, width, COMPOSER_MAX_ROWS)
+}
+
+/// The same with at most `max` rows of the draft (zen in a short window: six rows and the completions under them pushed
+/// its header and the completions off the screen, design review 11).
+// ponytail: a click in a draft taller than a box capped under six rows lands by the six-row scroll (composer_index);
+// give composer_index the cap when someone edits long drafts in a 12-row window.
+pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16, max: usize) -> Vec<Line<'static>> {
     if let Some(q) = &v.asking {
         // the answers are what to act on: the brightest text of the row, their keys in the accent (they were the
         // dimmest on screen, design review 2026-11-19)
@@ -2543,13 +2615,13 @@ pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
     }
     let room = (width as usize).saturating_sub(4).max(1);
     let rows = composer_layout(v, room);
-    let skip = composer_skip(&rows, cursor_at(v));
+    let skip = composer_skip(&rows, cursor_at(v), max);
     let hints = hint_row(v, th, width);
     let sel = v.select;
     rows.into_iter()
         .enumerate()
         .skip(skip)
-        .take(COMPOSER_MAX_ROWS)
+        .take(max)
         .map(|(i, (cells, _))| {
             let lead = if i == 0 { format!(" {glyph} ") } else { "   ".to_string() };
             let mut spans = vec![Span::styled(lead, st(th.accent).add_modifier(Modifier::BOLD))];
@@ -2624,9 +2696,9 @@ fn cursor_at(v: &View) -> usize {
 }
 
 /// Rows scrolled off the top: the cursor's row stays in view when the input is taller than the box.
-fn composer_skip(rows: &[(Vec<(char, Option<usize>)>, usize)], at: usize) -> usize {
+fn composer_skip(rows: &[(Vec<(char, Option<usize>)>, usize)], at: usize, max: usize) -> usize {
     let row = rows.iter().position(|(r, end)| *end == at || r.iter().any(|(_, i)| i.is_none_or(|i| i == at))).unwrap_or(rows.len().saturating_sub(1));
-    (row + 1).saturating_sub(COMPOSER_MAX_ROWS)
+    (row + 1).saturating_sub(max.max(1))
 }
 
 /// The input's byte index under the mouse at (`col`, `row`) of the composer's text area, `width` wide: the same
@@ -2638,7 +2710,7 @@ pub fn composer_index(v: &View, width: u16, col: u16, row: u16) -> Option<usize>
     }
     let rows = composer_layout(v, (width as usize).saturating_sub(4).max(1));
     let at = cursor_at(v);
-    let skip = composer_skip(&rows, at);
+    let skip = composer_skip(&rows, at, COMPOSER_MAX_ROWS);
     let last = (rows.len() - skip).min(COMPOSER_MAX_ROWS) - 1;
     let (cells, end) = &rows[skip + (row as usize).min(last)];
     // the text starts after the 3-column lead (" › ")
@@ -2699,8 +2771,37 @@ pub fn composer_height(v: &View, outer_width: u16) -> u16 {
     rows.clamp(1, COMPOSER_MAX_ROWS) as u16 + 2 + u16::from(!v.hints.is_empty() || v.toast.is_some() || v.input.starts_with('!'))
 }
 
+/// A row's two sides made to fit `width` by leaving whole parts out: the left's last first, then the right's, each down
+/// to its first part; a separator left at an end goes too. At 40 columns the right side ran over the left ("手 taz● ready")
+/// and a status row ended mid-word ("CAC", design review 11).
+fn fit_row(mut left: Line<'static>, mut right: Line<'static>, width: usize) -> (Line<'static>, Line<'static>) {
+    let drop_last = |l: &mut Line<'static>| {
+        l.spans.pop();
+        while l.spans.len() > 1 && l.spans.last().is_some_and(|s| matches!(s.content.trim(), "" | "│")) {
+            l.spans.pop();
+        }
+    };
+    let over = |l: &Line<'static>, r: &Line<'static>| l.width() + r.width() + usize::from(l.width() > 0 && r.width() > 0) > width;
+    while left.spans.len() > 1 && over(&left, &right) {
+        drop_last(&mut left);
+    }
+    while right.spans.len() > 1 && over(&left, &right) {
+        drop_last(&mut right);
+    }
+    if over(&left, &right) {
+        // one part a side and still too wide (a long tool's name in the status): it ends in "…" beside the mark, where it
+        // ran over it
+        let room = width.saturating_sub(left.width() + usize::from(left.width() > 0));
+        if let Some(sp) = right.spans.first_mut() {
+            *sp = Span::styled(ellipsis(&sp.content, room), sp.style);
+        }
+    }
+    (left, right)
+}
+
 /// Left and right content on one row.
 pub fn split_row(f: &mut Frame, area: Rect, left: Line<'static>, right: Line<'static>, bg: Option<Color>) {
+    let (left, right) = fit_row(left, right, area.width as usize);
     // paint the row background first: a styled Paragraph would repaint over the spans' own colors
     if let Some(c) = bg {
         f.render_widget(ratatui::widgets::Block::new().style(Style::new().bg(c)), area);
@@ -3223,6 +3324,123 @@ mod tests {
         on(&mut s, serde_json::json!({"type": "result", "subtype": "error_during_execution", "is_error": true, "result": "[provider error: HTTP 429: Rate limit reached (rate_limit_error)]"}), 9000.0);
         assert_eq!(activity(&s, &v, th), ("✗", "failed".to_string(), th.err));
         assert!(render(&s, &v).contains("gave up after 3 tries"));
+    }
+
+    /// Design review 11: zen asked about an edit without its diff, showed one row of a draft and no completions, called a
+    /// waiting call "ran" and a declined one "failed"; narrow rows cut mid-word.
+    #[test]
+    fn zen_shows_what_is_asked_the_whole_draft_and_a_declined_call_as_declined() {
+        let mut s = Session::new("", "medium");
+        let on = |s: &mut Session, e: serde_json::Value, at: f64| s.apply(&e, at);
+        on(&mut s, serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "c1", "name": "edit", "input": {"path": "main.rs", "old": "old line", "new": "new line"}}]}}), 1.0);
+        let mut v = View { design: Design::Zen, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: Some("edit: main.rs".into()), mode: "ask".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let render = |s: &Session, v: &View| {
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
+            term.draw(|f| { draw(f, s, v); }).unwrap();
+            let buf = term.backend().buffer().clone();
+            (0..buf.area.height).map(|y| (0..100).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>()).collect::<Vec<_>>().join("\n")
+        };
+        let screen = render(&s, &v);
+        assert!(screen.contains("- old line") && screen.contains("+ new line") && screen.contains("waits for your answer") && !screen.contains("ran 1 tool"), "{screen}");
+        // declined: the model's sentence is not on screen, and nothing counts as failed
+        v.asking = None;
+        on(&mut s, serde_json::json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "is_error": true, "content": "The user declined this. Ask what they want instead, or try another way."}]}}), 2.0);
+        let screen = render(&s, &v);
+        assert!(screen.contains("⌁ declined edit") && !screen.contains("failed") && !screen.contains("ran 1 tool") && screen.contains("[ask]"), "{screen}");
+        v.expand_all = true;
+        let screen = render(&s, &v);
+        assert!(screen.contains("declined") && !screen.contains("Ask what they want"), "{screen}");
+        // a draft of three lines: all three, and the completions under them
+        (v.input, v.hints) = ("first line\nsecond line\nlook at @ma".into(), vec!["main.rs".into()]);
+        v.cursor = v.input.len();
+        let screen = render(&s, &v);
+        assert!(["› first line", "second line", "look at @ma", "tab › main.rs"].iter().all(|t| screen.contains(t)), "{screen}");
+        // a row too narrow for both sides loses whole parts, never half a word
+        let line = |parts: &[&str]| Line::from(parts.iter().map(|p| Span::raw(p.to_string())).collect::<Vec<_>>());
+        let (l, r) = fit_row(line(&[" 手 ", "tazuna "]), line(&["● ready", "   ", "≈$0", "   ", "Mock Model", "  medium "]), 40);
+        assert_eq!((l.to_string(), r.to_string()), (" 手 ".to_string(), "● ready   ≈$0   Mock Model  medium ".to_string()));
+        let (l, _) = fit_row(line(&[" READY ", " T0 ", " CTX 0 ", " CACHE 0% "]), line(&[" 00:01 "]), 28);
+        assert_eq!(l.to_string(), " READY  T0  CTX 0 ");
+        assert_eq!(whole_hints("↑↓ model · ← providers · tab provider pin · enter choose · esc close", 50), "↑↓ model · ← providers · tab provider pin");
+    }
+
+    /// The review of design review 11's fixes: the question pinned to the wrong one of two calls, a plan's call as raw
+    /// JSON, "✓ done" after esc during the tests, the menu's selected row out of sight in a short box, zen's draft pushing
+    /// its header and completions off a 12-row screen, a long status over the mark.
+    #[test]
+    fn a_question_marks_its_own_call_and_small_screens_keep_what_matters() {
+        let on = |s: &mut Session, e: serde_json::Value, at: f64| s.apply(&e, at);
+        let view = |d: Design| View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "ask".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
+        let render = |s: &Session, v: &View, w: u16, h: u16| {
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+            term.draw(|f| { draw(f, s, v); }).unwrap();
+            let buf = term.backend().buffer().clone();
+            (0..h).map(|y| (0..w).map(|x| buf[(x, y)].symbol().to_string()).collect::<String>()).collect::<Vec<_>>().join("\n")
+        };
+        let row = |screen: &str, what: &str| screen.lines().find(|l| l.contains(what)).unwrap_or_else(|| panic!("no {what} in\n{screen}")).to_string();
+        // two edits in one message, the question about the first
+        let edit = |id: &str, path: &str| serde_json::json!({"type": "tool_use", "id": id, "name": "edit", "input": {"path": path, "old": format!("old {path}"), "new": format!("new {path}")}});
+        let mut s = Session::new("", "medium");
+        on(&mut s, serde_json::json!({"type": "assistant", "message": {"content": [edit("c1", "a.rs"), edit("c2", "b.rs")]}}), 1.0);
+        on(&mut s, serde_json::json!({"type": "harness_permission", "tool": "edit", "input": {"path": "a.rs", "old": "old a.rs", "new": "new a.rs"}}), 2.0);
+        let mut v = view(Design::Zen);
+        v.asking = Some("edit: a.rs".into());
+        let zen = render(&s, &v, 100, 30);
+        assert!(row(&zen, "? edit").contains("a.rs") && zen.contains("- old a.rs") && !zen.contains("- old b.rs") && !zen.contains("ran 2 tools") && !zen.contains("ran 1 tool"), "{zen}");
+        v.design = Design::Cockpit;
+        let cockpit = render(&s, &v, 110, 30);
+        assert!(row(&cockpit, "? edit").contains("a.rs") && row(&cockpit, "? edit").contains("waits for your answer") && !row(&cockpit, " b.rs").contains("waits"), "{cockpit}");
+        // answered: the question about the second marks the second
+        on(&mut s, serde_json::json!({"type": "harness_permission_done", "tool": "edit", "allow": true, "always": false, "mode": "default"}), 3.0);
+        on(&mut s, serde_json::json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "content": "ok"}]}}), 3.0);
+        on(&mut s, serde_json::json!({"type": "harness_permission", "tool": "edit", "input": {"path": "b.rs", "old": "old b.rs", "new": "new b.rs"}}), 4.0);
+        v.asking = Some("edit: b.rs".into());
+        let cockpit = render(&s, &v, 110, 30);
+        assert!(row(&cockpit, "? edit").contains("b.rs"), "{cockpit}");
+
+        // a plan to approve: its text, not its call as JSON over the question
+        let mut s = Session::new("", "medium");
+        on(&mut s, serde_json::json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "p1", "name": "ExitPlanMode", "input": {"plan": "## Plan\n\n1. do a thing\n2. do another"}}]}}), 1.0);
+        on(&mut s, serde_json::json!({"type": "harness_permission", "tool": "ExitPlanMode", "input": {"plan": "## Plan\n\n1. do a thing\n2. do another"}}), 2.0);
+        let mut v = view(Design::Zen);
+        v.asking = Some("ExitPlanMode: approve this plan and start editing".into());
+        let zen = render(&s, &v, 100, 30);
+        assert!(zen.contains("do a thing") && !zen.contains("{\"plan\"") && !zen.contains("\\n"), "{zen}");
+
+        // esc while the tests run: the run ends as stopped, whatever the reply's own end row says
+        let mut s = Session::new("", "medium");
+        on(&mut s, serde_json::json!({"type": "harness_user", "text": "change it"}), 0.0);
+        on(&mut s, serde_json::json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0}), 1.0);
+        on(&mut s, serde_json::json!({"type": "harness_verify_start", "cmd": "cargo test", "round": 1}), 2.0);
+        on(&mut s, serde_json::json!({"type": "harness_verify_cancel"}), 3.0);
+        on(&mut s, serde_json::json!({"type": "harness_verify_done", "cmd": "cargo test", "ok": true, "secs": 1.0, "output": "", "final": true}), 4.0);
+        let v = view(Design::Zen);
+        assert_eq!(activity(&s, &v, Design::Zen.theme()).1, "stopped");
+        on(&mut s, serde_json::json!({"type": "harness_user", "text": "again"}), 5.0);
+        on(&mut s, serde_json::json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0}), 6.0);
+        assert_eq!(activity(&s, &v, Design::Zen.theme()).1, "done", "the next run is its own");
+
+        // the / menu in a short window: the selected row is on screen
+        let s = Session::new("", "medium");
+        for d in [Design::Cockpit, Design::Zen] {
+            let mut v = view(d);
+            (v.input, v.cursor) = ("/".into(), 1);
+            v.menu = (0..12).map(|i| (format!("/cmd{i}"), "does a thing".to_string())).collect();
+            v.menu_sel = 9;
+            let screen = render(&s, &v, 40, 12);
+            assert!(screen.contains("›/cmd9"), "{screen}");
+        }
+        // zen at 40x12 with a six-line draft: the header and the completions' row stay
+        let mut v = view(Design::Zen);
+        (v.input, v.hints) = ("one\ntwo\nthree\nfour\nfive\nlook at @ma".into(), vec!["main.rs".into()]);
+        v.cursor = v.input.len();
+        let screen = render(&s, &v, 40, 12);
+        assert!(screen.lines().next().is_some_and(|l| l.contains("tazuna")) && screen.contains("look at @ma") && screen.contains("tab › main.rs"), "{screen}");
+
+        // one part a side and still too wide: the status ends in "…" beside the mark
+        let line = |parts: &[&str]| Line::from(parts.iter().map(|p| Span::raw(p.to_string())).collect::<Vec<_>>());
+        let (l, r) = fit_row(line(&[" 手 ", "tazuna "]), line(&["⠋ running mcp__github__create_pull_request", "   ", "≈$0"]), 40);
+        assert!(l.to_string() == " 手 " && r.to_string().ends_with('…') && l.width() + 1 + r.width() <= 40, "{l} | {r}");
     }
 
     #[test]

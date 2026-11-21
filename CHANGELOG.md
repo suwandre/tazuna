@@ -16,6 +16,49 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.192 (2026-11-21): zen asks with the diff in view, and a test command that is not installed is no failure
+
+Design review 11 (the user: "really check every tab, every click… check if there are any visual or actual bugs"), the
+terminal's part: every design, overlay, size and theme on a scripted provider, beside Claude Code, Codex, opencode and pi.
+No pass: zen, the default since 0.1.189, lacked what the other three designs have. The defects are fixed here; the look's
+changes (one overlay frame, tables as rules, two designs) wait for the user's pick from desktop/mockups/v8.html.
+
+- Zen asks with the call in view: the command, the edit's diff or the written file over the question (it asked "allow
+  edit: main.rs" blind). Its message box grows to six rows with a draft (one row showed the end of a three-line draft),
+  has the `@` and `/` completions, and shows the mode beside the status when it is not auto.
+- A call that waits for your answer says so ("? edit main.rs · waits for your answer"; it read "ran 1 tool … 0 lines"). A
+  declined one reads "declined", dim, and counts as declined: it showed the sentence meant for the model in red and
+  counted as a failure. The model gets the same sentence as before.
+- A stopped run's status says "■ stopped" (a green "✓ done" stood beside "■ Stopped").
+- The `/` menu marks its selected row with `›`, so it shows with NO_COLOR too (the selection was a colour alone).
+- Timeline shows one marker per row ("! !", "★ ✔" were doubled).
+- A row too narrow for its parts drops whole parts, never half a word: cockpit's header at 40 columns read "手 taz● ready"
+  and its message box collapsed, timeline's status ended in "CAC", the model picker's hints in "enter ch".
+- A test command that is not installed is "could not run · not verified": no fix round and no hand-over to a stronger
+  model. A machine without `cargo` counted it as "tests failed" and handed the task to Opus. The rule: the shell's exit
+  127 with an output line that names the command's own program as not found ("cargo: command not found"; sh, bash, dash
+  and zsh wordings). Any other 127 stays a failure with its fix round: a test script that calls a binary the change
+  renamed, or `npm test` whose script names a tool never installed. A type check that is not installed is no pass
+  either (it counted as one). The session view says so (`cannot_run`), the window shows "Could not run", and the run log
+  and a headless result say `could_not_run` (and `timed_out` for a timeout; both read "claimed").
+- With several calls in one message, the question marks the call it is about (matched by tool and input), and the calls
+  queued behind it are not counted as run. A plan or a question to you is not shown a second time as a call over it.
+  Esc while the tests run ends in "stopped". The `/` menu keeps its selected row in view in a short window, and zen's
+  draft leaves room for its completions there. Cockpit's tools panel does not count a declined call as a failure, and
+  the session view marks it (`declined`) for the window.
+- `--help` names zen as the design without a saved choice (it said cockpit); `/effort` on a model that is not in the
+  model list says what is sent, not that it "takes no effort level" under a header that showed one; cockpit says "exact
+  (reported)" only for a cost that is no estimate; the clock at rest reads "worked", not "working"; a notice is cut only
+  when what is left is longer than the note that says so; a blank row under zen's header.
+- Metrics: none moves on a machine with its test command installed. Without it, a task no longer escalates (one fix
+  round and a hand-over less: the cost of an Opus run per task in that case), and its log line says why. 219 tests pass.
+  An independent review of the first version of these fixes found eleven defects (the 127 rule swallowed real failures,
+  the question sat on the wrong call of two); they are fixed above, each with a test.
+- Seen on the scripted provider in a pty, each fix as a capture (out/review-11/cli-after). Not seen in pixels: cockpit's
+  "exact" label (the scripted provider reports no exact cost), a plan's approval in zen (a test only: the own loop has no
+  plan tool), Git Bash's wording on Windows. Left: a listed model with no effort levels still shows the effort sent in the
+  header; cockpit at 40x12 with a six-line draft loses its completions row.
+
 ## 0.1.191 (2026-11-21): a mark of its own, quiet motion, and a missing price said at once
 
 Design review 10 (the user: "compare it against other harnesses… what would you add, what would you remove"), set beside

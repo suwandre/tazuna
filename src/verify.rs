@@ -24,6 +24,10 @@ pub struct Outcome {
     /// package that took over 600 s under load came back as a failure and the model hunted bugs that were not there
     /// (three prometheus runs, 2026-10-26).
     pub timed_out: bool,
+    /// The command itself could not run: the shell found no such program (exit 127 and its words name the command's own
+    /// program, see `own_program_missing`). No result, so no fix round and no hand-over: a machine without `cargo` on its
+    /// PATH read as "tests failed", and the task went to the stronger model (design review 11).
+    pub cannot_run: bool,
     pub code: Option<i32>,
     pub secs: f64,
     /// Trimmed to what claude needs to fix the failure.
@@ -162,16 +166,22 @@ pub fn check(cwd: &Path, tests: Option<String>, types: Option<(String, String)>)
     let tc = types.map(|(cmd, before)| {
         let cwd = cwd.to_path_buf();
         std::thread::spawn(move || {
-            let (_, after, secs) = run_raw(&cwd, &cmd);
-            (cmd, new_type_errors(&before, &after), secs)
+            let (code, after, secs) = run_raw(&cwd, &cmd);
+            // the type checker is not on this machine: no result (its "command not found" holds no TS error, and read as a pass)
+            let missing = code == Some(127) && own_program_missing(&cmd, &after);
+            (cmd, new_type_errors(&before, &after), secs, missing)
         })
     });
     let mut o = tests.map(|c| preexisting(run(cwd, &c), |o| failing_before(cwd, &o.cmd, &o.failed)));
-    let Some((cmd, errors, secs)) = tc.and_then(|h| h.join().ok()) else {
-        return o.unwrap_or_else(|| Outcome { cmd: String::new(), ok: true, no_tests: true, timed_out: false, code: None, secs: 0.0, output: String::new(), failed: vec![], preexisting: vec![] });
+    let Some((cmd, errors, secs, missing)) = tc.and_then(|h| h.join().ok()) else {
+        return o.unwrap_or_else(|| Outcome { cmd: String::new(), ok: true, no_tests: true, timed_out: false, cannot_run: false, code: None, secs: 0.0, output: String::new(), failed: vec![], preexisting: vec![] });
     };
-    let base = o.take().unwrap_or(Outcome { cmd: String::new(), ok: true, no_tests: false, timed_out: false, code: Some(0), secs: 0.0, output: String::new(), failed: vec![], preexisting: vec![] });
+    let base = o.take().unwrap_or(Outcome { cmd: String::new(), ok: true, no_tests: false, timed_out: false, cannot_run: false, code: Some(0), secs: 0.0, output: String::new(), failed: vec![], preexisting: vec![] });
     let cmd = if base.cmd.is_empty() { cmd } else { format!("{} + {cmd}", base.cmd) };
+    if missing && base.ok {
+        // the tests' failure stands by itself; their pass without the type check is not "verified"
+        return Outcome { cmd, ok: false, no_tests: false, cannot_run: true, code: Some(127), secs: base.secs.max(secs), ..base };
+    }
     if errors.is_empty() {
         return Outcome { cmd, no_tests: false, secs: base.secs.max(secs), ..base };
     }
@@ -180,7 +190,7 @@ pub fn check(cwd: &Path, tests: Option<String>, types: Option<(String, String)>)
     if !base.ok {
         output = format!("{}\n\n{output}", base.output);
     }
-    Outcome { cmd, ok: false, no_tests: false, timed_out: false, code: base.code.filter(|&c| c != 0).or(Some(1)), secs: base.secs.max(secs), output: trim(&output), ..base }
+    Outcome { cmd, ok: false, no_tests: false, timed_out: false, cannot_run: false, code: base.code.filter(|&c| c != 0).or(Some(1)), secs: base.secs.max(secs), output: trim(&output), ..base }
 }
 
 /// Whether verify can test this repo at all: a command given, or one it would find (a Go module, a Cargo crate, Python
@@ -224,7 +234,24 @@ fn run_for(cwd: &Path, cmd: &str, limit: Duration) -> Outcome {
     let (code, output, secs) = run_limited(cwd, cmd, limit);
     let no_tests = code == Some(5) && (cmd.contains("pytest") || cmd.contains("unittest"));
     let timed_out = code.is_none() && secs >= limit.as_secs_f64();
-    Outcome { cmd: cmd.into(), ok: code == Some(0), no_tests, timed_out, code, secs, failed: go_failures(&output), preexisting: vec![], output: trim(&output) }
+    let cannot_run = code == Some(127) && own_program_missing(cmd, &output);
+    Outcome { cmd: cmd.into(), ok: code == Some(0), no_tests, timed_out, cannot_run, code, secs, failed: go_failures(&output), preexisting: vec![], output: trim(&output) }
+}
+
+/// Whether a shell's exit 127 says that the command's own program is not on this machine: its output names the first word
+/// of the command (or of a part after `&&`, `;`, `|`; `VAR=x` words before it skipped) as not found, in sh's and bash's
+/// words ("cargo: command not found"), dash's ("cargo: not found") or zsh's ("command not found: cargo"). Any other 127
+/// is a failure like every other: a test script that calls a binary the change renamed, or `npm test` whose script names
+/// a tool that was never installed, also end in 127, and the model has to hear about those. Windows runs the command in
+/// Git Bash, which says it as bash does; a tool missing inside an npm script exits 1 there (cmd.exe), a failure as here.
+fn own_program_missing(cmd: &str, output: &str) -> bool {
+    let parts = cmd.replace("&&", ";").replace("||", ";").replace('|', ";");
+    let programs: Vec<&str> = parts.split(';').filter_map(|p| p.split_whitespace().find(|w| !(w.contains('=') && !w.starts_with('=')))).collect();
+    // the name as a word of its own: "go: not found" is not in "./bin/go: not found"
+    let names = |line: &str, what: &str| line.match_indices(what).any(|(i, _)| i == 0 || line[..i].ends_with([' ', '\t']));
+    output.lines().any(|l| {
+        programs.iter().any(|p| names(l, &format!("{p}: command not found")) || names(l, &format!("{p}: not found")) || l.trim_end().ends_with(&format!("not found: {p}")))
+    })
 }
 
 /// The Go tests a `go test` output reports failing, by top-level name (a subtest counts as its test), once each; a
@@ -445,7 +472,7 @@ mod tests {
         let out = "=== RUN   TestA\n--- FAIL: TestA (60.01s)\n=== RUN   TestB\n    --- FAIL: TestB/sub (0.00s)\n--- FAIL: TestB (0.00s)\nFAIL\tgo.k6.io/k6/v2/internal/cmd\t62.3s\n";
         assert_eq!(go_failures(out), ["TestA", "TestB"]);
         assert_eq!(go_failures("FAIL\tx/y [build failed]\n"), ["(build)"]);
-        let failed = |names: &[&str]| Outcome { cmd: "go test ./a/".into(), ok: false, no_tests: false, timed_out: false, code: Some(1), secs: 1.0,
+        let failed = |names: &[&str]| Outcome { cmd: "go test ./a/".into(), ok: false, no_tests: false, timed_out: false, cannot_run: false, code: Some(1), secs: 1.0,
             output: "the failure".into(), failed: names.iter().map(|s| s.to_string()).collect(), preexisting: vec![] };
         let old = |names: &[&str]| { let v: Vec<String> = names.iter().map(|s| s.to_string()).collect(); move |_: &Outcome| Some(v) };
         let o = preexisting(failed(&["TestA"]), old(&["TestA"]));
@@ -563,5 +590,40 @@ mod tests {
         let o = run_for(Path::new("."), "sleep 5", Duration::from_millis(300));
         assert!(o.timed_out && !o.ok && o.code.is_none(), "killed at the limit");
         assert!(!run_for(Path::new("."), "exit 1", Duration::from_secs(5)).timed_out, "a failure is a failure");
+    }
+
+    #[test]
+    fn a_command_that_is_not_there_is_no_result_not_a_failure() {
+        let o = run_for(Path::new("."), "tazuna-no-such-test-runner test", Duration::from_secs(5));
+        assert!(o.cannot_run && !o.ok && o.code == Some(127), "the shell found no such program: {:?} {}", o.code, o.output);
+        assert!(!run_for(Path::new("."), "exit 1", Duration::from_secs(5)).cannot_run, "a failure is a failure");
+        assert!(run_for(Path::new("."), "cd . && X=1 tazuna-no-such-test-runner test", Duration::from_secs(5)).cannot_run, "after cd and a variable too");
+        // a 127 from inside the command is a failure the model has to hear about: a script that calls a binary the change
+        // renamed, a package script whose tool was never installed
+        let inside = run_for(Path::new("."), "sh -c 'tazuna-no-such-tool --selftest'", Duration::from_secs(5));
+        assert!(inside.code == Some(127) && !inside.cannot_run, "a tool missing inside a script: {}", inside.output);
+        assert!(!run_for(Path::new("."), "exit 127", Duration::from_secs(5)).cannot_run, "a bare 127");
+        // each shell's words for it
+        assert!(own_program_missing("cargo test --quiet", "sh: cargo: command not found\n"));
+        assert!(own_program_missing("cargo test", "bash: line 1: cargo: command not found\n"));
+        assert!(own_program_missing("go test ./a/", "sh: 1: go: not found\n"));
+        assert!(own_program_missing("npm test", "zsh:1: command not found: npm\n"));
+        assert!(!own_program_missing("npm test", "\n> test\n> vitest run\n\nsh: vitest: command not found\n"));
+        assert!(!own_program_missing("go test ./a/", "scripts/gen.sh: line 3: ./bin/go: not found\n"));
+        assert!(!own_program_missing("./scripts/test.sh", "./scripts/test.sh: line 3: ./target/debug/oldname: No such file or directory\n"));
+    }
+
+    #[test]
+    fn a_type_check_that_is_not_installed_is_no_pass() {
+        let dir = std::env::temp_dir();
+        // no tests, the type checker missing: no result (it read as "verified": its output holds no TS error)
+        let o = check(&dir, None, Some(("tazuna-no-such-tsc --noEmit".into(), String::new())));
+        assert!(o.cannot_run && !o.ok, "types alone: {:?}", o.code);
+        // the tests pass, the type checker is missing: not verified
+        let o = check(&dir, Some("true".into()), Some(("tazuna-no-such-tsc --noEmit".into(), String::new())));
+        assert!(o.cannot_run && !o.ok && o.cmd == "true + tazuna-no-such-tsc --noEmit", "{}", o.cmd);
+        // the tests fail: their failure stands
+        let o = check(&dir, Some("exit 1".into()), Some(("tazuna-no-such-tsc --noEmit".into(), String::new())));
+        assert!(!o.cannot_run && !o.ok && o.code == Some(1));
     }
 }

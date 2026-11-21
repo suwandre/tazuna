@@ -37,6 +37,8 @@ pub struct Verify {
     pub no_tests: bool,
     /// The tests outran the time limit: no result.
     pub timed_out: bool,
+    /// The test command is not on this machine (the shell's exit 127): no result.
+    pub cannot_run: bool,
     pub round: u64,
     /// None while the tests run.
     pub ok: Option<bool>,
@@ -57,6 +59,12 @@ pub struct Tool {
 }
 
 impl Tool {
+    /// A call the user said no to. Its result is the sentence written for the model ("The user declined this. Ask what
+    /// they want instead…"), which the screen showed in red as an error and counted as a failure (design review 11).
+    pub fn declined(&self) -> bool {
+        self.error && self.result.as_deref().is_some_and(|r| r.starts_with("The user declined this"))
+    }
+
     pub fn secs(&self) -> Option<f64> {
         self.done_ms.map(|d| (d - self.started_ms) / 1000.0)
     }
@@ -231,6 +239,11 @@ pub struct Session {
     usage_at_result: Usage,
     /// An interrupt was requested; the next result ends a stopped run.
     stopping: bool,
+    /// The open permission questions, oldest first, each as its tool and input: the screen marks the call the front one
+    /// is about (with two calls in one message it marked the newest, and the question was about the first).
+    pub asked: std::collections::VecDeque<(String, Value)>,
+    /// Esc during verification: the run ends when the tests return, as stopped (the status said a green "✓ done").
+    pub verify_cancelled: bool,
     /// Bumped whenever a new block appears or a tool finishes (effects key off it).
     pub new_blocks: usize,
     pub finished_tools: usize,
@@ -342,6 +355,8 @@ impl Session {
             ready_at: None,
             usage_at_result: Usage::default(),
             stopping: false,
+            asked: Default::default(),
+            verify_cancelled: false,
             new_blocks: 1,
             finished_tools: 0,
             results: 0,
@@ -442,7 +457,7 @@ impl Session {
             Block::Text { text, live } => json!({"kind": "text", "text": text, "live": live}),
             Block::Thinking { tokens, live, exact, text } => json!({"kind": "thinking", "tokens": tokens, "live": live, "exact": exact, "text": text.chars().take(20_000).collect::<String>()}),
             Block::Tool(t) => json!({"kind": "tool", "id": t.id, "name": t.name, "input": t.input, "result": t.result.as_deref().map(|r| cut(r, 4000)),
-                "error": t.error, "secs": t.secs(), "running": t.done_ms.is_none(), "stopped": t.done_ms.is_some() && t.result.is_none(), "sub": t.sub.as_ref().map(|(n, last)| json!({"calls": n, "last": last}))}),
+                "error": t.error, "declined": t.declined(), "secs": t.secs(), "running": t.done_ms.is_none(), "stopped": t.done_ms.is_some() && t.result.is_none(), "sub": t.sub.as_ref().map(|(n, last)| json!({"calls": n, "last": last}))}),
             Block::Done(d) => json!({"kind": "done", "ok": d.ok, "secs": d.secs, "turns": d.turns, "cost": d.cost, "usage": usage(&d.usage), "stopped": d.stopped,
                 "run_cost": d.run_cost, "run_usage": usage(&d.run_usage)}),
             Block::Notice { text, error } => json!({"kind": "notice", "text": text, "error": error}),
@@ -450,7 +465,7 @@ impl Session {
             Block::Retry(r) => json!({"kind": "notice", "error": r.gave_up, "text": format!("{}: {} {} failed{} ({})", r.why, r.tries,
                 if r.tries == 1 { "try" } else { "tries" }, if r.next_ms.is_some() { ", trying again" } else { "" }, r.raw)}),
             Block::Verify(v) => json!({"kind": "verify", "cmd": v.cmd, "ok": v.ok, "secs": v.secs, "round": v.round, "no_tests": v.no_tests,
-                "timed_out": v.timed_out, "output": cut(&v.output, 4000)}),
+                "timed_out": v.timed_out, "cannot_run": v.cannot_run, "output": cut(&v.output, 4000)}),
         }).collect();
         json!({"type": "view", "blocks": blocks, "model": self.model, "effort": self.effort, "cwd": self.cwd, "profile": self.profile,
             "mode": self.mode, "activity": format!("{:?}", self.activity), "cost": self.cost(), "usage": usage(&self.usage), "turns": self.turns,
@@ -627,10 +642,11 @@ impl Session {
                 self.last_prompt = s(&e["text"]);
                 self.push(Block::Prompt(s(&e["text"])));
                 self.activity = Activity::Waiting;
+                self.verify_cancelled = false;
             }
             (Some("harness_interrupt"), _) => self.stopping = true,
             (Some("harness_verify_start"), _) => {
-                self.push(Block::Verify(Verify { cmd: s(&e["cmd"]), no_tests: false, timed_out: false, round: e["round"].as_u64().unwrap_or(1), ok: None, secs: 0.0, output: String::new() }));
+                self.push(Block::Verify(Verify { cmd: s(&e["cmd"]), no_tests: false, timed_out: false, cannot_run: false, round: e["round"].as_u64().unwrap_or(1), ok: None, secs: 0.0, output: String::new() }));
                 self.activity = Activity::Verifying;
             }
             (Some("harness_verify_done"), _) => {
@@ -638,6 +654,7 @@ impl Session {
                     (v.ok, v.secs, v.output) = (e["ok"].as_bool(), e["secs"].as_f64().unwrap_or(0.0), s(&e["output"]));
                     v.no_tests = e["no_tests"] == true;
                     v.timed_out = e["timed_out"] == true;
+                    v.cannot_run = e["cannot_run"] == true;
                 }
                 self.finished_tools += 1; // pulse like a finished tool
                 self.activity = if e["final"] == true { Activity::Done } else { Activity::Waiting };
@@ -669,6 +686,7 @@ impl Session {
             (Some("harness_verify_cancel"), _) => {
                 self.push(Block::Notice { text: "verification cancelled · the run ends when the tests return".into(), error: false });
                 self.activity = Activity::Ready;
+                self.verify_cancelled = true;
             }
             // UI-only message (not from the process): no effect on cost or tools
             (Some("harness_review_start"), _) => {
@@ -685,6 +703,7 @@ impl Session {
             }
             (Some("harness_review"), _) => self.push(Block::Notice { text: "self-review: checking the change against the task".into(), error: false }),
             (Some("harness_permission"), _) => {
+                self.asked.push_back((s(&e["tool"]), e["input"].clone()));
                 // the question itself is drawn from live's queue; the transcript only gets the plan to approve
                 if e["tool"] == "ExitPlanMode" {
                     let plan: String = e["input"]["plan"].as_str().unwrap_or_default().chars().map(|c| if invisible(c) || (c.is_control() && c != '\n') { '�' } else { c }).collect();
@@ -693,9 +712,11 @@ impl Session {
                 self.activity = Activity::Waiting;
             }
             (Some("harness_permission_cleared"), _) => {
+                self.asked.clear();
                 self.push(Block::Notice { text: "open permission questions dropped: claude stopped".into(), error: false });
             }
             (Some("harness_permission_done"), _) => {
+                self.asked.pop_front();
                 self.mode = mode_name(e["mode"].as_str().unwrap_or_default()).to_string();
                 let verb = match (e["allow"] == true, e["always"] == true) {
                     (true, true) => "allowed for this session:",
