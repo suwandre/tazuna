@@ -12,6 +12,8 @@ export type ToolStep = {
   verb: string; target: string; detail?: string; secs: number; ok: boolean; running?: boolean;
   /** cut off when its reply was stopped: it has no result */
   stopped?: boolean;
+  /** you said no to it: neither done nor failed (its result is the sentence written for the model, not shown) */
+  declined?: boolean;
   /** the call's id: a subagent's own conversation is asked for by it */
   id?: string;
   kind?: "tool" | "thinking"; name?: string; input?: Record<string, unknown> | null; result?: string; text?: string;
@@ -153,3 +155,13 @@ export function shortTitle(text?: string | null, named = false): string {
  * digits below a tenth of a cent ($0.00012) so a cheap turn does not read as free, and $0 for nothing. Until desktop 0.1.77
  * always three decimals: "$10.127" (design review 5). */
 export const usd = (n: number) => (n <= 0 ? "$0" : n < 0.001 ? `$${n.toPrecision(2)}` : n < 0.1 ? `$${n.toFixed(3)}` : `$${n.toFixed(2)}`);
+
+const onMac = typeof navigator !== "undefined" && navigator.userAgent.includes("Mac");
+/** A shortcut as this machine's keyboard says it: written the Mac's way in the code ("⌘⇧U"), "Ctrl+Shift+U" on Windows
+ * and Linux, where the window showed ⌘ on keyboards that have none (design review 11). */
+export const keysOf = (k: string, mac = onMac) => (mac ? k : k.replace(/⌘/g, "Ctrl+").replace(/⇧/g, "Shift+").replace(/↵/g, "Enter"));
+export function demoKeys() {
+  const got = [keysOf("⌘⇧U", false), keysOf("⌘K", false), keysOf("⇧Tab", false), keysOf("⌘↵", false), keysOf("⌘\\", true)].join(" ");
+  if (got !== "Ctrl+Shift+U Ctrl+K Shift+Tab Ctrl+Enter ⌘\\") throw new Error(`keys: ${got}`);
+  console.log("keys ok");
+}

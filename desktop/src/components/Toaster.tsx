@@ -17,7 +17,7 @@ export function Toaster() {
     {(bar.length > 0 || update.installing) && <div className="pointer-events-none fixed inset-x-0 bottom-28 z-50 flex flex-col items-center gap-2">
       {/* an update on its way: its progress until the restart (no close: it cannot be stopped halfway) */}
       {update.installing && (
-        <div role="status" className="tz-enter pointer-events-auto w-[360px] rounded-lg border border-line-strong bg-card px-3 py-2.5 text-[13px] text-ink shadow-composer">
+        <div role="status" className="tz-enter pointer-events-auto w-[360px] rounded-lg border border-line-strong bg-card px-3 py-2.5 text-[13px] text-ink tz-float">
           <div className="flex items-center gap-2.5"><Info size={16} strokeWidth={1.75} className="flex-none text-accent" aria-hidden="true" />
             <span className="min-w-0 flex-1 truncate">{progressText(update)}</span></div>
           <div className="mt-2 h-1 overflow-hidden rounded bg-line"><i className={`block h-full rounded bg-accent transition-[width] duration-200 ${update.stage === "installing" || !update.total ? "animate-pulse" : ""}`}
@@ -26,7 +26,7 @@ export function Toaster() {
       )}
       {bar.map((t) => (
         <div key={t.id} role={t.kind === "error" ? "alert" : "status"}
-          className="tz-enter pointer-events-auto flex max-w-[520px] items-center gap-2.5 rounded-lg border border-line-strong bg-card py-2 pl-3 pr-2 text-[13px] text-ink shadow-composer">
+          className="tz-enter pointer-events-auto flex max-w-[520px] items-center gap-2.5 rounded-lg border border-line-strong bg-card py-2 pl-3 pr-2 text-[13px] text-ink tz-float">
           {icon(t, 16)}
           <span className="min-w-0 flex-1">{t.text}</span>
           {t.action && <button onClick={() => { dismiss(t.id); t.action!.run(); }}
@@ -53,7 +53,7 @@ function ToastDialog({ t }: { t: Toast }) {
   return (
     <div onMouseDown={close} className="tz-fade fixed inset-0 z-50 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="alertdialog" aria-modal="true" aria-labelledby={`toast-${t.id}`} aria-describedby={t.detail ? `toast-${t.id}-detail` : undefined}
-        tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog w-[420px] rounded-xl border border-line-strong bg-card p-5 shadow-composer">
+        tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog w-[420px] max-w-[calc(100vw-5rem)] rounded-xl border border-line-strong bg-card p-5 shadow-composer">
         <div className="flex items-start gap-3">
           <span className="mt-0.5">{icon(t, 20)}</span>
           <div className="min-w-0 flex-1">

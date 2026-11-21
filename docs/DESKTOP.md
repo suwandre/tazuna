@@ -427,6 +427,51 @@ terminals of Claude Code, Codex, opencode and pi; the user picked from the proto
   the project when it runs in one.
 - Seen on test data (the sweep, 88 steps in Chromium, both themes, three sizes; the answer with math in WebKit), out/review-10.
 
+0.1.96 (with tazuna 0.1.192; design review 11, both the window and the terminal: every screen of the sweep, an interaction and
+motion crawl, a WebKit pass, the real window; "no pass" on defects seen on everyday screens. The look's changes wait for the
+user's pick from the prototype mockups/v8.html):
+- The header's title uses the row: it was cut at 60% of its own words' width with the header empty beside it ("Bump the TLS
+  library to the late…"), on every conversation whose title was its whole first message. A long folder name gives way too.
+- Sidebar rows no longer fly over each other with a project unfolded: a conversation listed twice (its day, its project)
+  had one id for the slide, so each render slid one copy from the other's place. The project's copy does not slide.
+- A long link, path or unbroken word wraps in an answer (it ran off the sheet and the transcript scrolled sideways).
+- Shortcuts as this machine's keyboard says them (lib/types.ts `keysOf`): "Ctrl+K" on Windows and Linux, where every
+  chip, tooltip and the shortcut sheet showed ⌘.
+- The usage page says what its meters show: how much is used ("36% used"), where the line over them said "what each
+  account has left".
+- Dialogs fit the smallest window (960x600): Settings was 620 px tall and lost its lower 60.
+- One clock: "9:39pm" in the sidebar as on the usage page (it said "09:39 PM").
+- Tooltips: none over rows that moved under the pointer after a click (it covered the answer's first words), none on a
+  sidebar row whose title is shown whole; a control with an icon alone keeps a name for a screen reader while its tooltip
+  is up.
+- A side chat's and a subagent's header are one row at the conversation's header's height (three rules at three heights);
+  the work panel's button goes while a subagent's sheet has the column, as with a side chat (it stayed, pressed).
+- What floats without opening from a button (a toast, the status bar's cards, the chart's tip, the narrow window's
+  sidebar) has the pop shadow and fill (`tz-float`): they had the composer's shadow, none in dark.
+- Rename and Remove on a sidebar row come with keyboard focus, not only the pointer; the remove question keeps the
+  row's name and height; a spinner still turns under reduced motion (slower); the start page's cards are the box's
+  width in a narrow window; the sidebar's search field shows in light (its fill was the desk's own colour); Allow is as
+  tall as Always and Decline; the line under the box says the plan is nearly used once; Best-of names its models as the
+  picker does; "▸" became the icons' chevron; the list's last row is clear of the fade.
+- A check that gave no result (the test command is not installed, core 0.1.192, or it ran out of time) reads "Could not
+  run" or "Timed out" in the work panel, with a quiet mark: not a red "Failed".
+- A call you declined is a quiet "declined" step (core 0.1.192 marks it), not a failed one with the sentence meant for the
+  model under it.
+- An independent review of these fixes found thirteen more defects, fixed here: after a click the keyboard got no
+  tooltips until the mouse moved, and the next control under the pointer none at all; the title still ran under the
+  buttons in a narrow column (the title and the folder now give way, the rest first); at text size Large the dialogs were
+  wider than the smallest window (`max-w-[calc(100vw-5rem)]`); a row's Rename and Remove are in Tab's way in WebKit and
+  Chromium (unseen, not `display: none`) and no longer stay on a row clicked with the mouse; the remove question leaves by
+  Esc, Cancel or the focus going elsewhere, with the focus back on the row; the panel's key does nothing while a side chat
+  or subagent has the column; a check that found no tests reads "No tests found", not a green "Passed"; Best-of's lanes
+  name their models as the picker does and say "timed out" or "could not run"; a control with words keeps its tooltip
+  as its description for a screen reader.
+- The sweep shows the first-run setup (it showed the start page in its place) and no longer waits 30 s for a pill a
+  chat does not have.
+- Seen on test data: the sweep (86 steps, both themes, three sizes, no page errors), and each fix measured in the browser
+  (out/review-11/verify). Not fixed here: a duplicate-key warning from an answer with math (console only); two findings
+  that need the real core to judge (the start page's echo of a sent message, "Ask tazuna to open one" during a reply).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

@@ -1,6 +1,7 @@
 import { Check, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useDialog } from "../lib/dialog";
+import { keysOf } from "../lib/types";
 import { HOTKEY, core, defaultHotkey, type Settings } from "../lib/tazuna";
 
 // The first run (docs/DESKTOP.md 1.0): what tazuna found and what is left to choose, each choice with its own way there
@@ -35,13 +36,13 @@ export function Setup({ onSettings, onClose }: { onSettings: () => void; onClose
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Set up tazuna" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
-        className="tz-dialog flex max-h-full w-[600px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+        className="tz-dialog flex max-h-[calc(100vh-5rem)] w-[600px] max-w-[calc(100vw-5rem)] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Set up tazuna</span>
           <button onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
         </div>
         <div className="overflow-auto px-5 py-2">
-          <div className="py-2 text-[12.5px] text-muted">Nothing here is needed now: each line can wait, and Cmd-K "Set up tazuna" brings this back.</div>
+          <div className="py-2 text-[12.5px] text-muted">Nothing here is needed now: each line can wait, and {keysOf("⌘K")} "Set up tazuna" brings this back.</div>
           {row(claude ? true : claude === null ? false : undefined, "Claude on your subscription",
             claude === undefined ? "Looking for the claude CLI…" : claude ? <>Found {claude}. tazuna runs it as it is, with its own login.</>
               : <>The claude CLI is not installed. Install Claude Code, then log in once in a terminal (<code>claude</code>). Without it, tazuna uses the models below.</>,

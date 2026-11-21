@@ -1,6 +1,7 @@
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useDialog } from "../lib/dialog";
+import { keysOf } from "../lib/types";
 
 /** One thing the palette can do: shown under its group, found by its label and `keywords`. */
 export type Action = { id: string; group: string; label: string; hint?: string; keys?: string; keywords?: string; run: () => void };
@@ -34,7 +35,7 @@ export function Palette({ actions, onClose, query = "" }: { actions: Action[]; o
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 flex justify-center bg-scrim pt-[12vh]">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Commands" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
-        onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } }} className="tz-dialog flex max-h-[60vh] w-[560px] flex-col self-start overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+        onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); onClose(); } }} className="tz-dialog flex max-h-[60vh] w-[560px] max-w-[calc(100vw-5rem)] flex-col self-start overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-2 border-b border-line-soft px-3.5 py-2.5 text-muted">
           <Search size={15} strokeWidth={1.5} />
           <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Type a command, a conversation or a model"
@@ -53,7 +54,7 @@ export function Palette({ actions, onClose, query = "" }: { actions: Action[]; o
               <button data-i={i} onMouseMove={() => setSel(i)} onClick={() => run(a)}
                 className={`flex w-full items-center gap-3 px-3.5 py-[6px] text-left ${i === sel ? "bg-selected text-ink" : "text-ink-2"}`}>
                 <span className="min-w-0 flex-1 truncate">{marked(a.label, q)}{a.hint && <span className="ml-2 text-[12px] text-faint">{a.hint}</span>}</span>
-                {a.keys && <kbd className="rounded-[5px] border border-line px-[5px] py-px font-mono text-[11px] text-faint">{a.keys}</kbd>}
+                {a.keys && <kbd className="rounded-[5px] border border-line px-[5px] py-px font-mono text-[11px] text-faint">{keysOf(a.keys)}</kbd>}
               </button>
             </div>
           ))}
@@ -68,7 +69,7 @@ export function Palette({ actions, onClose, query = "" }: { actions: Action[]; o
 
 const SHORTCUTS: [string, string][] = [
   ["⌘K", "Command palette"], ["⌘N", "New chat"], ["⌘O", "Open a folder"], ["⌘/", "These shortcuts"], ["⌘,", "Settings"],
-  ["Enter", "Send"], ["Shift Enter", "New line"], ["Esc", "Stop the reply"], ["Shift Tab", "Next permission mode"],
+  ["Enter", "Send"], ["⇧Enter", "New line"], ["Esc", "Stop the reply"], ["⇧Tab", "Next permission mode"],
   ["y / a / n", "Allow, always, decline a question"], ["⌘\\", "The work panel"], ["⌘⇧L", "Light or dark"], ["⌘⇧U", "Usage"],
 ];
 
@@ -82,12 +83,12 @@ export function Shortcuts({ onClose }: { onClose: () => void }) {
   }, [onClose]);
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog w-[380px] rounded-xl border border-line-strong bg-card px-4 py-3 shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog w-[380px] max-w-[calc(100vw-5rem)] rounded-xl border border-line-strong bg-card px-4 py-3 shadow-composer">
         <div className="mb-2 text-[11.5px] font-medium text-faint">Keyboard shortcuts</div>
         {SHORTCUTS.map(([k, what]) => (
           <div key={k} className="flex items-center py-[5px] text-ink-2">
             <span className="flex-1">{what}</span>
-            <kbd className="rounded-[5px] border border-line px-[6px] py-px font-mono text-[11.5px] text-muted">{k}</kbd>
+            <kbd className="rounded-[5px] border border-line px-[6px] py-px font-mono text-[11.5px] text-muted">{keysOf(k)}</kbd>
           </div>
         ))}
       </div>

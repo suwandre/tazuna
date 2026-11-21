@@ -8,14 +8,20 @@ export function installTooltips() {
   tip.className = "tz-tip";
   tip.setAttribute("role", "tooltip");
   document.body.appendChild(tip);
-  let at: HTMLElement | null = null, text = "", timer = 0;
+  let at: HTMLElement | null = null, text = "", timer = 0, named = false, said = false, pressed = false, quiet = false;
   const hide = () => {
     clearTimeout(timer);
     tip.classList.remove("on");
     // back only if nothing set a new one meanwhile (React, when the title changed)
     if (at?.isConnected && !at.hasAttribute("title")) at.setAttribute("title", text);
-    at = null;
+    if (named) at?.removeAttribute("aria-label");
+    if (said) at?.removeAttribute("aria-description");
+    at = null; named = false; said = false;
   };
+  // a row marked `data-tip-clip` says in its title only what it shows: the tooltip comes when some of it is cut
+  // (the part its title repeats is marked `data-tip-text`; without one, any cut part counts)
+  const cut = (el: HTMLElement) => { const parts = el.querySelectorAll<HTMLElement>("[data-tip-text]"); return (parts.length ? [...parts] : [el, ...el.querySelectorAll<HTMLElement>(".truncate")]).some((e) => e.scrollWidth > e.clientWidth + 1); };
+  const soon = (el: HTMLElement, wait: number, byPointer: boolean) => { clearTimeout(timer); timer = window.setTimeout(() => at === el && !(byPointer && pressed) && show(el), wait); };
   const show = (el: HTMLElement) => {
     tip.textContent = text;
     const r = el.getBoundingClientRect(), t = tip.getBoundingClientRect(), gap = 6;
@@ -24,7 +30,7 @@ export function installTooltips() {
     tip.style.top = `${Math.round(below ? r.bottom + gap : r.top - gap - t.height)}px`;
     tip.classList.add("on");
   };
-  const over = (target: EventTarget | null, wait: number) => {
+  const over = (target: EventTarget | null, wait: number, byPointer: boolean) => {
     const el = (target as Element | null)?.closest?.<HTMLElement>("[title]") ?? null;
     if (el === at || (at && !el && at.contains(target as Node))) return;
     hide();
@@ -32,12 +38,28 @@ export function installTooltips() {
     if (!el || !title) return;
     at = el; text = title;
     el.removeAttribute("title");
-    timer = window.setTimeout(() => at === el && show(el), wait);
+    // a control with an icon alone has only its title for a name: it keeps one while the title is off (a screen reader
+    // on the focused send button read nothing, design review 11); one with words of its own keeps the title as its
+    // description
+    if (!el.textContent?.trim()) { if (!el.hasAttribute("aria-label") && !el.hasAttribute("aria-labelledby")) { el.setAttribute("aria-label", title); named = true; } }
+    else if (!el.hasAttribute("aria-description")) { el.setAttribute("aria-description", title); said = true; }
+    quiet = el.dataset.tipClip !== undefined && !cut(el);
+    // after a press the rows under the pointer may move: no tooltip over them until the pointer itself moves again (the
+    // press is looked at when the wait is over, and the pointer's next move starts the wait anew)
+    if (!quiet) soon(el, wait, byPointer);
   };
-  document.addEventListener("pointerover", (e) => over(e.target, 450));
+  document.addEventListener("pointerover", (e) => over(e.target, 450, true));
   // the keyboard's way to the same words
-  document.addEventListener("focusin", (e) => { if ((e.target as Element).matches?.(":focus-visible")) over(e.target, 450); });
+  document.addEventListener("focusin", (e) => { if ((e.target as Element).matches?.(":focus-visible")) over(e.target, 450, false); });
   for (const ev of ["pointerdown", "keydown", "focusout", "wheel"]) document.addEventListener(ev, hide, true);
+  let px = 0, py = 0;
+  document.addEventListener("pointerdown", (e) => { pressed = true; px = e.clientX; py = e.clientY; }, true);
+  document.addEventListener("pointermove", (e) => {
+    if (!pressed || Math.abs(e.clientX - px) + Math.abs(e.clientY - py) <= 3) return;
+    pressed = false;
+    if (at && !quiet && !tip.classList.contains("on")) soon(at, 450, true);
+  }, true);
+  document.addEventListener("keydown", () => { pressed = false; }, true);
   document.addEventListener("pointerleave", hide);
 }
 

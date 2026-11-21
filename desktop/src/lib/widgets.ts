@@ -114,7 +114,7 @@ export function dryRun(id: string): Promise<DryRun> {
 export function summary(r: DryRun["rec"]): string {
   const parts = [
     ...r.slots.map(([slot, id]) => `adds ${id} in ${slot}`), ...r.hidden.map((id) => `hides ${id}`),
-    ...(r.palette.length ? [`adds ${r.palette.length} Cmd-K action${r.palette.length === 1 ? "" : "s"}`] : []),
+    ...(r.palette.length ? [`adds ${r.palette.length} palette action${r.palette.length === 1 ? "" : "s"}`] : []),
     ...(r.theme ? ["changes design tokens"] : []), ...(r.css ? ["adds styles"] : []),
   ];
   return parts.join("; ");

@@ -104,9 +104,15 @@ button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
 .tz-dots span { animation: tz-dot 1.2s infinite; } .tz-dots span:nth-child(2) { animation-delay: .2s; } .tz-dots span:nth-child(3) { animation-delay: .4s; }
 /* what floats over the page (a menu, a popover, a dialog) lifts off it: until desktop 0.1.87 the only shadow was the
    composer's, and a menu over a card of the same fill read as part of it (design review 8) */
-.tz-pop, .tz-dialog { box-shadow: var(--shadow-pop); }
+/* the sidebar's search field on the desk: in light `field` is the desk's own colour and only its border showed (design
+   review 11), so there it is the sheet's */
+.tz-search { background-color: var(--main); } .dark .tz-search { background-color: var(--field); }
+.tz-search:hover { background-color: var(--hover); }
+.tz-pop, .tz-dialog, .tz-float { box-shadow: var(--shadow-pop); }
 /* in dark a shadow alone hardly shows: a menu's own fill is a step lighter than the cards it opens over */
-.tz-pop { background-color: var(--pop); }
+/* tz-float: the same lift for what floats without opening from a button (a toast, the status bar's cards, a chart's tip):
+   they had the composer's shadow, which is none in dark (design review 11) */
+.tz-pop, .tz-float { background-color: var(--pop); }
 /* a list that scrolls inside a popover fades out at its lower edge, so a row cut there reads as "more below" */
 .tz-scrollfade { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); padding-bottom: 14px; }
 /* a list fades at its two ends, so a row the scroll cuts reads as "more", never as a sliced one (design review 10) */
@@ -123,7 +129,9 @@ button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
   pointer-events: none; opacity: 0; transform: translateY(2px); transition: opacity .1s ease-out, transform .1s ease-out; }
 .tz-tip.on { opacity: 1; transform: none; }
 input[type=radio], input[type=checkbox] { accent-color: var(--accent); cursor: default; }
-.prose-answer { font-family: var(--font-prose); font-size: 15.5px; line-height: 1.62; user-select: text; }
+/* break-word: a long link, path or unbroken word wraps inside the sheet (it ran off it and the transcript scrolled
+   sideways, design review 11); not `anywhere`, which would let a table's columns shrink to one letter */
+.prose-answer { font-family: var(--font-prose); font-size: 15.5px; line-height: 1.62; user-select: text; overflow-wrap: break-word; }
 /* Settings, Appearance: answers in the window's own type */
 .prose-sans .prose-answer { font-family: var(--font-ui); font-size: 14.5px; line-height: 1.6; }
 .prose-answer p { margin: 0 0 10px; }
@@ -163,4 +171,5 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); cursor: d
 .tok-keyword { color: var(--code-keyword); } .tok-string { color: var(--code-string); }
 .tok-number { color: var(--code-number); } .tok-comment { color: var(--code-comment); font-style: italic; }
 code { font-family: var(--font-mono); font-size: 0.92em; }
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+/* a spinner still turns (slower): standing still it said "stuck", and it is the only sign that a reply runs */
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } .animate-spin { animation: spin 1.6s linear infinite !important; } }

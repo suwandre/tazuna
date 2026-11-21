@@ -17,7 +17,7 @@ export function DiffView({ diff, onClose, plain }: { diff: Diff; onClose: () => 
   const tone = (l: string) => plain ? "text-ink-2" : l.startsWith("+") ? "bg-ok/10 text-ok" : l.startsWith("-") ? "bg-bad/10 text-bad" : l.startsWith("@@") ? "text-faint" : "text-ink-2";
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-20 grid place-items-center bg-scrim p-10">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Changes" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex max-h-full w-full max-w-[900px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Changes" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex max-h-[calc(100vh-5rem)] w-full max-w-[900px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-2 border-b border-line-soft px-4 py-2.5">
           <span className="flex-1 truncate font-mono text-[12.5px] text-ink">{diff.path}</span>
           <button onClick={onClose} title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>

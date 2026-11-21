@@ -1,6 +1,6 @@
 import { ArrowUpCircle, Check, LoaderCircle, RefreshCw } from "lucide-react";
 import { openUsage } from "./Rail";
-import { usd, type Usage } from "../lib/types";
+import { usd, type Usage, keysOf } from "../lib/types";
 import { useEffect, useState } from "react";
 import { exactly, untilShort, whenReset, worst, type Item, type Level } from "../lib/health";
 import { Sep } from "./Sep";
@@ -45,7 +45,7 @@ function Card({ all, here }: { all: Item[]; here: Item[] }) {
   const groups = [...new Set(all.map((i) => i.group))];
   return (
     <span className="invisible absolute bottom-full left-2 z-30 pb-2 opacity-0 transition-opacity duration-150 group-hover/use:visible group-hover/use:opacity-100 group-focus-within/use:visible group-focus-within/use:opacity-100">
-      <span id="usage-card" role="tooltip" className="block max-h-[70vh] w-[400px] overflow-y-auto whitespace-normal rounded-xl border border-line-strong bg-card pb-1.5 text-[12.5px] text-ink-2 shadow-composer">
+      <span id="usage-card" role="tooltip" className="block max-h-[70vh] w-[400px] overflow-y-auto whitespace-normal rounded-xl border border-line-strong bg-card pb-1.5 text-[12.5px] text-ink-2 tz-float">
         {groups.map((g) => (
           <span key={g} className="block">
             <span className="block bg-field/40 px-3.5 py-1 text-[11.5px] text-muted [overflow-wrap:anywhere]">{g}</span>
@@ -60,7 +60,7 @@ function Card({ all, here }: { all: Item[]; here: Item[] }) {
           </span>
         ))}
         {all.length === 0 && <span className="block px-3.5 py-1.5 text-faint">Reading your accounts…</span>}
-        <span className="mt-1.5 flex items-center justify-between border-t border-line-soft px-3.5 pt-2 text-ink">Usage and spending<kbd className="rounded-[5px] border border-line px-[5px] font-mono text-[11px] text-faint">⌘⇧U</kbd></span>
+        <span className="mt-1.5 flex items-center justify-between border-t border-line-soft px-3.5 pt-2 text-ink">Usage and spending<kbd className="rounded-[5px] border border-line px-[5px] font-mono text-[11px] text-faint">{keysOf("⌘⇧U")}</kbd></span>
       </span>
     </span>
   );
@@ -142,7 +142,7 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [], o
             {others.length > 1 && <span className="tabular-nums">+{others.length - 1}</span>}
           </span>
           <span className="invisible absolute bottom-full left-0 z-30 pb-2 opacity-0 transition-opacity duration-150 group-hover/adv:visible group-hover/adv:opacity-100 group-focus-within/adv:visible group-focus-within/adv:opacity-100">
-            <span id="usage-advice" role="tooltip" className="block w-[340px] whitespace-normal rounded-xl border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-2 shadow-composer">
+            <span id="usage-advice" role="tooltip" className="block w-[340px] whitespace-normal rounded-xl border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-2 tz-float">
               {others.length > 1 && <span className="mb-1.5 block text-[11.5px] font-medium text-faint">{others.length} accounts need you</span>}
               {others.map((o) => <span key={o.key} className="mb-1.5 flex items-start gap-2 last:mb-0">
                 <span className={`mt-[7px] size-1.5 flex-none rounded-full ${tone[o.level]}`} aria-hidden="true" />{o.advice ?? o.short}</span>)}

@@ -1,20 +1,26 @@
 import { ChevronRight, FolderOpen, LoaderCircle, Pencil, Plus, Search, Settings, X } from "lucide-react";
-import { createContext, useContext, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
 import type { Project, Thread } from "../lib/types";
 import { Mark } from "./Mark";
 import { Parts } from "./Sep";
+import { clock } from "../lib/health";
+import { keysOf } from "../lib/types";
 
 const icon = { size: 16, strokeWidth: 1.5 };
 
 /** A row's key. Only Search shows its own all the time; the others come with the row's hover or focus: eight key chips on
  * the start screen read as a cheat sheet (design review 9). The shortcut sheet (⌘/) has them all. */
 function Kbd({ children, always }: { children: string; always?: boolean }) {
-  return <kbd className={`ml-auto rounded-[5px] border border-line px-[5px] py-px font-mono text-[11px] text-faint ${always ? "" : "opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"}`}>{children}</kbd>;
+  return <kbd className={`ml-auto rounded-[5px] border border-line px-[5px] py-px font-mono text-[11px] text-faint ${always ? "" : "opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"}`}>{keysOf(children)}</kbd>;
 }
 
 /** A row that holds buttons of its own (rename, close) cannot be a button itself: it acts as one, for the keyboard and the
  * pointer (a hand, Enter and Space), as the window's other buttons do. */
+/** A row's own buttons (rename, close): there with the pointer on the row or the keyboard's focus on it or in them. Out of
+ * the row's flow and unseen otherwise, not `display: none`: Tab has to find them (WebKit's and Chromium's Tab both lost a
+ * button that only showed while its row had the focus, and a row clicked with the mouse kept them; design review 11). */
+const reach = "absolute opacity-0 pointer-events-none group-hover:static group-hover:opacity-100 group-hover:pointer-events-auto group-focus-visible:static group-focus-visible:opacity-100 group-focus-visible:pointer-events-auto";
 const press = (go?: () => void) => ({
   role: "button", tabIndex: 0,
   onKeyDown: (e: React.KeyboardEvent) => { if ((e.key === "Enter" || e.key === " ") && e.target === e.currentTarget) { e.preventDefault(); go?.(); } },
@@ -47,7 +53,7 @@ export function when(at?: number, now = Date.now()): string {
   const d = new Date(at * 1000);
   switch (dayOf(at, now)) {
     case "Today": return age(at, now / 1000);
-    case "Yesterday": return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    case "Yesterday": return clock(d);
     case "This week": return d.toLocaleDateString([], { weekday: "short" });
     default: return d.toLocaleDateString([], { month: "short", day: "numeric" });
   }
@@ -64,6 +70,9 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose,
 }) {
   const [mode, setMode] = useState<"view" | "rename" | "hide">("view");
   const [title, setTitle] = useState(t.title);
+  // back from the remove question by Cancel or Esc, the keyboard's focus is on the row again (it fell to the window)
+  const row = useRef<HTMLAnchorElement>(null), back = useRef(false);
+  useEffect(() => { if (mode === "view" && back.current) { back.current = false; row.current?.focus(); } }, [mode]);
   // 24 px to hit (WCAG 2.2's minimum; they were 16, design review 5)
   const icon = "grid size-6 place-items-center rounded text-faint hover:bg-hover hover:text-ink";
   if (mode === "rename") {
@@ -74,11 +83,17 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose,
     );
   }
   if (mode === "hide") {
+    const twoLinesAsk = !sub && !noPlace && !!t.place;
     return (
-      <div className={`flex items-center gap-2 rounded-md bg-field px-[9px] py-1.5 text-[12px] ${sub ? "pl-7" : ""}`}>
-        <span className="flex-1 truncate text-ink-2" title="Remove from the list (its recording stays)">Remove?</span>
-        <button onClick={() => { onHide?.(); setMode("view"); }} className="font-medium text-bad">Remove</button>
-        <button onClick={() => setMode("view")} className="text-muted">Cancel</button>
+      // the row's own height and its name stay: it said only "Remove?" and the list jumped by 18 px (design review 11).
+      // Esc, Cancel or the focus going elsewhere leaves the question.
+      <div title="Remove from the list (its recording stays)" onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); back.current = true; setMode("view"); } }}
+        onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setMode("view"); }}
+        className={`rounded-md bg-field px-[9px] ${twoLinesAsk ? "py-[5px]" : "flex items-center gap-2 py-1.5"} ${sub ? "pl-7" : ""}`}>
+        <span className="block min-w-0 flex-1 truncate text-ink">{t.title}</span>
+        <span className="flex flex-none items-center gap-2 whitespace-nowrap text-[11.5px]">{twoLinesAsk && <span className="flex-1 text-faint">Remove?</span>}
+          <button autoFocus tabIndex={0} onClick={() => { onHide?.(); setMode("view"); }} className="font-medium text-bad">Remove</button>
+          <button tabIndex={0} onClick={() => { back.current = true; setMode("view"); }} className="text-muted">Cancel</button></span>
       </div>
     );
   }
@@ -86,22 +101,22 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose,
   const twoLines = !sub && !!place;
   const dot = opened && <span title="Open" className="size-1.5 flex-none rounded-full bg-accent" />;
   return (
-    <a data-flip={t.id} onClick={onClick} {...press(onClick)} title={t.full ?? t.title} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
+    <a ref={row} data-flip={sub ? undefined : t.id} data-tip-clip={(t.full ?? t.title).toLowerCase() === t.title.toLowerCase() ? "" : undefined} onClick={onClick} {...press(onClick)} title={t.full ?? t.title} className={`group flex items-center gap-2 truncate rounded-md px-[9px] ${twoLines ? "py-[5px]" : "py-1.5"} text-ink-2 transition-colors duration-150 hover:bg-hover ${sub ? "pl-7" : ""} ${active ? "bg-selected text-ink" : ""}`}>
       {sub && <span className={`size-1.5 flex-none rounded-full ${t.running ? "bg-accent shadow-[0_0_0_3px_var(--accent-soft)]" : "bg-faint"}`} />}
       {twoLines ? (
         <span className="min-w-0 flex-1">
           {/* where it ran and when, under its title: the model left the row (design review 9: "DeepSeek V4.1 Flas…" took
               the title's room on every row); it is in the conversation and the palette */}
-          <span className="flex items-center gap-1.5 text-ink">{dot}<span className="truncate">{t.title}</span></span>
-          <span className="flex gap-2 text-[11.5px] text-faint"><span className="truncate">{place}</span><span className="ml-auto flex-none tabular-nums group-hover:hidden">{when(t.at)}</span></span>
+          <span className="flex items-center gap-1.5 text-ink">{dot}<span data-tip-text className="truncate">{t.title}</span></span>
+          <span className="flex gap-2 text-[11.5px] text-faint"><span className="truncate">{place}</span><span className="ml-auto flex-none tabular-nums group-hover:hidden group-focus-visible:hidden group-has-[:focus-visible]:hidden">{when(t.at)}</span></span>
         </span>
-      ) : <span className="flex min-w-0 flex-1 items-center gap-1.5">{dot}<span className="truncate">{t.title}</span>
-          {!sub && <span className="ml-auto flex-none text-[11.5px] tabular-nums text-faint group-hover:hidden">{when(t.at)}</span>}</span>}
-      {onRename && <span className="hidden flex-none gap-0.5 group-hover:flex">
-        <button title="Rename" onClick={(e) => { e.stopPropagation(); setTitle(t.title); setMode("rename"); }} className={icon}><Pencil size={12} strokeWidth={1.5} /></button>
+      ) : <span className="flex min-w-0 flex-1 items-center gap-1.5">{dot}<span data-tip-text className="truncate">{t.title}</span>
+          {!sub && <span className="ml-auto flex-none text-[11.5px] tabular-nums text-faint group-hover:hidden group-focus-visible:hidden group-has-[:focus-visible]:hidden">{when(t.at)}</span>}</span>}
+      {onRename && <span className={`${reach} flex flex-none gap-0.5 focus-within:static focus-within:opacity-100 focus-within:pointer-events-auto`}>
+        <button tabIndex={0} title="Rename" onClick={(e) => { e.stopPropagation(); setTitle(t.title); setMode("rename"); }} className={icon}><Pencil size={12} strokeWidth={1.5} /></button>
         {opened && onClose
-          ? <button title="Close (the conversation stays in the lists)" aria-label={`Close ${t.title}`} onClick={(e) => { e.stopPropagation(); onClose(); }} className={icon}><X size={12} strokeWidth={1.5} /></button>
-          : <button title="Remove from the list (its recording stays)" onClick={(e) => { e.stopPropagation(); setMode("hide"); }} className={icon}><X size={12} strokeWidth={1.5} /></button>}
+          ? <button tabIndex={0} title="Close (the conversation stays in the lists)" aria-label={`Close ${t.title}`} onClick={(e) => { e.stopPropagation(); onClose(); }} className={icon}><X size={12} strokeWidth={1.5} /></button>
+          : <button tabIndex={0} title="Remove from the list (its recording stays)" onClick={(e) => { e.stopPropagation(); setMode("hide"); }} className={icon}><X size={12} strokeWidth={1.5} /></button>}
       </span>}
     </a>
   );
@@ -123,8 +138,8 @@ function OpenRow({ o, active, onSwitch, onClose }: { o: Open; active: boolean; o
         </span>
         <Parts className="block truncate text-[11.5px] text-faint" items={[o.place, o.state === "asking" && "waiting for your answer", o.state === "stopped" && "stopped"]} />
       </span>
-      <button title="Close (the conversation stays in the lists)" aria-label={`Close ${o.title}`} onClick={(e) => { e.stopPropagation(); onClose?.(o.tid); }}
-        className="hidden size-6 flex-none place-items-center rounded text-faint hover:bg-hover hover:text-ink group-hover:grid"><X size={12} strokeWidth={1.5} /></button>
+      <button tabIndex={0} title="Close (the conversation stays in the lists)" aria-label={`Close ${o.title}`} onClick={(e) => { e.stopPropagation(); onClose?.(o.tid); }}
+        className={`${reach} grid size-6 flex-none place-items-center rounded text-faint hover:bg-hover hover:text-ink focus-visible:static focus-visible:opacity-100 focus-visible:pointer-events-auto`}><X size={12} strokeWidth={1.5} /></button>
     </a>
   );
 }
@@ -196,7 +211,7 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
         <Mark size={22} />
         <span>tazuna</span>
       </div>
-      <button onClick={onSearch} className="mb-1 flex items-center gap-2 rounded-md border border-line bg-field px-[9px] py-[7px] text-left text-muted hover:bg-hover">
+      <button onClick={onSearch} className="tz-search mb-1 flex items-center gap-2 rounded-md border border-line px-[9px] py-[7px] text-left text-muted hover:bg-hover">
         <Search {...icon} /><span>Search</span><Kbd always>⌘K</Kbd>
       </button>
       <SidebarCtx.Provider value={{ onNewChat, onOpenFolder, onSettings, planLeft }}>
@@ -205,7 +220,7 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
           flex column squeezed every row to fit and they overlapped (desktop 0.1.64, with many saved conversations) */}
       {/* relative: the rows' offsetTop for the sliding; tz-edges fades the list at its ends, so a row cut by the scroll reads
           as more to come, not as a sliced heading (design review 10) */}
-      <div ref={listRef} className="tz-edges relative flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto *:shrink-0">
+      <div ref={listRef} className="tz-edges relative flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pb-[18px] *:shrink-0">
       {/* the conversations open now by what they need: an answer from you, time to work, nothing (when more than one is open);
           then every saved one by when it last ran, its project and age under its name; then the projects (2026-11-18) */}
       {([["Needs you", needs], ["Working", working], ["Open", idle]] as const).map(([head, list]) => list.length > 0 && (

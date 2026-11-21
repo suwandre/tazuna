@@ -43,7 +43,7 @@ function Meter({ name, of, used, at }: { name: string; of?: ReactNode; used: num
     <div className="flex items-center gap-3.5 px-3.5 py-2.5 text-[12.5px]">
       <span className="w-[200px] flex-none"><span className="block truncate text-ink" title={name}>{name}</span>{of && <span className="block truncate text-[11.5px] text-faint">{of}</span>}</span>
       <span className="h-1.5 min-w-0 flex-1 overflow-hidden rounded bg-line"><i className={`block h-full rounded ${pct >= 90 ? "bg-bad" : pct >= 75 ? "bg-warn" : "bg-accent"}`} style={{ width: `${pct}%` }} /></span>
-      <span className="w-[220px] flex-none truncate text-right tabular-nums text-muted"><span className="font-medium text-ink">{used == null ? "–" : `${Math.round(used)}%`}</span>{resets && <><Sep /><span title={exactly(at)}>resets {resets}</span></>}</span>
+      <span className="w-[220px] flex-none truncate text-right tabular-nums text-muted"><span className="font-medium text-ink">{used == null ? "–" : `${Math.round(used)}% used`}</span>{resets && <><Sep /><span title={exactly(at)}>resets {resets}</span></>}</span>
     </div>
   );
 }
@@ -96,13 +96,13 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
   const apiRuns = s ? s.byModel.filter((m) => !m.plan).reduce((a, m) => a + m.runs, 0) : 0, planRuns = s ? s.byModel.filter((m) => m.plan).reduce((a, m) => a + m.runs, 0) : 0;
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Usage" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex h-full max-h-[900px] w-[780px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Usage" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex h-full max-h-[900px] w-[780px] max-w-[calc(100vw-5rem)] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-3 border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Usage</span>
           <button onClick={onClose} title="Close (Esc)" aria-label="Close" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
         </div>
         <div className="overflow-auto bg-sidebar px-6 pb-7 pt-5">
-          <Section title="Right now" note="What each account has left: your Claude plan, your OmniRoute accounts and the credit with each provider.">
+          <Section title="Right now" note="How much of each account is used (your Claude plan, your OmniRoute accounts), and the credit left with each provider.">
             <RightNow acc={acc} limits={limits} balance={balance} />
           </Section>
 
@@ -353,7 +353,7 @@ function Bars({ days }: { days: Day[] }) {
         <span className="flex items-center gap-1.5"><i className="size-2 rounded-sm bg-accent" />Paid APIs</span>
       </div>
       {d && (
-        <div className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-line-strong bg-card px-2.5 py-1.5 text-[12px] shadow-composer"
+        <div className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 whitespace-nowrap rounded-md border border-line-strong bg-card px-2.5 py-1.5 text-[12px] tz-float"
           style={{ left: `${Math.min(88, Math.max(12, ((at! + 0.5) / days.length) * 100))}%` }}>
           <div className="font-semibold tabular-nums text-ink">{money(d.plan + d.api)}</div>
           <div className="text-muted">{dayName(d.day)}, {d.runs} runs</div>

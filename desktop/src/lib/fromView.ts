@@ -64,7 +64,7 @@ export function messages(v: View): Message[] {
     else if (b.kind === "text") { if (b.text.trim()) current().prose.push(b.text); }
     else if (b.kind === "tool") {
       const t: ToolStep = { kind: "tool", id: b.id, name: b.name, verb: verb(b.name), target: target(b.input ?? {}), secs: b.secs ?? 0, ok: !b.error,
-        running: b.running, stopped: b.stopped, input: b.input, result: b.result };
+        running: b.running, stopped: b.stopped, declined: b.declined, input: b.input, result: b.declined ? undefined : b.result };
       current().tools!.push(t);
     }
     else if (b.kind === "thinking") {

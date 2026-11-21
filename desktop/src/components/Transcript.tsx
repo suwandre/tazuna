@@ -281,7 +281,7 @@ export function MessageFailure({ message: m }: { message: Message }) {
           <div className="min-w-0 flex-1">
             <div className="font-medium text-ink">{f.stopped ? "Stopped after an error from the provider" : "The provider could not answer"}</div>
             <div className="mt-0.5 text-ink-2">{f.text}</div>
-            {f.raw && f.raw !== f.text && <button onClick={() => setRaw(!raw)} aria-expanded={raw} className="mt-1 text-[12px] text-muted hover:text-ink">{raw ? "Hide" : "Show"} its reply {raw ? "▾" : "▸"}</button>}
+            {f.raw && f.raw !== f.text && <button onClick={() => setRaw(!raw)} aria-expanded={raw} className="mt-1 text-[12px] text-muted hover:text-ink">{raw ? "Hide" : "Show"} its reply <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" className={`inline-block align-[-1px] transition-transform duration-150 ${raw ? "rotate-90" : ""}`} /></button>}
             {raw && <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] text-muted">{f.raw}</pre>}
           </div>
           {onRetry && f.ask && <button disabled={busy} onClick={() => onRetry(f.ask)} title="Send the same message again"
@@ -381,7 +381,7 @@ export function MessageMeta({ message: m }: { message: Message }) {
     <div ref={line} className={`mt-2 scroll-mb-3 text-[12px] tabular-nums text-faint transition-opacity duration-150 ${open ? "" : "opacity-0 focus-within:opacity-100 group-hover:opacity-100"}`}>
       <Parts items={[text && <CopyAnswer key="c" text={text} />, ...meta(m.meta)]} />
       {n > 0 && <><Sep /><button onClick={() => setOpen(!open)} aria-expanded={open} title="Each model call of this reply: tokens, timing and cost"
-        className="rounded px-1 hover:bg-hover hover:text-ink">{n} call{n === 1 ? "" : "s"} {open ? "▾" : "▸"}</button></>}
+        className="rounded px-1 hover:bg-hover hover:text-ink">{n} call{n === 1 ? "" : "s"} <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" className={`inline-block align-[-1px] transition-transform duration-150 ${open ? "rotate-90" : ""}`} /></button></>}
       {open && m.meta.calls && <Calls calls={m.meta.calls} />}
     </div>
   );

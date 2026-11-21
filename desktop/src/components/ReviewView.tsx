@@ -4,6 +4,7 @@ import { core, type Review } from "../lib/tazuna";
 import { numbered, parse, patchOf, patchOfFile, sideBySide, wordMarks, type FileDiff } from "../lib/unidiff";
 import { code } from "../lib/markdown";
 import { Parts, Sep } from "./Sep";
+import { keysOf } from "../lib/types";
 
 type Comment = { path: string; line: number; text: string; quote: string };
 type Writing = { path: string; line: number; quote: string; text: string };
@@ -114,7 +115,7 @@ export function ReviewView({ start, turns, onClose, onSend }: {
               placeholder={`Ask tazuna to change line ${at}…`}
               className="block w-full resize-none rounded-t-lg bg-transparent px-3 py-2 text-[13px] text-ink outline-none placeholder:text-faint" />
             <div className="flex items-center gap-2 border-t border-line-soft px-3 py-1.5 text-[11.5px] text-faint">
-              <span className="flex flex-1 items-center">Goes with your other comments when you send them<Sep />⌘↵</span>
+              <span className="flex flex-1 items-center">Goes with your other comments when you send them<Sep />{keysOf("⌘↵")}</span>
               <button onClick={() => setWriting(null)} className={`${textButton} text-muted`}>Cancel</button>
               <button onClick={() => keep(writing)} className="rounded-md border border-line px-2.5 py-0.5 text-[12px] text-ink hover:bg-hover">{c ? "Save" : "Add comment"}</button>
             </div>

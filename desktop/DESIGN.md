@@ -84,7 +84,7 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   (`components/Mark.tsx`). The app icon (`app-icon.svg`, paper on indigo on macOS's grid), the sidebar (22 px tile) and the
   terminal's welcome (two cells, `▐手▌`) use it; nothing else stands for tazuna.
 - Quiet structure: hairline borders, not shadows, for everything that sits on the page. What floats over it (a menu, a
-  popover, a dialog, a tooltip) has the `pop` shadow, and in dark a fill one step lighter than a card: a menu over a card
+  popover, a dialog, a tooltip; a toast or a card that opens by itself: `tz-float`) has the `pop` shadow, and in dark a fill one step lighter than a card: a menu over a card
   of the same fill read as part of it (design review 8, desktop 0.1.87). The composer keeps its own soft shadow.
 - Reading first: the assistant's prose is set in a serif; code, paths, tool calls, costs and numbers in mono.
 - Real numbers only: cost, tokens, cache and plan usage come from the session, never placeholders.
@@ -188,6 +188,8 @@ block with its language and copy; work panel section (Changes, Checks, Pull requ
   buttons and links; a text field whose box is the visible container (the composer, the palette, a bordered field) shows
   its focus on that box's border instead (`outline-none` and `focus:border-accent` or `focus-within:border-accent`).
 - macOS overlay title bar; native menus.
+- A shortcut is written the Mac's way in the code and shown through `keysOf` (lib/types.ts): "Ctrl+K" on Windows and Linux.
+- One clock (`clock`, lib/health.ts): "9:39pm". A tooltip repeats nothing the control already shows whole.
 
 ## Do not
 Inter or purple-blue gradients; glass, glow, neon; cards inside cards; an icon tile above every heading; stock shadcn

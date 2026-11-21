@@ -15,9 +15,10 @@ export function AgentPanel({ view, task, title, running, onStop, onClose }: {
   const messages = view ? viewMessages(view) : [];
   return (
     <aside data-side aria-label="Subagent" className="tz-enter mr-2 mt-2 flex min-h-0 w-[432px] flex-col overflow-hidden rounded-xl bg-main shadow-sheet">
-      <div className="flex items-start gap-2 border-b border-line-soft px-4 py-3">
-        <span className="min-w-0 flex-1"><span className="block truncate font-medium" title={title}>{title || "Subagent"}</span>
-          <Parts className="block truncate text-[11.5px] text-muted" items={[task?.agent || "subagent", running ? "working" : task?.status ?? "ended",
+      {/* one row, the conversation's header's height (design review 11) */}
+      <div className="flex h-[49px] flex-none items-center gap-2 border-b border-line-soft pl-4 pr-3">
+        <span className="flex min-w-0 flex-1 items-baseline gap-2"><span className="max-w-[55%] flex-none truncate font-medium" title={title}>{title || "Subagent"}</span>
+          <Parts className="min-w-0 truncate text-[12px] text-faint" items={[task?.agent || "subagent", running ? "working" : task?.status ?? "ended",
             task && tokens(task.tokens), task && task.tools > 0 && `${task.tools} step${task.tools === 1 ? "" : "s"}`]} /></span>
         {running && onStop && <button onClick={onStop} title="Stop this subagent: the conversation and its other tasks go on"
           className="flex flex-none items-center gap-1.5 rounded-md border border-line px-2 py-1 text-[12px] text-ink-2"><Square size={9} strokeWidth={2} fill="currentColor" />Stop</button>}

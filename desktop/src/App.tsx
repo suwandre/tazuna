@@ -19,7 +19,7 @@ import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
 import type { Row } from "./lib/usage";
-import { usd, type ChangedFile } from "./lib/types";
+import { usd, type ChangedFile, keysOf } from "./lib/types";
 import { Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rail";
 import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
@@ -329,7 +329,7 @@ export default function App() {
       const r = await dryRun(id);
       const said = summary(r.rec);
       if (r.error) problem = `It failed when run: ${r.error}`;
-      else if (!said) problem = "It ran but registers nothing: no spot entry, no Cmd-K action, no style and no hidden part. Check the spot names against the specification.";
+      else if (!said) problem = "It ran but registers nothing: no spot entry, no palette action, no style and no hidden part. Check the spot names against the specification.";
       else if (read && (w.state !== "enabled" || w.print !== read.print)) setReady((m) => ({ ...m, [t.tid]: { id, title: w.title, print: read.print, code: read.code, summary: said } }));
     }
     if (problem && run.rounds < 2) {
@@ -404,15 +404,17 @@ export default function App() {
   useEffect(() => setNavOpen(false), [active, narrow]);
   const panelOpen = panelPref ?? (!!folder && width >= 1280);
   const togglePanel = () => setPanelPref(!panelOpen);
+  // a side chat or a subagent's sheet has the column: the panel's key does nothing then (it flipped the hidden panel)
+  const paneOwns = useRef(false);
   useEffect(() => {
-    const key = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); setPanelPref((p) => !(p ?? (!!folder && window.innerWidth >= 1280))); } };
+    const key = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); if (paneOwns.current) return; setPanelPref((p) => !(p ?? (!!folder && window.innerWidth >= 1280))); } };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, [folder]);
   const work: Work = {
     files: changedFiles(view),
     branch: pr?.headRefName ?? pr?.branch, base: pr?.baseRefName,
-    checks: (view?.blocks ?? []).flatMap((b) => (b.kind === "verify" ? [{ cmd: b.cmd, ok: b.ok, secs: b.secs }] : [])).reverse(),
+    checks: (view?.blocks ?? []).flatMap((b) => (b.kind === "verify" ? [{ cmd: b.cmd, ok: b.ok, secs: b.secs, none: b.cannot_run ? "Could not run" : b.timed_out ? "Timed out" : b.no_tests ? "No tests found" : undefined }] : [])).reverse(),
     pr: pr ?? null, folder,
     review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
     openPr: inTauri && folder ? () => setShowPr(true) : undefined,
@@ -505,6 +507,7 @@ export default function App() {
   }, [active]);
   const tasks = view?.tasks ?? [];
   const agentHere = agent?.tid === active ? agent : null, agentTask = agentHere ? tasks.find((t) => t.calls.includes(agentHere.call)) : undefined;
+  paneOwns.current = !!side || !!agentHere;
   // a subagent with no task of its own (one that ran inside the reply) runs as long as its step does
   const agentStep = agentHere && (view?.blocks.find((b) => b.kind === "tool" && b.id === agentHere.call) as { running?: boolean; input?: Record<string, unknown> | null } | undefined);
   const agentRunning = agentTask ? agentTask.running : !!agentStep?.running;
@@ -677,7 +680,6 @@ export default function App() {
             below={line && (line.paid || line.low) && (
               <div className={`flex items-center gap-2 text-[11.5px] ${line.low ? "text-warn" : "text-faint"}`}>
                 <span className="truncate" title="Where your next message goes and what it costs">→ {line.text}</span>
-                {line.low && <span>{line.low}</span>}
                 {line.offer && <button onClick={() => core.setModel(line.offer!)} className="font-medium text-accent-ink">Switch to {line.offer.label}</button>}
               </div>
             )}
@@ -718,7 +720,7 @@ export default function App() {
       // the right column is always a track (0 px when shut), so it slides: a track that came and went was a jump cut
       style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", reviewing ? "0px" : agentHere ? "440px" : side ? "380px" : panelOpen ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
       {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-scrim" />}
-      <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-composer" : "hidden") : "flex min-h-0"}>
+      <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-[var(--shadow-pop)]" : "hidden") : "flex min-h-0"}>
       <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
         chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
         projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} / ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
@@ -734,15 +736,15 @@ export default function App() {
       {/* relative: the review is a pane over the conversation (header and box too), not a dialog over the window */}
       <main className={`relative mr-2 mt-2 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl bg-main shadow-sheet ${narrow ? "ml-2" : ""}`}>
         <header data-tauri-drag-region className="flex items-center justify-between gap-3 border-b border-line-soft py-2.5 pl-7 pr-4">
-          <div className="flex min-w-0 items-center gap-2 font-medium">
+          <div className="flex min-w-0 flex-1 items-center gap-2 font-medium">
             {narrow && <button onClick={() => setNavOpen(true)} aria-label="Conversations" title="Conversations" className="-ml-3 grid size-7 flex-none place-items-center rounded-md text-muted hover:text-ink"><PanelLeft size={16} strokeWidth={1.5} /></button>}
-            <span className="flex-none text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} title={firstAsked || title} className="tz-enter max-w-[60%] flex-none truncate text-[inherit] font-[inherit]">{title}</h1>
+            <span className="min-w-0 max-w-[30%] truncate text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} title={firstAsked || title} className={`tz-enter truncate text-[inherit] font-[inherit] ${view && more ? "max-w-[60%] shrink-[0.3]" : ""} min-w-0`}>{title}</h1>
             {view && more && <span className="min-w-0 truncate text-[12px] font-normal text-faint" aria-hidden="true">— {more}</span>}</div>
           <div className="flex flex-none items-center gap-1.5">
             <HeaderCtx.Provider value={{ modelLabel: modelLabel(models?.choices.find((c) => c.current)?.model ?? session.model), effort: session.effort,
               branch: session.branch, changed: session.changed, review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
               side: inTauri && view?.session_id ? () => (side ? closeSide(active) : openSide(active)) : undefined, sideOpen: !!side,
-              pr: pr ? prChip(pr) : null, openPr: () => setShowPr(true), cost: usage.threadCost, panelOpen: panelOpen && !side, togglePanel: side ? undefined : togglePanel }}>
+              pr: pr ? prChip(pr) : null, openPr: () => setShowPr(true), cost: usage.threadCost, panelOpen: panelOpen && !side && !agentHere, togglePanel: side || agentHere ? undefined : togglePanel }}>
               <Slot name="header.actions" props={{ data, folder }} />
             </HeaderCtx.Provider>
           </div>
@@ -935,11 +937,11 @@ function PrChip() {
 function CostChip() {
   const h = useContext(HeaderCtx);
   // nothing until there is a cost (a new chat showed $0.000)
-  return h.cost ? <button onClick={openUsage} title="This conversation's cost · Usage (⌘⇧U)" className="rounded-md px-2 py-1 text-[12.5px] tabular-nums text-muted hover:text-ink">{usd(h.cost)}</button> : null;
+  return h.cost ? <button onClick={openUsage} title={`This conversation's cost · Usage (${keysOf("⌘⇧U")})`} className="rounded-md px-2 py-1 text-[12.5px] tabular-nums text-muted hover:text-ink">{usd(h.cost)}</button> : null;
 }
 function PanelChip() {
   const h = useContext(HeaderCtx);
-  return h.togglePanel ? <button onClick={h.togglePanel} aria-pressed={h.panelOpen} title={`${h.panelOpen ? "Close" : "Open"} the work panel (⌘\\)`}
+  return h.togglePanel ? <button onClick={h.togglePanel} aria-pressed={h.panelOpen} title={`${h.panelOpen ? "Close" : "Open"} the work panel (${keysOf("⌘\\")})`}
     className={`grid size-7 place-items-center rounded-md ${h.panelOpen ? "bg-field text-ink" : "text-muted hover:text-ink"}`}><PanelRight size={16} strokeWidth={1.5} /></button> : null;
 }
 // the cost moved to the status bar (desktop 0.1.71): CostChip stays exported for a plugin that wants it in the header

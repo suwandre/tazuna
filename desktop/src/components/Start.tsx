@@ -2,6 +2,7 @@ import { CircleAlert, FolderOpen, MessageSquare, Plus, RotateCcw } from "lucide-
 import type { ReactNode } from "react";
 import { age } from "./Sidebar";
 import { Sep } from "./Sep";
+import { keysOf } from "../lib/types";
 
 // A new conversation before its first message (the second design review, prototype mockups/v3.html): the message box in
 // the middle under a question, a way back into recent work and into a project, the keys worth knowing. Until desktop
@@ -51,7 +52,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
       <div className="mb-3 text-center text-[12.5px] text-muted">{place ? "A change in this project, or a question about it." : "A question for a chat, or a change in one of your projects."}</div>
       <div className="w-full max-w-[756px]">{composer}</div>
       {(recent.length > 0 || projects.length > 0 || !place) && (
-        <div className={`mt-2 grid w-full max-w-[700px] grid-cols-1 gap-3.5 ${recent.length > 0 ? "sm:grid-cols-2" : ""}`}>
+        <div className={`mt-2 grid w-full max-w-[756px] grid-cols-1 gap-3.5 px-7 ${recent.length > 0 ? "sm:grid-cols-2" : ""}`}>
           {recent.length > 0 && (
             <section className="overflow-hidden rounded-xl border border-line bg-card">
               <div className={head}>Pick up where you left off</div>
@@ -83,7 +84,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
         {/* Search's key is on the sidebar's search field already */}
         {/* no Mode in a chat: nothing there asks for permission (its pill went too, design review 10) */}
         {([...(place ? [["Mode", "⇧Tab"]] : []), ["Shortcuts", "⌘/"]] as const).map(([what, keys]) => (
-          <span key={what}>{what} <kbd className="ml-1 rounded-[5px] border border-line px-[5px] font-mono text-[11px]">{keys}</kbd></span>
+          <span key={what}>{what} <kbd className="ml-1 rounded-[5px] border border-line px-[5px] font-mono text-[11px]">{keysOf(keys)}</kbd></span>
         ))}
       </div>
       </div>

@@ -2,7 +2,7 @@ import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useDialog } from "../lib/dialog";
 import type { ModelChoice, View } from "../lib/tazuna";
-import { usd } from "../lib/types";
+import { modelLabel, usd } from "../lib/types";
 import { Parts, Sep } from "./Sep";
 
 // Best-of-N (docs/DESKTOP.md 1.1): one task on several models, each in a worktree of its own, compared on cost, time,
@@ -33,7 +33,7 @@ export function BestOfStart({ choices, onStart, onClose }: { choices: ModelChoic
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Try on several models" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
-        className="tz-dialog flex max-h-full w-[600px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+        className="tz-dialog flex max-h-[calc(100vh-5rem)] w-[600px] max-w-[calc(100vw-5rem)] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Try on several models</span>
           <button onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
@@ -48,7 +48,7 @@ export function BestOfStart({ choices, onStart, onClose }: { choices: ModelChoic
               <label key={id(c)} className="flex items-center gap-2 py-1">
                 <input type="checkbox" checked={on} disabled={!on && picked.length >= 4}
                   onChange={() => setPicked((p) => (on ? p.filter((x) => x !== id(c)) : [...p, id(c)]))} />
-                <span className="text-ink">{c.label}</span><Parts className="text-[12px] text-muted" items={[c.place, c.price]} />
+                <span className="text-ink" title={c.model}>{modelLabel(c.model)}</span><Parts className="text-[12px] text-muted" items={[c.place, c.price]} />
               </label>
             );
           })}
@@ -77,7 +77,7 @@ export function laneStats(v: View | null | undefined) {
     running: !["Ready", "Done"].includes(v.activity) || done.length === 0,
     cost: v.cost, secs: done.reduce((n, b) => n + (b.kind === "done" ? b.secs : 0), 0),
     files: paths.size, added: files.reduce((n, f) => n + (f.added ?? 0), 0), removed: files.reduce((n, f) => n + (f.removed ?? 0), 0),
-    check: last ? (last.ok ? "passed" : last.ok === false ? "failed" : "running") : "none",
+    check: !last ? "none" : last.cannot_run ? "could not run" : last.timed_out ? "timed out" : last.no_tests ? "no tests" : last.ok ? "passed" : last.ok === false ? "failed" : "running",
     error: v.blocks.some((b) => b.kind === "notice" && b.error),
   };
 }
@@ -94,7 +94,7 @@ export function LanesView({ lanes, views, onOpen, onKeep, onClose }: {
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Lanes" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
-        className="tz-dialog flex max-h-full w-[820px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+        className="tz-dialog flex max-h-[calc(100vh-5rem)] w-[820px] max-w-[calc(100vw-5rem)] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="min-w-0 flex-1"><span className="font-medium">Lanes</span> <span className="truncate text-[12px] text-muted"><Sep />{lanes.task}</span></span>
           <button onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
@@ -107,7 +107,7 @@ export function LanesView({ lanes, views, onOpen, onKeep, onClose }: {
             <tbody>
               {rows.map(({ l, s }, i) => (
                 <tr key={i} className="border-t border-line-soft">
-                  <td className="py-2 pr-3"><span className="text-ink">{l.model.label}</span><span className="block text-[11.5px] text-faint">{l.model.place}</span></td>
+                  <td className="py-2 pr-3"><span className="text-ink" title={l.model.model}>{modelLabel(l.model.model)}</span><span className="block text-[11.5px] text-faint">{l.model.place}</span></td>
                   <td className="py-2 pr-3 text-muted">{!l.tid ? "starting…" : !s ? "starting…" : s.running ? "working…" : s.error ? "ended with an error" : "done"}</td>
                   <td className={`py-2 pr-3 text-right font-mono ${s && !s.running && s.cost === cheapest ? "text-ok" : ""}`}>{s ? usd(s.cost) : "–"}</td>
                   <td className="py-2 pr-3 text-right font-mono">{s && s.secs ? `${Math.round(s.secs)} s` : "–"}</td>
@@ -123,7 +123,7 @@ export function LanesView({ lanes, views, onOpen, onKeep, onClose }: {
           </table>
           {keep && (
             <div role="alert" className="mt-3 flex items-center gap-2 rounded-md border border-line-strong px-3 py-2 text-[12.5px]">
-              <span className="flex-1 text-ink-2">Keep {keep.model.label}'s lane? The other lanes' worktrees go, with their uncommitted changes (their branches stay).</span>
+              <span className="flex-1 text-ink-2">Keep {modelLabel(keep.model.model)}'s lane? The other lanes' worktrees go, with their uncommitted changes (their branches stay).</span>
               <button onClick={() => { onKeep(keep); setKeep(null); }} className="rounded-md border border-line-strong px-2.5 py-1 font-medium text-bad hover:bg-hover">Remove the others</button>
               <button onClick={() => setKeep(null)} className="rounded-md px-2 py-1 text-muted hover:bg-hover">Cancel</button>
             </div>

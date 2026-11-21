@@ -32,7 +32,7 @@ export function PrView({ pr, worktree, onClose, onSend, onRefresh, onRemoveWorkt
   const h = "mb-2 mt-5 text-[11.5px] font-medium text-faint";
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Pull request" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex max-h-full w-[720px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Pull request" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex max-h-[calc(100vh-5rem)] w-[720px] max-w-[calc(100vw-5rem)] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <div className="flex items-center gap-2 border-b border-line-soft px-5 py-3">
           <span className="flex-1 truncate font-medium">{pr && !pr.none && !pr.error ? `#${pr.number} ${pr.title}` : "Pull request"}</span>
           <button onClick={onRefresh} className="rounded-md px-2 py-0.5 text-[12px] text-muted hover:bg-hover">Refresh</button>

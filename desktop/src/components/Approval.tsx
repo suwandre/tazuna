@@ -42,7 +42,7 @@ export function Approval({ asking, onAnswer, keys = true }: { asking: NonNullabl
         </div>
         <pre className="mb-2.5 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[12px] text-ink select-text">{what}</pre>
         <div className="flex items-center gap-1.5">
-          <button disabled={!ready} onClick={() => onAnswer(true, false)} className={`${btn} bg-accent text-on-accent`}>Allow <kbd className="ml-1 font-mono opacity-70">y</kbd></button>
+          <button disabled={!ready} onClick={() => onAnswer(true, false)} className={`${btn} border border-transparent bg-accent text-on-accent`}>Allow <kbd className="ml-1 font-mono opacity-70">y</kbd></button>
           {!asking.once && (
             <button disabled={!ready} onClick={() => onAnswer(true, true)} className={`${btn} border border-line text-ink`}
               title={`${asking.note}, for the rest of the session`}>

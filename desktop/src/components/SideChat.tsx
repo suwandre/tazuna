@@ -23,9 +23,10 @@ export function SideChat({ view, onSend, onStop, onAnswer, onClose }: {
   }, [busy, onClose]);
   return (
     <aside data-side aria-label="Side chat" className="mr-2 mt-2 flex min-h-0 flex-col overflow-hidden rounded-xl bg-main shadow-sheet">
-      <div className="flex items-start gap-2 border-b border-line-soft px-4 py-3">
-        <span className="flex-1"><span className="font-medium">Side chat</span>
-          <span className="block text-[11.5px] text-muted">Knows this conversation. Nothing here goes back to it, and it changes no files.</span></span>
+      {/* one row, the conversation's header's height: the three sheets' rules were at three heights (design review 11) */}
+      <div className="flex h-[49px] flex-none items-center gap-2 border-b border-line-soft pl-4 pr-3">
+        <span className="flex min-w-0 flex-1 items-baseline gap-2"><span className="flex-none font-medium">Side chat</span>
+          <span className="truncate text-[12px] text-faint" title="Knows this conversation. Nothing here goes back to it, and it changes no files.">knows this conversation, changes nothing</span></span>
         <button onClick={onClose} title="Close the side chat" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
       </div>
       {messages.length === 0 && !busy && <div className="px-4 pt-4 text-[12.5px] text-faint">{!view ? "Starting…" : ready ? "Ask about the conversation: what it decided and why, what is left, what a step did." : "Not in plan mode, so nothing is sent."}</div>}

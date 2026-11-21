@@ -51,9 +51,8 @@ export function whenReset(at: number | undefined, now = Date.now()): string | un
   if (mins <= 0) return "now";
   if (mins < 60) return `in ${mins} min`;
   if (mins < 24 * 60) return `in ${Math.floor(mins / 60)} h${mins % 60 ? ` ${mins % 60} min` : ""}`;
-  const d = new Date(at), h = d.getHours(), m = d.getMinutes();
-  const time = `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""}${h < 12 ? "am" : "pm"}`;
-  if (mins < 7 * 24 * 60) return `${d.toLocaleString("en-US", { weekday: "short" })} ${time}`;
+  const d = new Date(at);
+  if (mins < 7 * 24 * 60) return `${d.toLocaleString("en-US", { weekday: "short" })} ${clock(d)}`;
   return `${d.toLocaleString("en-US", { month: "short" })} ${d.getDate()}`;
 }
 
@@ -176,4 +175,11 @@ export function demo() {
     && all.find((i) => i.key === "credit:OpenRouter")!.short === "OpenRouter $0.17 over";
   if (!ok) throw new Error(`health: ${JSON.stringify(all.map((i) => [i.key, i.level, i.short]))}`);
   console.log("health ok");
+}
+
+/** A time of day the one way the window writes it: "9:39pm", "2pm" (the sidebar said "09:39 PM" beside the usage page's
+ * "2:39am", design review 11). */
+export function clock(d: Date): string {
+  const h = d.getHours(), m = d.getMinutes();
+  return `${h % 12 || 12}${m ? `:${String(m).padStart(2, "0")}` : ""}${h < 12 ? "am" : "pm"}`;
 }

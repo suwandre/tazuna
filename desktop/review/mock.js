@@ -1,7 +1,8 @@
 // test data for the before/after comparison: the desktop app as it runs on tazuna's core, without the core
 if (!window.__TAURI_INTERNALS__) {
 Object.defineProperty(navigator, "userAgent", { get: () => "Mozilla/5.0 (X11; Linux x86_64) Chrome/140" });
-localStorage.setItem("tazuna.setup", "1");
+// set up already, but for the sweep's first-run step (it showed the start page in its place until design review 11)
+if (!sessionStorage.getItem("tz.firstRun")) localStorage.setItem("tazuna.setup", "1");
 // The v2 main screen's mock: a project conversation mid-reply (steps, changes, checks, no PR yet), one waiting for an
 // answer, saved chats and project conversations for the sidebar.
 (() => {

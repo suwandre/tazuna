@@ -108,7 +108,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
   const button = "rounded-md border border-line px-2.5 py-1 text-[12px] text-ink disabled:opacity-40";
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex h-[620px] max-h-full w-[860px] max-w-full overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex h-[620px] max-h-[calc(100vh-5rem)] w-[860px] max-w-[calc(100vw-5rem)] overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
         <nav aria-label="Settings" className="flex w-[196px] flex-none flex-col gap-px border-r border-line-soft bg-sidebar px-2 pb-3 pt-2.5">
           <div className="px-2.5 pb-2.5 pt-px font-medium">Settings</div>
           {["Appearance", "Providers", "Privacy and routing", "Paid API spend", "Tools from MCP servers", ...(hook ? ["After each turn"] : []), "Quick chat", "Panels and plugins", "About"].map((t) => (
