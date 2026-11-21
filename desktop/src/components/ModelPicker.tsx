@@ -1,7 +1,8 @@
 import { Check, Search } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
 import type { ModelChoice, Models } from "../lib/tazuna";
-import { modelLabel } from "../lib/types";
+import { matchesWords, modelLabel } from "../lib/types";
+import { Segmented } from "./Controls";
 
 // The model picker over the composer: the terminal's /model catalog, grouped by provider. With nothing typed it lists the
 // models usable now; typing searches all of them, and a row that needs a key or trust says what to do.
@@ -56,7 +57,7 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
   }, [onClose]);
   const { groups, hidden } = useMemo(() => {
     const all = models?.choices ?? [], f = q.trim().toLowerCase();
-    const rows = f ? all.filter((c) => `${c.label} ${modelLabel(c.model)} ${c.place}`.toLowerCase().includes(f)) : all.filter((c) => !c.why_not);
+    const rows = f ? all.filter((c) => matchesWords(f, `${modelLabel(c.model)} ${c.label} ${c.model} ${c.place} ${c.provider}`)) : all.filter((c) => !c.why_not);
     const groups = new Map<string, ModelChoice[]>();
     for (const c of rows.slice(0, 300)) groups.set(c.provider, [...(groups.get(c.provider) ?? []), c]);
     return { groups: [...groups], hidden: f ? Math.max(0, rows.length - 300) : all.length - rows.length };
@@ -70,12 +71,7 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
       {efforts.length > 1 && onEffort && (
         <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-[12px]">
           <span className="text-faint">Effort</span>
-          <span role="radiogroup" aria-label="Effort" className="flex flex-wrap rounded-md border border-line p-0.5">
-            {efforts.map((e) => (
-              <button key={e} role="radio" aria-checked={e === effort} onClick={() => onEffort(e)}
-                className={`rounded px-2 py-0.5 ${e === effort ? "bg-selected text-ink" : "text-muted hover:text-ink"}`}>{e}</button>
-            ))}
-          </span>
+          <Segmented label="Effort" wrap value={effort ?? ""} options={efforts.map((e) => [e, e] as const)} onChange={onEffort} />
         </div>
       )}
       {models?.rebuild && <div className="border-b border-line-soft px-3 py-1.5 text-[12px] text-warn">Switching between Claude models: {models.rebuild}</div>}

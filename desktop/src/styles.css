@@ -25,16 +25,19 @@
   color-scheme: light;
 }
 .dark {
-  --canvas: #171613; --main: #1b1a17; --sidebar: #151411; --card: #211f1b; --field: #2a2823; --hover: #302e29; --selected: #2b2c45;
-  --ink: #ece8df; --ink-2: #d2cdc2; --muted: #afaa9e; --faint: #9a958d;
-  --line: #2f2c27; --line-soft: #25231f; --line-strong: #3a3731;
+  /* the lifted sheet (design review 11, mockups/v8.html): the sheet against the desk was 1.08:1 and "paper on the desk" read
+     only in light; main, card, field, hover and the lines each a step up (sheet to desk 1.15:1). faint a step up with
+     them, so it still reads 4.5:1 on a hovered row (4.6:1; it was 4.17:1 on the new hover). */
+  --canvas: #171613; --main: #211f1b; --sidebar: #151411; --card: #282622; --field: #302e29; --hover: #37342e; --selected: #2b2c45;
+  --ink: #ece8df; --ink-2: #d2cdc2; --muted: #afaa9e; --faint: #a29d95;
+  --line: #35322c; --line-soft: #2b2925; --line-strong: #423e37;
   --accent: #8f9bf0; --accent-ink: #aab3f5; --accent-soft: #272a44; --on-accent: #14152a;
   --ok: #7cc08f; --bad: #e08b7f; --warn: #e0b46a;
 --code-string: #d6b878; --code-number: #d9a0c0; --code-keyword: var(--accent-ink); --code-comment: var(--faint);
   --shadow-composer: none;
-  --shadow-pop: 0 0 0 1px #ffffff0a, 0 10px 32px #00000080; --pop: #282622;
+  --shadow-pop: 0 0 0 1px #ffffff0a, 0 10px 32px #00000080; --pop: #2e2c27;
   --scrim: #0000008c;
-  --desk: #121110; --shadow-sheet: 0 0 0 1px #ffffff0d, 0 1px 2px #00000066, 0 10px 30px #00000059;
+  --desk: #121110; --shadow-sheet: 0 0 0 1px #ffffff14, 0 1px 2px #00000080, 0 12px 34px #00000066;
   color-scheme: dark;
 }
 
@@ -117,6 +120,22 @@ button.bg-accent:not(:disabled):hover { background-color: var(--accent-ink); }
 .tz-scrollfade { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent); padding-bottom: 14px; }
 /* a list fades at its two ends, so a row the scroll cuts reads as "more", never as a sliced one (design review 10) */
 .tz-edges { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 14px, #000 calc(100% - 18px), transparent); mask-image: linear-gradient(to bottom, transparent, #000 14px, #000 calc(100% - 18px), transparent); }
+/* the transcript fades under the header and over the message box (design review 11: both cut rows in half); its own
+   padding is as tall as the fades, so nothing is faded at its top or its end. Two gradients in the sheet's colour over
+   the scroller, clear of its scrollbar (`--tz-sbw`, lib/chrome.ts): a mask on the scroller itself faded the scrollbar
+   too, its lower end and, with classic scrollbars, its arrows. */
+.tz-doc-edges::before, .tz-doc-edges::after { content: ""; position: absolute; left: 0; right: var(--tz-sbw, 0px); z-index: 1; pointer-events: none; }
+.tz-doc-edges::before { top: 0; height: 26px; background: linear-gradient(to bottom, var(--main), transparent); }
+.tz-doc-edges::after { bottom: 0; height: 34px; background: linear-gradient(to top, var(--main), transparent); }
+/* scrolled up, the way back down stands over the lower fade: the fade is deeper there, so the button is on no word */
+.tz-doc-edges.away::after { height: 84px; background: linear-gradient(to top, var(--main), color-mix(in srgb, var(--main) 80%, transparent) 42px, transparent); }
+/* the receipt: a slip of paper, its lower edge torn (the mask); the hairline around it is drawn by the filter, so it
+   follows the torn edge */
+.tz-slip-wrap { width: 452px; max-width: 100%; filter: drop-shadow(0 0 .5px var(--line-strong)) drop-shadow(0 0 .5px var(--line-strong)) drop-shadow(0 1px 1.5px #2321191f); }
+.tz-slip-wrap.float { filter: drop-shadow(0 0 .5px var(--line-strong)) drop-shadow(0 0 .5px var(--line-strong)) drop-shadow(0 12px 22px #00000047); }
+.tz-slip { background: var(--card); padding: 12px 16px 21px; border-radius: 6px 6px 0 0; line-height: 1.5;
+  -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 14px 100%; mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 14px 100%; }
+.tz-slip-wrap.float .tz-slip { background: var(--pop); }
 /* selected text in the paper's own indigo, not the system's blue */
 ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
 /* what closes goes out as it came in: lib/chrome.ts leaves a copy of a closed menu or dialog for this long */

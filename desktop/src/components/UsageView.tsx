@@ -6,6 +6,7 @@ import { summarize, type Day, type Row } from "../lib/usage";
 import { modelLabel } from "../lib/types";
 import { exactly, parseReset, whenReset } from "../lib/health";
 import { Sep } from "./Sep";
+import { Segmented, dialogShell, quietButton } from "./Controls";
 
 // The usage page (Cmd-Shift-U, the menu, a click on the plan bar or the cost): what each account has left right now
 // (Claude's plan from claude's own /usage, OmniRoute's accounts, the providers' credits: src/accounts.rs), what the last
@@ -96,12 +97,12 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
   const apiRuns = s ? s.byModel.filter((m) => !m.plan).reduce((a, m) => a + m.runs, 0) : 0, planRuns = s ? s.byModel.filter((m) => m.plan).reduce((a, m) => a + m.runs, 0) : 0;
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Usage" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex h-full max-h-[900px] w-[780px] max-w-[calc(100vw-5rem)] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Usage" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className={`${dialogShell(780)} h-[900px]`}>
         <div className="flex items-center gap-3 border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Usage</span>
           <button onClick={onClose} title="Close (Esc)" aria-label="Close" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
         </div>
-        <div className="overflow-auto bg-sidebar px-6 pb-7 pt-5">
+        <div className="overflow-auto bg-main px-6 pb-7 pt-5">
           <Section title="Right now" note="How much of each account is used (your Claude plan, your OmniRoute accounts), and the credit left with each provider.">
             <RightNow acc={acc} limits={limits} balance={balance} />
           </Section>
@@ -109,9 +110,7 @@ export function UsageView({ onClose, limits, balance, choices = [] }: { onClose:
           {/* the range by the sections it changes, not in the page's header: there it read as changing "Right now" too,
               which it never did (the user, desktop 0.1.72) */}
           <Section title="Spending" action={
-            <span role="radiogroup" aria-label="Days" className="flex rounded-md border border-line p-0.5 text-[12px]">
-              {RANGES.map((d) => <button key={d} role="radio" aria-checked={d === days} onClick={() => setDays(d)} className={`rounded px-2 py-0.5 ${d === days ? "bg-selected text-ink" : "text-muted hover:bg-hover"}`}>{d} days</button>)}
-            </span>} note={`The last ${days} days from the run log. Claude on your plan is counted at API prices, not billed.`}>
+            <Segmented label="Days" value={String(days)} options={RANGES.map((d) => [String(d), `${d} days`] as const)} onChange={(d) => setDays(Number(d))} />} note={`The last ${days} days from the run log. Claude on your plan is counted at API prices, not billed.`}>
             {!s ? <div className="px-3.5 py-2.5 text-[12.5px] text-faint">Reading the run log…</div> : <>
               <div className="grid grid-cols-3 divide-x divide-line-soft">
                 <Figure label="API providers" value={s.api > 0 ? money(s.api) : "Nothing billed in these days"} quiet={s.api <= 0} caption="billed" more={[[`${apiRuns}`, "runs"]]} />
@@ -245,7 +244,7 @@ function credit(c: { provider: string; left?: string | null; page: string }) {
         <span className="w-[200px] flex-none text-ink">{c.provider}</span>
         {c.left ? <><span className="flex-1" /><span className={`tabular-nums ${/ over /.test(c.left) || c.left.startsWith("-") ? "text-bad" : "text-muted"}`}><span className="font-medium text-ink">{c.left.replace(/ (left|over).*/, "")}</span>{c.left.match(/ (left|over).*/)?.[0]}</span></>
           : <><span className="flex-1" />{/* why is on the fold these rows sit under */}
-            <button onClick={() => core.openLink(c.page).catch(() => {})} className="flex items-center gap-1 rounded-md border border-line px-2 py-0.5 text-[12px] text-ink">Open its page<ExternalLink size={12} strokeWidth={1.5} /></button></>}
+            <button onClick={() => core.openLink(c.page).catch(() => {})} className={`flex items-center gap-1 ${quietButton}`}>Open its page<ExternalLink size={12} strokeWidth={1.5} /></button></>}
       </div>
   );
 }
@@ -289,9 +288,7 @@ function Contributing({ notes }: { notes: string[] }) {
       {!p ? <pre className="border-t border-line-soft px-3.5 py-2.5 whitespace-pre-wrap font-sans text-[12px] leading-relaxed text-muted">{notes.filter((n) => !n.startsWith("Approximate")).join("\n")}</pre> : (
         <div className="border-t border-line-soft pb-1.5">
           <div className="flex items-center gap-3 px-3.5 pb-1 pt-2.5">
-            {all.length > 1 && <span role="radiogroup" aria-label="Period" className="flex rounded-md border border-line p-0.5 text-[12px]">
-              {all.map((q, i) => <button key={q.period} role="radio" aria-checked={q === p} onClick={() => setAt(i)}
-                className={`rounded px-2 py-0.5 ${q === p ? "bg-selected text-ink" : "text-muted hover:bg-hover"}`}>Last {name(q.period)}</button>)}</span>}
+            {all.length > 1 && <Segmented label="Period" value={String(all.indexOf(p))} options={all.map((q, i) => [String(i), `Last ${name(q.period)}`] as const)} onChange={(i) => setAt(Number(i))} />}
             <span className="ml-auto text-[11.5px] tabular-nums text-faint">{p.stats}</span>
           </div>
           {p.items.map((it) => (

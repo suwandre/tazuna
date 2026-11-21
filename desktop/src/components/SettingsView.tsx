@@ -8,6 +8,7 @@ import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, typ
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
 import { PROSE, TEXT_SIZES, THEME, ZOOM, look } from "../lib/chrome";
 import { Parts } from "./Sep";
+import { accentButton, Segmented, dialogShell, quietButton } from "./Controls";
 
 // Settings: provider keys (saved by tazuna, never shown again), the data policy for this session, the router. The
 // terminal's /login, /data and /route in one page. Each part is a section: a heading, a line on what it is for, and a card
@@ -105,10 +106,10 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
     refresh(); core.models().catch(() => {});
   };
   const input = "rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none focus:border-accent placeholder:font-sans placeholder:text-faint";
-  const button = "rounded-md border border-line px-2.5 py-1 text-[12px] text-ink disabled:opacity-40";
+  const button = quietButton;
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
-      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog flex h-[620px] max-h-[calc(100vh-5rem)] w-[860px] max-w-[calc(100vw-5rem)] overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className={`${dialogShell(860)} h-[620px] flex-row!`}>
         <nav aria-label="Settings" className="flex w-[196px] flex-none flex-col gap-px border-r border-line-soft bg-sidebar px-2 pb-3 pt-2.5">
           <div className="px-2.5 pb-2.5 pt-px font-medium">Settings</div>
           {["Appearance", "Providers", "Privacy and routing", "Paid API spend", "Tools from MCP servers", ...(hook ? ["After each turn"] : []), "Quick chat", "Panels and plugins", "About"].map((t) => (
@@ -121,7 +122,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
           <span className="flex-1 font-medium">{tab}</span>
           <button onClick={onClose} title="Close (Esc)" aria-label="Close" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
         </div>
-        <div className="flex-1 overflow-auto px-6 pb-7 pt-5">
+        <div className="flex-1 overflow-auto bg-main px-6 pb-7 pt-5">
           <TabCtx.Provider value={tab}>
           <Section title="Appearance">
             <Row title="Theme" note="System follows your computer's light and dark.">
@@ -144,7 +145,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
                       onKeyDown={(e) => { if (e.key === "Enter" && keys[p.name]) save(p.name); if (e.key === "Escape") { e.stopPropagation(); setKeyFor(null); } }} aria-label={`${p.name} key`}
                       placeholder={p.key ? "Paste a new key" : `Paste a key${p.example ? ` (${p.example})` : ""}`} autoComplete="off" spellCheck={false} className={`w-56 ${input}`} />
                     <button disabled={!keys[p.name]} onClick={() => save(p.name)} className={button}>Save</button>
-                    <button onClick={() => setKeyFor(null)} className="rounded-md px-2 py-1 text-[12px] text-muted">Cancel</button>
+                    <button onClick={() => setKeyFor(null)} className={quietButton}>Cancel</button>
                   </> : <button onClick={() => setKeyFor(p.name)} className={button}>{p.key ? "Replace key" : "Add key"}</button>}
                   <button onClick={() => core.openKeyPage(p.page)} aria-label={`Make a key in ${p.place}`} title={`Make a key in ${p.place}`} className="rounded p-1 text-muted hover:text-ink"><ExternalLink size={14} strokeWidth={1.5} /></button>
                 </Row>
@@ -161,7 +162,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
                 <div className="flex items-center gap-2 px-4 py-2.5 text-[12px]">
                   <span className="flex-1 text-warn">For a work repository this may not be allowed.</span>
                   <button onClick={() => core.setData("any", true).then(() => { setAskAny(false); refresh(); })} className={button}>Allow for this session</button>
-                  <button onClick={() => setAskAny(false)} className="rounded-md px-2 py-1 text-muted">Cancel</button>
+                  <button onClick={() => setAskAny(false)} className={quietButton}>Cancel</button>
                 </div>
               )}
               <Row title="Answer general questions as a chat" note="Inside a project, a question that is not about the code gets a chat answer. Off: everything you send goes to the agent.">
@@ -248,9 +249,9 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
                     window with tazuna's reach (it can send messages to the agent, which can act on your files).</div>
                   <pre tabIndex={0} className="max-h-56 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] text-ink select-text">{reading.code}</pre>
                   <div className="mt-2 flex justify-end gap-2">
-                    <button onClick={() => setReading(null)} className="rounded-md px-2.5 py-1 text-[12px] text-muted">Cancel</button>
+                    <button onClick={() => setReading(null)} className={quietButton}>Cancel</button>
                     <button onClick={() => { onEnable?.({ ...reading.w, print: reading.print }, true); setReading(null); }}
-                      className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent">Enable this code</button>
+                      className={accentButton}>Enable this code</button>
                   </div>
                 </div>
               )}
@@ -283,7 +284,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
                 {update.version
                   ? update.installing ? <span role="status" className="text-[12px] text-muted">{progressText(update)}</span>
                     : <button onClick={() => installUpdate()} title="Replies running now stop; conversations stay resumable"
-                        className="rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent">Install {update.version} and restart</button>
+                        className={accentButton}>Install {update.version} and restart</button>
                   // aria-disabled, not disabled, while checking: a disabled button drops focus, which then had nowhere to
                   // come back to when the answer's dialog closed
                   : <button aria-disabled={checking} onClick={async () => { if (checking) return; setChecking(true); await checkUpdate(true); setChecking(false); }}
@@ -306,7 +307,7 @@ function Section({ title, note, children }: { title: string; note?: React.ReactN
   return (
     <section>
       {note && <p className="mb-3 text-[12.5px] leading-relaxed text-muted">{note}</p>}
-      <div className="divide-y divide-line-soft rounded-lg border border-line bg-main">{children}</div>
+      <div className="divide-y divide-line-soft rounded-lg border border-line bg-card">{children}</div>
     </section>
   );
 }
@@ -334,14 +335,3 @@ function Switch({ on, onChange, label }: { on: boolean; onChange: (on: boolean) 
   );
 }
 
-/** One of a few, side by side. */
-function Segmented({ value, options, onChange, label }: { value: string; options: [string, string][]; onChange: (v: string) => void; label: string }) {
-  return (
-    <div role="radiogroup" aria-label={label} className="flex rounded-md border border-line p-0.5 text-[12px]">
-      {options.map(([v, l]) => (
-        <button key={v} role="radio" aria-checked={v === value} onClick={() => onChange(v)}
-          className={`whitespace-nowrap rounded px-2.5 py-1 ${v === value ? "bg-selected text-ink" : "text-muted hover:text-ink"}`}>{l}</button>
-      ))}
-    </div>
-  );
-}

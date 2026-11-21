@@ -39,8 +39,9 @@ export function math(tex: string, block = false, key?: number): ReactNode {
       }
       if (sub !== null || sup !== null) {
         const big = typeof base === "object" && base !== null && BIG.has(String((base as { props?: { children?: unknown } }).props?.children));
-        base = sub !== null && sup !== null ? h(big && block ? "munderover" : "msubsup", { key: out.length }, base, sub, sup)
-          : h(sub !== null ? (big && block ? "munder" : "msub") : big && block ? "mover" : "msup", { key: out.length }, base, sub ?? sup);
+        // a key of its own kind: an atom's is its token's number, and the row's count met it ("two children with the same key")
+        base = sub !== null && sup !== null ? h(big && block ? "munderover" : "msubsup", { key: `s${out.length}` }, base, sub, sup)
+          : h(sub !== null ? (big && block ? "munder" : "msub") : big && block ? "mover" : "msup", { key: `s${out.length}` }, base, sub ?? sup);
       }
       out.push(base);
     }

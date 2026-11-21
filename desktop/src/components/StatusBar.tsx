@@ -1,7 +1,8 @@
 import { ArrowUpCircle, Check, LoaderCircle, RefreshCw } from "lucide-react";
 import { openUsage } from "./Rail";
 import { usd, type Usage, keysOf } from "../lib/types";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { ChatSlip, priceSaid, type Turn } from "./Receipt";
 import { exactly, untilShort, whenReset, worst, type Item, type Level } from "../lib/health";
 import { Sep } from "./Sep";
 import { checkUpdate, useUpdate } from "../lib/update";
@@ -66,6 +67,35 @@ function Card({ all, here }: { all: Item[]; here: Item[] }) {
   );
 }
 
+/** "this chat $0.051": a click opens the conversation's receipt over the bar (its turns, the sums, the way on to the usage
+ * page; until design review 11 the click went straight to the usage page). Esc or a click elsewhere shuts it, and the
+ * keyboard's focus is back on the button. */
+function ChatCost({ cost, turns, busy, className, strong }: { cost: number; turns: Turn[]; busy?: boolean; className: string; strong: string }) {
+  const [open, setOpen] = useState(false);
+  const box = useRef<HTMLSpanElement>(null), button = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const key = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); button.current?.focus(); } };
+    const away = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    window.addEventListener("keydown", key, true); window.addEventListener("mousedown", away);
+    return () => { window.removeEventListener("keydown", key, true); window.removeEventListener("mousedown", away); };
+  }, [open]);
+  return (
+    <span ref={box} onBlur={(e) => { if (e.relatedTarget && !e.currentTarget.contains(e.relatedTarget)) setOpen(false); }} className="relative flex flex-none">
+      <button ref={button} onClick={() => setOpen(!open)} aria-expanded={open} aria-haspopup="dialog" title="This conversation's receipt: its turns and what they cost"
+        className={`${className} ${open ? "bg-hover text-ink" : ""}`}>this chat <span className={strong}>{priceSaid(cost, turns.some((t) => t.estimate))}</span></button>
+      {open && (
+        <div role="dialog" aria-label="This conversation's receipt" className="tz-fade absolute bottom-full right-0 z-30 mb-2 w-[452px] max-w-[calc(100vw-1.5rem)] whitespace-normal">
+          <ChatSlip turns={turns} cost={cost} busy={busy}>
+            <button autoFocus onClick={() => { setOpen(false); openUsage(); }} className="-mx-1.5 mt-2 flex w-[calc(100%+0.75rem)] items-center justify-between rounded-md px-1.5 py-0.5 text-ink hover:bg-hover">
+              Usage and spending<kbd className="rounded-[5px] border border-line px-[5px] font-mono text-[11px] text-faint">{keysOf("⌘⇧U")}</kbd></button>
+          </ChatSlip>
+        </div>
+      )}
+    </span>
+  );
+}
+
 /** The app's version, and what a click on it does: look for an update and answer in place ("up to date"), or offer the
  * one found (its dialog, as Settings' button); an update found by the hourly check shows here by itself, "update to
  * 0.1.86" in the accent, as VS Code and MonoCode show theirs. Until desktop 0.1.86 a line of text that did nothing (the
@@ -97,7 +127,9 @@ function Version({ version }: { version: string }) {
 /** "just now", "4 min ago", "2 h ago". */
 const ago = (at: number) => { const m = Math.floor((Date.now() - at) / 60_000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : `${Math.floor(m / 60)} h ago`; };
 
-export function StatusBar({ usage: u, version, idle, accounts = [], here = [], onRefresh, refreshing, readAt }: { usage: Usage; version: string;
+export function StatusBar({ usage: u, version, idle, accounts = [], here = [], onRefresh, refreshing, readAt, turns = [], busy }: { usage: Usage; version: string;
+  /** the conversation's finished turns and how its model is paid, for its receipt */
+  turns?: Turn[]; busy?: boolean;
   /** reads every account again (a few seconds, no model call), while `refreshing`; `readAt`: when the reading on screen came */
   onRefresh?: () => void; refreshing?: boolean; readAt?: number;
   /** no conversation on screen (a new one, before its first message): its context and cache are not shown as 0% */
@@ -154,7 +186,8 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [], o
       {/* a zero says nothing yet (a conversation before its first reply, a provider that reports no cache): not shown */}
       {!idle && u.contextPct > 0 && <span className={`${item} max-[900px]:hidden`} title="This conversation's context">context <span className={b}>{u.contextPct}%</span> of {u.contextMax}</span>}
       {!idle && u.cachedPct > 0 && <span className={`${item} max-[1100px]:hidden`} title="Input read from the cache in this conversation">cache <span className={b}>{u.cachedPct}%</span></span>}
-      {u.threadCost > 0 && <button onClick={openUsage} title="This conversation's cost · Usage" className={button}>this chat <span className={b}>{usd(u.threadCost)}</span></button>}
+      {u.threadCost > 0 && (turns.length ? <ChatCost cost={u.threadCost} turns={turns} busy={busy} className={button} strong={b} />
+        : <button onClick={openUsage} title="This conversation's cost · Usage" className={button}>this chat <span className={b}>{usd(u.threadCost)}</span></button>)}
       {version && <Version version={version} />}
     </footer>
   );

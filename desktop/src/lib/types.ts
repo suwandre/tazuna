@@ -22,8 +22,32 @@ export type ChangedFile = { path: string; added: number | null; removed: number 
 /** What one turn changed (the core's git snapshots before and after it). */
 export type Change = { turn: number; files: ChangedFile[]; undone: boolean; canUndo: boolean };
 /** One model call of a reply: what it called (tool verbs, or empty for the answer alone), its tokens, timing and cost. */
-export type Call = { tools: string; fresh: number; cached: number; out: number; cost: number; firstMs: number | null; tps: number | null; totalMs: number | null };
-export type Meta = { cost: number; tokens: number; cachedPct?: number; secs: number; calls?: Call[] };
+/** `model`, `role`: the call's own, where the core sends them; only then is `cost` the call's price as charged (else an
+ * estimate at the conversation's prices of now: not shown). `cost` null: not known (no usage reported, or cut off by a stop) */
+export type Call = { tools: string; fresh: number; cached: number; out: number; cost: number | null; firstMs: number | null; tps: number | null; totalMs: number | null;
+  model?: string; role?: string | null; /** `cost` is at list prices, not as charged */ estimate?: boolean };
+/** How one turn was paid, as the core says it ran: on the Claude plan (not billed), or to a provider, at `perM` dollars per
+ * million input, cached input and output tokens (a cache write's surcharge not in them). `providers`: a turn whose calls
+ * went to more than one, in order (then no `provider` and no `perM`). Where the core does not say, there is no Billing at
+ * all, and a receipt shows its total alone; a `plan` it does not send is not known, never "not on the plan". */
+export type Billing = { plan?: boolean; provider?: string; perM?: [number, number, number]; providers?: string[] };
+/** Who a turn paid, in words: "SubRouter", "SubRouter and OpenRouter"; undefined on the plan, where that is not known, and
+ * where nobody is named. */
+export const paidTo = (b?: Billing) => (b?.plan !== false ? undefined : b.provider ?? (b.providers?.length ? new Intl.ListFormat("en").format(b.providers) : undefined));
+export function demoBilling() {
+  // a `plan` the core did not send is not known: nobody is named as paid (absent was read as "not on the plan")
+  const got = [paidTo({ plan: false, provider: "Anthropic API" }), paidTo({ provider: "SubRouter" }), paidTo({ plan: true, provider: "x" }), paidTo(undefined), paidTo({ plan: false })];
+  if (got.join("|") !== "Anthropic API||||") throw new Error(`billing: ${JSON.stringify(got)}`);
+  console.log("billing ok");
+}
+/** `in`: all of the reply's input tokens, the cached ones included, `cached` those read from the cache; `out`: its output
+ * tokens (the receipt's line); `subCalls`: its subagents' model calls, in `cost` but not in `calls`. `cost` null: no amount
+ * can be told; `estimate`: it is tazuna's at list prices (nobody reported one); `uncounted`: tries the provider may have
+ * billed that are not in it; `unknownCalls`: calls whose cost is not known, not in it either */
+export type Meta = { cost: number | null; tokens: number; in?: number; cached?: number; out?: number; cachedPct?: number; secs: number; calls?: Call[]; billing?: Billing; subCalls?: number;
+  estimate?: boolean; uncounted?: number; unknownCalls?: number };
+/** A share as a whole percent that never rounds up to all of it: 99.6% of the input cached is "99%", only all of it "100%". */
+export const pct = (part: number, whole: number) => (part >= whole ? 100 : Math.min(99, Math.round((100 * part) / whole)));
 export type Message =
   | { role: "user"; text: string; queued?: boolean; edit?: { cp: number; block: number } }
   | { role: "agent"; prose: string[]; tools?: ToolStep[]; change?: Change; meta?: Meta; routedChat?: boolean; ask?: string;
@@ -109,6 +133,22 @@ export function demoModels() {
   console.log("model names ok");
 }
 
+/** Whether a model row is what was typed, by what the row shows (`shown`: its name as drawn, its label, its id, its place,
+ * its provider): every word typed is in it, in any case and order, where "-", "_", "/" and ":" read as a space too. The whole
+ * text as one substring found nothing for "deepseek v4.1" in "deepseek-v4.1-flash-1017" rows (2026-11-21). The terminal's
+ * /model has the same rule (src/main.rs, model_matches). */
+export function matchesWords(typed: string, shown: string): boolean {
+  const hay = shown.toLowerCase(), both = `${hay} ${hay.replace(/[-_/:]/g, " ")}`;
+  return typed.toLowerCase().split(/\s+/).filter(Boolean).every((w) => both.includes(w));
+}
+export function demoSearch() {
+  const row = `${modelLabel("deepseek-v4.1-flash-1017")} deepseek-v4.1-flash-1017 deepseek-v4.1-flash-1017 SubRouter · kriora SubRouter`;
+  const yes = ["", "deepseek v4.1", "DeepSeek V4.1", "deepseek-v4.1", "flash deepseek", "v4.1 1017", "  v4.1   flash ", "subrouter flash"], no = ["deepseek v4.2", "pro deepseek", "openrouter"];
+  const bad = [...yes.filter((q) => !matchesWords(q, row)), ...no.filter((q) => matchesWords(q, row)).map((q) => `${q} (matched)`)];
+  if (bad.length) throw new Error(`search: ${bad.join(", ")}`);
+  console.log("search ok");
+}
+
 /** A link as a few words: a GitHub pull request is "app PR #1521", an issue "repo issue #12", a repo
  * "owner/repo", a Claude artifact "Claude artifact", anything else its host and last path part. */
 export function linkName(u: string): string {
@@ -164,4 +204,54 @@ export function demoKeys() {
   const got = [keysOf("⌘⇧U", false), keysOf("⌘K", false), keysOf("⇧Tab", false), keysOf("⌘↵", false), keysOf("⌘\\", true)].join(" ");
   if (got !== "Ctrl+Shift+U Ctrl+K Shift+Tab Ctrl+Enter ⌘\\") throw new Error(`keys: ${got}`);
   console.log("keys ok");
+}
+
+/** The work panel's column, by rule (design review 11; the tab's click had set one choice for the whole window, which put
+ * the panel into plain chats and stopped the fold everywhere):
+ * 1. a side chat or a subagent's sheet has the column: no panel, no tab;
+ * 2. a choice made by hand in this conversation (the header's button, ⌘\, the tab) stands, in this conversation only;
+ * 3. else it is open in a project with something to show (a change, a check, a pull request, a panel of the user's) in a
+ *    window of 1280 px or more, and closed in a plain chat and in a narrower window;
+ * 4. a project with nothing to show has the "Changes 0" tab on the sheet's edge in its place (1280 px or more);
+ * 5. while it is not known yet whether there is something (`work` null: the pull request not answered, the panels not
+ *    read) the layout stays as it was (`was`), so the column does not slide open and shut.
+ * Closing by hand a panel that has nothing to show is no choice: it goes back to its tab (`choose`). */
+export function panelState(a: { project: boolean; width: number; work: boolean | null; choice?: boolean; pane?: boolean; was?: { open: boolean; tab: boolean } }): { open: boolean; tab: boolean } {
+  if (a.pane) return { open: false, tab: false };
+  const wide = a.project && a.width >= 1280;
+  if (a.choice !== undefined) return { open: a.choice, tab: false };
+  if (a.project && a.work === null) return a.was ?? { open: false, tab: false };
+  return { open: wide && !!a.work, tab: wide && !a.work };
+}
+/** The choice a click leaves for a conversation: the opposite of what shows, or none at all when that closes a panel with
+ * nothing in it. */
+export const panelChoice = (open: boolean, a: { project: boolean; work: boolean | null }): boolean | undefined => (open && a.project && a.work === false ? undefined : !open);
+export function demoPanel() {
+  const st = (a: Parameters<typeof panelState>[0]) => { const s = panelState(a); return `${s.open ? "open" : "shut"}${s.tab ? "+tab" : ""}`; };
+  const P = { project: true, width: 1280 }, by: Record<string, boolean | undefined> = {};
+  // the tab opened in one conversation, then another opened: the choice is the first one's only
+  by.a = panelChoice(false, { project: true, work: false });
+  const cases: [string, string, string][] = [
+    ["a plain chat", st({ project: false, width: 1680, work: false }), "shut"],
+    ["a plain chat, opened by hand", st({ project: false, width: 1680, work: false, choice: true }), "open"],
+    ["an empty project", st({ ...P, work: false }), "shut+tab"],
+    ["a project with a change", st({ ...P, work: true }), "open"],
+    ["gh answers with an error (no work: App counts a pull request by its number)", st({ ...P, work: false }), "shut+tab"],
+    ["the pull request not answered yet, after an open panel", st({ ...P, work: null, was: { open: true, tab: false } }), "open"],
+    ["the pull request not answered yet, after a tab", st({ ...P, work: null, was: { open: false, tab: true } }), "shut+tab"],
+    ["closed by hand, then a change arrives", st({ ...P, work: true, choice: panelChoice(true, { project: true, work: true }) }), "shut"],
+    ["an empty one opened by its tab", st({ ...P, work: false, choice: by.a }), "open"],
+    ["then another empty conversation", st({ ...P, work: false, choice: by.b }), "shut+tab"],
+    ["then a plain chat", st({ project: false, width: 1280, work: false, choice: by.c }), "shut"],
+    ["the opened empty one closed again: its tab is back", st({ ...P, work: false, choice: panelChoice(true, { project: true, work: false }) }), "shut+tab"],
+    ["opened by its tab, then a change arrives", st({ ...P, work: true, choice: by.a }), "open"],
+    ["a side chat or a subagent has the column", st({ ...P, work: true, choice: true, pane: true }), "shut"],
+    ["1100 px, a change", st({ project: true, width: 1100, work: true }), "shut"],
+    ["1100 px, nothing", st({ project: true, width: 1100, work: false }), "shut"],
+    ["900 px, a change", st({ project: true, width: 900, work: true }), "shut"],
+    ["900 px, opened by hand", st({ project: true, width: 900, work: true, choice: true }), "open"],
+  ];
+  const bad = cases.filter(([, got, want]) => got !== want).map(([what, got, want]) => `${what}: ${got} (wanted ${want})`);
+  if (bad.length) throw new Error(bad.join("\n"));
+  console.log("panel ok");
 }

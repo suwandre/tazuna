@@ -2,17 +2,13 @@ import { ArrowDown, CircleAlert, Check, ChevronRight, Copy, FileText, Info, Load
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
 import { readableError } from "../lib/fromView";
-import { usd, type Call, type Change, type Message, type ToolStep } from "../lib/types";
-import { Parts, Sep } from "./Sep";
+import { type Change, type Message, type ToolStep } from "../lib/types";
+import { AnswerSlip, priceSaid, tok } from "./Receipt";
+import { Sep } from "./Sep";
+import { quietButton } from "./Controls";
 
 function inlineCode(text: string) {
   return text.split(/(`[^`]+`)/).map((part, i) => part.startsWith("`") ? <code key={i}>{part.slice(1, -1)}</code> : part);
-}
-
-function meta(m: { cost: number; tokens: number; cachedPct?: number; secs: number }) {
-  const tokens = m.tokens >= 1e6 ? `${(m.tokens / 1e6).toFixed(1)}M` : m.tokens >= 1000 ? `${(m.tokens / 1000).toFixed(1)}k` : `${m.tokens}`;
-  // the time as the fold over the answer says it ("16 min 4 s" there and "964 s" here, design review 8)
-  return [usd(m.cost), `${tokens} tokens`, m.cachedPct != null ? `${m.cachedPct}% cached` : null, dur(m.secs)];
 }
 
 // one "thinking" from send to the first output (no "starting", then "waiting", then "thinking")
@@ -55,17 +51,17 @@ function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change
             {f.added > 0 && <span className="text-[12px] font-medium tabular-nums text-ok">+{f.added}</span>}
             {(f.removed ?? 0) > 0 && <span className="text-[12px] font-medium tabular-nums text-bad">−{f.removed}</span>}
           </>}
-          <button onClick={() => onDiff?.(change.turn, f.path)} className="rounded-md border border-line px-2 py-0.5 text-[12px] text-ink-2 hover:bg-hover">Diff</button>
+          <button onClick={() => onDiff?.(change.turn, f.path)} className={quietButton}>Diff</button>
         </div>
       ))}
       <div className="flex items-center gap-2 px-3 py-[7px] text-[12px] text-muted">
         <span className="flex-1">{change.files.length} file{change.files.length === 1 ? "" : "s"} changed in this turn
           {change.files.length > 6 && !all && <button onClick={() => setAll(true)} className="ml-2 text-accent-ink">show all</button>}</span>
         {!change.undone && onReview && <button onClick={() => onReview(change.turn)} title="Go through this turn's changes piece by piece"
-          className="rounded-md border border-line px-2.5 py-0.5 text-ink hover:bg-hover">Review</button>}
+          className={quietButton}>Review</button>}
         {change.undone ? <span className="text-faint">undone</span>
           : change.canUndo && <button disabled={busy} onClick={() => onUndo?.(change.turn)} title="Put these files back as they were before this turn"
-              className="rounded-md border border-line px-2.5 py-0.5 text-ink hover:bg-hover disabled:opacity-50">Undo</button>}
+              className={quietButton}>Undo</button>}
       </div>
     </div>
   );
@@ -100,17 +96,18 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
   useEffect(() => { if (jump == null) return; box.current?.querySelector(`[data-msg="${jump}"]`)?.scrollIntoView({ block: "start" }); setJump(null); }, [jump]);
   return (
     <TranscriptCtx.Provider value={rest}>
+    <div className={`tz-doc-edges relative flex min-h-0 flex-1 flex-col ${away ? "away" : ""}`}>
     <section ref={box} onScroll={(e) => { const el = e.currentTarget, gap = el.scrollHeight - el.scrollTop - el.clientHeight; stick.current = gap < 40; setAway(gap > 240); }}
-      className="min-h-0 flex-1 overflow-auto pb-3 pt-7">
+      className="min-h-0 flex-1 overflow-auto pb-9 pt-7">
       {hidden > 0 && (
         <div className="mx-auto mb-5 max-w-[756px] px-7">
-          <button onClick={() => { stick.current = false; setLimit((l) => l + 40); }} className="rounded-md border border-line px-2.5 py-1 text-[12px] text-muted hover:bg-hover">
+          <button onClick={() => { stick.current = false; setLimit((l) => l + 40); }} className={quietButton}>
             Show {Math.min(40, hidden)} earlier messages <span className="text-faint">({hidden} not shown)</span>
           </button>
         </div>
       )}
       {messages.slice(hidden).map((m, i, shown) => (
-        <div key={hidden + i} data-msg={hidden + i} className={`group mx-auto mb-[22px] max-w-[756px] px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
+        <div key={hidden + i} data-msg={hidden + i} className={`group mx-auto mb-[22px] max-w-[756px] scroll-mt-7 px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
           {m.role === "user" ? <Slot name="message.user" props={{ message: m, index: hidden + i }} only /> : (
             <>
               {/* no "tazuna" over each answer (nor "You" over each message): the field block says which is yours */}
@@ -129,15 +126,16 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
         </div>
       ))}
       {busy && !folded && activity && doing[activity] && <Working what={doing[activity]} since={rest.since} />}
-      {/* the text fades out under the button: on the page as it was, it sat on a message's words ("public API s↓ame",
-          design review 9) */}
+    </section>
+      {/* over the scroller, not in it: the transcript's own fade is under the button (in it, the fade took the button
+          too; before the fade it sat on a message's words, "public API s↓ame", design review 9) */}
       {away && (
-        <div className="pointer-events-none sticky bottom-0 z-[1] -mt-14 flex h-14 items-end justify-center bg-linear-to-t from-main from-35% to-transparent pb-1.5">
+        <div className="pointer-events-none absolute inset-x-0 bottom-1 z-[2] flex justify-center">
           <button onClick={() => { stick.current = true; box.current?.scrollTo({ top: box.current.scrollHeight, behavior: "smooth" }); }} title="Jump to the latest" aria-label="Jump to the latest"
             className="tz-enter pointer-events-auto grid size-8 place-items-center rounded-full border border-line-strong bg-card text-ink-2 shadow-[var(--shadow-pop)]"><ArrowDown size={15} strokeWidth={1.75} /></button>
         </div>
       )}
-    </section>
+    </div>
     </TranscriptCtx.Provider>
   );
 }
@@ -167,16 +165,11 @@ export function workSummary(tools: ToolStep[]): string {
   return parts.slice(0, 4).join(", ");
 }
 
-/** A reply's steps as one line, "Worked 41 s · read 2 files, ran 3 commands ›": open while the reply runs, folded once it
- * is done (a click keeps it as chosen). Until desktop 0.1.64 each step was a line of its own above every answer. */
-function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; secs?: number; live: boolean; asking?: boolean; since?: number }) {
-  const [open, setOpen] = useState<boolean | null>(null);
-  const shown = open ?? live;
-  const what = workSummary(tools);
-  const took = secs == null ? "" : ` ${dur(secs)}`;
-  // a click unfolds the steps in height and folds them back the same way (design review 10: they appeared and went at once)
+/** A part that unfolds and folds in height (180 ms open, 150 ms shut; at once under reduced motion): its body's ref and
+ * the click. The steps had it first (design review 10: they appeared and went at once); the receipt opens the same way. */
+const still = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+function useFold(shown: boolean, set: (open: boolean) => void) {
   const body = useRef<HTMLDivElement>(null), clicked = useRef(false);
-  const still = () => window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   useLayoutEffect(() => {
     const el = body.current;
     if (!el || !clicked.current || still()) return;
@@ -187,10 +180,21 @@ function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; sec
   }, [shown]);
   const toggle = () => {
     const el = body.current;
-    if (shown && el && !still()) { el.style.overflow = "hidden"; el.animate([{ height: `${el.scrollHeight}px` }, { height: "0px", opacity: 0 }], { duration: 150, easing: "cubic-bezier(0.2, 0, 0, 1)" }).onfinish = () => setOpen(false); return; }
+    if (shown && el && !still()) { el.style.overflow = "hidden"; el.animate([{ height: `${el.scrollHeight}px` }, { height: "0px", opacity: 0 }], { duration: 150, easing: "cubic-bezier(0.2, 0, 0, 1)" }).onfinish = () => set(false); return; }
     clicked.current = !shown;
-    setOpen(!shown);
+    set(!shown);
   };
+  return [body, toggle] as const;
+}
+
+/** A reply's steps as one line, "Worked 41 s · read 2 files, ran 3 commands ›": open while the reply runs, folded once it
+ * is done (a click keeps it as chosen). Until desktop 0.1.64 each step was a line of its own above every answer. */
+function WorkFold({ tools, secs, live, asking, since }: { tools: ToolStep[]; secs?: number; live: boolean; asking?: boolean; since?: number }) {
+  const [open, setOpen] = useState<boolean | null>(null);
+  const shown = open ?? live;
+  const what = workSummary(tools);
+  const took = secs == null ? "" : ` ${dur(secs)}`;
+  const [body, toggle] = useFold(shown, setOpen);
   return (
     <div className="mb-2.5">
       <button onClick={toggle} aria-expanded={shown} title={shown ? "Fold the steps" : "Show each step"}
@@ -285,7 +289,7 @@ export function MessageFailure({ message: m }: { message: Message }) {
             {raw && <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] text-muted">{f.raw}</pre>}
           </div>
           {onRetry && f.ask && <button disabled={busy} onClick={() => onRetry(f.ask)} title="Send the same message again"
-            className="flex flex-none items-center gap-1.5 rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover disabled:opacity-50"><RotateCcw size={12} strokeWidth={1.75} />Retry</button>}
+            className={`flex flex-none items-center gap-1.5 ${quietButton}`}><RotateCcw size={12} strokeWidth={1.75} />Retry</button>}
         </div>
       </div>
     )}
@@ -295,34 +299,6 @@ export function MessageFailure({ message: m }: { message: Message }) {
 export function MessageChange({ message: m }: { message: Message }) {
   const { busy, onDiff, onUndo, onReview } = useTranscript();
   return m.role === "agent" && m.change ? <ChangeCard change={m.change} busy={busy} onDiff={onDiff} onUndo={onUndo} onReview={onReview} /> : null;
-}
-
-const tok = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
-const secs = (ms: number | null) => (ms == null ? "–" : `${(ms / 1000).toFixed(1)} s`);
-const HEAD: [string, string][] = [["#", ""], ["called", "the tools this call asked for; none: it wrote the answer"],
-  ["new in", "input tokens sent uncached or written into the cache"], ["cached", "input tokens read from the cache"], ["out", "output tokens"],
-  ["first", "from its input being ready to its first token"], ["tok/s", "output while writing, after the first token (– where it cannot be measured)"],
-  ["time", "the whole call, the wait included"], ["cost", "at this model's prices"]];
-
-/** A reply's model calls, one row each: what it called, its tokens, timing and cost. */
-function Calls({ calls }: { calls: Call[] }) {
-  return (
-    <table className="mt-1.5 w-full border-collapse font-mono text-[11px] text-muted">
-      <thead className="text-faint">
-        <tr>{HEAD.map(([h, why], i) => <th key={h} title={why || undefined} scope="col" className={`px-1.5 py-0.5 font-normal ${i < 2 ? "text-left" : "text-right"}`}>{h}</th>)}</tr>
-      </thead>
-      <tbody>
-        {calls.map((c, i) => (
-          <tr key={i} className="border-t border-line-soft">
-            <td className="px-1.5 py-0.5">{i + 1}</td>
-            <td className="max-w-[200px] truncate px-1.5 py-0.5" title={c.tools || undefined}>{c.tools || "answer"}</td>
-            {[tok(c.fresh), tok(c.cached), tok(c.out), secs(c.firstMs), c.tps == null ? "–" : `${Math.round(c.tps)}`,
-              c.totalMs == null ? "…" : secs(c.totalMs), usd(c.cost)].map((x, j) => <td key={j} className="px-1.5 py-0.5 text-right">{x}</td>)}
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
 }
 
 /** Copies an answer's text as markdown (DeepSeek Harness puts copy under each answer; tazuna had only selecting it). */
@@ -369,20 +345,30 @@ export function MessageImages({ message: m }: { message: Message }) {
 
 export function MessageMeta({ message: m }: { message: Message }) {
   const [open, setOpen] = useState(false);
-  // its calls open into view (under the last answer they opened below the message box's edge)
+  const [body, toggle] = useFold(open, setOpen);
+  // the slip opens into view (under the last answer it opened below the message box's edge)
   const line = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (open) line.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [open]);
+  // (once it has unfolded: asked for while its height is still 0, only its top came into view)
+  useEffect(() => { if (!open) return; const t = setTimeout(() => body.current?.scrollIntoView({ block: "nearest", behavior: still() ? "auto" : "smooth" }), still() ? 0 : 200); return () => clearTimeout(t); }, [open]);
   if (m.role !== "agent" || !m.meta) return null;
-  const n = m.meta.calls?.length ?? 0;
-  const text = m.prose.join("\n\n");
+  const text = m.prose.join("\n\n"), a = m.meta;
   return (
-    // the answer's numbers show on its hover (or focus, or with its calls open): under every answer they were the busiest
-    // line on the screen, and the thread's cost stays in the header
-    <div ref={line} className={`mt-2 scroll-mb-3 text-[12px] tabular-nums text-faint transition-opacity duration-150 ${open ? "" : "opacity-0 focus-within:opacity-100 group-hover:opacity-100"}`}>
-      <Parts items={[text && <CopyAnswer key="c" text={text} />, ...meta(m.meta)]} />
-      {n > 0 && <><Sep /><button onClick={() => setOpen(!open)} aria-expanded={open} title="Each model call of this reply: tokens, timing and cost"
-        className="rounded px-1 hover:bg-hover hover:text-ink">{n} call{n === 1 ? "" : "s"} <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" className={`inline-block align-[-1px] transition-transform duration-150 ${open ? "rotate-90" : ""}`} /></button></>}
-      {open && m.meta.calls && <Calls calls={m.meta.calls} />}
+    // the answer's receipt: one faint line, always there (design review 11, variant A of mockups/v8.html; until then its
+    // numbers showed on the answer's hover only), a click unfolds every model call and what it cost. Copy stays on hover
+    // and on the keyboard's focus.
+    <div ref={line} className="mt-2 scroll-mb-3 text-[12px] tabular-nums text-faint">
+      <div className="flex items-center">
+        <button onClick={toggle} aria-expanded={open} title="The receipt: every model call of this reply and what it cost"
+          className="-ml-1.5 inline-flex min-w-0 items-center rounded-md px-1.5 py-0.5 hover:bg-hover hover:text-ink-2">
+          <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" className={`mr-1.5 flex-none transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
+          <span className="font-medium text-muted">{priceSaid(a.cost, a.estimate)}</span>
+          {a.in ? <><Sep />{tok(a.in)} in{a.cachedPct != null && <span className="ml-1">({a.cachedPct}% cached)</span>}<Sep />{tok(a.out ?? 0)} out</> : null}
+          <Sep />{dur(a.secs)}
+        </button>
+        <span className="flex-1" />
+        {text && <span className="opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100"><CopyAnswer text={text} /></span>}
+      </div>
+      {open && <div ref={body} className="scroll-mb-10 pb-1 pt-2"><AnswerSlip meta={a} tools={m.tools} toolsSaid={workSummary(m.tools ?? [])} /></div>}
     </div>
   );
 }

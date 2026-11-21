@@ -3,6 +3,7 @@ import { messages as viewMessages } from "../lib/fromView";
 import type { Task, View } from "../lib/tazuna";
 import { Parts } from "./Sep";
 import { Transcript } from "./Transcript";
+import { quietButton } from "./Controls";
 
 const tokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k tokens` : n > 0 ? `${n} tokens` : null);
 
@@ -21,7 +22,7 @@ export function AgentPanel({ view, task, title, running, onStop, onClose }: {
           <Parts className="min-w-0 truncate text-[12px] text-faint" items={[task?.agent || "subagent", running ? "working" : task?.status ?? "ended",
             task && tokens(task.tokens), task && task.tools > 0 && `${task.tools} step${task.tools === 1 ? "" : "s"}`]} /></span>
         {running && onStop && <button onClick={onStop} title="Stop this subagent: the conversation and its other tasks go on"
-          className="flex flex-none items-center gap-1.5 rounded-md border border-line px-2 py-1 text-[12px] text-ink-2"><Square size={9} strokeWidth={2} fill="currentColor" />Stop</button>}
+          className={`flex flex-none items-center gap-1.5 ${quietButton}`}><Square size={9} strokeWidth={2} fill="currentColor" />Stop</button>}
         <button onClick={onClose} title="Close" aria-label="Close" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
       </div>
       {!view && <div className="px-4 pt-4 text-[12.5px] text-faint">Reading what it has done so far…</div>}

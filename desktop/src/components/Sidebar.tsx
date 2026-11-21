@@ -132,9 +132,10 @@ function OpenRow({ o, active, onSwitch, onClose }: { o: Open; active: boolean; o
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5 text-ink">
           {o.state === "working" ? <LoaderCircle size={12} strokeWidth={2} className="flex-none animate-spin text-accent" aria-hidden="true" />
-            : o.state !== "asking" && <span className={`size-1.5 flex-none rounded-full ${STATE[o.state][0]}`} />}
+            // one waiting for you: a dot in the warning's colour (an "asks" badge said it a third time, under "Needs you" and
+            // over "waiting for your answer", and took the title's room; design review 11)
+            : <span className={`size-1.5 flex-none rounded-full ${STATE[o.state][0]}`} />}
           <span className="truncate">{o.title}</span>
-          {o.state === "asking" && <span className="ml-auto flex-none rounded-full border border-warn/45 px-1.5 text-[10.5px] font-medium leading-4 text-warn">asks</span>}
         </span>
         <Parts className="block truncate text-[11.5px] text-faint" items={[o.place, o.state === "asking" && "waiting for your answer", o.state === "stopped" && "stopped"]} />
       </span>

@@ -184,3 +184,61 @@ localStorage.setItem("tazuna.projects", JSON.stringify([PROJ]));
     return inv(cmd, args);
   };
 })();
+
+// desktop 0.1.97 (design review 11, the look): a receipt's data, each turn saying how it was paid as the core sends it
+// ("Why is the CI build so slow?": a turn on the Claude plan whose rows at list prices and its explorer subagent's two calls
+// (in the total, not among the rows) do not add up to the CLI's exact total, then a turn on DeepSeek that moved from
+// SubRouter to OpenRouter inside it (a 503), paid to both; "Speed up the CI build": paid to Mistral;
+// "Fix the flaky retry test": an older turn without those fields, its total alone; design review 12: in "Why is the CI
+// build so slow?" a turn on an API key (paid to Anthropic, not the plan), a stopped turn whose cost is tazuna's estimate
+// ("about", its cut-off call's cost not known), and a SubRouter turn with a call the provider sent no usage for and two
+// tries not in the total), today's runs for the start page's
+// ledger (`window.__NO_TODAY__`: a day without one), and gh's error for a project (`window.__PR_ERROR__`).
+(() => { const T = window.__TAURI_INTERNALS__; if (!window.__SENT__) return;
+  const emit = T.emit.bind(T), now = Math.floor(Date.now() / 1000), midnight = Math.floor(new Date().setHours(0, 0, 0, 0) / 1000);
+  const u = (i, c, o) => ({ input: i, cache_write: 0, cache_read: c, output: o });
+  const call = (block, fresh, cached, out, cost, ms, model, more = {}) => ({ block, fresh, cached, out, cost, first_ms: 900, tps: 55, total_ms: ms, model, role: null, provider: null, ...more });
+  const OPUS = { model: "claude-opus-5-5", plan: true, provider: null, price_m: [4, 0.4, 20] }, DEEP = { model: "deepseek-v4.1-flash", plan: false, provider: null, price_m: null, providers: ["SubRouter", "OpenRouter"] },
+    MISTRAL = { model: "mistral-large-3", plan: false, provider: "Mistral", price_m: [2, 0.2, 6] },
+    KEYED = { model: "claude-opus-5-5", plan: false, provider: "Anthropic API", price_m: [4, 0.4, 20] }, SUBR = { model: "glm-5.3", plan: false, provider: "SubRouter", price_m: [0.6, 0.11, 2.2] };
+  const at = (i) => Math.max(midnight + 60, now - i * 300);
+  const today = [...Array.from({ length: 9 }, (_, i) => [at(i + 1), "claude-opus-5-5", "0.1.176", true, 0.2 + i * 0.05, 2000, 500, 40000, 1200, null, null, null, "auto", true, [], []]),
+    ...[0.12, 0.11, 0.1, 0.08].map((c, i) => [at(i + 10), "deepseek-v4.1-flash", "0.1.176", false, c, 3000, 0, 30000, 900, null, null, null, "auto", true, [], [], "SubRouter"])];
+  T.emit = (event, payload) => {
+    const m = payload?.msg;
+    if (m?.type === "usage") m.rows = window.__NO_TODAY__ ? m.rows.filter((r) => r[0] < midnight) : [...m.rows.filter((r) => r[0] < midnight), ...today];
+    if (m?.type === "pr" && window.__PR_ERROR__) payload.msg = { type: "pr", state: "", error: "no git remotes found" };
+    if (m?.type === "view" && m.session_id === "c3" && !m.calls) {
+      m.blocks = [...m.blocks.slice(0, 6), { kind: "done", ok: true, secs: 38, turns: 3, cost: 0.031, usage: u(1300, 8900, 560), run_cost: 0.031, run_usage: u(1300, 8900, 560), stopped: false, ...OPUS, sub_calls: 2 },
+        { kind: "prompt", text: "What would the cache save us in a month?" },
+        { kind: "tool", id: "t9", name: "bash", input: { command: "gh run list --limit 200 --json durationMs" }, result: "200 runs, median 6 min 12 s", error: false, running: false, secs: 2 },
+        { kind: "notice", text: "route · now https://openrouter.ai/api/v1: HTTP 503", error: false },
+        { kind: "text", text: "About 26 hours of runner time: 74 s saved on each of roughly 1,260 runs a month. At the plan's price per minute that is a little under $13.", live: false },
+        { kind: "done", ok: true, secs: 14, turns: 2, cost: 0.0316, usage: u(2500, 20400, 920), run_cost: 0.0006, run_usage: u(1200, 11500, 360), stopped: false, ...DEEP },
+        { kind: "prompt", text: "On the API key now: which step should we cache first?" },
+        { kind: "text", text: "The npm store: it is 41% of the build and the cache step is three lines.", live: false },
+        { kind: "done", ok: true, secs: 9, turns: 1, cost: 0.0736, usage: u(3700, 26400, 1040), run_cost: 0.042, run_usage: u(1200, 6000, 120), stopped: false, ...KEYED },
+        { kind: "prompt", text: "And measure the type check on every branch" },
+        { kind: "tool", id: "t10", name: "Bash", input: { command: "for b in $(git branch --format='%(refname:short)'); do …; done" }, result: null, error: false, running: false, stopped: true, secs: 31 },
+        { kind: "notice", text: "stopped · send a message to continue", error: false },
+        { kind: "done", ok: false, secs: 33, turns: 2, cost: 0.2536, usage: u(23700, 26400, 6040), run_cost: 0.18, run_usage: u(20000, 0, 5000), stopped: true, estimate: true, ...KEYED },
+        { kind: "prompt", text: "Ask the cheap model for a one-line summary" },
+        { kind: "text", text: "Cache the npm store first; run the type check beside the tests.", live: false },
+        { kind: "done", ok: true, secs: 41, turns: 2, cost: 0.254, usage: u(25200, 26400, 6100), run_cost: 0.0004, run_usage: u(1500, 0, 60), stopped: false, uncounted: 2, ...SUBR }];
+      // claude's rows are estimates at list prices (its exact total comes with the result); the own loop's are as charged
+      m.calls = [call(1, 800, 2100, 90, 0.006, 4000, OPUS.model, { estimate: true }), call(3, 200, 2900, 110, 0.006, 6000, OPUS.model, { estimate: true }),
+        call(5, 300, 3900, 360, 0.014, 21000, OPUS.model, { estimate: true }),
+        call(8, 500, 5600, 210, 0.0002, 6000, "deepseek-v4.1-flash", { provider: "SubRouter" }), call(10, 700, 5900, 150, 0.0004, 5000, "deepseek-v4.1-flash", { provider: "OpenRouter" }),
+        call(13, 1200, 6000, 120, 0.0072, 7000, KEYED.model, { estimate: true, provider: "Anthropic API" }),
+        call(16, 20000, 0, 5000, 0.18, 30000, KEYED.model, { estimate: true, provider: "Anthropic API" }), call(17, 0, 0, 0, null, null, KEYED.model, { provider: "Anthropic API", first_ms: null, tps: null }),
+        call(20, 0, 0, 0, null, 38000, SUBR.model, { provider: "SubRouter", first_ms: null, tps: null }), call(20, 1500, 0, 60, 0.0004, 3000, SUBR.model, { provider: "SubRouter" })];
+      Object.assign(m, { cost: 0.254, turns: 10, usage: u(25200, 26400, 6100) });
+    }
+    if (m?.type === "view" && m.session_id === "p3" && !m.calls) {
+      m.calls = [call(1, 1400, 6000, 210, 0.0053, 5200, MISTRAL.model, { provider: "Mistral" }), call(3, 1600, 8000, 490, 0.0077, 12400, MISTRAL.model, { provider: "Mistral" })];
+      m.blocks = m.blocks.map((b) => (b.kind === "done" ? { ...b, ...MISTRAL, cost: 0.013 } : b));
+      m.cost = 0.013;
+    }
+    return emit(event, payload);
+  };
+})();

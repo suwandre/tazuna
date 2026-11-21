@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
-import { LoaderCircle, MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
+import { GitBranch, LoaderCircle, MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
 import { AgentPanel } from "./components/AgentPanel";
 import { Approval } from "./components/Approval";
 import { Composer, DRAFT, MODES, type Completions } from "./components/Composer";
@@ -18,8 +18,9 @@ import { SETUP, Setup } from "./components/Setup";
 import { prChip, type Pr } from "./lib/pr";
 import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
-import type { Row } from "./lib/usage";
-import { usd, type ChangedFile, keysOf } from "./lib/types";
+import { today as todayOf, type Row } from "./lib/usage";
+import { usd, type ChangedFile, type Message, keysOf, panelChoice, panelState } from "./lib/types";
+import type { Turn } from "./components/Receipt";
 import { Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rail";
 import { Slot, slots } from "./lib/slots";
 import { Sidebar } from "./components/Sidebar";
@@ -37,6 +38,7 @@ const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5
 import { THEME, applyLooks, darkNow, look } from "./lib/chrome";
 import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Accounts, type Diff, type ModelChoice, type Models, type SessionRow, type View } from "./lib/tazuna";
 import { listen } from "@tauri-apps/api/event";
+import { accentButton, quietButton } from "./components/Controls";
 
 const RECENT = "tazuna.projects";
 const recent = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT) ?? "[]"); } catch { return []; } };
@@ -284,7 +286,8 @@ export default function App() {
   const [paletteTick, setPaletteTick] = useState(0);
   useEffect(() => onPaletteChange(() => setPaletteTick((n) => n + 1)), []);
   const allTurns = threads.map((t) => t.view?.turns ?? 0).join(",");
-  const reloadWidgets = () => widgets.list().then((w) => setUserWidgets(w ?? [])).catch(() => {});
+  const [widgetsRead, setWidgetsRead] = useState(!inTauri);
+  const reloadWidgets = () => widgets.list().then((w) => setUserWidgets(w ?? [])).catch(() => {}).finally(() => setWidgetsRead(true));
   useEffect(() => { if (inTauri) reloadWidgets(); }, [allTurns]);
   // enabled plugins run (each reloaded when its code changes, taken back when turned off or removed); none in safe mode
   useEffect(() => {
@@ -388,13 +391,14 @@ export default function App() {
   const [showPr, setShowPr] = useState(false);
   useEffect(() => { if (!inTauri) return; const off = core.onPr((p, tid) => setPrs((m) => ({ ...m, [tid]: p }))); return () => { off.then((f) => f()); }; }, []);
   const replies = view ? view.blocks.reduce((n, b) => n + (b.kind === "done" ? 1 : 0), 0) : 0;
-  useEffect(() => { if (inTauri && folder && view) core.prIn(active).catch(() => {}); }, [active, folder, !!view, replies]);
+  useEffect(() => { if (inTauri && folder && view) core.prIn(active).catch((e) => setPrs((m) => (m[active] ? m : { ...m, [active]: { state: "", error: String(e) } }))); }, [active, folder, !!view, replies]);
   const pr = prs[active];
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => { if (inTauri) getVersion().then(setAppVersion).catch(() => {}); }, []);
-  // the work panel (the right column): open in a project, closed in a plain chat, until the user says otherwise (⌘\ or the
-  // header's button) for this window's life
-  const [panelPref, setPanelPref] = useState<boolean | null>(null);
+  // the work panel (the right column): by rule (lib/types.ts `panelState`), and by hand per conversation (⌘\, the header's
+  // button, the tab): one choice for the whole window put the panel into plain chats and stopped the fold everywhere
+  // (design review 11)
+  const [panelBy, setPanelBy] = useState<Record<string, boolean>>({});
   // the window's width: the work panel closes by itself below 1280 px, and below 1000 px the sidebar opens over the
   // conversation from the header's button (at 980 px the panel left the conversation 430 px and the composer's pills
   // wrapped; design review, 2026-11-18)
@@ -402,15 +406,27 @@ export default function App() {
   const narrow = width < 1000;
   const [navOpen, setNavOpen] = useState(false);
   useEffect(() => setNavOpen(false), [active, narrow]);
-  const panelOpen = panelPref ?? (!!folder && width >= 1280);
-  const togglePanel = () => setPanelPref(!panelOpen);
+  // with nothing to show (no change, no check, no pull request, no panel of the user's in it) it stays folded, a small tab
+  // on the sheet's edge in its place, and opens by itself at the first of them (design review 11, variant A of
+  // mockups/v8.html: two empty sections were a dead column beside every question asked in a project). Not known yet (the
+  // conversation still being read, gh not answered, the panels not read): the layout holds. A pull request is one with a
+  // number: gh's error (not installed, no remote) is nothing to show.
+  const hasWork: boolean | null = !folder ? false : !view || prs[active] === undefined || !widgetsRead ? null
+    : changedFiles(view).length > 0 || view.blocks.some((b) => b.kind === "verify") || !!pr?.number || userWidgets.some((w) => w.kind === "panel" && (w.slot ?? "rail") === "rail");
+  const colWas = useRef({ open: false, tab: false });
+  const col = panelState({ project: !!folder, width, work: hasWork, choice: panelBy[active], was: colWas.current });
+  colWas.current = col;
+  const panelOpen = col.open;
+  const togglePanel = () => setPanelBy(({ [active]: _, ...m }) => { const c = panelChoice(panelOpen, { project: !!folder, work: hasWork }); return c === undefined ? m : { ...m, [active]: c }; });
+  const toggleNow = useRef(togglePanel);
+  toggleNow.current = togglePanel;
   // a side chat or a subagent's sheet has the column: the panel's key does nothing then (it flipped the hidden panel)
   const paneOwns = useRef(false);
   useEffect(() => {
-    const key = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); if (paneOwns.current) return; setPanelPref((p) => !(p ?? (!!folder && window.innerWidth >= 1280))); } };
+    const key = (e: KeyboardEvent) => { if ((e.metaKey || e.ctrlKey) && e.key === "\\") { e.preventDefault(); if (!paneOwns.current) toggleNow.current(); } };
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
-  }, [folder]);
+  }, []);
   const work: Work = {
     files: changedFiles(view),
     branch: pr?.headRefName ?? pr?.branch, base: pr?.baseRefName,
@@ -647,6 +663,11 @@ export default function App() {
   // Not while a saved conversation's messages are on their way: the start screen showed for a moment before them, each
   // time one was opened (the user, 2026-11-20: "quickly flashes the main new chat page")
   const fresh = inTauri && !!view && !busy && !view.asking && !editing && !resuming && !view.blocks.some((b) => b.kind === "prompt");
+  // the start page's ledger reads the run log again when the page shows and when the day turns: yesterday's numbers stood
+  // there overnight as "Today", and runs made in the terminal never came (design review 11)
+  const [day, setDay] = useState(0);
+  useEffect(() => { if (fresh) core.usage().catch(() => {}); }, [fresh, active, day]);
+  useEffect(() => { const t = setTimeout(() => setDay((n) => n + 1), new Date().setHours(24, 0, 1, 0) - Date.now()); return () => clearTimeout(t); }, [day]);
   // in a project, its own conversations; in a chat, everything by when it last ran
   const startRecent: StartItem[] = Object.entries(sessions).filter(([dir]) => !folder || dir === folder).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: shortTitle(r.first, r.named) || "(no message)",
     place: dir === home ? "chat" : base(dir), dir: dir === home ? null : dir, at: r.last_at }))).sort((a, b) => b.at - a.at).slice(0, 3);
@@ -687,15 +708,15 @@ export default function App() {
             above={paidAsk != null ? (
               <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
                 <span className="flex-1">This goes to <span className="text-ink">{choice?.label}</span> on {choice?.provider}, a paid API{line?.est != null ? `: about ${usd(line.est)} a message` : ""}. Paid spend stops at your cap per 24 hours (Settings).</span>
-                <button onClick={() => { localStorage.setItem(paidKey, "1"); const t = paidAsk; setPaidAsk(null); sendNow(t); }} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Send</button>
-                <button onClick={() => { setDraft({ text: paidAsk, n: Date.now() }); setPaidAsk(null); }} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">Cancel</button>
+                <button onClick={() => { localStorage.setItem(paidKey, "1"); const t = paidAsk; setPaidAsk(null); sendNow(t); }} className={accentButton}>Send</button>
+                <button onClick={() => { setDraft({ text: paidAsk, n: Date.now() }); setPaidAsk(null); }} className={quietButton}>Cancel</button>
               </div>
             ) : editing && (
               <div className="mx-auto mb-2 flex max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
                 <span className="flex-1">Editing an earlier message: sending it goes back to before it, and the messages after it leave the conversation.
                   {editing.files > 0 && <label className="mt-1 flex items-center gap-2 text-ink"><input type="checkbox" checked={editing.keep} onChange={(e) => setEditing({ ...editing, keep: e.target.checked })} />
                     Also put back the {editing.files} file{editing.files === 1 ? "" : "s"} tazuna changed since</label>}</span>
-                <button onClick={() => { setEditing(null); setDraft({ text: "", n: Date.now() }); }} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">Cancel</button>
+                <button onClick={() => { setEditing(null); setDraft({ text: "", n: Date.now() }); }} className={quietButton}>Cancel</button>
               </div>
             )} onStop={() => core.interrupt()}
             models={models} onModels={inTauri ? () => core.models() : undefined}
@@ -751,7 +772,7 @@ export default function App() {
         </header>
         <div key={`view:${active}`} className="tz-enter flex min-h-0 flex-1 flex-col">
         {failed ? <CoreFailed error={error!} folder={folder} onRetry={restart} onChat={() => open(null)} />
-        : fresh ? <Start place={folder ? base(folder) : null} composer={composer} recent={startRecent} onResume={(r) => open(r.dir, r.id)} onFolder={pick}
+        : fresh ? <Start place={folder ? base(folder) : null} composer={composer} recent={startRecent} onResume={(r) => open(r.dir, r.id)} onFolder={pick} today={todayOf(rows)} onUsage={() => setOverlay("usage")}
             projects={projects.filter((p) => p !== folder).slice(0, 3).map((p) => ({ path: p, name: base(p), count: sessions[p]?.length ?? 0 }))} onProject={(p) => open(p)} />
         : <Transcript key={`${active}:${view?.session_id ?? ""}`} messages={messages} editFrom={editing?.cp}
           onEdit={inTauri ? (e, text) => {
@@ -761,35 +782,40 @@ export default function App() {
           onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined}
           onDiff={(turn, path) => (inTauri ? setReviewing({ scope: "turn", turn, path }) : core.diff(turn, path))} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />}
         </div>
+        {inTauri && col.tab && !side && !agentHere && !reviewing && !fresh && !failed && (
+          <button onClick={togglePanel} aria-expanded={false} aria-label="The work panel: no changes yet" title={`The work panel: nothing in it yet. It opens by itself at the first change (${keysOf("⌘\\")})`}
+            className="tz-enter absolute right-[var(--tz-sbw,0px)] top-[62px] z-[2] flex items-center gap-1.5 rounded-l-[7px] border border-r-0 border-line bg-desk py-1 pl-2 pr-[9px] text-[12px] text-muted hover:text-ink">
+            <GitBranch size={13} strokeWidth={1.5} aria-hidden="true" />Changes<span className="font-medium tabular-nums text-faint">0</span></button>
+        )}
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {reviewing && <ReviewView start={reviewing} turns={(view?.changes ?? []).filter((c) => !c.undone).map((c) => c.turn)}
           onClose={() => setReviewing(null)} onSend={(text) => core.send(text, true)} />}
         {view?.untrusted && (
           <div className="mx-auto mb-2 flex w-full max-w-[756px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
             <span className="flex-1">This folder's settings run code ({view.untrusted}). tazuna works here without them until you trust it.</span>
-            <button onClick={() => core.trust().then(restart)} className="rounded-md border border-line-strong px-2.5 py-1 font-medium text-ink hover:bg-hover">Trust folder</button>
+            <button onClick={() => core.trust().then(restart)} className={`${quietButton} font-medium`}>Trust folder</button>
           </div>
         )}
         {error && !failed && <div className="mx-auto mb-2 max-w-[756px] px-7 text-[12.5px] text-bad">{error}</div>}
         {folder && wtNotes[folder] && (
           <div className="mx-auto mb-2 flex w-full max-w-[756px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
             <span className="flex-1">Worktree ready. {wtNotes[folder]}.</span>
-            <button onClick={() => setWtNotes((m) => { const { [folder]: _, ...rest } = m; return rest; })} className="text-muted hover:text-ink">Dismiss</button>
+            <button onClick={() => setWtNotes((m) => { const { [folder]: _, ...rest } = m; return rest; })} className={quietButton}>Dismiss</button>
           </div>
         )}
         {createAsk != null && (
           <div className="mx-auto mb-2 flex w-full max-w-[700px] flex-wrap items-center gap-2 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
             <span className="flex-1">What should <span className="text-ink">“{createAsk.slice(0, 60)}”</span> be?</span>
-            <button onClick={() => { createPanel(createAsk); setCreateAsk(null); }} className="rounded-md border border-line-strong px-2.5 py-1 text-ink hover:bg-hover" title="A panel in the right column, or a plugin that changes the window">Part of the window</button>
-            <button onClick={() => { createBehaviour(createAsk); setCreateAsk(null); }} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent" title="A /command, a skill the agent reads, or a tool (MCP server): on every model">Something tazuna does</button>
-            <button onClick={() => setCreateAsk(null)} className="rounded-md px-2 py-1 text-muted hover:bg-hover">Cancel</button>
+            <button onClick={() => { createPanel(createAsk); setCreateAsk(null); }} className={quietButton} title="A panel in the right column, or a plugin that changes the window">Part of the window</button>
+            <button onClick={() => { createBehaviour(createAsk); setCreateAsk(null); }} className={accentButton} title="A /command, a skill the agent reads, or a tool (MCP server): on every model">Something tazuna does</button>
+            <button onClick={() => setCreateAsk(null)} className={quietButton}>Cancel</button>
           </div>
         )}
         {creation && creation.state !== "done" && (
           <div className="mx-auto mb-2 flex w-full max-w-[700px] items-center gap-3 rounded-lg border border-line-strong bg-card px-3.5 py-2 text-[12.5px] text-ink-2">
             <span className="flex-1">{creation.state === "made" ? "It is made and checked: what it is and where it is are in the conversation above. Read it, then turn it on." : "It did not pass the checks: the conversation says why."}</span>
-            {creation.state === "made" && <button onClick={() => core.createDoneIn(active, true).catch(() => {})} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Enable</button>}
-            <button onClick={() => core.createDoneIn(active, false).catch(() => {})} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">Discard</button>
+            {creation.state === "made" && <button onClick={() => core.createDoneIn(active, true).catch(() => {})} className={accentButton}>Enable</button>}
+            <button onClick={() => core.createDoneIn(active, false).catch(() => {})} className={quietButton}>Discard</button>
           </div>
         )}
         {wt && (
@@ -797,12 +823,12 @@ export default function App() {
             {wt.ask && <><span className="flex-1">This project has <span className="font-mono">.tazuna/setup.sh</span>. Run it in the new worktree (installs and the like)?
               {wt.script != null && <pre className="mt-1.5 max-h-60 overflow-auto whitespace-pre-wrap rounded bg-field px-2 py-1.5 font-mono text-[11.5px] text-ink">{wt.script}</pre>}
               <span className="mt-1 block text-[11.5px] text-muted">This is the whole script; exactly this runs.</span></span>
-              <button onClick={() => core.worktreeNew(true, wt.id).catch(() => {})} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Run it</button>
-              <button onClick={() => core.worktreeNew(false).catch(() => {})} className="rounded-md border border-line px-2.5 py-1 text-ink-2 hover:bg-hover">Skip</button></>}
+              <button onClick={() => core.worktreeNew(true, wt.id).catch(() => {})} className={accentButton}>Run it</button>
+              <button onClick={() => core.worktreeNew(false).catch(() => {})} className={quietButton}>Skip</button></>}
             {wt.error && <span className="flex-1 text-bad">The worktree was not made: {wt.error}</span>}
             {wt.remove && <><span className="flex-1">{wt.remove.dirty ? `It has changes that are not committed: ${wt.remove.dirty.slice(0, 160)}` : "Remove this worktree? Its folder goes; its branch and commits stay."}</span>
-              <button onClick={() => core.worktreeRemove(wt.remove!.path, !!wt.remove!.dirty).catch(() => {})} className="rounded-md border border-line-strong px-2.5 py-1 font-medium text-bad hover:bg-hover">{wt.remove.dirty ? "Remove anyway" : "Remove"}</button></>}
-            <button onClick={() => setWt(null)} className="rounded-md border border-line px-2.5 py-1 text-muted hover:bg-hover">{wt.ask ? "Cancel" : "Close"}</button>
+              <button onClick={() => core.worktreeRemove(wt.remove!.path, !!wt.remove!.dirty).catch(() => {})} className={`${quietButton} font-medium text-bad!`}>{wt.remove.dirty ? "Remove anyway" : "Remove"}</button></>}
+            <button onClick={() => setWt(null)} className={quietButton}>{wt.ask ? "Cancel" : "Close"}</button>
           </div>
         )}
         {inTauri && safeMode() && userWidgets.some((w) => w.kind === "plugin") && (
@@ -813,8 +839,8 @@ export default function App() {
             <span className="flex-1"><span className="font-medium text-ink">{ready[active]!.title}</span> is ready. Its own code says it {ready[active]!.summary}.
               <span className="block text-[12px] text-muted">That is self-reported: read the code to be sure. A plugin runs inside tazuna's window and can send messages to the agent.</span></span>
             <button onClick={() => setCodeView({ title: ready[active]!.title, text: ready[active]!.code })}
-              className="rounded-md border border-line px-2.5 py-1 text-ink-2 hover:bg-hover">Code</button>
-            <button onClick={() => enableReady(active)} className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent">Enable</button>
+              className={quietButton}>Code</button>
+            <button onClick={() => enableReady(active)} className={accentButton}>Enable</button>
           </div>
         )}
         {codeView && <DiffView diff={{ turn: 0, path: `${codeView.title} / plugin.js`, text: codeView.text }} plain onClose={() => setCodeView(null)} />}
@@ -862,10 +888,22 @@ export default function App() {
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>
-    <StatusBar usage={usage} version={appVersion} idle={fresh || failed} accounts={accts} here={hereAccts}
+    <StatusBar usage={usage} version={appVersion} idle={fresh || failed} accounts={accts} here={hereAccts} turns={turnsOf(messages)} busy={busy}
       onRefresh={inTauri && haveView ? () => readAccounts() : undefined} refreshing={acct.busy} readAt={readAt} />
     </div>
   );
+}
+
+/** The conversation's finished turns for its receipt: each message of yours (made short, as the sidebar's titles are) with
+ * what its reply cost and took. */
+function turnsOf(messages: Message[]): Turn[] {
+  const out: Turn[] = [];
+  let asked = "";
+  for (const m of messages) {
+    if (m.role === "user") asked = m.text;
+    else if (m.meta) out.push({ ...m.meta, title: shortTitle(asked) || "(no message)", calls: m.meta.calls?.length, in: m.meta.in ?? 0, out: m.meta.out ?? 0 });
+  }
+  return out;
 }
 
 /** The cost of the last finished turn. */

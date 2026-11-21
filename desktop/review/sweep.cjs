@@ -77,6 +77,59 @@ const log = [];
     log.push(`${theme} page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
     await ctx.close();
   }
+  // desktop 0.1.97 (design review 11, the look): the start page's ledger and a day without a run, an answer's receipt (on
+  // the plan and paid), the conversation's from the status bar, the empty work panel's tab and the panel opened from it,
+  // the transcript's faded edges, and the dialogs the first loop does not open
+  for (const theme of ["dark", "light"]) {
+    const [ctx, p] = await ctxOf({ theme }), T = theme[0];
+    await open(p, "Why is the CI build");
+    await step(p, `${T}-receipt-line`, async () => { await p.mouse.move(640, 400); await p.mouse.wheel(0, 9000); });
+    await step(p, `${T}-receipt-open`, async () => { await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500); });
+    // the same conversation's second turn ran on another model, paid to a provider: its own slip says so, and the
+    // conversation's slip has the plan's part and the provider's on a line each
+    await step(p, `${T}-receipt-mixed`, async () => { await p.getByTitle(/^The receipt/).nth(1).click(); await p.waitForTimeout(500); await p.mouse.move(640, 400); await p.mouse.wheel(0, 9000); });
+    await step(p, `${T}-receipt-chat`, async () => { await p.getByTitle(/^This conversation's receipt/).click(); }); await esc(p);
+    await step(p, `${T}-panel-tab`, async () => { await p.mouse.move(640, 400); await p.mouse.wheel(0, -9000); });
+    await step(p, `${T}-panel-open`, async () => { await p.getByTitle(/^The work panel: nothing/).click(); await p.waitForTimeout(500); });
+    const col = () => p.evaluate(() => `${document.querySelector('[style*="grid-template-columns"]').style.gridTemplateColumns.split(" ").pop()} column, ${document.querySelectorAll('button[aria-label^="The work panel"]').length} tab`);
+    log.push(`${theme} panel opened by its tab: ${await col()} (300px, 0 tab wanted)`);
+    await step(p, `${T}-receipt-paid`, async () => { await open(p, "Speed up the CI build"); await p.waitForTimeout(300); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500); });
+    log.push(`${theme} then another empty project conversation: ${await col()} (0px, 1 tab wanted)`);
+    await step(p, `${T}-edges`, async () => { await open(p, "Question 1"); await p.mouse.move(640, 400); await p.mouse.wheel(0, -700); });
+    log.push(`${theme} then a plain chat: ${await col()} (0px, 0 tab wanted)`);
+    // a turn saved before the core said how it was paid: its total alone, no price per call; and the conversation's slip
+    // while a reply runs, with a row for what is not a finished turn yet
+    await step(p, `${T}-receipt-old`, async () => { await open(p, "Fix the flaky retry test"); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500); });
+    await step(p, `${T}-receipt-chat-running`, async () => { await p.getByTitle(/^This conversation's receipt/).click(); }); await esc(p);
+    // the segmented control by keyboard: Tab stops on the chosen key, the arrows move and choose
+    await step(p, `${T}-segmented-keys`, async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("radio", { name: "Serif" }).focus(); await p.keyboard.press("ArrowRight"); });
+    log.push(`${theme} segmented by keyboard: focus on ${await p.evaluate(() => `${document.activeElement?.textContent} (checked ${document.activeElement?.getAttribute("aria-checked")}), ${document.querySelectorAll('[role=radiogroup][aria-label=Answers] [tabindex="0"]').length} tab stop`)} (Sans, true, 1 wanted)`);
+    await p.keyboard.press("ArrowLeft"); await esc(p);
+    await open(p, "Why is the CI build");
+    for (const [n, q] of [["bestof", "Try on several"], ["pr", "Pull request"]]) {
+      await step(p, `${T}-dialog-${n}`, async () => { await p.keyboard.press("Control+k"); await p.waitForTimeout(250); await p.keyboard.type(q); await p.waitForTimeout(250); await p.keyboard.press("Enter"); await p.waitForTimeout(700); }); await esc(p); await esc(p); }
+    log.push(`${theme} look page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
+    await ctx.close();
+    const [ctx2, q] = await ctxOf({ theme, extra: "window.__NO_TODAY__ = true;" });
+    await step(q, `${T}-start-no-runs-today`, async () => {});
+    await ctx2.close();
+    // gh answers with an error (not installed, no remote): nothing to show, so the tab, not an empty panel
+    const [ctx3, r] = await ctxOf({ theme, extra: "window.__PR_ERROR__ = true;" });
+    await step(r, `${T}-pr-error-tab`, async () => { await open(r, "Why is the CI build"); });
+    log.push(`${theme} gh's error: ${await r.evaluate(() => `${document.querySelector('[style*="grid-template-columns"]').style.gridTemplateColumns.split(" ").pop()} column, ${document.querySelectorAll('button[aria-label^="The work panel"]').length} tab`)} (0px, 1 tab wanted)`);
+    await ctx3.close();
+  }
+  { const [ctx, p] = await ctxOf({ w: 760, h: 640 });
+    await step(p, "w760-receipt-open", async () => { await p.getByRole("button", { name: "Conversations", exact: true }).click(); await open(p, "Why is the CI build"); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500); });
+    await step(p, "w760-receipt-chat", async () => { await p.getByTitle(/^This conversation's receipt/).click(); });
+    await ctx.close(); }
+  for (const [w, h] of [[873, 545], [768, 480]]) {
+    const [ctx, p] = await ctxOf({ w, h });
+    await step(p, `z${w}-start`, async () => {});
+    await step(p, `z${w}-receipt-open`, async () => { await p.getByRole("button", { name: "Conversations", exact: true }).click(); await open(p, "Why is the CI build"); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500); });
+    await step(p, `z${w}-receipt-chat`, async () => { await p.getByTitle(/^This conversation's receipt/).click(); });
+    log.push(`z${w} the conversation's slip: ${await p.evaluate(() => { const r = document.querySelector('[role=dialog][aria-label="This conversation\'s receipt"]').getBoundingClientRect(); return `y ${Math.round(r.top)}..${Math.round(r.bottom)} of ${innerHeight}, x ${Math.round(r.left)}..${Math.round(r.right)} of ${innerWidth}${r.top < 0 || r.left < 0 || r.right > innerWidth ? " CUT" : ""}`; })}`);
+    await ctx.close(); }
   for (const [w, h] of [[980, 720], [760, 640], [1680, 1050]]) {
     const [ctx, p] = await ctxOf({ w, h });
     await step(p, `w${w}-start`, async () => {});

@@ -20,8 +20,19 @@ export type ViewBlock =
   | { kind: "thinking"; tokens: number; live: boolean; text?: string }
   | { kind: "tool"; id: string; name: string; input: Record<string, unknown> | null; result?: string; error: boolean; declined?: boolean; secs?: number; running: boolean; stopped?: boolean }
   | { kind: "done"; ok: boolean; secs: number; turns: number; cost: number; usage: Usage; stopped: boolean;
-      /** this reply's own share of the totals (core 0.1.183; before, only the totals) */
-      run_cost?: number; run_usage?: Usage }
+      /** this reply's own share of the totals (core 0.1.183; before, only the totals); null: no amount can be told (a stopped
+       * turn on a model without list prices in the core), and none is in the totals */
+      run_cost?: number | null; run_usage?: Usage;
+      /** `run_cost` is tazuna's estimate at list prices (nobody reported it: a stopped turn, a hard stop, a crash);
+       * `uncounted`: tries the provider may have billed that are not in it (empty replies sent again, timed-out ones) */
+      estimate?: boolean; uncounted?: number;
+      /** how this turn was paid, as it ran (a receipt takes nothing from the conversation's model of now): the model's id,
+       * whether it ran on the Claude plan (not billed), who was paid, and the dollars per million input, cached input and
+       * output tokens (a cache write's surcharge is not in them: each call's `cost` holds it). Absent from a core before
+       * these and on turns saved before them; absent or null is not known, never false. `providers`: the turn's calls went
+       * to more than one (the own loop changed route inside it), in order; `provider` and `price_m` are then null.
+       * `sub_calls`: its subagents' model calls, which are in its cost and not among `calls`. */
+      model?: string; plan?: boolean; provider?: string | null; price_m?: [number, number, number] | null; providers?: string[]; sub_calls?: number }
   | { kind: "notice"; text: string; error: boolean }
   | { kind: "verify"; cmd: string; ok?: boolean; secs: number; timed_out?: boolean; cannot_run?: boolean; no_tests?: boolean };
 type Usage = { input: number; cache_write: number; cache_read: number; output: number };
@@ -40,7 +51,13 @@ export type View = {
   edit_points?: { cp: number; block: number }[];
   /** each model call: the block it began at, its tokens (fresh: sent uncached or written into the cache), its cost at the
    * model's prices, its timing (null: in flight or not measured) */
-  calls?: { block: number; fresh: number; cached: number; out: number; cost: number; first_ms: number | null; tps: number | null; total_ms: number | null }[];
+  /** `model` (with `role`, e.g. "explorer", and `provider`, who was paid for it): the call's own model, sent together with a
+   * `cost` fixed when the call began; without it `cost` is a rough figure, which the window does not show. `estimate`: the
+   * cost is at list prices (claude's calls: its exact total comes with the result alone); else it is what the own loop
+   * charged, and a turn's calls add up to its `run_cost` */
+  /** `cost` null: not known (the provider reported no usage, or the call was cut off by a stop) */
+  calls?: { block: number; fresh: number; cached: number; out: number; cost: number | null; first_ms: number | null; tps: number | null; total_ms: number | null;
+    model?: string; role?: string | null; provider?: string | null; estimate?: boolean }[];
 };
 export type Provider = { name: string; host: string; page: string; place: string; example: string; key: string; trusted: boolean };
 export type Settings = { providers: Provider[]; data_any: boolean; route: boolean; version: string;

@@ -4,6 +4,7 @@ import { useDialog } from "../lib/dialog";
 import type { ModelChoice, View } from "../lib/tazuna";
 import { modelLabel, usd } from "../lib/types";
 import { Parts, Sep } from "./Sep";
+import { accentButton, dialogShell, quietButton } from "./Controls";
 
 // Best-of-N (docs/DESKTOP.md 1.1): one task on several models, each in a worktree of its own, compared on cost, time,
 // what each changed and whether its checks passed: price to performance on the spot.
@@ -33,7 +34,7 @@ export function BestOfStart({ choices, onStart, onClose }: { choices: ModelChoic
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Try on several models" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
-        className="tz-dialog flex max-h-[calc(100vh-5rem)] w-[600px] max-w-[calc(100vw-5rem)] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+        className={dialogShell(600)}>
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Try on several models</span>
           <button onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
@@ -56,9 +57,9 @@ export function BestOfStart({ choices, onStart, onClose }: { choices: ModelChoic
             message, in auto mode: the agent works without asking, inside its worktree. Each lane bills as its model does.</div>
         </div>
         <div className="flex justify-end gap-2 border-t border-line-soft px-5 py-3">
-          <button onClick={onClose} className="rounded-md px-2.5 py-1 text-muted hover:bg-hover">Cancel</button>
+          <button onClick={onClose} className={quietButton}>Cancel</button>
           <button disabled={!ok} onClick={() => onStart(task.trim(), usable.filter((c) => picked.includes(id(c))))}
-            className="rounded-md bg-accent px-2.5 py-1 font-medium text-on-accent disabled:opacity-40">Start {picked.length || ""} lanes</button>
+            className={accentButton}>Start {picked.length || ""} lanes</button>
         </div>
       </div>
     </div>
@@ -94,7 +95,7 @@ export function LanesView({ lanes, views, onOpen, onKeep, onClose }: {
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Lanes" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
-        className="tz-dialog flex max-h-[calc(100vh-5rem)] w-[820px] max-w-[calc(100vw-5rem)] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+        className={dialogShell(860)}>
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="min-w-0 flex-1"><span className="font-medium">Lanes</span> <span className="truncate text-[12px] text-muted"><Sep />{lanes.task}</span></span>
           <button onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
@@ -114,8 +115,8 @@ export function LanesView({ lanes, views, onOpen, onKeep, onClose }: {
                   <td className="py-2 pr-3 text-right font-mono">{s ? `${s.files} files, +${s.added} −${s.removed}` : "–"}</td>
                   <td className={`py-2 pr-3 ${s?.check === "passed" ? "text-ok" : s?.check === "failed" ? "text-bad" : "text-muted"}`}>{s ? s.check : "–"}</td>
                   <td className="py-2 text-right whitespace-nowrap">
-                    {l.tid && <button onClick={() => onOpen(l.tid!)} className="rounded-md border border-line px-2 py-0.5 text-[12px] text-ink-2 hover:bg-hover">Open</button>}
-                    {l.tid && s && !s.running && <button onClick={() => setKeep(l)} className="ml-1.5 rounded-md border border-line-strong px-2 py-0.5 text-[12px] text-ink hover:bg-hover">Keep</button>}
+                    {l.tid && <button onClick={() => onOpen(l.tid!)} className={quietButton}>Open</button>}
+                    {l.tid && s && !s.running && <button onClick={() => setKeep(l)} className={`ml-1.5 ${quietButton}`}>Keep</button>}
                   </td>
                 </tr>
               ))}
@@ -124,8 +125,8 @@ export function LanesView({ lanes, views, onOpen, onKeep, onClose }: {
           {keep && (
             <div role="alert" className="mt-3 flex items-center gap-2 rounded-md border border-line-strong px-3 py-2 text-[12.5px]">
               <span className="flex-1 text-ink-2">Keep {modelLabel(keep.model.model)}'s lane? The other lanes' worktrees go, with their uncommitted changes (their branches stay).</span>
-              <button onClick={() => { onKeep(keep); setKeep(null); }} className="rounded-md border border-line-strong px-2.5 py-1 font-medium text-bad hover:bg-hover">Remove the others</button>
-              <button onClick={() => setKeep(null)} className="rounded-md px-2 py-1 text-muted hover:bg-hover">Cancel</button>
+              <button onClick={() => { onKeep(keep); setKeep(null); }} className={`${quietButton} font-medium text-bad!`}>Remove the others</button>
+              <button onClick={() => setKeep(null)} className={quietButton}>Cancel</button>
             </div>
           )}
           <div className="mt-3 text-[11.5px] text-faint">Changed: lines the turns changed, from the core's snapshots. Checks: tazuna's tests after the agent said it was done, where the project has them.</div>

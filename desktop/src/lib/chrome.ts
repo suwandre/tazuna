@@ -99,6 +99,15 @@ export function look(key: string, value: string) {
 export const darkNow = () => { const t = localStorage.getItem(THEME); return t === "dark" || (t !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches); };
 
 export function applyLooks() {
+  // how wide this machine's scrollbars are (0 where they lie over the page, as on a Mac): what sits on a scroller's right
+  // edge (the transcript's fades, the work panel's tab) stays clear of them
+  if (!document.documentElement.style.getPropertyValue("--tz-sbw")) {
+    const probe = document.createElement("div");
+    probe.style.cssText = "position:absolute;top:-99px;width:50px;height:50px;overflow:scroll";
+    document.body.appendChild(probe);
+    document.documentElement.style.setProperty("--tz-sbw", `${probe.offsetWidth - probe.clientWidth}px`);
+    probe.remove();
+  }
   document.documentElement.classList.toggle("dark", darkNow());
   document.documentElement.classList.toggle("prose-sans", localStorage.getItem(PROSE) === "sans");
   const zoom = Number(localStorage.getItem(ZOOM)) || 1;

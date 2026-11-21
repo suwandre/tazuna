@@ -1,6 +1,6 @@
 // The core's view (Session::view) turned into what the window draws.
 import type { View } from "./tazuna";
-import type { Call, Message, ToolStep, Usage } from "./types";
+import { pct, type Call, type Message, type ToolStep, type Usage } from "./types";
 
 /** A provider's error as its message alone: "provider · provider error in stream: {\"message\":\"[404]: … not found.\", …}"
  * (cut at 300 characters, so not always JSON) is "[404]: … not found.". The terminal reads it the same way (src/ui/mod.rs). */
@@ -34,7 +34,7 @@ function calls(v: View): (Call & { block: number })[] {
     const end = list[i + 1]?.block ?? v.blocks.length, counts = new Map<string, number>();
     for (const b of v.blocks.slice(c.block, end)) if (b.kind === "tool") { const w = verb(b.name); counts.set(w, (counts.get(w) ?? 0) + 1); }
     const tools = [...counts].map(([w, n]) => (n > 1 ? `${w} ×${n}` : w)).join(", ");
-    return { block: c.block, tools, fresh: c.fresh, cached: c.cached, out: c.out, cost: c.cost, firstMs: c.first_ms, tps: c.tps, totalMs: c.total_ms };
+    return { block: c.block, tools, fresh: c.fresh, cached: c.cached, out: c.out, cost: c.cost, firstMs: c.first_ms, tps: c.tps, totalMs: c.total_ms, model: c.model, role: c.role, estimate: c.estimate };
   });
 }
 
@@ -73,13 +73,20 @@ export function messages(v: View): Message[] {
         secs: 0, ok: true, running: b.live, text: b.text });
     }
     else if (b.kind === "done") {
-      // the reply's own cost and tokens (the totals so far were shown under every answer until desktop 0.1.80)
+      // the reply's own cost and tokens (the totals so far were shown under every answer until desktop 0.1.80); a cost the
+      // core says it cannot tell (null) stays unknown, only a core before 0.1.183 sends the totals alone
       const u = b.run_usage ?? b.usage, total = u.input + u.cache_write + u.cache_read + u.output, read = u.input + u.cache_write + u.cache_read;
+      // a call belongs to the first done block from where it began (`block`: the blocks there were then): a call that
+      // added no block began at the done's own place, and went under the next reply
       let n = 0;
-      while (n < pending.length && pending[n].block < k) n++;
-      const mine = pending.splice(0, n).map(({ block: _, ...c }) => c);
-      current().meta = { cost: b.run_cost ?? b.cost, tokens: total, cachedPct: read ? Math.round((100 * u.cache_read) / read) : undefined, secs: Math.round(b.secs),
-        calls: mine.length ? mine : undefined };
+      while (n < pending.length && pending[n].block <= k) n++;
+      const mine = pending.splice(0, n).map(({ block: _, ...c }) => c), unknown = mine.filter((c) => c.cost == null).length;
+      current().meta = { cost: b.run_cost === undefined ? b.cost : b.run_cost, tokens: total, in: read, cached: u.cache_read, out: u.output, cachedPct: read ? pct(u.cache_read, read) : undefined, secs: Math.round(b.secs),
+        calls: mine.length ? mine : undefined,
+        // how the turn was paid comes from the turn itself or not at all (the conversation's model of now said "not billed"
+        // under answers a provider had billed, design review 11); a `plan` not sent is not known, not false
+        billing: b.model === undefined ? undefined : { plan: b.plan ?? undefined, provider: b.provider ?? undefined, perM: b.price_m ?? undefined, providers: b.providers },
+        subCalls: b.sub_calls, estimate: b.estimate, uncounted: b.uncounted, unknownCalls: unknown || undefined };
       // a reply that ended without its answer says why, where a provider's error before it said (until desktop 0.1.74 the
       // error was its raw JSON, as the answer's text, and a failed reply ended with nothing)
       if (!b.ok || b.stopped) current().failure = { text: lastError ? readableError(lastError) : b.stopped ? "" : "The reply ended without an answer.", raw: lastError, stopped: b.stopped, ask };
@@ -101,6 +108,22 @@ export function messages(v: View): Message[] {
   return out;
 }
 
+/** A check of the receipt's data: `npx tsx -e 'import("./src/lib/fromView.ts").then(m => m.demoView())'`. A field the core
+ * does not send, or sends as null, is not known: never false, never $0. */
+export function demoView() {
+  const u = { input: 1000, cache_write: 0, cache_read: 0, output: 10 }, call = (block: number, cost: number | null) => ({ block, fresh: 1000, cached: 0, out: 10, cost, first_ms: null, tps: null, total_ms: null, model: "claude-sonnet-5-5" });
+  const v = { blocks: [{ kind: "prompt", text: "a" }, { kind: "done", ok: false, secs: 3, turns: 1, cost: 0, usage: u, stopped: true, run_cost: null, run_usage: u, estimate: true, model: "claude-sonnet-5-5", provider: null, price_m: null },
+    { kind: "prompt", text: "b" }, { kind: "done", ok: true, secs: 2, turns: 1, cost: 0.1, usage: u, stopped: false, run_cost: 0.1, run_usage: u, model: "glm-5.3", plan: false, provider: "SubRouter", price_m: [1, 0.1, 2], uncounted: 2 },
+    { kind: "prompt", text: "c" }, { kind: "done", ok: true, secs: 1, turns: 1, cost: 0.2, usage: u, stopped: false }],
+    calls: [call(1, null), call(3, 0.1)], model: "", effort: "", cwd: "", profile: "", mode: "", activity: "Done", cost: 0.1, usage: u, turns: 2, context: 0 } as View;
+  const m = messages(v).flatMap((x) => (x.role === "agent" && x.meta ? [x.meta] : []));
+  const ok = m.length === 3 && m[0].cost === null && m[0].estimate === true && m[0].billing?.plan === undefined && m[0].unknownCalls === 1 && m[0].calls?.length === 1
+    && m[1].cost === 0.1 && m[1].billing?.plan === false && m[1].uncounted === 2 && m[1].calls?.[0].cost === 0.1 && m[1].cached === 0
+    && m[2].cost === 0.2 && m[2].billing === undefined;
+  if (!ok) throw new Error(`view: ${JSON.stringify(m)}`);
+  console.log("view ok");
+}
+
 /** The messages waiting behind the reply now running (sent during it; the core holds them until it ends). */
 export const queued = (v: View) => messages(v).flatMap((m) => (m.role === "user" && m.queued ? [m.text] : []));
 
@@ -110,7 +133,7 @@ export function usage(v: View): Usage {
   const u = v.usage, read = u.input + u.cache_write + u.cache_read;
   return { contextPct: Math.min(100, Math.round((100 * v.context) / win)), contextUsed: k(v.context), contextMax: k(win),
     plan5h: v.limits ? Math.round(v.limits[0]) : null, plan5hReset: resetIn(v.limits_reset), planWeek: v.limits ? Math.round(v.limits[1]) : null,
-    threadCost: v.cost, threadTurns: v.turns, cachedPct: read ? Math.round((100 * u.cache_read) / read) : 0, saved: 0, today: v.cost, todayTurns: v.turns, todaySeries: [], balance: v.balance };
+    threadCost: v.cost, threadTurns: v.turns, cachedPct: read ? pct(u.cache_read, read) : 0, saved: 0, today: v.cost, todayTurns: v.turns, todaySeries: [], balance: v.balance };
 }
 
 /** "in 2 h 14 min" until the plan's 5-hour window resets; empty when unknown or past. */

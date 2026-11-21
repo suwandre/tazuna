@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { useDialog } from "../lib/dialog";
 import { dismiss, useToasts, type Toast } from "../lib/toast";
 import { progressText, useUpdate } from "../lib/update";
+import { accentButton, dialogShell, quietButton } from "./Controls";
 
 const icon = (t: Toast, size: number) => t.kind === "error" ? <CircleAlert size={size} strokeWidth={1.75} className="flex-none text-bad" aria-hidden="true" />
   : t.kind === "ok" ? <CircleCheck size={size} strokeWidth={1.75} className="flex-none text-ok" aria-hidden="true" />
@@ -30,7 +31,7 @@ export function Toaster() {
           {icon(t, 16)}
           <span className="min-w-0 flex-1">{t.text}</span>
           {t.action && <button onClick={() => { dismiss(t.id); t.action!.run(); }}
-            className="flex-none rounded-md bg-accent px-2.5 py-1 text-[12px] font-medium text-on-accent">{t.action.label}</button>}
+            className={`flex-none ${accentButton}`}>{t.action.label}</button>}
           <button onClick={() => dismiss(t.id)} aria-label="Dismiss" className="flex-none rounded p-1 text-muted hover:bg-hover hover:text-ink"><X size={14} strokeWidth={1.5} /></button>
         </div>
       ))}
@@ -53,7 +54,7 @@ function ToastDialog({ t }: { t: Toast }) {
   return (
     <div onMouseDown={close} className="tz-fade fixed inset-0 z-50 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="alertdialog" aria-modal="true" aria-labelledby={`toast-${t.id}`} aria-describedby={t.detail ? `toast-${t.id}-detail` : undefined}
-        tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className="tz-dialog w-[420px] max-w-[calc(100vw-5rem)] rounded-xl border border-line-strong bg-card p-5 shadow-composer">
+        tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className={`${dialogShell(420)} p-5`}>
         <div className="flex items-start gap-3">
           <span className="mt-0.5">{icon(t, 20)}</span>
           <div className="min-w-0 flex-1">
@@ -63,9 +64,9 @@ function ToastDialog({ t }: { t: Toast }) {
           <button onClick={close} aria-label="Close" title="Close (Esc)" className="-mr-1 -mt-1 flex-none rounded p-1 text-muted hover:text-ink"><X size={15} strokeWidth={1.5} /></button>
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <button autoFocus={!t.action} onClick={close} className="rounded-md border border-line px-3 py-1 text-[12.5px] text-ink">{t.action ? "Later" : "OK"}</button>
+          <button autoFocus={!t.action} onClick={close} className={quietButton}>{t.action ? "Later" : "OK"}</button>
           {t.action && <button autoFocus onClick={() => { close(); t.action!.run(); }}
-            className="rounded-md bg-accent px-3 py-1 text-[12.5px] font-medium text-on-accent">{t.action.label}</button>}
+            className={accentButton}>{t.action.label}</button>}
         </div>
       </div>
     </div>

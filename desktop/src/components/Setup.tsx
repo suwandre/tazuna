@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useDialog } from "../lib/dialog";
 import { keysOf } from "../lib/types";
 import { HOTKEY, core, defaultHotkey, type Settings } from "../lib/tazuna";
+import { accentButton, dialogShell, quietButton } from "./Controls";
 
 // The first run (docs/DESKTOP.md 1.0): what tazuna found and what is left to choose, each choice with its own way there
 // and none needed now ("choose later"). Shown once; Cmd-K "Set up tazuna" brings it back.
@@ -32,11 +33,11 @@ export function Setup({ onSettings, onClose }: { onSettings: () => void; onClose
       {action}
     </div>
   );
-  const button = "flex-none rounded-md border border-line px-2.5 py-1 text-[12px] text-ink hover:bg-hover";
+  const button = `flex-none ${quietButton}`;
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Set up tazuna" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
-        className="tz-dialog flex max-h-[calc(100vh-5rem)] w-[600px] max-w-[calc(100vw-5rem)] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer">
+        className={dialogShell(600)}>
         <div className="flex items-center border-b border-line-soft px-5 py-3">
           <span className="flex-1 font-medium">Set up tazuna</span>
           <button onClick={onClose} aria-label="Close" title="Close (Esc)" className="rounded p-1 text-muted hover:bg-hover"><X size={15} strokeWidth={1.5} /></button>
@@ -57,7 +58,7 @@ export function Setup({ onSettings, onClose }: { onSettings: () => void; onClose
             <button onClick={onSettings} className={button}>Change</button>)}
         </div>
         <div className="flex justify-end gap-2 border-t border-line-soft px-5 py-3">
-          <button onClick={onClose} className="rounded-md bg-accent px-3 py-1 font-medium text-on-accent">{claude && keys.length ? "Done" : "Choose later"}</button>
+          <button onClick={onClose} className={accentButton}>{claude && keys.length ? "Done" : "Choose later"}</button>
         </div>
       </div>
     </div>

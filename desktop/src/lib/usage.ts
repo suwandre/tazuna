@@ -1,6 +1,7 @@
 // The usage page's numbers (docs/DESKTOP.md 0.2), grouped from the run log's rows (the core's {"op": "usage"}: one row per
 // run, last 90 days). Runs on the claude CLI are the plan: their dollars are claude's estimate at API prices, not billed.
 // The rest ran on the own loop against a provider's API: billed.
+import { pct } from "./types";
 
 /** [ts, model, version, plan, cost, input, cache write, cache read, output, stop, verify, cache ttl, mode, real use, strong
  * signals, soft signals, provider] (src/main.rs usage_rows; the signals from src/realuse.rs; the provider of an API run
@@ -64,9 +65,23 @@ export function summarize(rows: Row[], days: number, now = Date.now() / 1000) {
   };
 }
 
+/** Today on this machine, for the start page's ledger line: the runs that called a model since local midnight, what
+ * they cost on paid APIs, and the share of their input that came from the cache. Null without a run today: the page
+ * shows no line then, never a zero. */
+export function today(rows: Row[] | null, now = Date.now() / 1000): { runs: number; paid: number; cachePct: number | null } | null {
+  const day = dayOf(now);
+  const runs = (rows ?? []).filter((r) => (r[5] ?? 0) + (r[6] ?? 0) + (r[7] ?? 0) + (r[8] ?? 0) > 0).map(run).filter((r) => r.day === day);
+  if (!runs.length) return null;
+  // a share that says nothing (no input read, or none of it from the cache) is null: the line leaves it out
+  const read = runs.reduce((a, r) => a + r.read, 0), cached = runs.reduce((a, r) => a + r.cached, 0);
+  return { runs: runs.length, paid: runs.reduce((a, r) => a + (r.plan ? 0 : r.cost), 0), cachePct: cached ? pct(cached, read) || null : null };
+}
+
 /** A check of the grouping: `npx tsx -e 'import("./src/lib/usage.ts").then(m => m.demo())'`. */
 export function demo() {
-  const now = 1_800_000_000;
+  // a noon on this machine, whatever its time zone: a fixed second was another zone's midnight, and the day's runs fell
+  // on two days there
+  const now = new Date(2027, 0, 15, 12).getTime() / 1000;
   const rows: Row[] = [
     [now - 100, "claude-opus-5-5", "0.1.130", true, 0.5, 0, 0, 1_000_000, 0, "completed", "claimed", "1h", "live", true, [], ["pushback"]],
     [now - 200, "deepseek-v4.1-flash", "0.1.130", false, 0.01, 1000, 0, 0, 100, "stopped", "claimed", null, "live", true, ["stopped", "correction"], []],
@@ -82,5 +97,12 @@ export function demo() {
     && s.byVersion.find((v) => v.model.startsWith("claude"))!.softPct === 100 && s.lanes.length === 2 && s.lanes[1].missPct === 100
     && s.byVersion.find((v) => v.model.startsWith("deepseek"))!.top === "stopped 1, correction 1";
   if (!ok) throw new Error(`usage: ${JSON.stringify(s)}`);
+  // the ledger: today's three runs (the empty one is no run), the paid ones' cost, the cache's share; none the day after
+  const t = today(rows, now);
+  if (!t || t.runs !== 3 || !near(t.paid, 0.03) || t.cachePct !== 99 || today(rows, now + 86400) !== null || today(rows.slice(1, 3), now)!.cachePct !== null) throw new Error(`today: ${JSON.stringify(t)}`);
+  // a claude run on an API key: the run log says it is not the plan (core, design review 12), so it is paid, to Anthropic
+  const keyed: Row = [now - 150, "claude-opus-5-5", "0.1.193", false, 0.42, 2000, 0, 0, 500, "completed", "claimed", "5m", "live", true, [], [], "Anthropic API"];
+  const k = today([...rows, keyed], now), byKey = summarize([...rows, keyed], 30, now).byModel.find((m) => m.provider === "Anthropic API");
+  if (!k || !near(k.paid, 0.45) || !byKey || byKey.plan || !near(byKey.cost, 0.42)) throw new Error(`keyed: ${JSON.stringify([k, byKey])}`);
   console.log("usage ok");
 }

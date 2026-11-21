@@ -472,6 +472,39 @@ user's pick from the prototype mockups/v8.html):
   (out/review-11/verify). Not fixed here: a duplicate-key warning from an answer with math (console only); two findings
   that need the real core to judge (the start page's echo of a sent message, "Ask tazuna to open one" during a reply).
 
+0.1.97 (with tazuna 0.1.193; design review 11's look, the user's picks from mockups/v8.html: "all"):
+- The start page has the user's own day on it: the mark at 44 px, the question, then "Today 13 runs | $0.41 paid | 93%
+  from the cache" from the run log (no line on a day without runs, no part that would be a zero; a click opens the usage
+  page; read again when the page shows and at midnight).
+- A receipt under every answer: a faint line that is always there ("$0.031 | 10.2k in (87% cached) | 560 out | 38 s")
+  and unfolds a slip of paper: a row per model call (its model, what it did, in, cached, out, time, price), the tools'
+  time, the total at API prices, "On your Claude plan: not billed" or "Paid to SubRouter", and what the same would have
+  cost without the cache. Every statement comes from what the core recorded for that turn (core 0.1.193): a turn from
+  before says "Total" and nothing else; a turn that went to two providers names both; rows that do not add up to the
+  total say why (the CLI's exact total against list prices; subagent calls that are in the total). "this chat $0.05" in
+  the status bar opens the conversation's receipt (its turns, plan and paid apart, a row for what runs now).
+- Dark has depth: the sheet is lifted (#211f1b on the desk's #121110, 1.15:1 where it was 1.08:1), with `faint` a step
+  lighter so every text level stays at 4.5:1 or more on every fill.
+- A project conversation with nothing to show (no change, no check, no pull request by number) folds its panel into a
+  "Changes 0" tab on the sheet's edge; it opens by a click, by ⌘\, or by itself when work arrives. A choice made by hand
+  holds for that conversation only (`panelState` in lib/types.ts, with its self-check).
+- The transcript fades under the header and over the box (two gradients over the scroller, clear of its scrollbar).
+- One segmented control (a raised key on a field track, a real radio group: one Tab stop, arrows, Home, End), one quiet
+  and one accent button, one dialog shell at 600, 780 or 860 px (components/Controls.tsx); 32 inline buttons and four
+  inline segmented controls went.
+- The model picker's search takes words in any order, as the terminal's does now.
+- The "asks" badge on a row under "Needs you" is a dot (the row said it three times); no "Start in a project" card on a
+  project's own start page.
+- A receipt says "about" for a stopped turn's estimate, "–" for a call whose cost was not reported, and counts the tries
+  that are not in a total; "without the cache" is the turn's own cost plus what its cached tokens would have cost at
+  the input price, and is left out where that cannot be said (subagent calls in the total, two providers, no prices).
+- Independent reviews found eighteen defects in the first build and four more in the receipt's rules (a receipt took its
+  payer from the conversation's current model, the tab's choice was window-wide, a gh error kept the panel open, list
+  prices stood beside a provider's billed figure), fixed before this release.
+- Seen on test data: the sweep (138 steps, both themes, 980 and 760 px, text sizes Large and Larger, no page errors) and a
+  WebKit pass of the new states (out/review-11/built3). Not seen: the real window on the real core; classic scrollbars
+  on Windows and Linux (the tab's and the fades' inset there).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

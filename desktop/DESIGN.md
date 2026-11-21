@@ -29,19 +29,19 @@ colors:
     desk: "#efebe3"
   dark:
     canvas: "#171613"
-    main: "#1b1a17"
+    main: "#211f1b"
     sidebar: "#151411"
-    card: "#211f1b"
-    field: "#2a2823"
-    hover: "#302e29"
+    card: "#282622"
+    field: "#302e29"
+    hover: "#37342e"
     selected: "#2b2c45"
     ink: "#ece8df"
     ink-2: "#d2cdc2"
     muted: "#afaa9e"
-    faint: "#9a958d"
-    line: "#2f2c27"
-    line-soft: "#25231f"
-    line-strong: "#3a3731"
+    faint: "#a29d95"
+    line: "#35322c"
+    line-soft: "#2b2925"
+    line-strong: "#423e37"
     accent: "#8f9bf0"
     accent-ink: "#aab3f5"
     accent-soft: "#272a44"
@@ -62,8 +62,8 @@ radius: { sm: 6px, md: 7px, lg: 10px, xl: 14px, pill: 999px }
 elevation:
   none: none
   composer: "0 1px 2px #2321190d, 0 4px 14px #23211908"
-  sheet: { light: "0 0 0 1px #2321190a, 0 1px 2px #2321190f, 0 8px 28px #2321190d", dark: "0 0 0 1px #ffffff0d, 0 1px 2px #00000066, 0 10px 30px #00000059" }
-  pop: { light: "0 2px 6px #2321190f, 0 14px 36px #23211924", dark: "0 0 0 1px #ffffff0a, 0 10px 32px #00000080", dark-fill: "#282622" }
+  sheet: { light: "0 0 0 1px #2321190a, 0 1px 2px #2321190f, 0 8px 28px #2321190d", dark: "0 0 0 1px #ffffff14, 0 1px 2px #00000080, 0 12px 34px #00000066" }
+  pop: { light: "0 2px 6px #2321190f, 0 14px 36px #23211924", dark: "0 0 0 1px #ffffff0a, 0 10px 32px #00000080", dark-fill: "#2e2c27" }
 layout: { sidebar: 248px, rail: 232px, reading: 700px, gutter: 28px }
 motion: { fast: 120ms, base: 160ms, slow: 200ms, easing: "cubic-bezier(0.2, 0, 0, 1)" }
 icons: { set: "Lucide", stroke: 1.5, size: 16px, small: 14px }
@@ -80,6 +80,9 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   sheet on it (`main`, 12 px corners, the `sheet` shadow, 8 px from the window's edges), and so is a side chat or a subagent
   beside it. The sidebar, the work panel and the status bar lie on the desk with no border of their own; the work panel's
   parts are sections apart by a rule, not cards.
+- The sheet is lifted in dark too (design review 11, `mockups/v8.html`): `main` #211f1b on the desk #121110 is 1.15:1 (it
+  was 1.08:1, and the sheet read only in light); card, field, hover and the lines each a step up with it, and `faint` too,
+  so it still reads 4.6:1 on a hovered row.
 - One mark: 手 (te, the hand of 手綱) drawn in the icons' round stroke, its last stroke ending in a rein's loop
   (`components/Mark.tsx`). The app icon (`app-icon.svg`, paper on indigo on macOS's grid), the sidebar (22 px tile) and the
   terminal's welcome (two cells, `▐手▌`) use it; nothing else stands for tazuna.
@@ -114,8 +117,13 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 
 ## Layout
 - Three columns: sidebar 248 px, main (header, transcript, composer), the work panel 300 px. The work panel is open in a
-  project and closed in a plain chat; ⌘\ and the header's button switch it. (Design review, 2026-11-18, prototype
-  `mockups/v2.html`.)
+  project and closed in a plain chat; ⌘\ and the header's button switch it, for the conversation they are pressed in (one
+  choice for the whole window put the panel into plain chats). With nothing to show (no change, no check, no pull request
+  with a number, no panel of the user's in it) it stays folded: a small "Changes 0" tab on the sheet's right edge opens
+  it, and it opens by itself at the first of them, unless closed by hand in that conversation. While it is not known yet
+  whether there is something (gh not answered, the panels not read), the column stays as it was. The rules are one
+  function with its check (`panelState`, `demoPanel`, lib/types.ts). (Design reviews of 2026-11-18, prototype
+  `mockups/v2.html`, and 11.)
 - The status bar names an account this conversation does not run on, when it needs you, quietly: a dot in its colour and faint
   words ("OpenRouter $0.17 over +2"), the advice on hover.
 - Each number shows once. The model and effort: the composer's one pill. The plan (5 hours and week, what is left), the
@@ -134,9 +142,25 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - Settings is one part at a time, chosen in a list on its left (Appearance first: theme, text size, the type answers are
   set in); a provider's key field shows when asked for.
 - Scrolled up from the end of a conversation, a round button over the message box goes back down.
-- A new conversation before its first message is the start screen (prototype `mockups/v3.html`): a serif question, the
+- A new conversation before its first message is the start screen (prototype `mockups/v3.html`): the mark (44 px), a serif
+  question, the day's ledger from the run log ("Today 14 runs | $0.41 paid | 94% from the cache"; a click opens the usage
+  page; a part with nothing to say is left out, and a day without a run shows the line that says what the box is for), the
   composer in the middle with a "where it runs" pill (a chat or a project), "Pick up where you left off" (the last three
-  conversations) and "Start in a project", then the keys worth knowing. No $0.000 anywhere on it.
+  conversations) and, in a chat, "Start in a project", then the keys worth knowing. No $0.000 anywhere on it.
+- The receipt (design review 11, variant A of `mockups/v8.html`): under every answer one faint line, always there
+  ("$0.031 | 12.4k in (85% cached) | 640 out | 38 s"; Copy beside it on hover or focus); a click unfolds the slip: a row
+  per model call (its model and role, or what it called; in, cached, out, time, and its price where the core fixed it
+  when the call ended), the tools' own time, then the sums (the total at API prices, "On your Claude plan: not billed" or
+  who was paid, and "The same without the cache"). A slip is paper with a torn lower edge (`.tz-slip`), not a card. How a
+  turn was paid comes from that turn alone (the core's `model`, `plan`, `provider`, `price_m` on its end): never from the
+  model the conversation runs on now, which said "not billed" under answers a provider had billed. A turn that does not
+  say has its total alone; a number the core does not send is a row or a column left out; rows that do not add up to
+  the total say why in one line. The status bar's "this chat $0.051" opens the conversation's own slip: its turns, a row
+  for what is not a finished turn yet, a total that is the sum of its rows, the plan's part and each provider's on a line
+  each, and the way on to the usage page.
+- The transcript fades under the header and over the message box (`.tz-doc-edges`: two gradients in the sheet's colour
+  over the scroller, clear of its scrollbar, never a mask on the scroller); its padding is as tall as the fades, so
+  nothing is faded at its top or end, and a message jumped to starts under the fade. The way back down stands over the lower fade, which is deeper while it shows.
 - The usage page speaks Settings' language: sections (Right now, Spending), each a card of rows; every account's windows
   as meters (amber from 75%); accounts with nothing used fold into one line ("4 windows at 0%"), and so do providers
   whose API tells no balance (their pages inside); a zero is a quiet line, not a big number; the daily bars stack the plan
@@ -161,7 +185,12 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   Pull request (state, CI, Checks and reviews), your messages, then the user's own panels.
 
 ## Components we own
-Mark (`components/Mark.tsx`); sidebar item (two lines, or one when its place repeats), open row, group heading, project group, thread dot (idle, running), badge; header crumb, cost and
+Segmented (a raised key on a `field` track; lilac `selected` is only a list's selected row; a radio group: one Tab stop,
+the arrows, Home and End choose), `quietButton` (every bordered button that is not the accent one: Cancel, Later, Diff,
+Review, Retry), `accentButton` and `dialogShell` (420, 600, 780 or 860 px wide, never past the window less 5 rem, the
+`pop` shadow; its body is `main`, its groups are `card` with a hairline; the command palette alone keeps its own
+geometry: 560 px near the window's top, at most 60% of its height), all in `components/Controls.tsx`; the receipt (`components/Receipt.tsx`: Slip, AnswerSlip, ChatSlip), the start page's ledger
+line, the work panel's tab; Mark (`components/Mark.tsx`); sidebar item (two lines, or one when its place repeats), open row, group heading, project group, thread dot (idle, running), badge; header crumb, cost and
 panel button; message (user, agent, chat), work fold, tool step, change card, metadata line, routed tag; composer with
 pills (where, mode, model with its effort; one style: filled, an icon, a chevron where a menu opens; no mode in a plain
 chat) and send, their menus placed by one rule (usePlace: above the whole box where it

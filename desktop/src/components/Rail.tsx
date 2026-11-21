@@ -5,6 +5,7 @@ import { tokens, widgetUrl, type UserWidget } from "../lib/widgets";
 import { OPEN_PR, checksOf, type Pr } from "../lib/pr";
 import type { ChangedFile, Message, Usage } from "../lib/types";
 import { Sep } from "./Sep";
+import { quietButton } from "./Controls";
 
 // The right column is the work panel (the design review of 2026-11-18): what the agent changed, the checks it ran, the
 // branch's pull request, then your messages and the user's own panels; it closes (⌘\), and a plain chat opens without
@@ -44,7 +45,7 @@ export function Section({ icon, title, right, children }: { icon?: ReactNode; ti
 }
 
 const ico = "flex-none text-muted";
-const btn = "rounded-md border border-line px-2.5 py-1 text-[12.5px] text-ink";
+const btn = quietButton;
 
 /** Kept for a panel or plugin made before 0.1.64: a titled card. */
 export function Card({ title, children }: { title: string; children: ReactNode }) {

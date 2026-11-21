@@ -5,6 +5,7 @@ import { numbered, parse, patchOf, patchOfFile, sideBySide, wordMarks, type File
 import { code } from "../lib/markdown";
 import { Parts, Sep } from "./Sep";
 import { keysOf } from "../lib/types";
+import { accentButton, Segmented, quietButton } from "./Controls";
 
 type Comment = { path: string; line: number; text: string; quote: string };
 type Writing = { path: string; line: number; quote: string; text: string };
@@ -66,12 +67,8 @@ export function ReviewView({ start, turns, onClose, onSend }: {
     setComments(w.text.trim() ? [...rest, { ...w, text: w.text.trim() }] : rest);
     setWriting(null);
   };
-  const seg = "flex rounded-md border border-line bg-field p-0.5 text-[12px]";
-  const segBtn = (on: boolean) => `rounded px-2.5 py-0.5 ${on ? "bg-card text-ink shadow-[0_1px_2px_#0000001a]" : "text-muted hover:text-ink"}`;
-  const tab = (s: string, label: string, turn?: number) => (
-    <button key={label} role="radio" aria-checked={scope.scope === s && scope.turn === turn} onClick={() => { setScope({ scope: s, turn }); setSel(null); }}
-      className={segBtn(scope.scope === s && scope.turn === turn)}>{label}</button>
-  );
+  // the scopes as one switch: "uncommitted", "branch", then a turn by its number
+  const scopes: (readonly [string, string])[] = [["uncommitted", "Uncommitted"], ["branch", "Branch"], ...turns.map((t) => [`turn:${t}`, `Turn ${t + 1}`] as const)];
   const added = files.reduce((n, f) => n + f.added, 0), removed = files.reduce((n, f) => n + f.removed, 0);
   const textButton = "rounded px-2 py-0.5 text-[12px] hover:bg-hover";
 
@@ -116,8 +113,8 @@ export function ReviewView({ start, turns, onClose, onSend }: {
               className="block w-full resize-none rounded-t-lg bg-transparent px-3 py-2 text-[13px] text-ink outline-none placeholder:text-faint" />
             <div className="flex items-center gap-2 border-t border-line-soft px-3 py-1.5 text-[11.5px] text-faint">
               <span className="flex flex-1 items-center">Goes with your other comments when you send them<Sep />{keysOf("⌘↵")}</span>
-              <button onClick={() => setWriting(null)} className={`${textButton} text-muted`}>Cancel</button>
-              <button onClick={() => keep(writing)} className="rounded-md border border-line px-2.5 py-0.5 text-[12px] text-ink hover:bg-hover">{c ? "Save" : "Add comment"}</button>
+              <button onClick={() => setWriting(null)} className={quietButton}>Cancel</button>
+              <button onClick={() => keep(writing)} className={quietButton}>{c ? "Save" : "Add comment"}</button>
             </div>
           </div>
         </div>
@@ -138,13 +135,11 @@ export function ReviewView({ start, turns, onClose, onSend }: {
           <ChevronLeft size={14} strokeWidth={1.5} />Conversation<kbd className="rounded-[5px] border border-line px-[5px] font-mono text-[11px] text-faint">Esc</kbd></button>
         <span className="h-4 w-px bg-line-strong" aria-hidden="true" />
         <span className="font-medium">Review</span>
-        <div role="radiogroup" aria-label="What to review" className={seg}>{tab("uncommitted", "Uncommitted")}{tab("branch", "Branch")}{turns.map((t) => tab("turn", `Turn ${t + 1}`, t))}</div>
+        <Segmented label="What to review" value={scope.scope === "turn" ? `turn:${scope.turn}` : scope.scope} options={scopes}
+          onChange={(v) => { setScope(v.startsWith("turn:") ? { scope: "turn", turn: Number(v.slice(5)) } : { scope: v, turn: undefined }); setSel(null); }} />
         <span className="min-w-0 flex-1 truncate text-[12px] text-faint">{review?.scope === "branch" && review.base ? `against ${review.base}` : ""}</span>
-        <div role="radiogroup" aria-label="Layout" className={seg}>
-          <button role="radio" aria-checked={!split} onClick={() => setSplit(false)} className={segBtn(!split)}>Unified</button>
-          <button role="radio" aria-checked={split} onClick={() => setSplit(true)} className={segBtn(split)}>Split</button>
-        </div>
-        {comments.length > 0 && <button onClick={send} className="rounded-md bg-accent px-3 py-1 text-[12.5px] font-medium text-on-accent">
+        <Segmented label="Layout" value={split ? "split" : "unified"} options={[["unified", "Unified"], ["split", "Split"]]} onChange={(v) => setSplit(v === "split")} />
+        {comments.length > 0 && <button onClick={send} className={accentButton}>
           Send {comments.length} comment{comments.length === 1 ? "" : "s"}</button>}
       </div>
       <div className="flex min-h-0 flex-1">

@@ -2,7 +2,9 @@ import { CircleAlert, FolderOpen, MessageSquare, Plus, RotateCcw } from "lucide-
 import type { ReactNode } from "react";
 import { age } from "./Sidebar";
 import { Sep } from "./Sep";
-import { keysOf } from "../lib/types";
+import { keysOf, usd } from "../lib/types";
+import { Mark } from "./Mark";
+import { accentButton, quietButton } from "./Controls";
 
 // A new conversation before its first message (the second design review, prototype mockups/v3.html): the message box in
 // the middle under a question, a way back into recent work and into a project, the keys worth knowing. Until desktop
@@ -21,8 +23,8 @@ export function CoreFailed({ error, folder, onRetry, onChat }: { error: string; 
               terminal (<code className="font-mono text-[12px]">tazuna --version</code>), then try again.</p>
             <pre className="mt-2.5 whitespace-pre-wrap break-words rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] text-muted">{error}</pre>
             <div className="mt-3 flex gap-2">
-              <button onClick={onRetry} className="flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-[12.5px] font-medium text-on-accent"><RotateCcw size={13} strokeWidth={1.75} />Try again</button>
-              {folder && <button onClick={onChat} className="flex items-center gap-1.5 rounded-md border border-line px-3 py-1.5 text-[12.5px] text-ink hover:bg-hover"><MessageSquare size={13} strokeWidth={1.5} />A chat instead</button>}
+              <button onClick={onRetry} className={`flex items-center gap-1.5 ${accentButton}`}><RotateCcw size={13} strokeWidth={1.75} />Try again</button>
+              {folder && <button onClick={onChat} className={`flex items-center gap-1.5 ${quietButton}`}><MessageSquare size={13} strokeWidth={1.5} />A chat instead</button>}
             </div>
           </div>
         </div>
@@ -34,7 +36,9 @@ export function CoreFailed({ error, folder, onRetry, onChat }: { error: string; 
 export type StartItem = { id: string; title: string; place: string; dir: string | null; at: number };
 export type StartProject = { path: string; name: string; count: number };
 
-export function Start({ place, composer, recent, projects, onResume, onProject, onFolder }: {
+export function Start({ place, composer, recent, projects, onResume, onProject, onFolder, today, onUsage }: {
+  /** today's runs on this machine from the run log (lib/usage.ts `today`): the ledger line; null or absent, no line */
+  today?: { runs: number; paid: number; cachePct: number | null } | null; onUsage?: () => void;
   /** the project's name, or null in a chat */
   place: string | null;
   composer: ReactNode; recent: StartItem[]; projects: StartProject[];
@@ -47,12 +51,23 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
     // lower half, desktop 0.1.75); my-auto, not justify-center, so a short window still scrolls to its top
     <div className="flex min-h-0 flex-1 flex-col items-center overflow-auto px-7 py-10">
       <div className="my-auto flex w-full flex-col items-center pb-[6vh]">
+      {/* the mark over the question, and under it the day's ledger from your own numbers (design review 11, variant A of
+          mockups/v8.html: the page read like every other harness's start). Without a run today, the line that says what
+          the box is for, as before: no zeros. */}
+      <div className="mb-5"><Mark size={44} /></div>
       <h2 className="mb-1.5 text-center font-prose text-[27px] font-normal leading-tight tracking-[-0.01em] text-ink">
         {place ? <>What are we working on in {place}?</> : "What are we working on?"}</h2>
-      <div className="mb-3 text-center text-[12.5px] text-muted">{place ? "A change in this project, or a question about it." : "A question for a chat, or a change in one of your projects."}</div>
+      {today ? (
+        <button onClick={onUsage} title="Today on this machine, from the run log · opens the usage page" className="mb-3 flex items-center rounded-md px-2 py-0.5 text-[13px] tabular-nums text-muted hover:bg-hover">
+          <span className="mr-2.5 text-faint">Today</span>
+          <b className="mr-1 font-medium text-ink">{today.runs}</b>{today.runs === 1 ? "run" : "runs"}
+          {today.paid > 0 && <><Sep /><b className="mr-1 font-medium text-ink">{usd(today.paid)}</b>paid</>}
+          {today.cachePct != null && <><Sep /><b className="mr-1 font-medium text-ink">{today.cachePct}%</b>from the cache</>}
+        </button>
+      ) : <div className="mb-3 py-0.5 text-center text-[12.5px] text-muted">{place ? "A change in this project, or a question about it." : "A question for a chat, or a change in one of your projects."}</div>}
       <div className="w-full max-w-[756px]">{composer}</div>
-      {(recent.length > 0 || projects.length > 0 || !place) && (
-        <div className={`mt-2 grid w-full max-w-[756px] grid-cols-1 gap-3.5 px-7 ${recent.length > 0 ? "sm:grid-cols-2" : ""}`}>
+      {(recent.length > 0 || !place) && (
+        <div className={`mt-2 grid w-full max-w-[756px] grid-cols-1 gap-3.5 px-7 ${recent.length > 0 && !place ? "sm:grid-cols-2" : ""}`}>
           {recent.length > 0 && (
             <section className="overflow-hidden rounded-xl border border-line bg-card">
               <div className={head}>Pick up where you left off</div>
@@ -64,7 +79,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
               ))}
             </section>
           )}
-          <section className="overflow-hidden rounded-xl border border-line bg-card">
+          {!place && <section className="overflow-hidden rounded-xl border border-line bg-card">
             <div className={head}>Start in a project</div>
             {projects.map((p) => (
               <button key={p.path} onClick={() => onProject(p.path)} title={p.path} className={row}>
@@ -77,7 +92,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
               <Plus size={14} strokeWidth={1.5} className="flex-none text-muted" />
               <span className="min-w-0 flex-1"><span className="block text-ink">Open a folder…</span><span className="block text-[11.5px] text-faint">any project on this machine</span></span>
             </button>
-          </section>
+          </section>}
         </div>
       )}
       <div className="mt-5 flex gap-4 text-[11.5px] text-faint">
