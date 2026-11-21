@@ -3,8 +3,8 @@
 use super::*;
 use ratatui::layout::{Constraint, Layout};
 
-pub(super) const OPTS: Opts = Opts { marker: "", prompt: PromptStyle::Quote, group_tools: true, timeline: false, durations: false };
-const MAX_WIDTH: u16 = 92;
+pub(super) const OPTS: Opts = Opts { prompt: PromptStyle::Quote, group_tools: true, durations: false };
+pub(super) const MAX_WIDTH: u16 = 92;
 
 pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let full = f.area();
@@ -30,20 +30,30 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     // as it takes (six at most, then it scrolls) with the `@` and `/` completions under it, or the placeholder. It was one
     // row that showed the end of a draft and no completions (design review 11).
     let (glyph, label, color) = activity(s, v, th);
+    // while a reply runs: how long it has been at it, counted from when it began as the window's fold says it, and the
+    // key that stops it ("⠹ thinking" said neither, design review 11); a retry's wait and a question keep their own words
+    let busy = v.asking.is_none() && s.retry_in(v.clock_ms).is_none() && s.waiting_note.is_none()
+        && matches!(s.activity, Activity::Starting | Activity::Waiting | Activity::Thinking | Activity::Writing | Activity::Tool | Activity::Verifying);
+    let said = if busy {
+        vec![Span::styled(format!("{glyph} "), st(color)), Span::styled(format!("Working {}", wait_str(s.working_for(v.clock_ms) / 1000.0)), st(th.text)),
+            Span::styled(esc_hint(v), st(th.faint))]
+    } else {
+        vec![Span::styled(format!("{glyph} {label}"), st(color))]
+    };
     let typing = v.live && !v.input.is_empty() && v.asking.is_none();
     // a note for a moment ("copied 12 chars", the design ctrl-t switched to); while typing it is the row under the draft
     let note = if typing { String::new() } else { v.toast.as_ref().map_or(String::new(), |(t, _)| format!("{t}   ")) };
     // a question in a narrow column has the row to itself (its "?" says who is waited for): beside "● needs you" the
     // answers were cut to "a al" at 40 columns
     let alone = v.asking.is_some() && col.width < 60;
-    let status = Line::from(if alone { vec![] } else { vec![
+    let status = Line::from(if alone { vec![] } else { [vec![
         Span::styled(note, st(th.ok)),
-        // the permission mode when it is not auto, as the other designs' boxes say it
+        // the permission mode when it is not auto, as cockpit's box says it
         Span::styled(if v.live && v.mode != "auto" && v.asking.is_none() { format!("[{}]  ", v.mode) } else { String::new() }, st(th.dim)),
-        Span::styled(format!("{glyph} {label}"), st(color)),
+    ], said, vec![
         Span::styled(if v.live { String::new() } else { format!("   {}", play_str(v, "paused")) }, st(th.faint)),
-        Span::styled(if v.live { "" } else { "   1-4 · e · q" }, st(th.faint)),
-    ] });
+        Span::styled(if v.live { "" } else { "   tab · e · q" }, st(th.faint)),
+    ]].concat() });
     // the text starts one column left of the column, so the prompt's `›` (after a space, as composer_rows draws it) stands
     // on the column's edge with or without a draft
     let shift = u16::from(col.x > full.x);
@@ -71,7 +81,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
         split_row(f, under, Line::default(), Line::from(extra), None);
     }
 
-    let (last_block, trows, top_line) = render_transcript(f, body, transcript(s, v, th, &OPTS, body.width as usize), v.scroll);
+    let (last_block, trows, top_line) = render_transcript(f, body, transcript(s, v, th, &OPTS, body.width as usize), v.scroll, th);
 
     f.render_widget(Paragraph::new(Span::styled("─".repeat(rule.width as usize), st(th.border))), rule);
     f.render_widget(Paragraph::new(rows), text);

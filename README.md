@@ -153,7 +153,7 @@ UI: 190 MB, 0.45 s to start (2026-10-08). A whole agent run: 21-22 MB on the own
 - **MCP for every model.** `/mcp add atlassian https://mcp.atlassian.com/v1/mcp`, then `/mcp on`, and "fix ABC-123" is
   enough. Servers that need a login get one in the browser, as tazuna itself; on Claude your claude.ai connectors come
   along. The list is `~/.config/tazuna/mcp.json`, in Claude Code's format.
-- **A terminal UI that stays small.** Four designs (`ctrl-t`, remembered; zen by default, cockpit shows context, cache, cost, tools and
+- **A terminal UI that stays small.** Two designs (`ctrl-t`, remembered; zen by default, cockpit shows context, cache, cost, tools and
   files as they change), click and drag in the message box, `@` for files, images with `ctrl-v`, `!cmd` to run a
   command and send its output to the model, `/diff`, `/rewind`, `/resume`, and permission modes on `shift-tab` (auto,
   ask, edits, plan).

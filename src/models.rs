@@ -239,8 +239,58 @@ pub fn why_not(c: &Choice) -> Option<String> {
     }
 }
 
+/// Who a turn on this API is paid to, for its receipt: the provider's name, or None where a turn pays nobody per token (a
+/// machine of the user's, or OmniRoute's accounts, which are subscriptions).
+pub fn paid_to(url: &str) -> Option<String> {
+    (url != OMNIROUTE && !own_machine(host_of(url))).then(|| provider_name(url))
+}
+
+/// The variables that, set where claude runs, bill its runs elsewhere than the Claude plan: tazuna writes the ones it sees
+/// set into claude's init (`tazuna_env`, the names alone) for `claude_payer`.
+pub const CLAUDE_BILLING_ENV: [&str; 5] = ["CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"];
+
+/// Whether a claude run is on the Claude plan, and who is paid when it is not (None: not known): from its init's
+/// `apiKeySource` ("none": the subscription's login) and which of CLAUDE_BILLING_ENV are `set` where it runs. The plan only
+/// when nothing says otherwise: "none" read as the plan under Bedrock, Vertex or a gateway too, and an API key's run counted
+/// as plan in the header and the run log (design review 12). The session (receipt, header) and the run log (usage and start
+/// pages) ask this alone.
+#[inline(never)]
+pub fn claude_payer(key_source: Option<&str>, set: impl Fn(&str) -> bool) -> (bool, Option<&'static str>) {
+    if set("CLAUDE_CODE_USE_BEDROCK") {
+        (false, Some("Bedrock"))
+    } else if set("CLAUDE_CODE_USE_VERTEX") {
+        (false, Some("Vertex"))
+    } else if set("ANTHROPIC_BASE_URL") || set("ANTHROPIC_AUTH_TOKEN") {
+        (false, None)
+    } else if key_source.map_or(set("ANTHROPIC_API_KEY"), |k| !k.is_empty() && k != "none") {
+        (false, Some("Anthropic API"))
+    } else {
+        (true, None)
+    }
+}
+
+/// A host that is the user's own: this machine, one on their network (a private, link-local or carrier-shared address,
+/// IPv6's too; a `.local`, `.lan` or `.internal` name, a Tailscale one; a name without a dot), so a turn there pays nobody.
+/// It named `gpu-box.local` and `[` (of `[::1]`) as providers (design review 11), and `gpu.tail1234.ts.net` (12).
+fn own_machine(host: &str) -> bool {
+    use std::net::IpAddr;
+    let h = host.to_ascii_lowercase();
+    let v4 = |a: std::net::Ipv4Addr| a.is_loopback() || a.is_private() || a.is_link_local() || a.is_unspecified() || (a.octets()[0] == 100 && a.octets()[1] & 0xc0 == 64);
+    match h.parse::<IpAddr>() {
+        Ok(IpAddr::V4(a)) => v4(a),
+        Ok(IpAddr::V6(a)) => a.is_loopback() || a.is_unspecified() || a.segments()[0] & 0xfe00 == 0xfc00 || a.segments()[0] & 0xffc0 == 0xfe80 || a.to_ipv4_mapped().is_some_and(v4),
+        Err(_) => !h.contains('.') || [".local", ".lan", ".internal", ".localhost", ".home.arpa", ".ts.net"].iter().any(|s| h.ends_with(s)),
+    }
+}
+
+/// A URL's host: without the scheme, a user name, the port and the path; an IPv6 address without its brackets.
 fn host_of(url: &str) -> &str {
-    url.split("://").nth(1).unwrap_or(url).split(['/', ':']).next().unwrap_or_default()
+    let rest = url.split("://").nth(1).unwrap_or(url).split(['/', '?', '#']).next().unwrap_or_default();
+    let rest = rest.rsplit('@').next().unwrap_or(rest);
+    match rest.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or_default(),
+        None => rest.split(':').next().unwrap_or_default(),
+    }
 }
 
 /// Claude's models, then the checked routes, then the unchecked SubRouter models that have a public score; `trusted` says
@@ -1152,6 +1202,43 @@ mod tests {
     /// A second variable that is always set, standing in for a key beside PATH: HOME on Unix, USERPROFILE on Windows, which
     /// has no HOME on GitHub's runners (the tests that used HOME failed there, 2026-11-08).
     const SET: &str = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+
+    #[test]
+    fn a_receipt_names_who_was_paid_or_nobody() {
+        assert_eq!(paid_to("https://subrouter.ai/v1").as_deref(), Some("SubRouter"));
+        assert_eq!(paid_to("https://api.example.com/v1").as_deref(), Some("api.example.com"));
+        assert!(paid_to(OMNIROUTE).is_none() && paid_to("http://localhost:8080/v1").is_none() && paid_to("http://192.168.1.20:8080/v1").is_none());
+        // the user's own machines pay nobody: by address (IPv6 in its brackets too), by a local name, by a bare name
+        for own in ["http://127.0.0.1:11434/v1", "http://10.0.0.5/v1", "http://172.20.1.1:8000/v1", "http://169.254.3.4/v1", "http://100.100.20.3:8080/v1", "http://[::1]:8080/v1",
+            "http://[fd12:3456::1]/v1", "http://[fe80::1]:1234/v1", "http://[::ffff:192.168.1.2]/v1", "http://gpu-box.local:11434/v1", "http://nas.lan/v1", "http://host.docker.internal:8080/v1",
+            "http://gpu-box:11434/v1", "http://user:pw@localhost:1/v1", "http://0.0.0.0:8000/v1"] {
+            assert!(paid_to(own).is_none(), "{own}");
+        }
+        // an address out on the internet is somebody's
+        assert!(paid_to("http://8.8.8.8/v1").is_some() && paid_to("http://[2001:4860::1]/v1").is_some() && paid_to("https://user@api.example.com:443/v1?x=1").as_deref() == Some("api.example.com"));
+        assert_eq!((host_of("http://[::1]:8080/v1"), host_of("https://a.b:1/x"), host_of("a.b/x")), ("::1", "a.b", "a.b"));
+    }
+
+    #[test]
+    fn a_tailscale_name_is_the_users_own_machine() {
+        // like its 100.64/10 addresses: a machine on the user's tailnet pays nobody
+        assert!(paid_to("http://gpu.tail1234.ts.net:11434/v1").is_none() && paid_to("http://100.101.1.2:11434/v1").is_none());
+        assert_eq!(paid_to("https://ts.net.example.com/v1").as_deref(), Some("ts.net.example.com"));
+    }
+
+    #[test]
+    fn a_claude_run_is_on_the_plan_only_when_nothing_says_otherwise() {
+        let run = |key: Option<&str>, env: &[&str]| claude_payer(key, |k| env.contains(&k));
+        assert_eq!(run(Some("none"), &[]), (true, None), "the subscription's login");
+        assert_eq!(run(None, &[]), (true, None), "a recording whose init does not say");
+        assert_eq!(run(Some("ANTHROPIC_API_KEY"), &[]), (false, Some("Anthropic API")));
+        assert_eq!(run(None, &["ANTHROPIC_API_KEY"]), (false, Some("Anthropic API")), "a claude that does not say, with a key set");
+        // claude says "none" under Bedrock, Vertex and a gateway too
+        assert_eq!(run(Some("none"), &["CLAUDE_CODE_USE_BEDROCK"]), (false, Some("Bedrock")));
+        assert_eq!(run(Some("none"), &["CLAUDE_CODE_USE_VERTEX"]), (false, Some("Vertex")));
+        assert_eq!(run(Some("none"), &["ANTHROPIC_AUTH_TOKEN"]), (false, None), "a gateway: billed, to someone not known");
+        assert_eq!(run(Some("ANTHROPIC_API_KEY"), &["ANTHROPIC_BASE_URL"]), (false, None), "the key goes to the gateway, not to Anthropic");
+    }
 
     #[test]
     fn a_route_falls_back_to_its_other_providers() {

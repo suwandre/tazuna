@@ -448,6 +448,8 @@ pub struct Live {
     session_id: Option<String>,
     /// From claude's init event: its built-in prompt changes between versions, which moves token counts.
     claude_version: Option<String>,
+    /// From claude's init too: on the Claude plan, and who is paid when not (models::claude_payer), for the run log.
+    claude_bill: (bool, Option<&'static str>),
     /// When this window started: a tazuna binary newer than this is a rebuild the window does not run yet.
     opened: std::time::SystemTime,
     generation: u64,
@@ -611,6 +613,7 @@ impl Live {
             rx,
             session_id: None,
             claude_version: None,
+            claude_bill: (true, None),
             opened: std::time::SystemTime::now(),
             generation: 0,
             interrupting: None,
@@ -1248,6 +1251,13 @@ impl Live {
                 Msg::Line(l) => {
                     let Ok(mut e) = serde_json::from_str::<Value>(&l) else { continue };
                     if e["type"] == "system" && e["subtype"] == "init" {
+                        // who pays claude's runs (models::claude_payer): its key's source, and the billing variables set in
+                        // the environment it runs in (this one), written into the init by name for the session and its replays
+                        if self.provider.is_none() {
+                            let set: Vec<&str> = crate::models::CLAUDE_BILLING_ENV.into_iter().filter(|k| std::env::var(k).is_ok_and(|v| !v.is_empty() && v != "0")).collect();
+                            self.claude_bill = crate::models::claude_payer(e["apiKeySource"].as_str(), |k| set.contains(&k));
+                            e["tazuna_env"] = json!(set);
+                        }
                         self.session_id = e["session_id"].as_str().map(String::from);
                         self.claude_version = e["claude_code_version"].as_str().map(String::from);
                         if self.mode != "headless" {
@@ -1614,8 +1624,10 @@ impl Live {
         let mut out = Vec::new();
         while self.runs.is_empty() && !self.verifying {
             let Some((text, attach)) = self.held.pop_front() else { break };
-            if let Err(e) = self.start_run(&text, attach) {
-                out.push(self.record(json!({"type": "harness_notice", "text": format!("{e:#}"), "error": true})));
+            match self.start_run(&text, attach) {
+                // its message was shown when it was sent; its work begins now
+                Ok(()) => out.push(self.record(json!({"type": "harness_held_start"}))),
+                Err(e) => out.push(self.record(json!({"type": "harness_notice", "text": format!("{e:#}"), "error": true}))),
             }
         }
         out
@@ -1648,8 +1660,10 @@ impl Live {
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
             "claude_version": self.claude_version, "cwd": self.cwd, "session_id": self.session_id, "recording": self.rec_path,
             "host": host(),
-            // which API the own loop ran on (none on claude): the usage page names it
-            "provider": self.provider.as_ref().map(|(u, _)| crate::models::provider_name(u)),
+            // which API the own loop ran on, or who billed claude (none on the plan): the usage page names it. `plan`: the
+            // run log called every claude run plan, so the start page counted an API key's runs as nothing paid
+            "provider": self.provider.as_ref().map(|(u, _)| crate::models::provider_name(u)).or_else(|| self.claude_bill.1.filter(|_| !self.claude_bill.0).map(String::from)),
+            "plan": self.provider.is_none() && self.claude_bill.0,
         })
     }
 

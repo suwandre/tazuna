@@ -1,6 +1,6 @@
 //! tazuna: a lean terminal coding agent for any model: Claude through the official `claude` CLI, other models on its own loop.
 //!
-//!   tazuna [--model M] [--effort E] [--design 1-4] [--allow-non-git]   # live: drive claude in the current repo
+//!   tazuna [--model M] [--effort E] [--design 2|3] [--allow-non-git]   # live: drive claude in the current repo
 //!          (without --model/--effort the router picks: tiny repos Sonnet medium, escalating to Opus high if tests
 //!          fail; otherwise Opus medium)
 //!          [--verify "<cmd>" | --no-verify]   # after claude says done, tazuna runs the tests (auto-detected by default)
@@ -60,7 +60,7 @@
 //!                      claude.ai connectors too; /mcp on|off switches it inside a session and remembers the choice
 //!                      (--connectors: the same, its name before 0.1.80)
 //!          [--no-project-instructions]   # lean profile: don't add the repo's CLAUDE.md / AGENTS.md to the prompt
-//!   tazuna <recording.jsonl> [--design 1-4] [--speed 3] [--raw-timing]   # replay a recorded session
+//!   tazuna <recording.jsonl> [--design 2|3] [--speed 3] [--raw-timing]   # replay a recorded session
 //!   tazuna <recording.jsonl> --snapshot <events> [--design N] [--size 110x36]   # render one frame as text
 //!   tazuna upgrade [VERSION] [--wait] [--force]   # (or update) the newest release CI has built for this machine, or VERSION, in
 //!                              place of this binary; --wait waits for one still building; `tazuna --version` says which
@@ -77,7 +77,8 @@
 //!   tazuna mcp   # the lean tool server (claude starts it; not for direct use)
 //!   tazuna engine   # tazuna's own agent loop (--provider starts it; not for direct use)
 //!
-//! Designs: 1 aurora · 2 cockpit · 3 zen · 4 timeline. Without --design: the one last chosen with ctrl-t, else zen.
+//! Designs: 2 cockpit · 3 zen (ctrl-t switches). Without --design: the one last chosen with ctrl-t, else zen. 1 (aurora)
+//! and 4 (timeline) are gone since 0.1.193: they open zen.
 //! Live sessions are saved to
 //! ~/.local/share/tazuna/sessions/ and replay like any recording.
 
@@ -143,6 +144,8 @@ struct Args {
     snapshot: Option<usize>,
     size: (u16, u16),
     design: Design,
+    /// The design a `--design 1` or `4` (or a saved one) named until 0.1.193: it opens zen, and the screen says so once.
+    design_gone: Option<&'static str>,
     /// `--theme light`: the light palette (the dark one is the default).
     light: bool,
     /// None: the router decides.
@@ -270,13 +273,15 @@ fn args() -> Result<Args> {
 }
 
 fn parse(argv: Vec<String>) -> Result<Args> {
+    let (design, design_gone) = Design::saved();
     let mut a = Args {
         path: None,
         speed: 3.0,
         raw_timing: false,
         snapshot: None,
         size: (110, 36),
-        design: Design::saved(),
+        design,
+        design_gone,
         light: false,
         model: None,
         effort: None,
@@ -335,7 +340,10 @@ fn parse(argv: Vec<String>) -> Result<Args> {
             "--speed" => a.speed = val()?.parse()?,
             "--raw-timing" => a.raw_timing = true,
             "--snapshot" => a.snapshot = Some(val()?.parse()?),
-            "--design" => a.design = Design::from_number(val()?.parse()?).context("--design 1-4")?,
+            "--design" => {
+                let n: usize = val()?.parse()?;
+                (a.design, a.design_gone) = (Design::from_number(n).context("--design 2 (cockpit) or 3 (zen)")?, Design::gone(n));
+            }
             "--theme" => a.light = match val()?.as_str() {
                 "light" => true,
                 "dark" => false,
@@ -929,6 +937,24 @@ fn review_done(live: &mut live::Live, s: &mut Session, e: &serde_json::Value) {
 
 /// A general question asked inside a project, answered as the chat profile would (one-line prompt, no tools) in a one-off
 /// process beside the agent's, whose conversation it leaves alone. Its events go to the screen through `tx`.
+/// A line of tazuna's own in the transcript: a hook that failed, a setting saved, a message not sent. `harness_info`, not
+/// `harness_notice`: that one says the process is gone (a stop, an exit, a new conversation) and closes its cost and the
+/// Working clock, so after a hook failed or a setting was saved the process's next result was added on top of its earlier
+/// total, and "Working" stopped during the tests (design review 12).
+#[inline(never)]
+fn note(text: impl Into<serde_json::Value>, error: bool) -> serde_json::Value {
+    json!({"type": "harness_info", "text": text.into(), "error": error})
+}
+
+/// The same for a message on screen that could not start (its chat answer did not start, the send was refused): nothing
+/// runs for it, so its Working clock stops (`ended`).
+#[inline(never)]
+fn not_started(text: impl Into<serde_json::Value>) -> serde_json::Value {
+    let mut n = note(text, true);
+    n["ended"] = json!(true);
+    n
+}
+
 fn chat_turn(c: RouteCtx, text: String, prior: Option<ChatLast>, tx: std::sync::mpsc::Sender<serde_json::Value>) {
     use std::io::{BufRead, Write};
     std::thread::spawn(move || {
@@ -959,7 +985,7 @@ fn chat_turn(c: RouteCtx, text: String, prior: Option<ChatLast>, tx: std::sync::
         };
         let child = cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn();
         let Ok(mut child) = child else {
-            let _ = tx.send(json!({"type": "tazuna_chat_event", "e": {"type": "harness_notice", "text": "could not start the chat answer", "error": true}}));
+            let _ = tx.send(json!({"type": "tazuna_chat_event", "e": not_started("could not start the chat answer")}));
             return;
         };
         if let Some(mut stdin) = child.stdin.take() {
@@ -967,8 +993,13 @@ fn chat_turn(c: RouteCtx, text: String, prior: Option<ChatLast>, tx: std::sync::
         }
         if let Some(out) = child.stdout.take() {
             for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
-                // the chat's own start-up event would replace the session's model and tools on the screen
-                if let Ok(e) = serde_json::from_str::<serde_json::Value>(&line) && e["type"] != "system" {
+                // the chat's own start-up event would replace the session's model and tools on the screen; it runs as the
+                // session does (its model, route and key), so the session's says how it is paid. Its result is its own
+                // process's whole cost (`tazuna_chat`), beside the conversation's process and not part of its count
+                if let Ok(mut e) = serde_json::from_str::<serde_json::Value>(&line) && e["type"] != "system" {
+                    if e["type"] == "result" {
+                        e["tazuna_chat"] = json!(true);
+                    }
                     let _ = tx.send(json!({"type": "tazuna_chat_event", "e": e}));
                 }
             }
@@ -1248,7 +1279,7 @@ fn app_server(a: &Args) -> Result<()> {
             match rx.try_recv() {
                 Ok(cmd) => {
                     let at = live.elapsed_ms();
-                    let info = |s: &mut Session, text: String| s.apply(&json!({"type": "harness_notice", "text": text, "error": true}), at);
+                    let info = |s: &mut Session, text: String| s.apply(&note(text, true), at);
                     // the window's commands carry "op"; chat_turn's events carry their own "type"
                     match cmd["op"].as_str().or(cmd["type"].as_str()) {
                         Some("send") => {
@@ -1446,7 +1477,7 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("routed") => {
                             let text = cmd["text"].as_str().unwrap_or_default().to_string();
                             if let Some(why) = untrusted_in_use(&live) {
-                                info(&mut s, why);
+                                s.apply(&not_started(why), at); // on screen since it was sent
                             } else if cmd["general"] == true && live.idle() {
                                 // shown since the send: recorded now
                                 live.note(json!({"type": "harness_user", "text": text}));
@@ -1462,7 +1493,7 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("tazuna_review") => review_done(&mut live, &mut s, &cmd),
                         // the project's hook ran (hooks.rs): only a failure shows
                         Some("tazuna_hook") => if cmd["ok"] != true {
-                            s.apply(&json!({"type": "harness_notice", "text": cmd["text"], "error": true}), at);
+                            s.apply(&note(cmd["text"].clone(), true), at);
                         },
                         // the plugin gallery (gallery/ in tazuna's repository, docs/PLUGINS.md): its list, or one entry's shared file,
                         // fetched on a thread from that folder only (an entry is a file name there, nothing else)
@@ -1638,12 +1669,11 @@ fn app_server(a: &Args) -> Result<()> {
                                     match files_back.and_then(|n| live.rewind(cp, false, true).map(|e| (n, e))) {
                                         Ok((n, (t, e))) => {
                                             s.blocks.truncate(block);
-                                            s.meta.truncate(block);
                                             done_turns.retain(|t| t.at_block < block);
                                             undo_note = None;
                                             s.apply(&e, t);
                                             if n > 0 {
-                                                s.apply(&json!({"type": "harness_notice", "text": format!("{n} file{} back as before that message", if n == 1 { "" } else { "s" }), "error": false}), t);
+                                                s.apply(&note(format!("{n} file{} back as before that message", if n == 1 { "" } else { "s" }), false), t);
                                             }
                                         }
                                         Err(e) => info(&mut s, format!("{e:#}")),
@@ -1676,7 +1706,7 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("piece") => {
                             let stage = cmd["stage"] == true;
                             match turns::apply_piece(&cwd, cmd["patch"].as_str().unwrap_or_default(), stage) {
-                                Ok(()) => s.apply(&json!({"type": "harness_notice", "text": if stage { "staged one piece" } else { "reverted one piece" }, "error": false}), at),
+                                Ok(()) => s.apply(&note(if stage { "staged one piece" } else { "reverted one piece" }, false), at),
                                 Err(e) => info(&mut s, format!("{e:#}")),
                             }
                         }
@@ -1701,7 +1731,7 @@ fn app_server(a: &Args) -> Result<()> {
                                         t.undone = true;
                                         let paths: Vec<&str> = t.files.iter().map(|f| f.path.as_str()).collect();
                                         undo_note = Some(format!("[tazuna: the user undid the file changes of your previous turn; these files are back as they were before it: {}]", paths.join(", ")));
-                                        s.apply(&json!({"type": "harness_notice", "text": format!("undone: {} file{} back as before the turn", paths.len(), if paths.len() == 1 { "" } else { "s" }), "error": false}), at);
+                                        s.apply(&note(format!("undone: {} file{} back as before the turn", paths.len(), if paths.len() == 1 { "" } else { "s" }), false), at);
                                     }
                                     Err(e) => info(&mut s, format!("{e:#}")),
                                 },
@@ -1727,7 +1757,7 @@ fn app_server(a: &Args) -> Result<()> {
                             let name = cmd["provider"].as_str().unwrap_or_default();
                             match models::LOGINS.iter().find(|l| l.name == name) {
                                 Some(l) => match login_save(l, cmd["key"].as_str().unwrap_or_default()) {
-                                    Ok(said) => s.apply(&json!({"type": "harness_notice", "text": said, "error": false}), at),
+                                    Ok(said) => s.apply(&note(said, false), at),
                                     Err(e) => info(&mut s, format!("{e:#}")),
                                 },
                                 None => info(&mut s, format!("no provider {name}")),
@@ -1747,7 +1777,7 @@ fn app_server(a: &Args) -> Result<()> {
                                 }
                                 _ => "data: trusted, or any with confirm".to_string(),
                             };
-                            s.apply(&json!({"type": "harness_notice", "text": text, "error": false}), at);
+                            s.apply(&note(text, false), at);
                         }
                         // a new worktree of this project for a conversation of its own (worktree.rs). The project's setup
                         // script runs only in a trusted project (it counts as code that needs trust, route.rs), after the
@@ -1840,7 +1870,7 @@ fn app_server(a: &Args) -> Result<()> {
                             };
                             let file = platform::home().map(|h| h.join(".config/tazuna/spend-cap"));
                             match file.filter(|_| !value.is_empty()).map(|f| f.parent().map(std::fs::create_dir_all).transpose().and_then(|_| std::fs::write(&f, &value))) {
-                                Some(Ok(())) => s.apply(&json!({"type": "harness_notice", "text": if value == "off" { "API spend: no cap".to_string() } else { format!("API spend: capped at ${value} per 24 hours") }, "error": false}), at),
+                                Some(Ok(())) => s.apply(&note(if value == "off" { "API spend: no cap".to_string() } else { format!("API spend: capped at ${value} per 24 hours") }, false), at),
                                 _ => info(&mut s, "the cap was not saved".into()),
                             }
                         }
@@ -1848,7 +1878,7 @@ fn app_server(a: &Args) -> Result<()> {
                             route_on = cmd["on"] == true;
                             let text = format!("router {}: general questions inside a project {}", if route_on { "on" } else { "off" },
                                 if route_on { "are answered as a chat" } else { "go to the agent" });
-                            s.apply(&json!({"type": "harness_notice", "text": text, "error": false}), at);
+                            s.apply(&note(text, false), at);
                         }
                         // MCP servers for every model (~/.config/tazuna/mcp.json), as the terminal's /mcp: the settings page lists
                         // them, adds, removes and checks one (logging in where it asks), and switches them on or off (remembered)
@@ -2185,6 +2215,8 @@ const QUIT_MS: u128 = 0; // the quit dissolve went in design review 10: tazuna e
 fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args) -> Result<()> {
     let mut s = Session::new(&replay.prompt, &replay.effort);
     let mut v = view(a.design, false, replay.speed);
+    Design::settle();
+    v.toast = a.design_gone.map(|g| (Design::gone_note(g, "tab"), Instant::now()));
     let mut fx = Fx::new();
     let mut quit_at: Option<Instant> = None;
     let mut last = Instant::now();
@@ -2195,6 +2227,9 @@ fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args)
             s.apply(e, *t);
         }
         (v.clock_ms, v.speed, v.paused) = (replay.clock, replay.speed, replay.paused);
+        if v.toast.as_ref().is_some_and(|(_, at)| at.elapsed() > Duration::from_millis(4000)) {
+            v.toast = None;
+        }
         term.draw(|f| {
             let _ = fx.frame(f, &s, &v, dt);
         })?;
@@ -2226,7 +2261,9 @@ fn run_replay(term: &mut ratatui::DefaultTerminal, mut replay: Replay, a: &Args)
                 KeyCode::Char('G') | KeyCode::End => v.scroll = 0,
                 KeyCode::Char('e') => v.expand_all = !v.expand_all,
                 KeyCode::Char(c @ '1'..='4') => {
-                    v.design = Design::from_number(c as usize - '0' as usize).unwrap_or(v.design);
+                    let n = c as usize - '0' as usize;
+                    v.design = Design::from_number(n).unwrap_or(v.design);
+                    v.toast = Design::gone(n).map(|g| (Design::gone_note(g, "tab"), Instant::now()));
                     fx.boot = true;
                 }
                 KeyCode::Tab => {
@@ -2438,7 +2475,7 @@ fn keys_rows() -> Vec<(String, ui::Tone)> {
             ("!cmd", "run cmd here, then send its output to the model (a turn starts)"), ("ctrl-v", "paste an image"), ("ctrl-g", "write the message in your editor"), ("ctrl-x", "put the message aside, or back"),
             ("↑ ↓", "your earlier messages"), ("shift-tab", "the next permission mode")]),
         ("While it works", &[("esc", "stop"), ("ctrl-b", "the tasks running in the background")]),
-        ("The screen", &[("ctrl-t", "the next design"), ("ctrl-o", "open or fold every step"), ("ctrl-l", "draw the screen again"), ("drag", "select and copy"),
+        ("The screen", &[("ctrl-t", "the other design (zen, cockpit)"), ("ctrl-o", "open or fold every step"), ("ctrl-l", "draw the screen again"), ("drag", "select and copy"),
             ("click", "a line in full")]),
     ];
     let mut rows = vec![];
@@ -2664,8 +2701,9 @@ fn usage_rows(log: &str, since: u64, labels: &str, recordings: bool) -> Vec<serd
         .filter_map(|d| Some((d["run"].as_str()?.to_string(), d["verdict"].as_str()?.to_string()))).collect();
     runs.iter().map(|r| {
         let (m, t) = (&r["meta"], &r["tokens"]);
-        // the own loop records claude_version as null; runs before 0.0.3 have no such key and all ran on claude
-        let plan = m.get("claude_version").is_none_or(|v| !v.is_null());
+        // the run's own word since design review 12 (models::claude_payer: an API key's claude run is paid); before, the own loop
+        // recorded claude_version as null, and runs before 0.0.3 have no such key and all ran on claude
+        let plan = m["plan"].as_bool().unwrap_or_else(|| m.get("claude_version").is_none_or(|v| !v.is_null()));
         let prompt = r["prompt"].as_str().unwrap_or_default();
         let key = (m["recording"].as_str().unwrap_or_default().to_string(), prompt.lines().next().unwrap_or_default().chars().take(200).collect::<String>());
         let msg = msgs.get_mut(&key).and_then(|q| q.pop_front());
@@ -2901,7 +2939,7 @@ fn run_live(
     s.apply(&route.1, route.0);
     s.mode = session::mode_name(&live.permission_mode).to_string();
     if !live::in_git_repo() && !a.allow_non_git {
-        s.apply(&json!({"type": "harness_notice", "text": "not a git repo: edits ask first, since git cannot show or undo them here (shift-tab changes the mode)", "error": false}), 0.0);
+        s.apply(&note("not a git repo: edits ask first, since git cannot show or undo them here (shift-tab changes the mode)", false), 0.0);
     }
     // the plan's windows as last read (claude reports them only now and then); SubRouter's balance, on a thread
     let last_read = labels::dir().ok().and_then(|d| session::last_limits(&d.join("sessions")));
@@ -2954,6 +2992,8 @@ fn run_live(
         });
     }
     let mut v = view(a.design, true, 1.0);
+    Design::settle();
+    v.toast = a.design_gone.map(|g| (Design::gone_note(g, "ctrl-t"), Instant::now()));
     let mut fx = Fx::new();
     let mut quit_at: Option<Instant> = None;
     let mut last = Instant::now();
@@ -3134,11 +3174,11 @@ fn run_live(
                 rows: shown(cs, filter, group.as_deref()).into_iter().map(|i| {
                     let c = &models::pinned(&cs[i], prov[i]);
                     // All models: each row says whose it is (one model can be on SubRouter and on Mortera)
-                    let label = match (group.is_none(), models::provider_of(c)) {
-                        (true, p) if p != "Claude" && p != "SubRouter" && !c.label.contains(" · ") => format!("{} · {}", c.label, p.to_lowercase()),
-                        _ => c.label.clone(),
-                    };
-                    ui::ModelRow { label: ui::pretty_label(&label), place: c.place.clone(), price: ui::even_price(&c.price), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
+                    // a label that ends in its provider ("Codestral 2508 · mistral") says it once, as the provider
+                    let whose = models::provider_of(c);
+                    let label = c.label.rsplit_once(" · ").filter(|(_, last)| last.eq_ignore_ascii_case(&whose)).map_or(c.label.as_str(), |(name, _)| name);
+                    let provider = if group.is_none() && whose != "Claude" && whose != "SubRouter" { whose.clone() } else { String::new() };
+                    ui::ModelRow { label: ui::pretty_label(label), provider, place: c.place.clone(), price: ui::even_price(&c.price), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
                         state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3, models::State::NotOnKey => 4 },
                         why: models::why_not(c).unwrap_or_default(), stale: c.stale, current: models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
                 }).collect(),
@@ -3149,10 +3189,10 @@ fn run_live(
                 in_models: *in_models,
                 effort: effort_at.map(|i| (cs[i].label.clone(), cs[i].efforts.clone(), eff[i],
                     match (*confirm, *effort_only) {
-                        (true, true) => "enter again to switch · esc close",
+                        (true, true) => "enter again to switch · esc closes",
                         (true, false) => "enter again to switch · esc models",
-                        (false, true) => "↑↓ effort · enter use · esc close",
-                        (false, false) => "↑↓ effort · enter use · esc models",
+                        (false, true) => "↑↓ move · enter uses it · esc closes",
+                        (false, false) => "↑↓ move · enter uses it · esc models",
                     }, note.clone())),
             }
         });
@@ -3212,7 +3252,7 @@ fn run_live(
                         chat_q = text.clone();
                         chat_turn(RouteCtx::of(live), text, chat_last.clone(), status_tx.clone());
                     } else if let Err(err) = live.send_typed(&text) {
-                        s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms());
+                        s.apply(&not_started(format!("{err:#}")), live.elapsed_ms());
                     }
                 }
                 Some("tazuna_review") => review_done(live, &mut s, &e),
@@ -3220,7 +3260,7 @@ fn run_live(
                     // what the hook changed (a formatter's work) does not count as a turn's change next time
                     hook_mark = runlog::git_snapshot(&std::env::current_dir().unwrap_or_default());
                     if e["ok"] != true {
-                        s.apply(&json!({"type": "harness_notice", "text": e["text"], "error": true}), live.elapsed_ms());
+                        s.apply(&note(e["text"].clone(), true), live.elapsed_ms());
                     }
                 }
                 Some("tazuna_chat_event") => {
@@ -3868,7 +3908,7 @@ fn run_live(
             KeyCode::Char('t') if ctrl => {
                 v.design = v.design.next();
                 v.design.save();
-                v.toast = Some((format!("design: {} · ctrl-t for the next", v.design.name()), Instant::now()));
+                v.toast = Some((format!("design: {} · ctrl-t for {}", v.design.name(), v.design.next().name()), Instant::now()));
                 fx.boot = true;
             }
             // the whole screen drawn again: anything another program wrote over it is gone
@@ -4385,12 +4425,12 @@ fn run_live(
                         match () {
                             _ if looprun::open_items(&std::fs::read_to_string("TODO.md").unwrap_or_default()).is_empty() => {
                                 if let Some(why) = untrusted_in_use(live) {
-                                    s.apply(&json!({"type": "harness_notice", "text": why, "error": true}), live.elapsed_ms());
+                                    s.apply(&note(why, true), live.elapsed_ms());
                                     continue;
                                 }
                                 match live.send(looprun::PLAN) {
                                     Ok((t, e)) => s.apply(&e, t),
-                                    Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),
+                                    Err(err) => s.apply(&note(format!("{err:#}"), true), live.elapsed_ms()),
                                 }
                                 loop_after_plan = Some(flags);
                                 "no open items in TODO.md yet: asking for PRD.md and TODO.md first; the loop starts once they are written".to_string()
@@ -4425,7 +4465,7 @@ fn run_live(
                         Ok(ticket) if ask.trim().is_empty() => text = ticket,
                         Ok(ticket) => text = format!("{ticket}\nMy request: {}", ask.trim()),
                         Err(e) => {
-                            s.apply(&json!({"type": "harness_notice", "text": format!("/jira: {e}"), "error": true}), live.elapsed_ms());
+                            s.apply(&note(format!("/jira: {e}"), true), live.elapsed_ms());
                             continue;
                         }
                     }
@@ -4433,7 +4473,7 @@ fn run_live(
                 normal = false; // the next message starts in insert mode
                 // before `!cmd` runs: its output is a message to the model, which must be one the code may go to
                 if let Some(why) = untrusted_in_use(live) {
-                    s.apply(&json!({"type": "harness_notice", "text": why, "error": true}), live.elapsed_ms());
+                    s.apply(&note(why, true), live.elapsed_ms());
                     continue;
                 }
                 // `!cmd`: run it here and hand the command and its output to the model as your message (like Claude Code's
@@ -4480,7 +4520,7 @@ fn run_live(
                 }
                 match if typed { live.send_typed(&text) } else { live.send(&text) } {
                     Ok((t, e)) => s.apply(&e, t),
-                    Err(err) => s.apply(&json!({"type": "harness_notice", "text": format!("{err:#}"), "error": true}), live.elapsed_ms()),
+                    Err(err) => s.apply(&note(format!("{err:#}"), true), live.elapsed_ms()),
                 }
                 v.scroll = 0;
             }
@@ -4657,7 +4697,8 @@ fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::pat
         Ok(_) => {}
         Err(e) => {
             *turn = None;
-            s.apply(&json!({"type": "harness_notice", "text": format!("{e:#}"), "error": true}), live.elapsed_ms());
+            // not `show`n here: on screen since the router's check began, and counting as work since
+            s.apply(&if show { note(format!("{e:#}"), true) } else { not_started(format!("{e:#}")) }, live.elapsed_ms());
         }
     }
 }
@@ -4717,14 +4758,24 @@ fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     Ok(p)
 }
 
-/// The picker rows that match what was typed (label or place, any case), as indices into the choices.
-/// The model rows on screen: the open provider's, or with no provider open every provider's that match the filter.
+/// The model rows on screen: the open provider's, or with no provider open every provider's, that match what was typed,
+/// as indices into the choices.
 fn shown(cs: &[models::Choice], filter: &str, group: Option<&str>) -> Vec<usize> {
-    let f = filter.to_lowercase();
     (0..cs.len())
         .filter(|&i| group.is_none_or(|g| models::provider_of(&cs[i]) == g))
-        .filter(|&i| f.is_empty() || cs[i].label.to_lowercase().contains(&f) || cs[i].place.to_lowercase().contains(&f))
+        .filter(|&i| model_matches(&cs[i], filter))
         .collect()
+}
+
+/// Whether a /model row is what was typed, by what the row shows: every word typed (any case, in any order) is somewhere in
+/// its name as drawn, its label, its model id, its place or its provider, where `-`, `_`, `/` and `:` read as a space too.
+/// The whole text was one substring of the label or the place: "deepseek v4.1" found nothing in "deepseek-v4.1-flash-1017"
+/// rows drawn as "DeepSeek V4.1 Flash 1017" (2026-11-21).
+#[inline(never)]
+fn model_matches(c: &models::Choice, typed: &str) -> bool {
+    let hay = format!("{} {} {} {} {} {}", ui::pretty_label(&c.label), ui::pretty_model(&c.model), c.label, c.model, c.place, models::provider_of(c)).to_lowercase();
+    let hay = format!("{hay} {}", hay.replace(['-', '_', '/', ':'], " "));
+    typed.to_lowercase().split_whitespace().all(|w| hay.contains(w))
 }
 
 const LOOP_STARTED: &str = "loop started: one fresh run per TODO.md item, a commit each, a notification at the end; messages you \
@@ -4802,6 +4853,20 @@ mod tests {
     }
 
     #[test]
+    fn the_model_search_finds_what_the_row_shows_word_by_word() {
+        let c = models::Choice { model: "deepseek-v4.1-flash-1017".into(), label: "deepseek-v4.1-flash-1017".into(),
+            route: Some(("https://subrouter.ai/v1".into(), "SUBROUTER_API_KEY".into(), "0.15,0.003,0.6".into())), place: "SubRouter · kriora".into(), efforts: vec![],
+            price: String::new(), note: String::new(), stale: false, state: models::State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
+        for typed in ["", "deepseek v4.1", "DeepSeek V4.1", "deepseek-v4.1", "flash deepseek", "v4.1 1017", "  v4.1   flash ", "subrouter flash", "kriora", "deepseek v4.1 flash 1017"] {
+            assert!(super::model_matches(&c, typed), "{typed:?}");
+        }
+        for typed in ["deepseek v4.2", "pro deepseek", "openrouter"] {
+            assert!(!super::model_matches(&c, typed), "{typed:?}");
+        }
+        assert_eq!(super::shown(std::slice::from_ref(&c), "deepseek v4.1", Some("SubRouter")), [0]);
+    }
+
+    #[test]
     fn a_picked_model_ends_the_lanes_cascade() {
         let mut live = crate::live::Live::new("", "").unwrap();
         live.set_escalate("claude-opus-5-5".into(), "high".into());
@@ -4820,6 +4885,55 @@ mod tests {
 broken"#;
         assert!((crate::live::paid_since(log, 150) - 0.5).abs() < 1e-9, "the plan's runs and older ones do not count");
         assert!((crate::live::paid_since(log, 0) - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_hook_failure_or_a_setting_saved_leaves_the_run_and_its_cost_alone() {
+        use crate::session::Session;
+        let paid = |s: &mut Session, t: f64, charged: f64, total: f64| {
+            s.apply(&json!({"type": "harness_user", "text": "go"}), t);
+            s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), t + 1.0);
+            s.apply(&json!({"type": "stream_event", "event": {"type": "message_delta", "tazuna_cost": charged, "usage": {"input_tokens": 1000, "output_tokens": 10}}}), t + 2.0);
+            s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": total, "tazuna_paid": true}), t + 3.0);
+        };
+        let mut s = Session::new("", "high");
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "glm-5.3", "price_per_m": [1.0, 0.1, 2.0], "provider": "SubRouter"}), 0.0);
+        paid(&mut s, 1.0, 1.0, 1.0);
+        // the desktop's Settings report, then a hook that failed, while the same process lives on: its next result is its
+        // cumulative $1.50 ("Paid to SubRouter $1.50" over rows of $0.50, the total $1.00 too high)
+        s.apply(&super::note("API spend: capped at $5 per 24 hours", false), 5.0);
+        s.apply(&super::note("hook: npm run lint failed", true), 6.0);
+        paid(&mut s, 10.0, 0.5, 1.5);
+        let d = s.view()["blocks"].as_array().unwrap().iter().rfind(|b| b["kind"] == "done").unwrap().clone();
+        assert!((d["run_cost"].as_f64().unwrap() - 0.5).abs() < 1e-9 && (s.cost() - 1.5).abs() < 1e-9, "{} {}", d["run_cost"], s.cost());
+        assert!(s.blocks.iter().any(|b| matches!(b, crate::session::Block::Notice { text, error: true } if text.starts_with("hook"))), "the failure is still an error");
+        // a hook that fails during the tests: Working goes on
+        s.apply(&json!({"type": "harness_verify_start", "cmd": "cargo test", "round": 1}), 20_000.0);
+        s.apply(&super::note("hook: npm run lint failed", true), 21_000.0);
+        assert_eq!(s.working_for(23_000.0), 3_000.0);
+        s.apply(&json!({"type": "harness_verify_done", "ok": true, "secs": 4.0, "output": "", "final": true}), 24_000.0);
+        // a message on screen that could not start: nothing runs for it
+        s.apply(&json!({"type": "harness_user", "text": "what is a monad"}), 30_000.0);
+        s.apply(&super::not_started("could not start the chat answer"), 30_100.0);
+        assert_eq!(s.working_for(40_000.0), 0.0);
+    }
+
+    #[test]
+    fn an_api_keys_claude_run_is_paid_in_the_receipt_the_header_and_the_run_log() {
+        // claude on ANTHROPIC_API_KEY: the receipt said so, the header said "$0.42 on Claude plan", and the run log (so the
+        // start page's "$ paid") counted it as the plan
+        let mut s = crate::session::Session::new("", "medium");
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "apiKeySource": "ANTHROPIC_API_KEY"}), 0.0);
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 0.5);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.42}), 1.0);
+        let d = s.view()["blocks"].as_array().unwrap().last().unwrap().clone();
+        assert_eq!((&d["plan"], &d["provider"]), (&json!(false), &json!("Anthropic API")));
+        assert_eq!((crate::ui::cost_str(&s), s.split_cost()), ("$0.42".to_string(), (0.42, 0.0)));
+        // the run log line live.rs writes for it (models::claude_payer), and an older claude line without the field
+        let log = r#"{"ts": 100, "meta": {"model": "claude-opus-5-5", "claude_version": "2", "plan": false, "provider": "Anthropic API"}, "cost_usd": 0.42}
+{"ts": 101, "meta": {"model": "claude-opus-5-5", "claude_version": "2"}, "cost_usd": 0.3}"#;
+        let rows = super::usage_rows(log, 0, "", false);
+        assert_eq!((&rows[0][3], &rows[0][16], &rows[1][3]), (&json!(false), &json!("Anthropic API"), &json!(true)));
     }
 
     #[test]

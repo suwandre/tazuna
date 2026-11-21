@@ -143,6 +143,13 @@ const BATCH_RULE: &str = "\n- Work in few turns: every turn re-sends the whole c
 /// A model call's first time limit; each timeout doubles it for the next try (see `chat`).
 const CALL_TIMEOUT: Duration = Duration::from_secs(180);
 
+thread_local! {
+    /// Tries of the model call in progress the provider may have billed and whose usage is not in its cost: a timed-out or
+    /// cut-off reply tried again, an empty reply sent again. Sent with the call's cost (`tazuna_uncounted`): unsaid, a
+    /// receipt's total read as all there was (design review 12). Per thread: the tests run engines side by side.
+    static UNCOUNTED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
 /// USD per token: input, cached input, output.
 type Price = (f64, f64, f64);
 
@@ -274,7 +281,7 @@ pub fn serve(args: &[String]) -> Result<()> {
     // the model's prices, so the screen's running cost is this model's and not Claude's list prices (a Luna turn read
     // ~$3 while it ran and $0.007 at its end, 2026-11-06)
     emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": [],
-                 "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "mcp_servers": mcp_status(hub.as_ref())}));
+                 "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "provider": crate::models::paid_to(&url), "mcp_servers": mcp_status(hub.as_ref())}));
     let send_reasoning = reasoning_back(&url, &model);
     let mut loop_ = Loop {
         call,
@@ -702,7 +709,9 @@ impl Loop {
                     self.cache_key = std::env::var_os("TAZUNA_NO_CACHE_KEY").is_none();
                     self.send_reasoning = reasoning_back(&url, &self.model);
                     self.route_calls.clear();
-                    (self.out)(&json!({"type": "system", "subtype": "route_switch", "message": format!("now {url}: {why}")}));
+                    // the new route's prices and who is paid there: a receipt for the calls from here on says them
+                    (self.out)(&json!({"type": "system", "subtype": "route_switch", "message": format!("now {url}: {why}"),
+                        "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "provider": crate::models::paid_to(&url)}));
                     return true;
                 }
                 Ok(_) => (self.out)(&json!({"type": "system", "subtype": "route_switch", "message": format!("{url} skipped: another API for this model")})),
@@ -789,9 +798,14 @@ impl Loop {
             } else {
                 (subtype, text)
             };
-            (s.out)(&json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "result": text,
+            let mut r = json!({"type": "result", "subtype": subtype, "is_error": subtype != "success", "result": text,
                 "num_turns": turns, "total_cost_usd": s.cost, "session_id": s.session, "duration_ms": began.elapsed().as_millis() as u64,
-                "usage": {"input_tokens": usage[0], "cache_creation_input_tokens": 0, "cache_read_input_tokens": usage[1], "output_tokens": usage[2]}}));
+                "usage": {"input_tokens": usage[0], "cache_creation_input_tokens": 0, "cache_read_input_tokens": usage[1], "output_tokens": usage[2]}});
+            // the tries of a call that never answered: in this run, not the next one's first call
+            if UNCOUNTED.get() > 0 {
+                r["tazuna_uncounted"] = json!(UNCOUNTED.replace(0));
+            }
+            (s.out)(&r);
         };
         loop {
             loop {
@@ -950,6 +964,7 @@ impl Loop {
                 if !empty_reply(&reply, self.api) {
                     break;
                 }
+                UNCOUNTED.set(UNCOUNTED.get() + 1);
                 pause(wait);
                 reply = match (self.call)(&body) {
                     Ok(r) => r,
@@ -957,6 +972,7 @@ impl Loop {
                 };
             }
             if empty_reply(&reply, self.api) && self.switch_route("empty replies") {
+                UNCOUNTED.set(UNCOUNTED.get() + 1);
                 continue;
             }
             let secs = t0.elapsed().as_secs_f64();
@@ -984,14 +1000,22 @@ impl Loop {
                 (self.out)(&json!({"type": "system", "subtype": "group_switch", "message": note}));
             }
             // the billed cost when the provider reports it (CheaperInference, OpenRouter), else the price list; a cache write
-            // costs 1.25x input (Anthropic, 5 minutes)
-            self.cost += u["cost"].as_f64().unwrap_or((prompt - cached) as f64 * self.price.0 + written as f64 * self.price.0 * 0.25
+            // costs 1.25x input (Anthropic, 5 minutes). No usage at all: not known, so null on the receipt (it read "$0")
+            let reported = u["cost"].is_number() || prompt + out > 0;
+            let charged = u["cost"].as_f64().unwrap_or((prompt - cached) as f64 * self.price.0 + written as f64 * self.price.0 * 0.25
                 + cached as f64 * self.price.1 + out as f64 * self.price.2);
+            self.cost += charged;
             for (sum, n) in usage.iter_mut().zip([prompt - cached, cached, out]) {
                 *sum += n;
             }
-            (self.out)(&json!({"type": "stream_event", "event": {"type": "message_delta",
-                "usage": {"input_tokens": prompt - cached, "cache_creation_input_tokens": 0, "cache_read_input_tokens": cached, "output_tokens": out}}}));
+            // `tazuna_cost`: what this call was charged, for its row on the receipt (the session priced it again by its own
+            // rule, without the provider's figure or the cache write's surcharge: the rows did not add up to the run)
+            let mut delta = json!({"type": "message_delta", "tazuna_cost": if reported { json!(charged) } else { Value::Null },
+                "usage": {"input_tokens": prompt - cached, "cache_creation_input_tokens": 0, "cache_read_input_tokens": cached, "output_tokens": out}});
+            if UNCOUNTED.get() > 0 {
+                delta["tazuna_uncounted"] = json!(UNCOUNTED.replace(0));
+            }
+            (self.out)(&json!({"type": "stream_event", "event": delta}));
 
             // the step's reasoning, for the transcript only (0.0.95): which steps the model deliberates on, and why, could
             // not be read before (41 of tazuna's 176 calls wrote over 5K tokens against Claude Code's 8 of 190, 2026-10-27)
@@ -1762,6 +1786,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             Err(e) if wait > 0 => {
                 if matches!(e, ureq::Error::Timeout(_)) {
                     limit = (limit * 2).min(Duration::from_secs(900));
+                    UNCOUNTED.set(UNCOUNTED.get() + 1);
                 }
                 retry(&e.to_string(), wait);
                 continue;
@@ -1772,6 +1797,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             match sse(&text).map(|events| from_stream(&events, api)) {
                 // an error inside a stream (a gateway's upstream failed after the headers) is retried like a 5xx
                 Some(Err(e)) if wait > 0 => {
+                    UNCOUNTED.set(UNCOUNTED.get() + 1);
                     retry(&format!("{e:#}"), wait);
                     continue;
                 }
@@ -2628,9 +2654,12 @@ data: {\"type\":\"message_stop\"}\n";
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.txt"), "a\n").unwrap();
         std::fs::write(dir.join("b.txt"), "b\n").unwrap();
-        let replies = Rc::new(RefCell::new(VecDeque::from([first, json!({"content": [{"type": "text", "text": "done"}], "usage": {"input_tokens": 5}})])));
+        // the second reply carries the provider's own figure for it (OpenRouter's `usage.cost`): that is what it cost
+        let replies = Rc::new(RefCell::new(VecDeque::from([first, json!({"content": [{"type": "text", "text": "done"}], "usage": {"input_tokens": 5, "cost": 0.0009}})])));
         let sent = Rc::new(RefCell::new(vec![]));
         let (r, s) = (replies.clone(), sent.clone());
+        let events = Rc::new(RefCell::new(Vec::<Value>::new()));
+        let ev = events.clone();
         let mut l = Loop {
             call: Box::new(move |b: &Value| {
                 s.borrow_mut().push(b.clone());
@@ -2659,7 +2688,7 @@ session: "s".into(),
         routes: VecDeque::new(),
         route_calls: vec![],
         connector: connect_key,
-            out: Box::new(|_: &Value| {}),
+            out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
         l.run(&json!("read a and b"), false, &rx);
@@ -2672,9 +2701,21 @@ session: "s".into(),
         let results = msgs[2]["content"].as_array().unwrap();
         assert_eq!((results.len(), results[0]["tool_use_id"].as_str(), results[1]["tool_use_id"].as_str()), (2, Some("t1"), Some("t2")));
         assert_eq!(results[1]["content"].as_str().unwrap().trim_end(), "b");
-        // 10 in + 90 written at 1.25x + 900 read + 40 out, then 5 in
-        let want = 10.0 * 1e-6 + 90.0 * 1.25e-6 + 900.0 * 1e-7 + 40.0 * 4e-6 + 5.0 * 1e-6;
+        // 10 in + 90 written at 1.25x + 900 read + 40 out, then the provider's figure (5 in at the list would be $0.000005)
+        let want = 10.0 * 1e-6 + 90.0 * 1.25e-6 + 900.0 * 1e-7 + 40.0 * 4e-6 + 0.0009;
         assert!((l.cost - want).abs() < 1e-12, "{}", l.cost);
+        // the receipt's rows: each call says what it was charged (the cache write at its surcharge, the provider's own
+        // figure), and a session fed these events adds them up to the run. It priced the rows again by its own rule, without
+        // either, until review 11.
+        let mut seen = crate::session::Session::new("", "");
+        for (i, e) in events.borrow().iter().enumerate() {
+            seen.apply(e, i as f64);
+        }
+        let v = seen.view();
+        let rows: Vec<f64> = v["calls"].as_array().unwrap().iter().map(|c| c["cost"].as_f64().unwrap()).collect();
+        let run = v["blocks"].as_array().unwrap().iter().rfind(|b| b["kind"] == "done").unwrap()["run_cost"].as_f64().unwrap();
+        assert!(rows.len() == 2 && (rows[0] - (10.0 * 1e-6 + 90.0 * 1.25e-6 + 900.0 * 1e-7 + 40.0 * 4e-6)).abs() < 1e-12 && rows[1] == 0.0009, "{rows:?}");
+        assert!((rows.iter().sum::<f64>() - run).abs() < 1e-12 && (run - want).abs() < 1e-12 && v["calls"][0].get("estimate").is_none(), "{rows:?} against {run}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -3020,6 +3061,20 @@ session: "s".into(),
         let last = sent.borrow()[8]["messages"].as_array().unwrap().last().unwrap().clone();
         assert_eq!((last["role"].as_str(), last["content"].as_str()), (Some("user"), Some(NUDGE)));
         assert_eq!(events.borrow().last().unwrap()["num_turns"].as_u64(), Some(3));
+        // the provider sent no usage: each call's cost is not known (it read "Paid to X $0"), and the three empty replies
+        // sent again before each answer may have been billed: tries not in the total (design review 12)
+        let deltas: Vec<(Value, Value)> = events.borrow().iter().filter(|e| e["event"]["type"] == "message_delta")
+            .map(|e| (e["event"]["tazuna_cost"].clone(), e["event"]["tazuna_uncounted"].clone())).collect();
+        assert_eq!(deltas, vec![(Value::Null, json!(3)); 3]);
+        let mut seen = crate::session::Session::new("", "");
+        seen.apply(&json!({"type": "system", "subtype": "init", "model": "m", "price_per_m": [0, 0, 0], "provider": "SubRouter"}), 0.0);
+        for (i, e) in events.borrow().iter().enumerate() {
+            seen.apply(e, 1.0 + i as f64);
+        }
+        let v = seen.view();
+        let done = v["blocks"].as_array().unwrap().iter().rfind(|b| b["kind"] == "done").unwrap().clone();
+        assert!(v["calls"].as_array().unwrap().iter().all(|c| c["cost"].is_null() && c.get("estimate").is_none()), "{}", v["calls"]);
+        assert_eq!((&done["uncounted"], &done["provider"]), (&json!(9), &json!("SubRouter")));
     }
 
     #[test]

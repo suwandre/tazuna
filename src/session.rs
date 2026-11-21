@@ -70,13 +70,6 @@ impl Tool {
     }
 }
 
-/// When a block appeared and in which model turn.
-#[derive(Clone, Copy)]
-pub struct Meta {
-    pub at_ms: f64,
-    pub turn: u64,
-}
-
 pub struct Summary {
     pub ok: bool,
     pub secs: f64,
@@ -88,9 +81,75 @@ pub struct Summary {
     /// The user stopped this run.
     pub stopped: bool,
     /// This run's own cost and tokens: the totals less the previous run's. Under each answer these are what it took; the
-    /// totals were shown there until 0.1.183 ("$12.13, 4.8M tokens" under a 31 s reply, design review 6).
-    pub run_cost: f64,
+    /// totals were shown there until 0.1.183 ("$12.13, 4.8M tokens" under a 31 s reply, design review 6). `run_cost` None:
+    /// no amount can be told (a stopped turn on a Claude model without list prices in the core), and none is in the totals.
+    pub run_cost: Option<f64>,
     pub run_usage: Usage,
+    /// How this run was paid, as it ran; None when no model had said itself yet (a recording without an init event).
+    pub bill: Option<Bill>,
+    /// `run_cost` is tazuna's estimate at list prices: nobody reported it (a stopped turn: claude says $0; a hard stop or a
+    /// crash: no result at all).
+    pub estimate: bool,
+    /// Tries the provider may have billed that are not in `run_cost`: empty replies sent again, timed-out or cut-off
+    /// replies tried again (the own loop says so).
+    pub uncounted: u32,
+    /// Its subagents' model calls (in its cost, not among the calls), fixed when it ended; those of a background subagent
+    /// that go on after it count in the run whose total they are in (they kept counting on the first, design review 12).
+    pub sub_calls: usize,
+}
+
+/// How one run was paid, fixed when it ended: a receipt under an answer says this, not what the conversation's model of
+/// now would cost (the window said "not billed" under answers a provider had billed, design review 11).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Bill {
+    pub model: String,
+    /// On the Claude plan: nothing billed, the cost is at API prices.
+    pub plan: bool,
+    /// Who was paid (models::paid_to, models::claude_payer); None on the plan, on a machine of the user's, through a gateway
+    /// claude does not name, and in recordings from before 0.1.193.
+    pub provider: Option<String>,
+    /// USD per million (uncached input, cached input, output) as the run was priced; None where the core has no prices.
+    /// A cache write's surcharge is not in it (the own loop charges one at 1.25x input, Claude's list at 1.5x): a call's
+    /// `cost` holds what it was charged.
+    pub price_m: Option<(f64, f64, f64)>,
+    /// The run's calls went to more than one provider (the own loop changed route inside it): their names in order, and
+    /// then neither `provider` nor `price_m` stands for the whole run.
+    pub providers: Vec<String>,
+}
+
+/// One model call's bill, fixed as it ran: its model, the prices and the provider in force when it began, and what the
+/// own loop charged for it (None on claude and in recordings from before 0.1.193: its cost is then an estimate).
+/// `unreported`: the provider sent no usage, so nobody knows the cost (it read "Paid to X $0", design review 12);
+/// `uncounted`: tries before its answer the provider may have billed, not in its cost.
+struct CallBill {
+    model: String,
+    price: Option<(f64, f64, f64)>,
+    provider: Option<String>,
+    cost: Option<f64>,
+    unreported: bool,
+    uncounted: u32,
+}
+
+/// Claude's list prices per million (uncached input, cached input, output) where the core has them: Opus 5.5's, the
+/// rates of `Usage::estimate`. ponytail: one model; a table when the others' prices are in the core.
+// not inlined into the event loop: a release build (lto, one codegen unit) did not finish in 15 minutes with these in `apply`
+#[inline(never)]
+fn claude_list(model: &str) -> Option<(f64, f64, f64)> {
+    model.starts_with("claude-opus-5-5").then_some((4.0, 0.4, 20.0))
+}
+
+#[inline(never)]
+fn price_of(e: &Value) -> Option<(f64, f64, f64)> {
+    e["price_per_m"].as_array().filter(|p| p.len() == 3).map(|p| (p[0].as_f64().unwrap_or(0.0), p[1].as_f64().unwrap_or(0.0), p[2].as_f64().unwrap_or(0.0)))
+}
+
+/// `u` at `price` (per million: uncached input, cached input, output), else at Claude's list prices.
+#[inline(never)]
+fn priced(u: &Usage, price: Option<(f64, f64, f64)>) -> f64 {
+    match price {
+        Some((i, c, o)) => ((u.input + u.cache_write) as f64 * i + u.cache_read as f64 * c + u.output as f64 * o) / 1e6,
+        None => u.estimate(),
+    }
 }
 
 /// One model call's timing: how long from its input being ready (the prompt sent, the last tool's result in) to its first
@@ -163,11 +222,12 @@ pub enum Activity {
 
 pub struct Session {
     pub blocks: Vec<Block>,
-    pub meta: Vec<Meta>,
     /// Usage per model turn (index = turn - 1).
     pub turn_usage: Vec<Usage>,
     /// The own loop's model prices per million (uncached input, cached input, output), from its init event.
     pub price_m: Option<(f64, f64, f64)>,
+    /// Who the own loop's calls are paid to, from its init event (and a route switch's); None on claude.
+    pub provider: Option<String>,
     /// Tokens in the latest request: how full the context is.
     pub context: u64,
     /// The model's context window, as claude's result reports it; None until then and after a switch (the own loop's
@@ -205,10 +265,18 @@ pub struct Session {
     pub balance: Option<f64>,
     /// Part of the cost is priced at list rates: a stopped turn reported $0.
     pub estimated: bool,
-    /// Time the agent spent working (message to its last token), summed over finished runs; `run_since`: when the run
-    /// in progress began (ms into the session).
+    /// Time the agent spent working (message to its last token, the tests), summed over finished runs; `run_since`: when
+    /// the work in progress began (ms into the session), what "Working N s" counts from. Set and cleared in `clock_on` and
+    /// `clock_off` alone: only a message set it, so the tests, the rounds that fix them and a message queued behind
+    /// another stood at "Working 0 s", and a hard stop left it set for the next reply (design review 11).
     busy_ms: f64,
     run_since: Option<f64>,
+    /// claude's runs are billed, not on the plan: an API key, Bedrock, Vertex, a gateway (models::claude_payer).
+    claude_billed: bool,
+    /// `call_bill`'s length at the last result: the calls from there on are the run in progress.
+    billed: usize,
+    /// Subagent calls already counted into a run's `sub_calls`.
+    subs_counted: usize,
     /// Every model call's timing, in order; the one in flight: when it started, when its first token came, its output so
     /// far (estimated: thinking as claude estimates it, text and tool input at ~4 characters a token) and its thinking
     /// blocks, which get the exact count when it ends.
@@ -216,6 +284,8 @@ pub struct Session {
     /// Where each model call began: the number of blocks then, by call (turn_usage's order). The desktop puts each call
     /// under its reply, with the tools it called.
     call_blocks: Vec<usize>,
+    /// Each call's model and prices as it began (turn_usage's order): its cost stays what it was after a `/model` switch.
+    call_bill: Vec<CallBill>,
     call_start: Option<f64>,
     first_token: Option<f64>,
     /// The own loop's provider is sending keep-alive comments and no output yet (cleared when the call answers or ends).
@@ -271,15 +341,13 @@ pub fn unix_now() -> u64 {
 
 /// The newest plan reading in the session recordings under `dir` (claude's rate_limit_event): (5-hour %, 7-day %, read
 /// at, when the 5-hour window resets). A window whose reset time has passed since counts from 0.
-/// A run's own share of the session's totals: `cost` and `usage` less those at the previous run's end. Totals that went
-/// down (a new conversation on the same screen) start again: the run's share is all of them.
+/// A run's own share of the session's totals: `cost` and `usage` less those at the previous run's end. The totals only
+/// grow (a new conversation is a new Session, a /clear's restarted count is folded in): where they went down, a turn's
+/// share was the whole conversation's ("$0 … the same without the cache $4.14" after /clear, design review 12).
 fn run_share(blocks: &[Block], cost: f64, usage: Usage) -> (f64, Usage) {
     let Some((pc, pu)) = blocks.iter().rev().find_map(|b| if let Block::Done(d) = b { Some((d.cost, d.usage)) } else { None }) else { return (cost, usage) };
-    let down = cost + 1e-9 < pc || usage.input < pu.input || usage.cache_read < pu.cache_read || usage.output < pu.output || usage.cache_write < pu.cache_write;
-    if down {
-        return (cost, usage);
-    }
-    (cost - pc, Usage { input: usage.input - pu.input, cache_write: usage.cache_write - pu.cache_write, cache_read: usage.cache_read - pu.cache_read, output: usage.output - pu.output })
+    ((cost - pc).max(0.0), Usage { input: usage.input.saturating_sub(pu.input), cache_write: usage.cache_write.saturating_sub(pu.cache_write),
+        cache_read: usage.cache_read.saturating_sub(pu.cache_read), output: usage.output.saturating_sub(pu.output) })
 }
 
 pub fn last_limits(dir: &std::path::Path) -> Option<(f64, f64, u64, Option<u64>)> {
@@ -312,9 +380,9 @@ impl Session {
         Session {
             // live sessions start empty; their messages arrive as `harness_user` events
             blocks: if prompt.trim().is_empty() { vec![] } else { vec![Block::Prompt(prompt.trim().to_string())] },
-            meta: if prompt.trim().is_empty() { vec![] } else { vec![Meta { at_ms: 0.0, turn: 0 }] },
             turn_usage: Vec::new(),
             price_m: None,
+            provider: None,
             context: 0,
             // ponytail: Opus 5.5's window as the default until the result event reports the real one
             context_window: None,
@@ -340,8 +408,12 @@ impl Session {
             estimated: false,
             busy_ms: 0.0,
             run_since: None,
+            claude_billed: false,
+            billed: 0,
+            subs_counted: 0,
             calls: vec![],
             call_blocks: vec![],
+            call_bill: vec![],
             call_start: None,
             first_token: None,
             sub_events: Default::default(),
@@ -430,6 +502,27 @@ impl Session {
         self.busy_ms + self.run_since.map_or(0.0, |r| (now_ms - r).max(0.0))
     }
 
+    /// How long the work in progress has been at it by `now_ms` (0 when nothing runs): since its message, the call that
+    /// began it, or the tests.
+    pub fn working_for(&self, now_ms: f64) -> f64 {
+        self.run_since.map_or(0.0, |r| (now_ms - r).max(0.0))
+    }
+
+    /// Work begins at `at_ms` (a message, a call, the tests, a fix round) unless some already runs.
+    #[inline(never)]
+    fn clock_on(&mut self, at_ms: f64) {
+        self.run_since.get_or_insert(at_ms);
+    }
+
+    /// It stopped at `at_ms` (a result, the tests' end, a hard stop or the process gone): its time joins the work done
+    /// (`secs`: the process's own count of it, where it gave one).
+    #[inline(never)]
+    fn clock_off(&mut self, at_ms: f64, secs: f64) {
+        let ran = if secs > 0.0 { secs * 1000.0 } else { self.run_since.map_or(0.0, |r| (at_ms - r).max(0.0)) };
+        self.busy_ms += ran;
+        self.run_since = None;
+    }
+
     /// Real money (own-loop providers) and plan use at API prices (claude), both exact as reported.
     pub fn split_cost(&self) -> (f64, f64) {
         (self.paid_base + self.paid_now, self.plan_base + self.plan_now)
@@ -458,8 +551,29 @@ impl Session {
             Block::Thinking { tokens, live, exact, text } => json!({"kind": "thinking", "tokens": tokens, "live": live, "exact": exact, "text": text.chars().take(20_000).collect::<String>()}),
             Block::Tool(t) => json!({"kind": "tool", "id": t.id, "name": t.name, "input": t.input, "result": t.result.as_deref().map(|r| cut(r, 4000)),
                 "error": t.error, "declined": t.declined(), "secs": t.secs(), "running": t.done_ms.is_none(), "stopped": t.done_ms.is_some() && t.result.is_none(), "sub": t.sub.as_ref().map(|(n, last)| json!({"calls": n, "last": last}))}),
-            Block::Done(d) => json!({"kind": "done", "ok": d.ok, "secs": d.secs, "turns": d.turns, "cost": d.cost, "usage": usage(&d.usage), "stopped": d.stopped,
-                "run_cost": d.run_cost, "run_usage": usage(&d.run_usage)}),
+            Block::Done(d) => {
+                let mut v = json!({"kind": "done", "ok": d.ok, "secs": d.secs, "turns": d.turns, "cost": d.cost, "usage": usage(&d.usage), "stopped": d.stopped,
+                    "run_cost": d.run_cost, "run_usage": usage(&d.run_usage)});
+                // how the run was paid, where it is known: absent otherwise, and the window then says only its total
+                if let Some(b) = &d.bill {
+                    (v["model"], v["plan"], v["provider"], v["price_m"]) = (json!(b.model), json!(b.plan), json!(b.provider), json!(b.price_m.map(|(i, c, o)| [i, c, o])));
+                    if !b.providers.is_empty() {
+                        v["providers"] = json!(b.providers);
+                    }
+                }
+                // its subagents' model calls are in its cost and not among `calls`: how many, so the window can say why
+                // the rows do not add up to the total; an estimate says so, and tries not in the total are counted
+                if d.sub_calls > 0 {
+                    v["sub_calls"] = json!(d.sub_calls);
+                }
+                if d.estimate {
+                    v["estimate"] = json!(true);
+                }
+                if d.uncounted > 0 {
+                    v["uncounted"] = json!(d.uncounted);
+                }
+                v
+            }
             Block::Notice { text, error } => json!({"kind": "notice", "text": text, "error": error}),
             // the app has no block of its own for it: a notice, an error once the run ended on it
             Block::Retry(r) => json!({"kind": "notice", "error": r.gave_up, "text": format!("{}: {} {} failed{} ({})", r.why, r.tries,
@@ -475,14 +589,42 @@ impl Session {
 
     /// Each model call for the desktop's per-turn view: where it began (a block index), its tokens (new input: sent
     /// uncached or written into the cache), its timing as /calls shows it (None: in flight, or not measured) and its
-    /// cost at this model's prices.
+    /// cost at the prices in force when it began (the session's prices of now until 0.1.192: after `/model` from a cheap
+    /// model to Opus every earlier call read at Opus's rates). `model` goes with a cost the core can stand for: the own
+    /// loop's prices, or Claude's where the list has the model; without it the cost is a rough figure the window hides.
+    /// The calls here are the conversation's own: a subagent's run under its tool call, so `role` is null.
+    /// `cost` is what the own loop charged for the call (its provider's own figure where it sends one, a cache write at
+    /// its surcharge): a run's calls add up to its `run_cost`; null where the provider reported no usage (not known). On
+    /// claude, and in older recordings, it is an estimate at list prices and the call says so (`estimate`): claude's exact
+    /// total comes with the result alone. `provider`: who that call was paid to (the own loop can change route inside a
+    /// run).
     fn calls_view(&self) -> Vec<Value> {
         self.turn_usage.iter().zip(&self.call_blocks).enumerate().map(|(i, (u, &block))| {
             let c = self.calls.get(i);
-            json!({"block": block, "fresh": u.input + u.cache_write, "cached": u.cache_read, "out": u.output, "cost": self.estimate(u),
+            let b = self.call_bill.get(i);
+            let price = b.map_or(self.price_m, |b| b.price);
+            let (charged, unreported) = (b.and_then(|b| b.cost), b.is_some_and(|b| b.unreported));
+            let cost = (!unreported).then(|| charged.unwrap_or_else(|| priced(u, price)));
+            let mut v = json!({"block": block, "fresh": u.input + u.cache_write, "cached": u.cache_read, "out": u.output, "cost": cost,
                 "first_ms": c.and_then(|c| c.ttft_ms), "tps": c.filter(|c| c.gen_ms > 0.0).map(|c| c.out as f64 / c.gen_ms * 1000.0),
-                "total_ms": c.map(|c| c.total_ms)})
+                "total_ms": c.map(|c| c.total_ms)});
+            if charged.is_none() && !unreported {
+                v["estimate"] = json!(true);
+            }
+            if let Some(b) = b.filter(|b| !b.model.is_empty() && (price.is_some() || claude_list(&b.model).is_some())) {
+                (v["model"], v["role"], v["provider"]) = (json!(b.model), Value::Null, json!(b.provider));
+            }
+            v
         }).collect()
+    }
+
+    /// The model calls a subagent made under tool call `id`: its assistant messages, one per message id.
+    #[inline(never)]
+    fn sub_calls(&self, id: &str) -> usize {
+        let mut ids: Vec<&str> = self.sub_events.get(id).into_iter().flatten().filter(|(_, e)| e["type"] == "assistant")
+            .map(|(_, e)| e["message"]["id"].as_str().unwrap_or_default()).collect();
+        ids.dedup();
+        ids.len()
     }
 
     /// Exact cost so far plus an estimate for tokens used since the last reported result.
@@ -501,10 +643,109 @@ impl Session {
     /// input, output), else at Claude's list prices. A live own-loop turn was priced like Claude: ~$3 shown while a
     /// Luna turn ran, $0.007 when it ended (2026-11-06).
     pub fn estimate(&self, u: &Usage) -> f64 {
-        match self.price_m {
-            Some((i, c, o)) => ((u.input + u.cache_write) as f64 * i + u.cache_read as f64 * c + u.output as f64 * o) / 1e6,
-            None => u.estimate(),
+        priced(u, self.price_m)
+    }
+
+    /// The run in progress is the own loop's: its results say so (`marked`), its init brought prices (a chat answer on its
+    /// route has no init of its own and read "not billed" under a `claude-…` id through SubRouter, design review 12), or, in
+    /// older recordings, its model is not claude's.
+    #[inline(never)]
+    fn own_loop(&self, marked: bool) -> bool {
+        marked || self.price_m.is_some() || !self.model.is_empty() && !self.model.starts_with("claude-")
+    }
+
+    /// Whether the run in progress is on the Claude plan: not the own loop, and claude on its login with nothing that bills
+    /// it elsewhere (models::claude_payer). The receipt and the header's split ask this alone; the run log asks
+    /// claude_payer too (live.rs).
+    #[inline(never)]
+    fn on_plan(&self, marked: bool) -> bool {
+        !self.own_loop(marked) && !self.claude_billed
+    }
+
+    /// What was used since the last result cost, for a run that ended without a total of its own (claude's stopped turn
+    /// reports $0; a hard stop or a crash, nothing): the own loop's calls as it charged them, the rest at list prices (then
+    /// `true`: an estimate). None where the rest has no list price in the core (a Claude model but Opus 5.5: its tokens at
+    /// Opus's rates read as Sonnet's price, design review 12). A call the provider sent no usage for is not known: 0.
+    #[inline(never)]
+    fn unbilled(&self) -> (Option<f64>, bool) {
+        let (u, b) = (self.usage, self.usage_at_result);
+        let mut rest = [u.input - b.input, u.cache_write - b.cache_write, u.cache_read - b.cache_read, u.output - b.output];
+        let mut charged = 0.0;
+        for (c, t) in self.call_bill.iter().zip(&self.turn_usage).skip(self.billed).filter(|(c, _)| c.cost.is_some() || c.unreported) {
+            charged += c.cost.unwrap_or(0.0);
+            for (r, n) in rest.iter_mut().zip([t.input, t.cache_write, t.cache_read, t.output]) {
+                *r = r.saturating_sub(n);
+            }
         }
+        let rest = Usage { input: rest[0], cache_write: rest[1], cache_read: rest[2], output: rest[3] };
+        if rest.total_in() + rest.output == 0 {
+            return (Some(charged), false);
+        }
+        // claude's: Usage::estimate, its calibrated rates (a cache write at 1.5x), as the header's live figure
+        let listed = self.price_m.is_some() || !self.model.starts_with("claude-") || claude_list(&self.model).is_some();
+        (listed.then(|| charged + self.estimate(&rest)), true)
+    }
+
+    /// The run in progress ends: its `done` block, with its own share of the totals, how it was paid, and its subagents'
+    /// calls and tries not in the total (its calls', and `lost`: those of a call that never answered); the calls from here
+    /// on are the next run's.
+    #[inline(never)]
+    fn end_run(&mut self, ok: bool, secs: f64, turns: u64, stopped: bool, marked: bool, priced: bool, estimate: bool, lost: u32) {
+        let (cost, usage) = (self.cost(), self.usage);
+        let (run_cost, run_usage) = run_share(&self.blocks, cost, usage);
+        let bill = self.bill(marked);
+        let uncounted = self.call_bill.iter().skip(self.billed).map(|b| b.uncounted).sum::<u32>() + lost;
+        let subs: usize = self.sub_events.keys().map(|id| self.sub_calls(id)).sum();
+        let sub_calls = subs.saturating_sub(std::mem::replace(&mut self.subs_counted, subs));
+        self.billed = self.call_bill.len();
+        self.push(Block::Done(Summary { ok, secs, turns, cost, usage, stopped, run_cost: priced.then_some(run_cost), run_usage, bill, estimate, uncounted, sub_calls }));
+    }
+
+    /// A run the process took with it (a hard stop, a crash): no result comes, so it ends here, with what it spent so far
+    /// in the totals and its own receipt, and the call `cut` off as one whose cost nobody knows. Its calls went under the
+    /// next answer's receipt and its spend left the conversation's total (design review 12).
+    #[inline(never)]
+    fn close_run(&mut self, secs: f64, stopped: bool, cut: bool) {
+        let asked = self.blocks.iter().rev().take_while(|b| !matches!(b, Block::Done(_))).any(|b| matches!(b, Block::Prompt(_)));
+        if self.call_bill.len() == self.billed && !asked {
+            return;
+        }
+        if let Some(b) = self.call_bill.last_mut().filter(|_| cut) {
+            b.unreported = true;
+        }
+        let (spent, estimate) = self.unbilled();
+        let s = spent.unwrap_or(0.0);
+        if self.on_plan(false) {
+            self.plan_now += s;
+        } else {
+            self.paid_now += s;
+        }
+        self.exact_cost = Some(self.exact_cost.unwrap_or(self.cost_base) + s);
+        self.usage_at_result = self.usage;
+        self.estimated |= estimate;
+        let turns = (self.call_bill.len() - self.billed) as u64;
+        self.end_run(false, secs, turns, stopped, false, spent.is_some(), estimate || spent.is_none(), 0);
+    }
+
+    /// How the run that just ended was paid. Paid as its cost was split (`on_plan`).
+    #[inline(never)]
+    fn bill(&self, marked: bool) -> Option<Bill> {
+        let own = self.own_loop(marked);
+        let paid = !self.on_plan(marked);
+        // who the run's calls were paid to, in order, each once, and the first one's prices; a call that used nothing (a
+        // refused one) paid nobody
+        let (mut providers, mut price): (Vec<String>, Option<(f64, f64, f64)>) = (vec![], None);
+        for (b, u) in self.call_bill.iter().zip(&self.turn_usage).skip(self.billed) {
+            if let Some(p) = b.provider.as_ref().filter(|p| u.total_in() + u.output > 0 && !providers.contains(p)) {
+                providers.push(p.clone());
+                price = price.or(b.price);
+            }
+        }
+        let mixed = paid && providers.len() > 1;
+        (!self.model.is_empty()).then(|| Bill { model: self.model.clone(), plan: !paid,
+            provider: if mixed { None } else { providers.first().cloned().or_else(|| self.provider.clone()).filter(|_| paid) },
+            price_m: if mixed { None } else if own { price.or(self.price_m) } else { claude_list(&self.model) },
+            providers: if mixed { providers } else { vec![] } })
     }
 
     fn push(&mut self, b: Block) {
@@ -532,7 +773,6 @@ impl Session {
     /// streamed stays live. Through `push` such a notice ended it: the spinner froze and what came after was dropped.
     fn push_aside(&mut self, b: Block) {
         self.blocks.push(b);
-        self.meta.push(Meta { at_ms: self.now_ms, turn: self.turns });
         self.new_blocks += 1;
     }
 
@@ -575,7 +815,13 @@ impl Session {
         match (e["type"].as_str(), e["subtype"].as_str()) {
             (Some("system"), Some("init")) => {
                 self.model = s(&e["model"]);
-                self.price_m = e["price_per_m"].as_array().filter(|p| p.len() == 3).map(|p| (p[0].as_f64().unwrap_or(0.0), p[1].as_f64().unwrap_or(0.0), p[2].as_f64().unwrap_or(0.0)));
+                self.price_m = price_of(e);
+                // who pays claude's runs (models::claude_payer): its key's source and the billing variables tazuna saw set
+                // where it runs; the receipt must not say "on your plan, not billed" under an API key, Bedrock or a gateway
+                let set: Vec<&str> = e["tazuna_env"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                let (plan, payer) = crate::models::claude_payer(e["apiKeySource"].as_str(), |k| set.contains(&k));
+                self.claude_billed = self.model.starts_with("claude-") && self.price_m.is_none() && !plan;
+                self.provider = e["provider"].as_str().map(String::from).or_else(|| payer.filter(|_| self.claude_billed).map(String::from));
                 self.cwd = s(&e["cwd"]);
                 let mut cmds: Vec<String> = e["slash_commands"].as_array().into_iter().flatten().filter_map(|c| c.as_str().map(String::from)).collect();
                 cmds.extend(OWN_COMMANDS.map(String::from));
@@ -614,6 +860,10 @@ impl Session {
             // the own loop's provider events: shown, not only in the session file (a pool that went down and a conversation
             // that moved were invisible until a run looked stuck, 2026-10-28)
             (Some("system"), Some(sub)) if e["message"].is_string() => {
+                // the own loop moved to another route: its prices and who is paid, for the calls from here on
+                if sub == "route_switch" && e["price_per_m"].is_array() {
+                    (self.price_m, self.provider) = (price_of(e), e["provider"].as_str().map(String::from));
+                }
                 let what = match sub {
                     "route_switch" => "route",
                     "group_switch" => "provider group",
@@ -637,7 +887,7 @@ impl Session {
                 self.push(Block::Notice { text: format!("{what} · {}", shown(&text, 4000)), error: false });
             }
             (Some("harness_user"), _) => {
-                self.run_since.get_or_insert(at_ms);
+                self.clock_on(at_ms);
                 self.ready_at = Some(at_ms);
                 self.last_prompt = s(&e["text"]);
                 self.push(Block::Prompt(s(&e["text"])));
@@ -646,6 +896,7 @@ impl Session {
             }
             (Some("harness_interrupt"), _) => self.stopping = true,
             (Some("harness_verify_start"), _) => {
+                self.clock_on(at_ms);
                 self.push(Block::Verify(Verify { cmd: s(&e["cmd"]), no_tests: false, timed_out: false, cannot_run: false, round: e["round"].as_u64().unwrap_or(1), ok: None, secs: 0.0, output: String::new() }));
                 self.activity = Activity::Verifying;
             }
@@ -657,11 +908,13 @@ impl Session {
                     v.cannot_run = e["cannot_run"] == true;
                 }
                 self.finished_tools += 1; // pulse like a finished tool
+                self.clock_off(at_ms, 0.0);
                 self.activity = if e["final"] == true { Activity::Done } else { Activity::Waiting };
             }
             (Some("harness_verify_feedback"), _) => {
                 let text = format!("↻ sent the failing tests back to claude (round {} of {})", e["round"], e["max"]);
                 self.push(Block::Notice { text, error: false });
+                self.clock_on(at_ms);
                 self.activity = Activity::Waiting;
             }
             (Some("harness_route"), _) => {
@@ -677,9 +930,12 @@ impl Session {
                 self.push(Block::Notice { text: s(&e["text"]), error: false });
             }
             (Some("harness_escalate"), _) => {
-                // the old process is gone: its reported cost is final
+                // the old process is gone: its reported cost is final. The hand-over to the stronger model is work ("Working
+                // 0 s" until its first call)
                 self.close_process();
+                self.clock_on(at_ms);
                 (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
+                (self.provider, self.price_m) = (None, None);
                 let text = format!("↑ tests failed on the cheap lane: fixing on {} {}", self.model.trim_start_matches("claude-"), self.effort);
                 self.push(Block::Notice { text, error: false });
             }
@@ -701,7 +957,10 @@ impl Session {
                 };
                 self.push(Block::Notice { text, error: false })
             }
-            (Some("harness_review"), _) => self.push(Block::Notice { text: "self-review: checking the change against the task".into(), error: false }),
+            (Some("harness_review"), _) => {
+                self.clock_on(at_ms); // a round of its own, after the result
+                self.push(Block::Notice { text: "self-review: checking the change against the task".into(), error: false })
+            }
             (Some("harness_permission"), _) => {
                 self.asked.push_back((s(&e["tool"]), e["input"].clone()));
                 // the question itself is drawn from live's queue; the transcript only gets the plan to approve
@@ -733,7 +992,20 @@ impl Session {
                     _ => self.push(Block::Notice { text: format!("mode: {}", self.mode), error: false }),
                 }
             }
-            (Some("harness_info"), _) => self.push_aside(Block::Notice { text: s(&e["text"]), error: false }),
+            // tazuna's own line (a hook that failed, a setting saved): beside the run, which goes on. `ended`: a message on
+            // screen that could not start, so nothing runs for it
+            (Some("harness_info"), _) => {
+                self.push_aside(Block::Notice { text: s(&e["text"]), error: e["error"] == true });
+                if e["ended"] == true {
+                    self.clock_off(at_ms, 0.0);
+                    self.activity = Activity::Ready;
+                }
+            }
+            // a message held while the tests ran is sent now: its work begins here, not at its first call's start
+            (Some("harness_held_start"), _) => {
+                self.clock_on(at_ms);
+                self.ready_at = Some(at_ms);
+            }
             // the own loop's reasoning before a message: a thinking row like claude's, its size estimated (~4 characters a token)
             (Some("reasoning"), _) => self.push(Block::Thinking { tokens: (s(&e["text"]).chars().count() / 4) as u64, live: false, exact: false, text: s(&e["text"]) }),
             // claude's thinking estimate, about once a second (50-150 tokens, then the rest when it ends); the exact count
@@ -748,8 +1020,14 @@ impl Session {
                     *tokens += n;
                 }
             }
-            // a replayed recording's process ended there (`/resume` replays several, without their notices)
-            (Some("harness_process_end"), _) => self.close_process(),
+            // a replayed recording's process ended there (`/resume` replays several, without their notices); a run it was
+            // in ends with it, as after a hard stop
+            (Some("harness_process_end"), _) => {
+                let (secs, cut) = (self.working_for(at_ms) / 1000.0, self.call_start.take().is_some());
+                self.clock_off(at_ms, 0.0);
+                self.close_run(secs, false, cut);
+                self.close_process();
+            }
             (Some("harness_effort"), _) => {
                 self.effort = s(&e["effort"]);
                 if let Some(m) = e["model"].as_str() {
@@ -761,6 +1039,7 @@ impl Session {
                 // /model: the old process is gone
                 self.close_process();
                 (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
+                (self.provider, self.price_m) = (None, None); // the next process says its own
                 self.context_window = None; // the next model reports its own (the own loop's: none)
                 self.cache_ttl_ms = None;
                 self.push(Block::Notice { text: s(&e["text"]), error: false });
@@ -774,11 +1053,17 @@ impl Session {
                     self.limits_reset = w["five_hour"]["resetsAt"].as_u64();
                 }
             }
+            // the process is gone (a hard stop, an exit, a restart; tazuna's other lines are `harness_info`)
             (Some("harness_notice"), _) => {
-                self.stopping = false;
+                let stopped = std::mem::take(&mut self.stopping);
                 // a killed process ends its call without message_delta or result: "waiting for first token" kept counting
-                (self.call_start, self.first_token) = (None, None);
+                let cut = std::mem::take(&mut self.call_start).is_some();
+                self.first_token = None;
+                // and no result either: its run ends here, or the next reply would count from the killed one's start
+                let secs = self.working_for(at_ms) / 1000.0;
+                self.clock_off(at_ms, 0.0);
                 self.push(Block::Notice { text: s(&e["text"]), error: e["error"].as_bool().unwrap_or(false) });
+                self.close_run(secs, stopped, cut);
                 // the process ended: its reported cost is final, the next one starts from $0
                 self.close_process();
                 for b in &mut self.blocks {
@@ -863,17 +1148,33 @@ impl Session {
                         self.push(Block::Text { text, live: false });
                     }
                 }
+                let (mut priced, mut estimate) = (true, false);
                 if let Some(mut c) = e["total_cost_usd"].as_f64() {
-                    // tazuna marks the own loop's results; older recordings: a model that is not claude's
-                    let paid = e["tazuna_paid"] == true || !self.model.is_empty() && !self.model.starts_with("claude-");
+                    let paid = !self.on_plan(e["tazuna_paid"] == true);
                     let prev = if paid { self.paid_now } else { self.plan_now };
                     let (u, b) = (self.usage, self.usage_at_result);
                     let since = Usage { input: u.input - b.input, cache_write: u.cache_write - b.cache_write, cache_read: u.cache_read - b.cache_read, output: u.output - b.output };
-                    // a stopped turn reports nothing for itself (claude: total_cost_usd 0 after 21k tokens, 2026-11-02):
-                    // its tokens are priced at list rates instead, and the cost is marked as an estimate
-                    if c <= prev && since.total_in() + since.output > 0 {
-                        c = prev + self.estimate(&since);
+                    if e["tazuna_chat"] == true {
+                        // a chat answer's own process (main.rs chat_turn): its one total is all its own, beside the
+                        // conversation's process, whose count goes on (it was read as a stopped turn, then lost in the next)
+                        let now = self.exact_cost.unwrap_or(self.cost_base) - self.cost_base;
+                        self.cost_base += c;
+                        if paid {
+                            self.paid_base += c;
+                        } else {
+                            self.plan_base += c;
+                        }
+                        c = now;
+                    } else if c <= prev && since.total_in() + since.output > 0 {
+                        // a stopped turn reports nothing for itself (claude: total_cost_usd 0 after 21k tokens, 2026-11-02):
+                        // its calls as charged or at list prices, and the cost is marked as an estimate
+                        let (spent, est) = self.unbilled();
+                        (priced, estimate) = (spent.is_some(), est || spent.is_none());
+                        c = prev + spent.unwrap_or(0.0);
                         self.estimated = true;
+                    } else if c + 1e-9 < prev {
+                        // claude counts from $0 again after /clear: what it reported before stays in the totals
+                        self.close_process();
                     }
                     self.exact_cost = Some(self.cost_base + c);
                     self.usage_at_result = self.usage;
@@ -888,9 +1189,7 @@ impl Session {
                 }
                 let ok = e["subtype"] == "success" && !e["is_error"].as_bool().unwrap_or(false);
                 let secs = e["duration_ms"].as_f64().unwrap_or(0.0) / 1000.0;
-                let ran = if secs > 0.0 { secs * 1000.0 } else { self.run_since.map_or(0.0, |r| (at_ms - r).max(0.0)) };
-                self.busy_ms += ran;
-                self.run_since = None;
+                self.clock_off(at_ms, secs);
                 let turns = e["num_turns"].as_u64().unwrap_or(0);
                 let stopped = std::mem::take(&mut self.stopping);
                 // why it failed, in the transcript: the result carried it but only "Failed" showed (a provider's content
@@ -904,9 +1203,7 @@ impl Session {
                         }
                     }
                 }
-                let (cost, usage) = (self.cost(), self.usage);
-                let (run_cost, run_usage) = run_share(&self.blocks, cost, usage);
-                self.push(Block::Done(Summary { ok, secs, turns, cost, usage, stopped, run_cost, run_usage }));
+                self.end_run(ok, secs, turns, stopped, e["tazuna_paid"] == true, priced, estimate, e["tazuna_uncounted"].as_u64().unwrap_or(0) as u32);
                 self.activity = Activity::Done;
                 self.results += 1;
             }
@@ -938,6 +1235,9 @@ impl Session {
                 self.call_thinking.clear();
                 self.turn_usage.push(Usage::default());
                 self.call_blocks.push(self.blocks.len());
+                self.call_bill.push(CallBill { model: self.model.clone(), price: self.price_m, provider: self.provider.clone(), cost: None, unreported: false, uncounted: 0 });
+                // a call with nothing running (a queued message's, after the run before it ended): work begins here
+                self.clock_on(self.now_ms);
             }
             Some("content_block_start") => {
                 self.streamed = true;
@@ -984,6 +1284,16 @@ impl Session {
             }
             Some("content_block_stop") => self.end_live(),
             Some("message_delta") => {
+                // the own loop says what it charged for the call (null: the provider reported no usage), and the tries
+                // before it the provider may have billed
+                if let Some(b) = self.call_bill.last_mut() {
+                    match ev.get("tazuna_cost") {
+                        Some(Value::Null) => b.unreported = true,
+                        Some(c) => b.cost = Some(b.cost.unwrap_or(0.0) + c.as_f64().unwrap_or(0.0)),
+                        None => {}
+                    }
+                    b.uncounted += ev["tazuna_uncounted"].as_u64().unwrap_or(0) as u32;
+                }
                 let u = &ev["usage"];
                 let n = |k: &str| u[k].as_u64().unwrap_or(0);
                 let t = Usage {
@@ -1531,6 +1841,183 @@ mod tests {
     }
 
     #[test]
+    fn a_turn_keeps_how_it_was_paid_through_a_model_switch() {
+        // a call as the own loop sends it (`charged`: what it says the call cost) or as claude does (None)
+        let call = |s: &mut Session, t: f64, fresh: u64, cached: u64, out: u64, charged: Option<f64>| {
+            s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), t);
+            let mut d = json!({"type": "message_delta", "usage": {"input_tokens": fresh, "cache_creation_input_tokens": 0, "cache_read_input_tokens": cached, "output_tokens": out}});
+            if let Some(c) = charged {
+                d["tazuna_cost"] = json!(c);
+            }
+            s.apply(&json!({"type": "stream_event", "event": d}), t + 1.0);
+        };
+        let mut s = Session::new("", "high");
+        // two calls on a provider's model, a billed result; then /model to Opus on the plan and one more turn. The own
+        // loop's figures are not what the price list gives for the tokens: the first is the provider's own (`usage.cost`),
+        // the second has a cache write's surcharge in it. The rows are those figures, and they add up to the run.
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "deepseek-v4.1-flash-1017", "price_per_m": [0.15, 0.003, 0.6], "provider": "SubRouter"}), 0.0);
+        call(&mut s, 1.0, 10_000, 0, 500, Some(0.0021));
+        call(&mut s, 3.0, 1_000, 10_000, 2_000, Some(0.00141));
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0021 + 0.00141, "tazuna_paid": true}), 5.0);
+        let v = s.view();
+        let cheap: Vec<f64> = v["calls"].as_array().unwrap().iter().map(|c| c["cost"].as_f64().unwrap()).collect();
+        assert_eq!(cheap, [0.0021, 0.00141]);
+        assert!((cheap[0] - s.estimate(&Usage { input: 10_000, cache_write: 0, cache_read: 0, output: 500 })).abs() > 1e-6, "not the list price of its tokens");
+        let run = v["blocks"].as_array().unwrap().last().unwrap()["run_cost"].as_f64().unwrap();
+        assert!((cheap.iter().sum::<f64>() - run).abs() < 1e-12 && v["calls"][0].get("estimate").is_none(), "{cheap:?} against {run}");
+        s.apply(&json!({"type": "harness_switch", "model": "claude-opus-5-5", "effort": "medium", "text": "now Opus"}), 6.0);
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5"}), 7.0);
+        call(&mut s, 8.0, 2_000, 11_000, 300, None);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.02}), 10.0);
+        let v = s.view();
+        let done: Vec<&Value> = v["blocks"].as_array().unwrap().iter().filter(|b| b["kind"] == "done").collect();
+        assert_eq!((&done[0]["model"], &done[0]["plan"], &done[0]["provider"], &done[0]["price_m"]), (&json!("deepseek-v4.1-flash-1017"), &json!(false), &json!("SubRouter"), &json!([0.15, 0.003, 0.6])));
+        assert_eq!((&done[1]["model"], &done[1]["plan"], &done[1]["provider"], &done[1]["price_m"]), (&json!("claude-opus-5-5"), &json!(true), &Value::Null, &json!([4.0, 0.4, 20.0])));
+        // the earlier calls cost what they cost then, each under its own model: not Opus's rates after the switch
+        let calls = v["calls"].as_array().unwrap();
+        assert_eq!(calls.iter().take(2).map(|c| c["cost"].as_f64().unwrap()).collect::<Vec<_>>(), cheap);
+        assert_eq!((&calls[0]["model"], &calls[0]["provider"], &calls[2]["model"], &calls[2]["role"], &calls[2]["provider"]),
+            (&json!("deepseek-v4.1-flash-1017"), &json!("SubRouter"), &json!("claude-opus-5-5"), &Value::Null, &Value::Null));
+        // claude's own call: an estimate at list prices, and it says so (its exact total comes with the result)
+        assert!((calls[2]["cost"].as_f64().unwrap() - Usage { input: 2_000, cache_write: 0, cache_read: 11_000, output: 300 }.estimate()).abs() < 1e-12);
+        assert_eq!(calls[2]["estimate"], json!(true));
+        // a route switch inside the own loop before any call used anything (the first route refused it): the run is the
+        // new route's alone
+        let mut r = Session::new("", "high");
+        r.apply(&json!({"type": "system", "subtype": "init", "model": "glm-5.3", "price_per_m": [1.0, 0.1, 2.0], "provider": "SubRouter"}), 0.0);
+        r.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 0.5);
+        r.apply(&json!({"type": "system", "subtype": "route_switch", "message": "now https://openrouter.ai/api/v1: HTTP 503", "price_per_m": [2.0, 0.2, 4.0], "provider": "OpenRouter"}), 1.0);
+        call(&mut r, 2.0, 1_000_000, 0, 0, Some(2.0));
+        r.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 2.0, "tazuna_paid": true}), 4.0);
+        let v = r.view();
+        let done = v["blocks"].as_array().unwrap().iter().rfind(|b| b["kind"] == "done").unwrap();
+        assert_eq!((&done["provider"], &done["price_m"], done.get("providers"), v["calls"][1]["cost"].as_f64()), (&json!("OpenRouter"), &json!([2.0, 0.2, 4.0]), None, Some(2.0)));
+        // the route changes after a call was paid: two providers in one run. Nobody stands for the whole of it, no one
+        // price list either: both are named in order, and each call keeps its own
+        let mut m = Session::new("", "high");
+        m.apply(&json!({"type": "system", "subtype": "init", "model": "glm-5.3", "price_per_m": [1.0, 0.1, 2.0], "provider": "SubRouter"}), 0.0);
+        call(&mut m, 1.0, 1_000_000, 0, 0, Some(1.0));
+        m.apply(&json!({"type": "system", "subtype": "route_switch", "message": "now https://openrouter.ai/api/v1: HTTP 503", "price_per_m": [2.0, 0.2, 4.0], "provider": "OpenRouter"}), 3.0);
+        call(&mut m, 4.0, 1_000_000, 0, 0, Some(2.0));
+        m.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 3.0, "tazuna_paid": true}), 6.0);
+        // the next run stays on the second route: one provider again
+        m.apply(&json!({"type": "harness_user", "text": "more"}), 7.0);
+        call(&mut m, 8.0, 500_000, 0, 0, Some(1.0));
+        m.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 4.0, "tazuna_paid": true}), 9.0);
+        let v = m.view();
+        let done: Vec<&Value> = v["blocks"].as_array().unwrap().iter().filter(|b| b["kind"] == "done").collect();
+        assert_eq!((&done[0]["provider"], &done[0]["price_m"], &done[0]["providers"], &done[0]["plan"]), (&Value::Null, &Value::Null, &json!(["SubRouter", "OpenRouter"]), &json!(false)));
+        assert_eq!((&v["calls"][0]["provider"], &v["calls"][1]["provider"]), (&json!("SubRouter"), &json!("OpenRouter")));
+        assert_eq!((&done[1]["provider"], done[1].get("providers")), (&json!("OpenRouter"), None));
+    }
+
+    #[test]
+    fn a_claude_run_on_an_api_key_is_paid_not_on_the_plan() {
+        // claude's init names where its key comes from: "none" is the subscription's login
+        let run = |source: Value| {
+            let mut s = Session::new("", "medium");
+            s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "apiKeySource": source}), 0.0);
+            s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 0.5);
+            s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.4}), 1.0);
+            let v = s.view();
+            let d = v["blocks"].as_array().unwrap().last().unwrap().clone();
+            (d["plan"].clone(), d["provider"].clone(), d["price_m"].clone(), v["calls"][0]["provider"].clone())
+        };
+        assert_eq!(run(json!("ANTHROPIC_API_KEY")), (json!(false), json!("Anthropic API"), json!([4.0, 0.4, 20.0]), json!("Anthropic API")));
+        assert_eq!(run(json!("none")), (json!(true), Value::Null, json!([4.0, 0.4, 20.0]), Value::Null));
+        assert_eq!(run(Value::Null).0, json!(true), "a recording whose init does not say");
+    }
+
+    #[test]
+    fn a_runs_subagent_calls_are_counted_for_its_receipt() {
+        let mut s = Session::new("", "medium");
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5"}), 0.0);
+        s.apply(&json!({"type": "harness_user", "text": "look"}), 1.0);
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 2.0);
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Agent", "input": {"description": "explore"}}]}}), 3.0);
+        // the subagent: two model calls, the first in two parts (one message id)
+        for (id, name) in [("m1", "Read"), ("m1", "Grep"), ("m2", "Read")] {
+            s.apply(&json!({"type": "assistant", "parent_tool_use_id": "t1", "message": {"id": id, "content": [{"type": "tool_use", "id": "x", "name": name, "input": {"path": "a"}}]}}), 4.0);
+        }
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.4}), 9.0);
+        s.apply(&json!({"type": "harness_user", "text": "thanks"}), 10.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.5}), 11.0);
+        let v = s.view();
+        let done: Vec<&Value> = v["blocks"].as_array().unwrap().iter().filter(|b| b["kind"] == "done").collect();
+        assert_eq!((&done[0]["sub_calls"], done[1].get("sub_calls"), v["calls"].as_array().unwrap().len()), (&json!(2), None, 1));
+    }
+
+    #[test]
+    fn working_counts_the_tests_a_fix_round_a_queued_message_and_stops_with_the_run() {
+        let call = |s: &mut Session, t: f64| s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), t);
+        let result = |s: &mut Session, t: f64| s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.1}), t);
+        let mut s = Session::new("", "");
+        s.apply(&json!({"type": "harness_user", "text": "a"}), 10_000.0);
+        call(&mut s, 10_500.0);
+        assert_eq!(s.working_for(15_000.0), 5_000.0);
+        result(&mut s, 20_000.0);
+        assert_eq!((s.working_for(20_050.0), s.busy(20_050.0)), (0.0, 10_000.0));
+        // the tests after the result count from their start ("Working 0 s" stood through a verification), and add to
+        // the work done; so does the round that fixes them
+        s.apply(&json!({"type": "harness_verify_start", "cmd": "cargo test", "round": 1}), 20_100.0);
+        assert_eq!((s.working_for(24_000.0), s.busy(24_000.0)), (3_900.0, 13_900.0));
+        s.apply(&json!({"type": "harness_verify_done", "ok": false, "secs": 6.0, "output": "", "final": false}), 26_100.0);
+        assert_eq!((s.working_for(26_150.0), s.busy(26_150.0)), (0.0, 16_000.0));
+        s.apply(&json!({"type": "harness_verify_feedback", "round": 1, "max": 2}), 26_200.0);
+        call(&mut s, 26_300.0);
+        assert_eq!(s.working_for(30_000.0), 3_800.0);
+        result(&mut s, 31_000.0);
+        assert_eq!(s.busy(40_000.0), 20_800.0);
+        // the next message, an hour on: its own count
+        s.apply(&json!({"type": "harness_user", "text": "b"}), 3_600_000.0);
+        assert_eq!(s.working_for(3_602_000.0), 2_000.0);
+        // a second message queued while the first runs: the first's result ends that count, the queued one's call starts
+        // its own (it stood at 0 s)
+        s.apply(&json!({"type": "harness_user", "text": "c"}), 3_603_000.0);
+        assert_eq!(s.working_for(3_604_000.0), 4_000.0);
+        result(&mut s, 3_605_000.0);
+        call(&mut s, 3_605_100.0);
+        assert_eq!(s.working_for(3_610_000.0), 4_900.0);
+        // a hard stop (no result): the run ends there, and the next message counts from itself, not from the killed one
+        s.apply(&json!({"type": "harness_notice", "text": "stopped · send a message to continue", "error": false}), 3_611_000.0);
+        let worked = s.busy(3_611_000.0);
+        assert_eq!((s.working_for(3_700_000.0), s.busy(3_700_000.0)), (0.0, worked), "nothing runs after the stop");
+        s.apply(&json!({"type": "harness_user", "text": "d"}), 3_900_000.0);
+        assert_eq!(s.working_for(3_903_000.0), 3_000.0);
+        // the process gone mid-run: the same
+        s.apply(&json!({"type": "harness_notice", "text": "claude exited (code 1)", "error": true}), 3_904_000.0);
+        assert_eq!((s.working_for(3_950_000.0), s.busy(3_950_000.0)), (0.0, worked + 4_000.0));
+    }
+
+    #[test]
+    fn an_old_recording_says_nothing_it_does_not_hold() {
+        // no init event (a result alone): no billing fields at all, and a call without its model
+        let mut s = Session::new("", "low");
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 0.5);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.01}), 1.0);
+        let v = s.view();
+        let done = v["blocks"].as_array().unwrap().last().unwrap().as_object().unwrap();
+        assert!(!["model", "plan", "provider", "price_m"].iter().any(|k| done.contains_key(*k)), "{done:?}");
+        assert!(v["calls"][0].get("model").is_none());
+        // the own loop before 0.1.193: its init names the model and its prices, not who was paid: nobody is named
+        let mut o = Session::new("", "high");
+        o.apply(&json!({"type": "system", "subtype": "init", "model": "deepseek-v4.1-flash-1017", "price_per_m": [0.15, 0.003, 0.6]}), 0.0);
+        o.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.01}), 1.0);
+        let v = o.view();
+        let done = v["blocks"].as_array().unwrap().last().unwrap();
+        assert_eq!((&done["plan"], &done["provider"], &done["price_m"]), (&json!(false), &Value::Null, &json!([0.15, 0.003, 0.6])));
+        // a Claude model the core has no list prices for: on the plan, no prices, and its calls without a model (their
+        // cost is a rough figure)
+        let mut c = Session::new("", "medium");
+        c.apply(&json!({"type": "system", "subtype": "init", "model": "claude-sonnet-5-5"}), 0.0);
+        c.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 0.5);
+        c.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.01}), 1.0);
+        let v = c.view();
+        let done = v["blocks"].as_array().unwrap().last().unwrap();
+        assert_eq!((&done["plan"], &done["price_m"], v["calls"][0].get("model")), (&json!(true), &Value::Null, None));
+    }
+
+    #[test]
     fn cost_adds_up_across_restarted_processes() {
         use serde_json::json;
         let mut s = Session::new("", "low");
@@ -1541,10 +2028,13 @@ mod tests {
         assert!(s.in_flight().is_none(), "a killed call stops its clock");
         s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.005}), 4.0); // resumed process restarts at $0
         assert!((s.cost() - 0.035).abs() < 1e-9, "{}", s.cost());
-        // under each answer its own share, not the total so far: $0.01, $0.02, $0.005 (design review 6)
-        let own: Vec<f64> = s.blocks.iter().filter_map(|b| if let Block::Done(d) = b { Some(d.run_cost) } else { None }).collect();
-        assert_eq!(own.len(), 3);
-        assert!((own[0] - 0.01).abs() < 1e-9 && (own[1] - 0.02).abs() < 1e-9 && (own[2] - 0.005).abs() < 1e-9, "{own:?}");
+        // under each answer its own share, not the total so far: $0.01, $0.02, $0.005 (design review 6); the stopped run in
+        // between ends on its own
+        let own: Vec<f64> = s.blocks.iter().filter_map(|b| if let Block::Done(d) = b { d.run_cost } else { None }).collect();
+        assert_eq!(own.len(), 4);
+        assert!((own[0] - 0.01).abs() < 1e-9 && (own[1] - 0.02).abs() < 1e-9 && own[2] == 0.0 && (own[3] - 0.005).abs() < 1e-9, "{own:?}");
+        assert!(matches!(&s.blocks[3], Block::Done(d) if !d.stopped), "a notice that is no stop of the user's: not `stopped`");
+        assert!(s.view()["calls"][0]["cost"].is_null(), "the call cut off: its cost is not known");
         // `/resume` replays: each recording's process starts again at $0; a slash command (no tokens) kept claude's
         // figure for its process alone: $55.63 on screen, then $17.98 after /mcp (2026-11-06)
         let mut r = Session::new("", "low");
@@ -1554,5 +2044,205 @@ mod tests {
         r.apply(&json!({"type": "result", "subtype": "success", "num_turns": 0, "total_cost_usd": 18.0}), 4.0);
         assert!((r.cost() - 50.5).abs() < 1e-9, "{}", r.cost());
         assert!(!r.blocks.iter().any(|b| matches!(b, Block::Notice { .. })), "the end of a process shows nothing");
+    }
+
+    /// A model call as the own loop sends it: `charged` what it says the call cost.
+    fn paid_call(s: &mut Session, t: f64, fresh: u64, cached: u64, out: u64, charged: f64) {
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), t);
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_delta", "tazuna_cost": charged,
+            "usage": {"input_tokens": fresh, "cache_creation_input_tokens": 0, "cache_read_input_tokens": cached, "output_tokens": out}}}), t + 1.0);
+    }
+
+    fn dones(v: &Value) -> Vec<(usize, Value)> {
+        v["blocks"].as_array().unwrap().iter().enumerate().filter(|(_, b)| b["kind"] == "done").map(|(i, b)| (i, b.clone())).collect()
+    }
+
+    #[test]
+    fn a_hard_stop_closes_its_run_into_its_own_receipt() {
+        // two calls on SubRouter ($1.00, $0.10) and a third cut off, esc twice (the process killed: no result), a new message
+        let mut s = Session::new("", "high");
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "glm-5.3", "price_per_m": [1.0, 0.1, 2.0], "provider": "SubRouter"}), 0.0);
+        s.apply(&json!({"type": "harness_user", "text": "a"}), 1.0);
+        paid_call(&mut s, 2.0, 1000, 0, 10, 1.0);
+        paid_call(&mut s, 4.0, 1000, 0, 10, 0.1);
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 6.0);
+        s.apply(&json!({"type": "harness_interrupt"}), 7.0);
+        s.apply(&json!({"type": "harness_notice", "text": "stopped · send a message to continue", "error": false}), 8.0);
+        assert!((s.cost() - 1.1).abs() < 1e-9, "the stopped run's spend stays in the conversation's total: {}", s.cost());
+        s.apply(&json!({"type": "harness_user", "text": "b"}), 10.0);
+        paid_call(&mut s, 11.0, 1000, 0, 10, 0.1);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.1, "tazuna_paid": true}), 13.0);
+        assert!((s.cost() - 1.2).abs() < 1e-9, "it fell to $0.10: {}", s.cost());
+        let v = s.view();
+        let d = dones(&v);
+        assert_eq!(d.len(), 2, "the stopped run has a receipt of its own");
+        assert_eq!((&d[0].1["stopped"], &d[0].1["ok"], &d[0].1["provider"], &d[0].1["plan"], d[0].1.get("estimate")), (&json!(true), &json!(false), &json!("SubRouter"), &json!(false), None));
+        assert!((d[0].1["run_cost"].as_f64().unwrap() - 1.1).abs() < 1e-9 && (d[1].1["run_cost"].as_f64().unwrap() - 0.1).abs() < 1e-9, "{:?}", d);
+        // the next answer's receipt lists its own call alone (it listed $1.00, $0.10, $0.10 under "Paid to SubRouter $0.10")
+        let calls = v["calls"].as_array().unwrap();
+        // a call goes to the first done block from where it began (`block`: the blocks there were then)
+        let under = |lo: usize, hi: usize| calls.iter().filter(|c| (lo..=hi).contains(&(c["block"].as_u64().unwrap() as usize))).map(|c| c["cost"].clone()).collect::<Vec<_>>();
+        assert_eq!(under(0, d[0].0), [json!(1.0), json!(0.1), Value::Null], "the call cut off: its cost is not known");
+        assert_eq!(under(d[0].0 + 1, d[1].0), [json!(0.1)]);
+        // a stop and then /model: the old calls stay under their own payer
+        let mut m = Session::new("", "high");
+        m.apply(&json!({"type": "system", "subtype": "init", "model": "glm-5.3", "price_per_m": [1.0, 0.1, 2.0], "provider": "SubRouter"}), 0.0);
+        m.apply(&json!({"type": "harness_user", "text": "a"}), 1.0);
+        paid_call(&mut m, 2.0, 1000, 0, 10, 1.0);
+        m.apply(&json!({"type": "harness_notice", "text": "stopped · send a message to continue", "error": false}), 4.0);
+        m.apply(&json!({"type": "harness_switch", "model": "claude-opus-5-5", "effort": "high", "text": "model: Opus"}), 5.0);
+        m.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "apiKeySource": "none"}), 6.0);
+        m.apply(&json!({"type": "harness_user", "text": "b"}), 7.0);
+        m.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 8.0);
+        m.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.3}), 9.0);
+        let d = dones(&m.view());
+        assert_eq!((&d[0].1["provider"], &d[1].1["plan"]), (&json!("SubRouter"), &json!(true)));
+        assert!((m.cost() - 1.3).abs() < 1e-9 && (m.split_cost().0 - 1.0).abs() < 1e-9, "{:?}", m.split_cost());
+        // a crash mid-run on claude: its calls at list prices, said to be an estimate, and the error is no stop of the user's
+        let mut c = Session::new("", "medium");
+        c.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "apiKeySource": "none"}), 0.0);
+        c.apply(&json!({"type": "harness_user", "text": "a"}), 1.0);
+        c.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 2.0);
+        c.apply(&json!({"type": "stream_event", "event": {"type": "message_delta", "usage": {"input_tokens": 1000, "output_tokens": 100}}}), 3.0);
+        c.apply(&json!({"type": "harness_notice", "text": "claude exited (code 1)", "error": true}), 4.0);
+        let d = dones(&c.view());
+        assert_eq!((&d[0].1["stopped"], &d[0].1["estimate"], &d[0].1["plan"]), (&json!(false), &json!(true), &json!(true)));
+        assert!((d[0].1["run_cost"].as_f64().unwrap() - 0.006).abs() < 1e-9 && (c.cost() - 0.006).abs() < 1e-9);
+        // a restart while nothing runs closes no run
+        c.apply(&json!({"type": "harness_notice", "text": "── new conversation ──", "error": false}), 5.0);
+        assert_eq!(dones(&c.view()).len(), 1);
+    }
+
+    #[test]
+    fn a_turn_after_clear_is_its_own() {
+        // claude counts from $0 again after /clear: the next turn's receipt is its own tokens and cost, not the
+        // conversation's ("$0 … The same without the cache $4.14")
+        let mut s = Session::new("", "medium");
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "apiKeySource": "none"}), 0.0);
+        s.apply(&json!({"type": "harness_user", "text": "a"}), 1.0);
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 2.0);
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_delta", "usage": {"input_tokens": 500_000, "cache_read_input_tokens": 9_000_000, "output_tokens": 20_000}}}), 3.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 4.0}), 4.0);
+        s.apply(&json!({"type": "harness_user", "text": "/clear"}), 5.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "num_turns": 0, "total_cost_usd": 0.0}), 6.0);
+        s.apply(&json!({"type": "harness_user", "text": "hi"}), 7.0);
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 8.0);
+        s.apply(&json!({"type": "stream_event", "event": {"type": "message_delta", "usage": {"input_tokens": 2_000, "cache_read_input_tokens": 0, "output_tokens": 50}}}), 9.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.01}), 10.0);
+        let d: Vec<&Block> = s.blocks.iter().filter(|b| matches!(b, Block::Done(_))).collect();
+        let [Block::Done(_), Block::Done(clear), Block::Done(hi)] = d[..] else { panic!() };
+        assert_eq!((clear.run_cost, clear.run_usage.total_in()), (Some(0.0), 0));
+        assert_eq!((hi.run_usage.input, hi.run_usage.cache_read, hi.run_usage.output), (2_000, 0, 50));
+        assert!((hi.run_cost.unwrap() - 0.01).abs() < 1e-9, "{:?}", hi.run_cost);
+        assert!((s.cost() - 4.01).abs() < 1e-9, "what was reported before the clear stays: {}", s.cost());
+    }
+
+    #[test]
+    fn a_stopped_turn_says_its_cost_is_an_estimate_or_not_known() {
+        // claude reports $0 for a stopped turn: tazuna's figure at list prices is "about", and on a model without list
+        // prices in the core no amount is claimed (it was Opus's rates, shown as "Paid to Anthropic API $0.18")
+        let stopped = |model: &str| {
+            let mut s = Session::new("", "medium");
+            s.apply(&json!({"type": "system", "subtype": "init", "model": model, "apiKeySource": "ANTHROPIC_API_KEY"}), 0.0);
+            s.apply(&json!({"type": "harness_user", "text": "a"}), 1.0);
+            s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 2.0);
+            s.apply(&json!({"type": "stream_event", "event": {"type": "message_delta", "usage": {"input_tokens": 20_000, "output_tokens": 5_000}}}), 3.0);
+            s.apply(&json!({"type": "harness_interrupt"}), 4.0);
+            s.apply(&json!({"type": "result", "subtype": "error_during_execution", "total_cost_usd": 0.0}), 5.0);
+            let v = s.view();
+            (dones(&v)[0].1.clone(), s.cost())
+        };
+        let (opus, total) = stopped("claude-opus-5-5");
+        assert_eq!((&opus["estimate"], &opus["provider"], &opus["stopped"]), (&json!(true), &json!("Anthropic API"), &json!(true)));
+        assert!((opus["run_cost"].as_f64().unwrap() - 0.18).abs() < 1e-9 && (total - 0.18).abs() < 1e-9);
+        let (sonnet, total) = stopped("claude-sonnet-5-5");
+        assert_eq!((&sonnet["estimate"], &sonnet["run_cost"], &sonnet["price_m"]), (&json!(true), &Value::Null, &Value::Null));
+        assert_eq!(total, 0.0, "nor in the total");
+        // a turn that ended as reported says nothing of the kind
+        let mut s = Session::new("", "medium");
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.1}), 1.0);
+        assert!(dones(&s.view())[0].1.get("estimate").is_none());
+    }
+
+    #[test]
+    fn bedrock_vertex_or_a_gateway_is_not_the_plan() {
+        // claude says apiKeySource "none" there too: tazuna writes what it saw set into the init (live.rs)
+        let run = |env: Value| {
+            let mut s = Session::new("", "medium");
+            s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "apiKeySource": "none", "tazuna_env": env}), 0.0);
+            s.apply(&json!({"type": "stream_event", "event": {"type": "message_start"}}), 0.5);
+            s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.4}), 1.0);
+            let d = dones(&s.view())[0].1.clone();
+            (d["plan"].clone(), d["provider"].clone(), crate::ui::cost_str(&s))
+        };
+        assert_eq!(run(json!(["CLAUDE_CODE_USE_BEDROCK"])), (json!(false), json!("Bedrock"), "$0.40".to_string()));
+        assert_eq!(run(json!(["CLAUDE_CODE_USE_VERTEX"])), (json!(false), json!("Vertex"), "$0.40".to_string()));
+        assert_eq!(run(json!(["ANTHROPIC_BASE_URL"])), (json!(false), Value::Null, "$0.40".to_string()), "a gateway: billed, the payer not known");
+        assert_eq!(run(json!([])), (json!(true), Value::Null, "$0.40 on Claude plan".to_string()));
+    }
+
+    #[test]
+    fn a_chat_answer_carries_the_sessions_billing() {
+        // a session on a `claude-…` id through SubRouter (the own loop); the router answers a question as a chat, whose
+        // process's init main.rs drops: it is paid to SubRouter, and its cost is its own beside the session's process
+        let mut s = Session::new("", "high");
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5", "price_per_m": [5.0, 0.5, 25.0], "provider": "SubRouter"}), 0.0);
+        s.apply(&json!({"type": "harness_user", "text": "fix it"}), 1.0);
+        paid_call(&mut s, 2.0, 100_000, 0, 1_000, 1.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 1.0, "tazuna_paid": true}), 4.0);
+        s.apply(&json!({"type": "harness_user", "text": "what is a monad"}), 5.0);
+        paid_call(&mut s, 6.0, 2_000, 0, 400, 0.02);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.02, "tazuna_chat": true}), 8.0);
+        // the session's process goes on: its next result is cumulative ($1.30 = $1.00 + $0.30)
+        s.apply(&json!({"type": "harness_user", "text": "and the tests"}), 9.0);
+        paid_call(&mut s, 10.0, 30_000, 0, 500, 0.3);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 1.3, "tazuna_paid": true}), 12.0);
+        let d = dones(&s.view());
+        assert_eq!((&d[1].1["plan"], &d[1].1["provider"], d[1].1.get("estimate")), (&json!(false), &json!("SubRouter"), None), "it said: not billed");
+        let own: Vec<f64> = d.iter().map(|(_, b)| b["run_cost"].as_f64().unwrap()).collect();
+        assert!((own[1] - 0.02).abs() < 1e-9 && (own[2] - 0.3).abs() < 1e-9 && (s.cost() - 1.32).abs() < 1e-9, "{own:?} {}", s.cost());
+    }
+
+    #[test]
+    fn a_background_subagents_later_calls_count_in_the_next_turn() {
+        // a subagent that goes on after its turn ended: its count on the first turn is fixed there, the calls after count in
+        // the turn whose total they are in (claude's next result)
+        let sub = |s: &mut Session, id: &str, t: f64| s.apply(&json!({"type": "assistant", "parent_tool_use_id": "t1", "message": {"id": id, "content": [{"type": "text", "text": "…"}]}}), t);
+        let mut s = Session::new("", "medium");
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "claude-opus-5-5"}), 0.0);
+        s.apply(&json!({"type": "harness_user", "text": "look around in the background"}), 1.0);
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Agent", "input": {"run_in_background": true}}]}}), 2.0);
+        sub(&mut s, "m1", 3.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.4}), 4.0);
+        sub(&mut s, "m2", 5.0);
+        sub(&mut s, "m3", 6.0);
+        let first = |s: &Session| dones(&s.view())[0].1["sub_calls"].clone();
+        assert_eq!(first(&s), json!(1), "it kept growing after the turn ended");
+        s.apply(&json!({"type": "harness_user", "text": "thanks"}), 7.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.6}), 8.0);
+        assert_eq!((first(&s), &dones(&s.view())[1].1["sub_calls"]), (json!(1), &json!(2)));
+    }
+
+    #[test]
+    fn working_starts_at_a_hand_over_a_review_and_a_held_message() {
+        let result = |s: &mut Session, t: f64| s.apply(&json!({"type": "result", "subtype": "success", "total_cost_usd": 0.1}), t);
+        let mut s = Session::new("", "");
+        s.apply(&json!({"type": "harness_user", "text": "a"}), 1_000.0);
+        result(&mut s, 2_000.0);
+        // the cascade hands the task over to the stronger model: work, before that model's first call
+        s.apply(&json!({"type": "harness_escalate", "model": "claude-opus-5-5", "effort": "high"}), 3_000.0);
+        assert_eq!(s.working_for(5_000.0), 2_000.0, "Working 0 s");
+        result(&mut s, 6_000.0);
+        // a self-review round
+        s.apply(&json!({"type": "harness_review"}), 7_000.0);
+        assert_eq!(s.working_for(8_000.0), 1_000.0);
+        result(&mut s, 9_000.0);
+        // a message sent during the tests waits for them, then starts
+        s.apply(&json!({"type": "harness_verify_start", "cmd": "cargo test", "round": 1}), 10_000.0);
+        s.apply(&json!({"type": "harness_user", "text": "b"}), 11_000.0);
+        s.apply(&json!({"type": "harness_verify_done", "ok": true, "secs": 2.0, "output": "", "final": true}), 12_000.0);
+        assert_eq!(s.working_for(12_500.0), 0.0);
+        s.apply(&json!({"type": "harness_held_start"}), 13_000.0);
+        assert_eq!(s.working_for(14_000.0), 1_000.0);
     }
 }

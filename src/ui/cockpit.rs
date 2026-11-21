@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block as Panel, BorderType, LineGauge, Sparkline, SparklineBar},
 };
 
-pub(super) const OPTS: Opts = Opts { marker: "▸", prompt: PromptStyle::Bar, group_tools: false, timeline: false, durations: true };
+pub(super) const OPTS: Opts = Opts { prompt: PromptStyle::Bar, group_tools: false, durations: true };
 const SIDEBAR: u16 = 38;
 
 fn panel<'a>(title: &'a str, th: &Theme) -> Panel<'a> {
@@ -56,7 +56,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let frame = panel("transcript", th);
     let inner = frame.inner(main).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(frame, main);
-    let (last_block, trows, top_line) = render_transcript(f, inner, transcript(s, v, th, &OPTS, inner.width as usize), v.scroll);
+    let (last_block, trows, top_line) = render_transcript(f, inner, transcript(s, v, th, &OPTS, inner.width as usize), v.scroll, th);
     if narrow {
         let b = Panel::bordered().border_type(BorderType::Rounded).border_style(st(th.border));
         let hint = composer_rows(v, th, "›", "Message tazuna…", composer.width.saturating_sub(2));
@@ -86,7 +86,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
             Line::from(vec![Span::styled(format!("{glyph} "), st(color)), Span::styled(label, st(color).add_modifier(Modifier::BOLD))]),
             // elapsed: the whole session, the user's own time too; working: message to last token, summed
             Line::from(vec![kv("elapsed", &clock_str(v.clock_ms - v.since_ms), th), Span::raw("  "), kv("working", &clock_str(s.busy(v.clock_ms)), th)]),
-            Line::from(vec![kv("turn", &s.turns.to_string(), th), Span::raw("  "),
+            // model calls, as the row under an answer counts them ("turn 5" after one message, design review 11)
+            Line::from(vec![kv("calls", &s.turns.to_string(), th), Span::raw("  "),
                 if v.live { Span::styled(format!("live  {}  {}", if s.profile.is_empty() { "lean" } else { &s.profile }, s.mode), st(th.text)) } else { kv("replay", &play, th) }]),
         ]),
         a,
@@ -216,7 +217,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let per_turn = if s.turns > 0 { s.cost() / s.turns as f64 } else { 0.0 };
     f.render_widget(
         Paragraph::new(vec![
-            Line::from(vec![Span::styled(cost_str(s), st(th.text).add_modifier(Modifier::BOLD)), Span::styled(format!("   {}/turn", usd(per_turn)), st(th.dim))]),
+            Line::from(vec![Span::styled(cost_str(s), st(th.text).add_modifier(Modifier::BOLD)), Span::styled(format!("   {}/call", usd(per_turn)), st(th.dim))]),
             // the plan's windows and SubRouter's balance on lines of their own: on one line the sidebar cut the balance
             // to "$8" (2026-11-02)
             // each account named in its own colour, its numbers beside it

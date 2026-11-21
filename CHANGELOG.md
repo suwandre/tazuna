@@ -16,6 +16,62 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.193 (2026-11-21): one frame for every overlay, two designs, and how each turn was paid
+
+Design review 11's look, the user's picks from the prototype (desktop/mockups/v8.html: "all"), and two things the user
+reported while it was built.
+
+- One frame for every overlay (the `/` menu, /model, /usage, /keys, /resume, /diff, /rewind, /changelog, /login, ctrl-b,
+  the tool and call lists): a grey border, the title on its left, a count on its right ("3/28"), the keys along its bottom
+  in one wording, the column's width, one selection (`›` and the accent), and a row when nothing matches ("no command
+  matches /zz"). There were three frame styles at five widths. The keys say what esc does in that state ("esc clears"
+  with a search or a draft typed).
+- /model searches what it shows. Every typed word has to be in the model's display name, its id, its label or its
+  provider, with `-`, `_`, `/` and `:` read as spaces too: "deepseek v4.1" found nothing under SubRouter, whose ids
+  say "deepseek-v4.1-flash-1017" (the user: "i think it still searches via slug instead of the display name"). Bench and
+  AA are two columns; the provider stands faint after the name and stays when the name is cut.
+- Answers: a table is its rows under one rule (a full grid with a blank row per row before), a code block is filled to
+  the column's width under its language, `---` is a rule across the column, and one bar marks a quote, your message and a
+  tool's output. /usage's meters say "used".
+- The welcome: the mark, the folder as `~/…` with its branch, the hint. The model says itself once, in the header.
+- Zen's status counts the work ("Working 12 s · esc stops": through the tests and a fix round too), and both designs say
+  how far up the transcript is scrolled ("↓ 15 lines").
+- Two designs: zen and cockpit. Aurora (cockpit without its side column) and timeline (its own marks, capitals and prompt)
+  held most of the review's inconsistencies and are gone. `--design 2` is cockpit and `3` zen as before; `1` and `4` open
+  zen and say so once; a saved 1 or 4 becomes zen when a session opens. ctrl-t switches between the two.
+- The session view says how each turn was paid, for the window's receipt: on a finished turn its model, whether it ran on
+  the Claude plan, who was paid (`provider`, or `providers` when a turn's calls went to more than one), the prices per
+  million, and how many subagent calls are in its cost but not in its list; on each call its model, provider and cost
+  (the own loop's as the engine charged it, so a turn's calls add up to its cost; claude's marked as an estimate). All
+  recorded when it happens: a later /model does not rewrite an earlier turn, and a recording from before says nothing.
+  What is not known is not a zero: a call without reported usage has no cost, tries sent again after an empty or timed-out
+  reply are counted apart, a stopped turn's cost is marked as an estimate, and a run killed with Esc twice closes into a
+  turn of its own (its calls landed on the next answer, and its spend left the conversation's total).
+- A claude run is "on the plan" only when nothing says otherwise (`models::claude_payer`): one billed to an API key,
+  Bedrock, Vertex or a gateway is paid, in the header, the run log and the receipt (the header said "on Claude plan" and
+  the run log counted it as plan). The done line shows "≈" for an estimate. Nothing sent to a model changes.
+- Tier 0, same session, before (0.1.192) and after:
+
+  | | 0.1.192 | 0.1.193 |
+  |---|---|---|
+  | binary | 5,652,160 bytes | 5,652,112 bytes |
+  | replay render | 8 ms | 7 ms |
+  | startup | 7.5 ms | 6.7 ms |
+  | UI CPU while animating | 3.40% | 3.51-3.60% |
+  | UI memory | 7.6 MB | 7.9-8.0 MB |
+  | tool server memory | 2.3 MB | 2.2 MB |
+
+  (measured after the look's change, before the billing fields; the binary's size is the final one). CPU and memory are
+  within the runs' spread. Tokens, cost and quality: nothing that reaches a model changed. 242 tests pass.
+- Two independent reviews of this change found twenty-five defects (the Working counter stood at 0 s through the tests,
+  a receipt could name the wrong payer after a provider switch inside a turn, any notice during a run closed its cost,
+  the design file was rewritten by `--help`), fixed here with a test each.
+- Seen on the scripted provider in a pty: every overlay and state in both designs at four sizes, light, 256 colours and
+  NO_COLOR (out/review-11/cli-built, cli-built2). Not seen: /usage with real meters, the bench column with real scores,
+  ctrl-b with tasks. Known and left: Enter typed before the screen is up (the first seconds after start) arrives as a
+  new line, as in every version so far; subagent calls' own tokens and cost are not in the view (only their count);
+  list prices for Sonnet, Haiku and Fable (no "without the cache" line on those).
+
 ## 0.1.192 (2026-11-21): zen asks with the diff in view, and a test command that is not installed is no failure
 
 Design review 11 (the user: "really check every tab, every click… check if there are any visual or actual bugs"), the

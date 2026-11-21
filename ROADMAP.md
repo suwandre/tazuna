@@ -302,6 +302,14 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-21: the receipt is tazuna's signature, and the terminal has two designs (design review 11, both the window and
+  the terminal beside Claude, T3 Code, ZCode, DeepSeek Harness, Claude Code, Codex, opencode and pi). No rival shows
+  what an answer cost honestly, and "cost is shown, never hidden" was a line in a status bar: every answer now carries
+  its receipt (calls, tokens, who was paid, what the cache saved), fed by what the core records per turn, and the start
+  page shows the user's own day. In the terminal aurora and timeline went: four designs were four sets of marks, hints
+  and frames to keep alike, and the review's inconsistencies sat in the two nobody chose. The user picked all of it from
+  desktop/mockups/v8.html. Open after it: a plain chat has no tools, so no web (the user asked why it cannot look up
+  the weather); adding web search and fetch to chat moves tokens per turn and waits for a measurement.
 - 2026-11-21: tazuna gets a look of its own (design review 10, beside Claude, T3 Code, MonoCode, ZCode, DeepSeek Harness
   and the terminals of Claude Code, Codex, opencode and pi): warm paper and a serif alone read as Claude's app with an
   indigo accent, and every rival opens on a mark while tazuna had three (a ≡ icon, a font's 手, a ◆). One drawn mark (手

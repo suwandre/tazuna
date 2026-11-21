@@ -1,8 +1,7 @@
-//! Rendering. Four designs share one transcript builder and one palette, and differ in chrome and layout.
+//! Rendering. Two designs (zen and cockpit) share one transcript builder, one palette and one overlay frame, and differ
+//! in chrome and layout. Until 0.1.193 there were four: aurora and timeline went (design review 11).
 
-mod aurora;
 mod cockpit;
-mod timeline;
 mod zen;
 
 use crate::session::{Activity, Block, Session, Tool};
@@ -39,7 +38,7 @@ const fn hex(c: u32) -> Color {
     Color::Rgb((c >> 16) as u8, (c >> 8) as u8, c as u8)
 }
 
-// One palette for the four designs: they differ in arrangement, not hue. Until 0.1.184 each had its own (navy and cyan,
+// One palette for both designs: they differ in arrangement, not hue. Until 0.1.184 each had its own (navy and cyan,
 // teal and violet, grey and pink, neon magenta and yellow), none of them the desktop app's (design review, 2026-11-19).
 // bg canvas, surface card, border line-strong (the hairline `line` is lost on a terminal's cell grid), dim muted.
 const DARK: Theme = Theme {
@@ -86,55 +85,103 @@ fn to_256(r: u8, g: u8, b: u8) -> u8 {
     if off(level, level, level) < off(STEPS[ri], STEPS[gi], STEPS[bi]) { (232 + grey.min(23)) as u8 } else { (16 + 36 * ri + 6 * gi + bi) as u8 }
 }
 
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Design {
-    Aurora,
     Cockpit,
     Zen,
-    Timeline,
 }
 
 impl Design {
-    pub const ALL: [Design; 4] = [Design::Aurora, Design::Cockpit, Design::Zen, Design::Timeline];
-
     /// One palette for every design (they differ in arrangement); the light one with `--theme light`.
     pub fn theme(self) -> &'static Theme {
         if LIGHT_ON.load(std::sync::atomic::Ordering::Relaxed) { &LIGHT } else { &DARK }
     }
 
-    /// `n` is 1-based, as typed on the keyboard.
+    /// `--design N`, a replay's digit and the saved choice. The numbers are the ones scripts know from the four designs:
+    /// 2 cockpit, 3 zen; 1 (aurora) and 4 (timeline) are gone since 0.1.193 and open zen (`gone` names them).
     pub fn from_number(n: usize) -> Option<Design> {
-        Self::ALL.get(n.checked_sub(1)?).copied()
+        match n {
+            2 => Some(Design::Cockpit),
+            1 | 3 | 4 => Some(Design::Zen),
+            _ => None,
+        }
     }
 
+    /// The design number `n` named until 0.1.193, when it opens zen now: said once, quietly.
+    pub fn gone(n: usize) -> Option<&'static str> {
+        match n {
+            1 => Some("aurora"),
+            4 => Some("timeline"),
+            _ => None,
+        }
+    }
+
+    /// The words for that, in the message box for a moment, with the key that switches here (`key`: ctrl-t in a
+    /// session, tab in a replay, where ctrl-t does nothing).
+    pub fn gone_note(name: &str, key: &str) -> String {
+        format!("{name} is gone: this is zen · {key}: cockpit")
+    }
+
+    pub fn number(self) -> usize {
+        match self {
+            Design::Cockpit => 2,
+            Design::Zen => 3,
+        }
+    }
+
+    /// The other one (ctrl-t).
     pub fn next(self) -> Design {
-        Self::ALL[(self as usize + 1) % Self::ALL.len()]
+        match self {
+            Design::Cockpit => Design::Zen,
+            Design::Zen => Design::Cockpit,
+        }
     }
 
     /// Its name, said once when ctrl-t switches to it (the names left the screens' headers in design review 10).
     pub fn name(self) -> &'static str {
         match self {
-            Design::Aurora => "aurora",
             Design::Cockpit => "cockpit",
             Design::Zen => "zen",
-            Design::Timeline => "timeline",
         }
     }
 
     /// The design the terminal opens in without --design: the last one chosen with ctrl-t, else Zen: a transcript and
     /// one quiet row, as Claude Code, Codex, pi and OpenCode open (design review 9, the user's choice 2026-11-20; until
     /// 0.1.189 Cockpit for someone with a run log and Aurora on a fresh install, and until 0.1.179 always Cockpit). A
-    /// choice made with ctrl-t stays.
-    pub fn saved() -> Design {
-        let Ok(dir) = crate::labels::dir() else { return Design::Zen };
-        let n = std::fs::read_to_string(dir.join("design")).ok().and_then(|t| t.trim().parse().ok());
-        n.and_then(Design::from_number).unwrap_or(Design::Zen)
+    /// choice made with ctrl-t stays. With it, the design a saved 1 or 4 named (now zen; the file then says 3, so this is
+    /// said once).
+    pub fn saved() -> (Design, Option<&'static str>) {
+        crate::labels::dir().map_or((Design::Zen, None), |d| Design::saved_in(&d))
+    }
+
+    fn saved_in(dir: &std::path::Path) -> (Design, Option<&'static str>) {
+        let n: Option<usize> = std::fs::read_to_string(dir.join("design")).ok().and_then(|t| t.trim().parse().ok());
+        (n.and_then(Design::from_number).unwrap_or(Design::Zen), n.and_then(Design::gone))
+    }
+
+    /// A saved 1 or 4 becomes zen's 3, so the note about it is said once: called when a session or a replay opens its
+    /// screen. Reading the choice wrote it until review 11, so `--run`, `--help` and the window's app-server (which never
+    /// show the note) used it up.
+    pub fn settle() {
+        if let Ok(dir) = crate::labels::dir() {
+            Design::settle_in(&dir);
+        }
+    }
+
+    fn settle_in(dir: &std::path::Path) {
+        if Design::saved_in(dir).1.is_some() {
+            Design::Zen.save_in(dir);
+        }
     }
 
     pub fn save(self) {
         if let Ok(dir) = crate::labels::dir() {
-            let _ = std::fs::create_dir_all(&dir).and_then(|_| std::fs::write(dir.join("design"), format!("{}\n", self as usize + 1)));
+            self.save_in(&dir);
         }
+    }
+
+    fn save_in(self, dir: &std::path::Path) {
+        let _ = std::fs::create_dir_all(dir).and_then(|_| std::fs::write(dir.join("design"), format!("{}\n", self.number())));
     }
 }
 
@@ -249,6 +296,8 @@ pub struct ModelsPanel {
 
 pub struct ModelRow {
     pub label: String,
+    /// Whose it is, said after its name in faint where the list mixes providers ("Mistral"); empty: not said.
+    pub provider: String,
     pub place: String,
     pub price: String,
     pub note: String,
@@ -369,10 +418,8 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
     let th = v.design.theme();
     f.render_widget(ratatui::widgets::Block::new().style(Style::new().bg(th.bg)), f.area());
     let areas = match v.design {
-        Design::Aurora => aurora::draw(f, s, v, th),
         Design::Cockpit => cockpit::draw(f, s, v, th),
         Design::Zen => zen::draw(f, s, v, th),
-        Design::Timeline => timeline::draw(f, s, v, th),
     };
     let mut areas = areas;
     areas.links = link_cells(f.buffer_mut(), areas.transcript, &links_in(s));
@@ -392,7 +439,7 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
     }
     // a modal over the screen: what is behind it fades to the border colour, so the modal reads on its own (a user
     // found the list mixed into the transcript and panels, 2026-11-05; a terminal cannot blur)
-    if v.tasks.is_some() || v.rewind.is_some() || v.sessions.is_some() || v.diff.is_some() || v.models.is_some() || v.list.is_some() {
+    if v.tasks.is_some() || v.rewind.is_some() || v.sessions.is_some() || v.diff.is_some() || v.models.is_some() || v.list.is_some() || v.login.is_some() {
         let area = f.area();
         let buf = f.buffer_mut();
         for y in area.y..area.bottom() {
@@ -403,66 +450,122 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View) -> Areas {
             }
         }
     }
-    if !v.menu.is_empty() && v.live {
-        draw_menu(f, v, th, areas.transcript);
+    // where every overlay opens: one column (zen's own; in cockpit the same width over the screen's middle), over the
+    // transcript's rows, so the message box stays in sight; a screen too short for that gives all of itself. Until
+    // 0.1.193 each overlay had a width and a place of its own (five of them, design review 11).
+    let full = f.area();
+    let w = full.width.saturating_sub(4).min(zen::MAX_WIDTH).max(full.width.min(20));
+    let band = if areas.transcript.height >= 8 { Rect { x: full.x + (full.width - w) / 2, width: w, y: areas.transcript.y, height: areas.transcript.height } } else { full };
+    // the box holds only `/…`: its commands over it, or that none matches (the menu just went)
+    let slash = v.asking.is_none() && v.input.len() > 1 && v.input.starts_with('/') && !v.input.contains(char::is_whitespace);
+    if v.live && (!v.menu.is_empty() || (slash && v.hints.is_empty())) {
+        draw_menu(f, v, th, Rect { x: full.x + (full.width - w) / 2, width: w, y: areas.transcript.y, height: areas.transcript.height });
     }
     if let Some(p) = &v.tasks {
-        areas.task_rows = draw_tasks(f, p, th);
+        areas.task_rows = draw_tasks(f, p, th, band);
     }
     if let Some(p) = &v.rewind {
-        draw_rewind(f, p, th);
+        draw_rewind(f, p, th, band);
     }
     if let Some(p) = &v.sessions {
-        draw_sessions(f, p, th);
+        draw_sessions(f, p, th, band);
     }
     if let Some(p) = &v.diff {
-        areas.diff_files = draw_diff(f, &v.changed, p, th, v.mouse);
+        areas.diff_files = draw_diff(f, &v.changed, p, th, v.mouse, band);
     }
     if let Some(p) = &v.models {
-        draw_models(f, p, th);
+        draw_models(f, p, th, band);
     }
     if let Some(p) = &v.login {
-        draw_login(f, p, th);
+        draw_login(f, p, th, band);
     }
     if let Some(p) = &v.list {
-        (areas.list, areas.list_links, areas.list_rows) = draw_list(f, p, th, v.clock_ms);
+        (areas.list, areas.list_links, areas.list_rows) = draw_list(f, p, th, v.clock_ms, band);
     }
     areas
+}
+
+/// One frame for everything that opens over the screen: a grey border, the title on its left (bold; what follows a
+/// " · " in it faint), a count on its right, the keys along the bottom (whole ones only, most needed first). Returns its
+/// inside. There were three styles: a grey border with the keys in its title, an accent border with the keys in a last
+/// row, an accent border with the keys bold in the title (design review 11, desktop/mockups/v8.html).
+fn overlay(f: &mut Frame, th: &Theme, area: Rect, title: &str, count: &str, keys: &str) -> Rect {
+    use ratatui::widgets::{Block, Borders, Clear};
+    f.render_widget(Clear, area);
+    let room = (area.width as usize).saturating_sub(4);
+    let (name, more) = title.split_once(" · ").unwrap_or((title, ""));
+    // the count only where the title's name fits whole beside it
+    let count = if name.width() + count.width() + 4 <= room { count } else { "" };
+    let left = room.saturating_sub(if count.is_empty() { 0 } else { count.width() + 4 });
+    let name = ellipsis(name, left);
+    let more = if more.is_empty() || left < name.width() + 6 { String::new() } else { format!("  {}", ellipsis(more, left - name.width() - 2)) };
+    let mut block = Block::new().borders(Borders::ALL).border_style(st(th.border)).style(Style::new().bg(th.bg))
+        .title_top(Line::from(vec![Span::raw(" "), Span::styled(name, st(th.text).add_modifier(Modifier::BOLD)), Span::styled(more, st(th.faint)), Span::raw(" ")]));
+    if !count.is_empty() {
+        block = block.title_top(Line::from(vec![Span::styled(format!(" {count} "), st(th.faint)), Span::styled("─", st(th.border))]).right_aligned());
+    }
+    let keys = match keys.rsplit_once(" · ").filter(|(_, last)| last.starts_with("esc ")) {
+        // the way out is said last and always: at 40 columns "↑↓ move · enter runs" left no room for it
+        Some((first, esc)) if esc.width() <= room => [whole_hints(first, room.saturating_sub(esc.width() + 3)), esc.to_string()].into_iter().filter(|k| !k.is_empty()).collect::<Vec<_>>().join(" · "),
+        _ => whole_hints(keys, room),
+    }.replace(" · ", "   ");
+    if !keys.is_empty() {
+        block = block.title_bottom(Line::from(Span::styled(format!(" {keys} "), st(th.faint))));
+    }
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+    inner
+}
+
+/// An overlay's place in the band: `rows` of content high (as many as fit), from the band's top; a completion menu sits
+/// at its bottom, over the message box.
+fn overlay_area(band: Rect, rows: usize, bottom: bool) -> Rect {
+    let h = (rows.min(u16::MAX as usize - 2) as u16 + 2).min(band.height);
+    Rect { y: if bottom { band.bottom() - h } else { band.y }, height: h, ..band }
+}
+
+/// The selected row of every list: the accent as a fill, bold; each list marks it with `›` too, so it shows without
+/// colour. The model list's was the row's own ink reversed, /rewind's the accent without a fill (design review 11).
+fn picked(th: &Theme) -> Style {
+    Style::new().fg(th.accent).bg(th.bg).add_modifier(Modifier::REVERSED | Modifier::BOLD)
 }
 
 /// The command menu, just over the message box (the transcript's bottom): up to 10 rows, the selected one marked and
 /// kept in view.
 fn draw_menu(f: &mut Frame, v: &View, th: &Theme, over: Rect) {
-    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-    let rows = v.menu.len().min(10) as u16;
     if over.height < 4 || over.width < 20 {
         return;
     }
-    let h = (rows + 2).min(over.height);
-    let area = Rect { x: over.x + 1, y: over.bottom().saturating_sub(h), width: over.width.saturating_sub(2), height: h };
+    let none = v.menu.is_empty();
+    let area = overlay_area(over, if none { 1 } else { v.menu.len().min(10) }, true);
     let sel = v.menu_sel.min(v.menu.len().saturating_sub(1));
+    let count = if none { String::new() } else { format!("{}/{}", sel + 1, v.menu.len()) };
+    // esc clears the draft, and the menu goes with it ("esc closes" promised the draft would stay, design review 11)
+    let inner = overlay(f, th, area, "commands", &count, if none { "esc clears" } else { "↑↓ move · enter runs · tab fills in · esc clears" });
+    let w = inner.width as usize;
+    if none {
+        // the menu just went when nothing matched, as if the box had stopped completing (design review 11)
+        let said = Line::from(vec![Span::styled(" no command matches ", st(th.faint)), Span::styled(ellipsis(&plain(&v.input), w.saturating_sub(21)), st(th.text))]);
+        f.render_widget(Paragraph::new(said), inner);
+        return;
+    }
     // by the rows the box shows, which may be fewer than the list's ten: in a short window the selected row scrolled out
     // of sight under the border (design review 11)
-    let shown = h.saturating_sub(2) as usize;
+    let shown = inner.height as usize;
     let first = sel.saturating_sub(shown.saturating_sub(1));
     let name_w = v.menu.iter().map(|(c, _)| c.width()).max().unwrap_or(8).min(24) + 3;
-    let inner = area.width.saturating_sub(2) as usize;
     let lines: Vec<Line> = v.menu.iter().enumerate().skip(first).take(shown).map(|(i, (c, d))| {
         let on = i == sel;
         // the selected row has a mark too, as the model and session lists: with NO_COLOR the terminal library resets
         // every attribute with its (empty) colour, so the fill alone left no row marked (design review 11)
-        let name: String = format!("{}{c:<w$}", if on { "›" } else { " " }, w = name_w - 1).chars().take(name_w).collect();
+        let name: String = format!("{}{c:<n$}", if on { "›" } else { " " }, n = name_w - 1).chars().take(name_w).collect();
         // a description cut short ends in "…" (cockpit's narrower menu cut "(enable, disca" with nothing, design review 10)
-        let about = ellipsis(d, inner.saturating_sub(name_w + 1));
-        let pad = " ".repeat(inner.saturating_sub(name.width() + about.width()));
-        // reversed, as every other list's selection: the same accent fill
-        let style = if on { Style::new().fg(th.accent).bg(th.bg).add_modifier(Modifier::REVERSED) } else { st(th.text) };
-        Line::from(vec![Span::styled(name, style.add_modifier(Modifier::BOLD)), Span::styled(about, if on { style } else { st(th.faint) }), Span::styled(pad, style)])
+        let about = ellipsis(d, w.saturating_sub(name_w + 1));
+        let pad = " ".repeat(w.saturating_sub(name.width() + about.width()));
+        let style = if on { picked(th) } else { st(th.text).add_modifier(Modifier::BOLD) };
+        Line::from(vec![Span::styled(name, style), Span::styled(about, if on { style.remove_modifier(Modifier::BOLD) } else { st(th.dim) }), Span::styled(pad, style)])
     }).collect();
-    f.render_widget(Clear, Rect { x: over.x, width: over.width, ..area });
-    let title = format!("{} ", whole_hints(&format!(" commands · {} · ↑↓ enter runs · tab fills in", v.menu.len()), inner.saturating_sub(1)));
-    f.render_widget(Paragraph::new(lines).block(Block::new().borders(Borders::ALL).border_style(st(th.border)).title(Span::styled(title, st(th.faint))))
-        .style(Style::new().bg(th.bg)), area);
+    f.render_widget(Paragraph::new(lines), inner);
 }
 
 /// The hints of `keys` (apart by " · ") that fit whole in `room` columns, from the first on: a row cut at the edge read
@@ -495,35 +598,38 @@ pub fn ellipsis(t: &str, w: usize) -> String {
 }
 
 /// A ListPanel in the middle of the screen: its title, the column heads, the rows that fit (failed ones in red).
-fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64) -> (Option<Rect>, Vec<(Rect, String)>, Vec<(Rect, usize)>) {
-    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-    let full = f.area();
-    let want = p.rows.iter().map(|r| r.0.width()).chain([p.head.width(), p.title.width()]).max().unwrap_or(20) as u16 + 4;
-    let (w, h) = (want.clamp(40, full.width), (p.rows.len() as u16 + 4).clamp(6, full.height * 85 / 100));
-    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
-    f.render_widget(Clear, area);
-    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(format!(" {} · {}↑↓ ←→ scroll · esc closes ", p.title,
-            if p.details.iter().any(Option::is_some) { "click a row: all of it · " } else { "" }), st(th.accent).add_modifier(Modifier::BOLD)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64, band: Rect) -> (Option<Rect>, Vec<(Rect, String)>, Vec<(Rect, usize)>) {
+    // a rule straight under a heading is not drawn: a section is its bold heading, as the window's (v8.html)
+    let ruled = |i: usize| p.rows[i].1 == Tone::Rule && i > 0 && p.rows[i - 1].1 == Tone::Head;
+    let drawn = (0..p.rows.len()).filter(|&i| !ruled(i)).count();
+    let area = overlay_area(band, drawn + usize::from(!p.head.is_empty()) + (3 * p.open.len()).min(12), false);
+    // the keys that do something here: a click only where rows unfold, sideways only where a row is cut ("←→ scroll"
+    // stood over every list)
+    let cut_row = p.hscroll > 0 || p.rows.iter().any(|r| r.0.width() + 2 > area.width as usize);
+    let keys = ["↑↓ scroll", if p.details.iter().any(Option::is_some) { "click unfolds a row" } else { "" }, if cut_row { "←→ sideways" } else { "" }, "esc closes"]
+        .into_iter().filter(|k| !k.is_empty()).collect::<Vec<_>>().join(" · ");
+    let inner = overlay(f, th, area, &p.title, "", &keys);
+    let inner = Rect { x: inner.x + 1, width: inner.width.saturating_sub(2), ..inner };
     let width = inner.width as usize;
     // sideways scrolled: the text from there on; else cut to the modal with "…" (a click unfolds it)
     let cut = |t: &str| -> String {
         let t: String = t.chars().skip(p.hscroll).collect();
         if p.hscroll == 0 && t.width() > width { format!("{}…", t.chars().take(width.saturating_sub(1)).collect::<String>()) } else { t }
     };
-    let mut lines = vec![Line::from(Span::styled(cut(&p.head), st(th.faint).add_modifier(Modifier::BOLD)))];
+    let mut lines = if p.head.is_empty() { vec![] } else { vec![Line::from(Span::styled(cut(&p.head), st(th.faint)))] };
     let (mut links, mut rows) = (vec![], vec![]);
-    let room = inner.height.saturating_sub(1) as usize;
+    let room = inner.height as usize;
     for (i, (r, tone)) in p.rows.iter().enumerate().skip(p.scroll) {
-        if lines.len() > room {
+        if lines.len() >= room {
             break;
+        }
+        if ruled(i) {
+            continue;
         }
         let y = inner.y + lines.len() as u16;
         let color = match tone {
             Tone::Bad => st(th.err),
-            Tone::Head => st(th.accent).add_modifier(Modifier::BOLD),
+            Tone::Head => st(th.text).add_modifier(Modifier::BOLD),
             Tone::Dim => st(th.faint),
             Tone::Plain | Tone::Rule => st(th.text),
         };
@@ -541,12 +647,13 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64) -> (Option
                 links.push((Rect::new(inner.x + at as u16, y, (b.width() as u16).min(inner.width.saturating_sub(at as u16)), 1), url));
                 lines.push(Line::from(vec![Span::styled(a, color), Span::styled(b, st(th.accent).add_modifier(Modifier::UNDERLINED))]));
             }
-            // a meter's bar (█ used, ░ left) in the accent (red on a failed row) over a faint track
+            // a meter (█ used, ░ left in its row's text) as a thin bar: the used part heavy in the accent (red on a failed
+            // row), the rest a light line, so it reads without colour too
             None if shown.contains('█') || shown.contains('░') => {
                 let bar = if *tone == Tone::Bad { st(th.err) } else { st(th.accent) };
                 let mut spans: Vec<Span> = vec![];
                 for c in shown.chars() {
-                    let s = match c { '█' => bar, '░' => st(th.border), _ => color };
+                    let (c, s) = match c { '█' => ('━', bar), '░' => ('─', st(th.border)), _ => (c, color) };
                     match spans.last_mut() {
                         Some(last) if last.style == s => last.content.to_mut().push(c),
                         _ => spans.push(Span::styled(c.to_string(), s)),
@@ -561,7 +668,7 @@ fn draw_list(f: &mut Frame, p: &ListPanel, th: &Theme, clock_ms: f64) -> (Option
             let indent = p.link_from.min(width / 3);
             let w = width.saturating_sub(indent).max(10);
             for chunk in d.chars().collect::<Vec<_>>().chunks(w) {
-                if lines.len() > room {
+                if lines.len() >= room {
                     break;
                 }
                 lines.push(Line::from(Span::styled(format!("{}{}", " ".repeat(indent), chunk.iter().collect::<String>()), st(th.dim))));
@@ -617,19 +724,15 @@ pub fn written_by_tools(s: &Session, skip: &[String]) -> Vec<Changed> {
 }
 
 /// The ctrl-b view: background tasks with status and age, and the latest output of the selected one.
-fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) -> Vec<(Rect, usize)> {
-    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-    let full = f.area();
-    let (w, h) = ((full.width * 9 / 10).max(20).min(full.width), (full.height * 8 / 10).max(8).min(full.height));
-    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
-    f.render_widget(Clear, area);
-    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(" background tasks · ↑↓ select · enter open an agent · x stop · esc close ", st(th.accent).add_modifier(Modifier::BOLD)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme, band: Rect) -> Vec<(Rect, usize)> {
+    // no task: the sentence in a frame its size (a 28-row empty box held it, design review 11); else the list and, under
+    // it, the selected task's output, in the band's height
+    let area = if p.rows.is_empty() { overlay_area(band, 1, false) } else { band };
+    let count = if p.rows.is_empty() { String::new() } else { format!("{}/{}", p.selected.min(p.rows.len() - 1) + 1, p.rows.len()) };
+    let inner = overlay(f, th, area, "background tasks", &count, if p.rows.is_empty() { "esc closes" } else { "↑↓ move · enter opens an agent · x stops · esc closes" });
     let mut lines: Vec<Line<'static>> = Vec::new();
     if p.rows.is_empty() {
-        lines.push(Line::from(Span::styled("No background tasks in this session yet.", st(th.faint))));
+        lines.push(Line::from(Span::styled(" no background task in this conversation yet", st(th.faint))));
     }
     // a long list scrolls with the selection: the window kept the first rows, and the selected one went off its bottom
     // edge (a session with 30-odd tasks, 2026-11-10); the output below keeps a third of the height
@@ -652,7 +755,7 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) -> Vec<(Rect, usize)> {
         let colour = if r.status == "running" { th.accent } else if r.status == "completed" { th.faint } else { th.warn };
         let row = format!("{mark} {:<10} {:>7}  {:<11} {}", plain(&r.status), age, plain(&r.kind), plain(&r.description).replace('\n', " "));
         // the selected row in reverse video, as in the other lists: bold alone on a completed (faint) row was hard to find
-        let style = if i == p.selected { st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(colour) };
+        let style = if i == p.selected { picked(th) } else { st(colour) };
         lines.push(Line::from(Span::styled(format!("{:<w$}", row.chars().take(inner.width as usize).collect::<String>(), w = inner.width as usize), style)));
     }
     if p.rows.len() > last {
@@ -677,11 +780,9 @@ fn draw_tasks(f: &mut Frame, p: &TasksPanel, th: &Theme) -> Vec<(Rect, usize)> {
 /// /rewind: the messages sent so far; the chosen one and everything after it can be undone.
 /// The files this conversation changed beside the selected one's diff (added lines green, removed red, hunks in the
 /// accent), scrollable.
-fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme, mouse: Option<(u16, u16)>) -> Vec<(Rect, usize)> {
+fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme, mouse: Option<(u16, u16)>, band: Rect) -> Vec<(Rect, usize)> {
     // the changed files as a list, each opened in the editor at its first change: a diff squeezed into a modal ran off
     // its right edge and could not be scrolled sideways (a user, 2026-11-06); the editor shows diffs better
-    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-    let full = f.area();
     let (add, del) = files.iter().fold((0, 0), |(a, d), c| (a + c.added, d + c.removed));
     let most = files.iter().map(|c| c.added + c.removed).max().unwrap_or(1).max(1);
     let cwd = std::env::current_dir().unwrap_or_default();
@@ -690,19 +791,14 @@ fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme, mouse:
         let gone = c.diff.is_some() && !cwd.join(&c.path).exists();
         (plain(&c.path), format!("+{}", c.added), format!("−{}", c.removed), gone)
     }).collect();
-    let pw = rows.iter().map(|r| r.0.width()).max().unwrap_or(10);
-    let title = format!(" {} changed · +{add} −{del} · ↑↓ · enter or click: open in your editor · esc ", files_n(files.len()));
-    let w = ((pw + 40).max(title.width() + 2) as u16).min(full.width.saturating_sub(4)).max(30);
-    let h = (files.len() as u16 + 2).clamp(4, full.height * 85 / 100);
-    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
-    f.render_widget(Clear, area);
-    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(title, st(th.accent).add_modifier(Modifier::BOLD)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let area = overlay_area(band, files.len().max(1), false);
+    let count = if files.is_empty() { String::new() } else { format!("{}/{}", p.selected.min(files.len() - 1) + 1, files.len()) };
+    let inner = overlay(f, th, area, &format!("{} changed · +{add} −{del}", files_n(files.len())), &count, "↑↓ move · enter opens it in your editor · esc closes");
     // the selected file stays in view
     let first = (p.selected + 1).saturating_sub(inner.height as usize);
-    let room = (inner.width as usize).saturating_sub(34);
+    // the bars go where they would leave the names no room (40 columns showed "…" for every file)
+    let bars = inner.width >= 60;
+    let room = (inner.width as usize).saturating_sub(if bars { 34 } else { 22 });
     let mut hits = vec![];
     let lines: Vec<Line> = rows.iter().enumerate().skip(first).take(inner.height as usize).map(|(i, (path, a, d, gone))| {
         let y = inner.y + (i - first) as u16;
@@ -712,14 +808,16 @@ fn draw_diff(f: &mut Frame, files: &[Changed], p: &DiffPanel, th: &Theme, mouse:
         let name = if path.width() > room { format!("…{}", path.chars().rev().take(room.saturating_sub(1)).collect::<Vec<_>>().into_iter().rev().collect::<String>()) } else { path.clone() };
         let c = &files[i];
         let (ba, bd) = ((c.added as f64 / most as f64 * 12.0).ceil() as usize, (c.removed as f64 / most as f64 * 12.0).ceil() as usize);
-        let base = if i == p.selected { Style::new().bg(th.surface) } else if hover { Style::new().bg(th.surface) } else { Style::new() };
+        // the selected file as every list's selected row; its counts keep their colours beside it
+        let on = i == p.selected;
+        let base = if hover && !on { Style::new().bg(th.surface) } else { Style::new() };
         let mut l = vec![
-            Span::styled(if i == p.selected { "› " } else { "  " }, st(th.accent)),
-            Span::styled(format!("{name:<room$}"), if hover { st(th.accent).add_modifier(Modifier::UNDERLINED) } else { st(th.text) }),
+            Span::styled(if on { "› " } else { "  " }, if on { picked(th) } else { st(th.accent) }),
+            Span::styled(format!("{name:<room$}"), if on { picked(th) } else if hover { st(th.accent).add_modifier(Modifier::UNDERLINED) } else { st(th.text) }),
             Span::styled(format!(" {a:>6}"), st(th.ok)),
             Span::styled(format!(" {d:>6} "), st(th.err)),
-            Span::styled("▮".repeat(ba.min(12)), st(th.ok)),
-            Span::styled("▮".repeat(bd.min(12 - ba.min(12))), st(th.err)),
+            Span::styled("▮".repeat(if bars { ba.min(12) } else { 0 }), st(th.ok)),
+            Span::styled("▮".repeat(if bars { bd.min(12 - ba.min(12)) } else { 0 }), st(th.err)),
         ];
         if *gone {
             l.push(Span::styled(" gone", st(th.faint)));
@@ -753,41 +851,32 @@ pub fn files_n(n: usize) -> String {
     if n == 1 { "1 file".into() } else { format!("{n} files") }
 }
 
-fn draw_sessions(f: &mut Frame, p: &SessionsPanel, th: &Theme) {
-    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-    let full = f.area();
-    let (w, h) = ((full.width * 9 / 10).max(20).min(full.width), ((p.rows.len().max(1) as u16 + 4).min(full.height * 8 / 10)).max(6).min(full.height));
-    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
-    f.render_widget(Clear, area);
-    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(" resume a session · ↑↓ select · enter open · esc ", st(th.accent).add_modifier(Modifier::BOLD)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+fn draw_sessions(f: &mut Frame, p: &SessionsPanel, th: &Theme, band: Rect) {
+    // "conversation" and "folder", as /keys and the window say them (it said "session" and "repo", design review 11)
+    let area = overlay_area(band, p.rows.len().max(1) + 2, false);
+    let count = if p.rows.is_empty() { String::new() } else { format!("{}/{}", p.selected.min(p.rows.len() - 1) + 1, p.rows.len()) };
+    let inner = overlay(f, th, area, "resume a conversation", &count, if p.rows.is_empty() { "esc closes" } else { "↑↓ move · enter opens · esc closes" });
     let room = inner.height.saturating_sub(2) as usize;
     let first = p.selected.saturating_sub(room.saturating_sub(1));
-    let mut lines: Vec<Line<'static>> = vec![Line::from(Span::styled(ellipsis("This repo's sessions, newest first; each opens where it ended, on the model it last ran on.", inner.width as usize), st(th.faint))), Line::from("")];
+    let mut lines: Vec<Line<'static>> = vec![Line::from(Span::styled(ellipsis(" This folder's conversations, newest first; each opens where it ended, on the model it last ran on.", inner.width as usize), st(th.faint))), Line::from("")];
     if p.rows.is_empty() {
-        lines.push(Line::from(Span::styled("no earlier session in this repo", st(th.faint))));
+        lines.push(Line::from(Span::styled(" no earlier conversation in this folder", st(th.faint))));
     }
     for (i, row) in p.rows.iter().enumerate().skip(first).take(room) {
-        let (mark, style) = if i == p.selected { ("›", st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED)) } else { (" ", st(th.text)) };
-        let text = format!("{mark} {}", plain(row).replace('\n', " ⏎ "));
-        // a row past the edge ends in "…"
-        let text = ellipsis(&text, inner.width as usize);
-        lines.push(Line::from(Span::styled(text, style)));
+        let (mark, style) = if i == p.selected { ("›", picked(th)) } else { (" ", st(th.text)) };
+        // a row past the edge ends in "…"; the selected one is filled to the frame
+        let text = ellipsis(&format!("{mark} {}", plain(row).replace('\n', " ⏎ ")), inner.width as usize);
+        lines.push(Line::from(Span::styled(format!("{text:<w$}", w = if i == p.selected { inner.width as usize } else { 0 }), style)));
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme) {
-    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-    let full = f.area();
-    let w = full.width.min(90).max(20.min(full.width));
-    let iw = w.saturating_sub(4) as usize;
+fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme, band: Rect) {
+    let iw = band.width.saturating_sub(4) as usize;
     let wrapped = |text: &str, c: Color| -> Vec<Line<'static>> {
         wrap_words(text, iw).into_iter().map(|l| Line::from(Span::styled(l, st(c)))).collect()
     };
-    let (title, lines) = match &p.form {
+    let (title, keys, lines) = match &p.form {
         Some(fm) => {
             let mut lines = vec![Line::from(""), Line::from(Span::styled(fm.page.clone(), st(th.accent).add_modifier(Modifier::UNDERLINED)))];
             lines.extend(wrapped(if fm.opened { "opened in your browser" } else { "open it in your browser" }, th.faint));
@@ -800,7 +889,9 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme) {
             }
             lines.push(Line::from(vec![Span::styled("> ", st(th.accent)), Span::styled("•".repeat(fm.typed.min(iw.saturating_sub(3))), st(th.text)),
                                        Span::styled("▍", st(th.accent))]));
-            lines.push(Line::from(Span::styled(if fm.has.is_empty() { "(esc to cancel, enter to submit)" } else { "(esc to cancel, enter to submit; enter with nothing typed keeps the key it has)" }, st(th.faint))));
+            if !fm.has.is_empty() {
+                lines.push(Line::from(Span::styled("Enter with nothing typed keeps the key it has.", st(th.faint))));
+            }
             lines.push(Line::from(""));
             lines.extend(wrapped(&format!("{} will see the code of the sessions you run on it, so saving also puts {} on your trusted providers. \
                 The key stays in ~/.config/tazuna/keys.json, readable by you only, and out of the agent's commands.", fm.name, fm.host), th.dim));
@@ -810,7 +901,7 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme) {
             } else if fm.has.starts_with("key in the environment") {
                 lines.extend(wrapped(&format!("{} is set in your environment, and it wins over a key saved here.", fm.var), th.dim));
             }
-            (format!(" Login to {} ", fm.name), lines)
+            (format!("log in to {}", fm.name), "enter saves the key · esc cancels", lines)
         }
         None => {
             let mut lines = wrapped("Log in to a provider to use its models in /model. None of these has a login for third-party tools, so it is an API key: the provider's page opens in your browser to make one.", th.faint);
@@ -824,43 +915,28 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme) {
                 let row = format!("{mark} {name:<nw$}  {how:<kw$}  ");
                 let left = row.chars().count();
                 lines.push(Line::from(vec![
-                    Span::styled(row, if on { st(th.accent).add_modifier(Modifier::BOLD) } else { st(th.text) }),
+                    Span::styled(row, if on { picked(th) } else { st(th.text) }),
                     Span::styled(state.chars().take(iw.saturating_sub(left)).collect::<String>(), st(if ok { th.ok } else { th.faint })),
                 ]));
             }
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled("↑↓ provider · enter log in · esc close", st(th.faint))));
-            (" login ".to_string(), lines)
+            ("login".to_string(), "↑↓ move · enter logs in · esc closes", lines)
         }
     };
-    let h = (lines.len() as u16 + 2).min(full.height);
-    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
-    f.render_widget(Clear, area);
-    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(title, st(th.accent).add_modifier(Modifier::BOLD)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner = overlay(f, th, overlay_area(band, lines.len(), false), &title, "", keys);
     f.render_widget(Paragraph::new(lines), Rect::new(inner.x + 1, inner.y, inner.width.saturating_sub(2), inner.height));
 }
 
-fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme) {
-    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-    let full = f.area();
-    let (w, h) = ((full.width * 9 / 10).max(20).min(full.width), ((p.items.len() as u16 + 6).min(full.height * 8 / 10)).max(8).min(full.height));
-    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
-    f.render_widget(Clear, area);
-    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(" rewind to before · ↑↓ select · enter files + conversation · f files · c conversation · esc ", st(th.accent).add_modifier(Modifier::BOLD)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme, band: Rect) {
+    let area = overlay_area(band, p.items.len().max(1) + 2, false);
+    let count = if p.items.is_empty() { String::new() } else { format!("{}/{}", p.selected.min(p.items.len() - 1) + 1, p.items.len()) };
+    let inner = overlay(f, th, area, "rewind to before", &count, "↑↓ move · enter files + conversation · f files · c conversation · esc closes");
     let room = inner.height.saturating_sub(2) as usize;
     let first = p.selected.saturating_sub(room.saturating_sub(1));
-    let mut lines: Vec<Line<'static>> = vec![Line::from(Span::styled("Undo the chosen message and everything after it.", st(th.faint))), Line::from("")];
+    let mut lines: Vec<Line<'static>> = vec![Line::from(Span::styled(" Undo the chosen message and everything after it.", st(th.faint))), Line::from("")];
     for (i, text) in p.items.iter().enumerate().skip(first).take(room) {
-        let mark = if i == p.selected { "›" } else { " " };
-        let row = format!("{mark} {:>2}. {}", i + 1, plain(text).replace('\n', " ⏎ "));
-        let style = if i == p.selected { st(th.accent).add_modifier(Modifier::BOLD) } else { st(th.text) };
-        lines.push(Line::from(Span::styled(row.chars().take(inner.width as usize).collect::<String>(), style)));
+        let on = i == p.selected;
+        let row = ellipsis(&format!("{} {:>2}. {}", if on { "›" } else { " " }, i + 1, plain(text).replace('\n', " ⏎ ")), inner.width as usize);
+        lines.push(Line::from(Span::styled(format!("{row:<w$}", w = if on { inner.width as usize } else { 0 }), if on { picked(th) } else { st(th.text) })));
     }
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -869,42 +945,34 @@ fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme) {
 /// provider (the code would go there) in the warning colour, a route checked long ago marked stale. The columns fit the
 /// panel's width: the label gives way first (cut in the middle, so "· fast" stays), then the scores go; the price always
 /// shows. The selected row in full (provider, price, cache, age, the reason it cannot be picked) wraps below the list.
-fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
-    use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-    let full = f.area();
+fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme, band: Rect) {
     // OMP's layout: the providers on the left, the selected one's models on the right; a narrow screen keeps the models
-    let two = full.width >= 70 && !p.groups.is_empty();
+    let two = band.width >= 70 && !p.groups.is_empty();
     let gw = if two { p.groups.iter().map(|(n, c, ..)| n.chars().count() + c.to_string().len() + 6).max().unwrap_or(18).clamp(18, 30) } else { 0 };
+    // our judge's score without its runs ("6.8", the runs are in the details under the list): two numbers to the right
+    // under "bench" and "AA", where "bench (runs)" and "AA index" stood as one double heading (design review 11)
+    let score = |b: &str| b.split(" (").next().unwrap_or_default().to_string();
     // column widths: as wide as their header or longest entry
     let width = |head: &str, f: &dyn Fn(&ModelRow) -> usize| p.rows.iter().map(f).chain([head.chars().count()]).max().unwrap_or(0);
     let pw = width("$/M in / out", &|r| r.price.chars().count());
-    let bw = width("bench (runs)", &|r| r.bench.chars().count());
-    let aw = width("AA index", &|r| r.aa.chars().count());
-    let longest = width("model", &|r| r.label.chars().count());
+    let bw = width("bench", &|r| score(&r.bench).chars().count());
+    let aw = width("AA", &|r| r.aa.chars().count());
+    let longest = width("model", &|r| r.label.width() + if r.provider.is_empty() { 0 } else { r.provider.width() + 1 });
     let keys = if let Some((_, _, _, k, _)) = &p.effort {
         k
+    } else if !p.filter.is_empty() {
+        // esc empties the search first (it said "esc closes", design review 11)
+        "↑↓ move · enter chooses · ← providers · tab pins a provider · esc clears the search"
     } else if p.in_models || !two {
-        "↑↓ model · ← providers · tab provider pin · enter choose · esc close"
+        "↑↓ move · enter chooses · ← providers · tab pins a provider · type to search · esc closes"
     } else {
-        "↑↓ providers · → its models · type to search · esc close"
+        "↑↓ providers · → its models · type to search · esc closes"
     };
-    // as wide as the panes need (and the key line), at most 9/10 of the screen
-    let table = 2 + longest + 1 + pw + 1 + bw + 1 + aw;
-    // one width while it is open (filtering does not make it jump): what the panes want, but at least 100 and at most
-    // 9/10 of the screen
-    let w = ((gw + usize::from(two) + table).max(keys.chars().count()).max(100) as u16 + 2).min(full.width * 9 / 10).max(20).min(full.width);
-    let h = (full.height * 8 / 10).max(12).min(full.height);
-    let area = Rect::new(full.x + (full.width - w) / 2, full.y + (full.height - h) / 2, w, h);
-    f.render_widget(Clear, area);
-    let block = Block::new().borders(Borders::ALL).border_style(st(th.accent)).style(Style::new().bg(th.bg))
-        .title(Span::styled(" model ", st(th.accent).add_modifier(Modifier::BOLD)));
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    let body = Rect::new(inner.x, inner.y, inner.width, inner.height.saturating_sub(1));
-    f.render_widget(Paragraph::new(Line::from(Span::styled(whole_hints(keys, inner.width as usize), st(th.faint)))), Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1));
+    // the band's width and height while it is open: filtering does not make it jump
+    let body = overlay(f, th, band, "model", &format!("{} model{}", p.rows.len(), if p.rows.len() == 1 { "" } else { "s" }), keys);
     // the left pane: All models, then the providers, ● usable now, ○ not (no key, not trusted)
     if two {
-        let mut lines = vec![Line::from(Span::styled("providers", st(th.faint)))];
+        let mut lines = vec![Line::from(Span::styled(" providers", st(th.faint)))];
         for (i, (name, n, ok, _)) in p.groups.iter().enumerate() {
             let mark = if i == p.group { "›" } else { " " };
             let dot = if i == 0 { "◆" } else if *ok { "●" } else { "○" };
@@ -913,8 +981,7 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
             let text = format!("{mark}{dot} {label:<room$} {n}");
             let color = if *ok || i == 0 { th.text } else { th.faint };
             let style = match (i == p.group, p.in_models) {
-                // the accent fill of the slash menu and /resume (until 0.1.180 a grey one here)
-                (true, false) => st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED),
+                (true, false) => picked(th),
                 (true, true) => st(th.accent).add_modifier(Modifier::BOLD),
                 _ => st(color),
             };
@@ -940,10 +1007,10 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     let detail: Vec<Line<'static>> = if !p.in_models && two {
         let state = if gok || p.group == 0 { format!("{} models · enter or → to pick one", p.rows.len()) } else { gwhy.clone() };
         [(gname.clone(), th.text), (state, if gok || p.group == 0 { th.dim } else { th.warn })].into_iter()
-            .flat_map(|(t, c)| wrap_words(&t, iw).into_iter().map(move |l| Line::from(Span::styled(l, st(c))))).collect()
+            .flat_map(|(t, c)| wrap_words(&t, iw.saturating_sub(1)).into_iter().map(move |l| Line::from(Span::styled(format!(" {l}"), st(c))))).collect()
     } else {
         p.rows.get(p.selected).map(|r| {
-            let price = if r.price == "plan" { "on the plan".to_string() } else { format!("${} per M tokens (in / out)", r.price.replace(" / ", " / $")) };
+            let price = match r.price.as_str() { "plan" => "on the plan".to_string(), "free" => "free".to_string(), p => format!("${} per M tokens (in / out)", p.replace(" / ", " / $")) };
             let scores = [(!r.bench.is_empty()).then(|| format!("bench {}", r.bench)), (!r.aa.is_empty()).then(|| format!("AA {}", r.aa))];
             let why = match r.state {
                 1 | 2 | 4 if !r.why.is_empty() => r.why.clone(),
@@ -954,7 +1021,7 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
             let head: Vec<String> = [Some(r.label.clone()), Some(price)].into_iter().chain(scores).flatten().collect();
             [(head.join(" · "), th.text), (r.place.clone(), th.dim), (why, color)].into_iter()
                 .filter(|(text, _)| !text.is_empty())
-                .flat_map(|(text, c)| wrap_words(&text, iw).into_iter().map(move |l| Line::from(Span::styled(l, st(c)))))
+                .flat_map(|(text, c)| wrap_words(&text, iw.saturating_sub(1)).into_iter().map(move |l| Line::from(Span::styled(format!(" {l}"), st(c)))))
                 .collect()
         }).unwrap_or_default()
     };
@@ -962,26 +1029,35 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     let room = right.height.saturating_sub(2 + dh + u16::from(dh > 0)) as usize; // search, header; a gap before the details
     let first = p.selected.saturating_sub(room.saturating_sub(1));
     let fixed = 2 + pw;
-    let scores = iw >= fixed + 1 + bw + 1 + aw + 1 + 16.min(longest); // room for the scores and a 16-character label
+    let scores = iw >= fixed + 2 + bw + 2 + aw + 1 + 16.min(longest); // room for the scores and a 16-character label
     // the label column takes what is left, so the table spans the pane
-    let lw = iw.saturating_sub(fixed + 1 + if scores { bw + 1 + aw + 1 } else { 0 }).max(4);
-    let fit = |s: &str| {
-        let n = s.chars().count();
-        if n <= lw {
-            return s.to_string();
-        }
-        let tail = (lw - 1) / 3;
-        format!("{}…{}", s.chars().take(lw - 1 - tail).collect::<String>(), s.chars().skip(n - tail).collect::<String>())
-    };
-    let cols = |mark: &str, l: &str, pr: &str, b: &str, a: &str| {
-        let mut s = format!("{mark} {:<lw$} {pr:<pw$}", fit(l));
+    let lw = iw.saturating_sub(fixed + 1 + if scores { bw + aw + 4 } else { 0 }).max(4);
+    // a row: the name, then whose it is in faint where both fit ("Codestral 2508 Mistral"; ", mistral" was part of the
+    // name, and a cut one ran into it: "ERNIE 5.5 Flash Previe…openrouter"), the price, the two scores to the right
+    let cols = |mark: &str, name: &str, provider: &str, pr: &str, b: &str, a: &str, base: Style, on: bool| -> Line<'static> {
+        // the provider stays and the name gives way to it: dropped where the name filled the column, two "DeepSeek V4.1
+        // …h 1017" rows of two providers read the same at 80 columns (design review 11)
+        let prov = if provider.is_empty() { String::new() } else { format!(" {}", ellipsis(provider, lw / 2)) };
+        let room = lw.saturating_sub(prov.width()).max(2);
+        // a name too long is cut in its middle, so what tells two rows of one model apart stays (", fast")
+        let n = name.chars().count();
+        let tail = room.saturating_sub(1) / 3;
+        let name = if n <= room { name.to_string() } else { format!("{}…{}", name.chars().take(room - 1 - tail).collect::<String>(), name.chars().skip(n - tail).collect::<String>()) };
+        let pad = " ".repeat(lw.saturating_sub(name.width() + prov.width()));
+        let price = if on { base } else { match pr { "free" => st(th.ok), "plan" => st(th.faint), _ => base } };
+        let mut sp = vec![Span::styled(format!("{mark} {name}"), base), Span::styled(prov, if on { base } else { st(th.faint) }), Span::styled(format!("{pad} "), base),
+            Span::styled(format!("{pr:<pw$}"), price)];
         if scores {
-            s.push_str(&format!(" {b:<bw$} {a:>aw$}"));
+            sp.push(Span::styled(format!("  {b:>bw$}  {a:>aw$}"), base));
         }
-        cut(s)
+        if on {
+            let used: usize = sp.iter().map(|x| x.content.width()).sum();
+            sp.push(Span::styled(" ".repeat(iw.saturating_sub(used)), base));
+        }
+        Line::from(sp)
     };
     let search = if p.filter.is_empty() {
-        Line::from(Span::styled(whole_hints(&format!("{gname} · {} models · type to search", p.rows.len()), iw), st(th.faint)))
+        Line::from(Span::styled(ellipsis(&format!(" {gname}"), iw), st(th.faint)))
     } else {
         Line::from(vec![Span::styled("> ", st(th.accent)), Span::styled(cut(p.filter.clone()), st(th.text)), Span::styled("▍", st(th.accent))])
     };
@@ -989,8 +1065,8 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
     if let Some((label, levels, at, _, note)) = &p.effort {
         let mut lines = vec![Line::from(vec![Span::styled(cut(label.clone()), st(th.text).add_modifier(Modifier::BOLD)), Span::styled(" · effort", st(th.faint))]), Line::from("")];
         for (i, l) in levels.iter().enumerate() {
-            let style = if i == *at { st(th.accent).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(th.text) };
-            lines.push(Line::from(Span::styled(cut(format!("{} {l}", if i == *at { "›" } else { " " })), style)));
+            let style = if i == *at { picked(th) } else { st(th.text) };
+            lines.push(Line::from(Span::styled(cut(format!("{} {l} ", if i == *at { "›" } else { " " })), style)));
         }
         lines.push(Line::from(""));
         lines.extend(wrap_words("A higher level thinks longer and costs more. /effort changes it later; the conversation goes on.", iw)
@@ -1002,17 +1078,16 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme) {
         f.render_widget(Paragraph::new(lines), right);
         return;
     }
-    let mut lines: Vec<Line<'static>> = vec![search, Line::from(Span::styled(cols(" ", "model", "$/M in / out", "bench (runs)", "AA index"), st(th.faint)))];
+    let mut lines: Vec<Line<'static>> = vec![search, cols(" ", "model", "", "$/M in / out", "bench", "AA", st(th.faint), false)];
     for (i, r) in p.rows.iter().enumerate().skip(first).take(room) {
         let on = i == p.selected && (p.in_models || !two);
         let mark = if on { "›" } else if r.current { "•" } else { " " };
-        let row = cols(mark, &r.label, &r.price, &r.bench, &r.aa);
         let color = match r.state { 1 | 4 => th.faint, 2 => th.warn, 3 => th.dim, _ if r.stale => th.warn, _ => th.text };
-        let style = if on { st(color).add_modifier(Modifier::BOLD | Modifier::REVERSED) } else { st(color) };
-        lines.push(Line::from(Span::styled(row, style)));
+        // the selected row as every list's: the accent fill (it was the row's own ink reversed)
+        lines.push(cols(mark, &r.label, &r.provider, &r.price, &score(&r.bench), &r.aa, if on { picked(th) } else { st(color) }, on));
     }
     if p.rows.is_empty() {
-        lines.push(Line::from(Span::styled("no model matches", st(th.faint))));
+        lines.push(Line::from(Span::styled(" no model matches", st(th.faint))));
     }
     f.render_widget(Paragraph::new(lines), right);
     if dh > 0 {
@@ -1215,17 +1290,6 @@ pub fn usd(x: f64) -> String {
     }
 }
 
-/// Claude's plan windows and SubRouter's balance on one line ("5h 13% · wk 21% · SubRouter $8.82 left"), and the colour
-/// to show it in by the fuller window: amber from 75%, red from 90% (Timeline's one-colour line; the others colour each).
-pub fn limits_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
-    match (plan_str(s, th), balance_str(s)) {
-        (Some((p, color)), Some(b)) => Some((format!("{p} · {b}"), color)),
-        (Some(p), None) => Some(p),
-        (None, Some(b)) => Some((b, th.dim)),
-        (None, None) => None,
-    }
-}
-
 /// A notice that carries a provider's raw error ("provider error in stream: {\"message\":\"[404]: … not found.\", …}",
 /// cut at 300 characters, so no longer JSON) as its message alone: "provider error: [404]: … not found.".
 pub fn readable_notice(text: &str) -> Option<String> {
@@ -1276,21 +1340,6 @@ pub fn balance_str(s: &Session) -> Option<String> {
     s.balance.map(|b| format!("SubRouter {} left", usd(b)))
 }
 
-/// The plan's windows alone: "5h 12% · wk 14% (2h ago)". The week reads "wk" as in the window's status bar (it was "7d"
-/// here and "wk" there, design review 9).
-pub fn plan_str(s: &Session, th: &Theme) -> Option<(String, Color)> {
-    let mut parts = vec![];
-    let mut color = th.dim;
-    if let Some((h5, d7)) = s.limits {
-        color = match h5.max(d7) { x if x >= 90.0 => th.err, x if x >= 75.0 => th.warn, _ => th.dim };
-        // the windows are the whole account's (Claude Code beside tazuna counts too), so no "this session" share: a
-        // "(+2%)" read as tazuna's (2026-11-02). Claude reports them only now and then: an older reading says how old.
-        let age = limits_age(s);
-        parts.push(format!("Claude 5h {h5:.0}% · wk {d7:.0}%{age}"));
-    }
-    (!parts.is_empty()).then(|| (parts.join(" · "), color))
-}
-
 pub fn clock_str(ms: f64) -> String {
     let secs = (ms / 1000.0) as u64;
     if secs >= 3600 {
@@ -1298,16 +1347,6 @@ pub fn clock_str(ms: f64) -> String {
     } else {
         format!("{:02}:{:02}", secs / 60, secs % 60)
     }
-}
-
-/// The session's elapsed time and, beside it, the agent's working time (message to last token): "26:51 · 06:08 working".
-/// "03:12 · 01:40 working": the session's time and the part spent working; before any work only the first (a "00:00
-/// working" on an idle session read as stuck, design review 4).
-pub fn times_str(s: &Session, v: &View) -> String {
-    let busy = s.busy(v.clock_ms);
-    // "worked" once it rests: "00:22  00:13 working" beside "ready" read as still running (design review 11)
-    let word = if matches!(s.activity, Activity::Ready | Activity::Done) { "worked" } else { "working" };
-    if busy < 1000.0 { clock_str(v.clock_ms - v.since_ms) } else { format!("{}  {} {word}", clock_str(v.clock_ms - v.since_ms), clock_str(busy)) }
 }
 
 /// The replay's speed ("▶ 4.0×", "⏸ paused"); nothing in a live session, where it is no control of the user's (until
@@ -1348,12 +1387,6 @@ pub fn tool_arg<'a>(t: &'a Tool, key: &str) -> &'a str {
         k => return t.input[k].as_str().unwrap_or_default(),
     };
     keys.iter().find_map(|k| t.input[*k].as_str()).unwrap_or_default()
-}
-
-/// Whether `model` runs on claude (the plan) rather than the own loop: claude's ids and its short names.
-pub fn on_claude(model: &str) -> bool {
-    let m = model.to_ascii_lowercase();
-    m.starts_with("claude-") || matches!(m.split('[').next(), Some("opus" | "sonnet" | "haiku" | "fable"))
 }
 
 pub fn model_short(m: &str) -> String {
@@ -1538,22 +1571,21 @@ pub enum PromptStyle {
 
 /// How a design wants the shared transcript drawn.
 pub struct Opts {
-    /// Glyph before each agent reply ("" for none).
-    pub marker: &'static str,
     pub prompt: PromptStyle,
     /// Collapse runs of finished tool calls into one line (unless expanded).
     pub group_tools: bool,
-    /// Time gutter, nodes and turn dividers.
-    pub timeline: bool,
     /// Show how long each tool took.
     pub durations: bool,
 }
 
 type Prefixed = (Line<'static>, Vec<Span<'static>>);
 
+/// The bar down the side of what is set apart: your message (cockpit), a quote, a tool's output. One glyph for the
+/// three; the output's was the box-drawing line (design review 11).
+const BAR: &str = "▎ ";
+
 const PROMPT_LINES: usize = 8;
 const TOOL_LINES: usize = 10;
-const GUTTER: usize = 8;
 
 /// Builds the wrapped transcript; also returns how many rows the newest block takes.
 pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> (Vec<Line<'static>>, usize, Vec<Option<usize>>) {
@@ -1562,14 +1594,13 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
     let mut owners: Vec<Option<usize>> = Vec::new();
     let mut last_rows = 0;
     let mut i = 0;
-    let mut prev_turn = 0;
     // a live session before its first message opens on who and where it is, as Claude Code's does; the lane's notice
     // ("lane default: opus-5-5 medium · repo profile (…)") is in it (until 0.1.180 that debug line was the whole screen)
     // (once the lane is known, and only while nothing but notices has come)
     let fresh = v.live && s.blocks.iter().all(|b| matches!(b, Block::Notice { .. }))
         && s.blocks.iter().any(|b| matches!(b, Block::Notice { text, .. } if text.starts_with("lane ")));
     if fresh {
-        for l in welcome(s, th, width) {
+        for l in welcome(th, width) {
             lines.push(l);
             owners.push(None);
         }
@@ -1580,7 +1611,6 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
             i += 1;
             continue;
         }
-        let meta = s.meta[i];
         // a run of tool calls collapses into one line in grouped designs
         let foldable = |b: &Block| matches!(b, Block::Tool(_) | Block::Thinking { .. });
         let mut group_end = i + 1;
@@ -1593,43 +1623,14 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
         let grouped = o.group_tools && !v.expand_all && foldable(b) && !v.open.contains(&i);
         let open = v.expand_all || v.open.contains(&i);
         let after_tool = i > 0 && matches!((&s.blocks[i - 1], b), (Block::Tool(_), Block::Tool(_)));
-        if o.timeline && meta.turn != prev_turn && meta.turn > 0 {
-            prev_turn = meta.turn;
-            lines.push(turn_divider(s, th, meta.turn));
-            owners.push(None);
-        } else if i > 0 && !after_tool {
-            // the timeline keeps its rail unbroken between steps
-            lines.push(if o.timeline { Line::from(vec![Span::raw("      "), Span::styled("│", st(th.border))]) } else { Line::default() });
+        if i > 0 && !after_tool {
+            lines.push(Line::default());
             owners.push(None);
         }
         let before = lines.len();
-        let gutter_w = if o.timeline { GUTTER } else { 0 };
-        let body = if grouped { group_lines(&s.blocks[i..group_end], s, v, th, o, width) } else { block_lines(b, s, v, th, o, open, width.saturating_sub(gutter_w)) };
-        for (k, (mut l, mut cont)) in body.into_iter().enumerate() {
-            if o.timeline {
-                let lead = if k == 0 {
-                    // the node replaces the step's own status glyph
-                    if matches!(b, Block::Tool(_) | Block::Thinking { .. } | Block::Verify(_) | Block::Retry(_) | Block::Notice { .. }) && !l.spans.is_empty() {
-                        let glyph_w = l.spans.remove(0).width();
-                        // continuation rows lose the same width so they stay aligned
-                        if let Some(first) = cont.first_mut() {
-                            let pad = first.content.width().saturating_sub(glyph_w);
-                            *first = Span::raw(" ".repeat(pad));
-                        }
-                    }
-                    // the end row's glyph is in one span with its word ("✔ Done"): the node says it ("★ ✔ Done", design review 11)
-                    if let (Block::Done(_), Some(first)) = (b, l.spans.first_mut()) {
-                        *first = Span::styled(first.content.split_once(' ').map_or(String::new(), |(_, w)| w.to_string()), first.style);
-                    }
-                    let (node, c) = node(b, s, v, th);
-                    vec![Span::styled(format!("{} ", clock_str(meta.at_ms)), st(th.faint)), Span::styled(node, st(c)), Span::raw(" ")]
-                } else {
-                    vec![Span::raw("      "), Span::styled("│", st(th.border)), Span::raw(" ")]
-                };
-                l.spans.splice(0..0, lead);
-                cont.splice(0..0, [Span::raw("      "), Span::styled("│", st(th.border)), Span::raw(" ")]);
-            }
-            lines.extend(wrap(l, width.max(gutter_w + 10), &cont));
+        let body = if grouped { group_lines(&s.blocks[i..group_end], s, v, th, o, width) } else { block_lines(b, s, v, th, o, open, width) };
+        for (l, cont) in body {
+            lines.extend(wrap(l, width.max(10), &cont));
         }
         // the block under the mouse is shaded: a click opens or closes it
         if v.hover.is_some_and(|h| (i..group_end).contains(&h)) {
@@ -1702,55 +1703,26 @@ fn lerp(a: Color, b: Color, t: f64) -> Color {
     }
 }
 
-fn node(b: &Block, s: &Session, v: &View, th: &Theme) -> (&'static str, Color) {
-    match b {
-        Block::Prompt(_) => ("◇", th.ink2),
-        Block::Text { live: true, .. } => ("●", th.accent),
-        Block::Text { .. } => ("●", th.dim),
-        Block::Thinking { live: true, .. } => (spinner(v.clock_ms), th.accent),
-        Block::Thinking { .. } => ("◌", th.faint),
-        Block::Tool(t) if asked(t, s, v) => ("?", th.warn),
-        Block::Tool(t) if t.result.is_none() => (spinner(v.clock_ms), th.accent),
-        Block::Tool(t) if t.declined() => ("■", th.dim),
-        Block::Tool(t) if t.error => ("✗", th.err),
-        Block::Tool(_) => ("◆", th.dim),
-        Block::Done(d) if d.stopped => ("■", th.dim),
-        Block::Done(d) if d.ok => ("★", th.ok),
-        Block::Done(_) => ("✗", th.err),
-        // no result is not a failure (the timeline drew a red ✗ beside "timed out · not verified")
-        Block::Verify(x) if x.no_tests || x.timed_out || x.cannot_run => ("·", th.faint),
-        Block::Verify(x) if x.ok.is_none() => (spinner(v.clock_ms), th.accent),
-        Block::Verify(x) if x.ok == Some(true) => ("✓", th.ok),
-        Block::Verify(_) => ("✗", th.err),
-        Block::Notice { error: true, .. } => ("!", th.err),
-        Block::Notice { .. } => ("·", th.faint),
-        Block::Retry(r) if r.next_ms.is_some() || r.gave_up => ("!", th.err),
-        Block::Retry(_) => ("·", th.faint),
-    }
-}
-
-fn turn_divider(s: &Session, th: &Theme, turn: u64) -> Line<'static> {
-    let mut spans = vec![Span::raw("      "), Span::styled("├─ ", st(th.border)), Span::styled(format!("turn {turn}"), st(th.dim).add_modifier(Modifier::BOLD))];
-    if let Some(u) = s.turn_usage.get(turn as usize - 1).filter(|u| u.total_in() > 0) {
-        spans.push(Span::styled(
-            format!("  ↑ {}  ↓ {}  ≈{}", human(u.total_in()), human(u.output), usd(s.estimate(u))),
-            st(th.faint),
-        ));
-    }
-    Line::from(spans)
-}
-
 /// Draws the transcript tail (or the scrolled position); returns the newest block's rows when following.
 /// Draws the transcript's lines that fit, `scroll` rows up from the end. Returns the newest block's rows (when at the
 /// bottom) and the block on each screen row.
 /// Also returns the transcript line on the area's first row (a mouse selection holds lines, not rows).
-pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): (Vec<Line<'static>>, usize, Vec<Option<usize>>), scroll: usize) -> (Option<Rect>, Vec<Option<usize>>, usize) {
-    let h = area.height as usize;
+pub fn render_transcript(f: &mut Frame, area: Rect, (lines, last_rows, owners): (Vec<Line<'static>>, usize, Vec<Option<usize>>), scroll: usize, th: &Theme) -> (Option<Rect>, Vec<Option<usize>>, usize) {
+    // scrolled up: the last row says how far the end is (nothing said the view was not at the end, design review 11);
+    // the transcript keeps the rows above it
+    let marked = scroll > 0 && area.height > 2 && lines.len() > area.height as usize;
+    let h = area.height as usize - usize::from(marked);
     let max_scroll = lines.len().saturating_sub(h);
     let start = max_scroll.saturating_sub(scroll.min(max_scroll));
     let visible: Vec<Line> = lines.into_iter().skip(start).take(h).collect();
     let shown = visible.len();
     f.render_widget(Paragraph::new(visible), area);
+    if marked {
+        let pill = format!(" ↓ {} ", lines_n(scroll.min(max_scroll)));
+        let w = (pill.width() as u16).min(area.width);
+        let at = Rect { x: area.x + (area.width - w) / 2, y: area.bottom() - 1, width: w, height: 1 };
+        f.render_widget(Paragraph::new(Span::styled(pill, Style::new().fg(th.ink2).bg(th.field))), at);
+    }
     let rows = owners.into_iter().skip(start).take(h).collect();
     let last = (scroll == 0 && last_rows > 0 && shown > 0).then(|| {
         let rows = last_rows.min(shown) as u16;
@@ -1766,43 +1738,77 @@ pub fn mark(th: &Theme) -> Vec<Span<'static>> {
         Span::styled("▌", st(th.accent))]
 }
 
-/// The whole transcript as the current design draws it at `width`, for copying a selection that runs off screen.
-/// The first screen of a live session: tazuna and its version, the model, where it runs and what it read there, a first
-/// thing to try.
-fn welcome(s: &Session, th: &Theme, width: usize) -> Vec<Line<'static>> {
-    let lane = s.blocks.iter().find_map(|b| match b { Block::Notice { text, .. } if text.starts_with("lane ") => Some(text.clone()), _ => None });
-    let profile = lane.as_deref().and_then(|t| t.split_once(" · ")).map(|(_, p)| p.to_string()).unwrap_or_default();
-    let home = crate::platform::home().map(|h| h.display().to_string()).unwrap_or_default();
-    let cwd = std::env::current_dir().map(|d| d.display().to_string()).unwrap_or_default();
-    let cwd = if !home.is_empty() && cwd.starts_with(&home) { format!("~{}", &cwd[home.len()..]) } else { cwd };
-    // on Claude only: a free own-loop model read "Mock Model  medium, on your Claude plan" (design review 9)
-    let plan = if s.limits.is_some() && on_claude(&s.model) { ", on your Claude plan" } else { "" };
-    let profile = match profile.split_once(" (") {
-        Some((_, inner)) => inner.trim_end_matches(')').replace(" tracked files", " files").replace("; repo config: ", ", ").replace("2 other .claude entries", "2 more .claude files"),
-        None => profile,
-    };
-    // a line too long for the column ends in "…", the profile's words before the folder's (design review 10: cockpit's
-    // narrower transcript cut "no repo conf" mid-word)
+/// The first screen of a live session: tazuna and its version, the folder as `~/…` with its branch, a first thing to
+/// try. The model says itself once, in the header (it stood here too, over "set on the command line; no repo config":
+/// that is in the first turn's "· started on …" note; design review 11).
+fn welcome(th: &Theme, width: usize) -> Vec<Line<'static>> {
+    let dir = std::env::current_dir().unwrap_or_default();
+    let cwd = tilde(&dir, crate::platform::home().as_deref());
+    // a line too long for the column ends in "…"; the branch only where it fits whole beside the folder
     let room = width.saturating_sub(6);
     let cwd = ellipsis(&cwd, room);
-    let left = room.saturating_sub(cwd.width());
-    let profile = if profile.is_empty() || left < 4 { String::new() } else { ellipsis(&format!("  {profile}"), left) };
+    let branch = branch_of(&dir).filter(|b| cwd.width() + 6 + b.width() <= room);
+    let mut place = vec![Span::raw("      "), Span::styled(cwd, st(th.ink2))];
+    if let Some(b) = branch {
+        place.extend([Span::styled("  on ", st(th.faint)), Span::styled(b, st(th.text))]);
+    }
     vec![
         Line::from([vec![Span::raw(" ")], mark(th), vec![Span::raw(" "), Span::styled("tazuna", st(th.text).add_modifier(Modifier::BOLD)), Span::styled(format!(" {}", env!("CARGO_PKG_VERSION")), st(th.faint))]].concat()),
-        Line::from(vec![Span::raw("      "), Span::styled(model_short(&s.model), st(th.dim)), Span::styled(format!("  {}{plan}", s.effort), st(th.faint))]),
-        Line::from(vec![Span::raw("      "), Span::styled(cwd, st(th.faint)), Span::styled(profile, st(th.faint))]),
+        Line::from(place),
         Line::default(),
         Line::from(vec![Span::raw("      "), Span::styled(ellipsis("Try \"how is this repo laid out?\", or /keys for every key", room), st(th.faint))]),
     ]
 }
 
+/// The branch checked out in `dir`'s repository, from its HEAD file (no git process: the welcome is drawn every frame,
+/// so the answer is kept for a second); None outside a repository and on a detached HEAD.
+fn branch_of(dir: &std::path::Path) -> Option<String> {
+    thread_local! { static KEPT: std::cell::RefCell<Option<(std::path::PathBuf, std::time::Instant, Option<String>)>> = const { std::cell::RefCell::new(None) }; }
+    KEPT.with(|k| {
+        let mut k = k.borrow_mut();
+        if let Some((_, _, b)) = k.as_ref().filter(|(d, at, _)| d == dir && at.elapsed().as_secs() < 1) {
+            return b.clone();
+        }
+        let b = read_branch(dir);
+        *k = Some((dir.to_path_buf(), std::time::Instant::now(), b.clone()));
+        b
+    })
+}
+
+/// `dir` as `~/…` under `home`, at a path boundary only (HOME /Users/al made /Users/alice/x read "~ice/x", design review 11).
+fn tilde(dir: &std::path::Path, home: Option<&std::path::Path>) -> String {
+    match home.filter(|h| !h.as_os_str().is_empty()).and_then(|h| dir.strip_prefix(h).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => dir.display().to_string(),
+    }
+}
+
+/// HEAD's `ref: refs/heads/<name>`; anything else (a detached HEAD's hash, a reftable repo's stub `refs/heads/.invalid`)
+/// names no branch.
+fn read_branch(dir: &std::path::Path) -> Option<String> {
+    let git = dir.ancestors().map(|d| d.join(".git")).find(|g| g.exists())?;
+    // a worktree's (and a submodule's) .git is a file that names the directory
+    let git = if git.is_file() { git.parent()?.join(std::fs::read_to_string(&git).ok()?.trim().strip_prefix("gitdir: ")?) } else { git };
+    Some(std::fs::read_to_string(git.join("HEAD")).ok()?.trim().strip_prefix("ref: refs/heads/")?.to_string()).filter(|b| !b.is_empty() && b != ".invalid")
+}
+
+/// What esc does now, said beside a run's state: " · esc stops" stood while a draft was typed, which the first esc
+/// clears (design review 11). Nothing in a replay, nor in vim's modes, where esc changes mode or leaves the draft.
+pub fn esc_hint(v: &View) -> &'static str {
+    match (v.live, v.vim, v.input.is_empty()) {
+        (false, ..) | (true, "INSERT", _) | (true, "NORMAL", false) => "",
+        (true, _, true) => " · esc stops",
+        _ => " · esc clears the draft",
+    }
+}
+
+/// The whole transcript as the current design draws it at `width`, for copying a selection that runs off screen.
 pub fn transcript_lines(s: &Session, v: &View, width: u16) -> Vec<Line<'static>> {
     let th = v.design.theme();
     let o = match v.design {
         Design::Cockpit => &cockpit::OPTS,
-        Design::Aurora => &aurora::OPTS,
         Design::Zen => &zen::OPTS,
-        Design::Timeline => &timeline::OPTS,
     };
     transcript(s, v, th, o, width as usize).0
 }
@@ -1833,7 +1839,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             let color = if loud { th.err } else { th.dim };
             let tries = if r.tries == 1 { "1 try".to_string() } else { format!("{} tries", r.tries) };
             let (state, next) = match (r.next_ms, r.gave_up) {
-                (Some(t), _) => (format!("try {} failed", r.tries), format!("trying again in {} · esc stops", wait_str((t - v.clock_ms) / 1000.0))),
+                (Some(t), _) => (format!("try {} failed", r.tries), format!("trying again in {}{}", wait_str((t - v.clock_ms) / 1000.0), esc_hint(v))),
                 (None, true) => (format!("gave up after {tries}"), "send the message again, or pick another model with /model".to_string()),
                 (None, false) => (format!("{tries} failed"), String::new()),
             };
@@ -1854,19 +1860,23 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             out
         }
         Block::Text { text, live } => {
-            let mut out = markdown(text, th, width.saturating_sub(if o.marker.is_empty() { 0 } else { 2 }));
+            // no mark before a reply in either design: zen had none, cockpit a ▸ that was also the fold's arrow (design
+            // review 11)
+            let mut out = markdown(text, th, width);
             if out.is_empty() {
                 out.push((Line::default(), vec![]));
             }
-            if !o.marker.is_empty() {
-                for (i, (l, cont)) in out.iter_mut().enumerate() {
-                    l.spans.insert(0, if i == 0 { Span::styled(format!("{} ", o.marker), st(if *live { th.accent } else { th.faint })) } else { Span::raw("  ") });
-                    cont.insert(0, Span::raw("  "));
-                }
-            }
             if *live {
                 if let Some((l, _)) = out.last_mut() {
-                    l.spans.push(Span::styled("▍", st(th.accent)));
+                    // in a code block's row the cursor takes the first cell of the fill, not one past the block's edge
+                    match l.spans.last().filter(|p| !p.content.is_empty() && p.content.chars().all(|c| c == ' ')).map(|p| p.style) {
+                        Some(fill) => {
+                            let at = l.spans.len() - 1;
+                            l.spans[at].content = l.spans[at].content[1..].to_string().into();
+                            l.spans.insert(at, Span::styled("▍", fill.fg(th.accent)));
+                        }
+                        None => l.spans.push(Span::styled("▍", st(th.accent))),
+                    }
                 }
             }
             out
@@ -1886,7 +1896,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
         Block::Done(d) => {
             let (glyph, word, color) = match (d.stopped, d.ok) {
                 (true, _) => ("■", "Stopped", th.dim),
-                (false, true) => ("✔", "Done", th.ok),
+                (false, true) => ("✓", "Done", th.ok),
                 (false, false) => ("✗", "Failed", th.err),
             };
             let u = &d.usage;
@@ -1911,7 +1921,9 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
             // line of numbers was the whole conversation's so far, the same under every answer and wrapping onto two
             // lines: it shows when the line is clicked, or with everything expanded.
             let took = if d.secs < 60.0 { format!("{:.0} s", d.secs) } else { format!("{} min {:02} s", d.secs as u64 / 60, d.secs as u64 % 60) };
-            let mut first = vec![Span::styled(format!("{glyph} {word}"), st(color).add_modifier(Modifier::BOLD)), Span::styled(format!("  {took}  {}", usd(d.run_cost)), st(th.dim))];
+            // an estimate says so, and a cost nobody can tell is not shown as one (design review 12)
+            let cost = d.run_cost.map_or("cost not known".into(), |c| format!("{}{}", if d.estimate { "≈" } else { "" }, usd(c)));
+            let mut first = vec![Span::styled(format!("{glyph} {word}"), st(color).add_modifier(Modifier::BOLD)), Span::styled(format!("  {took}  {cost}"), st(th.dim))];
             if !open {
                 first.push(Span::styled("  ▸", st(th.faint)));
             }
@@ -1949,7 +1961,7 @@ fn verify_lines(x: &crate::session::Verify, v: &View, th: &Theme) -> Vec<Prefixe
         let lines: Vec<&str> = x.output.lines().filter(|l| !l.trim().is_empty()).collect();
         let shown = if v.expand_all { lines.len() } else { VERIFY_FAIL_LINES.min(lines.len()) };
         for l in &lines[lines.len() - shown..] {
-            out.push((Line::from(vec![Span::raw("    "), Span::styled("│ ", st(th.faint)), Span::styled(l.replace('\t', "    "), st(th.err))]), vec![Span::raw("      ")]));
+            out.push((Line::from(vec![Span::raw("    "), Span::styled(BAR, st(th.faint)), Span::styled(l.replace('\t', "    "), st(th.err))]), vec![Span::raw("      ")]));
         }
     }
     out
@@ -1968,7 +1980,7 @@ fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, open: bool, width: u
     let mut out: Vec<Prefixed> = Vec::new();
     match o.prompt {
         PromptStyle::Bar => {
-            let bar = || Span::styled("▎ ", st(th.faint));
+            let bar = || Span::styled(BAR, st(th.faint));
             // every message of yours is "you" (the first was "task", design review 5)
             let _ = first;
             let label = "you";
@@ -2027,7 +2039,7 @@ fn tool_lines(t: &Tool, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool,
     if let (true, Some(secs)) = (o.durations, t.secs()) {
         meta.push_str(&format!(" · {secs:.1}s"));
     }
-    let gutter = || vec![Span::raw("    "), Span::styled("│ ", st(th.faint))];
+    let gutter = || vec![Span::raw("    "), Span::styled(BAR, st(th.faint))];
     // closed, the call is one short summary (a subagent's whole prompt ran 25 rows, 2026-11-02); opened (a click, or
     // ctrl-o for all), its full input and output
     let summary = tool_summary(t, s);
@@ -2187,29 +2199,40 @@ fn markdown(text: &str, th: &Theme, width: usize) -> Vec<Prefixed> {
         // a table: `| a | b |` rows, the second a `|---|---|` rule
         if !in_code && raw.trim_start().starts_with('|') && lines.get(i).is_some_and(|n| is_rule(n)) {
             let mut rows = vec![cells(raw)];
+            // `---:` under a column: its cells stand to the right (numbers)
+            let right: Vec<bool> = cells(lines[i]).iter().map(|c| c.ends_with(':') && !c.starts_with(':')).collect();
             i += 1;
             while i < lines.len() && lines[i].trim_start().starts_with('|') {
                 rows.push(cells(lines[i]));
                 i += 1;
             }
-            out.extend(table(&rows, th, width));
+            out.extend(table(&rows, &right, th, width));
             continue;
         }
-        if raw.trim_start().starts_with("```") {
+        if let Some(lang) = raw.trim_start().strip_prefix("```") {
             in_code = !in_code;
+            // the block's language on its first row, faint (the window's code block names it)
+            if in_code && !lang.trim().is_empty() {
+                out.extend(code_rows(lang.trim(), 0, st(th.faint), th, width));
+            }
             continue;
         }
         if in_code {
             // a wrapped line hangs under its own indent and a little more, as an editor's soft wrap (it went back to the
             // first column, design review 10)
             let hang = 1 + raw.chars().take_while(|c| c.is_whitespace()).count() + 4;
-            out.push((Line::from(Span::styled(format!(" {raw} "), Style::new().fg(th.ink2).bg(th.field))), vec![Span::styled(" ".repeat(hang), Style::new().bg(th.field))]));
+            out.extend(code_rows(raw, hang, st(th.ink2), th, width));
             continue;
         }
         let t = raw.trim_start();
+        // `---` alone on its line: a rule across the column (its three dashes showed, design review 11)
+        if t.len() >= 3 && ["-", "*", "_"].iter().any(|c| t.trim_end().chars().all(|x| c.starts_with(x))) {
+            out.push((Line::from(Span::styled("─".repeat(width.max(1)), st(th.border))), vec![]));
+            continue;
+        }
         if let Some(q) = t.strip_prefix('>') {
             // a quote: a bar and its words in the second ink, as the window draws it (it printed its ">", design review 10)
-            let bar = || Span::styled("▎ ", st(th.faint));
+            let bar = || Span::styled(BAR, st(th.accent));
             let words = inline(q.trim_start_matches('>').trim_start(), th).into_iter().map(|mut w| {
                 if w.style.fg == Some(th.text) {
                     w.style = w.style.fg(th.ink2);
@@ -2414,18 +2437,32 @@ fn is_rule(line: &str) -> bool {
     line.trim_start().starts_with('|') && !c.is_empty() && c.iter().all(|x| x.contains('-') && x.chars().all(|ch| matches!(ch, '-' | ':' | ' ')))
 }
 
-/// A markdown table drawn with borders, its columns fitted to `width`: a column wider than its share wraps inside its
-/// cell (rows then get a rule between them). Too narrow for that, the rows read as "a · b · c". The pipes of the raw
-/// markdown wrapped across the screen (2026-11-02).
-fn table(rows: &[Vec<String>], th: &Theme, width: usize) -> Vec<Prefixed> {
+/// One line of a code block as rows of the block's whole width: wrapped under `hang` columns, every row filled to
+/// `width` on the field colour, so the block is one even shape. The background followed each line's length, ragged down
+/// its right side (design review 11). Wrapped here, not by the transcript: a row has to know where it ends to be filled.
+fn code_rows(text: &str, hang: usize, style: Style, th: &Theme, width: usize) -> Vec<Prefixed> {
+    let bg = Style::new().bg(th.field);
+    let width = width.max(4);
+    wrap(Line::from(Span::styled(format!(" {text}"), style.bg(th.field))), width - 1, &[Span::styled(" ".repeat(hang.min(width / 2)), bg)]).into_iter().map(|mut l| {
+        let fill = width.saturating_sub(l.width());
+        l.spans.push(Span::styled(" ".repeat(fill), bg));
+        (l, vec![])
+    }).collect()
+}
+
+/// A markdown table as the window draws it: a quiet header, one rule under it, the rows under each other with no grid
+/// and no blank row between them; a `---:` column stands to the right. Its columns are fitted to `width`: a column wider
+/// than its share wraps inside its cell. Too narrow for that, the rows read as "a · b · c". Until 0.1.193 a full grid of
+/// box lines with a rule between wrapped rows (design review 11, desktop/mockups/v8.html).
+fn table(rows: &[Vec<String>], right: &[bool], th: &Theme, width: usize) -> Vec<Prefixed> {
     let n = rows.iter().map(Vec::len).max().unwrap_or(0);
-    let room = width.saturating_sub(3 * n + 1);
+    let room = width.saturating_sub(2 * n.saturating_sub(1));
     if n == 0 || room < 3 * n {
         return rows.iter().map(|r| (Line::from(inline(&r.join(" · "), th)), vec![])).collect();
     }
     let cell = |r: usize, c: usize| -> Vec<Span<'static>> {
         let spans = inline(rows[r].get(c).map_or("", String::as_str), th);
-        if r == 0 { spans.into_iter().map(|s| { let st = s.style.add_modifier(Modifier::BOLD); s.style(st) }).collect() } else { spans }
+        if r == 0 { spans.into_iter().map(|s| { let st = s.style.fg(th.faint); s.style(st) }).collect() } else { spans }
     };
     let natural: Vec<usize> = (0..n).map(|c| (0..rows.len()).map(|r| cell(r, c).iter().map(|s| s.content.width()).sum::<usize>()).max().unwrap_or(0).max(1)).collect();
     let mut w = natural.clone();
@@ -2441,9 +2478,7 @@ fn table(rows: &[Vec<String>], th: &Theme, width: usize) -> Vec<Prefixed> {
         let want: usize = natural.iter().zip(&base).map(|(a, b)| a - b).sum();
         w = natural.iter().zip(&base).map(|(&a, &b)| b + (a - b) * spare / want.max(1)).collect();
     }
-    let border = st(th.border);
-    let rule = |l: &str, m: &str, r: &str| (Line::from(Span::styled(format!("{l}{}{r}", w.iter().map(|x| "─".repeat(x + 2)).collect::<Vec<_>>().join(m)), border)), vec![]);
-    let mut body: Vec<Vec<Line<'static>>> = vec![];
+    let mut out: Vec<Prefixed> = vec![];
     for r in 0..rows.len() {
         let cols: Vec<Vec<Line<'static>>> = (0..n).map(|c| {
             let mut ls = wrap(Line::from(cell(r, c)), w[c], &[]);
@@ -2455,27 +2490,26 @@ fn table(rows: &[Vec<String>], th: &Theme, width: usize) -> Vec<Prefixed> {
             ls
         }).collect();
         let h = cols.iter().map(Vec::len).max().unwrap_or(1);
-        body.push((0..h).map(|k| {
-            let mut sp = vec![Span::styled("│ ", border)];
+        for k in 0..h {
+            let mut sp = vec![];
             for (c, col) in cols.iter().enumerate() {
                 let l = col.get(k).cloned().unwrap_or_default();
-                let lw: usize = l.spans.iter().map(|s| s.content.width()).sum();
+                let pad = " ".repeat(w[c].saturating_sub(l.spans.iter().map(|s| s.content.width()).sum()));
+                let to_right = right.get(c).copied().unwrap_or(false);
+                if to_right {
+                    sp.push(Span::raw(pad.clone()));
+                }
                 sp.extend(l.spans);
-                sp.push(Span::raw(" ".repeat(w[c].saturating_sub(lw))));
-                sp.push(Span::styled(if c + 1 < n { " │ " } else { " │" }, border));
+                if c + 1 < n {
+                    sp.push(Span::raw(format!("{}  ", if to_right { "" } else { pad.as_str() })));
+                }
             }
-            Line::from(sp)
-        }).collect());
-    }
-    let tall = body.iter().skip(1).any(|r| r.len() > 1);
-    let mut out = vec![rule("┌", "┬", "┐")];
-    for (r, lines) in body.into_iter().enumerate() {
-        if r == 1 || (r > 1 && tall) {
-            out.push(rule("├", "┼", "┤"));
+            out.push((Line::from(sp), vec![]));
         }
-        out.extend(lines.into_iter().map(|l| (l, vec![])));
+        if r == 0 {
+            out.push((Line::from(Span::styled("─".repeat(w.iter().sum::<usize>() + 2 * (n - 1)), st(th.border))), vec![]));
+        }
     }
-    out.push(rule("└", "┴", "┘"));
     out
 }
 
@@ -2527,7 +2561,7 @@ pub fn wrap(mut line: Line<'static>, width: usize, cont: &[Span<'static>]) -> Ve
     out
 }
 
-const REPLAY_KEYS: &str = "1-4 design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
+const REPLAY_KEYS: &str = "tab design · space pause · ←/→ speed · ↑/↓ scroll · e expand · q quit";
 
 /// As many whole key hints as fit in `room` columns, most used first; "/keys all" ends them when some are left out.
 fn fitted_keys(keys: &str, room: usize) -> String {
@@ -2734,7 +2768,8 @@ fn hint_row(v: &View, th: &Theme, width: u16) -> Option<Line<'static>> {
         return Some(Line::from(Span::styled(format!("   {SHELL_HINT}"), st(th.dim))));
     }
     if v.hints.is_empty() {
-        return None;
+        // "@xyz" with no such file: said, where the completions just went (design review 11)
+        return at_nothing(v).map(|word| Line::from(vec![Span::styled("   no file matches ", st(th.faint)), Span::styled(ellipsis(word, (width as usize).saturating_sub(21)), st(th.dim))]));
     }
     let mut spans = vec![Span::styled("   tab › ", st(th.faint))];
     let mut used = 9;
@@ -2747,6 +2782,15 @@ fn hint_row(v: &View, th: &Theme, width: u16) -> Option<Line<'static>> {
         spans.push(Span::styled(format!("{h}  "), if i == 0 { st(th.accent) } else { st(th.dim) }));
     }
     Some(Line::from(spans))
+}
+
+/// The `@word` being typed at the cursor when no file completes it (and the box does not hold a `/command`).
+fn at_nothing(v: &View) -> Option<&str> {
+    if !v.live || !v.hints.is_empty() || v.input.starts_with('/') {
+        return None;
+    }
+    let word = v.input[..cursor_at(v)].rsplit(char::is_whitespace).next()?;
+    (word.len() > 1 && word.starts_with('@')).then_some(word)
 }
 
 const CURSOR: char = '▍';
@@ -2768,7 +2812,7 @@ pub fn composer_height(v: &View, outer_width: u16) -> u16 {
     }
     let room = (outer_width as usize).saturating_sub(2 + 4).max(1);
     let rows: usize = with_cursor(v).split('\n').map(|l| l.width().div_ceil(room).max(1)).sum();
-    rows.clamp(1, COMPOSER_MAX_ROWS) as u16 + 2 + u16::from(!v.hints.is_empty() || v.toast.is_some() || v.input.starts_with('!'))
+    rows.clamp(1, COMPOSER_MAX_ROWS) as u16 + 2 + u16::from(!v.hints.is_empty() || v.toast.is_some() || v.input.starts_with('!') || at_nothing(v).is_some())
 }
 
 /// A row's two sides made to fit `width` by leaving whole parts out: the left's last first, then the right's, each down
@@ -2905,7 +2949,7 @@ mod tests {
         let draw = |selected: usize| {
             let p = TasksPanel { rows: (0..40).map(row).collect(), selected };
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 30)).unwrap();
-            term.draw(|f| { draw_tasks(f, &p, Design::Cockpit.theme()); }).unwrap();
+            term.draw(|f| { draw_tasks(f, &p, Design::Cockpit.theme(), f.area()); }).unwrap();
             let b = term.backend().buffer().clone();
             (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n")
         };
@@ -2919,7 +2963,7 @@ mod tests {
 
     #[test]
     fn model_picker_shows_rows_effort_and_why_not() {
-        let row = |label: &str, state: u8, stale: bool| ModelRow { label: label.into(), place: "SubRouter · kriora, shared-openai-pro-50, shared-openai-pro-52".into(),
+        let row = |label: &str, state: u8, stale: bool| ModelRow { label: label.into(), provider: String::new(), place: "SubRouter · kriora, shared-openai-pro-50, shared-openai-pro-52".into(),
             price: "0.0387 / 0.194".into(), note: "cached 81% · checked today".into(), bench: "6.8 (308)".into(), aa: "32".into(),
             state, why: match state {
                 1 => "no key: set the environment variable SUBROUTER_API_KEY before starting tazuna".into(),
@@ -2930,7 +2974,7 @@ mod tests {
             groups: vec![("All models".into(), 4, true, String::new()), ("SubRouter".into(), 4, true, String::new())], group: 1, in_models: true, effort: None };
         let draw = |p: &ModelsPanel, w: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 24)).unwrap();
-            term.draw(|f| draw_models(f, p, Design::Cockpit.theme())).unwrap();
+            term.draw(|f| draw_models(f, p, Design::Cockpit.theme(), f.area())).unwrap();
             let b = term.backend().buffer().clone();
             (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>()
         };
@@ -2943,16 +2987,35 @@ mod tests {
             let at: Vec<usize> = rows.iter().map(|l| l[..l.find("0.0387 / 0.194").unwrap_or_else(|| panic!("{w}: price cut: {l}"))].chars().count()).collect();
             assert!(at.windows(2).all(|x| x[0] == x[1]), "{w}: {rows:?}");
             assert!(rows[1].contains("· fast"), "{w}: {}", rows[1]);
-            assert_eq!(rows[0].contains("6.8 (308)"), w >= 120, "{w}: scores shown where they fit beside the providers");
+            // the judge's score and AA's index as two numbers to the right, under their own heads; the runs are in the details
+            let head = lines.iter().find(|l| l.contains("$/M in / out")).unwrap();
+            assert!(head.contains("bench") && head.trim_end_matches(['│', ' ']).ends_with("AA"), "{w}: {head}");
+            assert!(rows[1].contains("  6.8  ") && !rows[1].contains("(308)"), "{w}: {}", rows[1]);
             let text = lines.concat();
             assert!(text.contains("shared-openai-pro-52"), "{w}: the provider list wraps whole: {lines:#?}");
         }
         assert_eq!(wrap_words("ab cd efghij k", 4), ["ab", "cd", "efgh", "ij k"]);
-        // a wide screen (the user's, 2026-11-01): the panel ends where the table does, not at 9/10 of the screen
         let wide = draw(&p, 200);
-        let border = wide.iter().find(|l| l.contains('┌')).unwrap();
-        assert!(border.trim().chars().count() < 140, "{border}");
         assert!(wide.concat().contains("SubRouter") && wide.concat().contains("All models"), "the providers pane");
+        // whose a model is, after its name and not in it
+        p.rows[3].provider = "Mistral".into();
+        assert!(draw(&p, 120).iter().any(|l| l.contains("gpt-6-luna Mistral ")), "the provider beside the name");
+        p.rows[3].provider.clear();
+        // one model at two providers, its name filling the column at 80: the name gives way, the provider stays, and the two
+        // rows do not read the same
+        let mut two = ModelsPanel { rows: vec![row("DeepSeek V4.1 Flash 1017", 0, false), row("DeepSeek V4.1 Flash 1017", 0, false), row("DeepSeek V4.1 Flash 1017", 0, false)],
+            selected: 0, filter: String::new(), groups: vec![("All models".into(), 3, true, String::new()), ("SubRouter".into(), 1, true, String::new()), ("OpenRouter".into(), 1, true, String::new())],
+            group: 0, in_models: true, effort: None };
+        (two.rows[1].provider, two.rows[2].provider) = ("OpenRouter".into(), "DeepSeek".into());
+        let lines = draw(&two, 80);
+        let rows: Vec<String> = lines.iter().filter(|l| l.contains("0.0387 / 0.194")).map(|l| l[..l.find("0.0387").unwrap()].to_string()).collect();
+        assert!(rows.len() == 3 && rows[1].contains(" OpenRouter") && rows[2].contains(" DeepSeek") && rows[1].contains('…'), "{lines:#?}");
+        assert!(rows[0] != rows[1] && rows[1] != rows[2] && rows[0] != rows[2], "{rows:#?}");
+        // with a search typed, esc empties it first, and the hint says that
+        assert!(draw(&two, 80).concat().contains("esc closes"));
+        two.filter = "deepseek v4.1".into();
+        let text = draw(&two, 80).concat();
+        assert!(text.contains("esc clears the search") && !text.contains("esc closes"), "{text}");
         // the detail line says what to do: the variable to set, the line to add (it named `source ~/.subrouter-key`, a
         // file only the bench's machines have, until 0.1.77)
         for (i, want) in [(0, "cached 81%"), (1, "SUBROUTER_API_KEY"), (2, "trusted-providers"), (3, "stale")] {
@@ -2961,7 +3024,7 @@ mod tests {
         }
         // effort is not on the model rows: ← → move between the panes, and a model chosen gets its effort after
         let text = draw(&p, 120).concat();
-        assert!(!text.contains("‹") && text.contains("← providers") && text.contains("enter choose"), "{text}");
+        assert!(!text.contains("‹") && text.contains("← providers") && text.contains("enter chooses") && text.contains("esc closes") && text.contains("4 models"), "{text}");
         p.effort = Some(("deepseek-v4.1-flash-1017".into(), vec!["high".into(), "max".into()], 1, "↑↓ effort · enter use · esc models", String::new()));
         let text = draw(&p, 120).join("\n");
         assert!(text.contains("deepseek-v4.1-flash-1017 · effort") && text.contains("› max") && text.contains("  high") && text.contains("esc models"), "{text}");
@@ -2969,13 +3032,11 @@ mod tests {
         p.effort = Some(("Opus 5.5".into(), vec!["medium".into(), "high".into()], 1, "enter again to switch · esc models",
             "Enter again to switch: the next message re-reads ~514k tokens without the cache (≈ $4.11 of plan usage).".into()));
         let text = draw(&p, 120).join(" ");
-        assert!(text.contains("Enter again to switch: the next") && text.contains("enter again to switch · esc models"), "{text}");
+        assert!(text.contains("Enter again to switch: the next") && text.contains("enter again to switch   esc models"), "{text}");
     }
 
     #[test]
     fn the_plan_is_named_only_on_claude() {
-        assert!(super::on_claude("claude-opus-5-5") && super::on_claude("opus") && super::on_claude("sonnet[1m]"));
-        assert!(!super::on_claude("mock-model") && !super::on_claude("deepseek-v4.1-flash") && !super::on_claude(""));
         // a free own-loop model: $0, not "$0 on Claude plan"
         let mut s = crate::session::Session::new("", "");
         s.apply(&serde_json::json!({"type": "result", "subtype": "success", "total_cost_usd": 0.0}), 1.0);
@@ -2993,13 +3054,18 @@ mod tests {
         let b = term.backend().buffer().clone();
         let text: Vec<String> = (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect::<String>().trim_end().to_string()).collect();
         let all = text.join("\n");
-        for want in ["commands · 4", "/resume", "Continue an earlier conversation of this folder", "/review", "/security-review", "Claude: a security review"] {
+        for want in ["┌ commands ─", " 2/4 ─┐", "›/review", "↑↓ move   enter runs   tab fills in   esc clears", "/resume", "Continue an earlier conversation of this folder", "/security-review", "Claude: a security review"] {
             assert!(all.contains(want), "{want}\n{all}");
         }
         assert!(!all.contains("/new"), "only matches: {all}");
         // the menu sits on the transcript's bottom rows, just over the box
         let first = text.iter().position(|l| l.contains("commands")).unwrap();
         assert_eq!(first, 26 - 4 - 2, "{all}");
+        // nothing matches: the frame says so (the menu just went)
+        (v.menu, v.input) = (vec![], "/zz".into());
+        term.draw(|f| { draw(f, &Session::new("", "medium"), &v); }).unwrap();
+        let all: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
+        assert!(all.contains("no command matches /zz") && all.contains("└ esc clears ─"), "{all}");
     }
 
     #[test]
@@ -3009,20 +3075,21 @@ mod tests {
             row("Mortera", "API key", "not logged in")], selected: 2, form: None };
         let draw = |p: &LoginPanel, w: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 30)).unwrap();
-            term.draw(|f| draw_login(f, p, Design::Cockpit.theme())).unwrap();
+            term.draw(|f| draw_login(f, p, Design::Cockpit.theme(), f.area())).unwrap();
             let b = term.backend().buffer().clone();
             (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect::<String>().trim_end().to_string()).collect::<Vec<_>>()
         };
         let list = draw(&p, 100).join("\n");
-        assert!(list.contains("› Mortera") && list.contains("not logged in") && list.contains("enter log in"), "{list}");
+        assert!(list.contains("› Mortera") && list.contains("not logged in") && list.contains("↑↓ move   enter logs in   esc closes"), "{list}");
         p.form = Some(LoginForm { name: "Mortera".into(), page: "https://mortera.cloud".into(), opened: true, place: "your Mortera dashboard".into(),
             example: String::new(), typed: 5, host: "mortera.cloud".into(), var: "MORTERA_API_KEY".into(), has: String::new() });
         // 60 columns: nothing cut, the long lines wrap
         for w in [60u16, 100] {
             let page = draw(&p, w).join("\n");
-            for want in ["Login to Mortera", "https://mortera.cloud", "opened in your browser", "Paste your Mortera API key", "> •••••▍",
-                         "(esc to cancel, enter to submit)", "mortera.cloud on your trusted"] {
-                assert!(page.contains(want), "{w}: {want}\n{page}");
+            for want in ["log in to Mortera", "https://mortera.cloud", "opened in your browser", "Paste your Mortera API key", "> •••••▍",
+                         "enter saves the key esc cancels", "mortera.cloud on your trusted"] {
+                // (a sentence may break at the frame's edge)
+                assert!(page.replace('│', " ").split_whitespace().collect::<Vec<_>>().join(" ").contains(want), "{w}: {want}\n{page}");
             }
         }
     }
@@ -3032,7 +3099,7 @@ mod tests {
         let mut s = Session::new("", "medium");
         s.limits = Some((12.0, 14.0));
         s.balance = Some(8.816);
-        for d in [Design::Cockpit, Design::Aurora, Design::Zen, Design::Timeline] {
+        for d in [Design::Cockpit, Design::Zen] {
             let v = View { design: d, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(160, 40)).unwrap();
             term.draw(|f| { draw(f, &s, &v); }).unwrap();
@@ -3049,10 +3116,8 @@ mod tests {
         s.blocks.push(Block::Tool(Tool { id: "a".into(), name: "Agent".into(),
             input: serde_json::json!({"subagent_type": "explorer", "description": "Inspect load-secrets.sh retry impact", "prompt": prompt}),
             result: Some("It runs sequentially.".into()), error: false, started_ms: 0.0, done_ms: Some(6700.0), sub: None }));
-        s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
         s.blocks.push(Block::Tool(Tool { id: "b".into(), name: "Bash".into(), input: serde_json::json!({"command": format!("gh run view 1 --jq '{}'", "x".repeat(400))}),
             result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(4300.0), sub: None }));
-        s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
         let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
         let text = |v: &View| { let (l, _, owners) = transcript(&s, v, Design::Cockpit.theme(), &cockpit::OPTS, 100); (l.iter().map(|l| l.spans.iter().map(|x| x.content.to_string()).collect::<String>()).collect::<Vec<_>>(), owners) };
         let (closed, owners) = text(&v);
@@ -3070,19 +3135,110 @@ mod tests {
     }
 
     #[test]
-    fn tables_get_borders_and_fit_the_width() {
+    fn tables_are_rules_and_fit_the_width() {
         let th = Design::Cockpit.theme();
-        let md = "Free space:\n\n| Path | Size | What |\n|---|---:|---|\n| `~/bench-gocache` | 243 GB | Go build cache for the benchmark; safe to delete after runs |\n| ~/.omlx/models | 61 GB | Local MLX models |\n\nDone.";
+        let md = "Free space:\n\n| Path | Size | What |\n|---|---:|---|\n| `~/bench-gocache` | 243 GB | Go build cache for the benchmark; safe to delete after runs |\n| ~/.omlx/models | 61 GB | Local MLX models |\n| 日本語のパス | 5 GB | wide characters |\n\nDone.";
         let text = |w: usize| markdown(md, th, w).iter().map(|(l, _)| l.spans.iter().map(|s| s.content.to_string()).collect::<String>()).collect::<Vec<_>>();
         let wide = text(100);
-        assert!(wide.iter().any(|l| l.starts_with("┌")) && wide.iter().any(|l| l.starts_with("└")), "{wide:#?}");
-        assert!(wide.iter().any(|l| l.contains("│ ~/bench-gocache │ 243 GB │")), "{wide:#?}");
-        assert!(!wide.concat().contains("|---"), "the rule is not shown as text");
-        // narrow: cells wrap inside their columns, every row of the table the same width, none past the width
+        // a quiet header, one rule under it, no grid, no blank row between rows; the `---:` column to the right
+        let at = wide.iter().position(|l| l.starts_with("Path")).unwrap();
+        assert!(wide[at + 1].chars().all(|c| c == '─') && wide[at + 2].starts_with("~/bench-gocache  243 GB  Go build") && wide[at + 3].starts_with("~/.omlx/models    61 GB  Local"), "{wide:#?}");
+        assert!(wide[at + 4].starts_with("日本語のパス       5 GB  wide"), "a wide character takes two columns: {wide:#?}");
+        assert!(!wide.concat().contains("|---") && !wide.concat().contains('│') && !wide.concat().contains('┌'), "{wide:#?}");
+        // narrow: cells wrap inside their columns, no row past the width, the columns still in line
         let narrow = text(44);
-        let rows: Vec<&String> = narrow.iter().filter(|l| l.starts_with(['┌', '│', '├', '└'])).collect();
-        assert!(rows.len() > 6 && rows.iter().all(|l| l.width() == rows[0].width() && l.width() <= 44), "{narrow:#?}");
-        assert_eq!(text(10).iter().filter(|l| l.contains('│')).count(), 0, "too narrow: rows as plain lines");
+        let from = narrow.iter().position(|l| l.starts_with("Path")).unwrap();
+        let rows = &narrow[from..narrow.len() - 2];
+        assert!(rows.len() > 6 && rows.iter().all(|l| l.width() <= 44), "{narrow:#?}");
+        let col = |l: &String, what: &str| l.find(what).map(|b| l[..b].width());
+        assert_eq!(col(&rows[0], "What"), col(rows.iter().find(|l| l.contains("Local")).unwrap(), "Local"), "{narrow:#?}");
+        assert!(text(10).iter().all(|l| !l.contains('─')), "too narrow: rows as plain lines");
+    }
+
+    #[test]
+    fn a_code_block_is_one_even_shape_with_its_language() {
+        let th = Design::Cockpit.theme();
+        let md = "```rust\nfn main() {\n    println!(\"a long line that has to wrap because the column is narrow\");\n}\n```\n\n---\n\n> quoted";
+        let rows = markdown(md, th, 40);
+        let code: Vec<&Line> = rows.iter().map(|(l, _)| l).filter(|l| !l.spans.is_empty() && l.spans.iter().all(|s| s.style.bg == Some(th.field))).collect();
+        assert!(code.len() >= 5 && code.iter().all(|l| l.width() == 40), "every row of the block is the column's width: {:?}", code.iter().map(|l| l.width()).collect::<Vec<_>>());
+        assert_eq!(code[0].spans.iter().map(|s| s.content.to_string()).collect::<String>().trim(), "rust", "its language on the first row");
+        let text: Vec<String> = rows.iter().map(|(l, _)| l.spans.iter().map(|s| s.content.to_string()).collect()).collect();
+        assert!(text.contains(&"─".repeat(40)) && text.iter().any(|l| l == "▎ quoted"), "a rule across the column, a quote behind the bar: {text:#?}");
+    }
+
+    #[test]
+    fn two_designs_and_the_numbers_scripts_know() {
+        assert_eq!([1, 2, 3, 4, 5].map(Design::from_number), [Some(Design::Zen), Some(Design::Cockpit), Some(Design::Zen), Some(Design::Zen), None]);
+        assert_eq!([1, 2, 3, 4].map(Design::gone), [Some("aurora"), None, None, Some("timeline")]);
+        assert_eq!((Design::Zen.number(), Design::Cockpit.number(), Design::Zen.next(), Design::Cockpit.next()), (3, 2, Design::Cockpit, Design::Zen));
+        assert_eq!(Design::gone_note("timeline", "tab"), "timeline is gone: this is zen · tab: cockpit");
+        // a saved 1 or 4: reading it (every start: --run, --help, the app-server) leaves the file, so the note waits for
+        // a screen; a session or replay opening settles it to zen's 3, once
+        let dir = std::env::temp_dir().join(format!("tazuna-design-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("design"), "1\n").unwrap();
+        assert_eq!((Design::saved_in(&dir), Design::saved_in(&dir)), ((Design::Zen, Some("aurora")), (Design::Zen, Some("aurora"))));
+        Design::settle_in(&dir);
+        assert_eq!((Design::saved_in(&dir), std::fs::read_to_string(dir.join("design")).unwrap()), ((Design::Zen, None), "3\n".to_string()));
+        Design::Cockpit.save_in(&dir);
+        Design::settle_in(&dir);
+        assert_eq!(Design::saved_in(&dir), (Design::Cockpit, None), "a design that is not gone stays");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_welcome_names_a_branch_only_where_head_names_one() {
+        let root = std::env::temp_dir().join(format!("tazuna-branch-{}", std::process::id()));
+        let (repo, wt) = (root.join("repo"), root.join("wt"));
+        std::fs::create_dir_all(repo.join(".git/worktrees/wt")).unwrap();
+        std::fs::create_dir_all(repo.join("src")).unwrap();
+        std::fs::create_dir_all(&wt).unwrap();
+        let head = |h: &str| std::fs::write(repo.join(".git/HEAD"), h).unwrap();
+        head("ref: refs/heads/main\n");
+        assert_eq!(read_branch(&repo.join("src")).as_deref(), Some("main"), "from a folder inside");
+        head("4b825dc642cb6eb9a060e54bf8d69288fbee4904\n");
+        assert_eq!(read_branch(&repo), None, "a detached HEAD");
+        head("ref: refs/heads/.invalid\n");
+        assert_eq!(read_branch(&repo), None, "a reftable repo's stub HEAD");
+        // a worktree: its .git is a file naming its directory in the main repo
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", repo.join(".git/worktrees/wt").display())).unwrap();
+        std::fs::write(repo.join(".git/worktrees/wt/HEAD"), "ref: refs/heads/fix/x\n").unwrap();
+        assert_eq!(read_branch(&wt).as_deref(), Some("fix/x"));
+        std::fs::remove_dir_all(&root).unwrap();
+        // `~` at a path boundary only
+        let p = std::path::Path::new;
+        assert_eq!([tilde(p("/Users/al/x"), Some(p("/Users/al"))), tilde(p("/Users/alice/x"), Some(p("/Users/al"))), tilde(p("/Users/al"), Some(p("/Users/al/"))), tilde(p("/x"), None)],
+            ["~/x", "/Users/alice/x", "~", "/x"]);
+    }
+
+    #[test]
+    fn one_frame_for_every_overlay_at_any_size() {
+        let th = Design::Zen.theme();
+        let draw = |w: u16, h: u16, title: &str, count: &str, keys: &str| {
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, h)).unwrap();
+            let mut inner = Rect::default();
+            term.draw(|f| inner = overlay(f, th, f.area(), title, count, keys)).unwrap();
+            let b = term.backend().buffer().clone();
+            ((0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>(), inner)
+        };
+        let (rows, inner) = draw(60, 5, "commands", "3/28", "↑↓ move · enter runs · tab fills in · esc closes");
+        assert_eq!(rows[0], format!("┌ commands {} 3/28 ─┐", "─".repeat(41)));
+        assert_eq!(rows[4], format!("└ ↑↓ move   enter runs   tab fills in   esc closes {}┘", "─".repeat(8)));
+        assert_eq!(inner, Rect::new(1, 1, 58, 3));
+        // narrow: the keys that fit whole and always the way out, the count gone before the title is cut
+        let (rows, _) = draw(24, 3, "resume a conversation", "12/138", "↑↓ move · enter opens · esc closes");
+        assert_eq!(rows[0], "┌ resume a conversati… ┐");
+        assert_eq!(rows[2], "└ ↑↓ move   esc closes ┘");
+        assert_eq!(draw(16, 3, "model", "", "↑↓ move · enter chooses · esc closes").0[2], "└ esc closes ──┘");
+        // what follows " · " in a title is said after it, quietly; nothing breaks when there is no room at all
+        assert!(draw(60, 3, "usage · your accounts", "", "").0[0].starts_with("┌ usage  your accounts ─"));
+        for (w, h) in [(1, 1), (2, 2), (3, 1), (5, 3)] {
+            draw(w, h, "model", "824 models", "↑↓ move · esc closes");
+        }
+        // an overlay's place: from the band's top as many rows as fit; a completion menu at its bottom
+        let band = Rect::new(9, 2, 92, 20);
+        assert_eq!((overlay_area(band, 4, false), overlay_area(band, 4, true), overlay_area(band, 400, false)), (Rect::new(9, 2, 92, 6), Rect::new(9, 16, 92, 6), band));
     }
 
     #[test]
@@ -3115,7 +3271,6 @@ mod tests {
         assert!(links("[x](javascript:alert(1)) [y](https://a.b/\u{1b}]8;;)").iter().all(|(_, u)| u.is_none()), "only plain http(s) addresses");
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Text { text: "Sources: [GitHub changelog](https://github.blog/c)".into(), live: false });
-        s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
         let v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
         let mut areas = None;
@@ -3143,7 +3298,8 @@ mod tests {
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         term.draw(|f| { draw(f, &s, &v); }).unwrap();
         let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
-        assert!(text.contains("resume a session") && text.contains("  8m ago · 2 messages · review PR 1370") && text.contains("› 2h ago · 5 messages · fix the login"), "{text}");
+        assert!(text.contains("┌ resume a conversation ─") && text.contains(" 2/2 ─┐") && text.contains("  8m ago · 2 messages · review PR 1370") && text.contains("› 2h ago · 5 messages · fix the login")
+            && text.contains("↑↓ move   enter opens   esc closes"), "{text}");
     }
 
     #[test]
@@ -3166,6 +3322,26 @@ mod tests {
     }
 
     #[test]
+    fn scrolled_up_the_last_row_says_how_far_the_end_is() {
+        let th = Design::Zen.theme();
+        let draw = |n: usize, scroll: usize| {
+            let lines: Vec<Line<'static>> = (0..n).map(|i| Line::from(format!("line {i}"))).collect();
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(30, 6)).unwrap();
+            term.draw(|f| { render_transcript(f, f.area(), (lines, 1, vec![None; n]), scroll, th); }).unwrap();
+            let b = term.backend().buffer().clone();
+            (0..6).map(|y| (0..30).map(|x| b[(x, y)].symbol()).collect::<String>().trim().to_string()).collect::<Vec<_>>()
+        };
+        // 20 lines, 3 up: five rows of text and the mark; the text ends 3 lines before the end
+        assert_eq!(draw(20, 3), ["line 12", "line 13", "line 14", "line 15", "line 16", "↓ 3 lines"]);
+        // further than there is: the mark says what is really below
+        assert_eq!(draw(20, 99)[..2], ["line 0", "line 1"]);
+        assert_eq!(draw(20, 99)[5], "↓ 15 lines");
+        // at the end, or with everything on screen: no mark
+        assert_eq!(draw(20, 0)[5], "line 19");
+        assert!(!draw(4, 2).concat().contains('↓'));
+    }
+
+    #[test]
     fn files_panel_totals_and_the_diff_view() {
         let s = Session::new("", "medium");
         let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
@@ -3183,7 +3359,7 @@ mod tests {
         assert_eq!(first_change(&d(&["@@ -3,3 +3,2 @@", " a", "-b", " c"])), 4, "a deletion: where it was");
         assert_eq!(first_change(&d(&["+++ new.txt (new file)", "+a"])), 1, "a new file: its top");
         let t = text(&v);
-        assert!(t.contains("12 files changed · +186 −66") && !t.contains("+new line") && t.contains("› ") , "the file list with the selected file marked, no diff text (2026-11-06)");
+        assert!(t.contains("┌ 12 files changed  +186 −66 ─") && t.contains(" 2/12 ─┐") && !t.contains("+new line") && t.contains("› ") , "the file list with the selected file marked, no diff text (2026-11-06)");
     }
 
     #[test]
@@ -3267,7 +3443,6 @@ mod tests {
         let mut s = Session::new("", "medium");
         for i in 0..14 {
             s.blocks.push(Block::Tool(Tool { id: format!("a{i}"), name: "Agent".into(), input: serde_json::json!({"description": "look"}), result: Some("ok".into()), error: false, started_ms: 0.0, done_ms: Some(131_600.0), sub: None }));
-            s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 1 });
         }
         s.turn_usage = (0..40).map(|i| crate::session::Usage { input: 10, cache_write: 100, cache_read: 50_000, output: 200 + 300 * (i % 7) }).collect();
         let mut v = View { design: Design::Cockpit, expand_all: false, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 };
@@ -3362,6 +3537,19 @@ mod tests {
         let (l, _) = fit_row(line(&[" READY ", " T0 ", " CTX 0 ", " CACHE 0% "]), line(&[" 00:01 "]), 28);
         assert_eq!(l.to_string(), " READY  T0  CTX 0 ");
         assert_eq!(whole_hints("↑↓ model · ← providers · tab provider pin · enter choose · esc close", 50), "↑↓ model · ← providers · tab provider pin");
+        // a reply running: how long it has worked and the key that stops it; with a draft the first esc clears the draft,
+        // and the row says that instead
+        let mut w = Session::new("", "medium");
+        on(&mut w, serde_json::json!({"type": "harness_user", "text": "go"}), 1_000.0);
+        on(&mut w, serde_json::json!({"type": "stream_event", "event": {"type": "message_start"}}), 1_500.0);
+        (v.input, v.hints, v.cursor, v.expand_all, v.clock_ms) = (String::new(), vec![], 0, false, 13_000.0);
+        let screen = render(&w, &v);
+        assert!(screen.contains("Working 12 s · esc stops"), "{screen}");
+        (v.input, v.cursor) = ("half a thought".into(), 14);
+        let screen = render(&w, &v);
+        assert!(screen.contains("Working 12 s · esc clears the draft") && !screen.contains("esc stops"), "{screen}");
+        v.vim = "INSERT";
+        assert!(!render(&w, &v).contains("· esc"), "vim's esc changes mode");
     }
 
     /// The review of design review 11's fixes: the question pinned to the wrong one of two calls, a plan's call as raw
@@ -3460,20 +3648,20 @@ mod tests {
             links: vec![Some("https://x.com/a".into())], link_from: 17, hscroll: 0, details: vec![None], open: Default::default(), pending: false };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(100, 20)).unwrap();
         let mut out = (None, vec![], vec![]);
-        term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme(), 0.0); }).unwrap();
+        term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme(), 0.0, f.area()); }).unwrap();
         let (area, links, _) = out.clone();
         assert!(area.is_some() && links.len() == 1 && links[0].1 == "https://x.com/a");
         let r = links[0].0;
         assert_eq!(term.backend().buffer()[(r.x, r.y)].symbol(), "C", "the link starts at the title");
         p.hscroll = 10;
-        term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme(), 0.0); }).unwrap();
+        term.draw(|f| { out = draw_list(f, &p, Design::Cockpit.theme(), 0.0, f.area()); }).unwrap();
         assert_eq!(out.1[0].0.x, r.x - 10, "scrolled sideways, the link moves with its text");
         // still reading (/usage): the first row turns
         let p = ListPanel { rows: vec![("reading your accounts…".into(), Tone::Plain)], links: vec![None], details: vec![None], hscroll: 0, pending: true, ..p };
         let shown = |t: &ratatui::Terminal<ratatui::backend::TestBackend>| t.backend().buffer().content().iter().map(|c| c.symbol()).collect::<String>();
-        term.draw(|f| { draw_list(f, &p, Design::Cockpit.theme(), 0.0); }).unwrap();
+        term.draw(|f| { draw_list(f, &p, Design::Cockpit.theme(), 0.0, f.area()); }).unwrap();
         assert!(shown(&term).contains("⠋ reading your accounts…"));
-        term.draw(|f| { draw_list(f, &p, Design::Cockpit.theme(), 85.0); }).unwrap();
+        term.draw(|f| { draw_list(f, &p, Design::Cockpit.theme(), 85.0, f.area()); }).unwrap();
         assert!(shown(&term).contains("⠙ reading your accounts…"), "the next frame");
     }
 
@@ -3483,14 +3671,13 @@ mod tests {
         let p = DiffPanel { selected: 0, diff: vec!["+//! a line of code".into()], scroll: 0 };
         let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 20)).unwrap();
         let mut hits = vec![];
-        term.draw(|f| { hits = draw_diff(f, &files, &p, Design::Cockpit.theme(), None); }).unwrap();
+        term.draw(|f| { hits = draw_diff(f, &files, &p, Design::Cockpit.theme(), None, f.area()); }).unwrap();
         let text: String = term.backend().buffer().content().iter().map(|c| c.symbol()).collect();
         assert!(text.contains("tazuna/examples/studio.rs") && text.contains("+868") && !text.contains("a line of code"), "files and counts, no diff text");
         assert_eq!(hits.len(), 2);
         // a notice longer than NOTICE_CHARS: cut and clickable, opened all of it
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Notice { text: "x".repeat(300), error: false });
-        s.meta.push(crate::session::Meta { at_ms: 0.0, turn: 0 });
         let lines = |open: bool| block_lines(&s.blocks[0], &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
         assert!(lines(false).contains("click to show") && !lines(true).contains("click to show"));
     }
@@ -3548,7 +3735,7 @@ mod tests {
     #[test]
     fn a_long_prompt_opens_in_full() {
         let th = Design::Cockpit.theme();
-        let o = Opts { marker: "", prompt: PromptStyle::Bar, group_tools: true, timeline: false, durations: false };
+        let o = Opts { prompt: PromptStyle::Bar, group_tools: true, durations: false };
         let p = (1..=20).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n\n");
         let text = |open| prompt_lines(&p, true, &th, &o, open, 80).iter().map(|(l, _)| l.to_string()).collect::<Vec<_>>().join("\n");
         let closed = text(false);
