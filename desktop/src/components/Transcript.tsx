@@ -1,4 +1,4 @@
-import { ArrowDown, CircleAlert, Check, ChevronRight, Copy, FileText, Info, LoaderCircle, MessageCircle, Pencil, RotateCcw, Square } from "lucide-react";
+import { ArrowDown, CircleAlert, Check, ChevronRight, Copy, FileText, Info, LoaderCircle, MessageCircle, Pencil, RotateCcw, Square, SquareTerminal } from "lucide-react";
 import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Slot } from "../lib/slots";
 import { readableError } from "../lib/fromView";
@@ -115,6 +115,14 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
                 <div className="mb-1.5">
                   <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2 py-px text-[11.5px] text-muted">
                     <MessageCircle size={13} strokeWidth={1.5} /> answered as a chat<Sep /><button disabled={busy} onClick={() => m.ask && rest.onSendToAgent?.(m.ask)} className="font-medium text-accent-ink disabled:opacity-50">send to agent</button>
+                  </span>
+                </div>
+              )}
+              {/* the agent answered in the chat's place, and why */}
+              {m.handedOff != null && (
+                <div className="mb-1.5">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-accent-soft px-2 py-px text-[11.5px] text-muted">
+                    <SquareTerminal size={13} strokeWidth={1.5} /> answered by the agent{m.handedOff && <><Sep />{m.handedOff}</>}
                   </span>
                 </div>
               )}
@@ -344,6 +352,7 @@ export function MessageImages({ message: m }: { message: Message }) {
 }
 
 export function MessageMeta({ message: m }: { message: Message }) {
+  const { busy, onSendToAgent } = useTranscript();
   const [open, setOpen] = useState(false);
   const [body, toggle] = useFold(open, setOpen);
   // the slip opens into view (under the last answer it opened below the message box's edge)
@@ -366,7 +375,11 @@ export function MessageMeta({ message: m }: { message: Message }) {
           <Sep />{dur(a.secs)}
         </button>
         <span className="flex-1" />
-        {text && <span className="opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100"><CopyAnswer text={text} /></span>}
+        {text && <span className="inline-flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover:opacity-100">
+          {/* a plain chat's answer: the agent can take its question (it has a shell and the web) */}
+          {m.chat && m.ask && onSendToAgent && <button disabled={busy} onClick={() => onSendToAgent(m.ask!)} title="Ask the agent instead: it can run commands and read the web"
+            className="inline-flex items-center gap-1 rounded px-1 hover:bg-hover hover:text-ink disabled:opacity-50"><SquareTerminal size={12} strokeWidth={1.5} />Send to agent</button>}
+          <CopyAnswer text={text} /></span>}
       </div>
       {open && <div ref={body} className="scroll-mb-10 pb-1 pt-2"><AnswerSlip meta={a} tools={m.tools} toolsSaid={workSummary(m.tools ?? [])} /></div>}
     </div>

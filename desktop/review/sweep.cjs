@@ -52,6 +52,11 @@ const log = [];
     await step(p, `${T}-failed`, async () => { await side(p).locator('a[title="test"]').first().click(); await p.waitForTimeout(800); });
     await step(p, `${T}-long`, async () => { await open(p, "Question 1"); await p.mouse.move(640, 400); await p.mouse.wheel(0, -900); });
     await step(p, `${T}-markdown`, async () => { await open(p, "Why is the CI build"); });
+    // the chat's hand-off (2026-11-21): in a plain chat, answers the agent gave in the chat's place (live data, a page) under
+    // their line, and an ordinary chat answer with "Send to agent" beside Copy on hover
+    await step(p, `${T}-handoff`, async () => { await open(p, "Will it rain in Berlin"); await p.mouse.move(640, 300); await p.mouse.wheel(0, -900); });
+    await step(p, `${T}-handoff-send`, async () => { await p.mouse.wheel(0, 900); await p.getByText("Dune", { exact: true }).hover(); });
+    log.push(`${theme} hand-off: ${await p.evaluate(() => `${[...document.querySelectorAll("span")].filter((e) => e.textContent.trim().startsWith("answered by the agent")).length} agent tags, ${[...document.querySelectorAll("button")].filter((b) => b.textContent === "Send to agent").length} send-to-agent`)} (2 tags, 1 send wanted)`);
     // the message box: the `/` and `@` menus, attachments as chips, and an answer that names a picture (desktop 0.1.87)
     const msg = p.locator("textarea[aria-label=Message]");
     await step(p, `${T}-slash`, async () => { await msg.fill("/"); await p.waitForTimeout(300); });

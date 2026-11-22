@@ -242,3 +242,42 @@ localStorage.setItem("tazuna.projects", JSON.stringify([PROJ]));
     return emit(event, payload);
   };
 })();
+
+// the chat's hand-off (2026-11-21), a plain chat on DeepSeek: a question about tomorrow's weather the chat could not know,
+// answered by the agent after a fetch; a message with a link, which the chat handed over too; and an ordinary chat answer,
+// whose "Send to agent" shows beside Copy on hover
+(() => { const T = window.__TAURI_INTERNALS__; if (!window.__SENT__) return;
+  const inv = T.invoke.bind(T), emit = T.emit.bind(T), now = Math.floor(Date.now() / 1000);
+  const u = (i, c, o) => ({ input: i, cache_write: 0, cache_read: c, output: o });
+  const DS = { model: "deepseek-v4.1-flash", plan: false, provider: "SubRouter", price_m: [0.15, 0.003, 0.6] };
+  const done = (secs, turns, cost, usage, run, run_usage) => ({ kind: "done", ok: true, secs, turns, cost, usage, run_cost: run, run_usage, stopped: false, ...DS });
+  const fetch = (id, url, secs) => ({ kind: "tool", id, name: "fetch", input: { url }, result: "…", error: false, secs, running: false });
+  const c6 = { type: "view", from: 0, model: "deepseek-v4.1-flash", effort: "high", cwd: "/Users/x", profile: "chat", mode: "ask", session_id: "c6", cost: 0.0019, turns: 7, activity: "Done", context: 3400,
+    usage: u(10400, 2000, 1150), blocks: [
+      { kind: "prompt", text: "Will it rain in Berlin tomorrow?" },
+      { kind: "notice", text: "answered by the agent: needs live data or this computer", error: false },
+      fetch("h1", "https://wttr.in/Berlin?format=j1", 0.8),
+      { kind: "text", text: "Most likely, yes. Tomorrow's forecast for Berlin has an 80% chance of rain from about noon, 9 to 12 °C, and a south-west wind around 20 km/h. Take an umbrella if you are out in the afternoon.", live: false },
+      done(7, 3, 0.0008, u(4300, 0, 380), 0.0008, u(4300, 0, 380)),
+      { kind: "prompt", text: "Summarise https://example.com/blog/static-sites in two lines" },
+      { kind: "notice", text: "answered by the agent: needs live data or this computer", error: false },
+      fetch("h2", "https://example.com/blog/static-sites", 1.1),
+      { kind: "text", text: "The post argues that most small sites need no server: a static generator and a CDN give faster pages, fewer moving parts and almost no hosting cost.\n\nIt keeps a server only for what must change per visitor, such as logins and payments.", live: false },
+      done(9, 2, 0.0015, u(8900, 1200, 900), 0.0007, u(4600, 1200, 520)),
+      { kind: "prompt", text: "Name three classic science fiction novels" },
+      { kind: "text", text: "*Dune* by Frank Herbert, *The Left Hand of Darkness* by Ursula K. Le Guin, and *Foundation* by Isaac Asimov.", live: false },
+      done(3, 1, 0.0019, u(10400, 2000, 1150), 0.0004, u(1500, 800, 250))] };
+  // the chat's own call (it replied [[agent]]) is in the first answer's receipt, beside the agent's two
+  const call = (block, fresh, cached, out, cost, ms) => ({ block, fresh, cached, out, cost, first_ms: 600, tps: 60, total_ms: ms, model: DS.model, role: null, provider: "SubRouter" });
+  c6.calls = [call(1, 900, 0, 5, 0.0001, 900), call(2, 1600, 0, 115, 0.0004, 2500), call(3, 1800, 0, 260, 0.0003, 4300),
+    call(7, 2400, 1200, 120, 0.0003, 2400), call(8, 2200, 0, 400, 0.0004, 6200), call(11, 1500, 800, 250, 0.0004, 3000)];
+  T.invoke = async (cmd, args) => {
+    if (cmd === "op" && args.msg.op === "resume" && args.msg.id === "c6") { setTimeout(() => T.view(args.tid, c6), 10); return null; }
+    return inv(cmd, args);
+  };
+  T.emit = (event, payload) => {
+    const m = payload?.msg, home = m?.type === "sessions" && m.dirs.find((d) => d.dir === "/Users/x");
+    if (home && !home.list.some((e) => e.id === "c6")) home.list.unshift({ id: "c6", first: "Will it rain in Berlin tomorrow?", last_at: now - 600, messages: 6, model: "deepseek-v4.1-flash" });
+    return emit(event, payload);
+  };
+})();

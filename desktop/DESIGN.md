@@ -180,7 +180,9 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - The transcript is a document, not two-sided bubbles: no speaker labels (your message is the field block), a reply's
   steps folded into one line ("Worked 41 s · read 2 files, ran 3 commands"; open while it runs, a click unfolds it), prose,
   then a change card (file, +/-, Diff, Review, Undo) and its metadata line (cost, tokens, cached, time) on hover.
-- A message answered by the router as a chat carries an `answered as a chat · send to agent` tag.
+- A message answered by the router as a chat carries an `answered as a chat · send to agent` tag. One the agent answered in
+  a chat's place (the chat said it needs live data or this computer, or you sent it there)
+  carries `answered by the agent · why` the same way; a plain chat's answers have Send to agent beside Copy.
 - The work panel: Changes (the files this conversation changed, the branch, Review), Checks (tazuna's runs after a turn),
   Pull request (state, CI, Checks and reviews), your messages, then the user's own panels.
 

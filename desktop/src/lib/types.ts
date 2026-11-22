@@ -51,6 +51,10 @@ export const pct = (part: number, whole: number) => (part >= whole ? 100 : Math.
 export type Message =
   | { role: "user"; text: string; queued?: boolean; edit?: { cp: number; block: number } }
   | { role: "agent"; prose: string[]; tools?: ToolStep[]; change?: Change; meta?: Meta; routedChat?: boolean; ask?: string;
+      /** a plain chat's answer: "Send to agent" beside Copy */
+      chat?: boolean;
+      /** the agent answered in the chat's place: why ("needs live data or this computer"; empty when you sent it there) */
+      handedOff?: string;
       /** a reply that ended without its answer: the provider's error in words (and as it came), or stopped by you */
       failure?: Failure;
       /** errors the reply met and went on past, as the core wrote them */

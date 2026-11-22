@@ -58,6 +58,8 @@ export function messages(v: View): Message[] {
     if (b.kind === "prompt") { if (open) queue.push(b.text); else prompt(b.text); }
     // the router answered it as a chat (app server, 0.1.127's router): the reply carries the tag and the ask, for "send to agent"
     else if (b.kind === "notice" && b.text.startsWith("answered as a chat")) { Object.assign(current(), { routedChat: true, ask }); }
+    // the agent answered in a chat's place (the chat replied [[agent]], or you sent it there)
+    else if (b.kind === "notice" && b.text.startsWith("answered by the agent")) { current().handedOff = b.text.replace(/^answered by the agent:?\s*/, ""); }
     // a saved conversation shown but not continued (its model cannot run here now): said under it, in words (design
     // review 9: it opened empty under a red "/model to the model it used first")
     else if (b.kind === "notice" && !b.error && b.text.startsWith("This conversation ran on ")) { (current().info ??= []).push(b.text); }
@@ -90,6 +92,8 @@ export function messages(v: View): Message[] {
       // a reply that ended without its answer says why, where a provider's error before it said (until desktop 0.1.74 the
       // error was its raw JSON, as the answer's text, and a failed reply ended with nothing)
       if (!b.ok || b.stopped) current().failure = { text: lastError ? readableError(lastError) : b.stopped ? "" : "The reply ended without an answer.", raw: lastError, stopped: b.stopped, ask };
+      // a plain chat's own answer can go to the agent too
+      else if (v.profile === "chat" && current().handedOff == null) Object.assign(current(), { chat: true, ask });
       const c = changeAt.get(k);
       if (c) current().change = { turn: c.turn, files: c.files, undone: c.undone, canUndo: c.can_undo };
       agent = null;
@@ -121,6 +125,12 @@ export function demoView() {
     && m[1].cost === 0.1 && m[1].billing?.plan === false && m[1].uncounted === 2 && m[1].calls?.[0].cost === 0.1 && m[1].cached === 0
     && m[2].cost === 0.2 && m[2].billing === undefined;
   if (!ok) throw new Error(`view: ${JSON.stringify(m)}`);
+  // a plain chat: the agent's answer in the chat's place says why, the chat's own offers "Send to agent"
+  const done = { kind: "done", ok: true, secs: 1, turns: 1, cost: 0, usage: u, stopped: false } as const;
+  const chat = messages({ ...v, profile: "chat", calls: [], blocks: [{ kind: "prompt", text: "rain tomorrow?" }, { kind: "notice", text: "answered by the agent: needs live data or this computer", error: false },
+    { kind: "text", text: "Yes.", live: false }, done, { kind: "prompt", text: "a sci-fi novel?" }, { kind: "text", text: "Dune.", live: false }, done] } as View)
+    .flatMap((x) => (x.role === "agent" ? [[x.handedOff, x.chat, x.ask]] : []));
+  if (JSON.stringify(chat) !== JSON.stringify([["needs live data or this computer", undefined, undefined], [undefined, true, "a sci-fi novel?"]])) throw new Error(`chat: ${JSON.stringify(chat)}`);
   console.log("view ok");
 }
 

@@ -505,6 +505,16 @@ user's pick from the prototype mockups/v8.html):
   WebKit pass of the new states (out/review-11/built3). Not seen: the real window on the real core; classic scrollbars
   on Windows and Linux (the tab's and the fades' inset there).
 
+0.1.98 (with tazuna 0.1.194):
+- A chat hands what it cannot know to the agent (the user asked a chat for the weather and the crypto market): the
+  model's reply `[[agent]]` never shows; the agent answers in one turn that fetches and searches without asking and asks
+  before anything else, and the answer says "answered by the agent · needs live data or this computer". The chat stays
+  one conversation in the sidebar. Every chat answer has "Send to agent" beside Copy. An approval in a hand-off has no
+  "Always". Measured on four models before it stayed (CHANGELOG 0.1.194).
+- SubRouter's balance in dollars (it showed $0.046 for $0.32), Mortera's models back in the picker.
+- Seen: the sweep on test data (144 steps, both themes, the hand-off tag and Send to agent), the hand-off on the real
+  claude CLI in the terminal. Not seen: the desktop window on the real core.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
