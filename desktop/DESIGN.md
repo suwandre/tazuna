@@ -96,9 +96,15 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - `accent` marks the one thing to act on or the live state: the send button, the running thread, progress fills, the
   context ring. Never decoration, never more than one accented control per area.
 - `ok` and `bad` only for results (diff counts, passed or failed checks). `warn` only for limits and risk.
-- Tables in answers: rules between rows, a quiet header (11.5 px, faint), numbers in tabular figures; no grid.
-- TeX in answers is drawn as MathML by the system (`lib/math.tsx`): `$…$` only when it holds a backslash, ^ or _ (money
-  stays money), `\(…\)`, `$$…$$` and `\[…\]`.
+- Tables in answers: rules between rows, a quiet header (11.5 px, faint), numbers in tabular figures; no grid. A short
+  cell ("+2 −1") stays on one line; code in a cell may break anywhere, so a long path does not crush the other columns.
+- TeX in answers is drawn as MathML by the system (`lib/math.tsx`): `$…$` by pandoc's rule (the opening $ has no space
+  after it, the closing one none before it and no digit after it: `$O(k)$` and `$k$` are math, "$5 per month, or $12"
+  stays money), `\(…\)`, `$$…$$` (in a line too, read before `$…$`) and `\[…\]` (design review 12).
+- Answers read as chat apps have them: a single newline in a paragraph or a quote is a line break (a paragraph is read
+  whole, so **bold** or a link may run over it); `---` alone is a rule, and under a paragraph's line a heading (`===`
+  too); code spans are read before math; an unclosed `$$` stays text;
+  `- [x]` and `- [ ]` are task items with a drawn box (not a form's checkbox); `~~struck~~` is struck and muted.
 - Code in answers has its own four tokens (`code-keyword` = accent-ink, `code-string` ochre, `code-number` plum,
   `code-comment` = faint, italic), so syntax never borrows the result colours.
 - Text levels: `ink` for content, `ink-2` for secondary content, `muted` for supporting text, `faint` for labels and
@@ -116,39 +122,55 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
 - Fonts are bundled with the app (no network fonts).
 
 ## Layout
-- Three columns: sidebar 248 px, main (header, transcript, composer), the work panel 300 px. The work panel is open in a
-  project and closed in a plain chat; ⌘\ and the header's button switch it, for the conversation they are pressed in (one
-  choice for the whole window put the panel into plain chats). With nothing to show (no change, no check, no pull request
-  with a number, no panel of the user's in it) it stays folded: a small "Changes 0" tab on the sheet's right edge opens
-  it, and it opens by itself at the first of them, unless closed by hand in that conversation. While it is not known yet
-  whether there is something (gh not answered, the panels not read), the column stays as it was. The rules are one
-  function with its check (`panelState`, `demoPanel`, lib/types.ts). (Design reviews of 2026-11-18, prototype
-  `mockups/v2.html`, and 11.)
+- Three columns: sidebar 248 px, main (header, transcript, composer), the work panel 300 px. The work panel never opens
+  or closes by itself: opening at a turn's end moved the reading column under the reader, and Undo moved it back (design
+  review 12). In a project it stays folded, a small tab on the sheet's right edge that counts the files changed so far,
+  live while a reply edits ("Changes 2"); the tab, ⌘\ and the header's button open it, for the conversation they are
+  pressed in (one choice for the whole window put the panel into plain chats), and closing it brings the tab back. A
+  plain chat has no tab. The rules are one function with its check (`panelState`, `demoPanel`, lib/types.ts). (Design
+  reviews of 2026-11-18, prototype `mockups/v2.html`, 11 and 12.)
 - The status bar names an account this conversation does not run on, when it needs you, quietly: a dot in its colour and faint
-  words ("OpenRouter $0.17 over +2"), the advice on hover.
+  words ("OpenRouter $0.17 below zero and 2 more"), the advice on hover. A balance its API does not tell is no news: the
+  account's name alone.
 - Each number shows once. The model and effort: the composer's one pill. The plan (5 hours and week, what is left), the
   SubRouter balance, this conversation's context, cache and cost, and the app's version: the status bar along the window's
   bottom (prototype `mockups/v4.html`, variant B, 2026-11-19), a click on the plan or the cost opening the usage page. An
   answer's own numbers: under it, on hover. The line under the composer only says what is new: a paid model's cost per
-  message, or the plan running low.
+  message, the plan running low, or that Claude is signed out while the conversation runs on it ("Claude isn't signed
+  in | Settings → Providers").
+- A new conversation starts on the model last picked by hand for its kind (a chat, a project) when that is not Claude; a
+  Claude pick leaves it to the router's choice per task again (design review 12: new chats went back to Opus 5.5).
 - Narrow windows: below 1280 px the work panel starts closed; below 1000 px the sidebar opens over the conversation from
   the header's button. The composer's pills never wrap.
 - One live status per reply: its fold says "Working 12 s" (counted from when the reply began), or "Waiting for you" during
   an approval; the line under the transcript shows only before the first step.
+- A message of yours sent while a reply runs (from the box, review comments, the work panel, the pull request) waits in
+  the window, shown queued under it, kept on disk until it goes, and goes when the reply ends, one at a time (the next
+  when the reply before it has ended); Stop puts all that wait back in the box (sent on at once, they went to
+  the agent the moment the reply was stopped).
+- A call tried again says so while the reply runs, in its place ("the provider is rate limiting this model | 2 tries
+  failed | trying again"); it goes once the reply's text comes, or becomes the error card if the reply fails.
+- A change of model and a Retry go on in a new session of the core: the window keeps it one conversation (one row, still
+  selected, a click on its row shows it rather than a second copy; its draft, queue and panel choice stay).
 - The message box completes: `/` at its start lists the conversation's commands with what each does, `@` anywhere lists
   the project's files, in one menu over the box (arrows, Enter or Tab to take, Esc to shut); its placeholder says so.
   Attachments are chips over the text, an image with its thumbnail. An answer that names an image file shows it under
   the answer (a click shows it whole); nothing loads from the network.
 - Settings is one part at a time, chosen in a list on its left (Appearance first: theme, text size, the type answers are
-  set in); a provider's key field shows when asked for.
+  set in); a provider's key field shows when asked for. Claude is the first of your providers: signed in, or how to sign
+  in (`claude auth login` with Copy, and Check again), or its install page; the first-run dialog ticks it only when it is
+  signed in.
 - Scrolled up from the end of a conversation, a round button over the message box goes back down.
 - A new conversation before its first message is the start screen (prototype `mockups/v3.html`): the mark (44 px), a serif
   question, the day's ledger from the run log ("Today 14 runs | $0.41 paid | 94% from the cache"; a click opens the usage
   page; a part with nothing to say is left out, and a day without a run shows the line that says what the box is for), the
   composer in the middle with a "where it runs" pill (a chat or a project), "Pick up where you left off" (the last three
-  conversations) and, in a chat, "Start in a project", then the keys worth knowing. No $0.000 anywhere on it.
+  conversations) and, in a chat, "Start in a project", then the keys worth knowing. No $0.000 anywhere on it. A short
+  window (720 px or less) takes less room around it and leaves the keys out; what does not fit scrolls under the
+  transcript's fades. A bar under it (the trust bar) is in the flow, never over its content.
 - The receipt (design review 11, variant A of `mockups/v8.html`): under every answer one faint line, always there
-  ("$0.031 | 12.4k in (85% cached) | 640 out | 38 s"; Copy beside it on hover or focus); a click unfolds the slip: a row
+  ("$0.031 | 12.4k in (85% cached) | 640 out | 38 s", "<1 s" under a second; Copy beside it on hover or focus; a turn
+  that gave no answer and cost nothing has none); a click unfolds the slip: a row
   per model call (its model and role, or what it called; in, cached, out, time, and its price where the core fixed it
   when the call ended), the tools' own time, then the sums (the total at API prices, "On your Claude plan: not billed" or
   who was paid, and "The same without the cache"). A slip is paper with a torn lower edge (`.tz-slip`), not a card. How a
@@ -172,14 +194,21 @@ Warm paper: a calm, legible workspace for both coding and everyday questions. Ch
   time on the right). No model on the row. Projects last, folded. The list fades at both ends.
 - A conversation's title is its first message made short by rules (no polite opening, its first sentence, about 60
   characters at most, a capital); a name the user gave stays as given. The header shows the title, then in faint what the
-  title left out of the first message.
+  title left out of the first message after its words ("— just an image."), nothing where that cannot be said (never
+  the whole message again).
 - The review is a pane over the conversation, header and box included (Esc or "Conversation" goes back): the scopes and
   Unified or Split at its top, the changed files on its left (A, M, D), every file's diff one under another; the words
   that changed inside a line are marked; Stage and Revert per piece and per file (a file's revert takes a second
   click); a click on a line writes a comment, and the comments go to the agent as one message.
 - The transcript is a document, not two-sided bubbles: no speaker labels (your message is the field block), a reply's
   steps folded into one line ("Worked 41 s · read 2 files, ran 3 commands"; open while it runs, a click unfolds it), prose,
-  then a change card (file, +/-, Diff, Review, Undo) and its metadata line (cost, tokens, cached, time) on hover.
+  then a change card (file, +/-, Diff, Review, Undo) and its metadata line (cost, tokens, cached, time) on hover. A short
+  word the model wrote before a later step ("I'll look at the folder first.": one paragraph of about 280 characters or
+  less, no code block, table or list) is a quiet line in the fold, in its place; longer prose stays in the answer (and in
+  Copy), so an answer followed by a to-do step is not folded away. A declined step says its plain verb ("Edit main.rs | declined"). A change of
+  model that goes on in a new session is a quiet divider ("continued on Mock Coder 7B"); the conversation above it stays.
+- An approval of an edit or a write shows what would change (the step's own diff rendering, in a scroll of its own under
+  the file's name); a command shows as itself.
 - A message answered by the router as a chat carries an `answered as a chat · send to agent` tag. One the agent answered in
   a chat's place (the chat said it needs live data or this computer, or you sent it there)
   carries `answered by the agent · why` the same way; a plain chat's answers have Send to agent beside Copy.
@@ -197,7 +226,9 @@ panel button; message (user, agent, chat), work fold, tool step, change card, me
 pills (where, mode, model with its effort; one style: filled, an icon, a chevron where a menu opens; no mode in a plain
 chat) and send, their menus placed by one rule (usePlace: above the whole box where it
 fits, else below it); completion menu and attachment chip (Composer), answer images, jump to latest, tooltip (`.tz-tip`: every `title` shows
-in it, lib/chrome.ts); answer copy; error card (the provider's message in words, Retry, its raw reply on request); code
+in it, lib/chrome.ts, only after the pointer really moves onto its element: a row that slides under a still pointer gets
+none); answer copy; error card (the provider's message in words, said once even when the answer repeats it; Retry runs
+the last failed turn again without a second message, on the last reply only; its raw reply on request); code
 block with its language and copy; work panel section (Changes, Checks, Pull request), usage bar, status bar. Reuse these before adding new ones; add new ones here when they are made.
 
 ## Motion
@@ -220,7 +251,8 @@ block with its language and copy; work panel section (Changes, Checks, Pull requ
   its focus on that box's border instead (`outline-none` and `focus:border-accent` or `focus-within:border-accent`).
 - macOS overlay title bar; native menus.
 - A shortcut is written the Mac's way in the code and shown through `keysOf` (lib/types.ts): "Ctrl+K" on Windows and Linux.
-- One clock (`clock`, lib/health.ts): "9:39pm". A tooltip repeats nothing the control already shows whole.
+- One clock (`clock`, lib/health.ts): "9:39pm". A tooltip repeats nothing the control already shows whole; a cut title's
+  tooltip is the whole title (the first message), never the cut one.
 
 ## Do not
 Inter or purple-blue gradients; glass, glow, neon; cards inside cards; an icon tile above every heading; stock shadcn

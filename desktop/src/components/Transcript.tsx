@@ -3,8 +3,8 @@ import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState
 import { Slot } from "../lib/slots";
 import { readableError } from "../lib/fromView";
 import { type Change, type Message, type ToolStep } from "../lib/types";
-import { AnswerSlip, priceSaid, tok } from "./Receipt";
-import { Sep } from "./Sep";
+import { AnswerSlip, dur, priceSaid, tok } from "./Receipt";
+import { Parts, Sep } from "./Sep";
 import { quietButton } from "./Controls";
 
 function inlineCode(text: string) {
@@ -27,8 +27,10 @@ type Props = {
   editFrom?: number;
   /** follows the rail's "tazuna-jump" (not the side chat's transcript) */
   jumps?: boolean;
-  /** sends a failed reply's message again */
-  onRetry?: (text: string) => void;
+  /** runs the last failed turn again, without a second message (core C11) */
+  onRetry?: () => void;
+  /** the message whose Retry works: the last reply (set by Transcript) */
+  lastReply?: number;
   /** an image file an answer names, as a data URL (it fails for a file that is not there) */
   onImage?: (path: string) => Promise<string>;
 };
@@ -72,8 +74,10 @@ function ChangeCard({ change, busy, onDiff, onUndo, onReview }: { change: Change
 export const TranscriptCtx = createContext<Omit<Props, "messages" | "activity">>({});
 export const useTranscript = () => useContext(TranscriptCtx);
 
-export function Transcript({ messages, activity, jumps = true, ...rest }: Props) {
-  const { busy, editFrom } = rest;
+export function Transcript({ messages, activity, jumps = true, ...props }: Props) {
+  const { busy, editFrom } = props;
+  // Retry runs the last failed turn again: only the last reply's error card offers it
+  const rest = { ...props, lastReply: messages.reduce((n, m, i) => (m.role === "agent" ? i : n), -1) };
   // a reply with steps says it is working in its fold; the line under the transcript only until the first step
   const folded = !!busy && messages.some((m) => m.role === "agent" && !m.meta && (m.tools?.length ?? 0) > 0);
   // follow new output while the reader is at the bottom; stay put once they scroll up
@@ -83,7 +87,9 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
   // scrolled well up from the end: a way back down (new output no longer pulls the page there)
   const [away, setAway] = useState(false);
   const hidden = Math.max(0, messages.length - limit);
-  useEffect(() => { if (stick.current && box.current) box.current.scrollTop = box.current.scrollHeight; });
+  // before the paint: after it, a scroll event of the last follow could see the new content's height first, read the reader
+  // as scrolled up, and leave a reply's change card and receipt under the box (design review 12, now and then)
+  useLayoutEffect(() => { if (stick.current && box.current) box.current.scrollTop = box.current.scrollHeight; });
   // the rail's list of your messages (or a plugin) asks for message i with a "tazuna-jump" event: drawn if it was not, then
   // scrolled to
   const [jump, setJump] = useState<number | null>(null);
@@ -108,7 +114,10 @@ export function Transcript({ messages, activity, jumps = true, ...rest }: Props)
       )}
       {messages.slice(hidden).map((m, i, shown) => (
         <div key={hidden + i} data-msg={hidden + i} className={`group mx-auto mb-[22px] max-w-[756px] scroll-mt-7 px-7 transition-opacity duration-150 ${editFrom != null && shown.slice(0, i + 1).some((x) => x.role === "user" && x.edit?.cp === editFrom) ? "opacity-35" : ""}`}>
-          {m.role === "user" ? <Slot name="message.user" props={{ message: m, index: hidden + i }} only /> : (
+          {m.role === "user" ? <Slot name="message.user" props={{ message: m, index: hidden + i }} only /> : m.role === "notice" ? (
+            // a model switch that went on in a new session: a quiet divider, the conversation above it is still the one
+            <div className="flex items-center gap-3 text-[12px] text-faint"><span aria-hidden="true" className="h-px flex-1 bg-line" />{m.text}<span aria-hidden="true" className="h-px flex-1 bg-line" /></div>
+          ) : (
             <>
               {/* no "tazuna" over each answer (nor "You" over each message): the field block says which is yours */}
               {m.routedChat && (
@@ -154,7 +163,7 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 export function workSummary(tools: ToolStep[]): string {
   const n = new Map<string, number>();
   // a step you declined did not happen: said apart ("declined 1"), not "ran 1 command" (real window, 2026-11-22)
-  for (const t of tools) if (t.kind !== "thinking" && !t.declined && !t.waiting) n.set(t.verb, (n.get(t.verb) ?? 0) + 1);
+  for (const t of tools) if (t.kind !== "thinking" && t.kind !== "said" && !t.declined && !t.waiting) n.set(t.verb, (n.get(t.verb) ?? 0) + 1);
   const declined = tools.filter((t) => t.declined).length;
   const edits = (n.get("Edited") ?? 0) + (n.get("Wrote") ?? 0);
   n.delete("Edited"); n.delete("Wrote");
@@ -172,7 +181,8 @@ export function workSummary(tools: ToolStep[]): string {
   const other = [...n].filter(([v]) => !known.includes(v)).reduce((a, [, c]) => a + c, 0);
   if (other) parts.push(`used ${plural(other, "other tool")}`);
   if (declined) parts.push(`declined ${declined}`);
-  if (!parts.length && tools.some((t) => t.kind === "thinking")) parts.push("thought it through");
+  // not while a step waits for you: "Waiting for you | thought it through" (design review 12)
+  if (!parts.length && tools.some((t) => t.kind === "thinking") && !tools.some((t) => t.waiting)) parts.push("thought it through");
   return parts.slice(0, 4).join(", ");
 }
 
@@ -238,9 +248,6 @@ function Working({ what, since }: { what: string; since?: number }) {
   );
 }
 
-/** "41 s", "2 min 5 s" */
-const dur = (s: number) => (s < 60 ? `${s} s` : s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s / 60} min`);
-
 /** The seconds since `since`, counting. */
 function Ticking({ since }: { since: number }) {
   const [, tick] = useState(0);
@@ -279,13 +286,17 @@ export function UserMessage({ message: m }: { message: Message }) {
 
 /** Why a reply ended without its answer: the provider's error in words, its reply as it came on request, and Retry; a
  * reply you stopped says only that. Until desktop 0.1.74 the error was its raw JSON in the answer's font, after a "⚠". */
-export function MessageFailure({ message: m }: { message: Message }) {
-  const { busy, onRetry } = useTranscript();
+export function MessageFailure({ message: m, index }: { message: Message; index?: number }) {
+  const { busy, onRetry, lastReply } = useTranscript();
   const [raw, setRaw] = useState(false);
   if (m.role !== "agent") return null;
   const notes = (m.notes ?? []).filter((n) => n !== m.failure?.raw);
-  const f = m.failure;
+  const f = m.failure, r = m.retrying?.match(/^([\s\S]*?): (\d+ (?:try|tries) failed)(, trying again)?/);
   return <>
+    {/* a call being tried again, while it is: "the provider is rate limiting this model | 2 tries failed | trying again" */}
+    {/* (no spinner of its own: the reply's one live status is under it) */}
+    {m.retrying && <div role="status" className="mt-1 flex items-center gap-2 text-[12.5px] text-muted"><RotateCcw size={12} strokeWidth={1.75} className="flex-none text-faint" aria-hidden="true" />
+      <Parts items={r ? [r[1], r[2], r[3] && "trying again"] : [readableError(m.retrying)]} /></div>}
     {m.info?.map((n, i) => <div key={`i${i}`} className="mt-1 flex items-start gap-2 text-[12.5px] text-muted"><Info size={14} strokeWidth={1.5} className="mt-0.5 flex-none" />{n}</div>)}
     {notes.map((n, i) => <div key={i} className="mb-2 flex items-start gap-2 text-[12.5px] text-bad"><CircleAlert size={14} strokeWidth={1.5} className="mt-0.5 flex-none" />{readableError(n)}</div>)}
     {f && !f.text && <div className="mt-1 flex items-center gap-1.5 text-[12.5px] text-muted"><Square size={11} strokeWidth={2} className="fill-current text-warn" />Stopped</div>}
@@ -295,11 +306,11 @@ export function MessageFailure({ message: m }: { message: Message }) {
           <CircleAlert size={16} strokeWidth={1.5} className="mt-px flex-none text-bad" />
           <div className="min-w-0 flex-1">
             <div className="font-medium text-ink">{f.stopped ? "Stopped after an error from the provider" : "The provider could not answer"}</div>
-            <div className="mt-0.5 text-ink-2">{f.text}</div>
+            <div className="mt-0.5 text-ink-2">{inlineCode(f.text)}</div>
             {f.raw && f.raw !== f.text && <button onClick={() => setRaw(!raw)} aria-expanded={raw} className="mt-1 text-[12px] text-muted hover:text-ink">{raw ? "Hide" : "Show"} its reply <ChevronRight size={12} strokeWidth={1.5} aria-hidden="true" className={`inline-block align-[-1px] transition-transform duration-150 ${raw ? "rotate-90" : ""}`} /></button>}
             {raw && <pre className="mt-1.5 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] text-muted">{f.raw}</pre>}
           </div>
-          {onRetry && f.ask && <button disabled={busy} onClick={() => onRetry(f.ask)} title="Send the same message again"
+          {onRetry && index === lastReply && <button disabled={busy} onClick={onRetry} title="Run this turn again: the error makes way for the new reply"
             className={`flex flex-none items-center gap-1.5 ${quietButton}`}><RotateCcw size={12} strokeWidth={1.75} />Retry</button>}
         </div>
       </div>
@@ -364,6 +375,8 @@ export function MessageMeta({ message: m }: { message: Message }) {
   useEffect(() => { if (!open) return; const t = setTimeout(() => body.current?.scrollIntoView({ block: "nearest", behavior: still() ? "auto" : "smooth" }), still() ? 0 : 200); return () => clearTimeout(t); }, [open]);
   if (m.role !== "agent" || !m.meta) return null;
   const text = m.prose.join("\n\n"), a = m.meta;
+  // a turn that gave no answer and cost nothing has no receipt ("$0 | 0 s" under a failed attempt)
+  if (!text && !a.in && !a.out && !(a.cost && a.cost > 0)) return null;
   return (
     // the answer's receipt: one faint line, always there (design review 11, variant A of mockups/v8.html; until then its
     // numbers showed on the answer's hover only), a click unfolds every model call and what it cost. Copy stays on hover

@@ -69,6 +69,8 @@ export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effo
     for (const c of rows.slice(0, 300)) groups.set(c.provider, [...(groups.get(c.provider) ?? []), c]);
     return { groups: [...groups], hidden: f ? Math.max(0, rows.length - 300) : all.length - rows.length };
   }, [models, q]);
+  // the score column only where a row has one (a "Score" header stood over an empty column, design review 12)
+  const scored = groups.some(([, rows]) => rows.some((c) => c.bench));
   return (
     <div ref={box} style={place.style} className={`tz-pop absolute ${place.side} left-0 z-10 flex w-[460px] flex-col overflow-hidden rounded-xl border border-line-strong bg-card shadow-composer`}>
       <div className="flex items-center gap-2 border-b border-line-soft px-3 py-2 text-muted">
@@ -85,7 +87,7 @@ export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effo
       <div className="tz-scrollfade overflow-auto">
         {/* what the numbers on the right are (until desktop 0.1.74 only a hover said: "8.4 (12)", "0.14 / 0.56") */}
         {groups.length > 0 && <div className="sticky top-0 z-[1] flex items-center gap-2 bg-[var(--pop)] px-3 pb-0.5 pt-1.5 text-[11px] text-faint">
-          <span className="flex-1" /><span className="w-[64px] text-right" title="tazuna bench: judge score out of 10 (runs)">Score</span>
+          <span className="flex-1" />{scored && <span className="w-[64px] text-right" title="tazuna bench: judge score out of 10 (runs)">Score</span>}
           <span className="w-[112px] text-right" title="dollars per million tokens: input / output">$ per M, in / out</span></div>}
         {!models && <div className="px-3 py-2 text-[12.5px] text-faint">Loading…</div>}
         {groups.map(([provider, rows]) => { const caution = models?.cautions?.[provider]; return (
@@ -95,7 +97,7 @@ export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effo
             {caution?.note && <div className={`px-3 pb-0.5 text-[11.5px] ${caution.warn ? "text-warn" : "text-faint"}`}>{caution.note}</div>}
             {rows.map((c) => { const toKey = c.no_key && onKey; return (
               <button key={`${c.model}|${c.url}|${c.key_env}|${c.label}`} disabled={!!c.why_not && !toKey} onClick={() => (toKey ? onKey(c.provider) : onPick(c))}
-                title={toKey ? `Add a ${c.provider} key in Settings` : c.why_not ?? c.place}
+                title={toKey ? (c.why_not === "not signed in" ? `Sign in to ${c.provider} in Settings` : `Add a ${c.provider} key in Settings`) : c.why_not ?? c.place}
                 className="flex w-full items-center gap-2 px-3 py-[5px] text-left hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent">
                 <span className="w-3.5 flex-none text-accent">{c.current && <Check size={14} strokeWidth={1.75} />}</span>
                 <span className="min-w-0 flex-1">
@@ -105,13 +107,13 @@ export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effo
                   {/* no key: the desktop's own way to one (the core's words name the terminal's /login) */}
                   {c.why_not && <span className="block truncate text-[11.5px] text-faint">{c.no_key ? NO_KEY[c.why_not ?? ""] ?? NO_KEY["no key"] : c.why_not}</span>}
                 </span>
-                <span className="w-[64px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-faint" title="tazuna bench: judge score (runs)">{c.bench}</span>
+                {scored && <span className="w-[64px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-faint" title="tazuna bench: judge score (runs)">{c.bench}</span>}
                 <span className="w-[112px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-muted" title="$ per million tokens: input / output">{c.price === "plan" ? "on your plan" : price(c.price)}</span>
               </button>
             ); })}
           </div>
         ); })}
-        {hidden > 0 && <div className="px-3 py-2 text-[11.5px] text-faint">{q ? `${hidden} more: narrow the search` : `${hidden} more need a key or trust: type to search them`}</div>}
+        {hidden > 0 && <div className="px-3 py-2 text-[11.5px] text-faint">{q ? `${hidden.toLocaleString("en-US")} more: narrow the search` : `${hidden.toLocaleString("en-US")} more models: type to search them`}</div>}
       </div>
     </div>
   );
@@ -146,7 +148,7 @@ export function EffortMenu({ efforts, current, onPick, onClose }: { efforts: str
   return (
     <Menu onClose={onClose} width={160}>
       {efforts.map((e) => (
-        <button key={e} onClick={() => onPick(e)} className="flex w-full items-center gap-2 px-3 py-[5px] text-left hover:bg-hover">
+        <button key={e} role="menuitemradio" aria-checked={e === current} onClick={() => onPick(e)} className="flex w-full items-center gap-2 px-3 py-[5px] text-left hover:bg-hover">
           <span className="w-3.5 text-accent">{e === current && <Check size={14} strokeWidth={1.75} />}</span>{e}
         </button>
       ))}

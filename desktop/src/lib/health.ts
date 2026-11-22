@@ -94,10 +94,11 @@ export function items(acc: Accounts | null, fallback: { plan5h: number | null; p
     const amount = over ? -Number(over[1]) : left ? Number(left[1]) * (c.left!.startsWith("-") ? -1 : 1) : null;
     const level: Level = amount == null ? "unknown" : amount <= 0 ? "out" : amount < 2 ? "low" : "ok";
     out.push({ key: `credit:${c.provider}`, provider: c.provider, name: c.provider, group: "Credit with each provider", label: c.provider, note: amount == null ? "no balance from its API" : undefined,
-      value: amount == null ? undefined : amount < 0 ? `$${(-amount).toFixed(2)} over` : `$${amount.toFixed(2)} left`, level, page: c.page,
+      value: amount == null ? undefined : amount < 0 ? `$${(-amount).toFixed(2)} below zero` : `$${amount.toFixed(2)} left`, level, page: c.page,
       advice: amount == null ? undefined : amount <= 0 ? `Your ${c.provider} credit is ${amount < 0 ? `$${(-amount).toFixed(2)} past zero` : "used up"}. Add credits, or runs on ${c.provider} will fail.`
         : `${c.provider} has $${amount.toFixed(2)} left. Add credits soon, or runs on ${c.provider} will stop.`,
-      short: amount == null ? c.provider : amount < 0 ? `${c.provider} $${(-amount).toFixed(2)} over` : `${c.provider} $${amount.toFixed(2)} left` });
+      // "below zero", not "over": "OpenRouter $0.17 over" read as over a limit (design review 12)
+      short: amount == null ? c.provider : amount < 0 ? `${c.provider} $${(-amount).toFixed(2)} below zero` : `${c.provider} $${amount.toFixed(2)} left` });
   }
   for (const a of acc?.omniroute ?? []) for (const w of a.windows) {
     if (w.unlimited || w.used == null) continue;
@@ -148,7 +149,8 @@ export function demo() {
   const acc: Accounts = { plan: [{ label: "Current session", used: 34, resets: "in 4 h" }, { label: "Current week (all models)", used: 93, resets: "Nov 21 at 3am (Europe/Berlin)" }], plan_notes: [],
     credits: [{ provider: "SubRouter", left: "$12.40 left", page: "" }, { provider: "OpenRouter", left: "$0.17 over its credit", page: "" }, { provider: "Mortera", left: null, page: "" }],
     omniroute: [{ provider: "agy", name: "a", plan: "Ultra", status: "valid", windows: [{ group: "Gemini Models", window: "weekly", used: 12, resets: null, unlimited: false }] }] };
-  const all = items(acc, { plan5h: null, planWeek: null });
+  // at a fixed time: the week's reset (Nov 21) was over once that day had passed, and the check failed by the calendar
+  const all = items(acc, { plan5h: null, planWeek: null }, new Date(2026, 10, 19, 15, 0).getTime());
   // a conversation's newer reading replaces the 5 hours and the week, an older one nothing; the week on one model stays
   const fable = { ...acc, plan: [...acc.plan!, { label: "Current week (Fable)", used: 15, resets: "" }] };
   const used = (a: Accounts | null) => a!.plan!.map((r) => r.used).join(",");
@@ -172,7 +174,7 @@ export function demo() {
     && mine(all, { provider: "SubRouter" } as ModelChoice, "deepseek-v4.1-flash")[0]?.key === "credit:SubRouter"
     && mine(all, undefined, "claude-opus-5-5").map((i) => i.key).join() === "claude:5 hours,claude:week"
     && mine(all, { provider: "OmniRoute" } as ModelChoice, "agy/gemini-4-hydrogen-high")[0]?.name === "OmniRoute agy, Gemini"
-    && all.find((i) => i.key === "credit:OpenRouter")!.short === "OpenRouter $0.17 over";
+    && all.find((i) => i.key === "credit:OpenRouter")!.short === "OpenRouter $0.17 below zero";
   if (!ok) throw new Error(`health: ${JSON.stringify(all.map((i) => [i.key, i.level, i.short]))}`);
   console.log("health ok");
 }

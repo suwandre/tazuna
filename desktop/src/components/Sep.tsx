@@ -11,3 +11,10 @@ export function Parts({ items, className }: { items: (ReactNode | string | null 
   const shown = items.flatMap((x) => (typeof x === "string" ? x.split(" · ") : [x])).filter((x) => x !== null && x !== undefined && x !== false && x !== "");
   return <span className={className}>{shown.map((x, i) => <Fragment key={i}>{i > 0 && <Sep />}{x}</Fragment>)}</span>;
 }
+
+/** Lines added and removed, "+3 −1", in the result colours; a side with nothing is left out, never "+3 −0" (design review
+ * 12). */
+export const Counts = ({ added, removed, className = "" }: { added: number; removed: number; className?: string }) => <>
+  {added > 0 && <span className={`tabular-nums text-ok ${className}`}>+{added}</span>}{added > 0 && removed > 0 && " "}
+  {removed > 0 && <span className={`tabular-nums text-bad ${className}`}>−{removed}</span>}
+</>;

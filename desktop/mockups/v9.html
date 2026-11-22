@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>tazuna · design review 12 prototype (v9): the title bar, the open work panel</title>
+<!-- Design review 12 (2026-11-22). Two questions, each a switch with the app as it is as one option:
+     A. the title bar: today the traffic lights, the sidebar's brand row and the sheet's header are three heights;
+     B. an open work panel and the reading column: today the column jumps left when the panel opens.
+     The window is drawn from DESIGN.md's tokens and the bundled fonts, at the real window's sizes (1440×900, 1280×800,
+     the minimum 960×600). The traffic lights are drawn where macOS puts them (A1: the default; A2, A3: moved with
+     Tauri's `trafficLightPosition`). The panel at the bottom right switches variants; a link opens a state
+     (v9.html#a=a3&b=b3&open=true&theme=light&w=1440). Not the app. -->
+<style>
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Regular.woff2") format("woff2"); font-weight: 400; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-Medium.woff2") format("woff2"); font-weight: 500; }
+@font-face { font-family: "Geist"; src: url("../node_modules/geist/dist/fonts/geist-sans/Geist-SemiBold.woff2") format("woff2"); font-weight: 600; }
+@font-face { font-family: "Geist Mono"; src: url("../node_modules/geist/dist/fonts/geist-mono/GeistMono-Variable.woff2") format("woff2"); font-weight: 100 900; }
+@font-face { font-family: "Source Serif 4"; src: url("../node_modules/@fontsource-variable/source-serif-4/files/source-serif-4-latin-wght-normal.woff2") format("woff2"); font-weight: 200 900; }
+/* DESIGN.md's tokens (dark: the lifted sheet of review 11) */
+:root {
+  --main:#fbfaf7; --card:#fffefb; --field:#efebe3; --hover:#e7e3db; --selected:#e6e1f2;
+  --ink:#23221e; --ink-2:#3f3c35; --muted:#5b574f; --faint:#69655d; --line:#e3ded3; --line-soft:#ece8df; --line-strong:#d8d2c5;
+  --accent:#3d4aa8; --accent-ink:#2f3a8f; --on-accent:#fff; --ok:#3b7d4f; --bad:#b4473a; --warn:#a76a14;
+  --code-string:#7a5a1c; --code-number:#8a4a6b; --desk:#efebe3;
+  --sheet:0 0 0 1px #2321190a, 0 1px 2px #2321190f, 0 8px 28px #2321190d;
+  --shadow:0 1px 2px #2321190d, 0 4px 14px #23211908; --pop:0 2px 6px #2321190f, 0 14px 36px #23211924; --popfill:var(--card);
+  --ui:"Geist", system-ui, sans-serif; --mono:"Geist Mono", ui-monospace, monospace; --prose:"Source Serif 4", Georgia, serif;
+}
+.dark {
+  --main:#211f1b; --card:#282622; --field:#302e29; --hover:#37342e; --selected:#2b2c45;
+  --ink:#ece8df; --ink-2:#d2cdc2; --muted:#afaa9e; --faint:#a29d95; --line:#35322c; --line-soft:#2b2925; --line-strong:#423e37;
+  --accent:#8f9bf0; --accent-ink:#aab3f5; --on-accent:#14152a; --ok:#7cc08f; --bad:#e08b7f; --warn:#e0b46a;
+  --code-string:#d6b878; --code-number:#d9a0c0; --desk:#121110;
+  --sheet:0 0 0 1px #ffffff14, 0 1px 2px #00000080, 0 12px 34px #00000066;
+  --shadow:none; --pop:0 0 0 1px #ffffff0a, 0 10px 32px #00000080; --popfill:#2e2c27;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body { font: 13.5px/1.5 var(--ui); color: var(--ink); background: #0d0d0c; overflow: hidden; -webkit-font-smoothing: antialiased; }
+body.light { background: #d9d5cc; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: default; }
+.mono { font-family: var(--mono); font-size: 12.5px; }
+.faint { color: var(--faint); } .muted { color: var(--muted); } .ok { color: var(--ok); } .bad { color: var(--bad); }
+.hair { display: inline-block; width: 1px; height: .8em; background: var(--line-strong); margin: 0 7px; transform: translateY(.08em); }
+kbd { font: 11px var(--mono); border: 1px solid var(--line); border-radius: 5px; padding: 0 5px; color: var(--faint); }
+.ico { width: 15px; height: 15px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.ico.s { width: 13px; height: 13px; } .ico.xs { width: 11px; height: 11px; stroke-width: 2; }
+[data-k] { cursor: pointer; }
+
+/* the stage: the window at its real size, scaled to the page */
+.stage { position: fixed; inset: 0 348px 0 0; }
+body.pmin .stage, body.shot .stage { right: 0; }
+.frame { position: absolute; left: 50%; top: 50%; transform-origin: center; overflow: hidden; border-radius: 12px; box-shadow: 0 20px 60px #0007; background: var(--desk); }
+body.shot .frame { box-shadow: none; }
+
+/* ---------- the window: paper on the desk ---------- */
+.win { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--desk); }
+.cols { flex: 1; min-height: 0; display: grid; position: relative; }
+.side { padding: 0 10px 10px; display: flex; flex-direction: column; min-height: 0; position: relative; }
+.main { background: var(--main); display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; border-radius: 12px; box-shadow: var(--sheet); overflow: hidden; margin: 8px 8px 0 0; }
+.rail { padding: 18px 16px 16px 10px; display: flex; flex-direction: column; gap: 12px; overflow: hidden; position: relative; }
+
+/* the traffic lights, as macOS draws them */
+.lights { position: absolute; z-index: 30; display: flex; gap: 8px; }
+.lights i { width: 12px; height: 12px; border-radius: 50%; display: block; box-shadow: inset 0 0 0 .5px #00000033; }
+.lights i:nth-child(1) { background: #ff5f57; } .lights i:nth-child(2) { background: #febc2e; } .lights i:nth-child(3) { background: #28c840; }
+
+/* sidebar */
+.brand { display: flex; align-items: center; gap: 9px; padding: 2px 8px 12px; font-weight: 600; letter-spacing: -.01em; font-size: 14px; }
+.trow { display: flex; align-items: center; flex: none; }
+.trow .brand { padding: 0; gap: 8px; }
+.tile { display: grid; place-items: center; border-radius: 22%; background: var(--accent); flex: none; }
+.tile svg { fill: none; stroke: var(--on-accent); stroke-linecap: round; stroke-linejoin: round; }
+.search { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: color-mix(in srgb, var(--field) 70%, var(--desk)); border-radius: 7px; padding: 7px 9px; color: var(--muted); margin-bottom: 4px; }
+.search kbd { margin-left: auto; }
+.trow .search { flex: 1; margin: 0; padding: 0 8px; height: 28px; }
+.act { display: flex; align-items: center; gap: 9px; padding: 7px 9px; border-radius: 7px; color: var(--ink-2); }
+.list { flex: 1; overflow: hidden; margin: 6px -4px 0; padding: 0 4px; position: relative;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 22px), transparent); mask-image: linear-gradient(to bottom, transparent 0, #000 14px, #000 calc(100% - 22px), transparent); }
+.grp { display: flex; justify-content: space-between; padding: 12px 9px 4px; font-size: 11.5px; font-weight: 500; color: var(--faint); }
+.row { display: block; padding: 5px 9px; border-radius: 7px; color: var(--ink-2); }
+.row.on { background: color-mix(in srgb, var(--selected) 85%, var(--desk)); color: var(--ink); }
+.row .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .s { display: flex; gap: 6px; font-size: 11.5px; color: var(--faint); white-space: nowrap; }
+.row .s .age { margin-left: auto; font-variant-numeric: tabular-nums; }
+.settings { padding-top: 6px; margin-top: 2px; } .settings .act { color: var(--muted); }
+
+/* the sheet's header, and the toolbar on the desk (A2 alt) */
+.head { flex: none; display: flex; align-items: center; gap: 8px; padding: 0 16px 0 28px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; min-width: 0; }
+.crumb { color: var(--muted); font-weight: 500; } .ttl { font-weight: 500; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex-shrink: .3; }
+.full { font-size: 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; margin-left: 4px; min-width: 0; }
+.hb { margin-left: auto; display: flex; gap: 4px; flex: none; }
+.hb span, .tg { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: var(--muted); flex: none; }
+.hb span.on { background: var(--hover); color: var(--ink); }
+.tbar { height: 48px; flex: none; display: flex; align-items: center; white-space: nowrap; position: relative; }
+.tbar .tside { width: 248px; flex: none; height: 100%; display: flex; align-items: center; padding-left: 84px; }
+.tbar .tmain { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 8px; padding: 0 16px 0 28px; }
+
+/* the transcript */
+.scroll { flex: 1; overflow-y: auto; min-height: 0; position: relative; scrollbar-width: none; }
+.scroll::-webkit-scrollbar { display: none; }
+.scroll.fade { -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 26px, #000 calc(100% - 34px), transparent); mask-image: linear-gradient(to bottom, transparent 0, #000 26px, #000 calc(100% - 34px), transparent); }
+.doc { max-width: 756px; margin: 0 auto; padding: 26px 28px 34px; }
+.you { display: inline-block; background: var(--field); border-radius: 10px; padding: 9px 14px; color: var(--ink); margin-top: 14px; }
+.fold { margin: 14px 0 10px; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+.prose { font: 15.5px/1.62 var(--prose); color: var(--ink); }
+.prose p { margin: 0 0 10px; }
+.prose code { font: 12.5px var(--mono); background: var(--field); padding: 1px 5px; border-radius: 4px; }
+.tbl { border-collapse: collapse; font: 13px var(--ui); margin: 2px 0 14px; min-width: 300px; }
+.tbl th { font-size: 11.5px; font-weight: 500; color: var(--faint); text-align: left; padding: 0 18px 6px 0; border-bottom: 1px solid var(--line-strong); }
+.tbl td { padding: 7px 18px 7px 0; border-bottom: 1px solid var(--line-soft); font-variant-numeric: tabular-nums; }
+.tbl .r { text-align: right; } .tbl tr:last-child td { border-bottom: 0; }
+.code { border: 1px solid var(--line); border-radius: 8px; background: var(--card); margin: 0 0 12px; overflow: hidden; }
+.code .ch { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px 4px 12px; border-bottom: 1px solid var(--line-soft); font: 11.5px var(--ui); color: var(--faint); }
+.code .ch span:last-child { display: inline-flex; align-items: center; gap: 4px; }
+.code pre { padding: 10px 12px; font: 12.5px/1.55 var(--mono); white-space: pre; overflow: hidden; }
+.k { color: var(--accent-ink); } .str { color: var(--code-string); } .num { color: var(--code-number); } .cm { color: var(--faint); font-style: italic; }
+/* the change card: one card, its rows apart by rules */
+.cc { border: 1px solid var(--line); border-radius: 8px; background: var(--card); margin: 4px 0 8px; }
+.cc .f { display: flex; align-items: center; gap: 8px; padding: 7px 8px 7px 12px; border-bottom: 1px solid var(--line-soft); }
+.cc .f .ico { color: var(--faint); } .cc .f .p { font: 12.5px var(--mono); color: var(--ink-2); } .cc .f .st { font-size: 12px; color: var(--faint); }
+.cc .f .n { margin-left: auto; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.cc .ft { display: flex; align-items: center; gap: 6px; padding: 7px 8px 7px 12px; font-size: 12.5px; color: var(--muted); }
+.cc .ft .btn:first-of-type { margin-left: auto; }
+.btn { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-strong); border-radius: 7px; padding: 2px 9px; font-size: 12.5px; color: var(--ink); background: var(--card); }
+.meta { display: flex; align-items: center; font-size: 12px; color: var(--faint); margin: 6px 0 4px; font-variant-numeric: tabular-nums; }
+.meta b { font-weight: 500; color: var(--muted); } .meta > .ico:first-child { margin-right: 6px; } .meta .q { margin-left: 4px; }
+
+.composer { margin: 0 auto 18px; width: min(700px, calc(100% - 56px)); border: 1px solid var(--line-strong); border-radius: 12px; background: var(--card); padding: 12px 12px 10px 16px; box-shadow: var(--shadow); color: var(--faint); flex: none; white-space: nowrap; overflow: hidden; }
+.pills { display: flex; gap: 6px; margin-top: 14px; align-items: center; }
+.pill { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; font-size: 12px; color: var(--ink-2); background: var(--field); white-space: nowrap; }
+.pill .ico { width: 13px; height: 13px; } .pill .dn { width: 11px; height: 11px; color: var(--faint); margin-left: -1px; } .pill .lvl { color: var(--faint); }
+.clip { width: 28px; height: 28px; display: grid; place-items: center; color: var(--faint); }
+.send { margin-left: auto; width: 30px; height: 30px; border-radius: 50%; border: 1px solid var(--line); display: grid; place-items: center; color: var(--faint); }
+
+.sbar { height: 28px; flex: none; display: flex; align-items: center; padding: 0 14px; font-size: 12px; color: var(--muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sbar b { font-weight: 500; color: var(--ink); }
+.meter { display: inline-block; width: 30px; height: 4px; border-radius: 3px; background: var(--line-strong); margin: 0 8px 0 6px; position: relative; overflow: hidden; transform: translateY(-1px); }
+.meter i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--accent); border-radius: 3px; } .meter i.w { background: var(--warn); }
+.sdot { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); display: inline-block; margin-right: 7px; }
+.sp { flex: 1; }
+.ver { display: inline-flex; align-items: center; gap: 6px; }
+
+/* the work panel: sections apart by a rule, on the desk (docked) or on one floating sheet (B2) */
+.sec h4 { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--ink); margin-bottom: 6px; height: 20px; }
+.sec h4 .n { margin-left: auto; font-weight: 400; font-size: 12px; font-variant-numeric: tabular-nums; }
+.sec { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.sec:last-child { border-bottom: 0; padding-bottom: 0; }
+.sec .br { font: 12.5px var(--mono); color: var(--faint); margin-bottom: 4px; }
+.sec .fr { display: flex; justify-content: space-between; font-size: 12.5px; padding: 3px 0; color: var(--ink); }
+.sec .fr .n { font-variant-numeric: tabular-nums; }
+.sec .btn { margin-top: 8px; }
+.sec .m { font-size: 12px; line-height: 18px; padding: 3px 4px; margin: 0 -4px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border-radius: 4px; }
+.pop { position: absolute; z-index: 25; width: 300px; background: var(--popfill); border-radius: 12px; box-shadow: var(--pop); padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 12px; animation: pop 160ms cubic-bezier(.2,0,0,1); }
+.light .pop { border: 1px solid var(--line); }
+@keyframes pop { from { opacity: 0; transform: translateX(8px); } }
+/* the tab on the sheet's right edge (the panel shut, or B2's handle) */
+.ptab { position: absolute; right: 0; z-index: 3; display: inline-flex; align-items: center; gap: 6px; background: var(--desk); border: 1px solid var(--line); border-right: 0; border-radius: 7px 0 0 7px; padding: 4px 9px 4px 8px; font-size: 12px; color: var(--muted); }
+.ptab b { font-weight: 500; color: var(--faint); font-variant-numeric: tabular-nums; } .ptab .ico { width: 13px; height: 13px; }
+.ptab.on { color: var(--ink); background: var(--hover); } .ptab.on b { color: var(--ink-2); }
+
+/* prototype marks: drag regions, the column's edge */
+.showdrag .cols { background-image: repeating-linear-gradient(135deg, #e2513c55 0 2px, transparent 2px 7px); }
+.showdrag .side, .showdrag .rail { background: var(--desk); }
+.showdrag [data-drag] { position: relative; }
+.showdrag [data-drag]::after { content: ""; position: absolute; inset: 0; z-index: 28; pointer-events: none; outline: 1.5px dashed #e2513c; outline-offset: -1px;
+  background-image: repeating-linear-gradient(135deg, #e2513c55 0 2px, transparent 2px 7px); }
+.showdrag .nodrag { position: relative; z-index: 29; }
+.guide { position: absolute; z-index: 26; width: 0; border-left: 1.5px dashed #e2513c; pointer-events: none; }
+.guide span { position: absolute; bottom: 1px; left: 5px; white-space: nowrap; font: 600 11px var(--ui); color: #fff; background: #e2513c; padding: 1px 6px; border-radius: 99px; }
+
+/* the switch panel */
+.proto { position: fixed; right: 14px; bottom: 14px; z-index: 50; width: 320px; max-height: calc(100vh - 28px); overflow: auto; background: #111; color: #eee; border-radius: 12px; padding: 10px 12px 12px; font: 12px/1.45 system-ui, sans-serif; box-shadow: 0 10px 30px #0008; }
+body.shot .proto { display: none; }
+.proto b { display: block; font-size: 11px; color: #999; text-transform: uppercase; letter-spacing: .06em; margin: 9px 0 4px; }
+.proto b:first-of-type { margin-top: 0; }
+.proto .opts { display: flex; flex-wrap: wrap; gap: 4px; }
+.proto button { background: #2a2a2a; color: #ddd; border-radius: 6px; padding: 3px 8px; font-size: 12px; cursor: pointer; }
+.proto button.on { background: #5b67d8; color: #fff; }
+.proto button:disabled { opacity: .4; cursor: default; }
+.proto ol { margin: 6px 0 0 18px; color: #ccc; } .proto ol li { margin: 4px 0; } .proto ol li::marker { color: #888; }
+.proto .min { position: absolute; right: 12px; top: 8px; color: #888; cursor: pointer; }
+.proto.small > :not(.min):not(.keep) { display: none; }
+.proto .keep { color: #bbb; }
+.proto .note { color: #f0b37e; margin-top: 6px; }
+</style>
+</head>
+<body>
+<div class="stage"><div class="frame" id="frame"></div></div>
+<div class="proto" id="proto"></div>
+<script>
+const S = { a: "a2", b: "b3", open: false, theme: "dark", w: "1440", drag: false, guide: true, shot: false };
+const SIZES = { 1440: 900, 1280: 800, 960: 600 };
+
+// ── icons (Lucide paths) ──
+const P = {
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>', plus: '<path d="M5 12h14M12 5v14"/>',
+  folder: '<path d="m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>',
+  gear: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
+  panel: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M15 3v18"/>', panelL: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/>',
+  side: '<path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z"/><path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/>',
+  zap: '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>',
+  down: '<path d="m6 9 6 6 6-6"/>', right: '<path d="m9 18 6-6-6-6"/>',
+  clip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  up: '<path d="m5 12 7-7 7 7M12 19V5"/>',
+  branch: '<path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>',
+  copy: '<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>',
+  refresh: '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/>',
+};
+const ic = (n, c = "") => `<svg class="ico ${c}" viewBox="0 0 24 24">${P[n]}</svg>`;
+const MARK = '<path d="M16.2 4.6Q12.4 6 7.6 6.4"/><path d="M7.2 10.2h9.6M5.4 14.2h13.2"/><path d="M12 6.2v11.3a2 2 0 1 1-2.6-1.9"/>';
+const mark = (size) => `<span class="tile" style="width:${size}px;height:${size}px"><svg viewBox="0 0 24 24" width="${Math.round(size * .8)}" height="${Math.round(size * .8)}" stroke-width="${size <= 16 ? 2.4 : 2.2}">${MARK}</svg></span>`;
+const hair = '<span class="hair"></span>';
+const dn = `<svg class="ico dn" viewBox="0 0 24 24">${P.down}</svg>`;
+
+// ── geometry: where each variant puts the rows, the sheet, the column ───────────────────────────────────────────────
+// A1: the real window today. A2: the sheet's header centred on the lights' row (lights moved to y 28). A2 alt: a toolbar
+// on the desk across the window, the sheet under it. A3: the sheet runs to the top edge, its header is the title bar.
+function geom() {
+  const W = +S.w, H = SIZES[W], narrow = W < 1000, a = S.a;
+  const sheetTop = a === "a3" ? 0 : a === "a2b" ? 0 : 8;   // a2b: the sheet's top is under the 48 px toolbar
+  const hh = { a1: 48, a2: 40, a2b: 0, a3: 44 }[a];          // the sheet's header row
+  const rowY = { a1: 16, a2: 28, a2b: 24, a3: 22 }[a];       // the lights' centre
+  const lx = a === "a1" ? 10 : 20;                           // A1: macOS's default inset; A2, A3: trafficLightPosition x 20
+  const sheetL = narrow ? 8 : 248, sheetR = W - 8;            // the sheet with the panel shut
+  const closedW = sheetR - sheetL;
+  const docL = Math.max(0, (closedW - 756) / 2);             // the column's box (28 px padding each side) as centring puts it
+  let mode = S.open ? S.b : "shut", textW = 700, fallback = 0;
+  if (mode === "b3") {
+    textW = Math.min(700, closedW - 300 - docL - 56);        // the panel takes 300 px from the sheet's right
+    if (textW < 580) { fallback = textW; mode = "b2"; }       // under 580 px the column would read cramped: B2 instead
+  }
+  const docked = mode === "b1" || mode === "b3";
+  return { W, H, narrow, a, sheetTop, hh, rowY, lx, sheetL, closedW, docL, mode, textW, fallback, docked, textX: sheetL + docL + 28 };
+}
+
+// ── pieces ───────────────────────────────────────────────────────────────────────────────────────────────────────────
+const row = (t, s, age, on) => `<div class="row ${on ? "on" : ""}"><div class="t">${t}</div><div class="s"><span>${s}</span><span class="age">${age}</span></div></div>`;
+function sidebar(g) {
+  let top;
+  if (g.a === "a1") top = `<div data-drag style="height:38px;flex:none;margin:0 -10px"></div><div class="brand" data-drag>${mark(22)}<span>tazuna</span></div>
+      <div class="search nodrag">${ic("search", "s")}Search<kbd>⌘K</kbd></div>`;
+  else if (g.a === "a2") top = `<div class="trow" data-drag style="height:48px;margin:0 -10px 8px;padding:8px 0 0 84px"><span class="brand">${mark(20)}<span>tazuna</span></span></div>
+      <div class="search nodrag">${ic("search", "s")}Search<kbd>⌘K</kbd></div>`;
+  else if (g.a === "a2b") top = `<div class="search nodrag">${ic("search", "s")}Search<kbd>⌘K</kbd></div>`;
+  else top = `<div class="trow" data-drag style="height:44px;margin:0 -10px 6px;padding:0 10px 0 84px"><span class="search nodrag">${ic("search", "s")}Search<kbd>⌘K</kbd></span></div>`;
+  return `<aside class="side" style="${g.a === "a2b" ? "padding-top:8px" : ""}">${top}
+    <div class="act">${ic("plus")}New chat</div><div class="act">${ic("folder")}Open folder</div>
+    <div class="list">
+      <div class="grp"><span>Today</span></div>
+      ${row("The retry test fails on CI but passes locally", "api-gateway", "now", true)}${row("Names for a grey cat", "chat", "1h")}${row("Test", "chat", "2h")}
+      ${row("Why is the CI build so slow?", "api-gateway", "3h")}
+      <div class="grp"><span>Yesterday</span></div>${row("Refund for a train ticket", "chat", "11:09pm")}
+      <div class="grp"><span>This week</span></div>${row("Question 1: what about edge cases?", "chat", "Wed")}${row("Speed up the CI build", "api-gateway", "Sun")}
+      <div class="grp"><span>Projects</span></div><div class="act">${ic("right", "s")}api-gateway</div>
+    </div>
+    <div class="settings"><div class="act">${ic("gear")}Settings</div></div>
+  </aside>`;
+}
+function crumbs(g) {
+  const tg = g.narrow ? `<span class="tg nodrag" style="${g.a === "a1" ? "margin-left:-12px" : ""}" title="Conversations">${ic("panelL")}</span>` : "";
+  return `${tg}<span class="crumb">api-gateway</span><span class="faint">/</span><span class="ttl">The retry test fails on CI but passes locally</span><span class="full">— Can you find out why and fix it?</span>`;
+}
+function buttons(g) {
+  const on = S.open && g.mode !== "b2";
+  return `<span class="hb nodrag"><span title="Side chat">${ic("side")}</span><span class="${S.open ? "on" : ""}" data-k="open" data-val="${!S.open}" title="The work panel (⌘\\)">${ic("panel")}</span></span>`;
+}
+function statusBar(g) {
+  return `<div class="sbar"><span class="sdot"></span>Claude<span class="faint" style="margin-left:6px">5h</span><span class="meter"><i style="width:36%"></i></span><b>36%</b><span class="faint" style="margin-left:6px">2h 14m</span>
+    ${hair}<span class="faint">wk</span><span class="meter"><i class="w" style="width:79%"></i></span><b>79%</b><span class="faint" style="margin-left:6px">1d 2h</span>
+    <span style="margin-left:10px;color:var(--faint)">${ic("refresh", "xs")}</span>
+    <span class="sp"></span><span class="faint">context</span>&nbsp;<b>9%</b>&nbsp;<span class="faint">of 200k</span>${hair}<span class="faint">cache</span>&nbsp;<b>32%</b>${hair}<span class="faint">this chat</span>&nbsp;<b>$0.052</b>${hair}
+    <span class="ver faint">${g.a === "a3" ? mark(14) : ""}tazuna 0.1.102</span></div>`;
+}
+function transcript() {
+  return `
+    <div class="prose"><p>So the second attempt and the test's wait race each other: whichever comes first decides the run, and CI's runners are slower than this machine.</p></div>
+    <div class="meta">${ic("right", "s")}<b>$0.012</b>${hair}9.8k in<span class="q">(61% cached)</span>${hair}310 out${hair}4 s</div>
+    <div class="you">Make the wait follow the backoff, and keep the test under a second.</div>
+    <div class="fold">${ic("right", "s")}Worked 5 s${hair}edited 2 files, ran 2 commands</div>
+    <div class="prose">
+      <p>The test waited a fixed 100 ms for the second attempt, but the backoff starts at 80 ms with up to 25% jitter, so on a slow runner the attempt lands after the wait:</p>
+      <table class="tbl"><tr><th>Runner</th><th class="r">Second attempt</th><th class="r">Test waited</th><th>Result</th></tr>
+        <tr><td>This machine</td><td class="r">84 ms</td><td class="r">100 ms</td><td class="ok">passes</td></tr>
+        <tr><td>CI, median</td><td class="r">97 ms</td><td class="r">100 ms</td><td class="ok">passes</td></tr>
+        <tr><td>CI, slowest 10%</td><td class="r">112 ms</td><td class="r">100 ms</td><td class="bad">fails</td></tr></table>
+      <p>The test now waits for the longest the backoff can take, read from the same schedule, on fake timers, so the runner's speed no longer matters:</p>
+      <div class="code"><div class="ch"><span>ts</span><span>${ic("copy", "s")}Copy</span></div><pre><span class="cm">// src/retry.ts</span>
+<span class="k">export const</span> maxDelay = (n: <span class="k">number</span>) =&gt; base(n) * <span class="num">1.25</span>;
+
+<span class="cm">// tests/retry.test.ts</span>
+<span class="k">await</span> vi.advanceTimersByTimeAsync(maxDelay(<span class="num">1</span>));
+expect(calls).toBe(<span class="num">2</span>);</pre></div>
+      <p>The suite passed twice in a row: 48 tests, the retry test in 0.2 s.</p>
+    </div>
+    <div class="cc">
+      <div class="f">${ic("file", "s")}<span class="p">src/retry.ts</span><span class="n"><span class="ok">+2</span> <span class="bad">−1</span></span><span class="btn">Diff</span></div>
+      <div class="f">${ic("file", "s")}<span class="p">tests/retry.test.ts</span><span class="n ok">+3</span><span class="btn">Diff</span></div>
+      <div class="ft">2 files changed in this turn<span class="btn">Review</span><span class="btn">Undo</span></div>
+    </div>
+    <div class="meta">${ic("right", "s")}<b>$0.031</b>${hair}15.0k in<span class="q">(32% cached)</span>${hair}800 out${hair}5 s</div>`;
+}
+function panelBody() {
+  return `<div class="sec"><h4>${ic("branch")}Changes<span class="n"><span class="ok">+5</span> <span class="bad">−1</span></span></h4>
+      <div class="br">master</div>
+      <div class="fr"><span>src/retry.ts</span><span class="n"><span class="ok">+2</span> <span class="bad">−1</span></span></div>
+      <div class="fr"><span>tests/retry.test.ts</span><span class="n ok">+3</span></div>
+      <span class="btn">Review</span></div>
+    <div class="sec"><h4>Your messages<span class="n faint">3</span></h4>
+      <div class="m">The retry test fails on CI but passes locally. Can you find out why and fix it?</div>
+      <div class="m">Show me where the 100 ms comes from</div>
+      <div class="m">Make the wait follow the backoff, and keep the test under a second.</div></div>`;
+}
+
+// ── the window ───────────────────────────────────────────────────────────────────────────────────────────────────────
+function win(g) {
+  const cols = [g.narrow ? null : "248px", "minmax(0, 1fr)", g.docked ? "300px" : null].filter(Boolean).join(" ");
+  const r = g.a === "a3" ? "0 0 12px 12px" : "12px";
+  const mainStyle = `margin:${g.sheetTop}px ${g.docked ? 0 : 8}px 0 ${g.narrow ? 8 : 0}px;border-radius:${r}`;
+  // the header's left padding clears the lights when they sit over the sheet (narrow window, A2 and A3)
+  const pl = g.narrow && g.a !== "a1" ? 76 : 28;
+  const head = g.a === "a2b" ? "" : `<div class="head" data-drag style="height:${g.hh + 1}px;padding-left:${pl}px">${crumbs(g)}${buttons(g)}</div>`;
+  const tabTop = g.hh + 13;
+  const tab = g.docked ? "" : `<span class="ptab ${S.open ? "on" : ""}" style="top:${tabTop}px" data-k="open" data-val="${!S.open}" title="The work panel (⌘\\)">${ic("branch")}Changes<b>2</b></span>`;
+  // the column: centred (shut, B1, B2), or kept where centring put it with the panel shut (B3)
+  const b3 = g.mode === "b3";
+  const docStyle = b3 ? `margin:0 0 0 ${g.docL}px;max-width:none;width:${g.textW + 56}px` : "";
+  const boxStyle = b3 ? `margin:0 0 18px ${g.docL + 28}px;width:${g.textW}px` : "";
+  const bar = g.a !== "a2b" ? "" : `<div class="tbar" data-drag>${g.narrow ? `<div class="tmain" style="padding-left:84px">${crumbs(g)}${buttons(g)}</div>`
+    : `<div class="tside"><span class="brand" style="padding:0;gap:8px">${mark(20)}<span>tazuna</span></span></div><div class="tmain">${crumbs(g)}${buttons(g)}</div>`}</div>`;
+  const railTop = g.a === "a2b" ? 14 : g.sheetTop + g.hh / 2 - 10;   // the panel's first heading on the header's row
+  const rail = g.docked ? `<aside class="rail" style="padding-top:${railTop}px">${panelBody()}</aside>` : "";
+  const sheetY = g.a === "a2b" ? 48 : g.sheetTop;
+  const pop = g.mode === "b2" ? `<div class="pop" id="pop" style="right:20px;top:${sheetY + tabTop + 34}px">${panelBody()}</div>` : "";
+  const guide = S.guide && S.open ? `<div class="guide" style="left:${g.textX - 5}px;top:${sheetY}px;bottom:28px"><span>the column with the panel shut</span></div>` : "";
+  const lights = `<div class="lights" style="left:${g.lx}px;top:${g.rowY - 6}px"><i></i><i></i><i></i></div>`;
+  return `<div class="win">${bar}
+    <div class="cols" style="grid-template-columns:${cols}">${g.narrow ? "" : sidebar(g)}
+      <main class="main" style="${mainStyle}">${head}${tab}
+        <div class="scroll fade" id="scroll"><div class="doc" style="${docStyle}">${transcript()}</div></div>
+        <div class="composer" style="${boxStyle}"><div>Ask anything, or describe a change…&nbsp; / for commands, @ for files</div>
+          <div class="pills"><span class="pill">${ic("shield")}auto${dn}</span><span class="pill">${ic("zap")}Opus 5.5<span class="hair" style="margin:0 1px"></span><span class="lvl">high</span>${dn}</span><span class="clip">${ic("clip")}</span><span class="send">${ic("up", "s")}</span></div></div>
+      </main>${rail}
+    </div>${statusBar(g)}${pop}${guide}${lights}</div>`;
+}
+
+// ── render and the switch panel ──────────────────────────────────────────────────────────────────────────────────────
+const NOTES = {
+  a1: "A1, today: the lights in macOS's 32 px strip (y 16), the brand row under them (y 51), the sheet's header between (y 32). Narrow (960): the lights sit on the sheet's corner, over the header's sidebar button.",
+  a2: "A2: one row at y 28 across the window. The lights move down and in (trafficLightPosition x 20, y 22), the brand beside them, the sheet keeps its 8 px top and its header is 40 px, centred on the same line. The sheet still carries its title.",
+  a2b: "A2 alt: a 48 px toolbar on the desk (lights, brand, the title, the buttons), the sheet under it with no header of its own. The T3 / Claude layout; the title is no longer on the paper.",
+  a3: "A3: the sheet runs to the window's top edge; its 44 px header is the title bar (y 22). The brand row goes: Search takes its place beside the lights; the mark moves to the status bar beside the version (and stays on the start screen and the app icon).",
+};
+const BNOTES = {
+  shut: "Panel shut: the “Changes 2” tab on the sheet's edge, as it will be when the panel stops opening by itself.",
+  b1: () => "B1, today: the sheet narrows by 300 px and the column re-centres: its left edge jumps (the dashed line is where it was).",
+  b2: () => "B2: the panel floats over the conversation (the pop elevation), under its tab; nothing moves. Esc, a click outside, the tab or ⌘\\ shut it.",
+  b3: (g) => `B3: the column keeps its left edge and gives up width on the right (700 → ${g.mode === "b3" ? g.textW : "–"} px here); the panel lies on the desk as now. Under 580 px of column (a window under 1372 px, or any without the sidebar) it falls back to B2.`,
+};
+function fit() { const f = document.getElementById("frame"), st = f.parentElement, w = +S.w, h = SIZES[w]; f.style.width = w + "px"; f.style.height = h + "px"; f.style.transform = `translate(-50%, -50%) scale(${Math.min(1, (st.clientWidth - 32) / w, (st.clientHeight - 32) / h)})`; }
+function render() {
+  const pm = document.body.classList.contains("pmin");
+  document.body.className = `${S.theme} ${pm ? "pmin" : ""} ${S.shot ? "shot" : ""} ${S.drag ? "showdrag" : ""}`;
+  const g = geom();
+  document.getElementById("frame").innerHTML = win(g);
+  const sc = document.getElementById("scroll"); if (sc) sc.scrollTop = sc.scrollHeight;
+  fit(); panel(g);
+}
+function panel(g) {
+  const btn = (k, v, n, dis) => `<button data-k="${k}" data-val="${v}" class="${String(S[k]) === String(v) ? "on" : ""}" ${dis ? "disabled" : ""}>${n}</button>`;
+  const sw = (title, k, opts) => `<b>${title}</b><div class="opts">${opts.map(([v, n, d]) => btn(k, v, n, d)).join("")}</div>`;
+  const fb = g.fallback ? `<div class="note">B3 at ${g.W}: the column would be ${g.fallback} px, so it falls back to B2.</div>` : "";
+  document.getElementById("proto").innerHTML = `<span class="min" data-min>–</span>
+    ${sw("A · title bar", "a", [["a1", "A1 today"], ["a2", "A2 one row"], ["a2b", "A2 alt: toolbar"], ["a3", "A3 sheet to the top"]])}
+    ${sw("Work panel", "open", [[false, "Shut (tab)"], [true, "Open"]])}
+    ${sw("B · open panel and the column", "b", [["b1", "B1 today"], ["b2", "B2 over the sheet"], ["b3", "B3 column stays"]])}${fb}
+    ${sw("Theme", "theme", [["dark", "Dark"], ["light", "Light"]])}
+    ${sw("Window", "w", [["1440", "1440 × 900"], ["1280", "1280 × 800"], ["960", "960 × 600"]])}
+    ${sw("Marks", "drag", [[false, "Off"], [true, "Drag regions"]])}
+    ${sw("Column guide (panel open)", "guide", [[true, "On"], [false, "Off"]])}
+    <b>Recommended</b><div class="keep">A2 (one row, the sheet whole) with B3 (the column stays; B2 where it cannot).</div>
+    <b>What to look at</b><ol><li>${NOTES[S.a]}</li><li>${S.open ? BNOTES[g.mode](g) : BNOTES.shut}</li>
+    ${S.drag ? "<li>Hatched: <code>data-tauri-drag-region</code>, on the element itself (Tauri ignores its children, so buttons and the search stay clickable; the title's spans should carry it too, so a drag on the title moves the window). The desk between the parts is the grid's region, as now.</li>" : ""}</ol>`;
+}
+document.addEventListener("click", (e) => {
+  const mn = e.target.closest("[data-min]"); if (mn) { document.getElementById("proto").classList.toggle("small"); document.body.classList.toggle("pmin"); fit(); return; }
+  const t = e.target.closest("[data-k]");
+  if (t) { const v = t.dataset.val; S[t.dataset.k] = v === "true" ? true : v === "false" ? false : v; if (t.dataset.k === "b") S.open = true; }
+  else if (S.open && geom().mode === "b2" && e.target.closest("#frame") && !e.target.closest("#pop")) S.open = false;   // B2: a click outside shuts it
+  else return;
+  location.hash = new URLSearchParams(Object.entries(S).filter(([k]) => k !== "shot").map(([a, b]) => [a, String(b)])).toString();
+  render();
+});
+addEventListener("keydown", (e) => { if (e.key === "Escape" && S.open && geom().mode === "b2") { S.open = false; location.hash = location.hash.replace("open=true", "open=false"); render(); } });
+addEventListener("resize", fit);
+// a link opens a state: v9.html#a=a3&b=b3&open=true&theme=light&w=1440 (shot=true: the window alone, for screenshots)
+for (const [k, v] of new URLSearchParams(location.hash.slice(1))) if (k in S) S[k] = v === "true" ? true : v === "false" ? false : v;
+render();
+</script>
+</body>
+</html>

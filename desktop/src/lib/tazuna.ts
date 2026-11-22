@@ -38,11 +38,15 @@ export type ViewBlock =
 type Usage = { input: number; cache_write: number; cache_read: number; output: number };
 export type View = {
   blocks: ViewBlock[]; model: string; effort: string; cwd: string; profile: string; mode: string; activity: string;
-  cost: number; usage: Usage; turns: number; context: number; context_window?: number; tasks?: Task[]; limits?: [number, number]; limits_at?: number | null; limits_reset?: number | null; balance?: number | null;
+  /** `context_window` null: the model's window is not known (a local model), and no share of it is shown */
+  cost: number; usage: Usage; turns: number; context: number; context_window?: number | null; tasks?: Task[]; limits?: [number, number]; limits_at?: number | null; limits_reset?: number | null; balance?: number | null;
   /** what an untrusted folder's config would run (it runs lean until trusted) */
   untrusted?: string | null;
-  /** the conversation's session: claude's id, or the own loop's ("own-...") (null before the first reply) */
+  /** the conversation's session: claude's id, or the own loop's ("own-...") (null before the first reply, and right after a
+   * change of model or a first message's Retry until the new session has its id: never a new conversation then) */
   session_id?: string | null;
+  /** every earlier session this conversation goes on from (a change of model, a Retry), oldest first */
+  earlier_sessions?: string[];
   /** the oldest open permission question (text made safe by the core) */
   asking?: { tool: string; what: string; note: string; once: boolean; queued: number; reviewing?: boolean } | null;
   /** the turns that changed files: where their card goes (`at_block`, a done block) and what they changed */
@@ -85,6 +89,9 @@ export type Provider = { name: string; host: string; page: string; place: string
 /** A sign-in's progress (`ok` null: still going; its text says what to do: a code to type, the browser tab) and then its
  * outcome. `first`: the first sign-in on the ChatGPT plan, whose welcome shows once. */
 export type SignIn = { provider: string; ok?: boolean | null; text: string; first?: boolean };
+/** Claude Code as the core finds it: its version (null: not installed) and whether it is signed in (`claude_login`; null
+ * or absent: not known, a core before 0.1.198). */
+export type ClaudeSetup = { claude: string | null; claude_login?: boolean | null };
 export type Settings = { providers: Provider[]; data_any: boolean; route: boolean; version: string;
   /** dollars of paid API spend allowed per 24 hours (null: no cap), and what was spent */
   spend_cap?: number | null; spent_24h?: number };
@@ -134,7 +141,7 @@ export const core = {
   /** Resumes a conversation in thread `tid` (right after its start, before it is the current one). */
   resumeIn: (tid: string, id: string) => invoke("op", { tid, msg: { op: "resume", id } }),
   /** A message to thread `tid` whether or not it is on screen (creator mode's first message). */
-  sendIn: (tid: string, text: string) => invoke("send", { tid, text, agent: true }),
+  sendIn: (tid: string, text: string, agent = true) => invoke("send", { tid, text, agent }),
   modeIn: (tid: string, mode: string) => invoke("op", { tid, msg: { op: "mode", mode } }),
   /** any of the window's ops to thread `tid` (the side chat's) */
   opIn: (tid: string, msg: Record<string, unknown>) => invoke("op", { tid, msg }),
@@ -198,9 +205,11 @@ export const core = {
   galleryGet: (file: string) => to("op", { msg: { op: "gallery_get", file } }),
   onGallery: (cb: (g: { items?: GalleryItem[]; error?: string }) => void) => on<{ items?: GalleryItem[]; error?: string }>("gallery", cb),
   onGalleryItem: (cb: (g: { file?: string; text?: string; error?: string }) => void) => on<{ file?: string; text?: string; error?: string }>("gallery_item", cb),
-  /** the first run's checks: the claude CLI's version, or null when it is not installed */
+  /** the first run's checks: the claude CLI's version (null: not installed) and whether it is signed in */
   setup: () => to("op", { msg: { op: "setup" } }),
-  onSetup: (cb: (s: { claude: string | null }) => void) => on<{ claude: string | null }>("setup", cb),
+  onSetup: (cb: (s: ClaudeSetup) => void) => on<ClaudeSetup>("setup", cb),
+  /** the last failed turn again, without a second message of yours: its error is replaced by the new reply (core C11) */
+  retry: () => to("op", { msg: { op: "retry" } }),
   openKeyPage: (url: string) => invoke("open_key_page", { url }),
   /** a system notification */
   notify: async (title: string, body: string) => {

@@ -10,6 +10,7 @@ import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
 import { PROSE, TEXT_SIZES, THEME, ZOOM, look } from "../lib/chrome";
 import { Parts } from "./Sep";
 import { accentButton, Segmented, dialogShell, quietButton } from "./Controls";
+import { ClaudeButtons, ClaudeNote, useClaude } from "./Setup";
 
 // Settings: provider keys (saved by tazuna, never shown again), the data policy for this session, the router. The
 // terminal's /login, /data and /route in one page. Each part is a section: a heading, a line on what it is for, and a card
@@ -30,6 +31,8 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   /** opened on this provider (the model picker's "No key yet"): its row in view, its key field open */
   focus?: string | null } & PluginProps) {
   const [st, setSt] = useState<Settings | null>(null);
+  // Claude Code: the first of your providers, signed in or how to sign in (core C1; Settings had no row for it)
+  const [claude, checkClaude, checkingClaude] = useClaude();
   const [tab, setTabNow] = useState(() => localStorage.getItem(TAB) || "Appearance");
   const setTab = (t: string) => { localStorage.setItem(TAB, t); setTabNow(t); };
   // how the window looks (lib/chrome.ts keeps and applies it)
@@ -38,7 +41,7 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   // a provider's key field shows when asked for (seven open fields down the page read as a form to fill in)
   const [keyFor, setKeyFor] = useState<string | null>(focus ?? null);
   // the providers without a key (some seventy since core 0.1.196) folded under one line, searched by name or host
-  const [more, setMore] = useState(!!focus);
+  const [more, setMore] = useState(!!focus && focus !== "Claude");
   const [find, setFind] = useState("");
   const dialog = useDialog();
   const [keys, setKeys] = useState<Record<string, string>>({});
@@ -63,7 +66,7 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
     const at = document.querySelector<HTMLElement>(`[data-key-for="${CSS.escape(focus)}"], [aria-label="${CSS.escape(focus)} key"], [data-sign-in="${CSS.escape(focus)}"]`);
     at?.scrollIntoView({ block: "center" });
     if (at?.tagName === "BUTTON") at.focus();
-  }, [!!st]);
+  }, [!!st, claude !== undefined]);
   // updates from here (until 0.1.58 only the sidebar's row, when one was found, and Cmd-K)
   const update = useUpdate();
   const [checking, setChecking] = useState(false);
@@ -226,6 +229,7 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
           {!st && tab !== "Appearance" && <div className="text-[12.5px] text-faint">Loading…</div>}
           {st && <>
             <Section title="Providers" label="Yours" note="Claude runs on your subscription through the claude CLI, with its own login. Other providers need an API key (tazuna saves it on this machine, readable by you only, and never shows it again) or, for ChatGPT, GitHub Copilot, SuperGrok, Gemini CLI and Antigravity, a sign-in.">
+              <Row title="Claude" note={<ClaudeNote s={claude} />}><ClaudeButtons s={claude} check={checkClaude} checking={checkingClaude} /></Row>
               {yours.length ? yours.map(provider) : <div className="px-4 py-2.5 text-[12.5px] text-faint">No keys yet: add one under More providers.</div>}
             </Section>
             <Section title="Providers" label={<button onClick={() => setMore(!more)} aria-expanded={more} className="-mx-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:text-ink">

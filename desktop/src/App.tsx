@@ -20,6 +20,7 @@ import { checkUpdate, watchUpdates } from "./lib/update";
 import { routeLine } from "./lib/route";
 import { today as todayOf, type Row } from "./lib/usage";
 import { usd, type ChangedFile, type Message, keysOf, panelChoice, panelState } from "./lib/types";
+import { Sep } from "./components/Sep";
 import type { Turn } from "./components/Receipt";
 import { Rail, UserPanel, WorkCtx, openUsage, type Work } from "./components/Rail";
 import { Slot, slots } from "./lib/slots";
@@ -29,14 +30,14 @@ import { CoreFailed, Start, type StartItem } from "./components/Start";
 import { StatusBar } from "./components/StatusBar";
 import { getVersion } from "@tauri-apps/api/app";
 import * as demo from "./lib/demo";
-import { messages as viewMessages, queued, resetIn, usage as viewUsage } from "./lib/fromView";
+import { askedInput, changedCount, heldTurn, messages as viewMessages, queued, resetIn, sessionIds, unsaved, usage as viewUsage } from "./lib/fromView";
 import { modelLabel, shortTitle, titleFrom, type Usage } from "./lib/types";
 import { items as accountItems, mine as accountOf, withLive } from "./lib/health";
 import { Parts } from "./components/Sep";
 
 const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
 import { THEME, applyLooks, darkNow, look } from "./lib/chrome";
-import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Accounts, type Diff, type ModelChoice, type Models, type SessionRow, type View } from "./lib/tazuna";
+import { HOTKEY, core, defaultHotkey, inTauri, menuKeys, type Accounts, type ClaudeSetup, type Diff, type ModelChoice, type Models, type SessionRow, type View } from "./lib/tazuna";
 import { listen } from "@tauri-apps/api/event";
 import { accentButton, quietButton } from "./components/Controls";
 
@@ -44,6 +45,17 @@ const RECENT = "tazuna.projects";
 const recent = (): string[] => { try { return JSON.parse(localStorage.getItem(RECENT) ?? "[]"); } catch { return []; } };
 // messages queued behind a reply, per conversation, until the core takes them: after a restart they come back in the box
 const QUEUE = "tazuna.queued.";
+// the model new conversations of a kind start on ("chat", "project"): a non-Claude one the user picked by hand, until they
+// pick a Claude model again (Claude's stay the router's choice per task). A new chat started on Opus 5.5 right after the user
+// had picked another model, and failed while Claude was signed out (design review 12).
+const START_MODEL = "tazuna.start-model.";
+// With Claude signed out, a kind with no pick of its own takes the other kind's: the first project after a chat on another
+// model started on Sonnet and failed (review 12's own check).
+let claudeSignedOut = false;  // the last setup reading said claude is signed out (set in App)
+const startModel = (folder: string | null): Pick<ModelChoice, "model" | "url" | "key_env"> | null => {
+  const read = (kind: string) => { try { return JSON.parse(localStorage.getItem(START_MODEL + kind) ?? "null"); } catch { return null; } };
+  return read(folder ? "project" : "chat") ?? (claudeSignedOut ? read(folder ? "chat" : "project") : null);
+};
 
 /** An open conversation: its own core, folder (null: a chat) and latest view. */
 export type Thread = { tid: string; folder: string | null; view: View | null; error: string | null; used: number;
@@ -70,6 +82,14 @@ function useCore() {
   const [home, setHome] = useState<string | null>(null);
   const live = useRef<Record<string, Thread>>({});
   live.current = threads;
+  // each conversation's earlier sessions, newest first: a change of model and a Retry go on in a new session (core C5), and
+  // the saved lists know it by an earlier id until a turn has run in the new one. It stays one conversation: one row, the
+  // one selected, the one a click on that row shows (not a second copy)
+  const earlier = useRef<Record<string, string[]>>({});
+  const idsOf = (t: Thread) => sessionIds(t.view, earlier.current[t.tid]);
+  // the window's queue: when its last message went (and how many of yours the view had then), and the wait set for the next
+  const sent = useRef<Record<string, { prompts: number; at: number }>>({});
+  const waits = useRef<Record<string, number>>({});
   const activeRef = useRef("");
   activeRef.current = active;
   const patch = (tid: string, p: Partial<Thread>) => setThreads((t) => (t[tid] ? { ...t, [tid]: { ...t[tid], ...p } } : t));
@@ -87,14 +107,28 @@ function useCore() {
   };
   // the queue as it stands, saved while it holds anything; dropped once it empties in this window (not on a first view)
   const queuedN = useRef<Record<string, number>>({});
-  const keepQueue = (tid: string, v: View) => {
-    const sid = v.session_id;
-    if (!sid) return;
-    const q = busyView(v) ? queued(v) : [];
+  // messages sent while a reply runs wait here, in the window, and go on one at a time, each when the reply before it has
+  // ended: Stop puts all that wait back in the box. Sent to the core at once, they went to the agent the moment the reply
+  // was stopped (design review 12). Every message of yours waits the same way, from the box or not (review comments, the
+  // work panel's and the pull request's asks: `agent`, past the router).
+  const [held, setHeld] = useState<Record<string, { text: string; agent: boolean }[]>>({});
+  const heldRef = useRef(held);
+  heldRef.current = held;
+  const hold = (tid: string, text: string, agent = false) => setHeld((m) => ({ ...m, [tid]: [...(m[tid] ?? []), { text, agent }] }));
+  /** A thread's held messages, taken out (Stop: back into its box). */
+  const unhold = (tid: string) => { const q = heldRef.current[tid] ?? []; setHeld(({ [tid]: _, ...m }) => m); return q.map((w) => w.text); };
+  /** The queue as it stands (the core's and the window's), kept under the conversation's id while it holds anything: after
+   * a restart it comes back in the box. From each view and whenever the window's queue changes (a long quiet command sends
+   * no view, and a message queued then the app quit was lost). */
+  const keepQueue = (tid: string, v: View | null) => {
+    const sid = sessionIds(v, earlier.current[tid])[0];
+    if (!sid || !v) return;
+    const q = [...(busyView(v) ? queued(v) : []), ...(heldRef.current[tid] ?? []).map((w) => w.text)];
     if (q.length) localStorage.setItem(QUEUE + sid, JSON.stringify(q));
     else if (queuedN.current[tid]) localStorage.removeItem(QUEUE + sid);
     queuedN.current[tid] = q.length;
   };
+  useEffect(() => { for (const t of Object.values(live.current)) keepQueue(t.tid, t.view); }, [held]);
   /** Too many idle conversations open: the oldest idle ones close (not the one on screen, nothing working or asking). */
   const trim = (keep: string) => {
     const idle = Object.values(live.current).filter((t) => t.tid !== keep && !t.side && !busyView(t.view) && !t.view?.asking).sort((a, b) => b.used - a.used);
@@ -105,6 +139,9 @@ function useCore() {
     if (side) close(side.tid);
     core.stop(tid).catch(() => {});
     setThreads((t) => { const { [tid]: _, ...rest } = t; return rest; });
+    // what was kept for it goes with it (its queue stays saved under its id, for when it is opened again)
+    setHeld(({ [tid]: _, ...m }) => m);
+    delete earlier.current[tid]; delete sent.current[tid]; clearTimeout(waits.current[tid]); delete waits.current[tid];
   };
   /** A side chat beside thread `of`: its own core in the same folder, the conversation forked on the same model and
    * provider (its cache is the conversation's; the own loop's saved history is that provider's), in plan mode. */
@@ -136,7 +173,7 @@ function useCore() {
    * own; an earlier conversation already open is shown, not opened twice. */
   const open = (path: string | null, resume?: string, opts: { creator?: "new" | "edit"; then?: (tid: string) => void } = {}) => {
     if (path && !opts.creator) setProjects((p) => { const next = [path, ...p.filter((x) => x !== path)].slice(0, 12); localStorage.setItem(RECENT, JSON.stringify(next)); return next; });
-    const already = !opts.creator && Object.values(live.current).find((t) => resume ? t.view?.session_id === resume
+    const already = !opts.creator && Object.values(live.current).find((t) => resume ? idsOf(t).includes(resume)
       : t.folder === path && !t.creator && !t.view?.blocks.some((b) => b.kind === "prompt") && !t.error);
     // an open one is reused; what was to follow its start (`then`) follows now
     if (already) { show(already.tid); opts.then?.(already.tid); return; }
@@ -152,10 +189,11 @@ function useCore() {
     // the one on screen goes when it is idle: it is in the lists, a click away (until desktop 0.1.77 each conversation opened
     // stayed open with its own core, and four old ones looked through meant four "Open" rows and four processes)
     const was = live.current[activeRef.current];
-    if (was && !was.creator && !was.side && !was.error && (!was.view || (["Ready", "Done"].includes(was.view.activity) && !was.view.asking))) close(was.tid);
+    if (was && !was.creator && !was.side && !was.error && !unsaved(was.view) && (!was.view || (["Ready", "Done"].includes(was.view.activity) && !was.view.asking))) close(was.tid);
     show(tid);
+    const m = resume ? null : startModel(path);
     core.start(tid, path ?? undefined, path ? undefined : "chat")
-      .then((dir) => { if (!path) setHome(dir); if (resume) return core.resumeIn(tid, resume); opts.then?.(tid); })
+      .then((dir) => { if (!path) setHome(dir); if (resume) return core.resumeIn(tid, resume); if (m) core.opIn(tid, { op: "model", ...m }).catch(() => {}); opts.then?.(tid); })
       .catch((e) => patch(tid, { error: String(e) }));
     trim(tid);
   };
@@ -163,7 +201,12 @@ function useCore() {
     if (!inTauri) return;
     const offs = [
       core.onExit((tid) => patch(tid, { error: "tazuna stopped. The app needs tazuna 0.1.128 or later (it carries its own; TAZUNA_BIN overrides)." })),
-      core.onView((v, tid) => { tell(tid, v); keepQueue(tid, v); hideFork(tid, v); patch(tid, { view: v, error: null }); }),
+      core.onView((v, tid) => {
+        const was = live.current[tid]?.view?.session_id;
+        // (a switch's view has no session until its first turn: the id before it is kept too)
+        if (was && was !== v.session_id) earlier.current[tid] = [was, ...(earlier.current[tid] ?? []).filter((x) => x !== was)];
+        tell(tid, v); keepQueue(tid, v); hideFork(tid, v); patch(tid, { view: v, error: null });
+      }),
       // the quick-chat shortcut brought the window up: a new chat, its box focused
       listen("quick-chat", () => { open(null); requestAnimationFrame(() => document.querySelector<HTMLTextAreaElement>("footer textarea")?.focus()); }),
       core.onModels((m, tid) => { if (tid === activeRef.current) setModels(m); }),
@@ -190,8 +233,10 @@ function useCore() {
   // the catalog for the picker and the model's name: again after each switch, so the current row is right
   const model = view ? `${active}|${view.model}|${view.effort}` : "";
   useEffect(() => { if (inTauri && model) core.models().catch(() => {}); }, [model]);
-  // the lists again after any conversation finishes a turn (the run log has it then) and on another folder
-  const turns = Object.values(threads).map((t) => t.view?.turns ?? 0).join(",");
+  // the lists again whenever a conversation's reply ends (the run log has it then, after tazuna's checks) and on another
+  // folder. Until design review 12 by the view's `turns`, its model calls: the last refresh came during the reply's last
+  // call, before the run log had the turn, and a new conversation left the sidebar when its first reply ended
+  const turns = endedKey(Object.values(threads));
   const refreshSessions = () => {
     const dirs = [home, ...projects].filter((d): d is string => !!d);
     if (inTauri && dirs.length) core.sessions(dirs).catch(() => {});
@@ -209,11 +254,30 @@ function useCore() {
     core.start(t.tid, t.folder ?? undefined, t.folder ? undefined : "chat").catch((e) => patch(t.tid, { error: String(e) }));
   };
   // where the box's draft is kept: the conversation's id once known (a resumed one's from the start), else its folder's
-  const draftKey = cur ? view?.session_id ?? cur.resume ?? `new:${folder ?? "chat"}` : undefined;
+  // (after a change of model, before its first turn, the session before it: not a new chat's key)
+  const draftKey = cur ? idsOf(cur)[0] ?? cur.resume ?? `new:${folder ?? "chat"}` : undefined;
   // a saved conversation being opened: its core is up and its messages are still on their way (the core's first view is
   // empty, the resumed one follows)
   const resuming = !!cur?.resume && !error && !!view && view.session_id !== cur.resume && !view.blocks.some((b) => b.kind === "prompt");
-  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, side, openSide, closeSide, forget, resuming };
+  // the first held message goes on once its conversation's reply has ended, the next once that one's reply has: a message
+  // sent is taken when the view has one more of yours (a command that adds none: after 2 s idle)
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    for (const t of Object.values(threads)) {
+      const q = held[t.tid], now = Date.now(), turn = heldTurn(t.view, sent.current[t.tid], now);
+      if (!q?.length || t.error || turn < 0) continue;
+      if (turn > 0) { clearTimeout(waits.current[t.tid]); waits.current[t.tid] = window.setTimeout(() => setTick((n) => n + 1), turn); continue; }
+      sent.current[t.tid] = { prompts: t.view!.blocks.filter((b) => b.kind === "prompt").length, at: now };
+      const [first] = q;
+      setHeld((m) => ({ ...m, [t.tid]: (m[t.tid] ?? []).slice(1) }));
+      // not taken (the core gone for a moment): back at the head of the queue, tried again after the wait
+      core.sendIn(t.tid, first.text, first.agent).catch(() => setHeld((m) => (live.current[t.tid] ? { ...m, [t.tid]: [first, ...(m[t.tid] ?? [])] } : m)));
+    }
+  }, [threads, held, tick]);
+  /** The id the saved lists know a conversation by: its session's, else an earlier one's they still hold. */
+  const listed = new Set(Object.values(sessions).flatMap((rows) => rows.map((r) => r.id)));
+  const listedId = (t?: Thread) => (t ? idsOf(t).find((id) => listed.has(id)) ?? t.view?.session_id ?? undefined : undefined);
+  return { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads: list, active, show, close, restart, creator: cur?.creator, draftKey, side, openSide, closeSide, forget, resuming, held: (held[active] ?? []).map((w) => w.text), hold, unhold, listedId };
 }
 
 /** Light or dark: the choice in Settings (lib/chrome.ts keeps it; until desktop 0.1.87 a flip lasted until the window
@@ -262,7 +326,7 @@ export default function App() {
   // "edit from here": the message being edited (its checkpoint, its block, the files tazuna changed since, whether they
   // go back too) and the text put in the box
   const [editing, setEditing] = useState<{ cp: number; block: number; files: number; keep: boolean } | null>(null);
-  const [draft, setDraft] = useState<{ text: string; n: number }>();
+  const [draft, setDraft] = useState<{ text: string; n: number; append?: boolean }>();
   const [reviewing, setReviewing] = useState<{ scope: string; turn?: number; path?: string } | null>(null);
   // the menu bar's items (macOS)
   useEffect(() => {
@@ -279,7 +343,7 @@ export default function App() {
     });
     return () => { off.then((f) => f()); };
   }, []);
-  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, resuming, side, openSide, closeSide, forget } = useCore();
+  const { view, error, folder, projects, open, pick, models, sessions, home, diff, setDiff, refreshSessions, threads, active, show, close, restart, creator, draftKey, resuming, side, openSide, closeSide, forget, held, hold, unhold, listedId } = useCore();
   useEffect(() => setEditing(null), [active]);
   useEffect(watchUpdates, []);
   // creator mode: the user's panels, read again whenever a conversation finishes a turn (a creator one may have made one)
@@ -288,9 +352,8 @@ export default function App() {
   const loadedIds = useRef<string[]>([]);
   const [paletteTick, setPaletteTick] = useState(0);
   useEffect(() => onPaletteChange(() => setPaletteTick((n) => n + 1)), []);
-  const allTurns = threads.map((t) => t.view?.turns ?? 0).join(",");
-  const [widgetsRead, setWidgetsRead] = useState(!inTauri);
-  const reloadWidgets = () => widgets.list().then((w) => setUserWidgets(w ?? [])).catch(() => {}).finally(() => setWidgetsRead(true));
+  const allTurns = endedKey(threads);
+  const reloadWidgets = () => widgets.list().then((w) => setUserWidgets(w ?? [])).catch(() => {});
   useEffect(() => { if (inTauri) reloadWidgets(); }, [allTurns]);
   // enabled plugins run (each reloaded when its code changes, taken back when turned off or removed); none in safe mode
   useEffect(() => {
@@ -383,8 +446,33 @@ export default function App() {
   const [rows, setRows] = useState<Row[] | null>(null);
   useEffect(() => { if (!inTauri) return; const off = core.onUsage((u) => setRows(u.rows)); return () => { off.then((f) => f()); }; }, []);
   const choice = models?.choices.find((c) => c.current);
+  /** A model picked by hand: a non-Claude one is where new conversations of this kind start (START_MODEL). */
+  const pickModel = (c: ModelChoice) => {
+    const key = START_MODEL + (folder ? "project" : "chat");
+    if (c.url) localStorage.setItem(key, JSON.stringify({ model: c.model, url: c.url, key_env: c.key_env })); else localStorage.removeItem(key);
+    return core.setModel(c);
+  };
   useEffect(() => { if (inTauri && view) core.usage().catch(() => {}); }, [choice?.model, choice?.url, allTurns]);
+  // whether Claude Code is there and signed in (core C1): read at the start, from Settings' "Check again", and when the window
+  // comes back while it was signed out (a login in a terminal)
+  const [claude, setClaude] = useState<ClaudeSetup | null>(null);
+  const claudeRef = useRef(claude);
+  claudeRef.current = claude;
+  useEffect(() => {
+    const off = core.onSetup((s) => {
+      // signed in or out since: the catalog's Claude rows change with it
+      if (claudeRef.current && claudeRef.current.claude_login !== s.claude_login) core.models().catch(() => {});
+      setClaude(s);
+      claudeSignedOut = s.claude_login === false;
+    });
+    const back = () => { if (claudeRef.current?.claude_login === false) core.setup().catch(() => {}); };
+    window.addEventListener("focus", back);
+    return () => { off.then((f) => f()); window.removeEventListener("focus", back); };
+  }, []);
+  useEffect(() => { if (inTauri && view) core.setup().catch(() => {}); }, [!!view]);
   const line = inTauri ? routeLine(choice, view, rows, models?.choices ?? []) : null;
+  // the conversation runs on Claude (its CLI: no url) and setup says it is signed out
+  const claudeOut = claude?.claude_login === false && !!view && (choice ? !choice.url : /^(claude-)?(opus|sonnet|haiku|fable)/.test(view.model));
   // the first message to a paid model asks once (per model; the cap in Settings holds after that)
   const [paidAsk, setPaidAsk] = useState<string | null>(null);
   const paidKey = choice ? `tazuna.paid-ok.${choice.model}|${choice.url}` : "";
@@ -409,18 +497,12 @@ export default function App() {
   const narrow = width < 1000;
   const [navOpen, setNavOpen] = useState(false);
   useEffect(() => setNavOpen(false), [active, narrow]);
-  // with nothing to show (no change, no check, no pull request, no panel of the user's in it) it stays folded, a small tab
-  // on the sheet's edge in its place, and opens by itself at the first of them (design review 11, variant A of
-  // mockups/v8.html: two empty sections were a dead column beside every question asked in a project). Not known yet (the
-  // conversation still being read, gh not answered, the panels not read): the layout holds. A pull request is one with a
-  // number: gh's error (not installed, no remote) is nothing to show.
-  const hasWork: boolean | null = !folder ? false : !view || prs[active] === undefined || !widgetsRead ? null
-    : changedFiles(view).length > 0 || view.blocks.some((b) => b.kind === "verify") || !!pr?.number || userWidgets.some((w) => w.kind === "panel" && (w.slot ?? "rail") === "rail");
-  const colWas = useRef({ open: false, tab: false });
-  const col = panelState({ project: !!folder, width, work: hasWork, choice: panelBy[active], was: colWas.current });
-  colWas.current = col;
+  // in a project it stays folded, a small tab on the sheet's edge that counts the files changed so far, and it never opens
+  // or closes by itself: opening at a turn's end moved the reading column under the reader, and Undo moved it back (design
+  // review 12; review 11 had it open by itself at the first change)
+  const col = panelState({ project: !!folder, width, choice: panelBy[active] });
   const panelOpen = col.open;
-  const togglePanel = () => setPanelBy(({ [active]: _, ...m }) => { const c = panelChoice(panelOpen, { project: !!folder, work: hasWork }); return c === undefined ? m : { ...m, [active]: c }; });
+  const togglePanel = () => setPanelBy(({ [active]: _, ...m }) => { const c = panelChoice(panelOpen); return c === undefined ? m : { ...m, [active]: c }; });
   const toggleNow = useRef(togglePanel);
   toggleNow.current = togglePanel;
   // a side chat or a subagent's sheet has the column: the panel's key does nothing then (it flipped the hidden panel)
@@ -430,6 +512,10 @@ export default function App() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
+  /** A message of yours from anywhere but the box (review comments, the work panel, the pull request, "send to agent"): to
+   * the agent, and during a reply it waits in the window's queue as the box's do (it jumped ahead of them, and Stop did not
+   * bring it back) */
+  const say = (text: string, agent = true) => { if (busy) hold(active, text, agent); else core.send(text, agent).catch(() => {}); };
   const work: Work = {
     files: changedFiles(view),
     branch: pr?.headRefName ?? pr?.branch, base: pr?.baseRefName,
@@ -437,8 +523,12 @@ export default function App() {
     pr: pr ?? null, folder,
     review: inTauri && folder ? () => setReviewing({ scope: "uncommitted" }) : undefined,
     openPr: inTauri && folder ? () => setShowPr(true) : undefined,
-    ask: inTauri ? (text) => { core.send(text, true).catch(() => {}); } : undefined,
+    ask: inTauri ? (text) => say(text) : undefined,
   };
+  // the tab's count, live: the files the finished turns changed and those the running reply has edited so far (it said
+  // "Changes 0" while the fold said "Edited main.rs": a turn's changes come from git when it ends)
+  // (a folder whose pull request reply has an empty branch is not a git repository; gh missing says nothing either way)
+  const changes = changedCount(view, folder, work.files.map((f) => f.path), !(pr && pr.branch === "" && !pr.headRefName));
   // worktrees (src/worktree.rs): a new conversation in a worktree of this project; its setup script runs on the user's word
   const [wt, setWt] = useState<{ ask?: boolean; script?: string; id?: string; error?: string; remove?: { path: string; dirty?: string } } | null>(null);
   const [wtNotes, setWtNotes] = useState<Record<string, string>>({});
@@ -548,13 +638,17 @@ export default function App() {
   const sendNow = (text: string) => {
     // /create: part of the window (a panel or plugin) or something tazuna does (a command, skill or tool): asked first
     if (text.startsWith("/create ")) { setCreateAsk(text.slice(8).trim()); return; }
+    // during a reply it waits in the window, shown queued, and goes when the reply ends
+    if (busy) { hold(active, text); return; }
     if (creator === "edit" && !view?.blocks.some((b) => b.kind === "prompt")) { core.send(creatorMessage(text, true), true).catch(() => {}); return; }
     if (!editing) { core.send(text).catch((e) => console.error(e)); return; }
     const { cp, keep } = editing;
     setEditing(null);
     core.rewind(cp, keep).then(() => core.send(text)).catch((e) => console.error(e));
   };
-  const messages = view ? viewMessages(view) : inTauri ? [] : demo.messages;
+  const messages: Message[] = [...(view ? viewMessages(view) : inTauri ? [] : demo.messages), ...held.map((text) => ({ role: "user" as const, text, queued: true }))];
+  /** Stop: the reply ends, and what waited behind it goes back into the box (it went to the agent at once). */
+  const stop = () => { core.interrupt().catch(() => {}); const q = unhold(active); if (q.length) setDraft({ text: q.join("\n\n"), n: Date.now(), append: true }); };
   // the core did not start: its reason and a way to try again, no conversation (until desktop 0.1.77 the demo's title,
   // plan and cost filled the window around a small red line)
   const failed = inTauri && !view && !!error;
@@ -612,7 +706,9 @@ export default function App() {
   // to another conversation and back (it began at 0 s again on every switch)
   const replyStart = useRef<Record<string, number>>({});
   const startKey = `${active}:${view ? view.blocks.filter((b) => b.kind === "prompt").length : 0}`;
+  // (and from zero again when a reply of the same message starts anew: a Retry counted on from the failed try)
   if (busy && !replyStart.current[startKey]) replyStart.current[startKey] = Date.now();
+  else if (!busy && view) delete replyStart.current[startKey];
   const session = view
     ? { model: view.model || "default", effort: view.effort || "", mode: view.mode, branch: "", changed: 0, lastCost: lastCost(view) }
     : inTauri ? { model: "", effort: "", mode: "auto", branch: "", changed: 0, lastCost: 0 } : demo.session;
@@ -625,7 +721,7 @@ export default function App() {
       ...[...(home ? (sessions[home] ?? []).map((r) => [r, null] as const) : []), ...projects.flatMap((p) => (sessions[p] ?? []).slice(0, 10).map((r) => [r, p] as const))]
         .map(([r, dir]) => ({ id: `s:${r.id}`, group: "Conversations", label: shortTitle(r.first, r.named) || "(no message)", hint: dir ? base(dir) : "chat", keywords: `resume continue ${r.first}`, run: () => open(dir, r.id) })),
     ];
-    if (busy) a.unshift({ id: "stop", group: "This conversation", label: "Stop the reply", keys: "Esc", run: () => core.interrupt() });
+    if (busy) a.unshift({ id: "stop", group: "This conversation", label: "Stop the reply", keys: "Esc", run: stop });
     const undo = view?.changes?.find((c) => c.can_undo);
     if (undo && !busy) a.push({ id: "undo", group: "This conversation", label: `Undo the last turn's changes`, hint: `${undo.files.length} file${undo.files.length === 1 ? "" : "s"}`, run: () => core.undo(undo.turn) });
     if (view && folder) a.push({ id: "worktree", group: "This project", label: "New conversation in a worktree", hint: "a branch and folder of its own", keywords: "worktree branch parallel", run: () => core.worktreeNew(null).catch(() => {}) },
@@ -640,11 +736,11 @@ export default function App() {
       { id: "review-uncommitted", group: "Review", label: "Review uncommitted changes", keywords: "diff stage revert hunk", run: () => setReviewing({ scope: "uncommitted" }) },
       { id: "review-branch", group: "Review", label: "Review the branch against its base", keywords: "diff pr", run: () => setReviewing({ scope: "branch" }) });
     if (view) {
-      // each mode with what it does (the palette listed bare "auto, ask, edits", review 3)
-      a.push(...MODES.map(([m, about]) => ({ id: `m:${m}`, group: "Permission mode", label: `${m.charAt(0).toUpperCase()}${m.slice(1)}`, hint: m === view.mode ? `${about} (now)` : about, keywords: `mode permission ${m}`, run: () => core.setMode(m) })));
+      // each mode with what it does (the palette listed bare "auto, ask, edits", review 3); a plain chat has none
+      if (folder) a.push(...MODES.map(([m, about]) => ({ id: `m:${m}`, group: "Permission mode", label: `${m.charAt(0).toUpperCase()}${m.slice(1)}`, hint: m === view.mode ? `${about} (now)` : about, keywords: `mode permission ${m}`, run: () => core.setMode(m) })));
       const cur = models?.choices.find((c) => c.current);
       a.push(...(cur?.efforts ?? []).map((e) => ({ id: `e:${e}`, group: "Effort", label: e, hint: e === view.effort ? "current" : undefined, keywords: "effort thinking", run: () => core.setEffort(e) })));
-      a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: modelLabel(c.model), hint: c.current ? "current" : c.place, keywords: `model ${c.provider}`, run: () => core.setModel(c) })));
+      a.push(...(models?.choices ?? []).filter((c) => !c.why_not).map((c) => ({ id: `mo:${c.model}|${c.url}|${c.key_env}|${c.label}`, group: "Model", label: modelLabel(c.model), hint: c.current ? "current" : c.place, keywords: `model ${c.provider}`, run: () => pickModel(c) })));
     }
     a.push({ id: "create-behaviour", group: "Creator mode", label: "Make a command, skill or tool…", hint: "/create what it should do", keywords: "skill command mcp tool creator",
         run: () => setDraft({ text: "/create ", n: Date.now() }) });
@@ -672,7 +768,7 @@ export default function App() {
   useEffect(() => { if (fresh) core.usage().catch(() => {}); }, [fresh, active, day]);
   useEffect(() => { const t = setTimeout(() => setDay((n) => n + 1), new Date().setHours(24, 0, 1, 0) - Date.now()); return () => clearTimeout(t); }, [day]);
   // in a project, its own conversations; in a chat, everything by when it last ran
-  const startRecent: StartItem[] = Object.entries(sessions).filter(([dir]) => !folder || dir === folder).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: shortTitle(r.first, r.named) || "(no message)",
+  const startRecent: StartItem[] = Object.entries(sessions).filter(([dir]) => !folder || dir === folder).flatMap(([dir, rows]) => rows.map((r) => ({ id: r.id, title: shortTitle(r.first, r.named) || "(no message)", full: titleFrom(r.first),
     place: dir === home ? "chat" : base(dir), dir: dir === home ? null : dir, at: r.last_at }))).sort((a, b) => b.at - a.at).slice(0, 3);
   const where = { label: folder ? base(folder) : "Chat", folder: !!folder, pickFolder: pick,
     choices: [{ label: "Chat", hint: "no folder: a general question", path: null as string | null }, ...projects.slice(0, 6).map((p) => ({ label: base(p), hint: p, path: p as string | null }))],
@@ -701,10 +797,14 @@ export default function App() {
               if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk(text); return; }
               sendNow(text);
             }}
-            below={line && (line.paid || line.plan || line.low) && (
+            below={claudeOut ? (
+              // a conversation on Claude while it is signed out: every message would fail (design review 12)
+              <div className="flex items-center text-[11.5px] text-faint">Claude isn't signed in<Sep />
+                <button onClick={() => { setKeyFocus("Claude"); settingsAt("Providers"); }} className="font-medium text-accent-ink">Settings → Providers</button></div>
+            ) : line && (line.paid || line.plan || line.low) && (
               <div className={`flex items-center gap-2 text-[11.5px] ${line.low ? "text-warn" : "text-faint"}`}>
                 <span className="truncate" title="Where your next message goes and what it costs">→ {line.text}</span>
-                {line.offer && <button onClick={() => core.setModel(line.offer!)} className="font-medium text-accent-ink">Switch to {line.offer.label}</button>}
+                {line.offer && <button onClick={() => pickModel(line.offer!)} className="font-medium text-accent-ink">Switch to {line.offer.label}</button>}
               </div>
             )}
             draft={draft}
@@ -721,9 +821,9 @@ export default function App() {
                     Also put back the {editing.files} file{editing.files === 1 ? "" : "s"} tazuna changed since</label>}</span>
                 <button onClick={() => { setEditing(null); setDraft({ text: "", n: Date.now() }); }} className={quietButton}>Cancel</button>
               </div>
-            )} onStop={() => core.interrupt()}
+            )} onStop={stop}
             models={models} onModels={inTauri ? () => core.models() : undefined}
-            onPickModel={inTauri ? (c) => core.setModel(c) : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
+            onPickModel={inTauri ? pickModel : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
             onAddKey={inTauri ? (p) => { setKeyFocus(p); settingsAt("Providers"); } : undefined}
             onMode={inTauri ? (m) => core.setMode(m) : undefined}
             onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined}
@@ -734,9 +834,10 @@ export default function App() {
   // the header: the short title, then the first message in full where it is longer (variant A of mockups/v6.html)
   const firstAsked = titleFrom((view?.blocks.find((b) => b.kind === "prompt") as { text?: string } | undefined)?.text);
   const title = view ? shortTitle(firstAsked) || "New chat" : inTauri ? (failed ? "Could not start" : "New chat") : "Retry test fails on CI";
-  // after the title, only what it left out: "— Can you find out why and fix it?", not the title's words again
-  const said = title.replace(/…$/, "").toLowerCase();
-  const more = firstAsked.toLowerCase().startsWith(said) ? firstAsked.slice(said.length).replace(/^[\s.?!,;:]+/, "") : firstAsked === title ? "" : firstAsked;
+  // after the title, only what it left out: "— Can you find out why and fix it?", not the title's words again; nothing where
+  // that cannot be said (a title without the polite opening repeated the whole message, design review 12)
+  const said = title.replace(/…$/, "").toLowerCase(), at = firstAsked.toLowerCase().indexOf(said);
+  const more = at < 0 ? "" : firstAsked.slice(at + said.length).replace(/^[\s.?!,;:]+/, "");
   return (
     // paper on the desk (design review 10): the window is the desk; the conversation (and a side chat or subagent beside it)
     // is a sheet on it; the sidebar, the work panel and the status bar lie on the desk
@@ -746,12 +847,12 @@ export default function App() {
       style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", reviewing ? "0px" : agentHere ? "440px" : side ? "380px" : panelOpen ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
       {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-scrim" />}
       <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-[var(--shadow-pop)]" : "hidden") : "flex min-h-0"}>
-      <Sidebar active={inTauri ? view?.session_id ?? folder ?? "" : "t1"}
+      <Sidebar active={inTauri ? listedId(threads.find((t) => t.tid === active)) ?? folder ?? "" : "t1"}
         chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
         projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} / ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
         onNewChat={() => open(null)} onOpenFolder={pick} onOpenProject={(p) => p.path && open(p.path)}
         onOpenThread={(t, p) => open(p?.path ?? null, t.id)} onSearch={() => setOverlay("palette")} onSettings={() => setOverlay("settings")}
-        open={inTauri ? threads.filter((t) => t.tid === active || t.view?.blocks.some((b) => b.kind === "prompt")).map((t) => ({ tid: t.tid, id: t.view?.session_id, model: t.view?.model, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
+        open={inTauri ? threads.filter((t) => t.tid === active || t.view?.blocks.some((b) => b.kind === "prompt")).map((t) => ({ tid: t.tid, id: listedId(t), model: t.view?.model, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
           state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
         activeTid={active} onSwitch={show} onClose={close}
         onRename={inTauri ? (t, title) => core.rename(t.id, title).then(refreshSessions) : undefined}
@@ -778,22 +879,24 @@ export default function App() {
         {failed ? <CoreFailed error={error!} folder={folder} onRetry={restart} onChat={() => open(null)} />
         : fresh ? <Start place={folder ? base(folder) : null} composer={composer} recent={startRecent} onResume={(r) => open(r.dir, r.id)} onFolder={pick} today={todayOf(rows)} onUsage={() => setOverlay("usage")}
             projects={projects.filter((p) => p !== folder).slice(0, 3).map((p) => ({ path: p, name: base(p), count: sessions[p]?.length ?? 0 }))} onProject={(p) => open(p)} />
-        : <Transcript key={`${active}:${view?.session_id ?? ""}`} messages={messages} editFrom={editing?.cp}
+        // keyed by the conversation, not its session: a change of model goes on in a new session with the same messages (core
+        // C5), and the transcript stays where it was
+        : <Transcript key={active} messages={messages} editFrom={editing?.cp}
           onEdit={inTauri ? (e, text) => {
             const files = new Set((view?.changes ?? []).filter((c) => c.at_block > e.block && !c.undone).flatMap((c) => c.files.map((f) => f.path))).size;
             setEditing({ ...e, files, keep: files > 0 }); setDraft({ text, n: Date.now() });
-          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} onSendToAgent={(text) => core.send(text, true)} onRetry={(text) => core.send(text)}
+          } : undefined} busy={busy} activity={view?.asking ? undefined : view?.activity} asking={!!view?.asking} since={busy ? replyStart.current[startKey] : undefined} onSendToAgent={(text) => say(text)} onRetry={() => { core.retry().catch(() => {}); }}
           onImage={inTauri ? (p) => core.imageData(p, folder ?? undefined) : undefined}
           onDiff={(turn, path) => (inTauri ? setReviewing({ scope: "turn", turn, path }) : core.diff(turn, path))} onReview={inTauri ? (turn) => setReviewing({ scope: "turn", turn }) : undefined} onUndo={(turn) => core.undo(turn)} />}
         </div>
         {inTauri && col.tab && !side && !agentHere && !reviewing && !fresh && !failed && (
-          <button onClick={togglePanel} aria-expanded={false} aria-label="The work panel: no changes yet" title={`The work panel: nothing in it yet. It opens by itself at the first change (${keysOf("⌘\\")})`}
+          <button onClick={togglePanel} aria-expanded={false} aria-label={`The work panel: ${changes} file${changes === 1 ? "" : "s"} changed`} title={`The work panel: changes, checks, the pull request (${keysOf("⌘\\")})`}
             className="tz-enter absolute right-[var(--tz-sbw,0px)] top-[62px] z-[2] flex items-center gap-1.5 rounded-l-[7px] border border-r-0 border-line bg-desk py-1 pl-2 pr-[9px] text-[12px] text-muted hover:text-ink">
-            <GitBranch size={13} strokeWidth={1.5} aria-hidden="true" />Changes<span className="font-medium tabular-nums text-faint">0</span></button>
+            <GitBranch size={13} strokeWidth={1.5} aria-hidden="true" />Changes<span className={`font-medium tabular-nums ${changes ? "text-ink-2" : "text-faint"}`}>{changes}</span></button>
         )}
         {diff && <DiffView diff={diff} onClose={() => setDiff(null)} />}
         {reviewing && <ReviewView start={reviewing} turns={(view?.changes ?? []).filter((c) => !c.undone).map((c) => c.turn)}
-          onClose={() => setReviewing(null)} onSend={(text) => core.send(text, true)} />}
+          onClose={() => setReviewing(null)} onSend={(text) => say(text)} />}
         {view?.untrusted && (
           <div className="mx-auto mb-2 flex w-full max-w-[756px] items-center gap-3 px-7 text-[12.5px] text-ink-2">
             <span className="flex-1">This folder's settings run code ({view.untrusted}). tazuna works here without them until you trust it.</span>
@@ -867,7 +970,7 @@ export default function App() {
             })}
           </div>
         )}
-        {view?.asking && <Approval asking={view.asking} onAnswer={(allow, always) => core.answer(allow, always)} />}
+        {view?.asking && <Approval asking={view.asking} input={askedInput(view)} onAnswer={(allow, always) => core.answer(allow, always)} />}
         {!fresh && !failed && composer}
       </main>
       {agentHere ? <div className="flex min-h-0 justify-end overflow-hidden"><AgentPanel key={agentHere.call} view={agentViews[agentHere.call] ?? null} task={agentTask} running={agentRunning}
@@ -884,7 +987,7 @@ export default function App() {
         onOpen={(tid) => { setShowLanes(false); show(tid); }} onKeep={keepLane} onClose={() => setShowLanes(false)} />}
       <Toaster />
       {showPr && inTauri && <PrView pr={pr ?? null} worktree={inWorktree} onClose={() => setShowPr(false)} onRefresh={() => core.prIn(active).catch(() => {})}
-        onSend={(text) => { setShowPr(false); core.send(text, true).catch(() => {}); }} onRemoveWorktree={() => { setShowPr(false); setWt({ remove: { path: folder! } }); }} />}
+        onSend={(text) => { setShowPr(false); say(text); }} onRemoveWorktree={() => { setShowPr(false); setWt({ remove: { path: folder! } }); }} />}
       {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} choices={models?.choices} />}
       {overlay === "setup" && inTauri && <Setup onSettings={() => { localStorage.setItem(SETUP, "1"); localStorage.setItem("tazuna.settings.tab", "Providers"); setOverlay("settings"); }}
         onClose={() => { localStorage.setItem(SETUP, "1"); setOverlay(null); }} />}
@@ -905,7 +1008,7 @@ function turnsOf(messages: Message[]): Turn[] {
   let asked = "";
   for (const m of messages) {
     if (m.role === "user") asked = m.text;
-    else if (m.meta) out.push({ ...m.meta, title: shortTitle(asked) || "(no message)", calls: m.meta.calls?.length, in: m.meta.in ?? 0, out: m.meta.out ?? 0 });
+    else if (m.role === "agent" && m.meta) out.push({ ...m.meta, title: shortTitle(asked) || "(no message)", calls: m.meta.calls?.length, in: m.meta.in ?? 0, out: m.meta.out ?? 0 });
   }
   return out;
 }
@@ -915,6 +1018,9 @@ function lastCost(v: View): number {
   for (let i = v.blocks.length - 1; i >= 0; i--) { const b = v.blocks[i]; if (b.kind === "done") return b.cost; }
   return 0;
 }
+
+/** Changes whenever a conversation's reply starts or ends (or one opens or closes): what is read again after a reply. */
+const endedKey = (ts: Thread[]) => ts.map((t) => `${t.tid}:${busyView(t.view) ? 1 : 0}`).join(",");
 
 /** The window's width, kept as it is resized. */
 function useWidth() {

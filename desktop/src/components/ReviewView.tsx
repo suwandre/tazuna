@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { core, type Review } from "../lib/tazuna";
 import { numbered, parse, patchOf, patchOfFile, sideBySide, wordMarks, type FileDiff } from "../lib/unidiff";
 import { code } from "../lib/markdown";
-import { Parts, Sep } from "./Sep";
+import { Counts, Parts, Sep } from "./Sep";
 import { keysOf } from "../lib/types";
 import { accentButton, Segmented, quietButton } from "./Controls";
 
@@ -154,13 +154,13 @@ export function ReviewView({ start, turns, onClose, onSend }: {
                 className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[12.5px] ${sel === f.path ? "bg-selected text-ink" : "text-ink-2 hover:bg-hover"}`}>
                 <span className={`w-3 flex-none font-mono text-[11px] ${st[1]}`}>{st[0]}</span>
                 <span className="min-w-0 flex-1 truncate">{name}<span className="ml-1 text-[11.5px] text-faint">{dir}</span></span>
-                <span className="tabular-nums text-[11.5px] text-ok">+{f.added}</span>{f.removed > 0 && <span className="tabular-nums text-[11.5px] text-bad">−{f.removed}</span>}
+                <Counts added={f.added} removed={f.removed} className="text-[11.5px]" />
               </button>
             );
           })}
           {/* hairlines, not middle dots (design review 10) */}
           {files.length > 0 && <Parts className="mt-2 flex border-t border-line-soft px-2 pt-2 text-[11.5px] text-faint"
-            items={[`${files.length} file${files.length === 1 ? "" : "s"}`, <span key="n"><span className="text-ok">+{added}</span> <span className="text-bad">−{removed}</span></span>,
+            items={[`${files.length} file${files.length === 1 ? "" : "s"}`, (added > 0 || removed > 0) && <span key="n"><Counts added={added} removed={removed} /></span>,
               comments.length > 0 && `${comments.length} comment${comments.length === 1 ? "" : "s"}`]} />}
         </nav>
         <div className="min-w-0 flex-1 overflow-auto px-5 py-4">
@@ -168,7 +168,7 @@ export function ReviewView({ start, turns, onClose, onSend }: {
             <div key={f.path} ref={(el) => { files_.current[f.path] = el; }} className="mb-4 scroll-mt-4 overflow-hidden rounded-lg border border-line bg-card">
               <div className="flex items-center gap-2.5 border-b border-line bg-field px-3 py-2">
                 <span className="min-w-0 truncate font-mono text-[12.5px] text-ink">{f.path}</span>
-                <span className="tabular-nums text-[12px] text-ok">+{f.added}</span>{f.removed > 0 && <span className="tabular-nums text-[12px] text-bad">−{f.removed}</span>}
+                <Counts added={f.added} removed={f.removed} className="text-[12px]" />
                 <span className="flex-1" />
                 {!f.binary && <>
                   <button onClick={() => act(patchOfFile(f), true)} title="Add the whole file's changes to the next commit" className={`${textButton} text-muted hover:text-ink`}>Stage file</button>

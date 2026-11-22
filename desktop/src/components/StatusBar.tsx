@@ -36,7 +36,8 @@ function Here({ here }: { here: Item[] }) {
   if (here[0].provider === "Claude") return <>Claude{here.map((i, n) => <span key={i.key} title={about(i)} className="flex items-center gap-1.5">{n > 0 && <Sep />}<span className="text-faint">{tag(i.label)}</span><Meter pct={i.pct ?? 0} /><span className={b}>{i.value}</span>{until(i)}</span>)}</>;
   const i = here[0];
   if (i.pct != null) return <span title={about(i)} className="flex items-center gap-1.5">{i.name.split(",")[0]}<Meter pct={i.pct} /><span className={b}>{i.value}</span>{i.name.split(", ")[1]}{until(i)}</span>;
-  return <>{i.name} {i.value ? <span className={b}>{i.value.replace(/ (left|over)$/, "")}</span> : <span className="text-faint">balance not reported</span>}{i.value && <span className="text-faint">{i.value.match(/ (left|over)$/)?.[1]}</span>}</>;
+  // a balance its API does not tell is no news: the provider's name alone ("Mortera balance not reported" on every screen)
+  return <>{i.name} {i.value && <><span className={b}>{i.value.replace(/ (left|below zero)$/, "")}</span><span className="text-faint">{i.value.match(/ (left|below zero)$/)?.[1]}</span></>}</>;
 }
 
 /** Every account, the conversation's own marked, the ones that need you in their colour: in groups under their account
@@ -51,11 +52,11 @@ function Card({ all, here }: { all: Item[]; here: Item[] }) {
           <span key={g} className="block">
             <span className="block bg-field/40 px-3.5 py-1 text-[11.5px] text-muted [overflow-wrap:anywhere]">{g}</span>
             {all.filter((i) => i.group === g).map((i) => (
-              <span key={i.key} className={`grid grid-cols-[1fr_70px_96px] items-center gap-2.5 px-3.5 py-[5px] ${here.includes(i) ? "bg-accent-soft" : ""}`}>
+              <span key={i.key} className={`grid grid-cols-[1fr_70px_112px] items-center gap-2.5 px-3.5 py-[5px] ${here.includes(i) ? "bg-accent-soft" : ""}`}>
                 <span className="min-w-0"><span className="block text-ink">{i.label}</span>
                   {(here.includes(i) || i.note) && <span className="block text-[11.5px] text-faint" title={exactly(i.resetsAt)}>{[here.includes(i) && "this conversation", i.note].filter(Boolean).join(", ")}</span>}</span>
                 <span>{i.pct != null && <span className="block h-1 w-[70px] overflow-hidden rounded-sm bg-line-strong"><i className={`block h-full ${i.level === "out" ? "bg-bad" : i.level === "low" ? "bg-warn" : "bg-accent"}`} style={{ width: `${Math.min(100, i.pct)}%` }} /></span>}</span>
-                <span className={`text-right tabular-nums ${i.level === "ok" ? "text-ink" : ink[i.level]}`}>{i.value ?? <span className="text-faint">not reported</span>}</span>
+                <span className={`text-right tabular-nums ${i.level === "ok" ? "text-ink" : ink[i.level]}`}>{i.value}</span>
               </span>
             ))}
           </span>
@@ -164,14 +165,15 @@ export function StatusBar({ usage: u, version, idle, accounts = [], here = [], o
       )}
       {/* the badge says what it means and what to do, on its own hover (it opened the account card too, the user). Not a
           button: the account beside it opens the usage page. Several accounts: the most urgent by name, the rest counted
-          ("OpenRouter $0.17 over +2"), each in the hover; one badge, not one each, and not "3 accounts need you" */}
+          ("OpenRouter $0.17 below zero and 2 more"), each in the hover; one badge, not one each, and not "3 accounts need you" */}
       {others.length > 0 && (
         <span className="group/adv relative flex flex-none">
           {/* quiet: an account this conversation does not run on is a dot in its colour and faint words, not a red chip on
-              every screen (design review 10: "OpenRouter $0.17 over +2" shouted while the conversation ran on Claude) */}
+              every screen (design review 10: the badge in red shouted while the conversation ran on Claude) */}
           <span tabIndex={0} aria-describedby="usage-advice" className="flex flex-none cursor-default items-center gap-1.5 rounded px-1 -mx-1 text-faint hover:text-ink-2">
             <span className={`size-1.5 flex-none rounded-full ${tone[worst(others)]}`} aria-hidden="true" />{others[0].short}
-            {others.length > 1 && <span className="tabular-nums">+{others.length - 1}</span>}
+            {/* the rest counted in words ("+4" did not say what it counted) */}
+            {others.length > 1 && <span className="tabular-nums">and {others.length - 1} more</span>}
           </span>
           <span className="invisible absolute bottom-full left-0 z-30 pb-2 opacity-0 transition-opacity duration-150 group-hover/adv:visible group-hover/adv:opacity-100 group-focus-within/adv:visible group-focus-within/adv:opacity-100">
             <span id="usage-advice" role="tooltip" className="block w-[340px] whitespace-normal rounded-xl border border-line-strong bg-card px-3.5 py-2.5 text-[12.5px] leading-relaxed text-ink-2 tz-float">

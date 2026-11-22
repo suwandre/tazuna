@@ -8,7 +8,7 @@ export function installTooltips() {
   tip.className = "tz-tip";
   tip.setAttribute("role", "tooltip");
   document.body.appendChild(tip);
-  let at: HTMLElement | null = null, text = "", timer = 0, named = false, said = false, pressed = false, quiet = false;
+  let at: HTMLElement | null = null, text = "", timer = 0, named = false, said = false, pressed = false, quiet = false, armed = false;
   const hide = () => {
     clearTimeout(timer);
     tip.classList.remove("on");
@@ -44,20 +44,26 @@ export function installTooltips() {
     if (!el.textContent?.trim()) { if (!el.hasAttribute("aria-label") && !el.hasAttribute("aria-labelledby")) { el.setAttribute("aria-label", title); named = true; } }
     else if (!el.hasAttribute("aria-description")) { el.setAttribute("aria-description", title); said = true; }
     quiet = el.dataset.tipClip !== undefined && !cut(el);
-    // after a press the rows under the pointer may move: no tooltip over them until the pointer itself moves again (the
-    // press is looked at when the wait is over, and the pointer's next move starts the wait anew)
-    if (!quiet) soon(el, wait, byPointer);
+    // by the pointer, the wait starts at its next real move (below): an element that moved under a still pointer (rows
+    // after Ctrl+N or a press) gets no tooltip (design review 12: one came up on a sidebar row that slid under it)
+    armed = false;
+    if (!quiet && !byPointer) soon(el, wait, false);
   };
   document.addEventListener("pointerover", (e) => over(e.target, 450, true));
   // the keyboard's way to the same words
   document.addEventListener("focusin", (e) => { if ((e.target as Element).matches?.(":focus-visible")) over(e.target, 450, false); });
   for (const ev of ["pointerdown", "keydown", "focusout", "wheel"]) document.addEventListener(ev, hide, true);
-  let px = 0, py = 0;
+  // after a press the rows under the pointer may move: no tooltip over them until the pointer itself moves 3 px or more
+  let px = 0, py = 0, mx = -1, my = -1;
   document.addEventListener("pointerdown", (e) => { pressed = true; px = e.clientX; py = e.clientY; }, true);
   document.addEventListener("pointermove", (e) => {
-    if (!pressed || Math.abs(e.clientX - px) + Math.abs(e.clientY - py) <= 3) return;
-    pressed = false;
-    if (at && !quiet && !tip.classList.contains("on")) soon(at, 450, true);
+    // the browser's own "move" when the page moves under a still pointer has the pointer where it was: not a move
+    const moved = e.clientX !== mx || e.clientY !== my;
+    mx = e.clientX; my = e.clientY;
+    if (pressed && Math.abs(e.clientX - px) + Math.abs(e.clientY - py) > 3) { pressed = false; armed = false; }
+    if (!moved || pressed || armed || !at || quiet || tip.classList.contains("on")) return;
+    armed = true;
+    soon(at, 450, true);
   }, true);
   document.addEventListener("keydown", () => { pressed = false; }, true);
   document.addEventListener("pointerleave", hide);

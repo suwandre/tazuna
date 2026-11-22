@@ -379,3 +379,75 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     return emit(event, payload);
   };
 })();
+
+// design review 12, the core's new shapes: Claude Code's sign-in in `setup` (`window.__CLAUDE_LOGIN__ = false`: signed out,
+// its rows "not signed in" in the catalog), a local model with no context window (null), the signed-out error once
+// ("what is a haiku?"), Retry that runs the failed turn again without a second message, a model switch that goes on in a
+// new session under a divider, an edit asked for with its diff, and words before a step that go into the fold ("Rename the
+// retry helper")
+(() => { const T = window.__TAURI_INTERNALS__; if (!window.__SENT__) return;
+  const inv = T.invoke.bind(T), emit = T.emit.bind(T), now = Math.floor(Date.now() / 1000);
+  const u = (i, c, o) => ({ input: i, cache_write: 0, cache_read: c, output: o });
+  const out = () => window.__CLAUDE_LOGIN__ === false;
+  const last = {};
+  const base = { type: "view", from: 0, effort: "high", mode: "ask", cost: 0, usage: u(0, 0, 0), turns: 0, context: 0, context_window: 200000, changes: [], edit_points: [], activity: "Done", limits: [36, 79], limits_reset: now + 8040, balance: 12.4 };
+  const SIGNED_OUT = "Claude Code isn't signed in. Run `claude auth login` in a terminal (or Settings → Providers → Claude), then Retry.";
+  const views = {
+    c7: { ...base, session_id: "c7", model: "claude-opus-5-5", cwd: "/Users/x", profile: "chat", blocks: [{ kind: "prompt", text: "what is a haiku?" },
+      { kind: "notice", text: SIGNED_OUT, error: true }, { kind: "done", ok: false, secs: 0.4, turns: 0, cost: 0, usage: u(0, 0, 0), stopped: false }] },
+    p4: { ...base, session_id: "p4", model: "deepseek-v4.1-flash", cwd: "/Users/x/api-gateway", profile: "repo", activity: "Tool", cost: 0.002, turns: 2, context: 9000,
+      blocks: [{ kind: "prompt", text: "Rename the retry helper to withRetry" },
+        { kind: "text", text: "I'll read the helper first.", live: false },
+        { kind: "tool", id: "e1", name: "read", input: { path: "src/retry.ts" }, result: "export async function retry(fn) { … }", error: false, secs: 0.1, running: false },
+        { kind: "tool", id: "e2", name: "edit", input: { path: "src/retry.ts", old: "export async function retry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {\n  for (let i = 0; ; i++) {", new: "export async function withRetry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {\n  for (let attempt = 0; ; attempt++) {" }, error: false, secs: 0, running: true }],
+      asking: { tool: "edit", what: "src/retry.ts", note: "this file, for the session", once: false, queued: 0 } },
+    // two edits asked for at once: the core asks the oldest first, and its card shows that one's diff (review of review 12)
+    p5: { ...base, session_id: "p5", model: "claude-opus-5-5", cwd: "/Users/x/api-gateway", profile: "repo", activity: "Tool", cost: 0.004, turns: 1, context: 12000,
+      blocks: [{ kind: "prompt", text: "Rename limit to maxTries in both helpers" },
+        { kind: "tool", id: "f1", name: "Edit", input: { file_path: "/Users/x/api-gateway/src/a.ts", old_string: "const limit = 3;", new_string: "const maxTries = 3;" }, error: false, secs: 0, running: true },
+        { kind: "tool", id: "f2", name: "Edit", input: { file_path: "/Users/x/api-gateway/src/b.ts", old_string: "if (n > limit) throw err;", new_string: "if (n > maxTries) throw err;" }, error: false, secs: 0, running: true }],
+      asking: { tool: "Edit", what: "/Users/x/api-gateway/src/a.ts", note: "", once: false, queued: 1 } },
+  };
+  const reply = "Sure. A **haiku** is a three-line poem with 5, 7 and 5 syllables.\n\nExample:\n\n> An old silent pond\n> a frog jumps into the pond\n> splash! silence again";
+  T.invoke = async (cmd, args) => {
+    const msg = args?.msg ?? {}, tid = args?.tid, m = (x) => setTimeout(() => T.emit("tazuna-view", { tid, msg: x }), 20);
+    // `window.__NO_CLAUDE__`: Claude Code is not installed
+    if (cmd === "op" && msg.op === "setup") { m(window.__NO_CLAUDE__ ? { type: "setup", claude: null, claude_login: null } : { type: "setup", claude: "2.1.330 (Claude Code)", claude_login: !out() }); return null; }
+    if (cmd === "op" && msg.op === "resume" && views[msg.id]) { setTimeout(() => T.view(tid, views[msg.id]), 10); return null; }
+    // Retry: the failed turn's error makes way for the new reply; no second message of yours
+    if (cmd === "op" && msg.op === "retry") {
+      const v = last[tid]; if (!v) return null;
+      const at = v.blocks.map((b) => b.kind).lastIndexOf("prompt"), kept = v.blocks.slice(0, at + 1);
+      T.view(tid, { ...v, activity: "Thinking", blocks: kept });
+      setTimeout(() => T.view(tid, { ...v, activity: "Done", context: 1800, blocks: [...kept, { kind: "text", text: reply, live: false },
+        { kind: "done", ok: true, secs: 0.25, turns: 1, cost: 0, usage: u(1800, 0, 80), stopped: false }] }), 600);
+      return null;
+    }
+    // a switch of model after messages: the conversation goes on in a new session, under a divider (core C5); a local
+    // model's window is not known (C9)
+    // as the core does it: no session until the new one's first turn (null), every earlier id in `earlier_sessions`
+    if (cmd === "op" && msg.op === "model" && last[tid]?.blocks.some((b) => b.kind === "prompt")) {
+      const v = last[tid], label = msg.model === "mock-coder-7b" ? "Mock Coder 7B" : msg.model, was = v.session_id;
+      const next = { ...v, session_id: null, earlier_sessions: [...(v.earlier_sessions ?? []), ...(was ? [was] : [])], model: msg.model, context_window: msg.url?.includes("127.0.0.1") ? null : 200000,
+        blocks: [...v.blocks, { kind: "notice", text: `── continued on ${label} ──`, error: false }] };
+      setTimeout(() => T.view(tid, next), 30);
+      setTimeout(() => T.view(tid, { ...next, session_id: `${was ?? "s"}-2` }), 600);
+    }
+    return inv(cmd, args);
+  };
+  T.emit = (event, payload) => {
+    const msg = payload?.msg;
+    if (msg?.type === "view") last[payload.tid] = msg;
+    if (msg?.type === "models") {
+      // signed out: Claude's rows as the sign-ins' are before a sign-in (C2); a model server on this machine
+      if (out()) msg.choices = msg.choices.map((c) => (c.provider === "Claude" ? { model: c.model, label: c.label, provider: "Claude", price: "plan", why_not: "not signed in", no_key: true, current: c.current } : c));
+      if (!msg.choices.some((c) => c.model === "mock-coder-7b"))
+        msg.choices.push({ model: "mock-coder-7b", label: "mock-coder-7b · lm studio", place: "LM Studio · this machine", provider: "LM Studio", price: "0 / 0", url: "http://127.0.0.1:1234/v1", key_env: "LM_STUDIO_API_KEY", efforts: [], effort: null, bench: "", why_not: null, current: false });
+    }
+    const home = msg?.type === "sessions" && msg.dirs.find((d) => d.dir === "/Users/x"), proj = msg?.type === "sessions" && msg.dirs.find((d) => d.dir === "/Users/x/api-gateway");
+    if (home && !home.list.some((e) => e.id === "c7")) home.list.unshift({ id: "c7", first: "what is a haiku?", last_at: now - 300, messages: 1, model: "claude-opus-5-5" });
+    if (proj && !proj.list.some((e) => e.id === "p4")) proj.list.unshift({ id: "p4", first: "Rename the retry helper to withRetry", last_at: now - 60, messages: 1, model: "deepseek-v4.1-flash" });
+    if (proj && !proj.list.some((e) => e.id === "p5")) proj.list.unshift({ id: "p5", first: "Rename limit to maxTries in both helpers", last_at: now - 30, messages: 1, model: "claude-opus-5-5" });
+    return emit(event, payload);
+  };
+})();

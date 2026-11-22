@@ -33,7 +33,8 @@ export function CoreFailed({ error, folder, onRetry, onChat }: { error: string; 
   );
 }
 
-export type StartItem = { id: string; title: string; place: string; dir: string | null; at: number };
+/** `full`: its first message said whole (the title is made short from it), for the row's tooltip */
+export type StartItem = { id: string; title: string; full?: string; place: string; dir: string | null; at: number };
 export type StartProject = { path: string; name: string; count: number };
 
 export function Start({ place, composer, recent, projects, onResume, onProject, onFolder, today, onUsage }: {
@@ -48,13 +49,16 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
   const head = "flex px-3.5 pb-1.5 pt-2.5 text-[11.5px] font-medium text-faint";
   return (
     // the block in the middle of the page, a little above it (it sat 12% from the top, and a tall window was empty in its
-    // lower half, desktop 0.1.75); my-auto, not justify-center, so a short window still scrolls to its top
-    <div className="flex min-h-0 flex-1 flex-col items-center overflow-auto px-7 py-10">
-      <div className="my-auto flex w-full flex-col items-center pb-[6vh]">
+    // lower half, desktop 0.1.75); my-auto, not justify-center, so a short window still scrolls to its top. A short window
+    // takes less room around it, and what does not fit scrolls under a fade, as the transcript does: at 960×600 the cards
+    // ended cut at the trust bar, as if under it (design review 12). The padding is as tall as the fades.
+    <div className="tz-doc-edges relative flex min-h-0 flex-1 flex-col">
+    <div className="flex min-h-0 flex-1 flex-col items-center overflow-auto px-7 py-10 [@media(max-height:720px)]:pb-9 [@media(max-height:720px)]:pt-7">
+      <div className="my-auto flex w-full flex-col items-center pb-[6vh] [@media(max-height:720px)]:pb-0">
       {/* the mark over the question, and under it the day's ledger from your own numbers (design review 11, variant A of
           mockups/v8.html: the page read like every other harness's start). Without a run today, the line that says what
           the box is for, as before: no zeros. */}
-      <div className="mb-5"><Mark size={44} /></div>
+      <div className="mb-5 [@media(max-height:720px)]:mb-2"><Mark size={44} /></div>
       <h2 className="mb-1.5 text-center font-prose text-[27px] font-normal leading-tight tracking-[-0.01em] text-ink">
         {place ? <>What are we working on in {place}?</> : "What are we working on?"}</h2>
       {today ? (
@@ -72,8 +76,10 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
             <section className="overflow-hidden rounded-xl border border-line bg-card">
               <div className={head}>Pick up where you left off</div>
               {recent.map((s) => (
-                <button key={s.id} onClick={() => onResume(s)} title={s.title} className={row}>
-                  <span className="min-w-0 flex-1"><span className="block truncate text-ink">{s.title}</span><span className="block truncate text-[11.5px] text-faint">{s.place}</span></span>
+                // the tooltip says the whole first message, only where the row does not show all of it (a cut title's
+                // tooltip was the cut title, "…and add…", design review 12)
+                <button key={s.id} onClick={() => onResume(s)} title={s.full || s.title} data-tip-clip={(s.full || s.title).toLowerCase() === s.title.toLowerCase() ? "" : undefined} className={row}>
+                  <span className="min-w-0 flex-1"><span data-tip-text className="block truncate text-ink">{s.title}</span><span className="block truncate text-[11.5px] text-faint">{s.place}</span></span>
                   <span className="flex-none text-[11.5px] tabular-nums text-faint">{age(s.at)}</span>
                 </button>
               ))}
@@ -95,7 +101,9 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
           </section>}
         </div>
       )}
-      <div className="mt-5 flex gap-4 text-[11.5px] text-faint">
+      {/* a short window leaves the keys out (the palette and the shortcut sheet have them): at 960×600 they were what did
+          not fit */}
+      <div className="mt-5 flex gap-4 text-[11.5px] text-faint [@media(max-height:720px)]:hidden">
         {/* Search's key is on the sidebar's search field already */}
         {/* no Mode in a chat: nothing there asks for permission (its pill went too, design review 10) */}
         {([...(place ? [["Mode", "⇧Tab"]] : []), ["Shortcuts", "⌘/"]] as const).map(([what, keys]) => (
@@ -103,6 +111,7 @@ export function Start({ place, composer, recent, projects, onResume, onProject, 
         ))}
       </div>
       </div>
+    </div>
     </div>
   );
 }

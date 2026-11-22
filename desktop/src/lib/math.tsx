@@ -21,8 +21,10 @@ const OP: Record<string, string> = {
 const WORD = new Set(["log", "ln", "exp", "sin", "cos", "tan", "max", "min", "lim", "arg", "det"]);
 const BIG = new Set(["∑", "∏", "∫", "∮"]);
 
-/** `tex` as a <math> element; `block` for a display formula. */
-export function math(tex: string, block = false, key?: number): ReactNode {
+/** `tex` as a <math> element; `block` for a display formula, "inline" for one set in display style inside a line ($$…$$
+ * in a sentence). */
+export function math(tex: string, mode: boolean | "inline" = false, key?: number): ReactNode {
+  const block = !!mode;
   const toks = tex.match(/\\[a-zA-Z]+|\\.|\d+(?:\.\d+)?|\s+|./g) ?? [];
   let i = 0;
   const group = (): ReactNode[] => {
@@ -83,11 +85,8 @@ export function math(tex: string, block = false, key?: number): ReactNode {
     return h("mo", { key: i }, t === "*" ? "∗" : t === "-" ? "−" : t);
   };
   const body = group();
-  return h("math", { key, display: block ? "block" : undefined }, h("mrow", null, ...body));
+  return h("math", { key, display: mode === true ? "block" : undefined, displaystyle: mode === "inline" ? "true" : undefined }, h("mrow", null, ...body));
 }
-
-/** Whether `$…$` holds TeX, not money: "$5 and $10" stays text (design review 10). */
-export const isTex = (s: string) => /[\\^_]/.test(s);
 
 /** A check: `npx tsx -e 'import("./src/lib/math.tsx").then(m => m.demo())'`. */
 export async function demo() {
@@ -103,6 +102,5 @@ export async function demo() {
   ];
   for (const [t, want] of cases) if (!out(t).includes(want)) throw new Error(`math: ${t}\n${out(t)}`);
   if (!out("\\sum_{i=1}^n x_i", true).includes("<munderover>")) throw new Error("math: display limits");
-  if (isTex("5 and ") || !isTex("x^2")) throw new Error("math: money is not TeX");
   console.log("math ok");
 }

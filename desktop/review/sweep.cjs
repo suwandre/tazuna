@@ -95,7 +95,7 @@ const log = [];
     await step(p, `${T}-receipt-mixed`, async () => { await p.getByTitle(/^The receipt/).nth(1).click(); await p.waitForTimeout(500); await p.mouse.move(640, 400); await p.mouse.wheel(0, 9000); });
     await step(p, `${T}-receipt-chat`, async () => { await p.getByTitle(/^This conversation's receipt/).click(); }); await esc(p);
     await step(p, `${T}-panel-tab`, async () => { await p.mouse.move(640, 400); await p.mouse.wheel(0, -9000); });
-    await step(p, `${T}-panel-open`, async () => { await p.getByTitle(/^The work panel: nothing/).click(); await p.waitForTimeout(500); });
+    await step(p, `${T}-panel-open`, async () => { await p.getByTitle(/^The work panel: changes/).click(); await p.waitForTimeout(500); });
     const col = () => p.evaluate(() => `${document.querySelector('[style*="grid-template-columns"]').style.gridTemplateColumns.split(" ").pop()} column, ${document.querySelectorAll('button[aria-label^="The work panel"]').length} tab`);
     log.push(`${theme} panel opened by its tab: ${await col()} (300px, 0 tab wanted)`);
     await step(p, `${T}-receipt-paid`, async () => { await open(p, "Speed up the CI build"); await p.waitForTimeout(300); await p.getByTitle(/^The receipt/).first().click(); await p.waitForTimeout(500); });

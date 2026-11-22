@@ -545,6 +545,34 @@ does. Claude's thinking variants read "Opus 4.6 thinking".
 - Seen: the sweep on test data (the Google rows' warning and signed-in state, Antigravity's picker, Mistral's two groups,
   the unsure key, the plan line). Not seen: a real sign-in (no account was used).
 
+0.1.103 (with tazuna 0.1.199; design review 12, the first driven as a new user on the real core: a fresh home folder, claude
+signed out, a scripted model on LM Studio's port, the production build in WebKit; the user had kept finding what the
+reviews on test data missed):
+- A new user without Claude: setup, the picker and an error now agree that claude is signed out (`claude auth status`);
+  the error says it once and says to run `claude auth login`; Settings → Providers has a Claude row (signed in, not signed
+  in with the command to copy and "Check again", not installed); the line under the box says "Claude isn't signed in".
+  A model picked by hand that is not Claude is where new chats (and projects) start; signed out, a project with no pick of
+  its own starts on the chat's.
+- No trust bar in chats (it came from ~/.claude, Claude Code's own folder).
+- One conversation across a model switch and a Retry: the new model gets the conversation so far, the list shows one row,
+  "continued on X" marks the switch; Retry runs the failed turn again without a second copy of the question.
+- A reopened conversation keeps its change cards; edit approvals show the change; the work panel never opens or closes by
+  itself (its tab counts the changes as they land), so the answer never moves sideways under the reader.
+- Answers: strikethrough, rules, setext headings, task lists, line breaks inside a paragraph, inline math by pandoc's rule
+  (money stays money, code and shell variables stay text), tables whose code cells wrap.
+- Messages sent during a reply wait in the window and go one at a time; Stop gives them back to the box. A rate-limited
+  chat says it is retrying while it does. Short asides before later steps go into the fold.
+- Smaller: "<1 s", no "−0", no receipt under a turn that answered nothing, "Edit main.rs · declined", a step's time from its
+  Allow, no "of 200k" for an unknown window, the header's faint part only what the title left out, the picker's empty
+  Score column gone, the status bar's accounts in words ("$0.17 below zero and 4 more"), menus with their ARIA roles, no
+  permission modes in a chat's palette, the start page fitting 960×600, tooltips only after the pointer moves.
+- Independent reviews found 16 defects in the core's first round and 11 (2 major: an approval showing another file's
+  diff, queued messages saved late) in the window's; fixed before this release.
+- Seen: every fix on the real core (out/review-12/desktop-fix, z01-z12 the last pass), the sweep (210 steps, no page
+  errors), WebKit and Chromium. Not seen: the real Tauri window, a real Claude sign-in, Windows and Linux.
+- Prototype for the next step: mockups/v9.html (the title bar in the traffic lights' row; the open work panel keeping
+  the column's left edge), waiting for the user's pick.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

@@ -7,7 +7,8 @@ export type Thread = { id: string; title: string; project?: string; running?: bo
   /** its first message in full, where the title is shortened from it: the row's tooltip */
   full?: string };
 export type Project = { name: string; path?: string; open: boolean; pending?: number; threads: Thread[] };
-/** One step before the answer: a tool call (with what it was given and what came back) or a stretch of thinking. */
+/** One step before the answer: a tool call (with what it was given and what came back), a stretch of thinking, or what
+ * the model said between steps (`said`: its `text`, a quiet line in the fold; only prose after the last step is the answer). */
 export type ToolStep = {
   verb: string; target: string; detail?: string; secs: number; ok: boolean; running?: boolean;
   /** cut off when its reply was stopped: it has no result */
@@ -18,7 +19,7 @@ export type ToolStep = {
   waiting?: boolean;
   /** the call's id: a subagent's own conversation is asked for by it */
   id?: string;
-  kind?: "tool" | "thinking"; name?: string; input?: Record<string, unknown> | null; result?: string; text?: string;
+  kind?: "tool" | "thinking" | "said"; name?: string; input?: Record<string, unknown> | null; result?: string; text?: string;
 };
 export type ChangedFile = { path: string; added: number | null; removed: number | null; status: string };
 /** What one turn changed (the core's git snapshots before and after it). */
@@ -61,8 +62,12 @@ export type Message =
       failure?: Failure;
       /** errors the reply met and went on past, as the core wrote them */
       notes?: string[];
+      /** a call being tried again while the reply runs, as the core says it ("…: 2 tries failed, trying again (HTTP 429…)") */
+      retrying?: string;
       /** what the core says about the conversation itself, not an error: a saved one whose model cannot run here now */
-      info?: string[] };
+      info?: string[] }
+  /** what the core says between turns: a model switch that went on in a new session ("continued on X"), a quiet divider */
+  | { role: "notice"; text: string };
 /** `text` is the error's message alone ("[404]: … not found."), `raw` the notice as the core wrote it; both empty for a
  * reply you stopped without an error */
 export type Failure = { text: string; raw: string; stopped: boolean; /** the message it answered, for Retry */ ask: string };
@@ -214,50 +219,37 @@ export function demoKeys() {
   console.log("keys ok");
 }
 
-/** The work panel's column, by rule (design review 11; the tab's click had set one choice for the whole window, which put
- * the panel into plain chats and stopped the fold everywhere):
+/** The work panel's column, by rule (design reviews 11 and 12: it opened by itself at a turn's end and moved the reading
+ * column under the reader, and Undo moved it back):
  * 1. a side chat or a subagent's sheet has the column: no panel, no tab;
  * 2. a choice made by hand in this conversation (the header's button, ⌘\, the tab) stands, in this conversation only;
- * 3. else it is open in a project with something to show (a change, a check, a pull request, a panel of the user's) in a
- *    window of 1280 px or more, and closed in a plain chat and in a narrower window;
- * 4. a project with nothing to show has the "Changes 0" tab on the sheet's edge in its place (1280 px or more);
- * 5. while it is not known yet whether there is something (`work` null: the pull request not answered, the panels not
- *    read) the layout stays as it was (`was`), so the column does not slide open and shut.
- * Closing by hand a panel that has nothing to show is no choice: it goes back to its tab (`choose`). */
-export function panelState(a: { project: boolean; width: number; work: boolean | null; choice?: boolean; pane?: boolean; was?: { open: boolean; tab: boolean } }): { open: boolean; tab: boolean } {
+ * 3. else it is never open: a project in a window of 1280 px or more has the folded tab on the sheet's edge ("Changes 2"),
+ *    a plain chat and a narrower window have nothing. It never opens or closes by itself.
+ * Closing it by hand is no choice: it goes back to its tab (`panelChoice`). */
+export function panelState(a: { project: boolean; width: number; choice?: boolean; pane?: boolean }): { open: boolean; tab: boolean } {
   if (a.pane) return { open: false, tab: false };
-  const wide = a.project && a.width >= 1280;
-  if (a.choice !== undefined) return { open: a.choice, tab: false };
-  if (a.project && a.work === null) return a.was ?? { open: false, tab: false };
-  return { open: wide && !!a.work, tab: wide && !a.work };
+  if (a.choice) return { open: true, tab: false };
+  return { open: false, tab: a.project && a.width >= 1280 };
 }
-/** The choice a click leaves for a conversation: the opposite of what shows, or none at all when that closes a panel with
- * nothing in it. */
-export const panelChoice = (open: boolean, a: { project: boolean; work: boolean | null }): boolean | undefined => (open && a.project && a.work === false ? undefined : !open);
+/** The choice a click leaves for a conversation: open, or none (shut: its tab, where it has one). */
+export const panelChoice = (open: boolean): boolean | undefined => (open ? undefined : true);
 export function demoPanel() {
   const st = (a: Parameters<typeof panelState>[0]) => { const s = panelState(a); return `${s.open ? "open" : "shut"}${s.tab ? "+tab" : ""}`; };
   const P = { project: true, width: 1280 }, by: Record<string, boolean | undefined> = {};
   // the tab opened in one conversation, then another opened: the choice is the first one's only
-  by.a = panelChoice(false, { project: true, work: false });
+  by.a = panelChoice(false);
   const cases: [string, string, string][] = [
-    ["a plain chat", st({ project: false, width: 1680, work: false }), "shut"],
-    ["a plain chat, opened by hand", st({ project: false, width: 1680, work: false, choice: true }), "open"],
-    ["an empty project", st({ ...P, work: false }), "shut+tab"],
-    ["a project with a change", st({ ...P, work: true }), "open"],
-    ["gh answers with an error (no work: App counts a pull request by its number)", st({ ...P, work: false }), "shut+tab"],
-    ["the pull request not answered yet, after an open panel", st({ ...P, work: null, was: { open: true, tab: false } }), "open"],
-    ["the pull request not answered yet, after a tab", st({ ...P, work: null, was: { open: false, tab: true } }), "shut+tab"],
-    ["closed by hand, then a change arrives", st({ ...P, work: true, choice: panelChoice(true, { project: true, work: true }) }), "shut"],
-    ["an empty one opened by its tab", st({ ...P, work: false, choice: by.a }), "open"],
-    ["then another empty conversation", st({ ...P, work: false, choice: by.b }), "shut+tab"],
-    ["then a plain chat", st({ project: false, width: 1280, work: false, choice: by.c }), "shut"],
-    ["the opened empty one closed again: its tab is back", st({ ...P, work: false, choice: panelChoice(true, { project: true, work: false }) }), "shut+tab"],
-    ["opened by its tab, then a change arrives", st({ ...P, work: true, choice: by.a }), "open"],
-    ["a side chat or a subagent has the column", st({ ...P, work: true, choice: true, pane: true }), "shut"],
-    ["1100 px, a change", st({ project: true, width: 1100, work: true }), "shut"],
-    ["1100 px, nothing", st({ project: true, width: 1100, work: false }), "shut"],
-    ["900 px, a change", st({ project: true, width: 900, work: true }), "shut"],
-    ["900 px, opened by hand", st({ project: true, width: 900, work: true, choice: true }), "open"],
+    ["a plain chat", st({ project: false, width: 1680 }), "shut"],
+    ["a plain chat, opened by hand", st({ project: false, width: 1680, choice: true }), "open"],
+    ["a plain chat opened by hand, closed again", st({ project: false, width: 1680, choice: panelChoice(true) }), "shut"],
+    ["a project, whatever it changed: folded to its tab", st(P), "shut+tab"],
+    ["a project opened by its tab", st({ ...P, choice: by.a }), "open"],
+    ["then another conversation in the project", st({ ...P, choice: by.b }), "shut+tab"],
+    ["then a plain chat", st({ project: false, width: 1280, choice: by.c }), "shut"],
+    ["the opened one closed again: its tab is back", st({ ...P, choice: panelChoice(true) }), "shut+tab"],
+    ["a side chat or a subagent has the column", st({ ...P, choice: true, pane: true }), "shut"],
+    ["1100 px", st({ project: true, width: 1100 }), "shut"],
+    ["900 px, opened by hand", st({ project: true, width: 900, choice: true }), "open"],
   ];
   const bad = cases.filter(([, got, want]) => got !== want).map(([what, got, want]) => `${what}: ${got} (wanted ${want})`);
   if (bad.length) throw new Error(bad.join("\n"));

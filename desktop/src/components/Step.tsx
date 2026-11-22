@@ -6,31 +6,42 @@ import { Sep } from "./Sep";
 
 const box = "mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md bg-field px-2.5 py-2 font-mono text-[11.5px] leading-[1.5] text-ink-2 select-text";
 
-/** What a call was given, in its own shape: an edit as removed and added lines, a command as itself, else the fields. */
-function Given({ name, input }: { name: string; input: Record<string, unknown> }) {
+/** An edit's text as removed and added lines. */
+const lines = (before: string, after: string, key: string) => <>
+  {before.split("\n").map((l, i) => <div key={`${key}o${i}`} className="text-bad">- {l}</div>)}
+  {after.split("\n").map((l, i) => <div key={`${key}n${i}`} className="text-ok">+ {l}</div>)}
+</>;
+
+/** Whether a tool writes files: its approval shows what would change (`Given`), not only the file's name. */
+export const writes = (name: string) => /^(Edit|edit|Write|write|MultiEdit|multi_edit)$/.test(name.replace(/^mcp__\w+?__/, ""));
+
+/** What a call was given, in its own shape: an edit as removed and added lines (a multi-edit as each of them), a write as
+ * its text, a command as itself, else the fields. `cap`: the box's height class (the approval's is lower). */
+export function Given({ name, input, cap }: { name: string; input: Record<string, unknown>;
+  /** the box's height class where it is lower (the approval's): it takes the focus then, so the keyboard scrolls it */
+  cap?: string }) {
   const str = (k: string) => (typeof input[k] === "string" ? (input[k] as string) : null);
   const n = name.replace(/^mcp__\w+?__/, "");
+  const frame = cap ? box.replace("max-h-72", cap) : box;
   // claude's Edit names them old_string and new_string, the own loop's edit old and new
   const before = str("old_string") ?? str("old"), after = str("new_string") ?? str("new");
-  if (/^(Edit|edit)$/.test(n) && before != null) {
-    return (
-      <div className={box}>
-        {before.split("\n").map((l, i) => <div key={`o${i}`} className="text-bad">- {l}</div>)}
-        {(after ?? "").split("\n").map((l, i) => <div key={`n${i}`} className="text-ok">+ {l}</div>)}
-      </div>
-    );
+  const scroll = cap ? { tabIndex: 0, role: "region", "aria-label": "What would change" } : {};
+  if (/^(Edit|edit)$/.test(n) && before != null) return <div {...scroll} className={frame}>{lines(before, after ?? "", "")}</div>;
+  if (/^(MultiEdit|multi_edit)$/.test(n) && Array.isArray(input.edits)) {
+    const edits = input.edits as { old_string?: string; new_string?: string }[];
+    return <div {...scroll} className={frame}>{edits.map((e, i) => <div key={i} className={i ? "mt-1.5 border-t border-line pt-1.5" : ""}>{lines(e.old_string ?? "", e.new_string ?? "", `${i}`)}</div>)}</div>;
   }
-  if (/^(Write|write)$/.test(n) && str("content") != null) return <div className={box}>{str("content")}</div>;
+  if (/^(Write|write)$/.test(n) && str("content") != null) return <div {...scroll} className={frame}>{str("content")}</div>;
   if (str("command") != null) return <div className={box}>$ {str("command")}</div>;
   // a read in words: which file, which lines
   if (/^(Read|read)$/.test(n) && (str("file_path") ?? str("path")) != null) {
     const from = Number(input.offset ?? 1) || 1, count = Number(input.limit ?? 0);
-    return <div className={line}>{str("file_path") ?? str("path")}{count ? `, lines ${from}–${from + count - 1}` : ""}</div>;
+    return <div className={readLine}>{str("file_path") ?? str("path")}{count ? `, lines ${from}–${from + count - 1}` : ""}</div>;
   }
   return <Fields value={input} />;
 }
 
-const line = "mt-1 px-1 font-mono text-[11.5px] text-ink-2 select-text";
+const readLine = "mt-1 px-1 font-mono text-[11.5px] text-ink-2 select-text";
 
 /** `inline code` in a value drawn as code, not with its backticks */
 const code = (t: string) => t.split(/(`[^`]+`)/).map((p, i) => (p.startsWith("`") && p.endsWith("`") && p.length > 2 ? <code key={i} className="rounded bg-hover px-1 font-mono text-[11.5px]">{p.slice(1, -1)}</code> : p));
@@ -95,6 +106,8 @@ const NOW: Record<string, string> = { Read: "Reading", Ran: "Running", Edited: "
 // model shows it). Steps with nothing more to show do not open.
 export function Step({ t }: { t: ToolStep }) {
   const [open, setOpen] = useState(false);
+  // what the model said between its steps: a quiet line in its place, not the answer
+  if (t.kind === "said") return <div className="prose-answer py-0.5 !font-sans !text-[12.5px] !leading-[1.55] text-muted [&_p]:!mb-1"><Markdown text={t.text ?? ""} /></div>;
   const thinking = t.kind === "thinking";
   const more = thinking ? !!t.text?.trim() : !!(t.input && Object.keys(t.input).length) || !!t.result;
   // a subagent: its own conversation opens beside this one (App listens for "tazuna-agent")
@@ -110,7 +123,7 @@ export function Step({ t }: { t: ToolStep }) {
           : t.stopped || t.declined ? <Square size={10} strokeWidth={2} fill="currentColor" className="mx-0.5 flex-none text-faint" aria-label={t.declined ? "declined" : "stopped"} />
           : t.ok ? <Check size={14} strokeWidth={1.5} className="flex-none text-ok" />
           : <X size={14} strokeWidth={1.75} className="flex-none text-bad" aria-label="failed" />}
-        <span className={t.running && !t.waiting ? "tz-live" : ""}>{t.waiting ? `${WAIT[t.verb] ?? t.verb} · waits for you` : t.running ? (NOW[t.verb] ?? t.verb) : t.verb}</span> {t.target && <span className="truncate font-mono text-[11.5px] text-ink-2">{t.target}</span>}
+        <span className={t.running && !t.waiting ? "tz-live" : ""}>{t.waiting ? `${WAIT[t.verb] ?? t.verb} · waits for you` : t.running ? (NOW[t.verb] ?? t.verb) : t.declined ? (WAIT[t.verb] ?? t.verb) : t.verb}</span> {t.target && <span className="truncate font-mono text-[11.5px] text-ink-2">{t.target}</span>}
         {t.detail && <span className="flex items-center text-faint"><Sep />{t.detail}</span>}
         {t.stopped && <span className="flex items-center text-faint"><Sep />stopped</span>}
         {t.declined && <span className="flex items-center text-faint"><Sep />declined</span>}

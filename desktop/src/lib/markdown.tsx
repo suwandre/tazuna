@@ -1,19 +1,35 @@
 // Markdown for model answers: code fences (coloured, with their language and a copy button), headings, lists (nested,
-// numbered from where they start), quotes, tables (aligned as their |:--:| line says), paragraphs, `code`, **bold**,
-// *italic*, links, TeX between $…$, \(…\), $$…$$ or \[…\] (lib/math.tsx). React elements only, never raw HTML, so a reply cannot inject markup; a link opens in the browser through the
-// core's opener (http and https only), never inside the window.
-import { useState, type ReactNode } from "react";
+// numbered from where they start; "- [x]" task items with a drawn box), quotes, tables (aligned as their |:--:| line says),
+// rules (---), paragraphs (a single newline is a line break, as chat apps have it), `code`, **bold**, *italic*,
+// ~~struck~~, links, TeX between $…$ (pandoc's rule), \(…\), $$…$$ or \[…\] (lib/math.tsx). React elements only, never
+// raw HTML, so a reply cannot inject markup; a link opens in the browser through the core's opener (http and https only),
+// never inside the window.
+import { Fragment, useState, type ReactNode } from "react";
 import { Check, Copy } from "lucide-react";
-import { isTex, math } from "./math";
+import { math } from "./math";
 import { core, inTauri } from "./tazuna";
 
 const open = (url: string) => (inTauri ? core.openLink(url) : window.open(url, "_blank", "noopener"));
 
+// TeX in a line, by pandoc's rule: $$…$$ first (taken as $…$ it left a "$" on each side, design review 12), then $…$ whose
+// opening $ has no space after it and whose closing $ has none before it and no letter, digit or _ after it: "$O(k)$" and
+// "$k$" are math, "$5 per month, or $12" stays money and `echo $HOME/$USER` text. Never over a code span's backtick: code
+// comes first. Bold, italic, struck text and a link's words may run over a line's end (one paragraph is read whole).
+const TEX = String.raw`\$\$[^$\n\`]+?\$\$|\$(?![\s$])[^$\n\`]*?(?<![\s\\])\$(?!\w)`;
+const INLINE = new RegExp(String.raw`(\`[^\`\n]+\`|${TEX}|\\\(.+?\\\)|!\[[^\]\n]*\]\([^)\s]+\)|\*\*[^*]+?\*\*|~~(?![\s~])[^~]+?(?<![\s~])~~|(?<![\w*])\*(?![\s*])[^*]+?(?<![\s*])\*(?![\w*])|\[[^\]]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])`);
+
+/** A newline left in a paragraph's text is a line break (chat apps have it so; a haiku in a quote ran on as one line). */
+const breaks = (p: string, key: number) => (p.includes("\n") ? p.split("\n").map((x, j) => <Fragment key={`${key}.${j}`}>{j > 0 && <br />}{x}</Fragment>) : p);
+
 function inline(text: string): ReactNode[] {
-  return text.split(/(`[^`\n]+`|\$[^$\n]*[\\^_][^$\n]*\$|\\\(.+?\\\)|!\[[^\]\n]*\]\([^)\s]+\)|\*\*[^*\n]+\*\*|(?<![\w*])\*(?![\s*])[^*\n]+(?<![\s*])\*(?![\w*])|\[[^\]\n]+\]\(https?:\/\/[^)\s]+\)|https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/).map((p, i) => {
+  // the split keeps what matched at the odd places: only those are read as marks (a sentence that began and ended with "$"
+  // is text)
+  return text.split(INLINE).map((p, i) => {
+    if (i % 2 === 0) return breaks(p, i);
     if (p.startsWith("`") && p.endsWith("`") && p.length > 1) return <code key={i}>{p.slice(1, -1)}</code>;
-    // TeX: only $…$ that hold a backslash, ^ or _ ("$5 and $10" stays money), and \(…\)
-    if (p.length > 2 && p.startsWith("$") && p.endsWith("$") && isTex(p.slice(1, -1))) return math(p.slice(1, -1), false, i);
+    if (p.startsWith("$$")) return math(p.slice(2, -2), "inline", i);
+    if (p.startsWith("$")) return math(p.slice(1, -1), false, i);
+    if (p.startsWith("~~")) return <del key={i}>{inline(p.slice(2, -2))}</del>;
     if (p.startsWith("\\(") && p.endsWith("\\)")) return math(p.slice(2, -2), false, i);
     // what is inside bold or italic is read again: **`file.ts` lines 3-4** showed its backticks (design review 5)
     if (p.startsWith("**") && p.endsWith("**") && p.length > 3) return <strong key={i}>{inline(p.slice(2, -2))}</strong>;
@@ -69,7 +85,12 @@ type Item = { text: string; sub?: List };
 type List = { ordered: boolean; start: number; indent: number; items: Item[] };
 
 function renderList(l: List, key: number): ReactNode {
-  const items = l.items.map((it, i) => <li key={i}>{inline(it.text)}{it.sub && renderList(it.sub, 0)}</li>);
+  const items = l.items.map((it, i) => {
+    // a task item: its box drawn, done or not (not a form's checkbox: nothing here can be ticked)
+    const task = it.text.match(/^\[([ xX])\]\s+(.*)/);
+    return task ? <li key={i} className="task"><span role="img" aria-label={task[1] === " " ? "to do" : "done"} className="task-box">{task[1] !== " " && <Check size={11} strokeWidth={2.25} />}</span>{inline(task[2])}{it.sub && renderList(it.sub, 0)}</li>
+      : <li key={i}>{inline(it.text)}{it.sub && renderList(it.sub, 0)}</li>;
+  });
   return l.ordered ? <ol key={key} start={l.start === 1 ? undefined : l.start}>{items}</ol> : <ul key={key}>{items}</ul>;
 }
 
@@ -77,10 +98,11 @@ export function Markdown({ text }: { text: string }) {
   const out: ReactNode[] = [];
   const lines = text.split("\n");
   let para: string[] = [], list: List | null = null, quote: string[] = [];
+  // a paragraph or a quote is read whole, its newlines line breaks (inline() keeps a mark that runs over one)
   const flush = () => {
-    if (para.length) out.push(<p key={out.length}>{inline(para.join(" "))}</p>);
+    if (para.length) out.push(<p key={out.length}>{inline(para.join("\n"))}</p>);
     if (list) out.push(renderList(list, out.length));
-    if (quote.length) out.push(<blockquote key={out.length}>{inline(quote.join(" "))}</blockquote>);
+    if (quote.length) out.push(<blockquote key={out.length}>{inline(quote.join("\n"))}</blockquote>);
     para = []; list = null; quote = [];
   };
   // the deepest list an item at this indent belongs to: a deeper indent opens a list under the last item
@@ -103,14 +125,16 @@ export function Markdown({ text }: { text: string }) {
       out.push(<CodeBlock key={out.length} lang={lang} lines={body} />);
       continue;
     }
-    // a display formula: $$…$$ or \[…\], on one line or several
+    // a display formula: $$…$$ or \[…\] alone, on one line or several, and only once it is closed: "$$x$$ and more" is a
+    // line with a formula in it, and an unclosed $$ stays text (it swallowed the rest of the answer)
     const opens = line.trim().startsWith("$$") ? "$$" : line.trim().startsWith("\\[") ? "\\]" : null;
-    if (opens) {
+    const first = opens ? line.trim().slice(2) : "", at = opens ? first.indexOf(opens) : -1;
+    const end = !opens ? -1 : at >= 0 ? (first.slice(at + 2).trim() ? -1 : i) : lines.findIndex((l, j) => j > i && l.trimEnd().endsWith(opens));
+    if (opens && end >= 0) {
       flush();
-      let body = line.trim().slice(2);
-      const closes = (t: string) => t.trimEnd().endsWith(opens);
-      while (!closes(body) && i + 1 < lines.length) body += "\n" + lines[++i];
-      out.push(<div key={out.length} className="math-block">{math(body.trimEnd().replace(opens === "$$" ? /\$\$$/ : /\\\]$/, ""), true)}</div>);
+      const body = [first, ...lines.slice(i + 1, end + 1)].join("\n").trimEnd();
+      i = end;
+      out.push(<div key={out.length} className="math-block">{math(body.slice(0, body.lastIndexOf(opens)), true)}</div>);
       continue;
     }
     // a table: a row of cells, then a |---|:--:|--:| line that also says how each column aligns
@@ -120,16 +144,26 @@ export function Markdown({ text }: { text: string }) {
       const rows: string[][] = [];
       i += 1;
       while (i + 1 < lines.length && lines[i + 1].trim().startsWith("|")) rows.push(cells(lines[++i]));
+      // a short cell ("+2 −1") stays on one line; a long one wraps, its code too (a long path crushed the other columns)
+      const cell = (c: string, j: number) => ({ textAlign: align[j], whiteSpace: c.length <= 12 ? "nowrap" as const : undefined });
       out.push(
         <div key={out.length} className="table-wrap"><table>
-          <thead><tr>{head.map((c, j) => <th key={j} style={{ textAlign: align[j] }}>{inline(c)}</th>)}</tr></thead>
-          <tbody>{rows.map((r, k) => <tr key={k}>{r.map((c, j) => <td key={j} style={{ textAlign: align[j] }}>{inline(c)}</td>)}</tr>)}</tbody>
+          <thead><tr>{head.map((c, j) => <th key={j} style={cell(c, j)}>{inline(c)}</th>)}</tr></thead>
+          <tbody>{rows.map((r, k) => <tr key={k}>{r.map((c, j) => <td key={j} style={cell(c, j)}>{inline(c)}</td>)}</tr>)}</tbody>
         </table></div>,
       );
       continue;
     }
     const h = line.match(/^(#{1,6})\s+(.*)/), item = line.match(/^(\s*)(?:([-*+])|(\d+)[.)])\s+(.*)/), q = line.match(/^>\s?(.*)/);
     if (!line.trim()) { if (!(list && /^\s+\S/.test(lines[i + 1] ?? ""))) flush(); }
+    // a paragraph's line with === or --- right under it is a heading (setext): # and ## again, not a rule
+    else if (para.length && !list && !quote.length && /^ {0,3}(=+|-{2,})\s*$/.test(line)) {
+      const title = para.join(" ");
+      para = [];
+      out.push(line.trim()[0] === "=" ? <h2 key={out.length}>{inline(title)}</h2> : <h3 key={out.length}>{inline(title)}</h3>);
+    }
+    // a rule: ---, *** or ___ alone on a line (before a list item: "* * *" is one too)
+    else if (/^ {0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) { flush(); out.push(<hr key={out.length} />); }
     else if (h) {
       // a heading reads as one: # and ## as section titles, the rest as a bold lead-in (until desktop 0.1.74 every heading
       // was a bold paragraph)
@@ -160,6 +194,29 @@ export async function demo() {
   if (!renderToStaticMarkup(<Markdown text="total $T = \\sum_i t_i$, and \\(x^2\\)" />).includes("<math")) throw new Error("markdown: inline TeX");
   if (renderToStaticMarkup(<Markdown text="it costs $5 and $10 a month" />).includes("<math")) throw new Error("markdown: money is not math");
   if (!renderToStaticMarkup(<Markdown text={"$$\n\\frac{a}{b}\n$$"} />).includes('display="block"')) throw new Error("markdown: display TeX");
+  // design review 12: struck text, rules, task items, line breaks, TeX by pandoc's rule, $$…$$ after $…$, table cells
+  const md = (t: string) => renderToStaticMarkup(<Markdown text={t} />);
+  const cases: [string, (h: string) => boolean][] = [
+    ["and ~~struck~~ text", (h) => h.includes("<del>struck</del>")],
+    ["a\n\n---\n\nb\n\n* * *", (h) => (h.match(/<hr\/>/g) ?? []).length === 2 && !h.includes("<li")],
+    ["- [x] done item\n- [ ] open item", (h) => h.includes('class="task"') && h.includes('aria-label="done"') && h.includes('aria-label="to do"') && !h.includes("<input") && !h.includes("[x]")],
+    ["> An old silent pond\n> a frog jumps into the pond\n> splash! silence again", (h) => (h.match(/<br\/>/g) ?? []).length === 2],
+    ["one\ntwo", (h) => h.includes("<p>one<br/>two</p>")],
+    ["roughly $O(k)$ for $k$ captured", (h) => (h.match(/<math/g) ?? []).length === 2 && !h.includes("$")],
+    ["That costs $5 per month, or $12 with support.", (h) => !h.includes("<math") && h.includes("$5 per month, or $12")],
+    ["$20,000 and $30,000, or US$5-$10", (h) => !h.includes("<math")],
+    ["the lookup is $O(1)$: $$t_{lookup} = \\Theta(1)$$", (h) => h.includes('displaystyle="true"') && !h.includes("$")],
+    // the independent review of design review 12: setext headings, marks over a line's end, code before math, $ before a
+    // letter, an unclosed $$, struck text with spaces inside
+    ["Title\n===\n\nSub\n---\n\ntext\n\n---", (h) => h.includes("<h2>Title</h2>") && h.includes("<h3>Sub</h3>") && h.includes("<hr/>")],
+    ["a **very\nimportant** [link\ntext](https://example.com) end", (h) => h.includes("<strong>very<br/>important</strong>") && h.includes('href="https://example.com"')],
+    ["run `echo $x$` and echo $HOME/$USER", (h) => !h.includes("<math") && h.includes("<code>echo $x$</code>")],
+    ["$$x\nand the rest of the answer\n\nmore", (h) => !h.includes("<math") && h.includes("the rest of the answer") && h.includes("<p>more</p>")],
+    ["$$x$$ and more", (h) => h.includes('displaystyle="true"') && h.includes("and more")],
+    ["~~ a ~~ and ~~b~~", (h) => h.includes("~~ a ~~") && h.includes("<del>b</del>")],
+    ["| File | Lines |\n|---|--:|\n| `a/very/long/path/that/keeps/going/src/components/SomethingVeryLong.tsx` | +2 −1 |", (h) => h.includes('white-space:nowrap">+2 −1') && !h.includes('nowrap"><code')],
+  ];
+  for (const [t, ok] of cases) if (!ok(md(t))) throw new Error(`markdown: ${JSON.stringify(t)}\n${md(t)}`);
   for (const want of ["<h3>Why</h3>", "<em>now</em>", '<ol start="2"><li>second<ul><li>nested</li><li><strong>two</strong></li></ul></li><li>third</li></ol>',
     '<div class="code-head"><span>py</span>', "<pre>", "<blockquote>", 'style="text-align:right"', 'href="https://example.com"', 'href="https://tazuna.dev"',
     "tok-comment", "tok-string", "tok-keyword"]) {

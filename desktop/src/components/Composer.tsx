@@ -36,8 +36,9 @@ type Props = {
   /** files to attach (the native picker); dropped files come through onDrop */
   onPickFiles?: () => Promise<string[]>;
   onDrop?: (cb: (paths: string[]) => void) => Promise<() => void>;
-  /** text put in the box from outside ("edit from here"): set whenever `n` changes */
-  draft?: { text: string; n: number };
+  /** text put in the box from outside ("edit from here"): set whenever `n` changes; `append`: after what is there (the
+   * messages a Stop took back) */
+  draft?: { text: string; n: number; append?: boolean };
   /** shown above the box (the edit banner) */
   above?: React.ReactNode;
   /** shown under the box (where a message goes and what it costs) */
@@ -137,7 +138,7 @@ export function Composer({ session, where, chat, busy, onSend, onStop, models, o
   }, [text, draftKey]);
   // a draft from outside applies when it is new (not again when the box of another conversation mounts)
   const seen = useRef(draft?.n);
-  useEffect(() => { if (draft && draft.n !== seen.current) { seen.current = draft.n; setText(draft.text); box.current?.focus(); } }, [draft?.n]);
+  useEffect(() => { if (draft && draft.n !== seen.current) { seen.current = draft.n; setText((t) => (draft.append && t.trim() ? `${t.trimEnd()}\n\n${draft.text}` : draft.text)); box.current?.focus(); } }, [draft?.n]);
   const attach = (paths: string[]) => paths.length && setFiles((f) => [...new Set([...f, ...paths])]);
   useEffect(() => {
     if (!onDrop) return;
@@ -248,7 +249,7 @@ export function WherePill({ composer: c }: { composer: ComposerBag }) {
   if (!w) return null;
   return (
     <span className="relative">
-      <button onClick={() => setOpen(!open)} title="Where it runs: a chat, or a project's folder"
+      <button onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title="Where it runs: a chat, or a project's folder"
         className={pill}>
         {w.folder ? <FolderOpen size={14} strokeWidth={1.5} /> : <MessageCircle size={14} strokeWidth={1.5} />}{w.label}<ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
       </button>
@@ -256,12 +257,12 @@ export function WherePill({ composer: c }: { composer: ComposerBag }) {
         // downward: on the start screen the box sits under the heading, which an upward menu covered
         <Menu onClose={() => setOpen(false)} width={280}>
           {w.choices.map((ch) => (
-            <button key={ch.path ?? "chat"} onClick={() => { setOpen(false); w.pick(ch.path); }} title={ch.hint} className="flex w-full items-center gap-2 px-3 py-[6px] text-left hover:bg-hover">
+            <button key={ch.path ?? "chat"} role="menuitemradio" aria-checked={ch.label === w.label} onClick={() => { setOpen(false); w.pick(ch.path); }} title={ch.hint} className="flex w-full items-center gap-2 px-3 py-[6px] text-left hover:bg-hover">
               <span className="w-3.5 flex-none text-accent">{ch.label === w.label && <Check size={14} strokeWidth={1.75} />}</span>
               <span className="min-w-0 flex-1"><span className="block truncate text-ink">{ch.label}</span><span className="block truncate text-[11.5px] text-faint">{ch.hint}</span></span>
             </button>
           ))}
-          <button onClick={() => { setOpen(false); w.pickFolder(); }} className="flex w-full items-center gap-2 border-t border-line-soft px-3 py-[6px] text-left text-ink hover:bg-hover">
+          <button role="menuitem" onClick={() => { setOpen(false); w.pickFolder(); }} className="flex w-full items-center gap-2 border-t border-line-soft px-3 py-[6px] text-left text-ink hover:bg-hover">
             <span className="w-3.5 flex-none text-muted"><Plus size={14} strokeWidth={1.5} /></span>Open a folder…</button>
         </Menu>
       )}
@@ -275,13 +276,13 @@ export function ModePill({ composer: c }: { composer: ComposerBag }) {
   if (c.chat) return null;
   return (
     <span className="relative">
-      <button disabled={!c.onMode} onClick={() => setOpen(!open)} title="Permission mode (shift-tab)" className={pill}>
+      <button disabled={!c.onMode} onClick={() => setOpen(!open)} aria-haspopup="menu" aria-expanded={open} title="Permission mode (shift-tab)" className={pill}>
         <Shield size={14} strokeWidth={1.5} />{c.session.mode}<ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
       </button>
       {open && (
         <Menu onClose={() => setOpen(false)} width={320}>
           {MODES.map(([m, about]) => (
-            <button key={m} onClick={() => { setOpen(false); c.onMode?.(m); }} className="flex w-full items-start gap-2 px-3 py-[6px] text-left hover:bg-hover">
+            <button key={m} role="menuitemradio" aria-checked={m === c.session.mode} onClick={() => { setOpen(false); c.onMode?.(m); }} className="flex w-full items-start gap-2 px-3 py-[6px] text-left hover:bg-hover">
               <span className="mt-0.5 w-3.5 flex-none text-accent">{m === c.session.mode && <Check size={14} strokeWidth={1.75} />}</span>
               <span><span className="block text-ink">{m}</span><span className="block text-[11.5px] text-faint">{about}</span></span>
             </button>
@@ -300,7 +301,7 @@ export function ModelPill({ composer: c }: { composer: ComposerBag }) {
   useEffect(() => { if (c.picker && !c.busy && c.onPickModel) { c.onModels?.(); setOpen(true); } }, [c.picker]);
   return (
     <span className="relative">
-      <button disabled={c.busy || !c.onPickModel} onClick={toggle} title="Model and effort" className={pill}>
+      <button disabled={c.busy || !c.onPickModel} onClick={toggle} aria-haspopup="dialog" aria-expanded={open} title="Model and effort" className={pill}>
         <Zap size={14} strokeWidth={1.5} />{modelLabel(current?.model ?? c.session.model)}
         {c.session.effort && <span className="flex items-center text-faint"><Sep />{c.session.effort}</span>}
         <ChevronDown size={13} strokeWidth={1.5} className="text-faint" />
@@ -318,7 +319,7 @@ export function EffortPill({ composer: c }: { composer: ComposerBag }) {
   if (!c.session.effort) return null;
   return (
     <span className="relative">
-      <button disabled={c.busy || !c.onPickEffort || efforts.length < 2} onClick={() => { c.onModels?.(); setOpen(!open); }} title="Effort" className={pill}>
+      <button disabled={c.busy || !c.onPickEffort || efforts.length < 2} onClick={() => { c.onModels?.(); setOpen(!open); }} aria-haspopup="menu" aria-expanded={open} title="Effort" className={pill}>
         <Gauge size={14} strokeWidth={1.5} />{c.session.effort}
       </button>
       {open && <EffortMenu efforts={efforts} current={c.session.effort} onClose={() => setOpen(false)} onPick={(e) => { setOpen(false); c.onPickEffort?.(e); }} />}

@@ -2,6 +2,9 @@
 import type { View } from "./tazuna";
 import { pct, type Call, type Message, type ToolStep, type Usage } from "./types";
 
+/** Words before a later step that are an aside, not an answer: one short paragraph, no code block, table or list. */
+export const interim = (text: string) => { const t = text.trim(); return t.length <= 280 && !/\n\s*\n/.test(t) && !/^\s*(```|\||[-*+]\s|\d+[.)]\s|#)/m.test(t); };
+
 /** A provider's error as its message alone: "provider · provider error in stream: {\"message\":\"[404]: … not found.\", …}"
  * (cut at 300 characters, so not always JSON) is "[404]: … not found.". The terminal reads it the same way (src/ui/mod.rs). */
 export function readableError(text: string): string {
@@ -52,6 +55,16 @@ export function messages(v: View): Message[] {
   let at = 0;
   const prompt = (text: string, block = at) => { out.push({ role: "user", text, edit: edits.get(block) }); agent = null; ask = text; open = true; lastError = ""; };
   const current = () => (agent ??= (out.push({ role: "agent", prose: [], tools: [] }), out[out.length - 1] as Extract<Message, { role: "agent" }>));
+  // a short word the model wrote before a later step is no answer: it goes into the fold, in its place among the steps, as a
+  // quiet line ("I'll look at the folder first." showed under the finished fold as if said at the end, design review 12).
+  // Longer prose (more than a paragraph of ~280 characters, or with a code block, table or list) stays in the answer: a
+  // long answer and then a to-do step folded the whole answer away, and Copy took only the "Done." after it
+  const step = (t: ToolStep) => {
+    const a = current();
+    delete a.retrying;
+    a.prose = a.prose.filter((text) => { const short = interim(text); if (short) a.tools!.push({ kind: "said", verb: "", target: "", secs: 0, ok: true, text }); return !short; });
+    a.tools!.push(t);
+  };
   const changeAt = new Map((v.changes ?? []).map((c) => [c.at_block, c]));
   for (const [k, b] of v.blocks.entries()) {
     at = k;
@@ -63,7 +76,9 @@ export function messages(v: View): Message[] {
     // a saved conversation shown but not continued (its model cannot run here now): said under it, in words (design
     // review 9: it opened empty under a red "/model to the model it used first")
     else if (b.kind === "notice" && !b.error && b.text.startsWith("This conversation ran on ")) { (current().info ??= []).push(b.text); }
-    else if (b.kind === "text") { if (b.text.trim()) current().prose.push(b.text); }
+    // a model switch that went on in a new session (core C5): a quiet divider, the conversation above it stays
+    else if (b.kind === "notice" && !b.error && /^─+\s*continued on /.test(b.text)) out.push({ role: "notice", text: b.text.replace(/^[─\s]+|[─\s]+$/g, "") });
+    else if (b.kind === "text") { if (b.text.trim()) { current().prose.push(b.text); delete current().retrying; } }
     // ToolSearch is Claude Code loading a deferred tool before using it ("select:mcp__lean__bash"): plumbing, not a step
     // (it showed in every hand-off and added "used 1 other tool" to the summary; real window, 2026-11-22)
     else if (b.kind === "tool" && b.name === "ToolSearch") { /* nothing */ }
@@ -71,11 +86,11 @@ export function messages(v: View): Message[] {
       const t: ToolStep = { kind: "tool", id: b.id, name: b.name, verb: verb(b.name), target: target(b.input ?? {}), secs: b.secs ?? 0, ok: !b.error,
         running: b.running, stopped: b.stopped, declined: b.declined, input: b.input, result: b.declined ? undefined : b.result,
         waiting: !!(b.running && v.asking) };
-      current().tools!.push(t);
+      step(t);
     }
     else if (b.kind === "thinking") {
       const tok = b.tokens >= 1000 ? `${(b.tokens / 1000).toFixed(1)}k` : `${b.tokens}`;
-      current().tools!.push({ kind: "thinking", verb: b.live ? "Thinking" : "Thought", target: "", detail: b.tokens ? `~${tok} tokens` : undefined,
+      step({ kind: "thinking", verb: b.live ? "Thinking" : "Thought", target: "", detail: b.tokens ? `~${tok} tokens` : undefined,
         secs: 0, ok: true, running: b.live, text: b.text });
     }
     else if (b.kind === "done") {
@@ -87,7 +102,7 @@ export function messages(v: View): Message[] {
       let n = 0;
       while (n < pending.length && pending[n].block <= k) n++;
       const mine = pending.splice(0, n).map(({ block: _, ...c }) => c), unknown = mine.filter((c) => c.cost == null).length;
-      current().meta = { cost: b.run_cost === undefined ? b.cost : b.run_cost, tokens: total, in: read, cached: u.cache_read, out: u.output, cachedPct: read ? pct(u.cache_read, read) : undefined, secs: Math.round(b.secs),
+      current().meta = { cost: b.run_cost === undefined ? b.cost : b.run_cost, tokens: total, in: read, cached: u.cache_read, out: u.output, cachedPct: read ? pct(u.cache_read, read) : undefined, secs: b.secs,
         calls: mine.length ? mine : undefined,
         // how the turn was paid comes from the turn itself or not at all (the conversation's model of now said "not billed"
         // under answers a provider had billed, design review 11); a `plan` not sent is not known, not false
@@ -95,9 +110,17 @@ export function messages(v: View): Message[] {
         subCalls: b.sub_calls, estimate: b.estimate, uncounted: b.uncounted, unknownCalls: unknown || undefined };
       // a reply that ended without its answer says why, where a provider's error before it said (until desktop 0.1.74 the
       // error was its raw JSON, as the answer's text, and a failed reply ended with nothing)
-      if (!b.ok || b.stopped) current().failure = { text: lastError ? readableError(lastError) : b.stopped ? "" : "The reply ended without an answer.", raw: lastError, stopped: b.stopped, ask };
+      if (!b.ok || b.stopped) {
+        const f = current().failure = { text: lastError ? readableError(lastError) : b.stopped ? "" : "The reply ended without an answer.", raw: lastError, stopped: b.stopped, ask };
+        // an answer that only repeats its error is said once, in the error card ("Not logged in · Please run /login" twice)
+        current().prose = current().prose.filter((p) => !(f.text && [f.text, f.raw].some((e) => e.trim() === p.trim())));
+      }
       // a plain chat's own answer can go to the agent too
       else if (v.profile === "chat" && current().handedOff == null) Object.assign(current(), { chat: true, ask });
+      // a reply that answered and then took one more step (a last to-do list) has its last words as its answer, not none
+      const a = current(), said = a.tools!.map((t) => t.kind).lastIndexOf("said");
+      if (b.ok && !b.stopped && !a.prose.length && said >= 0) a.prose.push(a.tools!.splice(said, 1)[0].text!);
+      delete current().retrying;
       const c = changeAt.get(k);
       if (c) current().change = { turn: c.turn, files: c.files, undone: c.undone, canUndo: c.can_undo };
       agent = null;
@@ -105,6 +128,9 @@ export function messages(v: View): Message[] {
       const next = queue.shift();
       if (next !== undefined) prompt(next);
     }
+    // a call tried again (the core's retry notice): said while the reply runs, in its place; once the reply ends it goes
+    // (past it, or into the error card). In a plain chat it showed only once the reply had failed, 55 s later
+    else if (b.kind === "notice" && !b.error && /: \d+ (?:try|tries) failed/.test(b.text)) { lastError = b.text; current().retrying = b.text; }
     else if (b.kind === "notice" && (b.error || /provider error|HTTP \d{3}/.test(b.text))) {
       lastError = b.text;
       // an error the reply went on past (a tool server that failed to start) stays in sight, in words; a provider's retry
@@ -135,17 +161,88 @@ export function demoView() {
     { kind: "text", text: "Yes.", live: false }, done, { kind: "prompt", text: "a sci-fi novel?" }, { kind: "text", text: "Dune.", live: false }, done] } as View)
     .flatMap((x) => (x.role === "agent" ? [[x.handedOff, x.chat, x.ask]] : []));
   if (JSON.stringify(chat) !== JSON.stringify([["needs live data or this computer", undefined, undefined], [undefined, true, "a sci-fi novel?"]])) throw new Error(`chat: ${JSON.stringify(chat)}`);
+  // design review 12: prose before a later step is in the fold, in order; an answer that repeats its error once; a switch's divider
+  const bash = { kind: "tool", id: "1", name: "bash", input: { command: "ls" }, result: "", error: false, secs: 1, running: false } as const;
+  const shaped = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "a" }, { kind: "text", text: "I'll look first.", live: false }, bash, { kind: "text", text: "Done.", live: false }, done,
+    { kind: "prompt", text: "c" }, { kind: "text", text: "All set.", live: false }, bash, done,
+    { kind: "notice", text: "── continued on Mock Coder 7B ──", error: false }, { kind: "prompt", text: "b" }, { kind: "text", text: "Not logged in · Please run /login", live: false },
+    { kind: "notice", text: "Not logged in · Please run /login", error: true }, { ...done, ok: false }] } as View)
+    .map((x) => (x.role === "user" ? `user:${x.text}` : x.role === "notice" ? `notice:${x.text}` : `agent:${x.tools!.map((t) => t.kind).join("+")}|${x.prose.join("+")}|${x.failure?.text ?? ""}`));
+  if (shaped.join(" / ") !== "user:a / agent:said+tool|Done.| / user:c / agent:tool|All set.| / notice:continued on Mock Coder 7B / user:b / agent:||Please run /login") throw new Error(`shapes: ${shaped.join(" / ")}`);
+  const retry = { kind: "notice", text: "the provider is rate limiting this model: 2 tries failed, trying again (HTTP 429: busy)", error: false } as const;
+  const live = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "fail" }, retry] } as View)[1], ended = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "fail" }, retry, { ...done, ok: false }] } as View)[1];
+  if (live.role !== "agent" || !live.retrying || ended.role !== "agent" || ended.retrying || !ended.failure?.raw.includes("2 tries")) throw new Error("retry notice");
+  const answering = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "x" }, retry, { kind: "text", text: "Here", live: true }] } as View)[1];
+  if (answering.role !== "agent" || answering.retrying) throw new Error("retry notice once the text comes");
+  // a long answer, then a to-do step, then "Done.": the answer stays the answer
+  const long = `${"The cache is keyed on the lock file. ".repeat(4)}\n\n- one\n- two`;
+  const kept = messages({ ...v, calls: [], blocks: [{ kind: "prompt", text: "a" }, { kind: "text", text: long, live: false }, { ...bash, name: "TodoWrite" }, { kind: "text", text: "Done.", live: false }, done] } as View)[1];
+  if (kept.role !== "agent" || kept.prose.join("|") !== `${long}|Done.` || kept.tools!.some((t) => t.kind === "said")) throw new Error(`long prose: ${JSON.stringify(kept)}`);
+  // one conversation across sessions; the window's queue waits for the last message sent to be taken
+  const sw = { ...v, session_id: null, earlier_sessions: ["a", "b"], blocks: [{ kind: "prompt", text: "x" }] } as View;
+  if (sessionIds(sw, ["b", "c"]).join() !== "b,a,c" || sessionIds({ ...sw, session_id: "d" }).join() !== "d,b,a" || !unsaved(sw) || unsaved({ ...sw, session_id: "d" }) || unsaved({ ...v, session_id: null, blocks: [] }))
+    throw new Error("session ids");
+  const idle = { ...sw, activity: "Done" } as View, turns = [heldTurn(idle, undefined, 0), heldTurn(idle, { prompts: 1, at: 0 }, 500), heldTurn(idle, { prompts: 1, at: 0 }, 2500),
+    heldTurn(idle, { prompts: 0, at: 0 }, 500), heldTurn({ ...idle, activity: "Tool" }, undefined, 0)];
+  if (turns.join() !== "0,1500,0,0,-1") throw new Error(`held turns: ${turns}`);
+  if (usage({ ...v, context: 5000, context_window: null }).contextPct !== 0 || usage({ ...v, context: 5000 }).contextPct !== 3) throw new Error("context window");
   console.log("view ok");
+}
+
+/** What the call being asked about was given, for the approval's diff: among the open steps of that tool, the one whose
+ * file is the question's, else the oldest (the core asks the oldest open question first; two edits waiting showed the
+ * second one's diff under the first one's file). */
+export function askedInput(v: View | null): Record<string, unknown> | null | undefined {
+  const name = (n: string) => n.replace(/^mcp__\w+?__/, ""), a = v?.asking;
+  if (!a) return undefined;
+  const open = v.blocks.flatMap((b) => (b.kind === "tool" && b.running && name(b.name) === name(a.tool) ? [b.input] : []));
+  const file = (i: Record<string, unknown> | null) => [i?.file_path, i?.path, i?.notebook_path].find((p): p is string => typeof p === "string");
+  return open.find((i) => { const f = file(i); return !!f && (a.what === f || a.what.endsWith(`/${f}`) || f.endsWith(`/${a.what}`)); }) ?? open[0];
+}
+
+/** The files this conversation has changed so far, counted live (the work panel's tab), by the panel's own rule: the
+ * finished turns' (`done`, from git when each ended) and those the reply now running has edited or written inside the
+ * project; none of the running reply's where the folder is not a git repository (`git` false: the panel never lists them,
+ * and "Changes 2" fell to 0 at the reply's end; so did a plan written to ~/.claude). */
+export function changedCount(v: View | null, folder: string | null, done: string[], git = true): number {
+  const files = new Set(done);
+  const last = v ? v.blocks.map((b) => b.kind).lastIndexOf("done") : -1;
+  for (const b of git && folder ? v?.blocks.slice(last + 1) ?? [] : []) {
+    if (b.kind !== "tool" || b.running || b.error || b.declined || !/^(Edit|edit|Write|write|MultiEdit|multi_edit|NotebookEdit)$/.test(b.name.replace(/^mcp__\w+?__/, ""))) continue;
+    const path = [b.input?.file_path, b.input?.path, b.input?.notebook_path].find((p): p is string => typeof p === "string");
+    const rel = !path ? null : path.startsWith(`${folder}/`) ? path.slice(folder!.length + 1) : /^(\/|~|[A-Za-z]:[\\/]|\.\.\/)/.test(path) ? null : path.replace(/^\.\//, "");
+    if (rel) files.add(rel);
+  }
+  return files.size;
+}
+
+/** Every id a conversation goes by, newest first: its session's, the core's earlier ones (a change of model and a Retry go
+ * on in a new session, core C5), and those the window saw it by before (`seen`, newest first). */
+export const sessionIds = (v: View | null, seen: string[] = []) =>
+  [...new Set([v?.session_id, ...[...(v?.earlier_sessions ?? [])].reverse(), ...seen].filter((x): x is string => !!x))];
+
+/** A conversation whose change of model lives only in its core: messages, and no session yet (its first turn on the new
+ * model has not run). */
+export const unsaved = (v: View | null) => !!v && !v.session_id && v.blocks.some((b) => b.kind === "prompt");
+
+/** When the next message waiting in the window may go: -1 not now (no view, a reply running, a question open), else the ms
+ * still to wait for the last one sent to be taken (one more message of yours in the view; a command that adds none counts
+ * after 2 s), 0 now. */
+export function heldTurn(v: View | null, last: { prompts: number; at: number } | undefined, now: number): number {
+  if (!v || !["Ready", "Done"].includes(v.activity) || v.asking) return -1;
+  const prompts = v.blocks.filter((b) => b.kind === "prompt").length, wait = last ? 2000 - (now - last.at) : 0;
+  return last && prompts <= last.prompts && wait > 0 ? wait : 0;
 }
 
 /** The messages waiting behind the reply now running (sent during it; the core holds them until it ends). */
 export const queued = (v: View) => messages(v).flatMap((m) => (m.role === "user" && m.queued ? [m.text] : []));
 
 export function usage(v: View): Usage {
-  const win = v.context_window ?? 200000;
+  // a window the core does not know (null, core C9: a local model) has no share: "context 1% of 200k" was made up
+  const win = v.context_window === null ? 0 : v.context_window ?? 200000;
   const k = (n: number) => (n >= 1e6 ? `${+(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${Math.round(n / 1000)}k` : `${n}`);
   const u = v.usage, read = u.input + u.cache_write + u.cache_read;
-  return { contextPct: Math.min(100, Math.round((100 * v.context) / win)), contextUsed: k(v.context), contextMax: k(win),
+  return { contextPct: win ? Math.min(100, Math.round((100 * v.context) / win)) : 0, contextUsed: k(v.context), contextMax: win ? k(win) : "",
     plan5h: v.limits ? Math.round(v.limits[0]) : null, plan5hReset: resetIn(v.limits_reset), planWeek: v.limits ? Math.round(v.limits[1]) : null,
     threadCost: v.cost, threadTurns: v.turns, cachedPct: read ? pct(u.cache_read, read) : 0, saved: 0, today: v.cost, todayTurns: v.turns, todaySeries: [], balance: v.balance };
 }

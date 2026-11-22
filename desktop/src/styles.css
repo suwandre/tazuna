@@ -176,12 +176,20 @@ input[type=radio], input[type=checkbox] { accent-color: var(--accent); cursor: d
 .prose-answer li { margin: 2px 0; }
 .prose-answer a { color: var(--accent-ink); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .prose-answer blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 2px solid var(--line-strong); color: var(--ink-2); }
+/* a rule (---), struck text, and a task item's box in the bullet's place: drawn, not a form's checkbox */
+.prose-answer hr { margin: 16px 0; border: 0; border-top: 1px solid var(--line); }
+.prose-answer del { color: var(--muted); }
+.prose-answer li.task { list-style: none; }
+.prose-answer .task-box { display: inline-grid; place-items: center; width: 14px; height: 14px; margin: 0 7px 0 -21px; vertical-align: -2px;
+  border: 1.5px solid var(--line-strong); border-radius: 4px; color: var(--ink-2); }
 .prose-answer .table-wrap { overflow-x: auto; margin: 0 0 12px; }
 /* tables: rules between rows and a quiet header, numbers in tabular figures; the full grid was the heaviest thing on the page
    (design review 10) */
 .prose-answer table { border-collapse: collapse; font-family: var(--font-ui); font-size: 13px; font-variant-numeric: tabular-nums; min-width: 40%; }
 .prose-answer th, .prose-answer td { padding: 6px 18px 6px 0; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line-soft); }
 .prose-answer th { font-size: 11.5px; font-weight: 500; color: var(--faint); padding-top: 0; border-bottom-color: var(--line-strong); }
+/* code in a cell may break anywhere: a long path set the column's width and crushed the others to a word a line */
+.prose-answer td code { overflow-wrap: anywhere; }
 .prose-answer tr:last-child td { border-bottom: 0; }
 .prose-answer th:last-child, .prose-answer td:last-child { padding-right: 0; }
 /* math set by the system's MathML (lib/markdown.tsx: $…$ that hold TeX) */

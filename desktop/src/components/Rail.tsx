@@ -4,7 +4,7 @@ import { Slot } from "../lib/slots";
 import { tokens, widgetUrl, type UserWidget } from "../lib/widgets";
 import { OPEN_PR, checksOf, type Pr } from "../lib/pr";
 import type { ChangedFile, Message, Usage } from "../lib/types";
-import { Sep } from "./Sep";
+import { Counts, Sep } from "./Sep";
 import { quietButton } from "./Controls";
 
 // The right column is the work panel (the design review of 2026-11-18): what the agent changed, the checks it ran, the
@@ -70,7 +70,8 @@ export function ChangesSection() {
   const shown = all ? w.files : w.files.slice(0, 8);
   return (
     <Section icon={<GitBranch size={14} strokeWidth={1.5} className={ico} />} title="Changes"
-      right={w.files.length ? <><span className="text-ok">+{added}</span> <span className="text-bad">−{removed}</span></> : undefined}>
+      // a side with nothing is left out: never "+3 −0" (design review 12)
+      right={added || removed ? <Counts added={added} removed={removed} /> : undefined}>
       {w.branch && <div className="mb-1 truncate font-mono text-[12px] text-muted">{w.branch}{w.base ? ` → ${w.base}` : ""}</div>}
       {w.files.length === 0 ? <div className="py-0.5 text-[12.5px] text-muted">Nothing changed in this conversation yet.</div> : <>
         {shown.map((f) => {

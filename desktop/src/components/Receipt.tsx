@@ -82,7 +82,9 @@ export function demoReceipt() {
 }
 
 export const tok = (n: number) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
-const dur = (s: number) => (s < 60 ? `${s} s` : s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s / 60} min`);
+/** "41 s", "2 min 5 s"; "<1 s" under a second: the core's time is its own run's, without the model's start, and a quick
+ * local answer of 0.25 s read "0 s" (design review 12) */
+export const dur = (secs: number) => { if (secs < 1) return "<1 s"; const s = Math.round(secs); return s < 60 ? `${s} s` : s % 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s / 60} min`; };
 const took = (ms: number | null) => (ms == null ? "" : ms < 10_000 ? `${(ms / 1000).toFixed(1)} s` : dur(Math.round(ms / 1000)));
 
 const th = "border-b border-line pb-[5px] text-[11.5px] font-medium text-faint";
@@ -141,7 +143,7 @@ export function note(calls: { estimate?: boolean }[], subs: number, plan = false
  * input, the part read from the cache, its output, its time, and its price where it was fixed when the call ended), the
  * tools' own time, then the sums. */
 export function AnswerSlip({ meta, tools = [], toolsSaid }: { meta: Meta; tools?: ToolStep[]; /** the steps in words, "ran 2 commands, searched" */ toolsSaid?: string }) {
-  const calls = meta.calls ?? [], ran = tools.filter((t) => t.kind !== "thinking");
+  const calls = meta.calls ?? [], ran = tools.filter((t) => t.kind !== "thinking" && t.kind !== "said");
   const toolSecs = took(Math.round(ran.reduce((a, t) => a + t.secs, 0) * 1000));
   // a price per call only where each call brings its own (with its model); else the column would be an estimate at the
   // prices of the model the conversation runs on now, 20 to 100 times off after a change of model

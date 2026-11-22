@@ -3,8 +3,9 @@ import { useEffect, useRef, useState } from "react";
 import { useDialog } from "../lib/dialog";
 import type { ModelChoice, View } from "../lib/tazuna";
 import { modelLabel, usd } from "../lib/types";
-import { Parts, Sep } from "./Sep";
+import { Counts, Parts, Sep } from "./Sep";
 import { accentButton, dialogShell, quietButton } from "./Controls";
+import { dur } from "./Receipt";
 
 // Best-of-N (docs/DESKTOP.md 1.1): one task on several models, each in a worktree of its own, compared on cost, time,
 // what each changed and whether its checks passed: price to performance on the spot.
@@ -111,8 +112,8 @@ export function LanesView({ lanes, views, onOpen, onKeep, onClose }: {
                   <td className="py-2 pr-3"><span className="text-ink" title={l.model.model}>{modelLabel(l.model.model)}</span><span className="block text-[11.5px] text-faint">{l.model.place}</span></td>
                   <td className="py-2 pr-3 text-muted">{!l.tid ? "starting…" : !s ? "starting…" : s.running ? "working…" : s.error ? "ended with an error" : "done"}</td>
                   <td className={`py-2 pr-3 text-right font-mono ${s && !s.running && s.cost === cheapest ? "text-ok" : ""}`}>{s ? usd(s.cost) : "–"}</td>
-                  <td className="py-2 pr-3 text-right font-mono">{s && s.secs ? `${Math.round(s.secs)} s` : "–"}</td>
-                  <td className="py-2 pr-3 text-right font-mono">{s ? `${s.files} files, +${s.added} −${s.removed}` : "–"}</td>
+                  <td className="py-2 pr-3 text-right font-mono">{s && s.secs ? dur(s.secs) : "–"}</td>
+                  <td className="py-2 pr-3 text-right font-mono">{s ? <>{s.files} files{s.added || s.removed ? ", " : ""}<Counts added={s.added} removed={s.removed} /></> : "–"}</td>
                   <td className={`py-2 pr-3 ${s?.check === "passed" ? "text-ok" : s?.check === "failed" ? "text-bad" : "text-muted"}`}>{s ? s.check : "–"}</td>
                   <td className="py-2 text-right whitespace-nowrap">
                     {l.tid && <button onClick={() => onOpen(l.tid!)} className={quietButton}>Open</button>}
