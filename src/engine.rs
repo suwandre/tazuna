@@ -182,6 +182,18 @@ enum Api {
     Messages,
 }
 
+/// The API a provider documents for all its models (models.rs `LOGINS`: xAI and OpenAI Responses, MiniMax Messages, a local
+/// server Chat Completions); None where the model's name decides. A gpt-oss on Cerebras or Ollama went to /responses by its
+/// name, which those do not serve.
+fn api_for(url: &str) -> Option<Api> {
+    match crate::models::api_of(url)? {
+        "chat" => Some(Api::Chat),
+        "responses" => Some(Api::Responses),
+        "messages" => Some(Api::Messages),
+        _ => None,
+    }
+}
+
 /// The own loop's tools in permission mode `mode` (before the user's MCP servers).
 fn tool_list(mode: &str) -> Vec<Value> {
     let tools = crate::mcp::tools();
@@ -220,7 +232,8 @@ pub fn serve(args: &[String]) -> Result<()> {
     let url = flag("--url").context("--url")?.trim_end_matches('/').to_string();
     let key_env = flag("--key-env").context("--key-env")?;
     let model = flag("--model").context("--model")?;
-    let effort = flag("--effort");
+    // empty: a model without effort levels, which gets no effort field (OpenAI refuses one)
+    let effort = flag("--effort").filter(|e| !e.is_empty());
     let mode = flag("--permission-mode").unwrap_or_else(|| "bypassPermissions".into());
     // the prompt (with the repo's CLAUDE.md/AGENTS.md) comes in the environment, not on the command line: an agent's
     // `pkill -f "integration.test"` matched the AGENTS.md text in every engine's arguments and stopped ten runs (0.0.76)
@@ -246,6 +259,7 @@ pub fn serve(args: &[String]) -> Result<()> {
     for k in spec.split([';', '\n']).filter_map(|r| r.split_whitespace().nth(1)).filter(|k| *k != key_env) {
         // SAFETY: no other thread runs yet; the agent's commands must not inherit the keys
         unsafe { std::env::remove_var(k) };
+        crate::models::strip_too(k);
     }
     FALLBACK.store(!routes.is_empty(), Ordering::Relaxed);
     let (call, api, price) = connect(&url, &key_env, &model)?;
@@ -292,7 +306,7 @@ pub fn serve(args: &[String]) -> Result<()> {
     // the model's prices, so the screen's running cost is this model's and not Claude's list prices (a Luna turn read
     // ~$3 while it ran and $0.007 at its end, 2026-11-06)
     emit(&json!({"type": "system", "subtype": "init", "session_id": session, "model": model, "cwd": cwd, "tools": names, "slash_commands": [],
-                 "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "provider": crate::models::paid_to(&url), "mcp_servers": mcp_status(hub.as_ref())}));
+                 "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "provider": crate::models::paid_to(&url, &key_env), "mcp_servers": mcp_status(hub.as_ref())}));
     let send_reasoning = reasoning_back(&url, &model);
     let mut loop_ = Loop {
         call,
@@ -502,7 +516,8 @@ fn effort_instead(text: &str, asked: &str) -> Option<Option<String>> {
             return (pick != at).then(|| Some(LEVELS[pick].to_string()));
         }
     }
-    if t.contains("not enabled") {
+    // OpenAI on a model that does not reason: "Unsupported parameter: 'reasoning.effort' is not supported with this model"
+    if t.contains("not enabled") || t.contains("unsupported parameter") {
         return Some(None);
     }
     (at > 0 && t.contains(&format!("'{asked}'")) && (t.contains("not support") || t.contains("unsupported"))).then(|| Some(LEVELS[at - 1].to_string()))
@@ -722,7 +737,7 @@ impl Loop {
                     self.route_calls.clear();
                     // the new route's prices and who is paid there: a receipt for the calls from here on says them
                     (self.out)(&json!({"type": "system", "subtype": "route_switch", "message": format!("now {url}: {why}"),
-                        "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "provider": crate::models::paid_to(&url)}));
+                        "price_per_m": [price.0 * 1e6, price.1 * 1e6, price.2 * 1e6], "provider": crate::models::paid_to(&url, "")}));
                     return true;
                 }
                 Ok(_) => (self.out)(&json!({"type": "system", "subtype": "route_switch", "message": format!("{url} skipped: another API for this model")})),
@@ -1199,13 +1214,15 @@ fn connect(url: &str, key_env: &str, model: &str) -> Result<(Box<dyn FnMut(&Valu
     let key = std::env::var(key_env).with_context(|| format!("{key_env} not set"))?;
     // SAFETY: called before any other thread starts.
     unsafe { std::env::remove_var(key_env) };
+    // and out of the agent's commands, which a login shell's profile could give it again (mcp.rs `bash`)
+    crate::models::strip_too(key_env);
     connect_key(url, &key, model)
 }
 
 /// One call with no tools and no history: the independent reviewer on a provider's API (review.rs). The API follows the
 /// model's name as for the own loop; returns the reply's text and (input, cached, output) tokens.
 pub fn ask(url: &str, key: &str, model: &str, effort: &str, system: &str, prompt: &str) -> Result<(String, (u64, u64, u64))> {
-    let api = if model.starts_with("claude-") { Api::Messages } else if model.starts_with("gpt-") { Api::Responses } else { Api::Chat };
+    let api = api_for(url).unwrap_or(if model.starts_with("claude-") { Api::Messages } else if model.starts_with("gpt-") { Api::Responses } else { Api::Chat });
     let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(CALL_TIMEOUT)).http_status_as_error(false).build().into();
     let body = match api {
         Api::Responses => json!({"model": model, "instructions": system, "input": [{"role": "user", "content": prompt}], "store": false,
@@ -1422,7 +1439,7 @@ impl Loop {
         }
         // `/effort`: the next calls at another level, the conversation going on
         if m["type"] == "tazuna_effort" {
-            self.effort = m["effort"].as_str().map(String::from);
+            self.effort = m["effort"].as_str().filter(|e| !e.is_empty()).map(String::from);
             // a level that is its own model id (OmniRoute's agy/gemini-4-argon-high): that id for the next calls
             if let Some(model) = m["model"].as_str() {
                 self.model = model.to_string();
@@ -2034,7 +2051,7 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
 
 /// The model's prices from the provider's model list (per million tokens there, per token here), and the API it takes.
 fn price(http: &ureq::Agent, url: &str, key: &str, model: &str) -> Result<(Price, Api)> {
-    let api = |openai: bool| if model.starts_with("claude-") { Api::Messages } else if openai { Api::Responses } else { Api::Chat };
+    let api = |openai: bool| api_for(url).unwrap_or(if model.starts_with("claude-") { Api::Messages } else if openai { Api::Responses } else { Api::Chat });
     // a set price needs no list: Shannon lists a model only while an account serving it is online (gpt-6-luna came and
     // went within the hour)
     if let Ok(v) = std::env::var("TAZUNA_PRICE") {
@@ -2754,6 +2771,93 @@ session: "s".into(),
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[test]
+    fn each_providers_api_goes_out_in_its_shape() {
+        use std::io::Write;
+        // the API each new provider documents (models.rs LOGINS), one turn through the loop against a stub of that API:
+        // the path, the key's header and the body's fields each API needs
+        fn none(_: &str, _: &str, _: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, Api, Price)> {
+            anyhow::bail!("no other route")
+        }
+        let cases = [
+            ("https://api.deepseek.com", "deepseek-flash", "/chat/completions", "authorization: Bearer k",
+             r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":5,"completion_tokens":1}}"#),
+            ("http://127.0.0.1:11434/v1", "gpt-oss:20b", "/chat/completions", "authorization: Bearer k",
+             r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":5,"completion_tokens":1}}"#),
+            ("https://api.x.ai/v1", "grok-5", "/responses", "authorization: Bearer k",
+             r#"{"output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}],"usage":{"input_tokens":5,"output_tokens":1}}"#),
+            ("https://api.minimax.io/anthropic/v1", "MiniMax-M3", "/messages", "x-api-key: k",
+             r#"{"content":[{"type":"text","text":"ok"}],"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":1}}"#),
+        ];
+        let dir = std::env::temp_dir().join(format!("tazuna-apis-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // at high, and with no effort: a model without levels (OpenAI refused gpt-4.1's "reasoning.effort", review 11)
+        for (effort, (provider, model, path, auth, reply)) in [Some("high"), None].into_iter().flat_map(|e| cases.map(|c| (e, c))) {
+            let api = api_for(provider).expect("a documented API");
+            let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/v1", server.local_addr().unwrap());
+            let seen = std::thread::spawn(move || {
+                let (mut c, _) = server.accept().unwrap();
+                let req = read_request(&mut c);
+                c.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len()).as_bytes()).unwrap();
+                req
+            });
+            let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+            let events = Rc::new(RefCell::new(vec![]));
+            let ev = events.clone();
+            let tool = json!({"type": "function", "function": {"name": "bash", "description": "run", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}});
+            let mut l = Loop {
+                call: Box::new(move |b: &Value| chat(&http, &url, "k", api, b)),
+                api,
+                system: "sys".into(),
+                model: model.into(),
+                effort: effort.map(String::from),
+                price: (1e-6, 1e-7, 4e-6),
+                tools: vec![tool],
+                msgs: if api == Api::Chat { vec![json!({"role": "system", "content": "sys"})] } else { vec![] },
+                marks: vec![],
+                max_out: None,
+                saved: None,
+                server: crate::mcp::Server::new(dir.clone()),
+                hub: None,
+                session: "s".into(),
+                cost: 0.0,
+                task: (std::time::Instant::now(), 0.0),
+                queued: VecDeque::new(),
+                mode: "bypassPermissions".into(),
+                asked: 0,
+                send_reasoning: false,
+                cache_key: true,
+                routes: VecDeque::new(),
+                route_calls: vec![],
+                connector: none,
+                out: Box::new(move |e: &Value| ev.borrow_mut().push(e.clone())),
+            };
+            let (_tx, rx) = std::sync::mpsc::channel();
+            l.run(&json!("hi"), false, &rx);
+            let req = seen.join().unwrap();
+            let (head, body) = req.split_once("\r\n\r\n").unwrap();
+            let body: Value = serde_json::from_str(body).unwrap();
+            assert!(head.starts_with(&format!("POST /v1{path} ")), "{provider}: {head}");
+            assert!(head.lines().any(|h| h.eq_ignore_ascii_case(auth)), "{provider}: {auth} in {head}");
+            assert_eq!(body["model"], model);
+            let level = |v: &Value| if effort.is_some() { *v == "high" } else { v.is_null() };
+            assert!(effort.is_some() || (body.get("reasoning_effort").is_none() && body.get("reasoning").is_none() && body.get("output_config").is_none()),
+                    "{provider}: no effort field at all: {body}");
+            match api {
+                Api::Chat => assert!(body["messages"][0] == json!({"role": "system", "content": "sys"}) && body["messages"][1]["role"] == "user"
+                    && body["tools"][0]["function"]["name"] == "bash" && level(&body["reasoning_effort"]), "{provider}: {body}"),
+                Api::Responses => assert!(body["instructions"] == "sys" && body["store"] == false && body["input"][0]["role"] == "user"
+                    && body["tools"][0]["name"] == "bash" && level(&body["reasoning"]["effort"]), "{provider}: {body}"),
+                Api::Messages => assert!(body["system"] == "sys" && body["messages"][0]["role"] == "user" && body["max_tokens"].is_u64()
+                    && body["tools"][0]["input_schema"]["type"] == "object" && head.to_ascii_lowercase().contains("anthropic-version: 2023-06-01"), "{provider}: {body}"),
+            }
+            assert_eq!(events.borrow().last().unwrap()["subtype"], "success", "{provider}: the reply read back");
+        }
+        assert_eq!(api_for("https://subrouter.ai/v1"), None, "tazuna's own providers: by the model's name, as before");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// One whole HTTP request (headers, then Content-Length bytes of body) from a test server's connection: answering
     /// before the body is read made the client fail now and then (closed with unread data).
     fn read_request(c: &mut std::net::TcpStream) -> String {
@@ -2920,6 +3024,7 @@ session: "s".into(),
         let glm = "reasoning_effort 'xhigh' is not supported for this model; supported values: ['low', 'high', 'max']";
         assert_eq!(e(glm, "xhigh"), Some(Some("high".into())), "the highest up to the asked one");
         assert_eq!(e("reasoning_effort is not enabled for this model", "none"), Some(None), "Codestral: no field at all");
+        assert_eq!(e("Unsupported parameter: 'reasoning.effort' is not supported with this model.", "high"), Some(None), "OpenAI's gpt-4.1: none either");
         assert_eq!(e("'reasoning_effort' does not support 'max'", "max"), Some(Some("xhigh".into())));
         assert_eq!(e("model not found", "high"), None, "about something else");
         assert_eq!(e(small, "high"), None, "already a listed level: nothing to change");

@@ -245,8 +245,10 @@ pub struct View {
     pub vim: &'static str,
 }
 
-/// `/login`: the providers (name, how it logs in, its state now), and a provider's page while its key is typed.
+/// `/login`: the providers (name, its state now), and a provider's page while its key is typed.
 pub struct LoginPanel {
+    /// Each provider: its name, its state, the line on its terms (empty: none). How each logs in went with 0.1.196's
+    /// longer names: an API key for all but Claude, whose state says it, and the column cut the state at 80 columns.
     pub rows: Vec<(String, String, String)>,
     pub selected: usize,
     pub form: Option<LoginForm>,
@@ -265,6 +267,8 @@ pub struct LoginForm {
     pub var: String,
     /// Where its key comes from now (`models::key_source`); empty: none.
     pub has: String,
+    /// The line on its terms (`models::Login::note`); empty: none.
+    pub note: String,
 }
 
 /// `/resume`: this repo's earlier sessions, newest first ("8m ago · 2 messages · fix the login"), and the one selected.
@@ -284,7 +288,8 @@ pub struct ModelsPanel {
     pub selected: usize,
     /// What has been typed to narrow the list.
     pub filter: String,
-    /// The left pane, OMP-style: "All models" then each provider (name, how many models, usable now, why not), the one
+    /// The left pane, OMP-style: "All models" then each provider (name, how many models, usable now, why not and the line
+    /// on its terms), the one
     /// selected, and whether the keys move in the right pane (its models) or in the left (the providers).
     pub groups: Vec<(String, usize, bool, String)>,
     pub group: usize,
@@ -887,6 +892,9 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme, band: Rect) {
             if !fm.example.is_empty() {
                 lines.push(Line::from(Span::styled(format!("e.g. {}", fm.example), st(th.faint))));
             }
+            if !fm.note.is_empty() {
+                lines.extend(wrapped(&fm.note, th.warn));
+            }
             lines.push(Line::from(vec![Span::styled("> ", st(th.accent)), Span::styled("•".repeat(fm.typed.min(iw.saturating_sub(3))), st(th.text)),
                                        Span::styled("▍", st(th.accent))]));
             if !fm.has.is_empty() {
@@ -907,17 +915,24 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme, band: Rect) {
             let mut lines = wrapped("Log in to a provider to use its models in /model. None of these has a login for third-party tools, so it is an API key: the provider's page opens in your browser to make one.", th.faint);
             lines.push(Line::from(""));
             let nw = p.rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
-            let kw = p.rows.iter().map(|r| r.1.chars().count()).max().unwrap_or(0);
-            for (i, (name, how, state)) in p.rows.iter().enumerate() {
+            // the rows that fit (some 70 providers since 0.1.196), the selected one in view, its terms' line under them
+            let note = p.rows.get(p.selected).map(|r| wrapped(&r.2, th.warn)).unwrap_or_default();
+            let room = (band.height as usize).saturating_sub(lines.len() + 3 + note.len() + usize::from(!note.is_empty())).max(3);
+            let first = p.selected.saturating_sub(room.saturating_sub(1)).min(p.rows.len().saturating_sub(room));
+            for (i, (name, state, _)) in p.rows.iter().enumerate().skip(first).take(room) {
                 let on = i == p.selected;
                 let mark = if on { "›" } else { " " };
                 let ok = !state.contains("not ");
-                let row = format!("{mark} {name:<nw$}  {how:<kw$}  ");
+                let row = format!("{mark} {name:<nw$}  ");
                 let left = row.chars().count();
                 lines.push(Line::from(vec![
                     Span::styled(row, if on { picked(th) } else { st(th.text) }),
-                    Span::styled(state.chars().take(iw.saturating_sub(left)).collect::<String>(), st(if ok { th.ok } else { th.faint })),
+                    Span::styled(ellipsis(state, iw.saturating_sub(left)), st(if ok { th.ok } else { th.faint })),
                 ]));
+            }
+            if !note.is_empty() {
+                lines.push(Line::from(""));
+                lines.extend(note);
             }
             ("login".to_string(), "↑↓ move · enter logs in · esc closes", lines)
         }
@@ -948,7 +963,9 @@ fn draw_rewind(f: &mut Frame, p: &RewindPanel, th: &Theme, band: Rect) {
 fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme, band: Rect) {
     // OMP's layout: the providers on the left, the selected one's models on the right; a narrow screen keeps the models
     let two = band.width >= 70 && !p.groups.is_empty();
-    let gw = if two { p.groups.iter().map(|(n, c, ..)| n.chars().count() + c.to_string().len() + 6).max().unwrap_or(18).clamp(18, 30) } else { 0 };
+    // the providers' pane as wide as its longest row, but at 80 columns no wider than before 0.1.196's long names (they
+    // took 11 columns from the models' names, review 11: 19, as then); wider screens give it more, up to 30
+    let gw = if two { p.groups.iter().map(|(n, c, ..)| n.chars().count() + c.to_string().len() + 6).max().unwrap_or(18).clamp(18, (band.width as usize).saturating_sub(60).clamp(19, 30)) } else { 0 };
     // our judge's score without its runs ("6.8", the runs are in the details under the list): two numbers to the right
     // under "bench" and "AA", where "bench (runs)" and "AA index" stood as one double heading (design review 11)
     let score = |b: &str| b.split(" (").next().unwrap_or_default().to_string();
@@ -973,12 +990,17 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme, band: Rect) {
     // the left pane: All models, then the providers, ● usable now, ○ not (no key, not trusted)
     if two {
         let mut lines = vec![Line::from(Span::styled(" providers", st(th.faint)))];
-        for (i, (name, n, ok, _)) in p.groups.iter().enumerate() {
+        // the rows that fit, the selected one in view (some 70 providers since 0.1.196: it went off the pane, review 11)
+        let room = (body.height as usize).saturating_sub(1).max(1);
+        let first = p.group.saturating_sub(room - 1);
+        for (i, (name, n, ok, _)) in p.groups.iter().enumerate().skip(first).take(room) {
             let mark = if i == p.group { "›" } else { " " };
             let dot = if i == 0 { "◆" } else if *ok { "●" } else { "○" };
-            let room = gw.saturating_sub(5 + n.to_string().len());
-            let label: String = name.chars().take(room).collect();
-            let text = format!("{mark}{dot} {label:<room$} {n}");
+            // a name too long for the pane keeps more of itself without its count (the details say it)
+            let count = if name.chars().count() + n.to_string().len() + 5 <= gw { format!(" {n}") } else { String::new() };
+            let room = gw.saturating_sub(4 + count.len());
+            let label = ellipsis(name, room);
+            let text = format!("{mark}{dot} {label:<room$}{count}");
             let color = if *ok || i == 0 { th.text } else { th.faint };
             let style = match (i == p.group, p.in_models) {
                 (true, false) => picked(th),
@@ -1006,7 +1028,8 @@ fn draw_models(f: &mut Frame, p: &ModelsPanel, th: &Theme, band: Rect) {
     // the details under the list: the selected model in full, wrapped; with the providers in hand, the provider's state
     let detail: Vec<Line<'static>> = if !p.in_models && two {
         let state = if gok || p.group == 0 { format!("{} models · enter or → to pick one", p.rows.len()) } else { gwhy.clone() };
-        [(gname.clone(), th.text), (state, if gok || p.group == 0 { th.dim } else { th.warn })].into_iter()
+        let terms = if gok && p.group > 0 { gwhy.clone() } else { String::new() };
+        [(gname.clone(), th.text), (state, if gok || p.group == 0 { th.dim } else { th.warn }), (terms, th.warn)].into_iter().filter(|(t, _)| !t.is_empty())
             .flat_map(|(t, c)| wrap_words(&t, iw.saturating_sub(1)).into_iter().map(move |l| Line::from(Span::styled(format!(" {l}"), st(c))))).collect()
     } else {
         p.rows.get(p.selected).map(|r| {
@@ -3014,6 +3037,15 @@ mod tests {
         let rows: Vec<String> = lines.iter().filter(|l| l.contains("0.0387 / 0.194")).map(|l| l[..l.find("0.0387").unwrap()].to_string()).collect();
         assert!(rows.len() == 3 && rows[1].contains(" OpenRouter") && rows[2].contains(" DeepSeek") && rows[1].contains('…'), "{lines:#?}");
         assert!(rows[0] != rows[1] && rows[1] != rows[2] && rows[0] != rows[2], "{rows:#?}");
+        // some 70 providers with long names (0.1.196): at 80 columns the models' names keep the room they had (the pane took
+        // 11 columns, review 11), and the pane scrolls with the selection (it went off the pane after ~15 rows)
+        let many = ModelsPanel { rows: vec![row("Qwen3 Coder Plus 2025 09", 0, false)], selected: 0, filter: String::new(),
+            groups: std::iter::once(("All models".to_string(), 3458, true, String::new()))
+                .chain((1..70).map(|i| (format!("Alibaba Model Studio China {i}"), 120, i < 5, String::new()))).collect(),
+            group: 60, in_models: true, effort: None };
+        let lines = draw(&many, 80);
+        assert!(lines.iter().any(|l| l.contains("Qwen3 Coder Plus 2025 09 ")), "the name whole at 80 columns: {lines:#?}");
+        assert!(lines.iter().any(|l| l.contains("›○ Alibaba Model S…")) && !lines.iter().any(|l| l.contains("All models")), "the selected provider in view: {lines:#?}");
         // with a search typed, esc empties it first, and the hint says that
         assert!(draw(&two, 80).concat().contains("esc closes"));
         two.filter = "deepseek v4.1".into();
@@ -3073,9 +3105,9 @@ mod tests {
 
     #[test]
     fn login_lists_providers_then_a_page_that_asks_for_the_key() {
-        let row = |n: &str, h: &str, s: &str| (n.to_string(), h.to_string(), s.to_string());
-        let mut p = LoginPanel { rows: vec![row("Claude", "subscription", "the claude CLI's own login"), row("SubRouter", "API key", "logged in"),
-            row("Mortera", "API key", "not logged in")], selected: 2, form: None };
+        let row = |n: &str, s: &str| (n.to_string(), s.to_string(), String::new());
+        let mut p = LoginPanel { rows: vec![row("Claude", "subscription · the claude CLI's own login"), row("SubRouter", "logged in"),
+            row("Mortera", "not logged in")], selected: 2, form: None };
         let draw = |p: &LoginPanel, w: u16| {
             let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(w, 30)).unwrap();
             term.draw(|f| draw_login(f, p, Design::Cockpit.theme(), f.area())).unwrap();
@@ -3084,8 +3116,14 @@ mod tests {
         };
         let list = draw(&p, 100).join("\n");
         assert!(list.contains("› Mortera") && list.contains("not logged in") && list.contains("↑↓ move   enter logs in   esc closes"), "{list}");
+        // 80 columns with 0.1.196's longest names: a state whole beside the longest name (it lost "trusted yet", review 11)
+        let mut wide = LoginPanel { rows: vec![row("Alibaba Model Studio China", "key in this terminal only · not trusted yet"), row("DeepSeek", "logged in")],
+            selected: 1, form: None };
+        assert!(draw(&wide, 80).join("\n").contains("Alibaba Model Studio China  key in this terminal only · not trusted yet"), "{}", draw(&wide, 80).join("\n"));
+        wide.rows[0].1 = "x".repeat(200);
+        assert!(draw(&wide, 80).join("\n").contains("xxx…"), "longer still: cut with …");
         p.form = Some(LoginForm { name: "Mortera".into(), page: "https://mortera.cloud".into(), opened: true, place: "your Mortera dashboard".into(),
-            example: String::new(), typed: 5, host: "mortera.cloud".into(), var: "MORTERA_API_KEY".into(), has: String::new() });
+            example: String::new(), typed: 5, host: "mortera.cloud".into(), var: "MORTERA_API_KEY".into(), has: String::new(), note: String::new() });
         // 60 columns: nothing cut, the long lines wrap
         for w in [60u16, 100] {
             let page = draw(&p, w).join("\n");

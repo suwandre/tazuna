@@ -16,6 +16,49 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.196 (2026-11-22): 63 more providers from one catalog, local servers found by themselves, a faster first screen
+
+The user: "omp has the best list. whichever ones they have there, lets just add it. if it needs the user's discretion
+(i.e. it might ban their account), we will say so. but exclude claude", and "we should include the qwen coding plan".
+A survey of pi, omp, opencode, kilocode, cline, Roo, Aider, Crush, Goose, Hermes, Continue and Zed (their installed code
+and repos) found tazuna with 8 providers where they have 25 to 70.
+
+- Every provider omp (oh-my-pi 19.0.0) reaches with an API key: 63, among them DeepSeek, xAI, OpenAI, Google Gemini,
+  Moonshot and Kimi Code, Z.ai (pay-as-you-go and Coding Plan), Zhipu, MiniMax and its plan, Alibaba Model Studio
+  (Qwen, Singapore and Beijing), Alibaba's Coding Plan and Token Plan, Xiaomi MiMo and its Token Plans, StepFun,
+  Qianfan, Groq, Cerebras, Together, Fireworks, DeepInfra, Novita, SiliconFlow, Chutes, SambaNova, Nvidia, Hugging Face,
+  Vercel AI Gateway, OpenCode Zen and Go, Kilo, NanoGPT, Venice and the small gateways. Each in /model, /login and the
+  window's Settings → Providers with its key variable; region variants where the key or URL differs. Left out: omp's
+  logins (decided separately), and what needs more than a key (Bedrock, Vertex, Azure, Cloudflare).
+- One catalog for all of them: models.dev (MIT), trimmed to tazuna's providers and their tool-calling chat models and
+  shipped in the binary (21 KB gzipped, 2,600 models), refreshed at most once a day in the background with an ETag (a 304
+  costs nothing), read as it arrives so the refresh holds no more than a provider at a time. A cached copy counts only
+  when newer than the binary's own; a provider missing from it comes from the built-in copy. Every base URL comes from
+  tazuna's own table: a changed catalog cannot send a request anywhere else. A price of 0 counts as unknown (two routing
+  gateways list 0 and bill per use) unless the model is marked free or the provider is a plan; negative or absurd
+  prices are dropped. A model without reasoning gets no effort parameter (OpenAI and Groq refuse one).
+- Local servers: Ollama, LM Studio, llama.cpp and vLLM are found at start-up in the background by their model lists, at
+  $0 and trusted with code, without a key sent to them; an Ollama model that runs on Ollama's cloud is left out.
+- A provider whose own terms limit tazuna's use says so on its row, one line, in warning colour where an account may be
+  at risk: Alibaba's Coding and Token Plans (interactive use in coding tools only, never scripts or benchmarks; it may
+  refuse tazuna), Z.ai's and Zhipu's Coding Plans (only in their listed tools; tazuna is not listed), Kimi Code (it may
+  refuse clients other than its listed coding agents: check before buying), Xiaomi's Token Plans, Fire Pass, Chutes,
+  OpenCode Go. OpenCode Zen's free models are not listed (its terms keep them for OpenCode). Nothing else changes for
+  the user: the default model and the router are the same, and no call carries a token more.
+- The agent's commands keep the user's own variables: tazuna hides from them only the keys it hid before plus the key of
+  the provider in use (`/data` lists them). A first build hid OPENAI_API_KEY, HF_TOKEN and cloud secrets from every
+  command, Claude's included; the review caught it.
+- The first screen no longer waits for the run log's git labels (they run in the background): 3.0 s to 0.5 s in a repo
+  with unlabelled runs.
+- Footprint, measured against 0.1.195: binary 5.70 MB to 5.90 MB (+3.5%: the catalog, its table, a gzip decoder,
+  `miniz_oxide`); the window's model list 23 ms / 165 KB to 32 ms / 321 KB for ten times the models; /model's CPU
+  while open 1.46 s to 0.33 s per 8 s (it now redraws only on change); the app server's peak memory 38 MB to 39-40 MB.
+- An independent review of the first build found 11 defects (generic keys hidden from every command, $0 gateways
+  skipping the spend cap, effort sent where it is refused, /model at 42% of a core, a catalog refresh at 50 MB, an old
+  catalog surviving upgrades, saving a key freezing the window), each fixed with a test. 288 tests pass. Verified live:
+  none of the new providers (the only key on this machine is DeepSeek's, at a $0 balance); their request shapes against
+  stand-in servers for each API style (Chat Completions, Responses, Anthropic Messages).
+
 ## 0.1.195 (2026-11-22): web search for the own loop's hand-offs, Enter at start-up, the bench guard reads the meter again
 
 - The own loop's hand-off turn (a chat's `[[agent]]`, `/agent`, "Send to agent") can search the web: a `search` tool

@@ -1083,7 +1083,8 @@ fn untrusted_in_use(live: &live::Live) -> Option<String> {
 }
 
 fn check_data(url: &str, any: bool) -> Result<()> {
-    if any {
+    // a model server on this machine (Ollama, LM Studio, llama.cpp, vLLM): the code does not leave it
+    if any || models::local_server(url) {
         return Ok(());
     }
     let host = host_of(url);
@@ -1092,6 +1093,18 @@ fn check_data(url: &str, any: bool) -> Result<()> {
         bail!("{host} is not on the trusted list ({}): it may store or use your code. Add it there, or run with --data any", file.display());
     }
     Ok(())
+}
+
+/// What `/data` says of the keys kept from the agent's commands: tazuna's own providers', the routes', and the one the model
+/// in use runs on; the user's other variables stay.
+#[inline(never)]
+fn kept_keys(live: &live::Live) -> String {
+    let mut keys = models::provider_key_vars();
+    keys.extend(live.provider.as_ref().map(|p| p.1.clone()).filter(|k| !k.is_empty() && !keys.contains(k)));
+    if keys.is_empty() {
+        return "the agent's commands see every key (TAZUNA_KEEP_KEYS)".into();
+    }
+    format!("kept from the agent's commands: {} (your other variables stay; TAZUNA_KEEP_KEYS keeps these too)", keys.join(" "))
 }
 
 /// A provider host on the trusted list (~/.config/tazuna/trusted-providers): it may see the code under `--data trusted`.
@@ -1129,7 +1142,7 @@ struct LoginPick {
 
 /// `/login`, enter on a provider's page: saves the key typed (nothing typed: keeps the one it has) and trusts its host, as
 /// the page says. What it did, for the message line.
-fn login_save(l: &models::Login, typed: &str) -> Result<String> {
+fn login_save(l: &'static models::Login, typed: &str, tx: &std::sync::mpsc::Sender<serde_json::Value>) -> Result<String> {
     let mut said = vec![];
     // nothing typed and the key only in this terminal's environment: that key is saved, for tazuna in every folder
     let from_env = (typed.trim().is_empty() && models::key_source(l.vars) == "key in this terminal only").then(|| models::env_value(l.vars)).flatten();
@@ -1140,16 +1153,21 @@ fn login_save(l: &models::Login, typed: &str) -> Result<String> {
             p = models::save_key(var, typed)?;
         }
         said.push(format!("logged in to {}: key saved in {} (readable by you only)", l.name, p.display()));
-        if matches!(l.host, "mortera.cloud" | "api.cheaperinference.com" | "localhost") {
-            // ponytail: on the UI thread, ~1 s (15 s at most) once; their models come from their lists, which need the key
-            models::refresh_mortera();
+        if matches!(l.host(), "mortera.cloud" | "api.cheaperinference.com" | "localhost") || l.source == models::Source::List {
+            // their models come from their lists, which need the key: this provider's, in the background (every keyed list
+            // was fetched on the UI thread, up to 15 s each, review 11); the picker reads it when it is there
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                if l.host() == "localhost" { models::refresh_omniroute() } else { models::refresh_lists(l.vars) }
+                let _ = tx.send(json!({"type": "tazuna_lists"}));
+            });
         }
     } else if l.vars.iter().all(|v| models::key(v).is_none()) {
         bail!("no key typed");
     }
-    if !trusted_host(l.host) {
-        trust_host(l.host)?;
-        said.push(format!("{} may see the code now (trusted-providers)", l.host));
+    if !trusted_host(l.host()) {
+        trust_host(l.host())?;
+        said.push(format!("{} may see the code now (trusted-providers)", l.host()));
     }
     if from_env.is_some() {
         said.push("this terminal's key, now saved for tazuna in every folder".into());
@@ -1252,6 +1270,8 @@ fn app_server(a: &Args) -> Result<()> {
             models::refresh_openrouter();
         });
     }
+    // the model servers on this machine, at each start (a refused port answers at once)
+    std::thread::spawn(models::refresh_local);
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
@@ -1654,20 +1674,15 @@ fn app_server(a: &Args) -> Result<()> {
                         }
                         Some("tazuna_chat_event") => chat_event(&mut live, &mut s, &cmd, &mut chat_last, &mut last_reply),
                         // the model picker: the catalog as the terminal's /model shows it, answered as a `models` line
-                        Some("models") => {
+                        // a provider's list arrived after its key was saved (login_save): the picker's rows again
+                        Some("models" | "tazuna_lists") => {
                             models::refresh_omniroute(); // on this machine: its list as it is now
                             let cs = app_catalog()?;
-                            let rows: Vec<serde_json::Value> = cs.iter().map(|c| json!({
-                                "model": c.model, "label": c.label, "place": c.place, "provider": models::provider_of(c),
-                                "url": c.route.as_ref().map(|r| &r.0), "key_env": c.route.as_ref().map(|r| &r.1),
-                                "efforts": c.efforts, "effort": c.efforts.get(models::start_effort(c, &live.model, &live.effort)),
-                                "price": c.price, "bench": c.bench, "why_not": models::why_not(c).filter(|_| !live.data_any || c.state != models::State::Untrusted),
-                                "current": models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)),
-                            })).collect();
+                            let (rows, cautions) = app_models(&cs, &live);
                             // a Claude switch in a long conversation re-reads it without the cache: said before the user picks
                             let rebuild = rebuild_text(&s).filter(|_| live.provider.is_none());
                             let mut o = out.lock();
-                            let _ = writeln!(o, "{}", json!({"type": "models", "choices": rows, "rebuild": rebuild}));
+                            let _ = writeln!(o, "{}", json!({"type": "models", "choices": rows, "rebuild": rebuild, "cautions": cautions}));
                             let _ = o.flush();
                         }
                         // a model picked: {"op":"model","model":..,"url":..,"key_env":..,"effort":..} (url and key_env null for
@@ -1789,10 +1804,15 @@ fn app_server(a: &Args) -> Result<()> {
                         // the settings page: each provider's key state (never the key), the data policy, the router; a `settings`
                         // line
                         Some("settings") => {
-                            let providers: Vec<serde_json::Value> = models::LOGINS.iter().map(|l| json!({
-                                "name": l.name, "host": l.host, "page": l.page, "place": l.place, "example": l.example,
-                                "key": models::key_source(l.vars), "trusted": trusted_host(l.host),
+                            let mut providers: Vec<serde_json::Value> = models::LOGINS.iter().map(|l| json!({
+                                "name": l.name, "host": l.host(), "page": l.page, "place": l.place, "example": l.example,
+                                "key": models::key_source(l.vars), "trusted": trusted_host(l.host()), "note": l.note, "warn": l.warns(),
                             })).collect();
+                            // the model servers found running on this machine: theirs without a key
+                            providers.extend(models::local_running().into_iter().map(|name| json!({
+                                "name": name, "host": "127.0.0.1", "page": "", "place": "", "example": "", "key": "running on this machine",
+                                "trusted": true, "note": "", "warn": false, "local": true,
+                            })));
                             let mut o = out.lock();
                             let log = std::fs::read_to_string(labels::dir()?.join("runs.jsonl")).unwrap_or_default();
                             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
@@ -1804,7 +1824,7 @@ fn app_server(a: &Args) -> Result<()> {
                         Some("login") => {
                             let name = cmd["provider"].as_str().unwrap_or_default();
                             match models::LOGINS.iter().find(|l| l.name == name) {
-                                Some(l) => match login_save(l, cmd["key"].as_str().unwrap_or_default()) {
+                                Some(l) => match login_save(l, cmd["key"].as_str().unwrap_or_default(), &tx) {
                                     Ok(said) => s.apply(&note(said, false), at),
                                     Err(e) => info(&mut s, format!("{e:#}")),
                                 },
@@ -2639,8 +2659,10 @@ const CTX_HINT: u64 = 60_000;
 /// and the recordings that hold it (one per tazuna run it went through).
 struct Earlier {
     id: String,
-    /// the model of its latest run (an own-loop conversation goes on there)
+    /// the model of its latest run (an own-loop conversation goes on there), and the provider it ran on (the run log's,
+    /// `models::provider_name`; empty: claude, or a log from before 0.1.182)
     model: String,
+    provider: String,
     first: String,
     last_at: u64,
     messages: usize,
@@ -2676,7 +2698,7 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
         }
         let (ts, rec) = (r["ts"].as_u64().unwrap_or(0), m["recording"].as_str().map(std::path::PathBuf::from));
         let i = out.iter().position(|s| s.id == sid).unwrap_or_else(|| {
-            out.push(Earlier { id: sid.to_string(), model: String::new(), first: r["prompt"].as_str().unwrap_or_default().to_string(), last_at: ts, messages: 0, recordings: vec![], named: false });
+            out.push(Earlier { id: sid.to_string(), model: String::new(), provider: String::new(), first: r["prompt"].as_str().unwrap_or_default().to_string(), last_at: ts, messages: 0, recordings: vec![], named: false });
             last_line.push(0);
             out.len() - 1
         });
@@ -2684,6 +2706,7 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
         let e = &mut out[i];
         e.messages += 1;
         e.model = m["model"].as_str().unwrap_or_default().to_string();
+        e.provider = m["provider"].as_str().unwrap_or_default().to_string();
         e.last_at = e.last_at.max(ts);
         if let Some(p) = rec.filter(|p| !e.recordings.contains(p)) {
             e.recordings.push(p);
@@ -2886,9 +2909,17 @@ fn resume_choice(live: &live::Live, e: &Earlier) -> Option<models::Choice> {
     if if own { live.provider.is_some() && live.model == e.model } else { live.provider.is_none() } {
         return None;
     }
-    let cs = app_catalog().ok()?;
+    resume_in(&app_catalog().ok()?, e)
+}
+
+fn resume_in(cs: &[models::Choice], e: &Earlier) -> Option<models::Choice> {
+    let own = e.id.starts_with("own-");
     let fits = |c: &&models::Choice| c.route.is_some() == own && c.state == models::State::Ready;
-    cs.iter().filter(fits).find(|c| c.model == e.model).or_else(|| if own { None } else { cs.iter().find(fits) }).cloned()
+    // the own loop's on the provider it ran on: another provider listing the same model id is another account, price and
+    // history format (with models.dev's providers many list one id, review 11); gone, it is shown, not continued
+    let same = |c: &&models::Choice| c.model == e.model
+        && (!own || e.provider.is_empty() || c.route.as_ref().is_some_and(|r| models::provider_name(&r.0, &r.1) == e.provider));
+    cs.iter().filter(fits).find(same).or_else(|| if own { None } else { cs.iter().find(fits) }).cloned()
 }
 
 /// Why `model` cannot run here now, in a few words ("no SubRouter key", "not trusted"), from the picker's reasons.
@@ -3035,7 +3066,9 @@ fn run_live(
             if let Some(ms) = models::key_models("SUBROUTER_API_KEY") {
                 let _ = tx.send(json!({"type": "tazuna_key_models", "var": "SUBROUTER_API_KEY", "models": ms}));
             }
-            // Mortera's and OpenRouter's lists for /model, kept in the data folder
+            // the model servers on this machine, then Mortera's and OpenRouter's lists and models.dev's catalog for /model,
+            // kept in the data folder
+            models::refresh_local();
             models::refresh_mortera();
             models::refresh_openrouter();
         }
@@ -3104,6 +3137,10 @@ fn run_live(
     let mut rewind_sel: Option<usize> = None;
     // /resume: this repo's sessions and the selected one, while the picker is open
     let mut resume_pick: Option<(Vec<Earlier>, usize)> = None;
+    // what /login and /model last drew from: their rows are built again only when it changes (each frame, some 3,000 rows
+    // and 70 providers kept a core ~45% busy while /model was open, review 11)
+    let mut login_drawn: Option<(usize, Option<String>, bool)> = None;
+    let mut models_drawn: Option<u64> = None;
     // /loop: the running loop (its stop flag, its progress), or the flags of one waiting for PRD.md and TODO.md; and
     // TODO.md's open items when the /loop hint last showed
     let mut looping: Option<(std::sync::Arc<std::sync::atomic::AtomicBool>, std::sync::mpsc::Receiver<String>)> = None;
@@ -3199,67 +3236,20 @@ fn run_live(
         v.vim = if !vim { "" } else if normal { "NORMAL" } else { "INSERT" };
         v.sessions = resume_pick.as_ref().map(|(l, i)| ui::SessionsPanel { rows: l.iter().map(Earlier::row).collect(), selected: *i });
         v.rewind = rewind_sel.map(|i| ui::RewindPanel { items: live.checkpoints.iter().map(|c| c.text.clone()).collect(), selected: i });
-        v.login = login.as_ref().map(|lp| ui::LoginPanel {
-            rows: std::iter::once(("Claude".to_string(), "subscription".to_string(), "the claude CLI's own login".to_string()))
-                .chain(models::LOGINS.iter().map(|l| {
-                    let src = models::key_source(l.vars);
-                    let state = match (src.is_empty(), trusted_host(l.host)) {
-                        (true, _) => "not logged in".to_string(),
-                        (false, true) => src.to_string(),
-                        (false, false) => format!("{src} · {} not trusted yet", l.host),
-                    };
-                    (l.name.to_string(), "API key".to_string(), state)
-                }))
-                .collect(),
-            selected: lp.sel,
-            form: lp.form.as_ref().and_then(|typed| {
-                let l = models::LOGINS.get(lp.sel.checked_sub(1)?)?;
-                Some(ui::LoginForm { name: l.name.into(), page: l.page.into(), opened: lp.opened, place: l.place.into(),
-                    example: l.example.into(), typed: typed.chars().count(), host: l.host.into(), var: l.vars.join(" / "),
-                    has: models::key_source(l.vars).to_string() })
-            }),
-        });
-        v.models = pick.as_ref().map(|pk| {
-            let Picker { cs, sel, eff, prov, filter, psel, in_models, effort_at, effort_only, confirm } = pk;
-            // switching Claude's model or effort in a long conversation rebuilds its cache: the price, before the switch
-            let note = effort_at.and_then(|i| (cs[i].route.is_none() && live.provider.is_none()).then(|| rebuild_text(&s)).flatten())
-                .map(|t| if *confirm { format!("Enter again to switch: {t}.") } else { format!("Switching rebuilds Claude's cache once: {t}.") })
-                .unwrap_or_default();
-            let group = pk.group();
-            let usable = |i: usize| matches!(cs[i].state, models::State::Ready | models::State::Unchecked);
-            // the left pane: All models, then each provider with how many models and whether any can be picked now
-            let mut groups = vec![("All models".to_string(), cs.len(), true, String::new())];
-            groups.extend(models::providers(cs).into_iter().map(|(name, is)| {
-                let ok = is.iter().any(|&i| usable(i));
-                let why = if ok { String::new() } else { is.first().and_then(|&i| models::why_not(&cs[i])).unwrap_or_default() };
-                (name, is.len(), ok, why)
-            }));
-            ui::ModelsPanel {
-                rows: shown(cs, filter, group.as_deref()).into_iter().map(|i| {
-                    let c = &models::pinned(&cs[i], prov[i]);
-                    // All models: each row says whose it is (one model can be on SubRouter and on Mortera)
-                    // a label that ends in its provider ("Codestral 2508 · mistral") says it once, as the provider
-                    let whose = models::provider_of(c);
-                    let label = c.label.rsplit_once(" · ").filter(|(_, last)| last.eq_ignore_ascii_case(&whose)).map_or(c.label.as_str(), |(name, _)| name);
-                    let provider = if group.is_none() && whose != "Claude" && whose != "SubRouter" { whose.clone() } else { String::new() };
-                    ui::ModelRow { label: ui::pretty_label(label), provider, place: c.place.clone(), price: ui::even_price(&c.price), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
-                        state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3, models::State::NotOnKey => 4 },
-                        why: models::why_not(c).unwrap_or_default(), stale: c.stale, current: models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
-                }).collect(),
-                selected: *sel,
-                filter: filter.clone(),
-                groups,
-                group: *psel,
-                in_models: *in_models,
-                effort: effort_at.map(|i| (cs[i].label.clone(), cs[i].efforts.clone(), eff[i],
-                    match (*confirm, *effort_only) {
-                        (true, true) => "enter again to switch · esc closes",
-                        (true, false) => "enter again to switch · esc models",
-                        (false, true) => "↑↓ move · enter uses it · esc closes",
-                        (false, false) => "↑↓ move · enter uses it · esc models",
-                    }, note.clone())),
-            }
-        });
+        let login_now = login.as_ref().map(|lp| (lp.sel, lp.form.clone(), lp.opened));
+        if login_now != login_drawn {
+            login_drawn = login_now;
+            v.login = login.as_ref().map(|lp| login_panel(lp));
+        }
+        // switching Claude's model or effort in a long conversation rebuilds its cache: the price, before the switch
+        let switch_note = pick.as_ref().and_then(|pk| pk.effort_at.and_then(|i| (pk.cs[i].route.is_none() && live.provider.is_none()).then(|| rebuild_text(&s)).flatten())
+            .map(|t| if pk.confirm { format!("Enter again to switch: {t}.") } else { format!("Switching rebuilds Claude's cache once: {t}.") }))
+            .unwrap_or_default();
+        let models_now = pick.as_ref().map(|pk| picker_stamp(pk, live, &switch_note));
+        if models_now != models_drawn {
+            models_drawn = models_now;
+            v.models = pick.as_ref().map(|pk| models_panel(pk, live, switch_note));
+        }
         let dt = last.elapsed();
         last = Instant::now();
         for (t, e) in live.poll() {
@@ -3374,6 +3364,10 @@ fn run_live(
                     let ms = e["models"].as_array().into_iter().flatten().filter_map(|m| m.as_str().map(String::from)).collect();
                     key_models.insert(e["var"].as_str().unwrap_or_default().to_string(), ms);
                 }
+                // a provider's list arrived after its key was saved (login_save): its rows join an open picker
+                Some("tazuna_lists") => if let Some(pk) = pick.as_mut() {
+                    reload_picker(pk, live, &key_models);
+                },
                 _ => s.apply(&e, live.elapsed_ms()),
             }
         }
@@ -3635,7 +3629,7 @@ fn run_live(
                 (Some(typed), KeyCode::Char(c)) if !ctrl => typed.push(c),
                 (Some(typed), KeyCode::Enter) => {
                     let l = &models::LOGINS[lp.sel - 1];
-                    match login_save(l, typed) {
+                    match login_save(l, typed, &status_tx) {
                         Ok(text) => {
                             s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
                             login = None;
@@ -4202,7 +4196,7 @@ fn run_live(
                     let info = match text["/data".len()..].trim() {
                         // where else data goes: a hand-off turn's web search (engine.rs `tool_list`) sends its query alone
                         "" => format!("data: {} · /data trusted (only providers on the trusted list) or /data any · a web search in a turn handed \
-                            to the agent sends its query to Exa (own loop) or Anthropic (Claude)", if live.data_any { "any" } else { "trusted" }),
+                            to the agent sends its query to Exa (own loop) or Anthropic (Claude) · {}", if live.data_any { "any" } else { "trusted" }, kept_keys(live)),
                         "trusted" => {
                             live.data_any = false;
                             let untrusted = live.provider.as_ref().is_some_and(|p| check_data(&p.0, false).is_err());
@@ -4776,6 +4770,46 @@ fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::pat
     }
 }
 
+/// The app picker's rows: a row that can be picked whole; one that cannot (a key missing, a host not trusted) only what a
+/// search shows of it (with some 3,000 rows since 0.1.196 the line went from 134 KB to 1.3 MB, review 11): its model, its
+/// provider, price and reason, its label and score where they say more, `no_key` where Settings adds what it needs (the
+/// terminal's "/login, or set the environment variable" does not apply there). Each provider's terms once, in `cautions`.
+#[inline(never)]
+fn app_models(cs: &[models::Choice], live: &live::Live) -> (Vec<serde_json::Value>, serde_json::Map<String, serde_json::Value>) {
+    let mut cautions = serde_json::Map::new();
+    let rows = cs.iter().map(|c| {
+        let provider = models::provider_of(c);
+        if let Some(l) = models::login_of(c).filter(|l| !l.note.is_empty() && !cautions.contains_key(&provider)) {
+            cautions.insert(provider.clone(), json!({"note": l.note, "warn": l.warns()}));
+        }
+        let why = models::why_not(c).filter(|_| !live.data_any || c.state != models::State::Untrusted);
+        let Some(why) = why else {
+            return json!({
+                "model": c.model, "label": c.label, "place": c.place, "provider": provider,
+                "url": c.route.as_ref().map(|r| &r.0), "key_env": c.route.as_ref().map(|r| &r.1),
+                "efforts": c.efforts, "effort": c.efforts.get(models::start_effort(c, &live.model, &live.effort)),
+                "price": c.price, "bench": c.bench, "why_not": null,
+                "current": models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)),
+            });
+        };
+        let mut row = json!({"model": c.model, "provider": provider, "price": c.price});
+        if c.state == models::State::NoKey {
+            row["why_not"] = json!("no key");
+            row["no_key"] = json!(true);
+        } else {
+            row["why_not"] = json!(why);
+        }
+        if c.label != c.model {
+            row["label"] = json!(c.label);
+        }
+        if !c.bench.is_empty() {
+            row["bench"] = json!(c.bench);
+        }
+        row
+    }).collect();
+    (rows, cautions)
+}
+
 /// The model catalog for the app's picker (the terminal's /model list, without a SubRouter key's model list: those rows
 /// show as usable and a refusal comes from SubRouter).
 fn app_catalog() -> Result<Vec<models::Choice>> {
@@ -4790,7 +4824,8 @@ fn apply_choice(live: &mut live::Live, c: &models::Choice, effort: Option<String
     // the model in use, on the same provider: only its effort changes, and the conversation goes on
     let same = models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1));
     let blocked = matches!(c.state, models::State::NoKey | models::State::NotOnKey) || (c.state == models::State::Untrusted && !live.data_any);
-    let effort = effort.unwrap_or_else(|| live.effort.clone());
+    // a model without effort levels gets none: the engine sends no effort field (OpenAI refused gpt-4.1's, review 11)
+    let effort = if c.route.is_some() && c.efforts.is_empty() { String::new() } else { effort.unwrap_or_else(|| live.effort.clone()) };
     if same && !blocked {
         return live.set_effort(effort);
     }
@@ -4829,6 +4864,102 @@ fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     let mut p = Picker { cs, sel: 0, eff, prov, filter: String::new(), psel, in_models: false, effort_at: None, effort_only: false, confirm: false };
     p.sel = shown(&p.cs, "", p.group().as_deref()).iter().position(|&i| p.cs[i].model == live.model).unwrap_or(0);
     Ok(p)
+}
+
+/// `/login`'s list and page as drawn (from `run_live`'s loop, only when the selection or the page changes).
+#[inline(never)]
+fn login_panel(lp: &LoginPick) -> ui::LoginPanel {
+    ui::LoginPanel {
+        rows: std::iter::once(("Claude".to_string(), "subscription · the claude CLI's own login".to_string(), String::new()))
+            .chain(models::LOGINS.iter().map(|l| {
+                let src = models::key_source(l.vars);
+                // its host is on the provider's page: the line fits 80 columns beside the longest name
+                let state = match (src.is_empty(), trusted_host(l.host())) {
+                    (true, _) => "not logged in".to_string(),
+                    (false, true) => src.to_string(),
+                    (false, false) => format!("{src} · not trusted yet"),
+                };
+                (l.name.to_string(), state, l.note.to_string())
+            }))
+            .collect(),
+        selected: lp.sel,
+        form: lp.form.as_ref().and_then(|typed| {
+            let l = models::LOGINS.get(lp.sel.checked_sub(1)?)?;
+            Some(ui::LoginForm { name: l.name.into(), page: l.page.into(), opened: lp.opened, place: l.place.into(),
+                example: l.example.into(), typed: typed.chars().count(), host: l.host().into(), var: l.vars.join(" / "), note: l.note.into(),
+                has: models::key_source(l.vars).to_string() })
+        }),
+    }
+}
+
+/// What `/model` shows depends on, hashed: its rows are built again only when it changes. `note`: the switch's price.
+#[inline(never)]
+fn picker_stamp(pk: &Picker, live: &live::Live, note: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::hash::DefaultHasher::new();
+    (pk.sel, pk.psel, &pk.filter, pk.in_models, pk.effort_at, pk.effort_only, pk.confirm).hash(&mut h);
+    (&pk.eff, &pk.prov, pk.cs.len(), &live.model, &live.provider, note).hash(&mut h);
+    h.finish()
+}
+
+/// `/model` as drawn: the providers on the left, the selected one's rows (or the search's), the effort step.
+#[inline(never)]
+fn models_panel(pk: &Picker, live: &live::Live, note: String) -> ui::ModelsPanel {
+    let Picker { cs, sel, eff, prov, filter, psel, in_models, effort_at, effort_only, confirm } = pk;
+    let group = pk.group();
+    let usable = |i: usize| matches!(cs[i].state, models::State::Ready | models::State::Unchecked);
+    // the left pane: All models, then each provider with how many models and whether any can be picked now
+    let mut groups = vec![("All models".to_string(), cs.len(), true, String::new())];
+    groups.extend(models::providers(cs).into_iter().map(|(name, is)| {
+        let ok = is.iter().any(|&i| usable(i));
+        // a provider whose terms put the account at risk says so on its row (2026-11-22)
+        let note = is.first().and_then(|&i| models::login_of(&cs[i])).map_or("", |l| l.note);
+        let why = if ok { String::new() } else { is.first().and_then(|&i| models::why_not(&cs[i])).unwrap_or_default() };
+        (name, is.len(), ok, [why.as_str(), note].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(" · "))
+    }));
+    ui::ModelsPanel {
+        rows: shown(cs, filter, group.as_deref()).into_iter().map(|i| {
+            let c = &models::pinned(&cs[i], prov[i]);
+            // All models: each row says whose it is (one model can be on SubRouter and on Mortera)
+            // a label that ends in its provider ("Codestral 2508 · mistral") says it once, as the provider
+            let whose = models::provider_of(c);
+            let label = c.label.rsplit_once(" · ").filter(|(_, last)| last.eq_ignore_ascii_case(&whose)).map_or(c.label.as_str(), |(name, _)| name);
+            let provider = if group.is_none() && whose != "Claude" && whose != "SubRouter" { whose.clone() } else { String::new() };
+            ui::ModelRow { label: ui::pretty_label(label), provider, place: c.place.clone(), price: ui::even_price(&c.price), note: c.note.clone(), bench: c.bench.clone(), aa: c.aa.clone(),
+                state: match c.state { models::State::Ready => 0, models::State::NoKey => 1, models::State::Untrusted => 2, models::State::Unchecked => 3, models::State::NotOnKey => 4 },
+                why: models::why_not(c).unwrap_or_default(), stale: c.stale, current: models::same_model(c, &live.model) && c.route.as_ref().map(|r| (&r.0, &r.1)) == live.provider.as_ref().map(|p| (&p.0, &p.1)) }
+        }).collect(),
+        selected: *sel,
+        filter: filter.clone(),
+        groups,
+        group: *psel,
+        in_models: *in_models,
+        effort: effort_at.map(|i| (cs[i].label.clone(), cs[i].efforts.clone(), eff[i],
+            match (*confirm, *effort_only) {
+                (true, true) => "enter again to switch · esc closes",
+                (true, false) => "enter again to switch · esc models",
+                (false, true) => "↑↓ move · enter uses it · esc closes",
+                (false, false) => "↑↓ move · enter uses it · esc models",
+            }, note)),
+    }
+}
+
+/// The picker's rows read again (a provider's list came in), keeping the provider, the row and the search the user had;
+/// not while an effort is being picked (its row would move).
+#[inline(never)]
+fn reload_picker(pk: &mut Picker, live: &live::Live, keys: &models::KeyModels) {
+    if pk.effort_at.is_some() {
+        return;
+    }
+    let Ok(mut np) = open_picker(live, keys) else { return };
+    let group = pk.group();
+    let model = shown(&pk.cs, &pk.filter, group.as_deref()).get(pk.sel).map(|&i| pk.cs[i].model.clone());
+    np.filter = std::mem::take(&mut pk.filter);
+    np.in_models = pk.in_models;
+    np.psel = group.and_then(|g| models::providers(&np.cs).iter().position(|(n, _)| *n == g)).map_or(0, |i| i + 1);
+    let rows = shown(&np.cs, &np.filter, np.group().as_deref());
+    np.sel = model.and_then(|m| rows.iter().position(|&i| np.cs[i].model == m)).unwrap_or(0);
+    *pk = np;
 }
 
 /// The model rows on screen: the open provider's, or with no provider open every provider's, that match what was typed,
@@ -4946,6 +5077,42 @@ mod tests {
             assert!(!super::model_matches(&c, typed), "{typed:?}");
         }
         assert_eq!(super::shown(std::slice::from_ref(&c), "deepseek v4.1", Some("SubRouter")), [0]);
+    }
+
+    #[test]
+    fn the_apps_picker_gets_what_it_shows() {
+        let live = crate::live::Live::new("claude-opus-5-5", "medium").unwrap();
+        let row = |model: &str, state: models::State| models::Choice { model: model.into(), label: model.into(), route: Some(("https://api.z.ai/api/coding/paas/v4".into(), "ZAI_API_KEY".into(), "0,0,0".into())),
+            place: "Z.ai Coding Plan".into(), efforts: vec!["high".into()], price: "plan".into(), note: String::new(), stale: false, state, bench: String::new(), aa: String::new(), pins: vec![] };
+        let (rows, cautions) = super::app_models(&[row("glm-5", models::State::Ready), row("glm-4.6", models::State::NoKey)], &live);
+        // a row that can be picked: whole; one without a key: what a search shows, and that Settings adds the key
+        assert!(rows[0]["url"].is_string() && rows[0]["efforts"][0] == "high" && rows[0]["why_not"].is_null() && rows[0]["current"] == false, "{}", rows[0]);
+        let keys: Vec<&String> = rows[1].as_object().unwrap().keys().collect();
+        assert_eq!(keys, ["model", "provider", "price", "why_not", "no_key"], "{}", rows[1]);
+        assert!(!rows[1]["why_not"].as_str().unwrap().contains("/login"), "no terminal command in the window");
+        // the provider's terms once, warning: the account may be at risk
+        assert_eq!((cautions.len(), cautions["Z.ai Coding Plan"]["warn"].as_bool()), (1, Some(true)));
+    }
+
+    #[test]
+    fn an_own_loop_conversation_goes_on_only_where_it_ran() {
+        let row = |url: &str, var: &str| models::Choice { model: "glm-5".into(), label: "glm-5".into(), route: Some((url.into(), var.into(), "1,0.1,3".into())),
+            place: String::new(), efforts: vec![], price: String::new(), note: String::new(), stale: false, state: models::State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
+        let cs = [row("https://api.z.ai/api/paas/v4", "ZAI_API_KEY")];
+        let e = |provider: &str| super::Earlier { id: "own-1-a".into(), model: "glm-5".into(), provider: provider.into(), first: String::new(), last_at: 0, messages: 1, recordings: vec![], named: false };
+        // it ran on the Coding Plan, which is gone here: shown, not continued on pay-as-you-go Z.ai, which lists the same id
+        assert!(super::resume_in(&cs, &e("Z.ai Coding Plan")).is_none());
+        assert_eq!(super::resume_in(&cs, &e("Z.ai")).and_then(|c| c.route).map(|r| r.0).as_deref(), Some("https://api.z.ai/api/paas/v4"));
+        assert!(super::resume_in(&cs, &e("")).is_some(), "a run log from before 0.1.182 names no provider: by the model, as before");
+    }
+
+    #[test]
+    fn a_model_without_effort_levels_gets_no_effort() {
+        let mut live = crate::live::Live::new("claude-opus-5-5", "high").unwrap();
+        let c = models::Choice { model: "gpt-4.1".into(), label: "gpt-4.1".into(), route: Some(("https://api.openai.com/v1".into(), "OPENAI_API_KEY".into(), "2,0.5,8".into())),
+            place: String::new(), efforts: vec![], price: String::new(), note: String::new(), stale: false, state: models::State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
+        let (_, e) = super::apply_choice(&mut live, &c, None).unwrap();
+        assert_eq!((live.effort.as_str(), e["text"].as_str().unwrap_or_default().contains(" · :")), ("", false), "{e}");
     }
 
     #[test]

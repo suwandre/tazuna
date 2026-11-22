@@ -302,6 +302,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-22: providers: everything omp reaches with a key, from one catalog (models.dev, trimmed, in the binary), so a
+  provider is one table row, not a parser. A provider whose terms limit tazuna says so on its row; the user decides.
+  Logins that use another app's identity (Copilot, Gemini CLI, Antigravity, SuperGrok): the user chose to add them
+  opt-in behind a warning, after being told they impersonate that app and providers have suspended accounts for it;
+  "Sign in with ChatGPT" is OpenAI's own flow for open-source apps and needs none. Claude stays on its CLI only.
 - 2026-11-22: web search for the own loop through Exa's hosted endpoint, which needs no key: tazuna's defaults must
   work for anyone who installs it, with no signup; a user's own keys only raise limits. Search only in hand-off turns
   (chat and coding requests unchanged); measured at the same quality with 58% fewer input tokens than fetch alone

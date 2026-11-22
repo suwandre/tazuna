@@ -1062,14 +1062,17 @@ impl Live {
         let goes_on = route.is_none() && self.provider.is_none();
         self.respawn(model.clone(), effort.clone());
         self.provider = route.as_ref().map(|(u, k, _)| (u.clone(), k.clone()));
-        self.price = route.map(|r| r.2);
+        // a model with no price listed runs on the list's price, else --price (TAZUNA_PRICE)
+        self.price = route.map(|r| r.2).filter(|p| !p.is_empty());
         // an id that ends in its level (OmniRoute's agy/gemini-4-argon-high) is said without it: "… argon at high"
         let shown = model.strip_suffix(&format!("-{effort}")).unwrap_or(&model).to_string();
+        // a model without effort levels runs at none (its effort is empty)
+        let level = if effort.is_empty() { String::new() } else { format!(" · {effort}") };
         let text = if goes_on {
-            format!("model: {} · {effort} from here on (the conversation goes on; its cache is rebuilt once)", crate::ui::model_short(&shown))
+            format!("model: {}{level} from here on (the conversation goes on; its cache is rebuilt once)", crate::ui::model_short(&shown))
         } else {
             self.session_id = None;
-            format!("model: {} · {effort}: a new conversation (only claude can carry one over to another model)", crate::ui::model_short(&shown))
+            format!("model: {}{level}: a new conversation (only claude can carry one over to another model)", crate::ui::model_short(&shown))
         };
         Ok(self.record(json!({"type": "harness_switch", "model": model, "effort": effort, "text": text})))
     }
@@ -1943,7 +1946,7 @@ impl Live {
             "host": host(),
             // which API the own loop ran on, or who billed claude (none on the plan): the usage page names it. `plan`: the
             // run log called every claude run plan, so the start page counted an API key's runs as nothing paid
-            "provider": self.provider.as_ref().map(|(u, _)| crate::models::provider_name(u)).or_else(|| self.claude_bill.1.filter(|_| !self.claude_bill.0).map(String::from)),
+            "provider": self.provider.as_ref().map(|(u, k)| crate::models::provider_name(u, k)).or_else(|| self.claude_bill.1.filter(|_| !self.claude_bill.0).map(String::from)),
             "plan": self.provider.is_none() && self.claude_bill.0,
         })
     }
