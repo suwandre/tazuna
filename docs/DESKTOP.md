@@ -523,6 +523,15 @@ other 69 under "More providers" with a search; a provider's terms note sits on i
 key yet · add one in Settings" and opens that provider's settings. The fold has no "ToolSearch" step (Claude Code
 loading a tool), a step that waits for your answer says so without a clock, and a declined step is not counted as run.
 
+0.1.101 (with tazuna 0.1.197): sign-ins next to keys (core src/oauth.rs). Settings → Providers has ChatGPT ("Continue with
+ChatGPT": OpenAI's Sign in with ChatGPT for open-source apps, the browser, then "You're using your ChatGPT plan" once),
+GitHub Copilot and SuperGrok ("Sign in": a code to type on the provider's page, shown on the row; they send another app's
+identity, so the first one asks "I understand, sign in" under its warning, and the answer is kept). Signed in, the row
+sits under Yours with Sign out; its models are in the picker ("on your plan"), never picked by tazuna on its own; a
+model of one not signed in says "Not signed in · sign in in Settings". The usage page's ChatGPT row says "Manage usage".
+- Seen: the sweep on test data (the picker's not-signed-in row, the warning, the code, ChatGPT's welcome, signed in).
+  Not seen: a real sign-in (no account was used).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

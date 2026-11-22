@@ -41,6 +41,10 @@ export function price(p: string): string {
   return n.map((x) => (x === 0 ? "0" : x >= 1 ? String(+x.toFixed(2)) : String(+x.toPrecision(2)))).join(" / ");
 }
 
+/** What a row that cannot be picked needs, by the core's reason: a key, or a sign-in's state (core oauth.rs). */
+const NO_KEY: Record<string, string> = { "no key": "No key yet · add one in Settings", "not signed in": "Not signed in · sign in in Settings",
+  "plan use not allowed": "Plan use not allowed · allow it in Settings", "model list not loaded": "Its model list has not loaded yet" };
+
 export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effort, onEffort }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
   /** a row whose provider has no key: Settings on that provider, its key field open */
   onKey?: (provider: string) => void;
@@ -98,7 +102,7 @@ export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effo
                   <span className={`block truncate ${c.why_not ? "text-faint" : "text-ink"}`} title={c.model}>{modelLabel(c.model)}</span>
                   {/* the group names the provider: a row's second line only says why it cannot run (it repeated "api.mistral.ai") */}
                   {/* no key: the desktop's own way to one (the core's words name the terminal's /login) */}
-                  {c.why_not && <span className="block truncate text-[11.5px] text-faint">{c.no_key ? "No key yet · add one in Settings" : c.why_not}</span>}
+                  {c.why_not && <span className="block truncate text-[11.5px] text-faint">{c.no_key ? NO_KEY[c.why_not ?? ""] ?? NO_KEY["no key"] : c.why_not}</span>}
                 </span>
                 <span className="w-[64px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-faint" title="tazuna bench: judge score (runs)">{c.bench}</span>
                 <span className="w-[112px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-muted" title="$ per million tokens: input / output">{c.price === "plan" ? "on your plan" : price(c.price)}</span>

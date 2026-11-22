@@ -65,7 +65,17 @@ export type Provider = { name: string; host: string; page: string; place: string
    * provider may refuse tazuna */
   note: string; warn: boolean;
   /** a model server running on this machine (Ollama, LM Studio, llama.cpp, vLLM): it needs no key */
-  local?: boolean };
+  local?: boolean;
+  /** a sign-in instead of a key (core oauth.rs, 2026-11-22): "chatgpt", "copilot", "xai"; empty or absent: a key. `key` is
+   * "signed in" while signed in; one whose `warn` is set needs that warning confirmed before its first sign-in */
+  sign_in?: string;
+  /** its warning was confirmed once (it stays through a sign-out) */
+  confirmed?: boolean;
+  /** signed in to ChatGPT with plan use declined at its consent page: no model until a sign-in allows it */
+  plan_off?: boolean };
+/** A sign-in's progress (`ok` null: still going; its text says what to do: a code to type, the browser tab) and then its
+ * outcome. `first`: the first sign-in on the ChatGPT plan, whose welcome shows once. */
+export type SignIn = { provider: string; ok?: boolean | null; text: string; first?: boolean };
 export type Settings = { providers: Provider[]; data_any: boolean; route: boolean; version: string;
   /** dollars of paid API spend allowed per 24 hours (null: no cap), and what was spent */
   spend_cap?: number | null; spent_24h?: number };
@@ -136,6 +146,12 @@ export const core = {
   onDiff: (cb: (d: Diff) => void) => on<Diff>("diff", cb),
   settings: () => to("op", { msg: { op: "settings" } }),
   login: (provider: string, key: string) => to("op", { msg: { op: "login", provider, key } }),
+  /** a sign-in (the core opens the browser and waits for it); `confirm`: the user confirmed the provider's warning */
+  signIn: (provider: string, confirm = false) => to("op", { msg: { op: "login", provider, confirm } }),
+  signOut: (provider: string) => to("op", { msg: { op: "login", provider, sign_out: true } }),
+  /** ChatGPT with another account: the session revoked, a new registration */
+  signInOther: (provider: string) => to("op", { msg: { op: "login", provider, other_account: true } }),
+  onSignIn: (cb: (s: SignIn) => void) => on<SignIn>("signin", cb),
   setData: (policy: "trusted" | "any", confirm = false) => to("op", { msg: { op: "data", policy, confirm } }),
   setRoute: (on: boolean) => to("op", { msg: { op: "route", on } }),
   /** a new worktree of this project (src/worktree.rs); runSetup: the user's answer about .tazuna/setup.sh (null: ask) */

@@ -244,7 +244,7 @@ function credit(c: { provider: string; left?: string | null; page: string }) {
         <span className="w-[200px] flex-none text-ink">{c.provider}</span>
         {c.left ? <><span className="flex-1" /><span className={`tabular-nums ${/ over /.test(c.left) || c.left.startsWith("-") ? "text-bad" : "text-muted"}`}><span className="font-medium text-ink">{c.left.replace(/ (left|over).*/, "")}</span>{c.left.match(/ (left|over).*/)?.[0]}</span></>
           : <><span className="flex-1" />{/* why is on the fold these rows sit under */}
-            <button onClick={() => core.openLink(c.page).catch(() => {})} className={`flex items-center gap-1 ${quietButton}`}>Open its page<ExternalLink size={12} strokeWidth={1.5} /></button></>}
+            <button onClick={() => core.openLink(c.page).catch(() => {})} className={`flex items-center gap-1 ${quietButton}`}>{/* OpenAI's wording for its usage page */}{c.provider === "ChatGPT" ? "Manage usage" : "Open its page"}<ExternalLink size={12} strokeWidth={1.5} /></button></>}
       </div>
   );
 }

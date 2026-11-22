@@ -4,7 +4,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { useDialog } from "../lib/dialog";
 import { checkUpdate, installUpdate, progressText, useUpdate } from "../lib/update";
 import { safeMode } from "../lib/plugins";
-import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Provider, type Settings } from "../lib/tazuna";
+import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Provider, type Settings, type SignIn } from "../lib/tazuna";
 import { matchesWords } from "../lib/types";
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
 import { PROSE, TEXT_SIZES, THEME, ZOOM, look } from "../lib/chrome";
@@ -48,12 +48,22 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   const [cap, setCap] = useState<string | null>(null);
   const [mcp, setMcp] = useState<Mcp | null>(null);
   const [mcpState, setMcpState] = useState<Record<string, { ok?: boolean; text: string }>>({});
+  // sign-ins (core oauth.rs): the one whose warning is being confirmed, each one's progress and outcome, the ChatGPT plan's
+  // welcome (once, after the first sign-in that uses it: OpenAI's guidelines)
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const [signing, setSigning] = useState<Record<string, SignIn>>({});
+  const [welcome, setWelcome] = useState(false);
   const [adding, setAdding] = useState({ name: "", target: "" });
   const [hook, setHook] = useState<Hook | null>(null);
   // the app's own version beside its core's: "tazuna 0.1.173" alone read as the terminal's
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);
-  useEffect(() => { if (st && focus) document.querySelector(`[aria-label="${CSS.escape(focus)} key"]`)?.scrollIntoView({ block: "center" }); }, [!!st]);
+  useEffect(() => {
+    if (!st || !focus) return;
+    const at = document.querySelector<HTMLElement>(`[aria-label="${CSS.escape(focus)} key"], [data-sign-in="${CSS.escape(focus)}"]`);
+    at?.scrollIntoView({ block: "center" });
+    if (at?.tagName === "BUTTON") at.focus();
+  }, [!!st]);
   // updates from here (until 0.1.58 only the sidebar's row, when one was found, and Cmd-K)
   const update = useUpdate();
   const [checking, setChecking] = useState(false);
@@ -93,6 +103,11 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   useEffect(() => {
     const off = core.onSettings(setSt);
     const offMcp = core.onMcp(setMcp), offStatus = core.onMcpStatus((m) => setMcpState((all) => ({ ...all, [m.name]: m }))), offHook = core.onHook(setHook);
+    const offSign = core.onSignIn((m) => {
+      setSigning((all) => ({ ...all, [m.provider]: m }));
+      if (m.ok != null) { core.settings().catch(() => {}); core.models().catch(() => {}); }
+      if (m.first) setWelcome(true);
+    });
     const offGallery = core.onGallery(setGallery), offItem = core.onGalleryItem((g) => {
       if (g.file && !asked.current.delete(g.file)) return;
       setAskedN((n) => n + 1);
@@ -104,7 +119,7 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
     core.hook().catch(() => {});
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") close.current(); };
     window.addEventListener("keydown", esc);
-    return () => { for (const o of [off, offMcp, offStatus, offHook, offGallery, offItem]) o.then((f) => f()); window.removeEventListener("keydown", esc); };
+    return () => { for (const o of [off, offMcp, offStatus, offHook, offGallery, offItem, offSign]) o.then((f) => f()); window.removeEventListener("keydown", esc); };
   }, []);
   const save = async (name: string) => {
     await core.login(name, keys[name] ?? "");
@@ -117,12 +132,36 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   // Yours: the providers with a key and the model servers running here; the rest under More providers
   const yours = st?.providers.filter((p) => p.key || p.local) ?? [], others = st?.providers.filter((p) => !p.key && !p.local) ?? [];
   const found = others.filter((p) => matchesWords(find, `${p.name} ${p.host}`));
+  const signIn = (p: Provider, other = false) => {
+    setConfirming(null);
+    setSigning((all) => ({ ...all, [p.name]: { provider: p.name, text: "Starting…" } }));
+    (other ? core.signInOther(p.name) : core.signIn(p.name, p.warn)).catch(() => {});
+  };
+  const busy = (p: Provider) => !!signing[p.name] && signing[p.name].ok == null;
   const provider = (p: Provider) => (
     <Row key={p.name} title={p.name} note={<>{/* one line: with the key field open, "managed key (tazuna subrouter --manage)" broke inside "--manage" */}
-      <span title={p.key || p.host} className={`block truncate ${p.key ? "text-ok" : "font-mono text-[11.5px] text-faint"}`}>{p.key || p.host}</span>
+      <span title={p.key || p.host} className={`block truncate ${p.plan_off ? "text-warn" : p.key ? "text-ok" : "font-mono text-[11.5px] text-faint"}`}>{p.key || p.host}</span>
       {/* its terms, quiet; in the warning colour only where the account may be at risk or it may refuse tazuna */}
-      {p.note && <span className={`block ${p.warn ? "text-warn" : "text-faint"}`}>{p.note}</span>}</>}>
-      {!p.local && <>
+      {p.note && <span className={`block ${p.warn ? "text-warn" : "text-faint"}`}>{p.note}</span>}
+      {/* a sign-in: what to do now (a code to type, the browser tab), then how it went */}
+      {p.sign_in && signing[p.name] && <span role="status" className={`block ${signing[p.name].ok === false ? "text-bad" : signing[p.name].ok ? "text-ok" : "text-ink-2"}`}>{signing[p.name].text}</span>}</>}>
+      {p.sign_in && <>
+        {confirming === p.name ? <>
+          <button onClick={() => setConfirming(null)} className={quietButton}>Cancel</button>
+          <button autoFocus onClick={() => signIn(p)} className={accentButton}>I understand, sign in</button>
+        </> : p.key ? <>
+          {/* plan use declined at the consent page: a sign-in that asks for it again; ChatGPT: another account in its place */}
+          {p.plan_off ? <button disabled={busy(p)} onClick={() => signIn(p)} className={button}>Allow plan use</button>
+            : p.sign_in === "chatgpt" && <button disabled={busy(p)} onClick={() => signIn(p, true)} className={button}>Other account</button>}
+          <button disabled={busy(p)} onClick={() => { setSigning((all) => ({ ...all, [p.name]: { provider: p.name, text: "Signing out…" } })); core.signOut(p.name).catch(() => {}); }}
+            data-sign-in={p.name} className={button}>Sign out</button>
+        </>
+        // OpenAI's wording for its sign-in button; a warning to confirm first where the sign-in sends another app's identity
+        : <button disabled={busy(p)} onClick={() => (p.warn && !p.confirmed ? setConfirming(p.name) : signIn(p))} data-sign-in={p.name}
+          className={button}>{p.sign_in === "chatgpt" ? "Continue with ChatGPT" : "Sign in"}</button>}
+        <button onClick={() => core.openKeyPage(p.page)} aria-label={`Open ${p.place}`} title={`Open ${p.place}`} className="rounded p-1 text-muted hover:text-ink"><ExternalLink size={14} strokeWidth={1.5} /></button>
+      </>}
+      {!p.local && !p.sign_in && <>
         {keyFor === p.name ? <>
           <input autoFocus type="password" value={keys[p.name] ?? ""} onChange={(e) => setKeys((k) => ({ ...k, [p.name]: e.target.value }))}
             onKeyDown={(e) => { if (e.key === "Enter" && keys[p.name]) save(p.name); if (e.key === "Escape") { e.stopPropagation(); setKeyFor(null); } }} aria-label={`${p.name} key`}
@@ -164,7 +203,7 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
           </Section>
           {!st && tab !== "Appearance" && <div className="text-[12.5px] text-faint">Loading…</div>}
           {st && <>
-            <Section title="Providers" label="Yours" note="Claude runs on your subscription through the claude CLI, with its own login. Other providers need an API key: tazuna saves it on this machine, readable by you only, and never shows it again.">
+            <Section title="Providers" label="Yours" note="Claude runs on your subscription through the claude CLI, with its own login. Other providers need an API key (tazuna saves it on this machine, readable by you only, and never shows it again) or, for ChatGPT, GitHub Copilot and SuperGrok, a sign-in.">
               {yours.length ? yours.map(provider) : <div className="px-4 py-2.5 text-[12.5px] text-faint">No keys yet: add one under More providers.</div>}
             </Section>
             <Section title="Providers" label={<button onClick={() => setMore(!more)} aria-expanded={more} className="-mx-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:text-ink">
@@ -322,6 +361,34 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
           </>}
           </TabCtx.Provider>
         </div>
+        </div>
+      </div>
+      {welcome && <PlanWelcome onClose={() => setWelcome(false)} />}
+    </div>
+  );
+}
+
+/** The first sign-in that uses the ChatGPT plan, once (OpenAI's guidelines for ChatGPT plan usage): what it means, and
+ * where its usage is managed. */
+function PlanWelcome({ onClose }: { onClose: () => void }) {
+  const dialog = useDialog();
+  const close = useRef(onClose);
+  close.current = onClose;
+  useEffect(() => {
+    // before Settings' own Escape, which would close the whole page
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") { e.stopPropagation(); e.preventDefault(); close.current(); } };
+    window.addEventListener("keydown", esc, true);
+    return () => window.removeEventListener("keydown", esc, true);
+  }, []);
+  return (
+    <div onMouseDown={(e) => { e.stopPropagation(); onClose(); }} className="tz-fade fixed inset-0 z-40 grid place-items-center bg-scrim p-10">
+      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="plan-welcome" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className={`${dialogShell(420)} p-5`}>
+        <div id="plan-welcome" className="text-[14px] font-semibold text-ink">You're using your ChatGPT plan</div>
+        <p className="mt-1 text-[12.5px] leading-relaxed text-muted">Requests on ChatGPT's models in tazuna use your ChatGPT plan. You can see that usage and set its limits in
+          ChatGPT's settings.</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button onClick={() => core.openLink("https://chatgpt.com/settings/usage").catch(() => {})} className={quietButton}>Manage usage</button>
+          <button autoFocus onClick={onClose} className={accentButton}>Got it</button>
         </div>
       </div>
     </div>

@@ -124,6 +124,11 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
   ["Helmcode", "api.helmcode.com", "sk-..."], ["Otari", "api.otari.ai", "tk_..."], ["SingularityAPI", "api.singularityapi.dev", "sk-sapi-..."]]
   .map(([name, host, example = "", note = ""]) => ({ name, host, example, note, warn: /at risk|refuse|suspended|blocked|revoked/.test(note), key: KEYS[name] ?? "", trusted: !!KEYS[name],
     page: `https://${host}`, place: `${name}'s console (API keys)` }))
+  // sign-ins (core oauth.rs, 2026-11-22): ChatGPT's own flow, two that send another app's identity behind a warning
+  .concat([["ChatGPT", "api.openai.com", "chatgpt", "OpenAI's own sign-in for open-source apps: requests use your ChatGPT plan (manage usage in ChatGPT's settings)"],
+    ["GitHub Copilot", "api.githubcopilot.com", "copilot", "tazuna signs in as OpenCode's GitHub app and calls Copilot as Copilot CLI. Whether GitHub's terms allow this, or GitHub acts on accounts for it, is unclear. Use at your own risk."],
+    ["SuperGrok", "api.x.ai", "xai", "tazuna signs in as xAI's Grok CLI. Whether xAI's terms allow this, or xAI acts on accounts for it, is unclear. Use at your own risk."]]
+    .map(([name, host, sign_in, note]) => ({ name, host, example: "", note, warn: /own risk/.test(note), key: "", trusted: false, page: `https://${host}`, place: `${name}'s settings`, sign_in, confirmed: false })))
   .concat([{ name: "Ollama", host: "localhost:11434", example: "", note: "", warn: false, key: "running on this machine", trusted: true, page: "", place: "", local: true }]);
 
 (() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T);
@@ -133,6 +138,18 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     if (cmd === "op" && args.msg.op === "diff") { m({ type: "diff", turn: args.msg.turn, path: args.msg.path, text: diff }); return null; }
     if (cmd === "op" && args.msg.op === "review") { m({ type: "review", scope: args.msg.scope, turn: args.msg.turn ?? null, base: "main", text: diff }); return null; }
     if (cmd === "op" && args.msg.op === "settings") { m({ type: "settings", version: "0.1.176", data_any: false, route: true, spend_cap: 5, spent_24h: 0.41, providers: PROVIDERS }); return null; }
+    // a sign-in: ChatGPT through the browser, then its welcome; Copilot and SuperGrok show their code and wait there
+    if (cmd === "op" && args.msg.op === "login" && PROVIDERS.find((x) => x.name === args.msg.provider)?.sign_in) {
+      const p = PROVIDERS.find((x) => x.name === args.msg.provider), say = (o, ms = 20) => setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg: { type: "signin", provider: p.name, ok: null, first: false, ...o } }), ms);
+      if (args.msg.sign_out) { p.key = ""; say({ ok: true, text: `signed out of ${p.name}` }); return null; }
+      if (p.warn && !p.confirmed && !args.msg.confirm) { say({ ok: false, text: `${p.name}: confirm its warning first` }); return null; }
+      if (args.msg.confirm) p.confirmed = true;
+      if (p.sign_in !== "chatgpt") { say({ text: `${p.name}: enter the code ABCD-1234 at https://github.com/login/device (the page just opened in your browser; the code is on the clipboard)` }); return null; }
+      say({ text: "ChatGPT: continue in the browser tab that just opened (5 minutes)" });
+      setTimeout(() => { p.key = "signed in"; p.trusted = true; }, 690);
+      say({ ok: true, first: true, text: "signed in to ChatGPT as someone@example.com: requests on its models use your ChatGPT plan (3 models in /model); manage usage at https://chatgpt.com/settings/usage" }, 700);
+      return null;
+    }
     if (cmd === "op" && args.msg.op === "mcp") { m({ type: "mcp", on: true, claude: true, servers: [{ name: "github", target: "https://api.githubcopilot.com/mcp/" }], note: "" }); return null; }
     if (cmd === "op" && args.msg.op === "hook") { m({ type: "hook", cwd: "/Users/x/api-gateway", after_turn: "npm run lint -- --fix", note: "" }); return null; }
     if (cmd === "op" && args.msg.op === "setup") { m({ type: "setup", claude: "2.1.330 (Claude Code)" }); return null; }
@@ -181,7 +198,13 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
         { model: "qwen-4-coder-480b", provider: "Cerebras", price: "2 / 2", why_not: "no key: /login, or set the environment variable CEREBRAS_API_KEY before starting tazuna", no_key: true },
         { model: "glm-5.3", provider: "Z.ai Coding Plan", price: "plan", why_not: "no key: /login, or set the environment variable ZAI_CODING_API_KEY before starting tazuna", no_key: true },
         { model: "zai-org/glm-5.3", provider: "Chutes", price: "0.2 / 0.8", why_not: "not trusted: the code would go to llm.chutes.ai; /login allows it, or add the line llm.chutes.ai to /Users/x/.config/tazuna/trusted-providers" },
-      ], cautions: { "Z.ai Coding Plan": { note: "Z.ai allows the Coding Plan only in its listed tools and tazuna is not listed: the account may be at risk", warn: true },
+        // sign-ins: ChatGPT's models once signed in (the plan pays), a greyed row before; Copilot not signed in
+        ...(PROVIDERS.find((x) => x.name === "ChatGPT").key
+          ? [["gpt-6.2-sol", "GPT-6.2 Sol"], ["gpt-6.1-sol", "GPT-6.1 Sol"], ["gpt-6-luna", "GPT-6 Luna"]].map(([model, label]) => c({ model, label, place: "ChatGPT", provider: "ChatGPT", price: "plan", url: "https://api.openai.com/v1", key_env: "TAZUNA_SIGNIN_CHATGPT", efforts: ["low", "medium", "high", "xhigh", "max"] }))
+          : [{ model: "chatgpt-models", label: "ChatGPT's models", provider: "ChatGPT", price: "plan", why_not: "not signed in", no_key: true }]),
+        { model: "copilot-models", label: "GitHub Copilot's models", provider: "GitHub Copilot", price: "plan", why_not: "not signed in", no_key: true },
+      ], cautions: { ChatGPT: { note: "OpenAI's own sign-in for open-source apps: requests use your ChatGPT plan (manage usage in ChatGPT's settings)", warn: false },
+        "GitHub Copilot": { note: "tazuna signs in as OpenCode's GitHub app and calls Copilot as Copilot CLI. Whether GitHub's terms allow this, or GitHub acts on accounts for it, is unclear. Use at your own risk.", warn: true }, "Z.ai Coding Plan": { note: "Z.ai allows the Coding Plan only in its listed tools and tazuna is not listed: the account may be at risk", warn: true },
         Chutes: { note: "Chutes' terms: interactive and low-volume use, not large automated runs", warn: false } } }); return null; }
     if (cmd === "op" && args.msg.op === "sessions") { m({ type: "sessions", dirs: [
       { dir: "/Users/x", list: [{ id: "c1", first: "Names for a grey cat", last_at: now - 3600, messages: 2, model: "agy/gemini-4-argon" }, { id: "c4", first: "test", last_at: now - 7200, messages: 1, model: "agy/gemini-4-hydrogen" }, { id: "c5", first: "Question 1: what about edge case 1?", last_at: now - 2 * 86400, messages: 16, model: "claude-opus-5-5" }, { id: "c2", first: "Refund for a train ticket", last_at: now - 86400, messages: 6, model: "gpt-6.2-sol" }] },

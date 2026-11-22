@@ -31,12 +31,15 @@ export function routeLine(c: ModelChoice | undefined, v: View | null, rows: Row[
       // the own-loop model you used most in the last 30 days, if it can be picked now
       const since = Date.now() / 1000 - 30 * 86400, count = new Map<string, number>();
       for (const r of rows ?? []) if (!r[3] && r[0] >= since && r[1]) count.set(r[1], (count.get(r[1]) ?? 0) + 1);
-      const best = [...count.entries()].sort((a, b) => b[1] - a[1]).map(([m]) => catalog.find((x) => x.model === m && x.url && !x.why_not)).find(Boolean);
+      // never a sign-in's row (core oauth.rs): tazuna does not put a plan login forward on its own
+      const best = [...count.entries()].sort((a, b) => b[1] - a[1]).map(([m]) => catalog.find((x) => x.model === m && x.url && !x.why_not && !x.key_env?.startsWith("TAZUNA_SIGNIN_"))).find(Boolean);
       line.offer = best ?? undefined;
     }
     return line;
   }
   if (isFree(c)) return { text: `${modelLabel(c.model)} on ${c.provider}, free`, paid: false };
+  // a subscription's model (a plan key, a sign-in such as ChatGPT's): its plan pays, not per token
+  if (c.price === "plan") return { text: `${modelLabel(c.model)} on your ${c.provider} plan`, paid: false };
   const est = estimate(c, v, rows);
   return { text: `${modelLabel(c.model)} on ${c.provider}, paid, ${est != null ? `about ${usd(est)} a message` : `$${c.price} per million tokens`}`, paid: true, est };
 }

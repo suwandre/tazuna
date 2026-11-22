@@ -178,9 +178,31 @@ const log = [];
     log.push(`${theme} no key to Settings: focus on ${await p.evaluate(() => document.activeElement?.getAttribute("aria-label"))} (Cerebras key wanted)`);
     await esc(p); await esc(p);
     await step(p, `${T}-picker-caution`, async () => { await p.getByTitle("Model and effort").click(); await p.keyboard.type("glm"); });
+    await esc(p); await esc(p);
+    // sign-ins (core oauth.rs, 2026-11-22): a not-signed-in plan in the picker opens Settings on it; a sign-in that sends
+    // another app's identity asks once, with its warning; its code to type; ChatGPT's own flow, its welcome once, then
+    // signed in under Yours and its models in the picker
+    await step(p, `${T}-picker-sign-in`, async () => { await p.getByTitle("Model and effort").click(); await p.keyboard.type("copilot"); });
+    await step(p, `${T}-sign-in-from-picker`, async () => { await p.getByText("Not signed in · sign in in Settings").first().click(); await p.waitForTimeout(600); });
+    log.push(`${theme} not signed in to Settings: focus on ${await p.evaluate(() => document.activeElement?.dataset.signIn)} (GitHub Copilot wanted)`);
+    await step(p, `${T}-sign-in-warning`, async () => { await p.locator('[data-sign-in="GitHub Copilot"]').click(); });
+    await step(p, `${T}-sign-in-code`, async () => { await p.getByRole("button", { name: "I understand, sign in" }).click(); await p.waitForTimeout(300); });
+    await step(p, `${T}-sign-in-chatgpt`, async () => { await p.getByLabel("Search providers").fill("chatgpt"); });
+    await step(p, `${T}-sign-in-welcome`, async () => { await p.getByRole("button", { name: "Continue with ChatGPT" }).click(); await p.waitForTimeout(1000); });
+    await step(p, `${T}-signed-in`, async () => { await p.getByRole("button", { name: "Got it" }).click(); await p.waitForTimeout(300); await p.getByRole("button", { name: /^More providers/ }).click(); });
+    log.push(`${theme} signed in: ${await p.getByRole("button", { name: "Sign out" }).count()} sign-out, ${await p.getByRole("button", { name: "Other account" }).count()} other-account button (1, 1 wanted)`);
+    await esc(p);
+    await step(p, `${T}-picker-signed-in`, async () => { await p.getByTitle("Model and effort").click(); await p.keyboard.type("gpt-6"); });
+    await esc(p); await esc(p);
     log.push(`${theme} providers page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
     await ctx.close();
   }
+  // ChatGPT signed in with plan use declined at its consent page: said in the warning colour, "Allow plan use" beside Sign out
+  { const off = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { if (p?.msg?.type === "settings") p.msg.providers = p.msg.providers.map((x) => x.name === "ChatGPT" ? { ...x, key: "signed in, plan use not allowed", plan_off: true } : x); return emit(e, p); }; })();`;
+    const [ctx, p] = await ctxOf({ extra: off });
+    await step(p, "d-sign-in-plan-off", async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); });
+    log.push(`plan off: ${await p.getByRole("button", { name: "Allow plan use" }).count()} allow button (1 wanted)`);
+    await ctx.close(); }
   // a fresh install: no key yet, nothing running here
   { const none = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { if (p?.msg?.type === "settings") p.msg.providers = p.msg.providers.filter((x) => !x.local).map((x) => ({ ...x, key: "" })); return emit(e, p); }; })();`;
     const [ctx, p] = await ctxOf({ extra: none });
