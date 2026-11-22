@@ -29,11 +29,20 @@ pub fn trust(base: &Path, cwd: &Path) -> Result<()> {
 
 /// Asks on the terminal (before the UI starts). Only an explicit yes trusts.
 pub fn ask(cwd: &Path, what: &str) -> bool {
+    use ratatui::crossterm::terminal::{disable_raw_mode, enable_raw_mode, is_raw_mode_enabled};
     use std::io::Write;
+    // a live session has the terminal in raw mode from its start (main.rs): the answer is a line, read as the terminal
+    // reads lines
+    let raw = is_raw_mode_enabled().unwrap_or(false);
+    let _ = disable_raw_mode();
     print!("{} has {what}, which can run commands on this machine.\nTrust this repo? [y/N] ", key(cwd));
     let _ = std::io::stdout().flush();
     let mut answer = String::new();
-    std::io::stdin().read_line(&mut answer).is_ok() && matches!(answer.trim().to_lowercase().as_str(), "y" | "yes")
+    let yes = std::io::stdin().read_line(&mut answer).is_ok() && matches!(answer.trim().to_lowercase().as_str(), "y" | "yes");
+    if raw {
+        let _ = enable_raw_mode();
+    }
+    yes
 }
 
 #[cfg(test)]

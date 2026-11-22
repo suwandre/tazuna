@@ -302,6 +302,10 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-22: web search for the own loop through Exa's hosted endpoint, which needs no key: tazuna's defaults must
+  work for anyone who installs it, with no signup; a user's own keys only raise limits. Search only in hand-off turns
+  (chat and coding requests unchanged); measured at the same quality with 58% fewer input tokens than fetch alone
+  (CHANGELOG 0.1.195). Other providers (You.com, Linkup, Tavily, Serper) only if Exa's free limit is seen to fall short.
 - 2026-11-22: a chat decides itself when it needs the agent. The chat profile stays the model alone (it answers ordinary
   questions better than with tools), with one line that lets the model hand a question it cannot answer from training
   (live data, a web page, this computer) to the agent; a word list or a router rule cannot know every such question. The

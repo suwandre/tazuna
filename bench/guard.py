@@ -73,12 +73,43 @@ def meter():
         meter.last = got[1]
     elif not getattr(meter, "last", None) or time.time() - getattr(meter, "probed", 0) >= PROBE_EVERY:
         meter.last, meter.probed = probe(), time.time()
-    info = meter.last
-    w = info["unifiedWindows"]
-    meter.each = {k: round(100 * float(w[k]["utilization"]), 1) for k in ("five_hour", "seven_day") if k in w}
-    top = max(meter.each, key=meter.each.get)
-    reset = datetime.fromtimestamp(int(w[top]["resetsAt"]), tz=timezone.utc).isoformat()
-    return meter.each[top], reset, 1.0 if info.get("isUsingOverage") else 0.0
+    meter.each, util, reset, extra = reading(meter.last)
+    return util, reset, extra
+
+
+def reading(info):
+    """(each window's %, the tighter window's %, its reset time or None, 1 when on paid extra usage) from a rate_limit_info.
+    The claude CLI's own event has utilization, resetsAt and status per window; the one tazuna records from claude's
+    /usage page (since 0.1.174, 2026-11-18) has only utilization, and being the newest in the session files it failed
+    every reading on 'resetsAt' (2026-11-21). The utilization gates; a missing reset time only leaves the reset unknown.
+    An event can carry its tight window only at its top level (2026-11-11: five_hour 90% absent from unifiedWindows)."""
+    w = dict(info.get("unifiedWindows") or {})
+    top_type = info.get("rateLimitType")
+    if top_type and top_type not in w and info.get("utilization") is not None:
+        w[top_type] = info
+    each = {k: round(100 * float(w[k]["utilization"]), 1) for k in ("five_hour", "seven_day") if w.get(k, {}).get("utilization") is not None}
+    top = max(each, key=each.get)  # no window at all: ValueError, the reading fails
+    r = w[top].get("resetsAt")
+    reset = datetime.fromtimestamp(int(r), tz=timezone.utc).isoformat() if r else None
+    return each, each[top], reset, 1.0 if info.get("isUsingOverage") else 0.0
+
+
+def selftest():
+    cli = {"status": "allowed_warning", "resetsAt": 1795831200, "rateLimitType": "seven_day", "utilization": 0.28, "isUsingOverage": False,
+           "unifiedWindows": {"five_hour": {"utilization": 0.03, "resetsAt": 1795314600, "status": "allowed"},
+                              "seven_day": {"utilization": 0.28, "resetsAt": 1795831200, "status": "allowed"}}}
+    usage_page = {"unifiedWindows": {"five_hour": {"utilization": 0.38}, "seven_day": {"utilization": 0.32}}}
+    top_only = {"resetsAt": 1794397800, "rateLimitType": "five_hour", "utilization": 0.9, "isUsingOverage": True,
+                "unifiedWindows": {"seven_day": {"utilization": 0.66, "resetsAt": 1794621600}}}
+    assert reading(cli) == ({"five_hour": 3.0, "seven_day": 28.0}, 28.0, "2026-11-28T02:00:00+00:00", 0.0), reading(cli)
+    assert reading(usage_page) == ({"five_hour": 38.0, "seven_day": 32.0}, 38.0, None, 0.0), reading(usage_page)
+    assert reading(top_only) == ({"five_hour": 90.0, "seven_day": 66.0}, 90.0, "2026-11-11T11:50:00+00:00", 1.0), reading(top_only)
+    try:
+        reading({"unifiedWindows": {}})
+        raise AssertionError("an event without windows must fail the reading")
+    except ValueError:
+        pass
+    print("ok")
 
 
 # every agent a benchmark starts (and the judge, which is `claude -p` too); never an interactive session
@@ -101,6 +132,12 @@ def log(msg):
 
 def main():
     ABORT.unlink(missing_ok=True)
+    # the guard owns PAUSE: one left by an earlier run (a guard that died paused) blocked every script for 12 days (2026-11-09
+    # to 11-21); this run touches it again on its first reading if the meter says so
+    started = time.time()
+    if PAUSE.exists() and PAUSE.stat().st_mtime < started:
+        log(f"removed a stale PAUSE from {time.ctime(PAUSE.stat().st_mtime)}")
+        PAUSE.unlink(missing_ok=True)
     baseline, last_ok, full, aborted = None, time.time(), False, False
     while True:
         try:
@@ -109,7 +146,8 @@ def main():
             if baseline is None:
                 baseline = extra
                 log(f"baseline extra credits {extra}")
-            STATE.write_text(json.dumps(dict(util=util, reset=reset, extra=extra, baseline=baseline, at=time.time(), **getattr(meter, "each", {}))))
+            # an unknown reset is left out: readers take a missing one as "not passed" (run.py), a null would break them
+            STATE.write_text(json.dumps(dict(util=util, extra=extra, baseline=baseline, at=time.time(), **({"reset": reset} if reset else {}), **getattr(meter, "each", {}))))
             # at 100% the next request is paid extra usage: stop the agents now instead of after the first charge
             if util >= KILL_AT and not full:
                 full = True
@@ -146,4 +184,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    selftest() if "--selftest" in __import__("sys").argv else main()

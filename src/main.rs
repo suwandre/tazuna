@@ -124,7 +124,7 @@ use ratatui::{
             KeyModifiers, KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
         },
         execute,
-        terminal::supports_keyboard_enhancement,
+        terminal::{disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement},
     },
 };
 use replay::Replay;
@@ -626,6 +626,21 @@ fn main() -> Result<()> {
             headless(a.run.as_ref().context("--run")?, &a)
         }
         (None, _) => {
+            // the terminal in raw mode before anything else: keys typed while tazuna starts (seconds where many earlier runs are
+            // labelled from git below) came cooked until 0.1.194, the terminal turning their Enter into a \n, which crossterm
+            // reads as ctrl-j (a new line) once raw mode is on: typed fast, a first message did not send. Bracketed paste
+            // with it, so a block pasted that early stays one draft. Both off again however this ends (an error before the
+            // UI, or after ratatui::restore below, where they are off already).
+            let _ = enable_raw_mode();
+            let _ = execute!(std::io::stdout(), EnableBracketedPaste);
+            struct TermBack;
+            impl Drop for TermBack {
+                fn drop(&mut self) {
+                    let _ = execute!(std::io::stdout(), DisableBracketedPaste);
+                    let _ = disable_raw_mode();
+                }
+            }
+            let _term_back = TermBack;
             // outside git there is no `git diff` to review or undo the agent's edits: a live session starts in ask mode
             // (edits ask first, as Claude Code does) instead of refusing to start, which it did until 0.1.60 (a user
             // could not open tazuna in a plain folder, 2026-11-05); --allow-non-git keeps the chosen mode
@@ -680,7 +695,7 @@ fn main() -> Result<()> {
                 None => None,
             };
             let mut term = ratatui::init();
-            execute!(std::io::stdout(), EnableBracketedPaste, EnableMouseCapture)?;
+            execute!(std::io::stdout(), EnableMouseCapture)?;
             // terminals with the kitty keyboard protocol report Shift-Enter apart from Enter; Ctrl-J works everywhere
             let enhanced = supports_keyboard_enhancement().unwrap_or(false);
             if enhanced {
@@ -2105,7 +2120,11 @@ fn headless(prompt_file: &PathBuf, a: &Args) -> Result<()> {
     // each message in turn, the next one once the reply to the last is in; every reply is kept for a multi-turn run
     let mut answers = vec![];
     for text in std::iter::once(&prompt).chain(&thens) {
-        live.send(text)?;
+        // `/agent TEXT` as typed: in a chat-profile run, the turn a chat hands to the agent (bench/livefacts.py)
+        match text.strip_prefix("/agent ") {
+            Some(t) => live.send_agent(t.trim()).map(drop)?,
+            None => live.send(text).map(drop)?,
+        }
         loop {
             for (_, e) in live.poll() {
                 if e["type"] == "harness_notice" && e["error"] == true {
@@ -2346,6 +2365,13 @@ fn copy_last_reply(s: &Session) -> Result<(usize, platform::Copied)> {
 
 fn busy(s: &Session) -> bool {
     !matches!(s.activity, session::Activity::Ready | session::Activity::Done)
+}
+
+/// Pasted text as the draft takes it: its line breaks as \n. Many terminals send them as \r (as the Enter key), which
+/// stayed in the draft until 0.1.194: the lines showed run together and went to the model with a \r between them.
+#[inline(never)]
+fn pasted(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 /// Saves the clipboard's image (macOS) as a PNG in a private temp folder.
@@ -3422,7 +3448,7 @@ fn run_live(
             Event::Paste(text) => {
                 match login.as_mut().and_then(|l| l.form.as_mut()) {
                     Some(typed) => typed.push_str(text.trim()),
-                    None => ed.insert(&text.replace("\r\n", "\n")),
+                    None => ed.insert(&pasted(&text)),
                 }
                 continue;
             }
@@ -4170,7 +4196,9 @@ fn run_live(
                 if text == "/data" || text.starts_with("/data ") {
                     let at = live.elapsed_ms();
                     let info = match text["/data".len()..].trim() {
-                        "" => format!("data: {} · /data trusted (only providers on the trusted list) or /data any", if live.data_any { "any" } else { "trusted" }),
+                        // where else data goes: a hand-off turn's web search (engine.rs `tool_list`) sends its query alone
+                        "" => format!("data: {} · /data trusted (only providers on the trusted list) or /data any · a web search in a turn handed \
+                            to the agent sends its query to Exa (own loop) or Anthropic (Claude)", if live.data_any { "any" } else { "trusted" }),
                         "trusted" => {
                             live.data_any = false;
                             let untrusted = live.provider.as_ref().is_some_and(|p| check_data(&p.0, false).is_err());
@@ -4866,6 +4894,11 @@ fn short_command<'a>(word: &str, commands: &'a [String]) -> Option<&'a String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_paste_keeps_its_line_breaks_whatever_the_terminal_sends() {
+        assert_eq!(super::pasted("a\rb\r\nc\nd"), "a\nb\nc\nd");
+    }
+
     #[test]
     fn the_router_reads_its_word_leniently_and_a_chat_follow_up_carries_the_exchange() {
         use super::{ChatLast, says_general, with_prior};

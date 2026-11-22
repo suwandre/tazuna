@@ -16,6 +16,41 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.195 (2026-11-22): web search for the own loop's hand-offs, Enter at start-up, the bench guard reads the meter again
+
+- The own loop's hand-off turn (a chat's `[[agent]]`, `/agent`, "Send to agent") can search the web: a `search` tool
+  through Exa's hosted MCP endpoint (`https://mcp.exa.ai/mcp`, the one opencode and kilocode use), which needs no key, no
+  account and no card: it works for anyone. `EXA_API_KEY` (environment or ~/.config/tazuna/keys.json) raises Exa's free
+  rate limit; at the limit the model gets one line that says so. Five hits come back, each a title, date, URL and a
+  snippet of at most 200 characters (about 430 tokens in all; one fetched page averaged about 2,270). It runs without
+  asking in a hand-off turn, as fetch does: it sends only the query. `/data` names Exa (Anthropic on Claude, whose own
+  WebSearch was already there). Other harnesses: opencode and kilocode search through the same Exa endpoint, omp through
+  a provider chain (Perplexity, Brave, Kagi, Tavily, Exa, Jina, SearXNG, DuckDuckGo's page as the keyless fallback),
+  cline mostly through Perplexity, codex through OpenAI's hosted search, pi has none.
+- Only there: chat calls have no tools, and coding turns do not get it. Their requests are byte-identical to 0.1.194's
+  (captured from both binaries against a stand-in provider). The tool's definition is about 57 tokens, in hand-off turns
+  only. `TAZUNA_NO_SEARCH=1` leaves it out.
+- Measured (bench/livefacts.py, bench/suite/live-facts.jsonl: 12 live questions, releases, sports, news, prices,
+  weather, local events; DeepSeek V4.1 Flash 1017 on SubRouter, 2 runs each, judged blind by Opus 5.5 xhigh with web
+  access, 0-2 per answer):
+
+  | | score | correct / partly / wrong | input tokens per question (median) | tool calls | seconds | cost |
+  |---|---|---|---|---|---|---|
+  | fetch alone | 43/48 | 19 / 5 / 0 | 34,183 (13,561) | 3.8 | 19.0 | $0.0075 |
+  | fetch and search | 44/48 | 20 / 4 / 0 | 14,206 (12,648) | 3.5 | 17.5 | $0.0051 |
+
+  Quality within noise, 58% fewer input tokens on average and 32% less cost: one search replaces guessing at pages (the
+  week's AI news took 234k tokens of fetched pages without it, 15k with it; Rust's latest release 29k against 5k). The
+  medians are close: most questions cost about the same. Search was used in 17 of 24 runs, no rate limit was hit.
+  Cost of the measurement: SubRouter $0.017, the judge 3% of a 5-hour window on the Claude plan.
+- Enter right after start sends: keys typed before tazuna put the terminal in raw mode arrived as `\n`, which tazuna
+  reads as a new line, and raw mode came after about 3 s of start-up work (labelling the run log from git). Raw mode and
+  bracketed paste now go on first; a paste whose lines end in a bare `\r` keeps its line breaks.
+- `bench/guard.py` reads the plan's meter again: tazuna's own usage events (from claude's /usage page since 0.1.174) carry
+  no reset time, and the guard failed on the missing field, then paused every plan benchmark after 10 minutes. It reads
+  both shapes, and removes a stale PAUSE file it finds at start (one from 2026-11-09 had sat there for 12 days).
+- 274 tests pass.
+
 ## 0.1.194 (2026-11-22): a chat hands what it cannot know to the agent; SubRouter's balance in dollars; Mortera is back
 
 The user: "tazuna cannot open/fetch any data from my own PC, or search the web (e.g. if i ask it for the weather, or

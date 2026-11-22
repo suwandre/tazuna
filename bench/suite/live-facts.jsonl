@@ -1,0 +1,12 @@
+{"id": "node-latest", "text": "What is the latest stable version of Node.js right now?", "kind": "release"}
+{"id": "rust-latest", "text": "What is the latest stable Rust release?", "kind": "release"}
+{"id": "macos-latest", "text": "What is the latest macOS version that Apple has released?", "kind": "release"}
+{"id": "claude-code-latest", "text": "What is the latest version of the Claude Code CLI?", "kind": "release"}
+{"id": "f1-last-race", "text": "Who won the most recent Formula 1 Grand Prix?", "kind": "sport"}
+{"id": "bayern-last-match", "text": "What was the result of Bayern Munich's most recent match?", "kind": "sport"}
+{"id": "headlines", "text": "What are the top three world news headlines today?", "kind": "news"}
+{"id": "tech-news", "text": "What is the biggest AI news story of this week?", "kind": "news"}
+{"id": "btc-price", "text": "What is the current price of Bitcoin in US dollars?", "kind": "price"}
+{"id": "eurusd", "text": "What is the EUR to USD exchange rate today?", "kind": "price"}
+{"id": "tokyo-weather", "text": "What is the weather forecast for Tokyo tomorrow?", "kind": "weather"}
+{"id": "berlin-events", "text": "What concerts are happening in Berlin this weekend?", "kind": "local"}

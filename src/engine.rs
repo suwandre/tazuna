@@ -182,6 +182,38 @@ enum Api {
     Messages,
 }
 
+/// The own loop's tools in permission mode `mode` (before the user's MCP servers).
+fn tool_list(mode: &str) -> Vec<Value> {
+    let tools = crate::mcp::tools();
+    // TAZUNA_SEARCH_TOOLS (`--search-tools`): grep and glob as tools of their own, as DeepSeek's own harness has: there
+    // DeepSeek searched and read through them and ran bash 6 times a task; in the own loop it grepped, cat-ed and sed-ed
+    // through bash 30-40 times (more calls, more uncached tool output), 2026-11-04. Under measurement.
+    let search = std::env::var_os("TAZUNA_SEARCH_TOOLS").is_some();
+    let mut fns: Vec<Value> = tools.as_array().into_iter().flatten().map(|t| {
+        let mut d = t["description"].as_str().unwrap_or_default().to_string();
+        if search && t["name"] == "bash" {
+            d.push_str(" Search with grep, find files with glob and read with read: not through bash (no grep, find, ls, cat, head, tail or sed -n here).");
+        }
+        json!({"type": "function", "function": {"name": t["name"], "description": d, "parameters": t["inputSchema"]}})
+    }).collect();
+    if search {
+        for mut t in explore_tools() {
+            let f = &mut t["function"];
+            f["name"] = json!(if f["name"] == "search" { "grep" } else { "glob" });
+            fns.push(t);
+        }
+    }
+    // the web as a tool of its own (the model in bash knew curl but in another turn said it had no web access)
+    let f = crate::mcp::fetch_tool();
+    fns.push(json!({"type": "function", "function": {"name": f["name"], "description": f["description"], "parameters": f["inputSchema"]}}));
+    // a turn a chat handed to the agent (live.rs hand_off) looks things up: a web search too, there only (it runs without a
+    // question there, like fetch, and sends only the query). TAZUNA_NO_SEARCH leaves it out (fetch alone, for measuring)
+    if mode == "handoff" && std::env::var_os("TAZUNA_NO_SEARCH").is_none() {
+        fns.push(crate::mcpc::search_tool());
+    }
+    fns
+}
+
 pub fn serve(args: &[String]) -> Result<()> {
     crate::mcp::reap_left(); // background processes an earlier, killed engine left running
     let flag = |name: &str| args.windows(2).find(|w| w[0] == name).map(|w| w[1].clone());
@@ -248,28 +280,7 @@ pub fn serve(args: &[String]) -> Result<()> {
     let session = resumed.as_ref().filter(|_| !fork).map(|r| r.0.clone()).unwrap_or_else(|| format!("own-{}-{:x}", std::process::id(),
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0)));
     let marks = resumed.as_ref().map(|r| r.1.marks.clone()).unwrap_or_default();
-    let tools = crate::mcp::tools();
-    // TAZUNA_SEARCH_TOOLS (`--search-tools`): grep and glob as tools of their own, as DeepSeek's own harness has: there
-    // DeepSeek searched and read through them and ran bash 6 times a task; in the own loop it grepped, cat-ed and sed-ed
-    // through bash 30-40 times (more calls, more uncached tool output), 2026-11-04. Under measurement.
-    let search = std::env::var_os("TAZUNA_SEARCH_TOOLS").is_some();
-    let mut fns: Vec<Value> = tools.as_array().into_iter().flatten().map(|t| {
-        let mut d = t["description"].as_str().unwrap_or_default().to_string();
-        if search && t["name"] == "bash" {
-            d.push_str(" Search with grep, find files with glob and read with read: not through bash (no grep, find, ls, cat, head, tail or sed -n here).");
-        }
-        json!({"type": "function", "function": {"name": t["name"], "description": d, "parameters": t["inputSchema"]}})
-    }).collect();
-    if search {
-        for mut t in explore_tools() {
-            let f = &mut t["function"];
-            f["name"] = json!(if f["name"] == "search" { "grep" } else { "glob" });
-            fns.push(t);
-        }
-    }
-    // the web as a tool of its own (the model in bash knew curl but in another turn said it had no web access)
-    let f = crate::mcp::fetch_tool();
-    fns.push(json!({"type": "function", "function": {"name": f["name"], "description": f["description"], "parameters": f["inputSchema"]}}));
+    let mut fns = tool_list(&mode);
     // the user's MCP servers (`/mcp on`, 0.1.80): one tool for all of them, the same all session
     let hub = std::env::var_os("TAZUNA_MCP").is_some().then(crate::mcpc::Hub::connect);
     fns.extend(hub.as_ref().and_then(|h| h.tool()));
@@ -1134,6 +1145,10 @@ impl Loop {
                         Permit::Allow(input) if name == "grep" || name == "glob" => {
                             explore_tool(if name == "grep" { "search" } else { "list" }, &input, &std::env::current_dir().unwrap_or_default())
                         }
+                        // only where it was offered (a hand-off turn): a call to an unlisted `search` never reaches Exa
+                        Permit::Allow(input) if name == "search" && self.tools.iter().any(|t| t["function"]["name"] == "search") => {
+                            crate::mcpc::web_search(input["query"].as_str().unwrap_or_default())
+                        }
                         Permit::Allow(input) if name == "mcp" => match self.hub.as_mut() {
                             Some(h) => h.call(&input),
                             None => ("MCP is off: the user turns it on with /mcp on".to_string(), true),
@@ -1491,12 +1506,13 @@ impl Loop {
 /// Whether a call asks the user first in permission mode `mode`. fetch reaches the network like bash: a page's injected
 /// text could make it send data out (security review, 2026-11-05), so it asks wherever bash asks, but in `handoff`: a
 /// chat's message handed to the agent (live.rs hand_off), alone in a fresh conversation. There everything else asks, a
-/// read and an MCP call too: a page could have the agent read a key and fetch a URL with it (review, 2026-11-21).
+/// read and an MCP call too: a page could have the agent read a key and fetch a URL with it (review, 2026-11-21). `search`
+/// (there only: `tool_list`) sends a query alone, like fetch a URL.
 fn asks(mode: &str, tool: &str) -> bool {
     match mode {
         "default" | "plan" => matches!(tool, "bash" | "write" | "edit" | "fetch"),
         "acceptEdits" => matches!(tool, "bash" | "fetch"),
-        "handoff" => tool != "fetch",
+        "handoff" => !matches!(tool, "fetch" | "search"),
         _ => false,
     }
 }
@@ -3385,6 +3401,37 @@ session: "s".into(),
         let ev = ev.borrow();
         assert!(ev.iter().any(|e| e["type"] == "control_request" && e["request"]["tool_name"] == "read"), "{ev:?}");
         assert!(!ev.iter().any(|e| e.to_string().contains("SECRET KEY")), "declined: the key was never read");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn web_search_is_offered_in_a_hand_off_turn_only_and_runs_there_without_asking() {
+        let name = |t: &Value| t["function"]["name"].as_str().unwrap_or_default().to_string();
+        let coding = super::tool_list("bypassPermissions");
+        for mode in ["default", "acceptEdits", "plan", "explore"] {
+            assert_eq!(super::tool_list(mode), coding, "{mode}: the same tools in every other mode");
+        }
+        assert!(!coding.iter().any(|t| name(t) == "search"), "coding turns: no search");
+        assert!(!crate::mcp::tools().as_array().unwrap().iter().any(|t| t["name"] == "search"), "the claude path's lean tools: none either");
+        let handoff = super::tool_list("handoff");
+        assert_eq!(handoff[..coding.len()], coding[..], "the hand-off turn: the same tools first, byte for byte");
+        assert_eq!(handoff[coding.len()..], [crate::mcpc::search_tool()]);
+        assert!(crate::mcpc::search_tool().to_string().len() / 4 < 60, "a short definition");
+        assert!(!super::asks("handoff", "search"), "it sends only the query, like fetch a URL");
+        // a coding turn's model that calls `search` anyway: not run (no question, no request to Exa)
+        let dir = std::env::temp_dir().join(format!("tazuna-no-search-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ev = Rc::new(RefCell::new(vec![]));
+        let (_tx, rx) = std::sync::mpsc::channel();
+        let mut l = asking_loop("bypassPermissions", &dir, ev.clone(), None);
+        let replies = RefCell::new(VecDeque::from([
+            json!({"choices": [{"message": {"content": null, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "search", "arguments": "{\"query\":\"x\"}"}}]}}], "usage": {}}),
+            json!({"choices": [{"message": {"content": "done"}}], "usage": {}}),
+        ]));
+        l.call = Box::new(move |_: &Value| Ok(replies.borrow_mut().pop_front().unwrap()));
+        l.run(&json!("find x"), false, &rx);
+        let result = ev.borrow().iter().find(|e| e["type"] == "user").cloned().unwrap();
+        assert_eq!(result["message"]["content"][0]["content"], "unknown tool search");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

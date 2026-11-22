@@ -996,6 +996,7 @@ pub fn provider_key_vars() -> Vec<String> {
         return vec![];
     }
     let mut v: Vec<String> = LOGINS.iter().flat_map(|l| l.vars.iter().map(|s| s.to_string())).collect();
+    v.push("EXA_API_KEY".into()); // the own loop's web search (mcpc.rs `web_search`)
     v.extend(std::env::vars_os().filter_map(|(k, _)| k.into_string().ok()).filter(|k| k.starts_with("SUBROUTER_")));
     // every "key_env" in routes.json, at any depth (a route's own and its pinned providers')
     if let Some(routes) = crate::labels::dir().ok().and_then(|d| std::fs::read_to_string(d.join("routes.json")).ok()).and_then(|t| serde_json::from_str::<Value>(&t).ok()) {

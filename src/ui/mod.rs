@@ -1536,7 +1536,7 @@ pub fn tool_summary(t: &Tool, s: &Session) -> String {
         "Grep" | "Glob" => format!("{} {}", arg("pattern"), rel(s, arg("path"))).trim().to_string(),
         // a subagent: who and what for; its prompt shows when the call is opened
         "Agent" | "Task" => format!("{}: {}", i["subagent_type"].as_str().unwrap_or("agent"), i["description"].as_str().unwrap_or_default()),
-        "WebSearch" | "ToolSearch" => i["query"].as_str().unwrap_or_default().to_string(),
+        "WebSearch" | "ToolSearch" | "search" => i["query"].as_str().unwrap_or_default().to_string(),
         "fetch" | "WebFetch" => fetch_label(t),
         "Skill" => i["skill"].as_str().or(i["name"].as_str()).unwrap_or_default().to_string(),
         _ => i.to_string(),
