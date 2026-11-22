@@ -92,14 +92,47 @@ localStorage.setItem("tazuna.projects", JSON.stringify([PROJ]));
   };
 })();
 
+// Settings' providers as the core lists them since 0.1.196 (models.rs LOGINS): three with a key, a model server running
+// here, the rest without one; their terms, in the warning colour where the account may be at risk or tazuna refused
+const KEYS = { SubRouter: "managed key (tazuna subrouter --manage)", DeepSeek: "key in the environment", Groq: "logged in" };
+const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera.cloud"], ["OpenRouter", "openrouter.ai", "sk-or-v1-..."], ["Kenari", "kenari.id"],
+  ["Mistral", "api.mistral.ai"], ["Cheaper Inference", "api.cheaperinference.com"], ["OmniRoute", "localhost:20128"], ["DeepSeek", "api.deepseek.com", "sk-..."],
+  ["Moonshot", "api.moonshot.ai", "sk-..."], ["Kimi Code", "api.kimi.ai", "", "Kimi may refuse tazuna as a client: check before buying the plan"],
+  ["Kimi Code China", "api.kimi.com", "", "Kimi may refuse tazuna as a client: check before buying the plan"], ["Z.ai", "api.z.ai"],
+  ["Z.ai Coding Plan", "api.z.ai", "", "Z.ai allows the Coding Plan only in its listed tools and tazuna is not listed: the account may be at risk"],
+  ["Zhipu Coding Plan", "open.bigmodel.cn", "", "Zhipu allows the Coding Plan only in its listed tools and tazuna is not listed: the account may be at risk"],
+  ["MiniMax", "api.minimax.io"], ["MiniMax China", "api.minimax.cn"], ["MiniMax Plan", "api.minimax.io"], ["MiniMax Plan China", "api.minimax.cn"],
+  ["Alibaba Model Studio", "dashscope-intl.aliyuncs.com", "sk-..."], ["Alibaba Model Studio China", "dashscope.aliyuncs.com", "sk-..."],
+  ["Alibaba Coding Plan", "coding-intl.dashscope.aliyuncs.com", "sk-sp-...", "Alibaba allows the Coding Plan only for interactive use in coding tools, never scripts or benchmarks; it may refuse tazuna"],
+  ["Alibaba Coding Plan China", "coding.dashscope.aliyuncs.com", "sk-sp-...", "Alibaba allows the Coding Plan only for interactive use in coding tools, never scripts or benchmarks; it may refuse tazuna"],
+  ["Alibaba Token Plan", "token-plan.ap-southeast-1.maas.aliyuncs.com", "sk-sp-...", "Alibaba allows the Token Plan only for interactive use, not scripts or app backends: the key may be suspended"],
+  ["xAI", "api.x.ai", "xai-..."], ["OpenAI", "api.openai.com", "sk-..."], ["Google Gemini", "generativelanguage.googleapis.com", "AIza..."], ["Meta", "api.meta.ai"],
+  ["Xiaomi MiMo", "api.xiaomimimo.com"], ["Xiaomi Token Plan", "token-plan-sgp.xiaomimimo.com", "tp-...", "Xiaomi allows the Token Plan only in coding tools, not scripts or backends: the key may be blocked"],
+  ["Xiaomi Token Plan Europe", "token-plan-ams.xiaomimimo.com", "tp-...", "Xiaomi allows the Token Plan only in coding tools, not scripts or backends: the key may be blocked"],
+  ["StepFun", "api.stepfun.ai"], ["Inception", "api.inceptionlabs.ai"], ["Sakana AI", "api.sakana.ai"], ["Groq", "api.groq.com", "gsk_..."], ["Cerebras", "api.cerebras.ai", "csk-..."],
+  ["SambaNova", "api.sambanova.ai"], ["Together", "api.together.ai"], ["Fireworks", "api.fireworks.ai", "fw_..."],
+  ["Fire Pass", "api.fireworks.ai", "fpk_...", "Fireworks allows Fire Pass for personal coding with agent tools, not production work: the pass may be revoked"],
+  ["DeepInfra", "api.deepinfra.com"], ["Novita", "api.novita.ai"], ["SiliconFlow", "api.siliconflow.com", "sk-..."], ["SiliconFlow China", "api.siliconflow.cn", "sk-..."],
+  ["Chutes", "llm.chutes.ai", "cpk_...", "Chutes' terms: interactive and low-volume use, not large automated runs"], ["Baseten", "inference.baseten.co"],
+  ["Hugging Face", "router.huggingface.co", "hf_..."], ["NVIDIA", "integrate.api.nvidia.com", "nvapi-..."], ["Scaleway", "api.scaleway.ai"], ["Modular", "api.modular.com"],
+  ["GMI Cloud", "api.gmi-serving.com"], ["ai&", "api.aiand.com"], ["CoralBricks", "inference.coralbricks.ai", "cb_..."], ["Abliteration", "api.abliteration.ai", "ak_..."],
+  ["Venice", "api.venice.ai"], ["Wafer", "pass.wafer.ai", "wfr_..."], ["Ollama Cloud", "ollama.com"], ["Synthetic", "api.synthetic.new"], ["Umans Coding Plan", "api.code.umans.ai", "sk-..."],
+  ["Vercel AI Gateway", "ai-gateway.vercel.sh", "vck_..."], ["NanoGPT", "nano-gpt.com"], ["AIML API", "api.aimlapi.com"], ["ZenMux", "zenmux.ai", "sk-..."], ["Kilo Gateway", "api.kilo.ai"],
+  ["OpenCode Zen", "opencode.ai", "sk-...", "OpenCode's terms keep Zen's free models for OpenCode itself; its paid models work from other tools"],
+  ["OpenCode Go", "opencode.ai", "sk-...", "OpenCode Go asks coding agents for a session header tazuna does not send; OpenCode watches its traffic for abuse"],
+  ["ClinePass", "api.cline.bot", "sk_..."], ["Command Code", "api.commandcode.ai", "user_..."], ["Charm Hyper", "hyper.charm.land", "sk-hyper-..."], ["Qianfan", "qianfan.baidubce.com", "bce-v3/ALTAK-..."],
+  ["Helmcode", "api.helmcode.com", "sk-..."], ["Otari", "api.otari.ai", "tk_..."], ["SingularityAPI", "api.singularityapi.dev", "sk-sapi-..."]]
+  .map(([name, host, example = "", note = ""]) => ({ name, host, example, note, warn: /at risk|refuse|suspended|blocked|revoked/.test(note), key: KEYS[name] ?? "", trusted: !!KEYS[name],
+    page: `https://${host}`, place: `${name}'s console (API keys)` }))
+  .concat([{ name: "Ollama", host: "localhost:11434", example: "", note: "", warn: false, key: "running on this machine", trusted: true, page: "", place: "", local: true }]);
+
 (() => { const T = window.__TAURI_INTERNALS__, inv = T.invoke.bind(T);
   const diff = "diff --git a/tests/retry.test.ts b/tests/retry.test.ts\n--- a/tests/retry.test.ts\n+++ b/tests/retry.test.ts\n@@ -12,9 +12,15 @@ describe(\"retry\", () => {\n   it(\"retries once after a failure\", async () => {\n-    const fn = vi.fn().mockRejectedValueOnce(new Error(\"boom\"));\n-    await retry(fn);\n-    await sleep(100);\n+    vi.useFakeTimers();\n+    const fn = vi.fn().mockRejectedValueOnce(new Error(\"boom\")).mockResolvedValue(\"ok\");\n+    const p = retry(fn);\n+    // the backoff is 80 ms with up to 25% jitter: past its longest\n+    await vi.advanceTimersByTimeAsync(100);\n+    await p;\n     expect(fn).toHaveBeenCalledTimes(2);\n+    vi.useRealTimers();\n   });\n";
   T.invoke = async (cmd, args) => {
     const m = (msg) => setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg }), 20);
     if (cmd === "op" && args.msg.op === "diff") { m({ type: "diff", turn: args.msg.turn, path: args.msg.path, text: diff }); return null; }
     if (cmd === "op" && args.msg.op === "review") { m({ type: "review", scope: args.msg.scope, turn: args.msg.turn ?? null, base: "main", text: diff }); return null; }
-    if (cmd === "op" && args.msg.op === "settings") { m({ type: "settings", version: "0.1.176", data_any: false, route: true, spend_cap: 5, spent_24h: 0.41,
-      providers: [{ name: "SubRouter", key: "sk-…9f2c", example: "sk-…", page: "https://subrouter.ai", place: "SubRouter" }, { name: "Mistral", key: "", example: "", page: "https://console.mistral.ai/api-keys", place: "Mistral" }] }); return null; }
+    if (cmd === "op" && args.msg.op === "settings") { m({ type: "settings", version: "0.1.176", data_any: false, route: true, spend_cap: 5, spent_24h: 0.41, providers: PROVIDERS }); return null; }
     if (cmd === "op" && args.msg.op === "mcp") { m({ type: "mcp", on: true, claude: true, servers: [{ name: "github", target: "https://api.githubcopilot.com/mcp/" }], note: "" }); return null; }
     if (cmd === "op" && args.msg.op === "hook") { m({ type: "hook", cwd: "/Users/x/api-gateway", after_turn: "npm run lint -- --fix", note: "" }); return null; }
     if (cmd === "op" && args.msg.op === "setup") { m({ type: "setup", claude: "2.1.330 (Claude Code)" }); return null; }
@@ -142,8 +175,14 @@ localStorage.setItem("tazuna.projects", JSON.stringify([PROJ]));
         c({ model: "codestral-2508", label: "codestral-2508 · mistral", place: "api.mistral.ai", provider: "Mistral", price: "0.3 / 0.9" }),
         c({ model: "mistral-large-3", label: "mistral-large-3 · mistral", place: "api.mistral.ai", provider: "Mistral", price: "2 / 6", bench: "7.8 (12)" }),
         c({ model: "agy/gemini-4-hydrogen", label: "gemini-4-hydrogen · agy", place: "OmniRoute · agy", provider: "OmniRoute", price: "plan" }),
-        c({ model: "or/qwen-4-coder", label: "qwen-4-coder · openrouter", place: "openrouter.ai", provider: "OpenRouter", price: "0.2 / 0.8", why_not: "needs OPENROUTER_API_KEY" }),
-      ] }); return null; }
+        // rows that cannot be picked come compact (core 0.1.196): no key yet, or a host not trusted
+        { model: "or/qwen-4-coder", label: "qwen-4-coder · openrouter", provider: "OpenRouter", price: "0.2 / 0.8", why_not: "no key: /login, or set the environment variable OPENROUTER_API_KEY before starting tazuna", no_key: true },
+        { model: "gpt-oss-120b", provider: "Cerebras", price: "0.35 / 0.75", bench: "6.9 (8)", why_not: "no key: /login, or set the environment variable CEREBRAS_API_KEY before starting tazuna", no_key: true },
+        { model: "qwen-4-coder-480b", provider: "Cerebras", price: "2 / 2", why_not: "no key: /login, or set the environment variable CEREBRAS_API_KEY before starting tazuna", no_key: true },
+        { model: "glm-5.3", provider: "Z.ai Coding Plan", price: "plan", why_not: "no key: /login, or set the environment variable ZAI_CODING_API_KEY before starting tazuna", no_key: true },
+        { model: "zai-org/glm-5.3", provider: "Chutes", price: "0.2 / 0.8", why_not: "not trusted: the code would go to llm.chutes.ai; /login allows it, or add the line llm.chutes.ai to /Users/x/.config/tazuna/trusted-providers" },
+      ], cautions: { "Z.ai Coding Plan": { note: "Z.ai allows the Coding Plan only in its listed tools and tazuna is not listed: the account may be at risk", warn: true },
+        Chutes: { note: "Chutes' terms: interactive and low-volume use, not large automated runs", warn: false } } }); return null; }
     if (cmd === "op" && args.msg.op === "sessions") { m({ type: "sessions", dirs: [
       { dir: "/Users/x", list: [{ id: "c1", first: "Names for a grey cat", last_at: now - 3600, messages: 2, model: "agy/gemini-4-argon" }, { id: "c4", first: "test", last_at: now - 7200, messages: 1, model: "agy/gemini-4-hydrogen" }, { id: "c5", first: "Question 1: what about edge case 1?", last_at: now - 2 * 86400, messages: 16, model: "claude-opus-5-5" }, { id: "c2", first: "Refund for a train ticket", last_at: now - 86400, messages: 6, model: "gpt-6.2-sol" }] },
       { dir: "/Users/x/api-gateway", list: [{ id: "p1", first: "Fix the flaky retry test", last_at: now - 20, messages: 4, model: "claude-opus-5-5" }, { id: "p2", first: "Bump the TLS library to the latest minor", last_at: now - 120, messages: 2, model: "deepseek-v4.1-flash" }, { id: "c3", first: "Why is the CI build so slow? Give me the top three fixes.", last_at: now - 3 * 3600, messages: 2, model: "claude-opus-5-5" }, { id: "p3", first: "Speed up the CI build", last_at: now - 5 * 86400, messages: 9, model: "mistral-large-3" }] }] }); return null; }

@@ -1,10 +1,11 @@
-import { ExternalLink, RefreshCw, X } from "lucide-react";
+import { ChevronRight, ExternalLink, RefreshCw, Search, X } from "lucide-react";
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { useDialog } from "../lib/dialog";
 import { checkUpdate, installUpdate, progressText, useUpdate } from "../lib/update";
 import { safeMode } from "../lib/plugins";
-import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Settings } from "../lib/tazuna";
+import { HOTKEY, core, defaultHotkey, type GalleryItem, type Hook, type Mcp, type Provider, type Settings } from "../lib/tazuna";
+import { matchesWords } from "../lib/types";
 import { dryRun, summary, widgets, type UserWidget } from "../lib/widgets";
 import { PROSE, TEXT_SIZES, THEME, ZOOM, look } from "../lib/chrome";
 import { Parts } from "./Sep";
@@ -25,7 +26,9 @@ type PluginProps = {
 export const TAB = "tazuna.settings.tab";
 const TabCtx = createContext("");
 
-export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, onChanged }: { onClose: () => void } & PluginProps) {
+export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onRemove, onChanged }: { onClose: () => void;
+  /** opened on this provider (the model picker's "No key yet"): its row in view, its key field open */
+  focus?: string | null } & PluginProps) {
   const [st, setSt] = useState<Settings | null>(null);
   const [tab, setTabNow] = useState(() => localStorage.getItem(TAB) || "Appearance");
   const setTab = (t: string) => { localStorage.setItem(TAB, t); setTabNow(t); };
@@ -33,7 +36,10 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
   const [looks, setLooks] = useState(() => ({ theme: localStorage.getItem(THEME) ?? "system", zoom: localStorage.getItem(ZOOM) ?? "1", prose: localStorage.getItem(PROSE) ?? "serif" }));
   const setLook = (key: string, name: keyof typeof looks, v: string) => { look(key, v); setLooks((l) => ({ ...l, [name]: v })); };
   // a provider's key field shows when asked for (seven open fields down the page read as a form to fill in)
-  const [keyFor, setKeyFor] = useState<string | null>(null);
+  const [keyFor, setKeyFor] = useState<string | null>(focus ?? null);
+  // the providers without a key (some seventy since core 0.1.196) folded under one line, searched by name or host
+  const [more, setMore] = useState(!!focus);
+  const [find, setFind] = useState("");
   const dialog = useDialog();
   const [keys, setKeys] = useState<Record<string, string>>({});
   const [askAny, setAskAny] = useState(false);
@@ -47,6 +53,7 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
   // the app's own version beside its core's: "tazuna 0.1.173" alone read as the terminal's
   const [appVersion, setAppVersion] = useState("");
   useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);
+  useEffect(() => { if (st && focus) document.querySelector(`[aria-label="${CSS.escape(focus)} key"]`)?.scrollIntoView({ block: "center" }); }, [!!st]);
   // updates from here (until 0.1.58 only the sidebar's row, when one was found, and Cmd-K)
   const update = useUpdate();
   const [checking, setChecking] = useState(false);
@@ -107,6 +114,26 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
   };
   const input = "rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none focus:border-accent placeholder:font-sans placeholder:text-faint";
   const button = quietButton;
+  // Yours: the providers with a key and the model servers running here; the rest under More providers
+  const yours = st?.providers.filter((p) => p.key || p.local) ?? [], others = st?.providers.filter((p) => !p.key && !p.local) ?? [];
+  const found = others.filter((p) => matchesWords(find, `${p.name} ${p.host}`));
+  const provider = (p: Provider) => (
+    <Row key={p.name} title={p.name} note={<>{/* one line: with the key field open, "managed key (tazuna subrouter --manage)" broke inside "--manage" */}
+      <span title={p.key || p.host} className={`block truncate ${p.key ? "text-ok" : "font-mono text-[11.5px] text-faint"}`}>{p.key || p.host}</span>
+      {/* its terms, quiet; in the warning colour only where the account may be at risk or it may refuse tazuna */}
+      {p.note && <span className={`block ${p.warn ? "text-warn" : "text-faint"}`}>{p.note}</span>}</>}>
+      {!p.local && <>
+        {keyFor === p.name ? <>
+          <input autoFocus type="password" value={keys[p.name] ?? ""} onChange={(e) => setKeys((k) => ({ ...k, [p.name]: e.target.value }))}
+            onKeyDown={(e) => { if (e.key === "Enter" && keys[p.name]) save(p.name); if (e.key === "Escape") { e.stopPropagation(); setKeyFor(null); } }} aria-label={`${p.name} key`}
+            placeholder={p.key ? "Paste a new key" : `Paste a key${p.example ? ` (${p.example})` : ""}`} autoComplete="off" spellCheck={false} className={`w-56 ${input}`} />
+          <button disabled={!keys[p.name]} onClick={() => save(p.name)} className={button}>Save</button>
+          <button onClick={() => setKeyFor(null)} className={quietButton}>Cancel</button>
+        </> : <button onClick={() => setKeyFor(p.name)} className={button}>{p.key ? "Replace key" : "Add key"}</button>}
+        <button onClick={() => core.openKeyPage(p.page)} aria-label={`Make a key in ${p.place}`} title={`Make a key in ${p.place}`} className="rounded p-1 text-muted hover:text-ink"><ExternalLink size={14} strokeWidth={1.5} /></button>
+      </>}
+    </Row>
+  );
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim p-10">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className={`${dialogShell(860)} h-[620px] flex-row!`}>
@@ -137,19 +164,20 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
           </Section>
           {!st && tab !== "Appearance" && <div className="text-[12.5px] text-faint">Loading…</div>}
           {st && <>
-            <Section title="Providers" note="Claude runs on your subscription through the claude CLI, with its own login. Other providers need an API key: tazuna saves it on this machine, readable by you only, and never shows it again.">
-              {st.providers.map((p) => (
-                <Row key={p.name} title={p.name} note={<span className={p.key ? "text-ok" : ""}>{p.key || "no key"}</span>}>
-                  {keyFor === p.name ? <>
-                    <input autoFocus type="password" value={keys[p.name] ?? ""} onChange={(e) => setKeys((k) => ({ ...k, [p.name]: e.target.value }))}
-                      onKeyDown={(e) => { if (e.key === "Enter" && keys[p.name]) save(p.name); if (e.key === "Escape") { e.stopPropagation(); setKeyFor(null); } }} aria-label={`${p.name} key`}
-                      placeholder={p.key ? "Paste a new key" : `Paste a key${p.example ? ` (${p.example})` : ""}`} autoComplete="off" spellCheck={false} className={`w-56 ${input}`} />
-                    <button disabled={!keys[p.name]} onClick={() => save(p.name)} className={button}>Save</button>
-                    <button onClick={() => setKeyFor(null)} className={quietButton}>Cancel</button>
-                  </> : <button onClick={() => setKeyFor(p.name)} className={button}>{p.key ? "Replace key" : "Add key"}</button>}
-                  <button onClick={() => core.openKeyPage(p.page)} aria-label={`Make a key in ${p.place}`} title={`Make a key in ${p.place}`} className="rounded p-1 text-muted hover:text-ink"><ExternalLink size={14} strokeWidth={1.5} /></button>
-                </Row>
-              ))}
+            <Section title="Providers" label="Yours" note="Claude runs on your subscription through the claude CLI, with its own login. Other providers need an API key: tazuna saves it on this machine, readable by you only, and never shows it again.">
+              {yours.length ? yours.map(provider) : <div className="px-4 py-2.5 text-[12.5px] text-faint">No keys yet: add one under More providers.</div>}
+            </Section>
+            <Section title="Providers" label={<button onClick={() => setMore(!more)} aria-expanded={more} className="-mx-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:text-ink">
+              <ChevronRight size={14} strokeWidth={1.5} className={`text-faint transition-transform ${more ? "rotate-90" : ""}`} />More providers<span className="font-normal text-faint">{others.length}</span></button>}>
+              {more && <>
+                <div className="flex items-center gap-2 px-4 py-2.5 text-muted">
+                  <Search size={14} strokeWidth={1.5} />
+                  <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Search by name or host" aria-label="Search providers" spellCheck={false}
+                    className="flex-1 bg-transparent text-[13px] text-ink outline-none placeholder:text-faint" />
+                </div>
+                {found.map(provider)}
+                {!found.length && <div className="px-4 py-2.5 text-[12.5px] text-faint">No provider matches.</div>}
+              </>}
             </Section>
 
             <Section title="Privacy and routing" note="Where your code may go in this session, and what answers a question.">
@@ -301,13 +329,15 @@ export function SettingsView({ onClose, items = [], onEnable, onEdit, onRemove, 
 }
 
 /** A part of the page: its heading, a line on what it is for, and its rows in one card, a line between each. */
-function Section({ title, note, children }: { title: string; note?: React.ReactNode; children: React.ReactNode }) {
+function Section({ title, note, label, children }: { title: string; note?: React.ReactNode; label?: React.ReactNode; children: React.ReactNode }) {
   // the part chosen on the left is the one on screen; its name is the page's heading
   if (useContext(TabCtx) !== title) return null;
   return (
-    <section>
+    // a part may come in pieces, each under its own `label` (Providers: yours, then the rest)
+    <section className="mt-6 first:mt-0">
       {note && <p className="mb-3 text-[12.5px] leading-relaxed text-muted">{note}</p>}
-      <div className="divide-y divide-line-soft rounded-lg border border-line bg-card">{children}</div>
+      {label && <div className="mb-2 text-[12.5px] font-medium text-ink-2">{label}</div>}
+      {children && <div className="divide-y divide-line-soft rounded-lg border border-line bg-card">{children}</div>}
     </section>
   );
 }

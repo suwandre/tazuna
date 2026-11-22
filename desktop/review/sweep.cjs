@@ -164,6 +164,28 @@ const log = [];
     await step(p, "core-fails", async () => { await p.waitForTimeout(600); });
     log.push(`core fails: ${await p.getByText("tazuna could not start").count() ? "failure screen" : "NO failure screen"}, ${await p.getByText("Retry test fails on CI").count() ? "DEMO TITLE SHOWN" : "no demo title"}`);
     await ctx.close(); }
+  // some seventy providers (core 0.1.196): yours first, the rest folded under More providers and searched, their terms quiet
+  // or in the warning colour; a model whose provider has no key opens Settings on that provider, its key field open
+  for (const theme of ["dark", "light"]) {
+    const [ctx, p] = await ctxOf({ theme }), T = theme[0];
+    await step(p, `${T}-providers`, async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); });
+    await step(p, `${T}-providers-more`, async () => { await p.getByRole("button", { name: /^More providers/ }).click(); });
+    await step(p, `${T}-providers-search`, async () => { await p.getByLabel("Search providers").fill("coding plan"); });
+    await step(p, `${T}-providers-search-quiet`, async () => { await p.getByLabel("Search providers").fill("opencode"); });
+    await esc(p);
+    await step(p, `${T}-picker-no-key`, async () => { await p.getByTitle("Model and effort").click(); await p.keyboard.type("cerebras"); });
+    await step(p, `${T}-picker-no-key-settings`, async () => { await p.getByText("No key yet · add one in Settings").first().click(); await p.waitForTimeout(600); });
+    log.push(`${theme} no key to Settings: focus on ${await p.evaluate(() => document.activeElement?.getAttribute("aria-label"))} (Cerebras key wanted)`);
+    await esc(p); await esc(p);
+    await step(p, `${T}-picker-caution`, async () => { await p.getByTitle("Model and effort").click(); await p.keyboard.type("glm"); });
+    log.push(`${theme} providers page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
+    await ctx.close();
+  }
+  // a fresh install: no key yet, nothing running here
+  { const none = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { if (p?.msg?.type === "settings") p.msg.providers = p.msg.providers.filter((x) => !x.local).map((x) => ({ ...x, key: "" })); return emit(e, p); }; })();`;
+    const [ctx, p] = await ctxOf({ extra: none });
+    await step(p, "d-providers-none", async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); });
+    await ctx.close(); }
   // the model picker's search takes the typing as it opens (0.1.74 to 0.1.76 it did not)
   { const [ctx, p] = await ctxOf({});
     await p.getByTitle("Model and effort").click(); await p.waitForTimeout(400);

@@ -41,7 +41,9 @@ export function price(p: string): string {
   return n.map((x) => (x === 0 ? "0" : x >= 1 ? String(+x.toFixed(2)) : String(+x.toPrecision(2)))).join(" / ");
 }
 
-export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onEffort }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
+export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effort, onEffort }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
+  /** a row whose provider has no key: Settings on that provider, its key field open */
+  onKey?: (provider: string) => void;
   /** the current model's effort levels, chosen at the top (one pill for model and effort since desktop 0.1.70, as Claude,
    * MonoCode and DeepSeek Harness have it) */
   efforts?: string[]; effort?: string; onEffort?: (e: string) => void }) {
@@ -57,7 +59,7 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
   }, [onClose]);
   const { groups, hidden } = useMemo(() => {
     const all = models?.choices ?? [], f = q.trim().toLowerCase();
-    const rows = f ? all.filter((c) => matchesWords(f, `${modelLabel(c.model)} ${c.label} ${c.model} ${c.place} ${c.provider}`)) : all.filter((c) => !c.why_not);
+    const rows = f ? all.filter((c) => matchesWords(f, [modelLabel(c.model), c.label, c.model, c.place, c.provider].join(" "))) : all.filter((c) => !c.why_not);
     const groups = new Map<string, ModelChoice[]>();
     for (const c of rows.slice(0, 300)) groups.set(c.provider, [...(groups.get(c.provider) ?? []), c]);
     return { groups: [...groups], hidden: f ? Math.max(0, rows.length - 300) : all.length - rows.length };
@@ -81,25 +83,29 @@ export function ModelPicker({ models, onPick, onClose, efforts = [], effort, onE
           <span className="flex-1" /><span className="w-[64px] text-right" title="tazuna bench: judge score out of 10 (runs)">Score</span>
           <span className="w-[112px] text-right" title="dollars per million tokens: input / output">$ per M, in / out</span></div>}
         {!models && <div className="px-3 py-2 text-[12.5px] text-faint">Loading…</div>}
-        {groups.map(([provider, rows]) => (
+        {groups.map(([provider, rows]) => { const caution = models?.cautions?.[provider]; return (
           <div key={provider}>
             <div className="px-3 pb-0.5 pt-2 text-[11.5px] font-medium text-faint">{provider}</div>
-            {rows.map((c) => (
-              <button key={`${c.model}|${c.url}|${c.key_env}|${c.label}`} disabled={!!c.why_not} onClick={() => onPick(c)} title={c.why_not ?? c.place}
+            {/* its terms once, under its name: in the warning colour only where the account may be at risk or it may refuse tazuna */}
+            {caution?.note && <div className={`px-3 pb-0.5 text-[11.5px] ${caution.warn ? "text-warn" : "text-faint"}`}>{caution.note}</div>}
+            {rows.map((c) => { const toKey = c.no_key && onKey; return (
+              <button key={`${c.model}|${c.url}|${c.key_env}|${c.label}`} disabled={!!c.why_not && !toKey} onClick={() => (toKey ? onKey(c.provider) : onPick(c))}
+                title={toKey ? `Add a ${c.provider} key in Settings` : c.why_not ?? c.place}
                 className="flex w-full items-center gap-2 px-3 py-[5px] text-left hover:bg-hover disabled:cursor-default disabled:hover:bg-transparent">
                 <span className="w-3.5 flex-none text-accent">{c.current && <Check size={14} strokeWidth={1.75} />}</span>
                 <span className="min-w-0 flex-1">
                   {/* its name, not its id ("GPT-6.2 Sol", not "gpt-6.2-sol · subrouter"); the group names the provider */}
                   <span className={`block truncate ${c.why_not ? "text-faint" : "text-ink"}`} title={c.model}>{modelLabel(c.model)}</span>
                   {/* the group names the provider: a row's second line only says why it cannot run (it repeated "api.mistral.ai") */}
-                  {c.why_not && <span className="block truncate text-[11.5px] text-faint">{c.why_not}</span>}
+                  {/* no key: the desktop's own way to one (the core's words name the terminal's /login) */}
+                  {c.why_not && <span className="block truncate text-[11.5px] text-faint">{c.no_key ? "No key yet · add one in Settings" : c.why_not}</span>}
                 </span>
                 <span className="w-[64px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-faint" title="tazuna bench: judge score (runs)">{c.bench}</span>
                 <span className="w-[112px] flex-none whitespace-nowrap text-right text-[11.5px] tabular-nums text-muted" title="$ per million tokens: input / output">{c.price === "plan" ? "on your plan" : price(c.price)}</span>
               </button>
-            ))}
+            ); })}
           </div>
-        ))}
+        ); })}
         {hidden > 0 && <div className="px-3 py-2 text-[11.5px] text-faint">{q ? `${hidden} more: narrow the search` : `${hidden} more need a key or trust: type to search them`}</div>}
       </div>
     </div>

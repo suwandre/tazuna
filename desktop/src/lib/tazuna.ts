@@ -59,7 +59,13 @@ export type View = {
   calls?: { block: number; fresh: number; cached: number; out: number; cost: number | null; first_ms: number | null; tps: number | null; total_ms: number | null;
     model?: string; role?: string | null; provider?: string | null; estimate?: boolean }[];
 };
-export type Provider = { name: string; host: string; page: string; place: string; example: string; key: string; trusted: boolean };
+/** `key`: where its key comes from ("logged in", "key in the environment", …), empty: no key */
+export type Provider = { name: string; host: string; page: string; place: string; example: string; key: string; trusted: boolean;
+  /** the provider's terms in one line (core 0.1.196 on), empty: none; `warn`: they say the account may be at risk or the
+   * provider may refuse tazuna */
+  note: string; warn: boolean;
+  /** a model server running on this machine (Ollama, LM Studio, llama.cpp, vLLM): it needs no key */
+  local?: boolean };
 export type Settings = { providers: Provider[]; data_any: boolean; route: boolean; version: string;
   /** dollars of paid API spend allowed per 24 hours (null: no cap), and what was spent */
   spend_cap?: number | null; spent_24h?: number };
@@ -79,16 +85,22 @@ export type SessionRow = { id: string; first: string; last_at: number; messages:
   named?: boolean };
 export type Sessions = { dirs: { dir: string; list: SessionRow[] }[] };
 
+/** A row of the catalog. One that can be picked (`why_not` null) has every field; one that cannot is compact (core 0.1.196
+ * on, ~3000 rows): its model, provider, price and why_not, its label and bench only when they say something, and `no_key`
+ * when its provider has no key yet. */
 export type ModelChoice = {
-  model: string; label: string; place: string; provider: string; url: string | null; key_env: string | null;
-  efforts: string[]; effort: string | null; price: string; bench: string; why_not: string | null; current: boolean;
+  model: string; provider: string; price: string; why_not: string | null;
+  label?: string; place?: string; url?: string | null; key_env?: string | null; efforts?: string[]; effort?: string | null; bench?: string; current?: boolean;
+  no_key?: boolean;
 };
 export type Accounts = {
   plan: { label: string; used: number; resets: string }[] | null; plan_notes: string[];
   credits: { provider: string; left: string | null; page: string }[];
   omniroute: { provider: string; name: string; plan: string | null; status: string; windows: { group: string; window: string; used: number | null; resets: string | null; unlimited: boolean | null }[] }[];
 };
-export type Models = { choices: ModelChoice[]; rebuild: string | null };
+export type Models = { choices: ModelChoice[]; rebuild: string | null;
+  /** each provider's terms in one line, once (`Provider.note` and `warn`), shown on its group in the picker */
+  cautions?: Record<string, { note: string; warn: boolean }> };
 /** A background task of claude's (a subagent, a command), as the core's view lists them: `calls` are the calls that
  * started and continued it (a step's id), `secs` how long it took once ended. */
 export type Task = { id: string; kind: string; agent: string; description: string; status: string; running: boolean; doing: string; tokens: number; tools: number; calls: string[]; secs: number | null };

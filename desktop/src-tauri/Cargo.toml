@@ -1,6 +1,6 @@
 [package]
 name = "tazuna-desktop"
-version = "0.1.99"
+version = "0.1.100"
 edition = "2021"
 description = "tazuna desktop (docs/DESKTOP.md)"
 license = "MIT"

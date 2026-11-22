@@ -256,6 +256,9 @@ export default function App() {
   // what the palette opens with (`/resume` opens it on the conversations); empty again once it closes
   const [paletteQ, setPaletteQ] = useState("");
   useEffect(() => { if (overlay !== "palette") setPaletteQ(""); }, [overlay]);
+  // the provider Settings opens on (the model picker's "No key yet"), its key field open; that opening only
+  const [keyFocus, setKeyFocus] = useState<string | null>(null);
+  useEffect(() => { if (overlay !== "settings") setKeyFocus(null); }, [overlay]);
   // "edit from here": the message being edited (its checkpoint, its block, the files tazuna changed since, whether they
   // go back too) and the text put in the box
   const [editing, setEditing] = useState<{ cp: number; block: number; files: number; keep: boolean } | null>(null);
@@ -721,6 +724,7 @@ export default function App() {
             )} onStop={() => core.interrupt()}
             models={models} onModels={inTauri ? () => core.models() : undefined}
             onPickModel={inTauri ? (c) => core.setModel(c) : undefined} onPickEffort={inTauri ? (e) => core.setEffort(e) : undefined}
+            onAddKey={inTauri ? (p) => { setKeyFocus(p); settingsAt("Providers"); } : undefined}
             onMode={inTauri ? (m) => core.setMode(m) : undefined}
             onPickFiles={inTauri ? core.pickFiles : undefined} onDrop={inTauri ? core.onDrop : undefined}
             complete={complete[active] ?? null} onComplete={inTauri ? () => { core.complete().catch(() => {}); } : undefined}
@@ -884,7 +888,7 @@ export default function App() {
       {overlay === "usage" && inTauri && <UsageView onClose={() => setOverlay(null)} limits={view?.limits} balance={view?.balance} choices={models?.choices} />}
       {overlay === "setup" && inTauri && <Setup onSettings={() => { localStorage.setItem(SETUP, "1"); localStorage.setItem("tazuna.settings.tab", "Providers"); setOverlay("settings"); }}
         onClose={() => { localStorage.setItem(SETUP, "1"); setOverlay(null); }} />}
-      {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} items={userWidgets} onEdit={editPanel}
+      {overlay === "settings" && inTauri && <SettingsView onClose={() => setOverlay(null)} focus={keyFocus} items={userWidgets} onEdit={editPanel}
         onEnable={(w, on) => widgets.enable(w.id, w.print!, on).then(reloadWidgets).catch((e) => console.error(e))}
         onRemove={(id) => widgets.remove(id).then(reloadWidgets).catch(() => {})} onChanged={reloadWidgets} />}
     </div>

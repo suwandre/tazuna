@@ -518,6 +518,11 @@ user's pick from the prototype mockups/v8.html):
 0.1.99 (with tazuna 0.1.195): a hand-off on the own loop can search the web (Exa, no key needed); its steps read
 "Searched …" in the fold.
 
+0.1.100 (with tazuna 0.1.196): Settings → Providers lists yours first (a key, or a local server running) and folds the
+other 69 under "More providers" with a search; a provider's terms note sits on its row; a model without a key says "No
+key yet · add one in Settings" and opens that provider's settings. The fold has no "ToolSearch" step (Claude Code
+loading a tool), a step that waits for your answer says so without a clock, and a declined step is not counted as run.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
