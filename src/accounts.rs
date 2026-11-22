@@ -36,6 +36,57 @@ pub fn claude_plan() -> Option<(Vec<PlanRow>, Vec<String>)> {
     parse_plan(&page?)
 }
 
+/// Whether the official CLI is signed in, as `claude auth status` says ("loggedIn" in its JSON, ~0.15 s; it reads no
+/// model and tazuna never reads its credentials): None when claude is not there or said nothing readable within 5 s. From
+/// the home folder, as `claude_plan`. Kept for the process (`claude_logged_in`): an installed, logged-out claude was ticked
+/// "Claude on your subscription" and its models offered as on the plan (review 12).
+#[inline(never)]
+pub fn refresh_claude_login() -> Option<bool> {
+    let read = || -> Option<bool> {
+        use std::io::Read;
+        let mut child = std::process::Command::new("claude").args(["auth", "status"]).current_dir(crate::platform::home()?)
+            .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn().ok()?;
+        let mut out = child.stdout.take()?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut s = String::new();
+            let _ = out.read_to_string(&mut s);
+            let _ = tx.send(s);
+        });
+        let text = rx.recv_timeout(Duration::from_secs(5)).ok();
+        if text.is_none() {
+            let _ = child.kill();
+        }
+        std::thread::spawn(move || { let _ = child.wait(); });
+        // logged out it exits 1, with the same JSON
+        serde_json::from_str::<Value>(text?.trim()).ok()?["loggedIn"].as_bool()
+    };
+    // tests never start the user's claude
+    let now = if cfg!(test) { None } else { read() };
+    *CLAUDE_LOGIN.lock().unwrap_or_else(|e| e.into_inner()) = Some(now);
+    now
+}
+
+static CLAUDE_LOGIN: std::sync::Mutex<Option<Option<bool>>> = std::sync::Mutex::new(None);
+
+/// `refresh_claude_login` as last read in this process; None before the first read. Never read here: a claude that hangs
+/// (a keychain prompt) held the window's server and the terminal's screen up to 5 s each time /model opened (review 12).
+#[inline(never)]
+pub fn claude_logged_in() -> Option<bool> {
+    CLAUDE_LOGIN.lock().unwrap_or_else(|e| e.into_inner()).flatten()
+}
+
+/// Reads it again off the caller's thread; `changed` runs when it differs from `shown` (what the caller showed with
+/// `claude_logged_in`), to show it again.
+#[inline(never)]
+pub fn recheck_claude_login(shown: Option<bool>, changed: impl FnOnce() + Send + 'static) {
+    std::thread::spawn(move || {
+        if refresh_claude_login() != shown {
+            changed();
+        }
+    });
+}
+
 fn parse_plan(text: &str) -> Option<(Vec<PlanRow>, Vec<String>)> {
     let mut rows = vec![];
     for l in text.lines().map(str::trim) {
@@ -130,7 +181,8 @@ pub fn all() -> Value {
 /// so the whole takes as long as the slowest, not their sum.
 pub fn all_then(early: impl FnOnce(&Value)) -> Value {
     std::thread::scope(|s| {
-        let (c, o) = (s.spawn(credits), s.spawn(omniroute));
+        // claude's login read again too (the pickers' Claude rows follow it)
+        let (c, o, _) = (s.spawn(credits), s.spawn(omniroute), s.spawn(refresh_claude_login));
         let plan = claude_plan();
         let mut v = json!({
             "plan": plan.as_ref().map(|(rows, _)| rows.iter().map(|r| json!({"label": r.label, "used": r.used, "resets": r.resets})).collect::<Vec<_>>()),

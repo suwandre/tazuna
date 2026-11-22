@@ -641,6 +641,7 @@ fn device_wait(name: &str, url: &str, form: &[(&str, &str)], interval: u64, expi
     loop {
         #[cfg(not(test))]
         std::thread::sleep(Duration::from_secs(wait));
+        let _ = wait; // read in tests too, where there is no sleep
         let (_, t) = post_form(url, form)?;
         if t["access_token"].is_string() {
             return Ok(t);

@@ -225,9 +225,14 @@ pub fn providers(cs: &[Choice]) -> Vec<(String, Vec<usize>)> {
     out
 }
 
+/// A Claude row when the claude CLI is not signed in (`catalog`).
+pub const CLAUDE_SIGNED_OUT: &str = "not signed in: run `claude auth login` in a terminal";
+
 /// Why a row cannot be picked as it is, in words that say what to do; None when it can.
 pub fn why_not(c: &Choice) -> Option<String> {
-    let (url, var, _) = c.route.as_ref()?;
+    let Some((url, var, _)) = c.route.as_ref() else {
+        return (c.state == State::NoKey).then(|| CLAUDE_SIGNED_OUT.to_string());
+    };
     let host = host_of(url);
     match c.state {
         State::NoKey if host == "subrouter.ai" => Some(format!("no SubRouter key. Two ways: `tazuna subrouter --manage` makes \
@@ -330,6 +335,8 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
     } else {
         " · your own key decides the providers: tazuna subrouter --apply pins these on it, --manage makes a key with them"
     };
+    // an installed claude that is not signed in: its rows as a sign-in's are when signed out (why_not says what to do)
+    let claude = if crate::accounts::claude_logged_in() == Some(false) { State::NoKey } else { State::Ready };
     let mut out: Vec<Choice> = CLAUDE.iter().map(|(m, l)| Choice {
         model: m.to_string(),
         label: l.to_string(),
@@ -339,7 +346,7 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
         price: "plan".into(),
         note: String::new(),
         stale: false,
-        state: State::Ready,
+        state: claude,
         bench: scores(&file, m).0,
         aa: scores(&file, m).1,
         pins: vec![],

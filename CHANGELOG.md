@@ -16,6 +16,34 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.199 (2026-11-23): one conversation across a model switch, Retry without a second question, Claude's login said once
+
+Design review 12 drove the real core as a new user would (a fresh home folder, a scripted model on LM Studio's port); the
+user had kept finding problems the reviews on test data missed ("test it like you would as a normal user").
+
+- Claude's login is read with the official `claude auth status` (never its credentials): the first-run check says
+  whether claude is signed in (`claude_login`), Claude's rows in the model lists are "not signed in" when it is not, and
+  the terminal says so at start. The pickers answer from the last reading and correct themselves when it changes, so a
+  `claude` that hangs (a keychain prompt) never holds the screen.
+- Claude's own "Not logged in · Please run /login" is one error, never also the answer, and says what to do: run
+  `claude auth login` in a terminal (tazuna's /login saves API keys, so it sent people the wrong way).
+- A chat no longer asks to trust the home folder: ~/.claude is the user's own Claude Code folder, not the folder's config.
+- A model switch that cannot keep the history (Claude to another provider, or back) carries the conversation over as text
+  (earlier messages and answers, the latest 40k characters): the new model had started with nothing while the window
+  still showed the thread. The new session continues the earlier one: the lists show one conversation under the first
+  title, a reopened one shows all of it with "── continued on X ──", and resume finds it by any of its ids
+  (`earlier_sessions` in every view).
+- Retry (`{"op":"retry"}`) runs the failed turn again with the same message: no second copy in the history or the view,
+  across a model switch, a second Retry, or text written before the failure.
+- A reopened conversation keeps its change cards (with Undo and Diff, and what was undone); a card whose snapshot git has
+  since cleaned up says so.
+- A chat on a rate-limited provider shows its retries as they happen ("trying again in 8s"), not after Stop.
+- A step's time starts when it is allowed: "Ran ls 7.7 s" counted 7 s of waiting for the user.
+- An unknown context window is left out (a local model showed "of 200k").
+- The terminal's first line names the model that runs (it said "started on Sonnet 5.5 … escalates to opus-5-5 high"
+  after /model had picked another).
+- conversations.json is written whole or not at all (a temporary file, then a rename).
+
 ## 0.1.198 (2026-11-22): Gemini CLI and Antigravity sign-ins, Mistral Vibe as its own provider, Claude on Copilot and Antigravity plans
 
 The user: ship Antigravity "with a warning that users do this at their own risk"; offer the Claude models Copilot's and

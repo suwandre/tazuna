@@ -1315,9 +1315,7 @@ fn asked(t: &Tool, s: &Session, v: &View) -> bool {
     if v.asking.is_none() || t.result.is_some() || t.done_ms.is_some() {
         return false;
     }
-    let open = || s.blocks.iter().filter_map(|b| if let Block::Tool(x) = b { Some(x) } else { None }).filter(|x| x.result.is_none() && x.done_ms.is_none());
-    let about = s.asked.front().and_then(|(tool, input)| open().find(|x| x.name == *tool && x.input == *input).or_else(|| open().find(|x| x.name == *tool)));
-    about.or_else(|| open().next()).is_some_and(|x| std::ptr::eq(x, t))
+    s.asked_call().is_some_and(|i| matches!(&s.blocks[i], Block::Tool(x) if std::ptr::eq(x, t)))
 }
 
 fn last_tool_name(s: &Session) -> String {
@@ -1554,6 +1552,9 @@ pub fn even_price(p: &str) -> String {
     };
     format!("{} / {}", one(a), one(b))
 }
+
+/// session::CLAUDE_NOT_SIGNED_IN as the terminal says it: no Settings page, no Retry button.
+const CLAUDE_NOT_SIGNED_IN: &str = "Claude Code isn't signed in. Run `claude auth login` in a terminal, then send your message again.";
 
 /// The lane's notice at a session's start, said plainly: "lane default: opus-5-5 medium · repo profile (…)" is "started
 /// on Opus 5.5 · medium · repo profile (…)" (it read as a debug line at the top of every recording, design review 5).
@@ -1882,7 +1883,9 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
         // a long notice (a provider's error) shows its start until clicked, then all of it
         // a provider's error reads as its message ("provider error: [404] … not found"), the raw reply on a click
         Block::Notice { text, error } => {
-            let shown = if open { text.clone() } else { readable_notice(text).or_else(|| lane_notice(text)).or_else(|| model_notice(text)).unwrap_or_else(|| text.clone()) };
+            // claude not signed in: without the window's Settings and Retry
+            let text = if text == crate::session::CLAUDE_NOT_SIGNED_IN { CLAUDE_NOT_SIGNED_IN } else { text.as_str() };
+            let shown = if open { text.to_string() } else { readable_notice(text).or_else(|| lane_notice(text)).or_else(|| model_notice(text)).unwrap_or_else(|| text.to_string()) };
             vec![(
                 Line::from(vec![
                     Span::styled(if *error { "! " } else { "· " }, st(if *error { th.err } else { th.faint })),

@@ -65,6 +65,14 @@ pub struct RepoConfig {
 impl RepoConfig {
     /// Config in `cwd` and every parent up to the git root (Claude Code also picks config up from parent directories).
     pub fn read(cwd: &Path) -> Self {
+        Self::read_in(cwd, crate::platform::home().as_deref())
+    }
+
+    /// `read` with the user's home folder: its .claude is Claude Code's own user folder (projects/, todos/, the user's
+    /// settings.json), not a folder's config. Counted, every chat (which runs in the home folder) asked to "Trust folder"
+    /// for its "N other .claude entries" (review 12). Files directly in the home folder (a CLAUDE.md, .mcp.json) count.
+    fn read_in(cwd: &Path, home: Option<&Path>) -> Self {
+        let home = home.map(|h| h.canonicalize().unwrap_or_else(|_| h.to_path_buf()));
         let top = Command::new("git")
             .args(["rev-parse", "--show-toplevel"])
             .current_dir(cwd)
@@ -75,7 +83,7 @@ impl RepoConfig {
         let start = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
         let mut c = RepoConfig::default();
         for dir in start.ancestors() {
-            c.add(dir, dir == start);
+            c.add(dir, dir == start, home.as_deref() == Some(dir));
             if top.as_deref().is_none_or(|t| dir == t) {
                 break;
             }
@@ -83,25 +91,26 @@ impl RepoConfig {
         c
     }
 
-    fn add(&mut self, dir: &Path, here: bool) {
+    fn add(&mut self, dir: &Path, here: bool, home: bool) {
         let file = |p: &str| dir.join(p).is_file();
-        let count = |d: &str| std::fs::read_dir(dir.join(d)).map(|r| r.flatten().count()).unwrap_or(0);
-        let settings_text: String =
-            [".claude/settings.json", ".claude/settings.local.json"].iter().filter_map(|f| std::fs::read_to_string(dir.join(f)).ok()).collect();
-        for f in ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md", "CLAUDE.local.md"].iter().filter(|f| file(f)) {
+        // the home folder's .claude is the user's own (read_in)
+        let claude = if home { None } else { Some(dir.join(".claude")) };
+        let count = |d: &str| claude.as_ref().and_then(|c| std::fs::read_dir(c.join(d)).ok()).map_or(0, |r| r.flatten().count());
+        let settings_text: String = claude.iter().flat_map(|c| ["settings.json", "settings.local.json"].map(|f| c.join(f)))
+            .filter_map(|f| std::fs::read_to_string(f).ok()).collect();
+        for f in ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md", "CLAUDE.local.md"].iter().filter(|f| file(f) && !(home && f.starts_with(".claude/"))) {
             self.instructions.push(if here { f.to_string() } else { dir.join(f).to_string_lossy().into_owned() });
         }
-        self.settings |= dir.join(".claude/settings.json").exists() || dir.join(".claude/settings.local.json").exists();
+        self.settings |= claude.as_ref().is_some_and(|c| c.join("settings.json").exists() || c.join("settings.local.json").exists());
         self.hooks |= settings_text.contains("\"hooks\"");
-        self.skills += count(".claude/skills");
-        self.commands += count(".claude/commands");
-        self.agents += count(".claude/agents");
+        self.skills += count("skills");
+        self.commands += count("commands");
+        self.agents += count("agents");
         self.mcp |= file(".mcp.json");
         self.setup |= file(".tazuna/setup.sh");
         let known = ["CLAUDE.md", "settings.json", "settings.local.json", "skills", "commands", "agents"];
-        self.other += std::fs::read_dir(dir.join(".claude"))
-            .map(|r| r.flatten().filter(|e| !known.contains(&e.file_name().to_string_lossy().as_ref())).count())
-            .unwrap_or(0);
+        self.other += claude.and_then(|c| std::fs::read_dir(c).ok())
+            .map_or(0, |r| r.flatten().filter(|e| !known.contains(&e.file_name().to_string_lossy().as_ref())).count());
     }
 
     pub fn any(&self) -> bool {
@@ -192,6 +201,23 @@ pub fn manual(cwd: &Path, model: &str, effort: &str) -> Lane {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_home_folders_claude_folder_is_the_users_own_not_the_folders_config() {
+        let home = std::env::temp_dir().join(format!("tazuna-home-{}", std::process::id()));
+        for d in [".claude/projects", ".claude/todos", ".claude/skills/x"] {
+            std::fs::create_dir_all(home.join(d)).unwrap();
+        }
+        std::fs::write(home.join(".claude/settings.json"), r#"{"hooks": {}}"#).unwrap();
+        let c = RepoConfig::read_in(&home, Some(&home));
+        assert!(!c.runs_code() && c.instructions.is_empty(), "{c:?}");
+        assert!(RepoConfig::read_in(&home, None).runs_code(), "the same folder as a project's needs trust");
+        std::fs::write(home.join(".mcp.json"), "{}").unwrap();
+        std::fs::write(home.join("CLAUDE.md"), "rules").unwrap();
+        let c = RepoConfig::read_in(&home, Some(&home));
+        assert!(c.mcp && c.runs_code() && c.instructions == ["CLAUDE.md"], "files right in the home folder count: {c:?}");
+        std::fs::remove_dir_all(&home).ok();
+    }
 
     #[test]
     fn tiny_repos_get_the_cheap_lane_with_escalation() {

@@ -1016,10 +1016,7 @@ fn chat_turn(c: RouteCtx, text: String, prior: Option<ChatLast>, tx: std::sync::
         }
         if let Some(out) = child.stdout.take() {
             for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
-                // the chat's own start-up event would replace the session's model and tools on the screen; it runs as the
-                // session does (its model, route and key), so the session's says how it is paid. Its result is its own
-                // process's whole cost (`tazuna_chat`), beside the conversation's process and not part of its count
-                if let Ok(e) = serde_json::from_str::<serde_json::Value>(&line) && e["type"] != "system" {
+                if let Ok(e) = serde_json::from_str::<serde_json::Value>(&line) && chat_shows(&e) {
                     // with its own question: two chat answers can overlap (one shared question handed the wrong one on); a
                     // result with what the chat was sent, which a hand-off gives the agent
                     let mut ev = json!({"type": "tazuna_chat_event", "q": &text, "e": e});
@@ -1033,6 +1030,15 @@ fn chat_turn(c: RouteCtx, text: String, prior: Option<ChatLast>, tx: std::sync::
         }
         let _ = child.wait();
     });
+}
+
+/// Which of a chat answer's events reach the screen. Not its start-up event: it would replace the session's model and tools
+/// there; it runs as the session does (its model, route and key), so the session's says how it is paid. Its result is its
+/// own process's whole cost (`tazuna_chat`), beside the conversation's process and not part of its count. The own loop's
+/// tries and waits do: a rate-limited chat answer said only "thinking…" for 2 minutes (review 12).
+#[inline(never)]
+fn chat_shows(e: &serde_json::Value) -> bool {
+    e["type"] != "system" || matches!(e["subtype"].as_str(), Some("call_retry" | "call_waiting"))
 }
 
 /// A message the router answers as a chat (`why`: the line that says so): a one-off chat answer beside the agent. Shown and
@@ -1049,7 +1055,11 @@ fn chat_answer(live: &mut live::Live, s: &mut Session, text: String, why: &str, 
 #[inline(never)]
 fn chat_event(live: &mut live::Live, s: &mut Session, cmd: &serde_json::Value, chat_last: &mut Option<ChatLast>, last_reply: &mut String) {
     let e = &cmd["e"];
-    let (t, ev) = live.note(e.clone());
+    let mut rec = e.clone();
+    if e["type"] == "result" {
+        rec["tazuna_prompt"] = cmd["q"].clone(); // the message it answers (live.rs track)
+    }
+    let (t, ev) = live.note(rec);
     s.apply(&ev, t);
     let Some(r) = e["result"].as_str().filter(|_| e["type"] == "result") else { return };
     let q = cmd["q"].as_str().unwrap_or_default().to_string();
@@ -1062,6 +1072,39 @@ fn chat_event(live: &mut live::Live, s: &mut Session, cmd: &serde_json::Value, c
     } else {
         *last_reply = r.to_string();
         *chat_last = Some(ChatLast { q, a: r.to_string() });
+    }
+}
+
+/// The error card's Retry (C11): the last message again when its turn ended without an answer, with no second copy of it
+/// on screen or in the model's history (live.rs retry); a router chat answer is asked again. Otherwise it says there is
+/// nothing to retry.
+#[inline(never)]
+fn app_retry(live: &mut live::Live, s: &mut Session, turn: &mut Option<(String, bool)>, cwd: &std::path::Path, prior: Option<ChatLast>, tx: &std::sync::mpsc::Sender<serde_json::Value>) {
+    let at = live.elapsed_ms();
+    if !live.idle() || turn.as_ref().is_some_and(|t| !t.1) {
+        return s.apply(&note("a reply is running: retry once it has ended (or stop it)", true), at);
+    }
+    let Some((p, text)) = s.retryable() else {
+        return s.apply(&note("nothing to retry: the last message has its answer (or none was sent)", false), at);
+    };
+    // a router chat answer (it has no checkpoint): asked again, under its line
+    let chat = s.blocks[p..].iter().find_map(|b| match b {
+        session::Block::Notice { text, .. } if text.starts_with("answered as a chat") => Some(text.clone()),
+        _ => None,
+    });
+    if let Some(why) = chat {
+        let (t, e) = live.note(json!({"type": "harness_retry"}));
+        s.apply(&e, t);
+        return chat_answer(live, s, text, &why, prior, tx);
+    }
+    // what the failed try changed goes with the retry's card (its own stood under the try that is gone)
+    let before = turn.as_ref().map(|t| t.0.clone()).or_else(|| s.changes.iter().find(|c| c.at_block > p).map(|c| c.before.clone())).or_else(|| turns::snapshot(cwd));
+    match live.retry(&text) {
+        Ok((t, e)) => {
+            *turn = before.map(|b| (b, false));
+            s.apply(&e, t);
+        }
+        Err(e) => s.apply(&note(format!("{e:#}"), true), at),
     }
 }
 
@@ -1378,12 +1421,13 @@ fn app_server(a: &Args) -> Result<()> {
             models::refresh_openrouter();
         });
     }
-    // the model servers on this machine, at each start (a refused port answers at once)
+    // the model servers on this machine, at each start (a refused port answers at once); claude's login, for the pickers
     std::thread::spawn(models::refresh_local);
+    accounts::recheck_claude_login(None, || {});
     std::thread::spawn(move || {
         // only the window's own commands: "routed" and chat events are this process's, and a line posing as one would
         // skip the checks a send goes through
-        const OPS: [&str; 49] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo",
+        const OPS: [&str; 50] = ["send", "interrupt", "new", "profile", "models", "model", "effort", "trust", "sessions", "resume", "mode", "answer", "diff", "undo", "retry",
             "settings", "login", "data", "route", "full", "rename", "hide", "rewind", "review", "piece", "allow_root", "quit", "fork", "usage", "spend_cap",
             "worktree_new", "worktrees", "worktree_remove", "pr", "create", "create_enable", "create_discard", "mcp", "mcp_on", "mcp_add", "mcp_remove", "mcp_check", "hook", "setup", "gallery", "gallery_get", "accounts", "complete", "agent", "task_stop"];
         for line in std::io::stdin().lock().lines().map_while(Result::ok) {
@@ -1403,7 +1447,7 @@ fn app_server(a: &Args) -> Result<()> {
     // reply streamed (2026-11-16).
     // the model calls likewise (`calls_from`): a long session has hundreds, and only the one in flight changes
     let sent = std::cell::RefCell::new((Vec::<String>::new(), Vec::<String>::new()));
-    let emit = |s: &Session, untrusted: &Option<String>, live: &live::Live, done_turns: &[AppTurn]| {
+    let emit = |s: &Session, untrusted: &Option<String>, live: &live::Live| {
         let mut v = s.view();
         let mut prev = sent.borrow_mut();
         let (old_blocks, old_calls) = &mut *prev;
@@ -1417,8 +1461,8 @@ fn app_server(a: &Args) -> Result<()> {
             *old = strs;
         }
         drop(prev);
-        let last_undoable = done_turns.iter().rposition(|t| !t.undone);
-        v["changes"] = json!(done_turns.iter().enumerate().map(|(i, t)| json!({
+        let last_undoable = s.changes.iter().rposition(|t| !t.undone);
+        v["changes"] = json!(s.changes.iter().enumerate().map(|(i, t)| json!({
             "turn": i, "at_block": t.at_block, "undone": t.undone, "can_undo": Some(i) == last_undoable,
             "files": t.files.iter().map(|f| json!({"path": f.path, "added": f.added, "removed": f.removed, "status": f.status.to_string()})).collect::<Vec<_>>(),
         })).collect::<Vec<_>>());
@@ -1430,6 +1474,8 @@ fn app_server(a: &Args) -> Result<()> {
             "running": t.ended.is_none(), "doing": t.doing, "tokens": t.tokens, "tools": t.tools, "calls": t.calls.iter().map(|c| &c.0).collect::<Vec<_>>(),
             "secs": t.ended.map(|e| e.duration_since(t.started).as_secs())})).collect::<Vec<_>>());
         v["session_id"] = json!(live.session_id());
+        // the conversation's earlier sessions, oldest first: its id while `session_id` is null after a switch or a retry
+        v["earlier_sessions"] = json!(live.earlier_sessions());
         // the messages "edit from here" can go back to: claude's checkpoints, each with its message's block
         v["edit_points"] = json!(edit_points(s, live).iter().enumerate().map(|(cp, b)| json!({"cp": cp, "block": b})).collect::<Vec<_>>());
         // the oldest open permission question, as the terminal shows it (text made safe), and how many wait behind it
@@ -1444,9 +1490,8 @@ fn app_server(a: &Args) -> Result<()> {
     // each turn's changes (src/turns.rs): the tree before the turn on the agent, whether its result came, the finished
     // turns with their files, and the note the next message carries after an undo
     let mut turn: Option<(String, bool)> = None;
-    let mut done_turns: Vec<AppTurn> = vec![];
     let mut undo_note: Option<String> = None;
-    emit(&s, &untrusted, &live, &done_turns);
+    emit(&s, &untrusted, &live);
     let mut last_reply = String::new();
     let mut chat_last: Option<ChatLast> = None;
     // the router: on as in the terminal; the settings page turns it off (the terminal's /route off)
@@ -1527,12 +1572,13 @@ fn app_server(a: &Args) -> Result<()> {
                                 s.apply(&e, t);
                             }
                         }
+                        // the error card's Retry: the last message again, not a second copy of it (C11)
+                        Some("retry") => app_retry(&mut live, &mut s, &mut turn, &cwd, chat_last.clone(), &tx),
                         Some("new") => {
                             if let Err(e) = restart_session(&mut live, &mut s, None) {
                                 info(&mut s, format!("{e:#}"));
                             }
                             (turn, undo_note) = (None, None);
-                            done_turns.clear();
                         }
                         // the sessions of some folders (this one when none named), newest first, as a `sessions` line: the
                         // terminal's /resume list, for the sidebar
@@ -1580,13 +1626,13 @@ fn app_server(a: &Args) -> Result<()> {
                         // an earlier conversation of this folder, continued (claude only, as /resume)
                         Some("resume") => {
                             let id = cmd["id"].as_str().unwrap_or_default();
-                            match sessions_of(&labels::dir()?, &cwd).into_iter().find(|e| e.id == id) {
+                            // by any of its sessions' ids (the window may know it by an earlier one)
+                            match sessions_of(&labels::dir()?, &cwd).into_iter().find(|e| e.ids.iter().any(|i| i == id)) {
                                 Some(e) => {
                                     if let Err(err) = restart_session(&mut live, &mut s, Some(&e)) {
                                         info(&mut s, format!("{err:#}"));
                                     }
                                     (turn, undo_note) = (None, None);
-                                    done_turns.clear();
                                 }
                                 None => info(&mut s, format!("no session {id} in this folder")),
                             }
@@ -1631,7 +1677,6 @@ fn app_server(a: &Args) -> Result<()> {
                                         s.apply(&json!({"type": "harness_notice", "text": "── side chat: it reads the conversation, nothing goes back ──", "error": false}), t);
                                         s.apply(&me, mt);
                                         (turn, undo_note) = (None, None);
-                                        done_turns.clear();
                                     }
                                     Err(err) => {
                                         s.apply(&me, mt);
@@ -1725,13 +1770,15 @@ fn app_server(a: &Args) -> Result<()> {
                                 let _ = o.flush();
                             });
                         }
-                        // the first run's checks: is the claude CLI there (its version; ~1 s, so on a thread)
+                        // the first run's checks: is the claude CLI there (its version; ~1 s, so on a thread), and signed in
+                        // (null: claude missing, or its status unreadable)
                         Some("setup") => {
                             std::thread::spawn(|| {
                                 let version = std::process::Command::new("claude").arg("--version").output().ok().filter(|o| o.status.success())
                                     .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+                                let login = version.as_ref().and_then(|_| accounts::refresh_claude_login());
                                 let mut o = std::io::stdout().lock();
-                                let _ = writeln!(o, "{}", json!({"type": "setup", "claude": version}));
+                                let _ = writeln!(o, "{}", json!({"type": "setup", "claude": version, "claude_login": login}));
                                 let _ = o.flush();
                             });
                         }
@@ -1785,6 +1832,11 @@ fn app_server(a: &Args) -> Result<()> {
                         // a provider's list arrived after its key was saved (login_save): the picker's rows again
                         Some("models" | "tazuna_lists") => {
                             models::refresh_omniroute(); // on this machine: its list as it is now
+                            // claude signed in or out since: read off this thread, the rows again when it changed
+                            if cmd["op"] == "models" {
+                                let tx = tx.clone();
+                                accounts::recheck_claude_login(accounts::claude_logged_in(), move || { let _ = tx.send(json!({"type": "tazuna_lists"})); });
+                            }
                             let cs = app_catalog()?;
                             let (rows, cautions) = app_models(&cs, &live);
                             // a Claude switch in a long conversation re-reads it without the cache: said before the user picks
@@ -1824,7 +1876,7 @@ fn app_server(a: &Args) -> Result<()> {
                                 _ if !live.idle() || turn.is_some() => info(&mut s, "wait until the run has finished (or stop it), then edit".into()),
                                 None => info(&mut s, "that message cannot be edited from here (sent before this window opened it, or by an earlier tazuna)".into()),
                                 Some(block) => {
-                                    let later: Vec<&AppTurn> = done_turns.iter().filter(|t| t.at_block > block && !t.undone).collect();
+                                    let later: Vec<&session::Change> = s.changes.iter().filter(|t| t.at_block > block && !t.undone).collect();
                                     let files_back = if cmd["files"] == true && let Some(first) = later.first() {
                                         let paths: std::collections::HashSet<&str> = later.iter().flat_map(|t| t.files.iter().map(|f| f.path.as_str())).collect();
                                         match turns::snapshot(&cwd) {
@@ -1840,7 +1892,7 @@ fn app_server(a: &Args) -> Result<()> {
                                     match files_back.and_then(|n| live.rewind(cp, false, true).map(|e| (n, e))) {
                                         Ok((n, (t, e))) => {
                                             s.blocks.truncate(block);
-                                            done_turns.retain(|t| t.at_block < block);
+                                            s.changes.retain(|t| t.at_block < block);
                                             undo_note = None;
                                             s.apply(&e, t);
                                             if n > 0 {
@@ -1864,7 +1916,7 @@ fn app_server(a: &Args) -> Result<()> {
                                     Err(e) => (String::new(), Some(format!("{e:#}"))),
                                 },
                                 "turn" => {
-                                    let t = done_turns.get(cmd["turn"].as_u64().unwrap_or(u64::MAX) as usize);
+                                    let t = s.changes.get(cmd["turn"].as_u64().unwrap_or(u64::MAX) as usize);
                                     (t.map(|t| t.files.iter().map(|f| turns::diff(&cwd, &t.before, &t.after, &f.path, MAX)).collect::<String>()).unwrap_or_default(), None)
                                 }
                                 _ => (turns::worktree_diff(&cwd, MAX), None),
@@ -1884,8 +1936,11 @@ fn app_server(a: &Args) -> Result<()> {
                         // one file's diff in a turn, answered as a `diff` line
                         Some("diff") => {
                             let (i, path) = (cmd["turn"].as_u64().unwrap_or(u64::MAX) as usize, cmd["path"].as_str().unwrap_or_default());
-                            if let Some(t) = done_turns.get(i).filter(|t| t.files.iter().any(|f| f.path == path)) {
+                            if let Some(t) = s.changes.get(i).filter(|t| t.files.iter().any(|f| f.path == path)) {
                                 let text = turns::diff(&cwd, &t.before, &t.after, path, 400_000);
+                                if text.is_empty() && turns::gone(&cwd, &t.before, &t.after) {
+                                    info(&mut s, turns::GONE.into());
+                                }
                                 let mut o = out.lock();
                                 let _ = writeln!(o, "{}", json!({"type": "diff", "turn": i, "path": path, "text": text}));
                                 let _ = o.flush();
@@ -1894,13 +1949,18 @@ fn app_server(a: &Args) -> Result<()> {
                         // the last turn's files back as they were before it; the next message tells the model
                         Some("undo") => {
                             let i = cmd["turn"].as_u64().unwrap_or(u64::MAX) as usize;
-                            let last = done_turns.iter().rposition(|t| !t.undone);
-                            match done_turns.get_mut(i) {
+                            let last = s.changes.iter().rposition(|t| !t.undone);
+                            match s.changes.get(i) {
                                 _ if !live.idle() || turn.is_some() => info(&mut s, "wait until the run has finished (or stop it), then undo".into()),
                                 Some(t) if Some(i) == last => match turns::undo(&cwd, &t.before, &t.after, &t.files) {
                                     Ok(()) => {
-                                        t.undone = true;
-                                        let paths: Vec<&str> = t.files.iter().map(|f| f.path.as_str()).collect();
+                                        let paths: Vec<String> = t.files.iter().map(|f| f.path.clone()).collect();
+                                        // recorded, and kept with the conversation: the card stays undone when it is opened again
+                                        if let (Ok(b), Some(id)) = (labels::dir(), live.session_id()) {
+                                            let _ = undone_kept(&b, id, &t.after);
+                                        }
+                                        let (t, e) = live.note(json!({"type": "harness_undone", "after": t.after}));
+                                        s.apply(&e, t);
                                         undo_note = Some(format!("[tazuna: the user undid the file changes of your previous turn; these files are back as they were before it: {}]", paths.join(", ")));
                                         s.apply(&note(format!("undone: {} file{} back as before the turn", paths.len(), if paths.len() == 1 { "" } else { "s" }), false), at);
                                     }
@@ -2123,7 +2183,6 @@ fn app_server(a: &Args) -> Result<()> {
                                 info(&mut s, format!("{err:#}"));
                             } else {
                                 (turn, undo_note) = (None, None);
-                                done_turns.clear();
                                 creating = creation_start(&mut live, &mut s, &ask);
                             }
                         }
@@ -2195,8 +2254,9 @@ fn app_server(a: &Args) -> Result<()> {
         {
             let files = turns::files(&cwd, &before, &after);
             if !files.is_empty() {
-                let at_block = s.blocks.iter().rposition(|b| matches!(b, session::Block::Done(_))).unwrap_or(0);
-                done_turns.push(AppTurn { before, after, files, at_block, undone: false });
+                // recorded, so the conversation opened again has its card (session::Change)
+                let (t, e) = live.note(session::Change::event(&before, &after, &files));
+                s.apply(&e, t);
                 changed = true;
                 if let Some(cmd) = hooks::after_turn(&cwd) {
                     hooks::spawn(cwd.clone(), cmd, hook_tx.clone());
@@ -2204,7 +2264,7 @@ fn app_server(a: &Args) -> Result<()> {
             }
         }
         if changed && last.elapsed() >= Duration::from_millis(50) {
-            emit(&s, &untrusted, &live, &done_turns);
+            emit(&s, &untrusted, &live);
             (changed, last) = (false, Instant::now());
         }
         std::thread::sleep(Duration::from_millis(15));
@@ -2771,6 +2831,9 @@ const CTX_HINT: u64 = 60_000;
 /// and the recordings that hold it (one per tazuna run it went through).
 struct Earlier {
     id: String,
+    /// The sessions it is, oldest first, its own last: one a later session continues (the run log's `continues`: a switch
+    /// to a model that could not take its history, a retry) is part of it, not a row of its own.
+    ids: Vec<String>,
     /// the model of its latest run (an own-loop conversation goes on there), and the provider it ran on (the run log's,
     /// `models::provider_name`; empty: claude, or a log from before 0.1.182)
     model: String,
@@ -2804,6 +2867,7 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
     let mut out: Vec<Earlier> = vec![];
     // the run log is in order: a session's last line says when it was last used
     let mut last_line: Vec<usize> = vec![];
+    let mut continues: std::collections::HashMap<String, String> = Default::default();
     for (n, r) in std::fs::read_to_string(base.join("runs.jsonl")).unwrap_or_default().lines().filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok()).enumerate() {
         let m = &r["meta"];
         let Some(sid) = m["session_id"].as_str() else { continue };
@@ -2811,8 +2875,11 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
             continue;
         }
         let (ts, rec) = (r["ts"].as_u64().unwrap_or(0), m["recording"].as_str().map(std::path::PathBuf::from));
+        if let Some(c) = m["continues"].as_str().filter(|c| *c != sid) {
+            continues.insert(sid.to_string(), c.to_string());
+        }
         let i = out.iter().position(|s| s.id == sid).unwrap_or_else(|| {
-            out.push(Earlier { id: sid.to_string(), model: String::new(), provider: String::new(), key_env: String::new(), first: r["prompt"].as_str().unwrap_or_default().to_string(), last_at: ts, messages: 0, recordings: vec![], named: false });
+            out.push(Earlier { id: sid.to_string(), ids: vec![sid.to_string()], model: String::new(), provider: String::new(), key_env: String::new(), first: r["prompt"].as_str().unwrap_or_default().to_string(), last_at: ts, messages: 0, recordings: vec![], named: false });
             last_line.push(0);
             out.len() - 1
         });
@@ -2827,12 +2894,30 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
             e.recordings.push(p);
         }
     }
-    let mut both: Vec<(usize, Earlier)> = last_line.into_iter().zip(out).collect();
+    // a session that continues another takes it in: its title, its messages, its recordings first (in order of first use,
+    // so a chain's first session is taken in before its next); the earlier one leaves the list. A model switch split one
+    // conversation into two rows until review 12
+    let mut gone = vec![false; out.len()];
+    for i in 0..out.len() {
+        let Some(j) = continues.get(&out[i].id).and_then(|c| out.iter().position(|e| e.id == *c)).filter(|&j| j != i && !gone[j]) else { continue };
+        gone[j] = true;
+        let (first, ids, recordings, messages) = (out[j].first.clone(), out[j].ids.clone(), out[j].recordings.clone(), out[j].messages);
+        let e = &mut out[i];
+        (e.first, e.messages) = (first, e.messages + messages);
+        e.ids = ids.into_iter().chain(e.ids.drain(..)).collect();
+        for p in std::mem::replace(&mut e.recordings, recordings) {
+            if !e.recordings.contains(&p) {
+                e.recordings.push(p);
+            }
+        }
+    }
+    let mut both: Vec<(usize, Earlier)> = last_line.into_iter().zip(out).zip(gone).filter(|(_, g)| !g).map(|(b, _)| b).collect();
     both.sort_by_key(|(n, _)| std::cmp::Reverse(*n));
-    // names given and conversations taken off the list (the desktop app's rename and remove; the recordings stay)
+    // names given and conversations taken off the list (the desktop app's rename and remove; the recordings stay); a name
+    // given to the session it continues holds
     let names = conversation_names(base);
     both.into_iter().map(|(_, e)| e).filter(|e| names[&e.id]["hidden"] != true).map(|mut e| {
-        if let Some(t) = names[&e.id]["title"].as_str() {
+        if let Some(t) = e.ids.iter().rev().find_map(|id| names[id]["title"].as_str()) {
             e.first = t.to_string();
             e.named = true;
         }
@@ -2852,15 +2937,37 @@ fn name_conversation(base: &std::path::Path, id: &str, field: &str, value: serde
         all = json!({});
     }
     all[id][field] = value;
-    std::fs::write(base.join("conversations.json"), serde_json::to_string_pretty(&all)?)?;
+    // whole or not at all (a temporary file renamed over it). ponytail: two cores writing at once, the last one wins and the
+    // other's change is lost; a lock file if renames and undos from two windows at once show up
+    let tmp = base.join(format!("conversations.json.{}.tmp", std::process::id()));
+    std::fs::write(&tmp, serde_json::to_string_pretty(&all)?)?;
+    std::fs::rename(&tmp, base.join("conversations.json"))?;
     Ok(())
+}
+
+/// A turn's changes undone (its tree after: session::Change), kept with the conversation (conversations.json, "undone"): a
+/// window that only undid them sends nothing, so its recording is not among the conversation's when it opens again.
+#[inline(never)]
+fn undone_kept(base: &std::path::Path, id: &str, after: &str) -> Result<()> {
+    let mut list = conversation_names(base)[id]["undone"].as_array().cloned().unwrap_or_default();
+    list.push(json!(after));
+    name_conversation(base, id, "undone", json!(list))
+}
+
+/// The undos kept with a conversation (undone_kept) that its replayed cards lack, each tree as many times as it is kept
+/// more often than undone there.
+fn undos_missing(kept: &[String], changes: &[session::Change]) -> Vec<String> {
+    kept.iter().enumerate().filter(|(i, after)| {
+        let have = changes.iter().filter(|c| c.undone && c.after == **after).count();
+        kept[..=*i].iter().filter(|a| a == after).count() > have
+    }).map(|(_, a)| a.clone()).collect()
 }
 
 /// The parts of a recording that are conversation `id`: a recording holds several when `/new` or `/resume` started another
 /// in the same run, or an edit from an earlier message went on in a fork. Parts are split at their notices; a part is
 /// `id`'s when the init in it names that session. Each part ran on a process of its own, whose reported cost started at
 /// $0. A fork's part starts at its rewind notice: the messages it kept from before show in the original's.
-fn conversation<'a>(events: &'a [(f64, serde_json::Value)], id: &str) -> Vec<Vec<&'a (f64, serde_json::Value)>> {
+fn conversation<'a>(events: &'a [(f64, serde_json::Value)], ids: &[String]) -> Vec<Vec<&'a (f64, serde_json::Value)>> {
     let mut parts: Vec<Vec<&(f64, serde_json::Value)>> = vec![vec![]];
     for e in events {
         let text = e.1["text"].as_str().unwrap_or_default();
@@ -2873,7 +2980,7 @@ fn conversation<'a>(events: &'a [(f64, serde_json::Value)], id: &str) -> Vec<Vec
         }
         parts.last_mut().expect("one at least").push(e);
     }
-    parts.into_iter().filter(|p| p.iter().any(|e| e.1["type"] == "system" && e.1["session_id"] == id)).collect()
+    parts.into_iter().filter(|p| p.iter().any(|e| e.1["type"] == "system" && e.1["session_id"].as_str().is_some_and(|s| ids.iter().any(|i| i == s)))).collect()
 }
 
 /// `/new` (None) or `/resume`: the next message starts a fresh conversation or continues `earlier` on claude. The screen
@@ -3074,7 +3181,7 @@ fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earl
     if let Some(e) = earlier {
         for p in &e.recordings {
             if let Ok(mut r) = Replay::load(p, false) {
-                for part in conversation(r.take(usize::MAX), &e.id) {
+                for part in conversation(r.take(usize::MAX), &e.ids) {
                     for (t, ev) in &part {
                         s.apply(ev, *t);
                         live.heard_before(ev);
@@ -3083,6 +3190,18 @@ fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earl
                     s.apply(&json!({"type": "harness_process_end"}), part.last().map_or(0.0, |e| e.0));
                 }
             }
+        }
+        // the turns undone in a window that sent nothing after (undone_kept), as many as the recordings lack (an undo they
+        // have, applied again, marked a later turn with the same tree)
+        let names = labels::dir().map(|d| conversation_names(&d)).unwrap_or_default();
+        let kept: Vec<String> = e.ids.iter().flat_map(|id| names[id.as_str()]["undone"].as_array().cloned().unwrap_or_default())
+            .filter_map(|a| a.as_str().map(String::from)).collect();
+        for after in undos_missing(&kept, &s.changes) {
+            s.apply(&json!({"type": "harness_undone", "after": after}), 0.0);
+        }
+        // the sessions before the one it goes on in (`earlier_sessions`)
+        if shown_only.is_none() {
+            live.set_earlier(&e.ids[..e.ids.len().saturating_sub(1)]);
         }
         s.model = live.model.clone();
     }
@@ -3177,6 +3296,14 @@ fn run_live(
             if let Some(e) = accounts::claude_plan().and_then(|(rows, _)| accounts::rate_event(&rows)) {
                 let _ = tx.send(e);
             }
+        });
+    }
+    // a Claude model and claude not signed in: said at the start, not by claude's "Please run /login" (tazuna's /login saves
+    // API keys) after the first message
+    if live.provider.is_none() {
+        let tx = status_tx.clone();
+        std::thread::spawn(move || if accounts::refresh_claude_login() == Some(false) {
+            let _ = tx.send(json!({"type": "tazuna_update", "text": "Claude isn't signed in: run `claude auth login` in a terminal, or /model for another model"}));
         });
     }
     // the models SubRouter lets SUBROUTER_API_KEY use, for the picker to grey out the rest
@@ -3779,7 +3906,7 @@ fn run_live(
                 (None, KeyCode::Esc) => login = None,
                 (None, KeyCode::Enter) if lp.sel == 0 => {
                     s.apply(&json!({"type": "harness_info", "text": "Claude runs on the claude CLI's own login (your subscription): if \
-                        it is not logged in, run `claude` in a terminal and /login there"}), live.elapsed_ms());
+                        it is not signed in, run `claude auth login` in a terminal"}), live.elapsed_ms());
                     login = None;
                 }
                 (None, KeyCode::Enter) => {
@@ -4257,6 +4384,9 @@ fn run_live(
                 }
                 if text == "/model" {
                     pick = Some(open_picker(live, &key_models)?);
+                    // claude signed in or out since: read off the screen's thread, the rows again when it changed
+                    let tx = status_tx.clone();
+                    accounts::recheck_claude_login(accounts::claude_logged_in(), move || { let _ = tx.send(json!({"type": "tazuna_lists"})); });
                     continue;
                 }
                 // /usage: every account in one panel: Claude's plan (claude's own /usage page, no model call), the
@@ -4876,16 +5006,6 @@ fn edit_points(s: &Session, live: &live::Live) -> Vec<usize> {
     out
 }
 
-/// A finished turn on the agent that changed files (the app's change card).
-struct AppTurn {
-    before: String,
-    after: String,
-    files: Vec<turns::File>,
-    /// Its `done` block in the session, where the card goes.
-    at_block: usize,
-    undone: bool,
-}
-
 /// A message for the agent from the app: the tree before it is kept (the first message of a turn), and after an undo the
 /// message carries the note that tells the model its last changes are gone. ponytail: the snapshot runs on the server's
 /// one thread (git add -A on a large repo takes a moment); off it if that shows.
@@ -4938,6 +5058,8 @@ fn app_models(cs: &[models::Choice], live: &live::Live) -> (Vec<serde_json::Valu
                 Some(l) if !oauth::signed_in(l) => "not signed in",
                 Some(l) if oauth::plan_declined(l) => "plan use not allowed",
                 Some(_) => "model list not loaded",
+                // claude's own login: its rows as a signed-out sign-in's (the window says how to sign in)
+                None if c.route.is_none() => "not signed in",
                 None if models::login_of(c).and_then(models::mistral_other).is_some() && models::mistral_unsure().is_some() => "which key",
                 None => "no key",
             });
@@ -5055,7 +5177,8 @@ fn sign_in_key(l: &'static models::Login, code: KeyCode, tx: &std::sync::mpsc::S
 #[inline(never)]
 fn login_panel(lp: &LoginPick) -> ui::LoginPanel {
     ui::LoginPanel {
-        rows: std::iter::once(("Claude".to_string(), "subscription · the claude CLI's own login".to_string(), String::new()))
+        rows: std::iter::once(("Claude".to_string(), if accounts::claude_logged_in() == Some(false) { "not signed in · `claude auth login` in a terminal" }
+                else { "subscription · the claude CLI's own login" }.to_string(), String::new()))
             .chain(models::LOGINS.iter().map(|l| {
                 let src = models::key_source(l.vars);
                 // its host is on the provider's page: the line fits 80 columns beside the longest name
@@ -5290,11 +5413,31 @@ mod tests {
     }
 
     #[test]
+    fn claude_not_signed_in_is_a_signed_out_row_and_says_how_to_sign_in() {
+        let live = crate::live::Live::new("claude-opus-5-5", "medium").unwrap();
+        let opus = models::Choice { model: "claude-opus-5-5".into(), label: "Opus 5.5".into(), route: None, place: "Claude · subscription".into(),
+            efforts: vec!["high".into()], price: "plan".into(), note: String::new(), stale: false, state: models::State::NoKey, bench: String::new(), aa: String::new(), pins: vec![] };
+        let (rows, _) = super::app_models(std::slice::from_ref(&opus), &live);
+        assert_eq!((rows[0]["why_not"].as_str(), rows[0]["no_key"].as_bool(), rows[0]["label"].as_str()), (Some("not signed in"), Some(true), Some("Opus 5.5")), "{}", rows[0]);
+        assert_eq!(models::why_not(&opus).as_deref(), Some(models::CLAUDE_SIGNED_OUT), "the terminal's picker says what to run");
+        let mut live = live;
+        assert!(super::apply_choice(&mut live, &opus, None).is_err(), "not picked");
+    }
+
+    #[test]
+    fn a_chat_answers_retries_and_waits_show_but_not_its_start() {
+        assert!(super::chat_shows(&json!({"type": "system", "subtype": "call_retry", "message": "HTTP 429: slow down · trying again in 2s"})));
+        assert!(super::chat_shows(&json!({"type": "system", "subtype": "call_waiting", "message": "the provider is still processing"})));
+        assert!(!super::chat_shows(&json!({"type": "system", "subtype": "init", "model": "x"})));
+        assert!(super::chat_shows(&json!({"type": "result", "result": "hi"})));
+    }
+
+    #[test]
     fn an_own_loop_conversation_goes_on_only_where_it_ran() {
         let row = |url: &str, var: &str| models::Choice { model: "glm-5".into(), label: "glm-5".into(), route: Some((url.into(), var.into(), "1,0.1,3".into())),
             place: String::new(), efforts: vec![], price: String::new(), note: String::new(), stale: false, state: models::State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
         let cs = [row("https://api.z.ai/api/paas/v4", "ZAI_API_KEY")];
-        let e = |provider: &str| super::Earlier { id: "own-1-a".into(), model: "glm-5".into(), provider: provider.into(), key_env: String::new(), first: String::new(), last_at: 0, messages: 1, recordings: vec![], named: false };
+        let e = |provider: &str| super::Earlier { id: "own-1-a".into(), ids: vec![], model: "glm-5".into(), provider: provider.into(), key_env: String::new(), first: String::new(), last_at: 0, messages: 1, recordings: vec![], named: false };
         // it ran on the Coding Plan, which is gone here: shown, not continued on pay-as-you-go Z.ai, which lists the same id
         assert!(super::resume_in(&cs, &e("Z.ai Coding Plan")).is_none());
         assert_eq!(super::resume_in(&cs, &e("Z.ai")).and_then(|c| c.route).map(|r| r.0).as_deref(), Some("https://api.z.ai/api/paas/v4"));
@@ -5350,7 +5493,7 @@ mod tests {
     fn a_mistral_run_goes_on_with_the_key_it_ran_on_and_an_old_one_never_moves_to_per_token_unsaid() {
         let row = |var: &str| models::Choice { model: "codestral-2508".into(), label: "codestral-2508".into(), route: Some(("https://api.mistral.ai/v1".into(), var.into(), "0,0,0".into())),
             place: String::new(), efforts: vec![], price: String::new(), note: String::new(), stale: false, state: models::State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
-        let e = |provider: &str, key_env: &str| super::Earlier { id: "own-1-a".into(), model: "codestral-2508".into(), provider: provider.into(), key_env: key_env.into(),
+        let e = |provider: &str, key_env: &str| super::Earlier { id: "own-1-a".into(), ids: vec![], model: "codestral-2508".into(), provider: provider.into(), key_env: key_env.into(),
             first: String::new(), last_at: 0, messages: 1, recordings: vec![], named: false };
         let both = [row("MISTRAL_API_KEY"), row("MISTRAL_VIBE_API_KEY")];
         let var = |c: Option<models::Choice>| c.and_then(|c| c.route).map(|r| r.1);
@@ -5655,12 +5798,31 @@ not json"#;
         assert!(previous_session(&base, &base.join("none"), None).is_none());
         let list = sessions_of(&base, &repo);
         assert_eq!(list.first().map(|e| e.id.as_str()), Some("ccc-3"), "the latest used first, this repo only");
+        // a session that continues another (a switch to a model that could not take its history): one row, the first's title,
+        // both recordings; a chain is one too
+        let run = |sid: &str, prompt: &str, continues: Option<&str>| json!({"prompt": prompt, "meta": {"session_id": sid, "cwd": &repo,
+            "recording": format!("/r/{sid}.jsonl"), "continues": continues}}).to_string();
+        std::fs::write(base.join("runs.jsonl"), [run("a-1", "What is a haiku?", None), run("own-2", "And a limerick?", Some("a-1")),
+            run("c-3", "A sonnet?", Some("own-2")), run("x-9", "Unrelated", None)].join("\n")).unwrap();
+        let list = sessions_of(&base, &repo);
+        let rows: Vec<(&str, &str, usize)> = list.iter().map(|e| (e.id.as_str(), e.first.as_str(), e.messages)).collect();
+        assert_eq!(rows, [("x-9", "Unrelated", 1), ("c-3", "What is a haiku?", 3)]);
+        assert_eq!((list[1].ids.join(" "), list[1].recordings.len()), ("a-1 own-2 c-3".to_string(), 3));
+        // replayed: every part that is one of its sessions
+        let rec = vec![(0.0, json!({"type": "system", "subtype": "init", "session_id": "a-1"})), (0.0, json!({"type": "harness_notice", "text": "── new conversation ──"})),
+            (0.0, json!({"type": "system", "subtype": "init", "session_id": "own-2"}))];
+        assert_eq!(super::conversation(&rec, &list[1].ids).len(), 2);
+        // an undo kept with the conversation that the recordings have already is not applied again
+        let card = |after: &str, undone: bool| session::Change { before: "b".into(), after: after.into(), files: vec![], at_block: 0, undone };
+        let kept = ["t1".to_string(), "t1".to_string(), "t2".to_string()];
+        assert_eq!(super::undos_missing(&kept, &[card("t1", true), card("t1", false), card("t2", false)]), ["t1", "t2"]);
+        assert!(super::undos_missing(&kept[..1], &[card("t1", true), card("t1", false)]).is_empty());
         // a recording with two conversations (a /new between them): only the one asked for is replayed
         let ev = |v: serde_json::Value| (0.0, v);
         let rec = vec![ev(json!({"type": "harness_user", "text": "one"})), ev(json!({"type": "system", "subtype": "init", "session_id": "s1"})),
             ev(json!({"type": "harness_notice", "text": "── new conversation ──"})),
             ev(json!({"type": "harness_user", "text": "two"})), ev(json!({"type": "system", "subtype": "init", "session_id": "s2"}))];
-        let texts = |rec: &[(f64, serde_json::Value)], id: &str| super::conversation(rec, id).into_iter().flatten().filter_map(|e| e.1["text"].as_str().map(String::from)).collect::<Vec<_>>();
+        let texts = |rec: &[(f64, serde_json::Value)], id: &str| super::conversation(rec, &[id.to_string()]).into_iter().flatten().filter_map(|e| e.1["text"].as_str().map(String::from)).collect::<Vec<_>>();
         assert_eq!((texts(&rec, "s1"), texts(&rec, "s2")), (vec!["one".to_string()], vec!["two".to_string()]));
         // an edit from an earlier message: what came after it is the fork's, not the original's
         let rec = vec![ev(json!({"type": "system", "subtype": "init", "session_id": "s1"})), ev(json!({"type": "harness_user", "text": "a"})),

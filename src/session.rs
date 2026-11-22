@@ -70,6 +70,27 @@ impl Tool {
     }
 }
 
+/// A finished turn on the agent that changed files (the desktop's change card): the work tree before and after it as git
+/// trees (turns.rs), its files, its `done` block (where the card goes), whether it was undone. Kept as recorded events
+/// (`harness_turn`, `harness_undone`), so a conversation opened again has its cards: they lived in the app server alone,
+/// and a resumed conversation said "Changes 0" beside the agent's files (review 12).
+pub struct Change {
+    pub before: String,
+    pub after: String,
+    pub files: Vec<crate::turns::File>,
+    pub at_block: usize,
+    pub undone: bool,
+}
+
+impl Change {
+    /// The event that records it.
+    #[inline(never)]
+    pub fn event(before: &str, after: &str, files: &[crate::turns::File]) -> Value {
+        json!({"type": "harness_turn", "before": before, "after": after,
+            "files": files.iter().map(|f| json!({"path": f.path, "added": f.added, "removed": f.removed, "status": f.status.to_string()})).collect::<Vec<_>>()})
+    }
+}
+
 pub struct Summary {
     pub ok: bool,
     pub secs: f64,
@@ -323,8 +344,13 @@ pub struct Session {
     pub profile: String,
     /// Permission mode in tazuna's words: auto, ask, edits, plan.
     pub mode: String,
+    /// The router's choice at the start (its `harness_route` event), for its line again after a model picked before the
+    /// first message.
+    lane: Value,
     /// Slash commands claude offers in this session (built-ins, the repo's commands and skills), plus tazuna's own.
     pub commands: Vec<String>,
+    /// Each finished turn's changed files, in order.
+    pub changes: Vec<Change>,
     /// Claude's to-do list (TodoWrite): (status, text).
     pub todos: Vec<(String, String)>,
     /// The last thing the user sent, to tell what a command result belongs to.
@@ -384,7 +410,7 @@ impl Session {
             price_m: None,
             provider: None,
             context: 0,
-            // ponytail: Opus 5.5's window as the default until the result event reports the real one
+            // unknown (null in the view, no stand-in) until a result reports it
             context_window: None,
             think_from: (0, 0.0),
             now_ms: 0.0,
@@ -433,9 +459,11 @@ impl Session {
             finished_tools: 0,
             results: 0,
             profile: String::new(),
+            lane: Value::Null,
             mode: "auto".into(),
             commands: vec!["agent".into(), "bad".into(), "boss".into(), "changelog".into(), "chat".into(), "create".into(), "data".into(), "diff".into(), "effort".into(), "explorer".into(), "good".into(), "hook".into(), "jira".into(), "keys".into(), "login".into(), "loop".into(), "mcp".into(), "model".into(), "new".into(), "preset".into(), "profile".into(), "resume".into(), "review".into(), "route".into(), "rewind".into(), "usage".into(), "verify".into(), "vim".into()],
             todos: Vec::new(),
+            changes: Vec::new(),
             last_prompt: String::new(),
             streamed: false,
             streamed_text: false,
@@ -574,7 +602,11 @@ impl Session {
                 }
                 v
             }
-            Block::Notice { text, error } => json!({"kind": "notice", "text": text, "error": error}),
+            // a switch that carries the conversation to another model (live.rs switch): a line where it continues
+            Block::Notice { text, error } => match text.split_once(": the conversation continues on ").filter(|_| text.starts_with("model: ")) {
+                Some((_, model)) => json!({"kind": "notice", "text": format!("── continued on {model} ──"), "error": error}),
+                None => json!({"kind": "notice", "text": text, "error": error}),
+            },
             // the app has no block of its own for it: a notice, an error once the run ended on it
             Block::Retry(r) => json!({"kind": "notice", "error": r.gave_up, "text": format!("{}: {} {} failed{} ({})", r.why, r.tries,
                 if r.tries == 1 { "try" } else { "tries" }, if r.next_ms.is_some() { ", trying again" } else { "" }, r.raw)}),
@@ -912,6 +944,42 @@ impl Session {
                 self.verify_cancelled = false;
             }
             (Some("harness_interrupt"), _) => self.stopping = true,
+            // the window's Retry (live.rs retry): the last message's failed try goes (its error, its receipt, a card), its
+            // calls go under the new reply's receipt, and the work on it begins again under the same message
+            // what came after it stays (a switch's "continued on" line: the new reply comes under it)
+            (Some("harness_retry"), _) => {
+                let p = self.blocks.iter().rposition(|b| matches!(b, Block::Prompt(_)));
+                let d = p.and_then(|p| self.blocks[p..].iter().rposition(|b| matches!(b, Block::Done(_))).map(|d| p + d));
+                if let (Some(p), Some(d)) = (p, d) {
+                    self.blocks.drain(p + 1..=d);
+                    let moved = |i: usize| if i <= p { i } else if i <= d { p + 1 } else { i - (d - p) };
+                    self.changes.retain(|c| c.at_block <= p || c.at_block > d);
+                    for c in &mut self.changes {
+                        c.at_block = moved(c.at_block);
+                    }
+                    for b in &mut self.call_blocks {
+                        *b = moved(*b);
+                    }
+                    (self.retry, self.stopping) = (None, false);
+                    self.call_thinking.clear();
+                    self.new_blocks += 1;
+                }
+                self.clock_on(at_ms);
+                self.ready_at = Some(at_ms);
+                self.activity = Activity::Waiting;
+            }
+            // a turn's changes (main.rs), its card under the turn's answer
+            (Some("harness_turn"), _) => {
+                let files = e["files"].as_array().into_iter().flatten().map(|f| crate::turns::File { path: s(&f["path"]), added: f["added"].as_u64(),
+                    removed: f["removed"].as_u64(), status: f["status"].as_str().and_then(|x| x.chars().next()).unwrap_or('M') }).collect();
+                let at_block = self.blocks.iter().rposition(|b| matches!(b, Block::Done(_))).unwrap_or(0);
+                self.changes.push(Change { before: s(&e["before"]), after: s(&e["after"]), files, at_block, undone: false });
+            }
+            (Some("harness_undone"), _) => {
+                if let Some(c) = self.changes.iter_mut().rev().find(|c| !c.undone && c.after == s(&e["after"])) {
+                    c.undone = true;
+                }
+            }
             (Some("harness_verify_start"), _) => {
                 self.clock_on(at_ms);
                 self.push(Block::Verify(Verify { cmd: s(&e["cmd"]), no_tests: false, timed_out: false, cannot_run: false, round: e["round"].as_u64().unwrap_or(1), ok: None, secs: 0.0, output: String::new() }));
@@ -936,11 +1004,9 @@ impl Session {
             }
             (Some("harness_route"), _) => {
                 (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
-                let model = self.model.trim_start_matches("claude-").to_string();
-                let up = e["escalate"].as_str().map_or(String::new(), |x| format!(" · escalates to {} if tests fail", x.trim_start_matches("claude-")));
                 self.profile = s(&e["profile"]);
-                let profile = e["profile"].as_str().map_or(String::new(), |p| format!(" · {p} profile"));
-                self.push(Block::Notice { text: format!("lane {}: {model} {}{profile} ({}){up}", s(&e["lane"]), self.effort, s(&e["reason"])), error: false });
+                self.lane = e.clone();
+                self.push(Block::Notice { text: lane_text(e), error: false });
             }
             (Some("harness_profile"), _) => {
                 self.profile = s(&e["profile"]);
@@ -992,6 +1058,14 @@ impl Session {
                 self.push(Block::Notice { text: "open permission questions dropped: claude stopped".into(), error: false });
             }
             (Some("harness_permission_done"), _) => {
+                // the step runs from the answer: the wait for it was the user's ("Ran ls -la 7.7 s" after 7 s of it, review 12).
+                // Only the call the question names: one from inside a subagent is not on this screen, and the oldest open call
+                // then is the subagent's own (its minutes read as seconds)
+                if let Some((tool, input)) = self.asked.front().cloned()
+                    && let Some(Block::Tool(t)) = self.blocks.iter_mut().rev().find(|b| matches!(b, Block::Tool(x) if x.result.is_none() && x.done_ms.is_none() && x.name == tool && x.input == input))
+                {
+                    t.started_ms = at_ms;
+                }
                 self.asked.pop_front();
                 self.mode = mode_name(e["mode"].as_str().unwrap_or_default()).to_string();
                 let verb = match (e["allow"] == true, e["always"] == true) {
@@ -1091,6 +1165,15 @@ impl Session {
                 // /model: the old process is gone
                 self.close_process();
                 (self.model, self.effort) = (s(&e["model"]), s(&e["effort"]));
+                // picked before the first message: the route line names the model that runs, without the lane's cascade
+                // (a pick ends it, live.rs picked). It named the router's Sonnet and its escalation over an own-loop model
+                // (review 12)
+                let picked = !self.blocks.iter().any(|b| matches!(b, Block::Prompt(_)));
+                if picked && let Some(Block::Notice { text, .. }) = self.blocks.iter_mut().find(|b| matches!(b, Block::Notice { text, .. } if text.starts_with("lane "))) {
+                    let mut lane = self.lane.clone();
+                    (lane["model"], lane["effort"], lane["escalate"]) = (e["model"].clone(), e["effort"].clone(), Value::Null);
+                    *text = lane_text(&lane);
+                }
                 (self.provider, self.price_m) = (None, None); // the next process says its own
                 self.context_window = None; // the next model reports its own (the own loop's: none)
                 self.cache_ttl_ms = None;
@@ -1128,6 +1211,9 @@ impl Session {
                 self.activity = Activity::Ready;
             }
             (Some("stream_event"), _) => self.stream(&e["event"]),
+            // claude's own error as a message ("Not logged in · Please run /login"): its result says it, once, as the
+            // error; it showed as the answer too (review 12)
+            (Some("assistant"), _) if e["is_api_error_message"] == true => {}
             (Some("assistant"), _) => {
                 // Full message: tool inputs arrive complete here (partial JSON is not worth rendering). The own loop
                 // streams no content blocks, only the message: its text and tool calls are drawn from here.
@@ -1248,10 +1334,13 @@ impl Session {
                 // filter refused a question, 2026-11-05)
                 if !ok && !stopped {
                     if let Some(why) = e["result"].as_str().filter(|r| !r.trim().is_empty()) {
+                        // claude's own login: tazuna's words for it, on claude only (a gateway's "OAuth token has expired" is not
+                        // claude's)
+                        let said = if !self.own_loop(e["tazuna_paid"] == true) && claude_login_error(why) { CLAUDE_NOT_SIGNED_IN.to_string() } else { failure_reason(why) };
                         // the call that was being tried again failed for good: its block says so, not a second one
                         match self.retry.and_then(|i| self.blocks.get_mut(i)) {
-                            Some(Block::Retry(r)) => (r.why, r.raw, r.tries, r.gave_up) = (failure_reason(why), shown(why, 4000), r.tries + 1, true),
-                            _ => self.push(Block::Notice { text: failure_reason(why), error: true }),
+                            Some(Block::Retry(r)) => (r.why, r.raw, r.tries, r.gave_up) = (said, shown(why, 4000), r.tries + 1, true),
+                            _ => self.push(Block::Notice { text: said, error: true }),
                         }
                     }
                 }
@@ -1433,12 +1522,50 @@ impl Session {
         }
     }
 
+    /// The last message and its block, when its turn ended without an answer (an error, a stop): what Retry sends again.
+    /// The answer is the text after the turn's last step; text before it ("I'll check the config.", then a 529) is not one.
+    #[inline(never)]
+    pub fn retryable(&self) -> Option<(usize, String)> {
+        let p = self.blocks.iter().rposition(|b| matches!(b, Block::Prompt(_)))?;
+        let after = &self.blocks[p + 1..];
+        let failed = after.iter().any(|b| matches!(b, Block::Done(d) if !d.ok));
+        let from = after.iter().rposition(|b| matches!(b, Block::Tool(_))).map_or(p + 1, |t| p + 2 + t);
+        let answered = (from..self.blocks.len()).any(|i| matches!(&self.blocks[i], Block::Text { text, .. } if !text.trim().is_empty() && !self.hidden(i)));
+        let Block::Prompt(text) = &self.blocks[p] else { return None };
+        (failed && !answered).then(|| (p, text.clone()))
+    }
+
+    /// The block of the call the oldest permission question is about: the open call with the question's tool and input,
+    /// then its tool alone, then the oldest open call (a question is asked in the calls' order).
+    #[inline(never)]
+    pub fn asked_call(&self) -> Option<usize> {
+        let open = || self.blocks.iter().enumerate().filter_map(|(i, b)| match b {
+            Block::Tool(x) if x.result.is_none() && x.done_ms.is_none() => Some((i, x)),
+            _ => None,
+        });
+        let about = self.asked.front().and_then(|(tool, input)| open().find(|(_, x)| x.name == *tool && x.input == *input).or_else(|| open().find(|(_, x)| x.name == *tool)));
+        about.or_else(|| open().next()).map(|(i, _)| i)
+    }
+
     fn tool_mut(&mut self, id: &str) -> Option<&mut Tool> {
         self.blocks.iter_mut().rev().find_map(|b| match b {
             Block::Tool(t) if t.id == id => Some(t),
             _ => None,
         })
     }
+}
+
+/// The router's line at a session's start: "lane small: sonnet-5-5 medium · lean profile (tiny repo, 5 tracked files) ·
+/// escalates to Opus 5.5 high if tests fail" (the terminal says it as "started on …", ui::lane_notice).
+#[inline(never)]
+fn lane_text(e: &Value) -> String {
+    let s = |v: &Value| v.as_str().unwrap_or_default().to_string();
+    let up = e["escalate"].as_str().map_or(String::new(), |x| {
+        let (m, effort) = x.split_once(' ').map_or((x, String::new()), |(m, e)| (m, format!(" {e}")));
+        format!(" · escalates to {}{effort} if tests fail", crate::ui::model_short(m))
+    });
+    let profile = e["profile"].as_str().filter(|p| !p.is_empty()).map_or(String::new(), |p| format!(" · {p} profile"));
+    format!("lane {}: {} {}{profile} ({}){up}", s(&e["lane"]), s(&e["model"]).trim_start_matches("claude-"), s(&e["effort"]), s(&e["reason"]))
 }
 
 /// Text from the model made safe to show in a permission question: control characters (terminal escapes, carriage
@@ -1472,6 +1599,18 @@ pub fn mode_name(m: &str) -> &str {
         "plan" => "plan",
         other => other,
     }
+}
+
+/// claude's error for a login that is missing, expired or revoked, in the window's words; the terminal leaves out the
+/// window's parts (ui::block_lines). claude's own says "Please run /login", which in tazuna saves API keys (review 12).
+pub const CLAUDE_NOT_SIGNED_IN: &str = "Claude Code isn't signed in. Run `claude auth login` in a terminal (or Settings → Providers → Claude), then Retry.";
+
+/// claude's texts for that (its CLI 2.1.330): "Not logged in · Please run /login", "Login expired · Please run /login",
+/// "OAuth token revoked · Please run /login", "Session expired. Please run /login to sign in again.", "Failed to
+/// authenticate: OAuth session expired and could not be refreshed", "Please run /login · API Error: 401 …".
+#[inline(never)]
+fn claude_login_error(text: &str) -> bool {
+    ["Please run /login", "run /login to sign in", "Not logged in", "OAuth session expired", "OAuth token revoked", "OAuth token has expired"].iter().any(|p| text.contains(p))
 }
 
 /// A failed turn's reason in a line: known provider refusals in plain words, anything else cut to its start.
@@ -1879,6 +2018,86 @@ mod tests {
         let msg = r#"[provider error: HTTP 403: {"error":{"message":"请求内容未通过安全检查。","type":"content_policy_violation","code":"content_policy_violation"}}]"#;
         assert!(super::failure_reason(msg).starts_with("the provider's content filter refused"));
         assert_eq!(super::failure_reason("[provider error: HTTP 500: boom]"), "provider error: HTTP 500: boom");
+    }
+
+    #[test]
+    fn claude_not_signed_in_is_one_error_in_tazunas_words_not_also_the_answer() {
+        let mut s = Session::new("", "high");
+        s.apply(&json!({"type": "harness_user", "text": "what is a haiku?"}), 0.0);
+        s.apply(&json!({"type": "assistant", "error": "authentication_failed", "is_api_error_message": true, "parent_tool_use_id": null,
+            "message": {"model": "<synthetic>", "content": [{"type": "text", "text": "Not logged in · Please run /login"}]}}), 10.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "is_error": true, "result": "Not logged in · Please run /login", "total_cost_usd": 0, "duration_ms": 42}), 20.0);
+        let kinds: Vec<String> = s.view()["blocks"].as_array().unwrap().iter().map(|b| b["kind"].as_str().unwrap().to_string()).collect();
+        assert_eq!(kinds, ["prompt", "notice", "done"]);
+        assert!(matches!(&s.blocks[1], Block::Notice { text, error: true } if text == CLAUDE_NOT_SIGNED_IN));
+        assert!(claude_login_error("Login expired · Please run /login") && claude_login_error("Failed to authenticate: OAuth session expired and could not be refreshed"));
+        // a gateway on the own loop saying the same words is not claude: no claude advice
+        let mut own = Session::new("", "high");
+        own.apply(&json!({"type": "harness_user", "text": "hi"}), 0.0);
+        own.apply(&json!({"type": "result", "subtype": "error", "is_error": true, "result": "HTTP 401: OAuth token has expired", "tazuna_paid": true}), 1.0);
+        assert!(matches!(&own.blocks[1], Block::Notice { text, .. } if text != CLAUDE_NOT_SIGNED_IN));
+        // what Retry sends again, and the failed try gone once it does
+        assert_eq!(s.retryable(), Some((0, "what is a haiku?".to_string())));
+        s.apply(&json!({"type": "harness_retry"}), 30.0);
+        assert!(s.blocks.len() == 1 && s.retryable().is_none() && s.working_for(40.0) == 10.0);
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "Five, seven, five."}]}}), 50.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "result": "Five, seven, five.", "total_cost_usd": 0.01}), 60.0);
+        assert!(s.retryable().is_none(), "answered");
+        // text before a step is not the answer: a turn that said what it would do, then failed, is retried
+        s.apply(&json!({"type": "harness_user", "text": "check the config"}), 70.0);
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "I'll check the config."}, {"type": "tool_use", "id": "r1", "name": "Read", "input": {"file_path": "a"}}]}}), 71.0);
+        s.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "r1", "content": "x"}]}}), 72.0);
+        s.apply(&json!({"type": "result", "subtype": "error", "is_error": true, "result": "API Error: 529 overloaded", "total_cost_usd": 0.02}), 73.0);
+        assert_eq!(s.retryable().map(|r| r.1), Some("check the config".to_string()));
+        // a switch after it: its line stays, and the new reply comes under it
+        s.apply(&json!({"type": "harness_switch", "model": "mock-coder-7b", "effort": "", "text": "model: Mock Coder 7B: the conversation continues on Mock Coder 7B"}), 74.0);
+        s.apply(&json!({"type": "harness_retry"}), 75.0);
+        let last: Vec<String> = s.view()["blocks"].as_array().unwrap().iter().rev().take(2).map(|b| b["text"].as_str().unwrap_or_default().to_string()).collect();
+        assert_eq!(last, ["── continued on Mock Coder 7B ──", "check the config"]);
+    }
+
+    #[test]
+    fn a_turns_changes_and_their_undo_come_back_with_the_recording() {
+        let events = [json!({"type": "harness_user", "text": "change it"}), json!({"type": "result", "subtype": "success", "result": "done", "total_cost_usd": 0}),
+            Change::event("t0", "t1", &[crate::turns::File { path: "NOTES.md".into(), added: Some(3), removed: Some(0), status: 'A' }]),
+            json!({"type": "harness_undone", "after": "t1"})];
+        let mut s = Session::new("", "high");
+        for e in &events {
+            s.apply(e, 0.0);
+        }
+        let c = &s.changes[0];
+        assert_eq!((c.before.as_str(), c.after.as_str(), c.files[0].path.as_str(), c.files[0].status, c.at_block, c.undone), ("t0", "t1", "NOTES.md", 'A', 1, true));
+    }
+
+    #[test]
+    fn a_step_runs_from_the_users_answer() {
+        let mut s = Session::new("", "high");
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "c1", "name": "bash", "input": {"command": "ls -la"}}]}}), 1000.0);
+        s.apply(&json!({"type": "harness_permission", "tool": "bash", "input": {"command": "ls -la"}}), 1010.0);
+        s.apply(&json!({"type": "harness_permission_done", "tool": "bash", "allow": true, "mode": "default"}), 8000.0);
+        s.apply(&json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "c1", "content": "ok"}]}}), 8700.0);
+        let Block::Tool(t) = &s.blocks[0] else { panic!() };
+        assert_eq!(t.secs(), Some(0.7), "the 7 s of waiting for Allow are not the step's");
+        // a question from inside a subagent: its call is not on this screen, and the subagent's own step keeps its time
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "t1", "name": "Task", "input": {"prompt": "look"}}]}}), 10_000.0);
+        s.apply(&json!({"type": "harness_permission", "tool": "Bash", "input": {"command": "rm x"}}), 20_000.0);
+        s.apply(&json!({"type": "harness_permission_done", "tool": "Bash", "allow": true, "mode": "default"}), 190_000.0);
+        let Some(Block::Tool(t)) = s.blocks.iter().rev().find(|b| matches!(b, Block::Tool(x) if x.id == "t1")) else { panic!() };
+        assert_eq!(t.started_ms, 10_000.0);
+    }
+
+    #[test]
+    fn a_model_picked_before_the_first_message_is_the_one_the_route_line_names() {
+        let mut s = Session::new("", "");
+        s.apply(&json!({"type": "harness_route", "lane": "small", "model": "claude-sonnet-5-5", "effort": "medium", "reason": "tiny repo, 5 tracked files",
+            "profile": "lean", "escalate": "claude-opus-5-5 high"}), 0.0);
+        assert!(matches!(&s.blocks[0], Block::Notice { text, .. } if text.ends_with("· escalates to Opus 5.5 high if tests fail")));
+        s.apply(&json!({"type": "harness_switch", "model": "mock-coder-7b", "effort": "", "text": "model: Mock Coder 7B from here on"}), 1.0);
+        let Block::Notice { text, .. } = &s.blocks[0] else { panic!() };
+        assert_eq!(crate::ui::lane_notice(text).as_deref(), Some("started on Mock Coder 7B · lean profile (tiny repo, 5 tracked files)"), "{text}");
+        // a switch that carries the conversation: a line where it continues, in the window
+        s.apply(&json!({"type": "harness_switch", "model": "claude-opus-5-5", "effort": "high", "text": "model: Opus 5.5 · high: the conversation continues on Opus 5.5"}), 2.0);
+        assert_eq!(s.view()["blocks"][2]["text"], "── continued on Opus 5.5 ──");
     }
 
     #[test]

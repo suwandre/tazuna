@@ -92,9 +92,22 @@ fn on_disk(cwd: &Path, path: &str) -> Option<String> {
     cwd.join(path).is_file().then(|| git(cwd, &["hash-object", "--", path], None).ok()).flatten().map(|s| s.trim().to_string())
 }
 
+/// What Undo and Diff say when a turn's trees are gone.
+pub const GONE: &str = "this turn's snapshot is gone (git cleaned it up)";
+
+/// A turn's trees are no longer in the repository: snapshots are unreferenced objects, which git's gc drops in time (about
+/// two weeks), and a card from a conversation opened again can outlive them. They read as "changed after that turn".
+pub fn gone(cwd: &Path, before: &str, after: &str) -> bool {
+    [before, after].iter().any(|t| git(cwd, &["cat-file", "-e", &format!("{t}^{{tree}}")], None).is_err())
+}
+
 /// Puts the turn's files back as they were before it. Refused, with nothing written, when any of them changed after the
-/// turn (by the user or a later turn). ponytail: file modes are not restored (an executable bit a turn added stays).
+/// turn (by the user or a later turn), or its snapshot is gone. ponytail: file modes are not restored (an executable bit a
+/// turn added stays).
 pub fn undo(cwd: &Path, before: &str, after: &str, changed: &[File]) -> Result<()> {
+    if gone(cwd, before, after) {
+        bail!("{GONE}");
+    }
     for f in changed {
         if on_disk(cwd, &f.path) != blob(cwd, after, &f.path) {
             bail!("{} changed after that turn: undo works only while the files are as it left them", f.path);
@@ -215,6 +228,10 @@ mod tests {
         // the user's index is untouched (nothing staged)
         assert_eq!(std::fs::read(dir.join(".git/index")).unwrap(), index_before);
 
+        // a snapshot git cleaned up: said so, not "changed after that turn"
+        let lost = "0123456789abcdef0123456789abcdef01234567";
+        assert!(gone(&dir, &before, lost) && !gone(&dir, &before, &after));
+        assert_eq!(undo(&dir, &before, lost, &fs).unwrap_err().to_string(), GONE);
         // changed again after the turn: refused, nothing written
         std::fs::write(dir.join("new.txt"), "edited by the user\n").unwrap();
         assert!(undo(&dir, &before, &after, &fs).is_err());

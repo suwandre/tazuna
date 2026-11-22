@@ -98,9 +98,12 @@ pub fn draw(f: &mut Frame, s: &Session, v: &View, th: &Theme) -> Areas {
     let a = b.inner(p_context).inner(Margin { horizontal: 1, vertical: 0 });
     f.render_widget(b, p_context);
     let [g1, g2, g3, g4] = Layout::vertical([Constraint::Length(1); 4]).areas(a);
-    // the window as the model reports it: none until claude's first result, none on the own loop
-    let (ctx, window) = s.context_window.map_or((0.0, String::new()), |w| (s.context as f64 / w as f64, format!(" / {}", human(w))));
-    gauge(f, g1, ctx, &format!("{:<12}{}{window}", "context", human(s.context)), th.accent, th);
+    // the window as the model reports it: none until claude's first result, none on the own loop, and then the count alone,
+    // no gauge (the window stood at "1% of 200k" for a local model, review 12)
+    match s.context_window {
+        Some(w) => gauge(f, g1, s.context as f64 / w as f64, &format!("{:<12}{} / {}", "context", human(s.context), human(w)), th.accent, th),
+        None => f.render_widget(Paragraph::new(Line::from(vec![Span::styled(format!("{:<12}", "context"), st(th.text)), Span::styled(human(s.context), st(th.text))])), g1),
+    }
     let misses = s.cache_misses();
     let miss = match misses {
         0 => String::new(),

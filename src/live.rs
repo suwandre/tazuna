@@ -170,6 +170,20 @@ pub fn with_earlier(text: &str, earlier: &[(String, String)]) -> String {
     m + text
 }
 
+/// The exchanges a switch carries to a model that cannot read the conversation's history (`switch`): the latest that fit
+/// in about 40k characters as `with_earlier` cuts them, a message without an answer said so.
+#[inline(never)]
+pub fn carried(conv: &[(String, String)]) -> Vec<(String, String)> {
+    let mut room = 40_000usize;
+    let from = conv.iter().rposition(|(q, a)| {
+        let n = q.chars().count().min(1500) + a.chars().count().min(3000);
+        let over = n > room;
+        room = room.saturating_sub(n);
+        over
+    }).map_or(0, |i| i + 1);
+    conv[from..].iter().map(|(q, a)| (q.clone(), if a.is_empty() { "(no answer)".into() } else { a.clone() })).collect()
+}
+
 /// Experiment (TAZUNA_ANSWER_REVIEW, 2026-11-15): the self-review turn (`--self-review`) runs only after a change, so a plan
 /// or a review (the weakest kinds: 3-7 against 8-9 for questions) never got one. This turn follows an answer that changed
 /// nothing. Measured on Mistral's DeepSeek (5 dev plans): judge 7.10 to 7.40 (5 runs), acceptable 80% to 60%, billed
@@ -441,6 +455,13 @@ pub struct Checkpoint {
     pub text: String,
     /// The last reply before the message: a conversation rewind resumes there (None: before the first message).
     pub before: Option<String>,
+    /// The exchanges that went in front of it (the first message after a switch): a retry sends them again.
+    pub carry: Vec<(String, String)>,
+    /// Its images were read and sent (a typed message's; never tazuna's own text): a retry sends it the same way.
+    pub attach: bool,
+    /// The switches to a model that could not take the history before it (`switches`): one from before the last is not in
+    /// the history of the session now.
+    pub epoch: u64,
 }
 
 /// A random version-4 UUID (claude takes the message ids it is given, and they must be UUIDs).
@@ -621,6 +642,19 @@ pub struct Live {
     /// router's next chat answer has the last (`handed`); a message handed to the agent carries the last few (`earlier`).
     said: Vec<(String, String)>,
     told: usize,
+    /// This conversation's exchanges, oldest first (a message, its final answer or empty), in every profile (`track`); what
+    /// a model that cannot read its history gets as text (`switch`).
+    conv: Vec<(String, String)>,
+    /// The exchanges the next new session's first message carries (`switch`, `start_run`).
+    carry: Vec<(String, String)>,
+    /// The session this one continues (a switch to a model that could not take its history, a retry, an edit from an
+    /// earlier message): the run log's `continues`, by which the conversation lists show the two as one (main.rs sessions_of).
+    continues: Option<String>,
+    /// Every earlier session this conversation continues from, oldest first: the view's `earlier_sessions`, so the window
+    /// knows the conversation by any of its ids (its session id is null after a switch until the new one starts).
+    earlier: Vec<String>,
+    /// Switches to a model that could not take the history (a checkpoint's `epoch`).
+    switches: u64,
     /// `--data any` or `/data any`: providers off the trusted list may see the code (the model picker allows them).
     pub data_any: bool,
     /// Also load the user's personal ~/.claude settings (repo profile).
@@ -734,6 +768,11 @@ impl Live {
             handoff: None,
             said: Vec::new(),
             told: 0,
+            conv: Vec::new(),
+            carry: Vec::new(),
+            continues: None,
+            earlier: Vec::new(),
+            switches: 0,
             data_any: false,
             user_settings: false,
             connectors: false,
@@ -843,6 +882,7 @@ impl Live {
     /// question, set in `poll`), and the line that starts another conversation. A resumed chat's recordings give them back
     /// the same way (`heard_before`).
     fn heard(&mut self, e: &Value) {
+        self.track(e);
         if e["type"] == "harness_notice" && e["text"].as_str().is_some_and(|t| t.starts_with("── ")) {
             (self.said, self.told) = (Vec::new(), 0);
         }
@@ -868,6 +908,30 @@ impl Live {
     pub fn heard_before(&mut self, e: &Value) {
         if self.profile == Profile::Chat {
             self.heard(e);
+        } else {
+            self.track(e);
+        }
+    }
+
+    /// Keeps the conversation's exchanges (`conv`) by a recorded event: a message, a result (its answer, to the message it
+    /// answered: `tazuna_prompt`), a new or resumed conversation.
+    #[inline(never)]
+    fn track(&mut self, e: &Value) {
+        let text = e["text"].as_str().unwrap_or_default();
+        match e["type"].as_str() {
+            Some("harness_user") => self.conv.push((text.to_string(), String::new())),
+            Some("harness_notice") if text.starts_with("── new conversation") || text.starts_with("── resumed session") => self.conv.clear(),
+            Some("result") => {
+                let Some(a) = e["result"].as_str().filter(|a| e["subtype"] == "success" && e["is_error"] != true && !a.trim().is_empty() && !hands_off(a)) else { return };
+                // to its message; claude's own turn after a background command, or a recording from before, to the first
+                // message without an answer, else the last
+                let q = e["tazuna_prompt"].as_str();
+                let i = self.conv.iter().rposition(|c| Some(c.0.as_str()) == q).or_else(|| self.conv.iter().position(|c| c.1.is_empty()));
+                if let Some(c) = i.or(self.conv.len().checked_sub(1)).and_then(|i| self.conv.get_mut(i)) {
+                    c.1 = a.to_string();
+                }
+            }
+            _ => {}
         }
     }
 
@@ -981,9 +1045,14 @@ impl Live {
             }
         });
         self.types_last = run.types_before.clone().map(|b| (run.git_before.clone(), b));
+        // a new session after a switch: the conversation so far in front of its first message (`switch`), kept with its
+        // checkpoint for a retry of it; done with once it went out
+        let carry = if sent.is_none() { self.carry.clone() } else { Vec::new() };
         // the map orients the first message of a session; the run log keeps the user's own words
         let first = if sent.is_some() {
             sent.map(String::from)
+        } else if !carry.is_empty() {
+            Some(with_earlier(text, &carry))
         } else if self.repo_map && !self.mapped && self.session_id.is_none() {
             self.mapped = true;
             crate::repomap::build(&self.cwd, text).map(|m| format!("{m}\n---\n\n{text}"))
@@ -998,9 +1067,22 @@ impl Live {
         // begins in its saved history); a handed-over turn is in a conversation of its own, not one to go back in
         let uuid = self.handoff.is_none().then(new_uuid);
         if let Some(u) = &uuid {
-            self.checkpoints.push(Checkpoint { uuid: u.clone(), text: text.to_string(), before: self.last_assistant.clone() });
+            self.checkpoints.push(Checkpoint { uuid: u.clone(), text: text.to_string(), before: self.last_assistant.clone(), carry: carry.clone(), attach, epoch: self.switches });
         }
-        self.write_content(if attach { user_content(sent, &self.cwd) } else { json!(sent) }, false, uuid.as_deref())?;
+        // the images the user's own words name (not the earlier messages' or a repo map's), with all that is sent
+        let content = match user_content(text, &self.cwd) {
+            Value::Array(mut parts) if attach => {
+                if let Some(t) = parts.last_mut() {
+                    t["text"] = json!(sent);
+                }
+                Value::Array(parts)
+            }
+            _ => json!(sent),
+        };
+        self.write_content(content, false, uuid.as_deref())?;
+        if !carry.is_empty() {
+            self.carry.clear();
+        }
         (self.task, self.task_reviewed) = (text.to_string(), false);
         self.runs.push_back(run);
         Ok(())
@@ -1072,11 +1154,26 @@ impl Live {
         let shown = model.strip_suffix(&format!("-{effort}")).unwrap_or(&model).to_string();
         // a model without effort levels runs at none (its effort is empty)
         let level = if effort.is_empty() { String::new() } else { format!(" · {effort}") };
+        let short = crate::ui::model_short(&shown);
         let text = if goes_on {
-            format!("model: {}{level} from here on (the conversation goes on; its cache is rebuilt once)", crate::ui::model_short(&shown))
+            format!("model: {short}{level} from here on (the conversation goes on; its cache is rebuilt once)")
         } else {
-            self.session_id = None;
-            format!("model: {}{level}: a new conversation (only claude can carry one over to another model)", crate::ui::model_short(&shown))
+            // neither can read the other's history (claude and the own loop, two providers of the own loop): the conversation
+            // so far goes with the next message as text, and the new session continues this one (one conversation in the
+            // lists). It started over with nothing until review 12
+            if let Some(id) = self.session_id.take() {
+                self.continue_from(id);
+            }
+            self.carry = carried(&self.conv);
+            // the messages before it are not in the next session's history: going back to one starts afresh (`back_before`),
+            // and nothing goes back into the old one
+            self.switches += 1;
+            (self.resume_at, self.pending_resume, self.mapped) = (None, None, false);
+            if self.carry.is_empty() {
+                format!("model: {short}{level} from here on")
+            } else {
+                format!("model: {short}{level}: the conversation continues on {short}")
+            }
         };
         Ok(self.record(json!({"type": "harness_switch", "model": model, "effort": effort, "text": text})))
     }
@@ -1211,6 +1308,8 @@ impl Live {
         }
         self.respawn(self.model.clone(), self.effort.clone());
         self.checkpoints.clear();
+        (self.carry, self.continues, self.earlier, self.resume_at, self.pending_resume) = (Vec::new(), None, Vec::new(), None, None);
+        self.mapped = resume.is_some(); // a new conversation's first message gets the map
         let text = match &resume {
             Some(id) => format!("── resumed session {} ──", id.chars().take(8).collect::<String>()),
             None => "── new conversation ──".to_string(),
@@ -1346,8 +1445,10 @@ impl Live {
         }
         if conversation {
             self.checkpoints.truncate(i);
-            // claude resumes at the reply before the message; the own loop's history is cut before the message itself
-            self.pending_resume = Some(if self.provider.is_some() { Some(cp.uuid.clone()) } else { cp.before.clone() });
+            self.back_before(&cp);
+            if let Some(j) = self.conv.iter().rposition(|c| c.0 == cp.text) {
+                self.conv.truncate(j);
+            }
             if !files {
                 self.resume_before();
             } // with files: once claude has answered the file rewind (its checkpoints live in that process)
@@ -1358,6 +1459,68 @@ impl Live {
             _ => "conversation",
         };
         Ok(self.record(json!({"type": "harness_notice", "text": format!("── rewound {what} to before: {} ──", crate::session::shown(&cp.text, 60)), "error": false})))
+    }
+
+    /// The window's Retry (main.rs app_retry): the last message, whose turn ended without an answer, sent again, its
+    /// images too, with no second copy of it in the history or the transcript (it was there twice, the failed try between).
+    /// The conversation goes back to before it as "edit from here" does (claude at the reply before it, in a fork; the own
+    /// loop's history cut before it); the new session continues the old one, so the lists keep one conversation. Records
+    /// `harness_retry`, which takes the failed try off the screen (Session::apply).
+    #[inline(never)]
+    pub fn retry(&mut self, text: &str) -> Result<(f64, Value)> {
+        if !self.idle() {
+            bail!("wait until the run has finished (or stop it), then retry");
+        }
+        // its checkpoint: a message this process sent to the model (one sent before the window opened the conversation, or
+        // handed to the agent in a turn of its own, has none: the history could not go back before it)
+        let cp = self.checkpoints.last().filter(|c| c.text == text).cloned().context("that message cannot be sent again from here \
+            (it was sent before this window opened the conversation, or handed to the agent): send it again")?;
+        self.within_cap()?;
+        self.checkpoints.pop();
+        self.back_before(&cp);
+        self.resume_before();
+        // its message stays in `conv`, unanswered, for this try's answer
+        self.start_run(text, cp.attach, None)?;
+        Ok(self.record(json!({"type": "harness_retry"})))
+    }
+
+    /// Back to before message `cp` (an edit from it, a retry of it), for the next spawn (`resume_before`). One of this
+    /// session's: claude at the reply before it, the own loop's history cut before it, in a fork. One from before a switch to
+    /// a model that could not take the history: that history is not this session's, so a fresh session, the conversation
+    /// before it carried as text (a Claude reply's id went to the own loop as `--resume-before`, review 12). Either way the
+    /// next session continues this one.
+    #[inline(never)]
+    fn back_before(&mut self, cp: &Checkpoint) {
+        let fresh = cp.epoch != self.switches;
+        self.pending_resume = Some(match (fresh, self.provider.is_some()) {
+            (true, _) => None,
+            (false, true) => Some(cp.uuid.clone()),
+            (false, false) => cp.before.clone(),
+        });
+        // back before a switch's first message: the next one carries the conversation before it again
+        let upto = self.conv.iter().rposition(|c| c.0 == cp.text).unwrap_or(self.conv.len());
+        self.carry = if fresh { carried(&self.conv[..upto]) } else { cp.carry.clone() };
+        if let Some(id) = self.session_id.clone() {
+            self.continue_from(id);
+        }
+    }
+
+    /// The next session continues `id` (`continues`, `earlier`).
+    fn continue_from(&mut self, id: String) {
+        if self.earlier.last() != Some(&id) {
+            self.earlier.push(id.clone());
+        }
+        self.continues = Some(id);
+    }
+
+    /// Every earlier session the conversation continues from, oldest first (the view's `earlier_sessions`).
+    pub fn earlier_sessions(&self) -> &[String] {
+        &self.earlier
+    }
+
+    /// A conversation resumed (main.rs restart_session): the sessions it continues from, oldest first.
+    pub fn set_earlier(&mut self, ids: &[String]) {
+        self.earlier = ids.to_vec();
     }
 
     /// Ends the process so the next message resumes the conversation at the reply `pending_resume` names (or starts a
@@ -1371,10 +1534,14 @@ impl Live {
         self.stdin = None;
         self.generation += 1;
         match before {
-            Some(at) => self.resume_at = Some(at),
-            None => self.session_id = None,
+            Some(at) => {
+                // the reply it resumes at is the last one again: a message sent next goes back there (a second retry, an
+                // edit of it); None started the next session fresh (review 12)
+                self.last_assistant = self.provider.is_none().then(|| at.clone());
+                self.resume_at = Some(at);
+            }
+            None => (self.session_id, self.last_assistant, self.mapped) = (None, None, false),
         }
-        self.last_assistant = None;
     }
 
     /// What the explore tool's answers cost so far (`--explorer MODEL@URL`; claude's own figure does not include them).
@@ -1624,6 +1791,10 @@ impl Live {
                             run.add_cost(if total >= self.proc_cost { total - self.proc_cost } else { total });
                         }
                         self.proc_cost = total;
+                        // the message it answers, for the conversation's exchanges (`track`)
+                        if let Some(run) = self.runs.front().filter(|r| r.prompt != BACKGROUND_PROMPT) {
+                            e["tazuna_prompt"] = json!(run.prompt);
+                        }
                         // a chat's answer or the agent's in its place, with its question (`heard`)
                         if let Some(run) = self.runs.front().filter(|_| self.profile == Profile::Chat || self.handoff.is_some()) {
                             e["tazuna_q"] = json!(run.prompt);
@@ -1954,6 +2125,8 @@ impl Live {
             // the key's variable: two providers can share an API (Mistral and Mistral Vibe), and a resume goes on on the same
             "key_env": self.provider.as_ref().map(|(_, k)| k),
             "plan": self.provider.is_none() && self.claude_bill.0,
+            // the session this one continues: the lists show them as one conversation (main.rs sessions_of)
+            "continues": self.continues,
         })
     }
 
@@ -2040,9 +2213,7 @@ impl Live {
                 }
                 // no TAZUNA_HEADLESS: its nudge after a turn without a change made the own loop write general-set
                 // answers into files
-                if let Some(id) = &self.session_id {
-                    cmd.args(["--resume", id]);
-                }
+                self.own_resume(&mut cmd);
                 return self.start(cmd);
             }
             let search = if std::env::var_os("TAZUNA_SEARCH_TOOLS").is_some() { "Search with the grep and glob tools, not in bash; read files with read." } else { "Search with grep -rn in bash; read whole files with read." };
@@ -2130,17 +2301,7 @@ impl Live {
             if self.mode == "headless" {
                 cmd.env("TAZUNA_HEADLESS", "1"); // a task, not a conversation: stopping without a change gets a nudge
             }
-            // a resumed session (`-c`, `--resume`, or the engine started again mid-session): the engine reads the history it
-            // saved (until 0.1.119 it was never passed, and an own-loop session always started empty)
-            if let Some(id) = &self.session_id {
-                cmd.args(["--resume", id]);
-                // "edit from here": the history up to before that message, in a fork (the original stays as it was)
-                if let Some(at) = self.resume_at.take() {
-                    cmd.args(["--resume-before", &at, "--fork-session"]);
-                } else if std::mem::take(&mut self.fork_next) {
-                    cmd.arg("--fork-session"); // a side chat
-                }
-            }
+            self.own_resume(&mut cmd);
             return self.start(cmd);
         }
         let mut cmd = Command::new("claude");
@@ -2345,6 +2506,21 @@ impl Live {
             cmd.env("CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING", "1"); // /rewind's file checkpoints
         }
         self.start(cmd)
+    }
+
+    /// The own loop's engine on a resumed session (`-c`, `--resume`, or started again mid-session): it reads the history it
+    /// saved (until 0.1.119 it was never passed, and an own-loop session always started empty). The chat profile's engine
+    /// too: it resumed without the two below, so an edit or a retry there kept the message it went back before (review 12).
+    fn own_resume(&mut self, cmd: &mut Command) {
+        if let Some(id) = &self.session_id {
+            cmd.args(["--resume", id]);
+            // "edit from here", a retry: the history up to before that message, in a fork (the original stays as it was)
+            if let Some(at) = self.resume_at.take() {
+                cmd.args(["--resume-before", &at, "--fork-session"]);
+            } else if std::mem::take(&mut self.fork_next) {
+                cmd.arg("--fork-session"); // a side chat
+            }
+        }
     }
 
     /// Starts the agent process and the threads that read its output.
@@ -3195,6 +3371,111 @@ mod tests {
 
     /// Through a session on scripted events: the chat replies [[agent]], the lean agent takes the message in a fresh
     /// conversation, and the chat's own comes back after it.
+    /// A switch between claude and the own loop: the new model gets the conversation so far as text in front of its first
+    /// message (each could not read the other's history, and started with none until review 12), and its session says it
+    /// continues the earlier one, for the lists.
+    #[cfg(unix)]
+    #[test]
+    fn a_switch_carries_the_conversation_and_its_session_continues_the_earlier_one() {
+        let (mut live, dir) = stub::live("carry");
+        // an own-loop conversation, as recorded (its engine is not started here)
+        live.provider = Some(("http://127.0.0.1:1/v1".into(), "LM_STUDIO_API_KEY".into()));
+        live.resume("own-1");
+        for e in [json!({"type": "harness_user", "text": "what is a haiku?"}), json!({"type": "result", "subtype": "success", "result": "A short poem.", "tazuna_prompt": "what is a haiku?"}),
+            json!({"type": "harness_user", "text": "this one will fail"})] {
+            live.heard_before(&e);
+        }
+        let (_, e) = live.switch("claude-opus-5-5".into(), "high".into(), None).unwrap();
+        assert_eq!(e["text"], "model: Opus 5.5 · high: the conversation continues on Opus 5.5");
+        live.send("and a limerick?").unwrap();
+        stub::started(&dir);
+        assert!(stub::sent(&dir, "Earlier in this chat you were asked: what is a haiku?\nYou answered: A short poem."));
+        assert!(stub::sent(&dir, "asked: this one will fail\nYou answered: (no answer)\n\nThe new message: and a limerick?"));
+        stub::feed(&live, json!({"type": "system", "subtype": "init", "session_id": "claude-2", "model": "claude-opus-5-5"}));
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "result": "There once was…", "total_cost_usd": 0.01}));
+        live.poll();
+        let log = std::fs::read_to_string(dir.join("runs.jsonl")).unwrap();
+        let line: Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+        assert_eq!((line["meta"]["session_id"].as_str(), line["meta"]["continues"].as_str(), line["prompt"].as_str()), (Some("claude-2"), Some("own-1"), Some("and a limerick?")));
+        // a long conversation: the latest of it, about 40k characters
+        let long: Vec<(String, String)> = (0..30).map(|i| (format!("q{i}"), "a".repeat(2000))).collect();
+        let c = carried(&long);
+        assert!(c.len() == 19 && c.last().unwrap().0 == "q29", "{}", c.len());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Retry: the failed message again, the conversation back to before it, never a second copy in the history.
+    #[cfg(unix)]
+    #[test]
+    fn a_retry_sends_the_last_message_again_from_before_it() {
+        let (mut live, dir) = stub::live("retry");
+        live.send_typed("what is a haiku?").unwrap();
+        stub::started(&dir);
+        stub::feed(&live, json!({"type": "system", "subtype": "init", "session_id": "c-1", "model": "claude-opus-5-5"}));
+        stub::feed(&live, json!({"type": "assistant", "parent_tool_use_id": null, "uuid": "u-1", "message": {"content": [{"type": "text", "text": "A poem."}]}}));
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "result": "A poem.", "total_cost_usd": 0.01}));
+        live.poll();
+        live.send_typed("and a limerick?").unwrap();
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": true, "result": "API Error: 500", "total_cost_usd": 0.01}));
+        live.poll();
+        assert!(live.retry("something else").is_err(), "only the last message");
+        let (_, e) = live.retry("and a limerick?").unwrap();
+        assert_eq!(e["type"], "harness_retry");
+        let a = stub::started(&dir);
+        // claude at the reply before it, in a fork: the failed message is not in the history it resumes
+        assert_eq!((stub::flag(&a, "--resume").as_deref(), stub::flag(&a, "--resume-session-at").as_deref()), (Some("c-1"), Some("u-1")));
+        assert!(a.contains(&"--fork-session".to_string()) && live.checkpoints.len() == 2 && live.continues.as_deref() == Some("c-1"));
+        // the retried message goes back to the same reply again: a second retry (or an edit of it) resumes there, not fresh
+        assert_eq!(live.checkpoints[1].before.as_deref(), Some("u-1"));
+        stub::feed(&live, json!({"type": "system", "subtype": "init", "session_id": "c-2", "model": "claude-opus-5-5"}));
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": true, "result": "API Error: 500", "total_cost_usd": 0.01}));
+        live.poll();
+        live.retry("and a limerick?").unwrap();
+        let a = stub::started(&dir);
+        assert_eq!((stub::flag(&a, "--resume").as_deref(), stub::flag(&a, "--resume-session-at").as_deref()), (Some("c-2"), Some("u-1")));
+        assert_eq!(live.earlier_sessions(), ["c-1", "c-2"]);
+        // tazuna's own text (create's check, `send`) is sent again as text, its paths never read as images
+        live.checkpoints.last_mut().unwrap().attach = false;
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": true, "result": "API Error: 500", "total_cost_usd": 0.01}));
+        live.poll();
+        live.retry("and a limerick?").unwrap();
+        assert!(!live.checkpoints.last().unwrap().attach);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A retry of a message from before a switch to a model that could not take the history: a fresh session with the
+    /// conversation before it carried (the switch's carry was dropped, and a Claude reply's id went to the own loop, review
+    /// 12); the message is not carried twice.
+    #[cfg(unix)]
+    #[test]
+    fn a_retry_across_a_switch_starts_afresh_with_the_conversation_before_it() {
+        let (mut live, dir) = stub::live("retry-switch");
+        live.provider = Some(("http://127.0.0.1:1/v1".into(), "LM_STUDIO_API_KEY".into()));
+        live.resume("own-1");
+        for e in [json!({"type": "harness_user", "text": "what is a haiku?"}), json!({"type": "result", "subtype": "success", "result": "A short poem.", "tazuna_prompt": "what is a haiku?"}),
+            json!({"type": "harness_user", "text": "and a limerick?"})] {
+            live.heard_before(&e);
+        }
+        live.checkpoints.push(Checkpoint { uuid: "m-2".into(), text: "and a limerick?".into(), before: None, carry: vec![], attach: true, epoch: 0 });
+        live.switch("claude-opus-5-5".into(), "high".into(), None).unwrap();
+        live.retry("and a limerick?").unwrap();
+        let a = stub::started(&dir);
+        assert!(stub::flag(&a, "--resume").is_none() && !a.contains(&"--resume-session-at".to_string()), "{a:?}");
+        assert!(stub::sent(&dir, "Earlier in this chat you were asked: what is a haiku?\nYou answered: A short poem.\n\nThe new message: and a limerick?"));
+        assert!(!stub::sent(&dir, "asked: and a limerick?"));
+        assert_eq!((live.continues.as_deref(), live.earlier_sessions()), (Some("own-1"), &["own-1".to_string()][..]));
+        // the other way: a Claude message's reply id never reaches the own loop
+        live.checkpoints.push(Checkpoint { uuid: "m-3".into(), text: "x".into(), before: Some("claude-reply".into()), carry: vec![], attach: true, epoch: 1 });
+        live.switches = 2;
+        live.provider = Some(("http://127.0.0.1:1/v1".into(), "LM_STUDIO_API_KEY".into()));
+        let cp = live.checkpoints.last().cloned().unwrap();
+        live.back_before(&cp);
+        assert_eq!(live.pending_resume, Some(None));
+        live.resume_before();
+        assert!(live.resume_at.is_none() && live.session_id.is_none() && !live.mapped);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[cfg(unix)]
     #[test]
     fn a_chat_hands_its_message_to_the_lean_agent_and_takes_the_session_back() {
