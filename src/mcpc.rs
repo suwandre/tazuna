@@ -66,7 +66,7 @@ fn conf_path() -> Result<PathBuf> {
 }
 
 /// A file read leniently: anything missing or broken is `{}`.
-fn read_json(p: &Path) -> Value {
+pub(crate) fn read_json(p: &Path) -> Value {
     std::fs::read_to_string(p).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_else(|| json!({}))
 }
 
@@ -97,7 +97,7 @@ pub(crate) fn write_private(p: &Path, v: &Value) -> Result<()> {
     Ok(())
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
@@ -502,7 +502,7 @@ fn refresh(name: &str, url: &str) -> Option<String> {
     a["access_token"].as_str().map(String::from)
 }
 
-fn store(a: &mut Value, t: &Value) {
+pub(crate) fn store(a: &mut Value, t: &Value) {
     a["access_token"] = t["access_token"].clone();
     if t["refresh_token"].is_string() {
         a["refresh_token"] = t["refresh_token"].clone();
@@ -510,12 +510,12 @@ fn store(a: &mut Value, t: &Value) {
     a["expires_at"] = t["expires_in"].as_u64().map_or(Value::Null, |s| json!(now() + s));
 }
 
-fn short_agent() -> ureq::Agent {
+pub(crate) fn short_agent() -> ureq::Agent {
     ureq::Agent::config_builder().timeout_global(Some(SETUP_TIMEOUT)).http_status_as_error(false).build().into()
 }
 
 /// A token request; the client authenticates the way it registered: in the body, with HTTP Basic, or not at all.
-fn token_call(endpoint: &str, mut form: Vec<(&str, String)>, client: &Value) -> Result<Value> {
+pub(crate) fn token_call(endpoint: &str, mut form: Vec<(&str, String)>, client: &Value) -> Result<Value> {
     let id = client["client_id"].as_str().unwrap_or_default();
     let secret = client["client_secret"].as_str();
     let basic = secret.is_some() && client["auth_method"] == "client_secret_basic";
@@ -612,15 +612,18 @@ fn login(name: &str, spec: &Value, say: &dyn Fn(String)) -> Result<()> {
     } else {
         say(format!("{name}: open this link to log in (5 minutes): {link}"));
     }
-    let code = wait_code(&listener, &state, name)?;
+    let q = wait_callback(&listener, &state, name, &format!("/mcp login {name}"))?;
+    let code = q.iter().find(|(k, _)| k == "code").map(|(_, v)| v.clone()).context("no code")?;
     let form = vec![("grant_type", "authorization_code".to_string()), ("code", code), ("redirect_uri", redirect), ("code_verifier", verifier), ("resource", url)];
     let t = token_call(token_at, form, &a)?;
     store(&mut a, &t);
     write_private(&auth_path(name)?, &a)
 }
 
-/// The authorization code from the browser's redirect (five minutes at most); other requests (a favicon) are turned away.
-fn wait_code(l: &TcpListener, state: &str, name: &str) -> Result<String> {
+/// The browser's redirect to the one-time listener (five minutes at most): its query, once it carries this attempt's
+/// `state` and a code; a refusal for this attempt is an error; other requests (a favicon, another state) are turned away.
+/// `again`: what the user types to try again.
+pub(crate) fn wait_callback(l: &TcpListener, state: &str, name: &str, again: &str) -> Result<Vec<(String, String)>> {
     l.set_nonblocking(true)?;
     let end = Instant::now() + Duration::from_secs(300);
     loop {
@@ -628,7 +631,7 @@ fn wait_code(l: &TcpListener, state: &str, name: &str) -> Result<String> {
             Ok((s, _)) => s,
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 if Instant::now() > end {
-                    bail!("{name}: no login within 5 minutes: /mcp login {name} to try again");
+                    bail!("{name}: no login within 5 minutes: {again} to try again");
                 }
                 std::thread::sleep(Duration::from_millis(200));
                 continue;
@@ -643,7 +646,7 @@ fn wait_code(l: &TcpListener, state: &str, name: &str) -> Result<String> {
         let q = query(req.split_whitespace().nth(1).unwrap_or_default());
         let got = |k: &str| q.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone());
         let (page, out) = match (got("code"), got("state"), got("error")) {
-            (Some(c), Some(st), _) if st == state => ("Logged in. Close this tab and go back to tazuna.", Ok(c)),
+            (Some(_), Some(st), None) if st == state => ("Logged in. Close this tab and go back to tazuna.", Ok(q.clone())),
             (_, Some(st), Some(e)) if st == state => ("The login did not go through; tazuna says why.", Err(anyhow!("{name}: the login was refused: {e} {}", got("error_description").unwrap_or_default()))),
             _ => {
                 let _ = write!(s, "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -669,7 +672,7 @@ fn quoted(h: &str, key: &str) -> Option<String> {
     Some(h[i..].split('"').next()?.to_string())
 }
 
-fn query(target: &str) -> Vec<(String, String)> {
+pub(crate) fn query(target: &str) -> Vec<(String, String)> {
     let q = target.split_once('?').map_or("", |x| x.1);
     q.split('&').filter_map(|p| p.split_once('=')).map(|(k, v)| (dec(k), dec(v))).collect()
 }
@@ -690,16 +693,16 @@ fn dec(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-fn enc(s: &str) -> String {
+pub(crate) fn enc(s: &str) -> String {
     s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
-fn b64url(b: &[u8]) -> String {
+pub(crate) fn b64url(b: &[u8]) -> String {
     crate::mcp::base64(b).replace('+', "-").replace('/', "_").trim_end_matches('=').to_string()
 }
 
 /// SHA-256, for the PKCE challenge (FIPS 180-4).
-fn sha256(data: &[u8]) -> [u8; 32] {
+pub(crate) fn sha256(data: &[u8]) -> [u8; 32] {
     const K: [u32; 64] = [
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74,
         0x80deb1fe, 0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d,

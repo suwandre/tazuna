@@ -1211,6 +1211,12 @@ impl Loop {
 /// A model call through the provider, the API it takes, and its prices. Removes the key from this process's environment:
 /// the agent's commands inherit it and must not see the key.
 fn connect(url: &str, key_env: &str, model: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, Api, Price)> {
+    // a sign-in's variable names the route only: its token comes from its record (oauth.rs), renewed as it runs out
+    if let Some(l) = crate::models::sign_in_of(key_env) {
+        // SAFETY: called before any other thread starts.
+        unsafe { std::env::remove_var(key_env) };
+        return connect_sign_in(l, url, model);
+    }
     let key = std::env::var(key_env).with_context(|| format!("{key_env} not set"))?;
     // SAFETY: called before any other thread starts.
     unsafe { std::env::remove_var(key_env) };
@@ -1246,6 +1252,33 @@ pub fn ask(url: &str, key: &str, model: &str, effort: &str, system: &str, prompt
     let cached = n(&u["input_tokens_details"]["cached_tokens"], &u["prompt_tokens_details"]["cached_tokens"]) + u["cache_read_input_tokens"].as_u64().unwrap_or(0);
     let input = n(&u["input_tokens"], &u["prompt_tokens"]) + if api == Api::Messages { cached } else { 0 };
     Ok((text, (input, cached.min(input), n(&u["output_tokens"], &u["completion_tokens"]))))
+}
+
+/// A signed-in plan's model (oauth.rs): its access token before each call, renewed with 5 minutes left and once more
+/// after a 401; Copilot's headers; ChatGPT's tools in a namespace (flat for the session after one refusal of that).
+/// The plan pays: no price (the $1 cap counts nothing), no model list to read one from.
+#[inline(never)]
+fn connect_sign_in(l: &'static crate::models::Login, url: &str, model: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, Api, Price)> {
+    let (base, wire) = crate::oauth::route(l, model);
+    // tests and a local stand-in name their own address; a real route goes where the sign-in's record says
+    let base = if url.trim_end_matches('/') == l.url { base } else { url.trim_end_matches('/').to_string() };
+    let api = if wire == "responses" { Api::Responses } else { Api::Chat };
+    let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(CALL_TIMEOUT)).http_status_as_error(false).build().into();
+    let mut flat = false;
+    Ok((Box::new(move |body: &Value| {
+        let mut stale: Option<String> = None;
+        loop {
+            let token = crate::oauth::access_token(l, stale.as_deref())?;
+            let shaped = crate::oauth::shape(l, body, flat);
+            match chat_in(&http, &base, &token, api, &shaped, groups(), Some(&crate::oauth::headers(l, &shaped))) {
+                // an access token refused: renewed once (another engine may have renewed it already)
+                Err(e) if stale.is_none() && format!("{e:#}").starts_with("HTTP 401") => stale = Some(token),
+                Err(e) if !flat && shaped["tools"][0]["type"] == "namespace" && format!("{e:#}").contains("unsupported_capability")
+                    && ["tools", "namespace"].iter().any(|w| format!("{e:#}").contains(w)) => flat = true,
+                r => return r.map_err(|e| crate::oauth::explain(l, e)),
+            }
+        }
+    }), api, (0.0, 0.0, 0.0)))
 }
 
 /// `connect` with the key itself (a later route's, read at start).
@@ -1694,7 +1727,7 @@ fn emit(e: &Value) {
 /// network outage ended a 38-minute run when the tries spanned only 40 s, and a free model "at capacity" (HTTP 429) ended
 /// all seven runs of a benchmark when they spanned 4 minutes.
 fn chat(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value) -> Result<Value> {
-    chat_in(http, url, key, api, body, groups())
+    chat_in(http, url, key, api, body, groups(), None)
 }
 
 /// Whether a call starts streamed (see chat_in). SubRouter streams again (0.0.93; unstreamed in 0.0.91-0.0.92): its
@@ -1705,7 +1738,16 @@ fn streams_by_default(url: &str, api: Api) -> bool {
     !url.contains("unorouter.com") && !(url.contains("mortera.cloud") && matches!(api, Api::Responses))
 }
 
-fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, groups: &Groups) -> Result<Value> {
+/// A refusal that no wait mends on a ChatGPT sign-in (plan usage: a limit, an account or a request it does not take):
+/// said at once. A key route whose gateway passes the same codes on keeps waiting them out, as before.
+fn refused_for_good(text: &str) -> bool {
+    ["subscription_sharing_usage_limit_exceeded", "subscription_sharing_user_not_eligible", "subscription_sharing_unsupported_capability",
+     "subscription_sharing_route_not_supported", "subscription_sharing_invalid_user", "chatpass_v2_"].iter().any(|c| text.contains(c))
+}
+
+/// `sign_in`: a sign-in's route (oauth.rs) with its own headers: always streamed (ChatGPT's plan takes nothing else), its
+/// plan's refusals said at once. None: a key's route, as before.
+fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, groups: &Groups, sign_in: Option<&[(String, String)]>) -> Result<Value> {
     let path = match api {
         Api::Chat => "chat/completions",
         Api::Responses => "responses",
@@ -1719,7 +1761,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
     // 0 tokens written with it, 6,286 without), and its streamed Responses carry no usage (GPT-6 Luna looked 0% cached
     // and the cost cap saw nothing), so GPT goes unstreamed there
     let mortera = url.contains("mortera.cloud");
-    let mut stream = std::env::var("TAZUNA_STREAM").map_or(streams_by_default(url, api), |v| v != "0");
+    let mut stream = sign_in.is_some() || std::env::var("TAZUNA_STREAM").map_or(streams_by_default(url, api), |v| v != "0");
     let mut body = body.clone();
     if mortera {
         body.as_object_mut().map(|o| o.remove("cache_control"));
@@ -1777,10 +1819,13 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
             Some((k, v)) => req.header(k.trim(), v.trim()),
             None => req,
         };
-        let req = match groups.current() {
+        let mut req = match groups.current() {
             Some(g) => req.header("X-Group", &g),
             None => req,
         };
+        for (k, v) in sign_in.unwrap_or_default() {
+            req = req.header(k, v);
+        }
         // on a thread of its own, so a stop is heard while the provider has not answered; the call given up stops reading
         // at its next chunk and shows nothing more
         let (payload, to_ui, cancel) = (body.to_string(), stream && STREAM_TO_UI.load(Ordering::Relaxed), Arc::new(AtomicBool::new(false)));
@@ -1837,7 +1882,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         if status == 200 {
             match sse(&text).map(|events| from_stream(&events, api)) {
                 // an error inside a stream (a gateway's upstream failed after the headers) is retried like a 5xx
-                Some(Err(e)) if wait > 0 => {
+                Some(Err(e)) if wait > 0 && !(sign_in.is_some() && refused_for_good(&format!("{e:#}"))) => {
                     UNCOUNTED.set(UNCOUNTED.get() + 1);
                     retry(&format!("{e:#}"), wait);
                     continue;
@@ -1885,7 +1930,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         // OpenRouter's daily allowance of free calls (50 without credits) lasts until midnight UTC: no wait helps, and
         // the tries below held "waiting for first token" for over an hour behind a 429 that came in 0.1 s (2026-11-11)
         let permanent = (text.contains("insufficient_quota") || text.contains("requires_purchase") || text.contains("free-models-per-day"))
-            && !text.contains("free_limit_reached");
+            && !text.contains("free_limit_reached") || sign_in.is_some() && refused_for_good(&text);
         // a rate limit clears by waiting, but an hourly allowance outlasts the ~15 minutes of tries above (Experiential
         // Labs' free models: 166,500 output tokens an hour, reset on the hour; a run that crossed it ended): the last try
         // is repeated every 5 minutes for up to 70 more minutes
@@ -2858,6 +2903,71 @@ session: "s".into(),
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    #[test]
+    fn a_signed_in_plan_renews_its_token_after_a_401_and_goes_out_in_its_own_shape() {
+        use crate::oauth::tests::{login, put, stand_in, temp};
+        let completed = "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}],\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n";
+        let (base, seen) = stand_in(move |line, head, body| match line {
+            "POST /v1/responses" if head.contains("Bearer at1") => (401, r#"{"error":{"message":"token expired","code":"token_expired"}}"#.into()),
+            // ChatGPT's tools in a namespace; refused once here, so they go flat for the rest of the session
+            "POST /v1/responses" if body.contains("namespace") => (400, r#"{"error":{"message":"namespace","code":"subscription_sharing_unsupported_capability","param":"tools"}}"#.into()),
+            "POST /v1/responses" => (200, completed.into()),
+            "POST /api/accounts/oauth/token" => (200, json!({"access_token": "at2", "refresh_token": "rt2", "expires_in": 3600}).to_string()),
+            "POST /chat/completions" => (200, r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":5,"completion_tokens":1}}"#.into()),
+            _ => (404, "{}".into()),
+        });
+        let dir = temp("engine-sign-in");
+        crate::oauth::STAND_IN.set(Some((base.clone(), dir.clone())));
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let chatgpt = login("chatgpt");
+        put(chatgpt, json!({"access_token": "at1", "refresh_token": "rt1", "expires_at": now + 3600, "client_id": "oaiapp_test",
+            "models": [{"id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "api": "responses"}]}));
+        let (mut call, api, price) = connect_sign_in(chatgpt, &format!("{base}/v1"), "gpt-6.1-sol").unwrap();
+        assert_eq!((api, price), (Api::Responses, (0.0, 0.0, 0.0)), "the plan pays: nothing against the $1 cap");
+        let body = json!({"model": "gpt-6.1-sol", "instructions": "sys", "input": [{"role": "user", "content": "hi"}], "store": false,
+            "tools": [{"type": "function", "name": "bash", "parameters": {"type": "object"}}]});
+        for _ in 0..2 {
+            let r = call(&body).unwrap();
+            assert_eq!(r["output"][0]["content"][0]["text"], "ok");
+        }
+        let calls: Vec<String> = seen.lock().unwrap().iter().filter(|r| r.starts_with("POST /v1/responses")).cloned().collect();
+        assert_eq!(calls.len(), 4, "401, renewed: namespace refused, flat: ok, then flat at once");
+        assert!(calls[1].contains("Bearer at2") && calls[1].contains(r#""type":"namespace""#) && calls[1].contains(r#""stream":true"#), "{}", calls[1]);
+        assert!(calls[2].contains(r#""tools":[{"name":"bash""#) || calls[2].contains(r#""tools":[{"type":"function""#), "{}", calls[2]);
+        assert!(!calls[3].contains("namespace"), "flat for the session");
+        assert_eq!(serde_json::from_str::<Value>(&std::fs::read_to_string(dir.join("chatgpt.json")).unwrap()).unwrap()["refresh_token"], "rt2");
+        // Copilot: its plan's host from the record, Copilot CLI's headers, who asked
+        let copilot = login("copilot");
+        put(copilot, json!({"access_token": "gho_test", "api_url": base, "models": [{"id": "gemini-3.7-pro", "api": "chat"}]}));
+        let (mut call, api, _) = connect_sign_in(copilot, "https://api.githubcopilot.com", "gemini-3.7-pro").unwrap();
+        assert_eq!(api, Api::Chat);
+        call(&json!({"model": "gemini-3.7-pro", "messages": [{"role": "system", "content": "s"}, {"role": "tool", "content": "ok", "tool_call_id": "c"}]})).unwrap();
+        let req = seen.lock().unwrap().iter().rev().find(|r| r.starts_with("POST /chat/completions")).cloned().unwrap().to_lowercase();
+        for h in ["authorization: bearer gho_test", "copilot-integration-id: copilot-chat", "editor-version: copilot/1.0.82", "x-initiator: agent", "x-github-api-version: 2026-08-01"] {
+            assert!(req.contains(h), "{h} in {req}");
+        }
+        crate::oauth::STAND_IN.set(None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_plan_limit_ends_a_sign_in_call_at_once_and_a_key_route_still_waits_it_out() {
+        // the same 429 from a pooled ChatGPT-plan gateway on a key, and from ChatGPT's own plan on a sign-in
+        let n = Arc::new(AtomicUsize::new(0));
+        let k = n.clone();
+        let (base, _) = crate::oauth::tests::stand_in(move |_, _, _| if k.fetch_add(1, Ordering::SeqCst) % 2 == 0 {
+            (429, r#"{"error":{"message":"limit","code":"subscription_sharing_usage_limit_exceeded"}}"#.into())
+        } else {
+            (200, r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":5,"completion_tokens":1}}"#.into())
+        });
+        let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
+        let body = json!({"model": "m", "messages": [], "stream": false});
+        assert!(chat(&http, &base, "k", Api::Chat, &body).is_ok(), "a key route tries again");
+        assert_eq!(n.load(Ordering::SeqCst), 2);
+        let e = format!("{:#}", chat_in(&http, &base, "t", Api::Chat, &body, &Groups::from("", None), Some(&[])).unwrap_err());
+        assert!(e.contains("subscription_sharing_usage_limit_exceeded") && n.load(Ordering::SeqCst) == 3, "a sign-in says it at once: {e}");
+    }
+
     /// One whole HTTP request (headers, then Content-Length bytes of body) from a test server's connection: answering
     /// before the body is read made the client fail now and then (closed with unread data).
     fn read_request(c: &mut std::net::TcpStream) -> String {
@@ -2931,7 +3041,7 @@ session: "s".into(),
             n
         });
         let http: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
-        let e = format!("{:#}", chat_in(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": []}), &Groups::from("", None)).unwrap_err());
+        let e = format!("{:#}", chat_in(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": []}), &Groups::from("", None), None).unwrap_err());
         assert!(e.starts_with("HTTP 429: Rate limit exceeded: free-models-per-day") && e.contains("resets in 1h 30m"), "{e}");
         assert_eq!(calls.join().unwrap(), 1, "no tries after it");
     }
@@ -2964,7 +3074,7 @@ session: "s".into(),
             "400 Bad Request\r\nConnection: close\r\n\r\n{\"error\":{\"message\":\"Provider returned error (Baidu)\"}}"] {
             let (url, seen) = serve(fail);
             let g = Groups::from("a, b, c", None);
-            let r = chat_in(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": []}), &g).unwrap();
+            let r = chat_in(&http, &url, "k", Api::Chat, &json!({"model": "m", "messages": []}), &g, None).unwrap();
             assert_eq!(r["choices"][0]["message"]["content"], "ok");
             assert_eq!(seen.join().unwrap(), ["a", "b"], "the call went again at once on the next group");
             assert_eq!(g.drain().len(), 1, "the switch is kept for the run log");

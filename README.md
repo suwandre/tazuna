@@ -39,7 +39,7 @@ tazuna --run task.txt                           # one task, headless, result as 
 ```
 
 Type a task and press enter. `/model` switches to another model mid-session (Claude or the own loop) and asks its effort
-after, `/effort` changes only the effort (the conversation goes on), `/login` adds a provider's key, `/mcp` brings your
+after, `/effort` changes only the effort (the conversation goes on), `/login` adds a provider's key or signs in, `/mcp` brings your
 tools, `/keys` lists every key and command.
 
 ## Results
@@ -169,6 +169,13 @@ scores; typing searches every provider at once. A provider without a key is grey
 the providers, and picking one opens the page where its keys are made in your browser and asks for the key. tazuna keeps
 it in `~/.config/tazuna/keys.json` (readable by you only) and puts the provider on `~/.config/tazuna/trusted-providers`,
 since it will see your code. A key in the environment (`MORTERA_API_KEY` and so on) still works and wins.
+
+Three plans take a sign-in instead of a key, in `/login` and the desktop's Settings: **ChatGPT** through OpenAI's own Sign
+in with ChatGPT for open-source apps (requests use your ChatGPT plan; manage it at chatgpt.com/settings/usage), and
+**GitHub Copilot** and **SuperGrok**, which send another app's identity (OpenCode's GitHub app and Copilot CLI's headers,
+xAI's Grok CLI): each says so with its provider's terms before the first sign-in, and you confirm once. Their tokens stay in
+`~/.config/tazuna/logins/` (readable by you only), never in an environment the agent's commands see; tazuna never picks
+their models on its own. Claude's login is never used outside the claude CLI.
 
 - **SubRouter** (DeepSeek, GPT, Kimi, GLM, MiniMax ...): your own key, or `tazuna subrouter --manage` makes one with the
   providers tazuna checked (they differ a lot: some serve another model, some barely cache); `tazuna subrouter --apply`

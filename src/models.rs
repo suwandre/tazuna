@@ -234,6 +234,7 @@ pub fn why_not(c: &Choice) -> Option<String> {
             one in your account with tested providers for each model (needs your account's access token); or bring your own \
             key: /login, or set {var} (its provider settings decide: a model without a list on it can land on any \
             provider)")),
+        State::NoKey if let Some(l) = login_of(c).filter(|l| !l.sign_in().is_empty()) => crate::oauth::why_not(l).or_else(|| Some(format!("not signed in: /login signs in to {}", l.name))),
         State::NoKey => Some(format!("no key: /login, or set the environment variable {var} before starting tazuna{}", match host {
             "api.mistral.ai" => " (a Mistral API key, or one made under Code › Vibe CLI)",
             _ => "",
@@ -291,7 +292,7 @@ fn own_machine(host: &str) -> bool {
 }
 
 /// A URL's host: without the scheme, a user name, the port and the path; an IPv6 address without its brackets.
-fn host_of(url: &str) -> &str {
+pub(crate) fn host_of(url: &str) -> &str {
     let rest = url.split("://").nth(1).unwrap_or(url).split(['/', '?', '#']).next().unwrap_or_default();
     let rest = rest.rsplit('@').next().unwrap_or(rest);
     match rest.strip_prefix('[') {
@@ -494,6 +495,21 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
                 label: format!("{}'s models", l.name), note: format!("tazuna loads {}'s model list at start once {} is set", l.name, l.vars[0]),
                 ..login_row(l, "", None, vec![], &file, &trusted) }),
             None => {}
+        }
+    }
+    // the sign-ins' models, as their records keep them (oauth.rs); before a sign-in one greyed row, as a keyed list's
+    for l in LOGINS.iter().filter(|l| !l.sign_in().is_empty()) {
+        // not signed in, ChatGPT's plan use declined, or no list yet: one greyed row that says which
+        if let Some(why) = crate::oauth::why_not(l) {
+            out.push(Choice { model: format!("{}-models", l.sign_in()), label: format!("{}'s models", l.name), note: format!("{} · {why}", l.note),
+                state: State::NoKey, ..login_row(l, "", None, vec![], &file, &trusted) });
+            continue;
+        }
+        for m in crate::oauth::models(l) {
+            let Some(id) = m["id"].as_str() else { continue };
+            // OpenAI's Responses take an effort; Copilot's Chat Completions do not (omp: no reasoning fields there)
+            let efforts = if m["api"] == "responses" { LEVELS.iter().map(|e| e.to_string()).collect() } else { vec![] };
+            out.push(Choice { label: m["name"].as_str().unwrap_or(id).to_string(), ..login_row(l, id, None, efforts, &file, &trusted) });
         }
     }
     if let Some(list) = dir.and_then(|d| std::fs::read_to_string(d.join(LOCAL_FILE)).ok()) {
@@ -868,6 +884,7 @@ pub fn refresh_openrouter() {
 pub fn refresh_mortera() {
     refresh_omniroute();
     refresh_lists(&[]);
+    crate::oauth::refresh_models();
 }
 
 /// The model lists that need a key, each whose variable is in `only` (all of them when empty): a key just saved fetches
@@ -1409,6 +1426,10 @@ fn own_key(var: &str) -> Option<String> {
 /// commands) would inherit them; only the own loop's engine gets its key, and takes it out of its environment before any
 /// tool runs.
 pub fn key(var: &str) -> Option<String> {
+    // a sign-in: a stand-in while signed in (the engine reads the token itself, never from its environment)
+    if let Some(l) = sign_in_of(var) {
+        return crate::oauth::signed_in(l).then(|| "signed-in".to_string());
+    }
     own_key(var).or_else(|| (var == "SUBROUTER_API_KEY").then(managed_key).flatten())
         // a local server that wants no key gets a stand-in (the engine sends one)
         .or_else(|| LOCAL.iter().any(|l| l.2 == var).then(|| "local".to_string()))
@@ -1416,7 +1437,7 @@ pub fn key(var: &str) -> Option<String> {
 
 /// A provider `/login` offers: its name, the key's variables, its API (whose host sees the code), where keys are made, an
 /// example of a key's start, where its models come from, the API its models take, and a line on its terms where they put
-/// the account at risk. None of them has a login for third-party tools here (no OAuth), so an API key it is.
+/// the account at risk. An API key for all but the sign-ins (`sign_in`, oauth.rs).
 pub struct Login {
     pub name: &'static str,
     /// The variables its routes read the key from (the first is the usual one): a login saves it under each.
@@ -1445,9 +1466,18 @@ pub enum Source {
     ModelsDev(&'static str),
     /// The provider's /models with the key, read at start: ids without prices (the engine reads one from it if it has one).
     List,
+    /// A sign-in instead of a key (oauth.rs: "chatgpt", "copilot", "xai"): its models from its record. Its one variable only
+    /// names the route and never holds a token. One whose note warns needs that warning confirmed once before its first
+    /// sign-in.
+    SignIn(&'static str),
 }
 
 impl Login {
+    /// The sign-in's id (`Source::SignIn`); empty for a key.
+    pub fn sign_in(&self) -> &'static str {
+        if let Source::SignIn(id) = self.source { id } else { "" }
+    }
+
     /// The host that sees the code.
     pub fn host(&self) -> &'static str {
         host_of(self.url)
@@ -1456,7 +1486,7 @@ impl Login {
     /// Its note says the account (or the plan, the key) may be at risk, or that the provider may refuse tazuna: shown in the
     /// warn colour, the other notes quietly.
     pub fn warns(&self) -> bool {
-        ["at risk", "refuse", "suspended", "blocked", "revoked"].iter().any(|w| self.note.contains(w))
+        ["at risk", "own risk", "refuse", "suspended", "blocked", "revoked"].iter().any(|w| self.note.contains(w))
     }
 }
 
@@ -1624,6 +1654,19 @@ pub const LOGINS: &[Login] = &[
             place: "your Synthetic account (API keys)", source: Md("synthetic"), ..P },
     Login { name: "Umans Coding Plan", vars: &["UMANS_AI_CODING_PLAN_API_KEY"], url: "https://api.code.umans.ai/v1", page: "https://app.umans.ai",
             place: "the Umans dashboard (API keys)", example: "sk-...", source: Md("umans-ai-coding-plan"), plan: true, ..P },
+    // sign-ins (oauth.rs, 2026-11-22): a plan's own login instead of a key; their models are never picked by tazuna on its
+    // own. ChatGPT is OpenAI's own flow for open-source apps; the others send another app's identity (the user chose them
+    // opt-in, behind the warning in their note, confirmed once). Claude's login is never one (the claude CLI only), nor Qwen's
+    // (its free tier ended 2026-04-15)
+    Login { name: "ChatGPT", vars: &["TAZUNA_SIGNIN_CHATGPT"], url: "https://api.openai.com/v1", page: "https://chatgpt.com/settings/usage",
+            place: "ChatGPT's settings (Usage)", api: "responses", plan: true, source: Source::SignIn("chatgpt"),
+            note: "OpenAI's own sign-in for open-source apps: requests use your ChatGPT plan (manage usage in ChatGPT's settings)", ..P },
+    Login { name: "GitHub Copilot", vars: &["TAZUNA_SIGNIN_COPILOT"], url: "https://api.githubcopilot.com", page: "https://github.com/settings/copilot",
+            place: "GitHub's Copilot settings", api: "chat", plan: true, source: Source::SignIn("copilot"),
+            note: "tazuna signs in as OpenCode's GitHub app and calls Copilot as Copilot CLI. Whether GitHub's terms allow this, or GitHub acts on accounts for it, is unclear. Use at your own risk.", ..P },
+    Login { name: "SuperGrok", vars: &["TAZUNA_SIGNIN_XAI"], url: "https://api.x.ai/v1", page: "https://grok.com",
+            place: "your Grok account", api: "responses", plan: true, source: Source::SignIn("xai"),
+            note: "tazuna signs in as xAI's Grok CLI. Whether xAI's terms allow this, or xAI acts on accounts for it, is unclear. Use at your own risk.", ..P },
     // gateways: many makers' models behind one key (Claude among them stays out: it runs through the claude CLI)
     Login { name: "Vercel AI Gateway", vars: &["AI_GATEWAY_API_KEY"], url: "https://ai-gateway.vercel.sh/v1", page: "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
             place: "Vercel's dashboard (AI Gateway, API keys)", example: "vck_...", source: Md("vercel"), ..P },
@@ -1712,8 +1755,20 @@ fn strip_list(in_use: &[String]) -> Vec<String> {
     v
 }
 
+/// The sign-in whose route variable this is (`Login::sign_in`).
+pub fn sign_in_of(var: &str) -> Option<&'static Login> {
+    LOGINS.iter().find(|l| !l.sign_in().is_empty() && l.vars[0] == var)
+}
+
 /// Where a provider's key comes from, for `/login`'s list; empty: none.
 pub fn key_source(vars: &[&str]) -> &'static str {
+    if let Some(l) = vars.first().and_then(|v| sign_in_of(v)) {
+        return match (crate::oauth::signed_in(l), crate::oauth::plan_declined(l)) {
+            (false, _) => "",
+            (true, false) => "signed in",
+            (true, true) => "signed in, plan use not allowed",
+        };
+    }
     // a variable set in one terminal is seen by tazuna started there only (a Mistral key showed in one folder's terminal
     // and not another's, 2026-11-12): /login saves it for every folder
     if vars.iter().any(|v| env_key(v).is_some()) && !vars.iter().any(|v| saved_key(v).is_some()) {
@@ -2115,7 +2170,8 @@ mod tests {
         for n in ["DeepSeek", "Z.ai", "MiniMax", "Groq", "OpenAI", "SubRouter", "Umans Coding Plan", "ClinePass"] {
             assert!(note(n).is_empty(), "{n}: no note where none is needed");
         }
-        assert!(LOGINS.iter().all(|l| l.note.len() < 130 && !l.note.contains('\n')), "one short line each");
+        // a sign-in's is the warning confirmed before it: up to two short sentences and "Use at your own risk."
+        assert!(LOGINS.iter().all(|l| l.note.len() < if l.sign_in().is_empty() { 130 } else { 190 } && !l.note.contains('\n')), "one short line each");
         // Kimi may refuse a client that is not its listed coding agents (403, 2025): said before the plan is bought
         assert!(note("Kimi Code").contains("may refuse tazuna") && note("Kimi Code").contains("before buying"));
         // the warn colour only where the account may be at risk or the provider may refuse tazuna (review 11, UI-1)

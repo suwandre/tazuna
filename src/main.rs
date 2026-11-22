@@ -92,6 +92,7 @@ mod live;
 mod looprun;
 mod mcp;
 mod mcpc;
+mod oauth;
 mod models;
 mod outcap;
 mod platform;
@@ -843,6 +844,8 @@ fn says_general(answer: &str) -> bool {
 #[inline(never)]
 fn quick_answer(c: &RouteCtx, system: &str, user: &str, max: u32) -> Option<String> {
     match &c.provider {
+        // a sign-in's token stays with the engine (and ChatGPT's plan takes Responses only): no side call on it
+        Some((_, key_env)) if models::sign_in_of(key_env).is_some() => None,
         Some((url, key_env)) => {
             let key = std::env::var(key_env).ok().or_else(|| models::key(key_env))?;
             let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(20))).build().into();
@@ -1100,11 +1103,72 @@ fn check_data(url: &str, any: bool) -> Result<()> {
 #[inline(never)]
 fn kept_keys(live: &live::Live) -> String {
     let mut keys = models::provider_key_vars();
-    keys.extend(live.provider.as_ref().map(|p| p.1.clone()).filter(|k| !k.is_empty() && !keys.contains(k)));
+    keys.extend(live.provider.as_ref().map(|p| p.1.clone()).filter(|k| !k.is_empty() && !keys.contains(k) && models::sign_in_of(k).is_none()));
+    // sign-ins: their tokens never enter an environment; what is stored, by name
+    let stored = oauth::stored();
+    let signed = if stored.is_empty() { String::new() } else { format!(" · signed in: {}", stored.join(", ")) };
     if keys.is_empty() {
-        return "the agent's commands see every key (TAZUNA_KEEP_KEYS)".into();
+        return format!("the agent's commands see every key (TAZUNA_KEEP_KEYS){signed}");
     }
-    format!("kept from the agent's commands: {} (your other variables stay; TAZUNA_KEEP_KEYS keeps these too)", keys.join(" "))
+    format!("kept from the agent's commands: {} (your other variables stay; TAZUNA_KEEP_KEYS keeps these too){signed}", keys.join(" "))
+}
+
+/// The app server's sign-in op (oauth.rs): a sign-out, another ChatGPT account, or a sign-in once its warning is confirmed,
+/// each off this thread; their progress and outcome as `signin` lines, then the pickers' rows again.
+#[inline(never)]
+fn app_sign_in(cmd: &serde_json::Value, tx: &std::sync::mpsc::Sender<serde_json::Value>) {
+    let Some(l) = models::LOGINS.iter().find(|l| l.name == cmd["provider"] && !l.sign_in().is_empty()) else { return };
+    let (tx, name) = (tx.clone(), l.name);
+    let say = move |ok: Option<bool>, text: String, first: bool| {
+        use std::io::Write;
+        let mut o = std::io::stdout().lock();
+        let _ = writeln!(o, "{}", json!({"type": "signin", "provider": name, "ok": ok, "text": text, "first": first}));
+        let _ = o.flush();
+        if ok.is_some() {
+            let _ = tx.send(json!({"type": "tazuna_lists"}));
+        }
+    };
+    if cmd["sign_out"] == true {
+        std::thread::spawn(move || match oauth::sign_out(l) {
+            Ok(t) => say(Some(true), t, false),
+            Err(e) => say(Some(false), format!("{e:#}"), false),
+        });
+    } else if let Err(e) = sign_in_gate(l, cmd["confirm"] == true) {
+        say(Some(false), e, false);
+    } else if cmd["other_account"] == true {
+        std::thread::spawn(move || match oauth::forget_account(l) {
+            Ok(()) => sign_in_run(l, say),
+            Err(e) => say(Some(false), format!("{e:#}"), false),
+        });
+    } else {
+        sign_in_run(l, say);
+    }
+}
+
+/// A sign-in may start: its warning (where its note has one) confirmed now (`confirm`, which is kept) or before.
+#[inline(never)]
+fn sign_in_gate(l: &models::Login, confirm: bool) -> std::result::Result<(), String> {
+    if !l.warns() || oauth::confirmed(l) {
+        return Ok(());
+    }
+    if !confirm {
+        return Err(format!("{}: confirm its warning first", l.name));
+    }
+    oauth::confirm(l).map_err(|e| format!("{e:#}"))
+}
+
+/// A sign-in (oauth.rs) off the screen's thread: `say` gets its progress (None), then its outcome (Some(ok)) and whether
+/// it was the first sign-in on the ChatGPT plan (its welcome). Its host goes on the trusted list when it went through, as
+/// a saved key's does.
+#[inline(never)]
+fn sign_in_run(l: &'static models::Login, say: impl Fn(Option<bool>, String, bool) + Send + 'static) {
+    std::thread::spawn(move || match oauth::sign_in(l, &|t| say(None, t, false)) {
+        Ok((text, first)) => {
+            let trust = if !trusted_host(l.host()) && trust_host(l.host()).is_ok() { format!("; {} may see the code now (trusted-providers)", l.host()) } else { String::new() };
+            say(Some(true), format!("{text}{trust}"), first);
+        }
+        Err(e) => say(Some(false), format!("{e:#}"), false),
+    });
 }
 
 /// A provider host on the trusted list (~/.config/tazuna/trusted-providers): it may see the code under `--data trusted`.
@@ -1138,6 +1202,9 @@ struct LoginPick {
     form: Option<String>,
     /// The page where keys are made opened in the browser.
     opened: bool,
+    /// When the page opened: a sign-in's page takes no key in its first moment, as a permission question (an enter typed
+    /// twice must not confirm a warning unread).
+    shown: Option<Instant>,
 }
 
 /// `/login`, enter on a provider's page: saves the key typed (nothing typed: keeps the one it has) and trusts its host, as
@@ -1807,6 +1874,8 @@ fn app_server(a: &Args) -> Result<()> {
                             let mut providers: Vec<serde_json::Value> = models::LOGINS.iter().map(|l| json!({
                                 "name": l.name, "host": l.host(), "page": l.page, "place": l.place, "example": l.example,
                                 "key": models::key_source(l.vars), "trusted": trusted_host(l.host()), "note": l.note, "warn": l.warns(),
+                                "sign_in": l.sign_in(), "confirmed": !l.sign_in().is_empty() && oauth::confirmed(l),
+                                "plan_off": !l.sign_in().is_empty() && oauth::plan_declined(l),
                             })).collect();
                             // the model servers found running on this machine: theirs without a key
                             providers.extend(models::local_running().into_iter().map(|name| json!({
@@ -1821,6 +1890,12 @@ fn app_server(a: &Args) -> Result<()> {
                             let _ = o.flush();
                         }
                         // a provider's key from the settings page: saved and its host trusted, as /login does
+                        // a sign-in instead (oauth.rs): {"sign_out": true}, else a sign-in, whose warning (where it has one) comes
+                        // with {"confirm": true} the first time; progress and outcome as `signin` lines, then the pickers' rows
+                        // a sign-in instead (oauth.rs): {"sign_out": true}, {"other_account": true} (ChatGPT), else a sign-in, whose
+                        // warning (where it has one) comes with {"confirm": true} the first time; progress and outcome as
+                        // `signin` lines, then the pickers' rows
+                        Some("login") if models::LOGINS.iter().any(|l| l.name == cmd["provider"] && !l.sign_in().is_empty()) => app_sign_in(&cmd, &tx),
                         Some("login") => {
                             let name = cmd["provider"].as_str().unwrap_or_default();
                             match models::LOGINS.iter().find(|l| l.name == name) {
@@ -2917,8 +2992,11 @@ fn resume_in(cs: &[models::Choice], e: &Earlier) -> Option<models::Choice> {
     let fits = |c: &&models::Choice| c.route.is_some() == own && c.state == models::State::Ready;
     // the own loop's on the provider it ran on: another provider listing the same model id is another account, price and
     // history format (with models.dev's providers many list one id, review 11); gone, it is shown, not continued
+    // a sign-in's row only for a run that named that provider: a run logged before providers were (0.1.182) never moves
+    // onto a plan login by its model's name
+    let named = |c: &models::Choice| c.route.as_ref().is_some_and(|r| models::provider_name(&r.0, &r.1) == e.provider);
     let same = |c: &&models::Choice| c.model == e.model
-        && (!own || e.provider.is_empty() || c.route.as_ref().is_some_and(|r| models::provider_name(&r.0, &r.1) == e.provider));
+        && (!own || if models::login_of(c).is_some_and(|l| !l.sign_in().is_empty()) { named(c) } else { e.provider.is_empty() || named(c) });
     cs.iter().filter(fits).find(same).or_else(|| if own { None } else { cs.iter().find(fits) }).cloned()
 }
 
@@ -3623,6 +3701,14 @@ fn run_live(
         if let (Some(lp), false) = (login.as_mut(), stop_key) {
             match (&mut lp.form, key.code) {
                 (Some(_), KeyCode::Esc) => lp.form = None,
+                // a sign-in's page (oauth.rs): enter signs in, s signs out
+                (Some(_), code) if !models::LOGINS[lp.sel - 1].sign_in().is_empty() => {
+                    let early = lp.shown.is_some_and(|t| t.elapsed() < Duration::from_millis(ANSWER_DELAY_MS));
+                    if let Some(text) = (!early).then(|| sign_in_key(&models::LOGINS[lp.sel - 1], code, &status_tx)).flatten() {
+                        s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
+                        login = None;
+                    }
+                }
                 (Some(typed), KeyCode::Backspace) => {
                     typed.pop();
                 }
@@ -3647,8 +3733,11 @@ fn run_live(
                     login = None;
                 }
                 (None, KeyCode::Enter) => {
-                    // the page where keys are made opens in the browser, and the page here asks for the key
-                    lp.opened = platform::open_url(models::LOGINS[lp.sel - 1].page).is_ok();
+                    // the page where keys are made opens in the browser, and the page here asks for the key (a sign-in's
+                    // page says what signing in does first)
+                    let l = &models::LOGINS[lp.sel - 1];
+                    lp.opened = l.sign_in().is_empty() && platform::open_url(l.page).is_ok();
+                    lp.shown = Some(Instant::now());
                     lp.form = Some(String::new());
                 }
                 _ => {}
@@ -4113,7 +4202,7 @@ fn run_live(
                     continue;
                 }
                 if text == "/login" {
-                    login = Some(LoginPick { sel: 1, form: None, opened: false });
+                    login = Some(LoginPick { sel: 1, form: None, opened: false, shown: None });
                     continue;
                 }
                 if text == "/model" {
@@ -4794,7 +4883,13 @@ fn app_models(cs: &[models::Choice], live: &live::Live) -> (Vec<serde_json::Valu
         };
         let mut row = json!({"model": c.model, "provider": provider, "price": c.price});
         if c.state == models::State::NoKey {
-            row["why_not"] = json!("no key");
+            // a sign-in's provider (oauth.rs) is signed in to, not given a key
+            row["why_not"] = json!(match models::login_of(c).filter(|l| !l.sign_in().is_empty()) {
+                Some(l) if !oauth::signed_in(l) => "not signed in",
+                Some(l) if oauth::plan_declined(l) => "plan use not allowed",
+                Some(_) => "model list not loaded",
+                None => "no key",
+            });
             row["no_key"] = json!(true);
         } else {
             row["why_not"] = json!(why);
@@ -4866,6 +4961,45 @@ fn open_picker(live: &live::Live, keys: &models::KeyModels) -> Result<Picker> {
     Ok(p)
 }
 
+/// `/login` on a sign-in's page (oauth.rs): enter signs in (that enter confirms its warning, where it has one), s signs
+/// out; both off the screen's thread, their progress and outcome as lines in the transcript, the pickers' rows after.
+/// Some(what started): the page closes.
+#[inline(never)]
+fn sign_in_key(l: &'static models::Login, code: KeyCode, tx: &std::sync::mpsc::Sender<serde_json::Value>) -> Option<String> {
+    let tx = tx.clone();
+    let done = move |text: String, ok: bool| {
+        let _ = tx.send(json!({"type": "tazuna_update", "text": text}));
+        if ok {
+            let _ = tx.send(json!({"type": "tazuna_lists"}));
+        }
+    };
+    match code {
+        KeyCode::Enter => {
+            if l.warns() && let Err(e) = oauth::confirm(l) {
+                return Some(format!("{e:#}"));
+            }
+            sign_in_run(l, move |ok, text, _| done(text, ok == Some(true)));
+            Some(format!("signing in to {}…", l.name))
+        }
+        // ChatGPT with another account: the session revoked, the registration forgotten, a new one made
+        KeyCode::Char('a') if l.sign_in() == "chatgpt" && oauth::signed_in(l) => {
+            std::thread::spawn(move || match oauth::forget_account(l) {
+                Ok(()) => sign_in_run(l, move |ok, text, _| done(text, ok == Some(true))),
+                Err(e) => done(format!("{e:#}"), false),
+            });
+            Some("signing in to ChatGPT with another account…".into())
+        }
+        KeyCode::Char('s') if oauth::signed_in(l) => {
+            std::thread::spawn(move || match oauth::sign_out(l) {
+                Ok(t) => done(t, true),
+                Err(e) => done(format!("{e:#}"), false),
+            });
+            Some(format!("signing out of {}…", l.name))
+        }
+        _ => None,
+    }
+}
+
 /// `/login`'s list and page as drawn (from `run_live`'s loop, only when the selection or the page changes).
 #[inline(never)]
 fn login_panel(lp: &LoginPick) -> ui::LoginPanel {
@@ -4875,6 +5009,7 @@ fn login_panel(lp: &LoginPick) -> ui::LoginPanel {
                 let src = models::key_source(l.vars);
                 // its host is on the provider's page: the line fits 80 columns beside the longest name
                 let state = match (src.is_empty(), trusted_host(l.host())) {
+                    (true, _) if !l.sign_in().is_empty() => "not signed in".to_string(),
                     (true, _) => "not logged in".to_string(),
                     (false, true) => src.to_string(),
                     (false, false) => format!("{src} · not trusted yet"),
@@ -4885,9 +5020,16 @@ fn login_panel(lp: &LoginPick) -> ui::LoginPanel {
         selected: lp.sel,
         form: lp.form.as_ref().and_then(|typed| {
             let l = models::LOGINS.get(lp.sel.checked_sub(1)?)?;
+            // a sign-in: how it goes (the browser, or a code to type), and its warning to confirm the first time
+            let how = match l.sign_in() {
+                "" => String::new(),
+                "chatgpt" => "Enter opens ChatGPT in your browser: sign in there and allow tazuna to use your ChatGPT plan.".into(),
+                _ => format!("Enter shows a code to type on {}'s page, which opens in your browser.", l.name),
+            };
             Some(ui::LoginForm { name: l.name.into(), page: l.page.into(), opened: lp.opened, place: l.place.into(),
                 example: l.example.into(), typed: typed.chars().count(), host: l.host().into(), var: l.vars.join(" / "), note: l.note.into(),
-                has: models::key_source(l.vars).to_string() })
+                has: models::key_source(l.vars).to_string(), confirm: l.warns() && !how.is_empty() && !oauth::confirmed(l), sign_in: how,
+                other: l.sign_in() == "chatgpt" })
         }),
     }
 }
@@ -5104,6 +5246,29 @@ mod tests {
         assert!(super::resume_in(&cs, &e("Z.ai Coding Plan")).is_none());
         assert_eq!(super::resume_in(&cs, &e("Z.ai")).and_then(|c| c.route).map(|r| r.0).as_deref(), Some("https://api.z.ai/api/paas/v4"));
         assert!(super::resume_in(&cs, &e("")).is_some(), "a run log from before 0.1.182 names no provider: by the model, as before");
+        // a sign-in's row only for a run that ran there: a log naming no provider never moves onto a plan login
+        let signed = [row("https://api.openai.com/v1", "TAZUNA_SIGNIN_CHATGPT")];
+        assert!(super::resume_in(&signed, &e("")).is_none() && super::resume_in(&signed, &e("OpenAI")).is_none());
+        assert!(super::resume_in(&signed, &e("ChatGPT")).is_some());
+    }
+
+    #[test]
+    fn a_sign_in_that_sends_another_apps_identity_starts_only_once_its_warning_is_confirmed() {
+        let dir = std::env::temp_dir().join(format!("tazuna-gate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::oauth::STAND_IN.set(Some(("http://127.0.0.1:9".into(), dir.clone())));
+        let of = |id: &str| models::LOGINS.iter().find(|l| l.sign_in() == id).unwrap();
+        // missing or false: refused, nothing kept; true: kept, and later sign-ins need no new answer
+        assert!(super::sign_in_gate(of("copilot"), false).unwrap_err().contains("confirm its warning first"));
+        assert!(!crate::oauth::confirmed(of("copilot")));
+        let missing: serde_json::Value = json!({"op": "login", "provider": "GitHub Copilot"});
+        assert!(super::sign_in_gate(of("copilot"), missing["confirm"] == true).is_err());
+        assert!(super::sign_in_gate(of("copilot"), true).is_ok() && crate::oauth::confirmed(of("copilot")));
+        assert!(super::sign_in_gate(of("copilot"), false).is_ok());
+        assert!(super::sign_in_gate(of("xai"), false).is_err(), "each login its own answer");
+        assert!(super::sign_in_gate(of("chatgpt"), false).is_ok(), "OpenAI's own flow: no warning");
+        crate::oauth::STAND_IN.set(None);
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

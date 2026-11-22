@@ -16,6 +16,38 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.197 (2026-11-22): sign in with ChatGPT, GitHub Copilot and SuperGrok
+
+The user, on omp's logins: add them, "if it needs the user's discretion (i.e. it might ban their account), we will say
+so", and for the ones that send another app's identity: "yes, behind a clear warning. its fine." Claude stays on its CLI.
+
+- Sign in with ChatGPT: OpenAI's own flow for open-source apps (the browser, back to tazuna on 127.0.0.1 with PKCE,
+  state and nonce; tazuna registers itself on the first sign-in and keeps the issued client and a host id). The ID token
+  is checked against OpenAI's published keys (issuer, audience, expiry, nonce). Requests go to the Responses API on the
+  ChatGPT plan, always streamed, never stored; tools in a namespace as OpenAI's preview asks, flat for the session if
+  that is refused once. Declining plan use keeps the sign-in and greys its models with the reason; "Allow plan use" asks
+  again. "Other account" revokes the session and registers anew.
+- GitHub Copilot and SuperGrok: a code typed on the provider's page. They send another app's identity (OpenCode's GitHub
+  app and Copilot CLI's headers; xAI's Grok CLI, from omp, MIT), so each shows its warning first and asks once: "Whether
+  GitHub's [xAI's] terms allow this, or GitHub [xAI] acts on accounts for it, is unclear. Use at your own risk."
+- Tokens in ~/.config/tazuna/logins/, owner-only, written atomically, renewed under a system file lock (two windows cannot
+  spend the same rotating refresh token), five minutes before they run out and once more after a 401; never in any
+  process's environment. Sign-out revokes at OpenAI and xAI; GitHub's grant stays until removed at
+  github.com/settings/applications, and the sign-out says so. `/data` lists the sign-ins. A command the agent runs can
+  still read the files, as it can keys.json; review mode's sandbox closes that folder.
+- Their models are in /model and the window's picker on the plan ($0 against the $1 cap), and tazuna never picks one by
+  itself: not the router, not the plan-low switch offer, not a resumed run unless its log names that sign-in.
+- Not built: Gemini CLI and Antigravity (they need Google's Cloud Code Assist format in the engine). Left out: Codex
+  CLI's login (Sign in with ChatGPT covers its models), Mistral Vibe's (never impersonate it), the sign-ins that only mint
+  an API key (Kimi, Z.ai, Xiaomi, Kilo, Muse Code: their keys work already), and Cursor, Kiro, Devin/Windsurf, Factory
+  Droid, GitLab Duo, Perplexity (their own wire protocols or a borrowed browser session).
+- Key routes send the same requests as before, and no call carries a token more.
+- Footprint: binary 5.90 MB to 6.03 MB (+2.2%); the RSA check adds 0 bytes (`ring` was already linked through rustls).
+- An independent review found 3 major and 11 minor defects (a plan refusal that stopped key routes' retries too, no way
+  back after declining plan use, a stale lock two processes could both break, a double Enter confirming the warning
+  unread, two sign-ins at once, sign-outs that left live grants), each fixed. 298 tests pass. Verified live: none (no
+  account was signed in); every flow against stand-in servers.
+
 ## 0.1.196 (2026-11-22): 63 more providers from one catalog, local servers found by themselves, a faster first screen
 
 The user: "omp has the best list. whichever ones they have there, lets just add it. if it needs the user's discretion

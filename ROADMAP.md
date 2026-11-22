@@ -302,6 +302,11 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-22: sign-ins built for ChatGPT (OpenAI's own flow), GitHub Copilot and SuperGrok (0.1.197); Gemini CLI and
+  Antigravity wait for a Cloud Code Assist wire in the engine. Skipped: Codex CLI's login (Sign in with ChatGPT covers its
+  models), Mistral Vibe (WORKING.md: never impersonate it), the sign-ins that only mint an API key (Kimi, Z.ai, Xiaomi,
+  Kilo, Muse Code), and Cursor, Kiro, Devin/Windsurf, Factory Droid, GitLab Duo, Perplexity (their own wire protocols or
+  a borrowed browser session).
 - 2026-11-22: providers: everything omp reaches with a key, from one catalog (models.dev, trimmed, in the binary), so a
   provider is one table row, not a parser. A provider whose terms limit tazuna says so on its row; the user decides.
   Logins that use another app's identity (Copilot, Gemini CLI, Antigravity, SuperGrok): the user chose to add them

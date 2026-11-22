@@ -1525,12 +1525,13 @@ dependencies = [
 
 [[package]]
 name = "tazuna"
-version = "0.1.196"
+version = "0.1.197"
 dependencies = [
  "anyhow",
  "libc",
  "miniz_oxide",
  "ratatui",
+ "ring",
  "serde",
  "serde_json",
  "tachyonfx",

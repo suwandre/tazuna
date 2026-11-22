@@ -441,7 +441,7 @@ pub fn describe(cmd: &str) -> &'static str {
         "explorer" => "The model that searches the repo for the main one",
         "jira" => "A ticket's text as the message: /jira KEY [request]",
         "keys" => "All keyboard shortcuts",
-        "login" => "Save a provider's API key",
+        "login" => "Save a provider's API key, or sign in (ChatGPT, Copilot, SuperGrok)",
         "loop" => "Build TODO.md's items one run at a time (/loop stop)",
         "mcp" => "Your MCP servers for every model (on, off, add)",
         "model" => "Pick the model and its effort",

@@ -269,6 +269,12 @@ pub struct LoginForm {
     pub has: String,
     /// The line on its terms (`models::Login::note`); empty: none.
     pub note: String,
+    /// A sign-in instead of a key (oauth.rs): how it goes; empty for a key.
+    pub sign_in: String,
+    /// The sign-in's warning (its note) not confirmed yet: the enter that signs in confirms it.
+    pub confirm: bool,
+    /// Another account can take its place (ChatGPT): `a`.
+    pub other: bool,
 }
 
 /// `/resume`: this repo's earlier sessions, newest first ("8m ago · 2 messages · fix the login"), and the one selected.
@@ -882,6 +888,30 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme, band: Rect) {
         wrap_words(text, iw).into_iter().map(|l| Line::from(Span::styled(l, st(c)))).collect()
     };
     let (title, keys, lines) = match &p.form {
+        // a sign-in's page: its warning first where it has one, how it goes, where the tokens stay
+        Some(fm) if !fm.sign_in.is_empty() => {
+            let mut lines = vec![Line::from("")];
+            if !fm.note.is_empty() {
+                lines.extend(wrapped(&fm.note, if fm.confirm { th.warn } else { th.faint }));
+                lines.push(Line::from(""));
+            }
+            lines.extend(wrapped(&fm.sign_in, th.text));
+            if fm.has == "signed in" {
+                lines.extend(wrapped(&format!("Signed in now: enter signs in again{}, s signs out.", if fm.other { ", a signs in with another account" } else { "" }), th.ok));
+            } else if fm.has.starts_with("signed in") {
+                lines.extend(wrapped("Signed in, but ChatGPT plan use was not allowed: enter signs in again and asks for it.", th.warn));
+            }
+            lines.push(Line::from(""));
+            lines.extend(wrapped(&format!("{} will see the code of the sessions you run on it, so signing in also puts {} on your trusted providers. \
+                The tokens stay in ~/.config/tazuna/logins/, readable by you only, never in the environment the agent's commands see.", fm.name, fm.host), th.dim));
+            let keys = match (fm.confirm, fm.has.starts_with("signed in"), fm.other) {
+                (true, ..) => "enter: I understand, sign in · esc back",
+                (false, true, true) => "enter signs in again · a another account · s signs out · esc",
+                (false, true, false) => "enter signs in again · s signs out · esc back",
+                (false, false, _) => "enter signs in · esc back",
+            };
+            (format!("sign in to {}", fm.name), keys, lines)
+        }
         Some(fm) => {
             let mut lines = vec![Line::from(""), Line::from(Span::styled(fm.page.clone(), st(th.accent).add_modifier(Modifier::UNDERLINED)))];
             lines.extend(wrapped(if fm.opened { "opened in your browser" } else { "open it in your browser" }, th.faint));
@@ -912,7 +942,7 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme, band: Rect) {
             (format!("log in to {}", fm.name), "enter saves the key · esc cancels", lines)
         }
         None => {
-            let mut lines = wrapped("Log in to a provider to use its models in /model. None of these has a login for third-party tools, so it is an API key: the provider's page opens in your browser to make one.", th.faint);
+            let mut lines = wrapped("Log in to a provider to use its models in /model: an API key (the provider's page opens in your browser to make one), or for ChatGPT, GitHub Copilot and SuperGrok a sign-in.", th.faint);
             lines.push(Line::from(""));
             let nw = p.rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
             // the rows that fit (some 70 providers since 0.1.196), the selected one in view, its terms' line under them
@@ -3123,7 +3153,8 @@ mod tests {
         wide.rows[0].1 = "x".repeat(200);
         assert!(draw(&wide, 80).join("\n").contains("xxx…"), "longer still: cut with …");
         p.form = Some(LoginForm { name: "Mortera".into(), page: "https://mortera.cloud".into(), opened: true, place: "your Mortera dashboard".into(),
-            example: String::new(), typed: 5, host: "mortera.cloud".into(), var: "MORTERA_API_KEY".into(), has: String::new(), note: String::new() });
+            example: String::new(), typed: 5, host: "mortera.cloud".into(), var: "MORTERA_API_KEY".into(), has: String::new(), note: String::new(),
+            sign_in: String::new(), confirm: false, other: false });
         // 60 columns: nothing cut, the long lines wrap
         for w in [60u16, 100] {
             let page = draw(&p, w).join("\n");
@@ -3133,6 +3164,28 @@ mod tests {
                 assert!(page.replace('│', " ").split_whitespace().collect::<Vec<_>>().join(" ").contains(want), "{w}: {want}\n{page}");
             }
         }
+    }
+
+    #[test]
+    fn a_sign_in_page_says_its_warning_how_it_goes_and_where_the_tokens_stay() {
+        let mut p = LoginPanel { rows: vec![], selected: 1, form: Some(LoginForm { name: "SuperGrok".into(), page: "https://grok.com".into(), opened: false,
+            place: String::new(), example: String::new(), typed: 0, host: "api.x.ai".into(), var: String::new(), has: String::new(),
+            note: "tazuna signs in as xAI's Grok CLI. Use at your own risk.".into(), sign_in: "Enter shows a code to type on SuperGrok's page.".into(), confirm: true, other: false }) };
+        let draw = |p: &LoginPanel| {
+            let mut term = ratatui::Terminal::new(ratatui::backend::TestBackend::new(80, 24)).unwrap();
+            term.draw(|f| draw_login(f, p, Design::Cockpit.theme(), f.area())).unwrap();
+            let b = term.backend().buffer().clone();
+            (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol()).collect::<String>()).collect::<Vec<_>>().join("\n")
+                .replace('│', " ").split_whitespace().collect::<Vec<_>>().join(" ")
+        };
+        let page = draw(&p);
+        for want in ["sign in to SuperGrok", "Use at your own risk.", "Enter shows a code", "~/.config/tazuna/logins/", "enter: I understand, sign in"] {
+            assert!(page.contains(want), "{want}\n{page}");
+        }
+        let f = p.form.as_mut().unwrap();
+        (f.confirm, f.has) = (false, "signed in".into());
+        let page = draw(&p);
+        assert!(page.contains("s signs out") && page.contains("Signed in now"), "{page}");
     }
 
     #[test]
