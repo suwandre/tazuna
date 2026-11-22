@@ -645,8 +645,12 @@ fn main() -> Result<()> {
             // (edits ask first, as Claude Code does) instead of refusing to start, which it did until 0.1.60 (a user
             // could not open tazuna in a plain folder, 2026-11-05); --allow-non-git keeps the chosen mode
             let no_git = !live::in_git_repo() && !a.allow_non_git;
-            // label this repo's older runs from git while we are here (cheap, read-only git)
-            let _ = labels::label_git(&base, Some(&std::env::current_dir()?));
+            // label this repo's older runs from git while we are here (read-only git, appends to labels.jsonl): in the
+            // background, since it took 3 s before the first screen with a long run log (2026-11-22)
+            let (lb, here) = (base.clone(), std::env::current_dir()?);
+            std::thread::spawn(move || {
+                let _ = labels::label_git(&lb, Some(&here));
+            });
             let mut live = live::Live::new("", "")?;
             live.user_settings = a.user_settings;
             // `/mcp on|off` is remembered for the next live sessions; `--run` keeps only the flag (benches stay as given)
