@@ -16,6 +16,40 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.198 (2026-11-22): Gemini CLI and Antigravity sign-ins, Mistral Vibe as its own provider, Claude on Copilot and Antigravity plans
+
+The user: ship Antigravity "with a warning that users do this at their own risk"; offer the Claude models Copilot's and
+Antigravity's plans serve ("its part of antigravity plans, so its allowed"); "for mistral, we should have 2, mistral API
+and mistral vibe", so the picker shows which models use API usage and which use Vibe credits.
+
+- Gemini CLI and Antigravity: Google's sign-in in the browser as that app (PKCE, its public client from omp, MIT), then
+  the account's Code Assist project, found or set up (a Workspace or paid account gives its Google Cloud project: the
+  window has a field for it, the terminal reads GOOGLE_CLOUD_PROJECT). Requests go in Gemini's own format inside Code
+  Assist's envelope, a new wire in the engine (the conversation stays in Chat Completions' shape); thinking blocks go
+  back one by one with their own signatures (Claude only). A blocked prompt or a reply ended for safety stops at once
+  instead of being retried for 16 minutes; a malformed call is asked once more. Model lists: Gemini CLI's quota
+  buckets; Antigravity's roster, Claude included. Both behind the strongest warning ("Google's terms forbid ...; Google
+  has suspended accounts that did ... you do this at your own risk"), confirmed once. Sign-out deletes tazuna's tokens
+  and keeps Google's grant (revoking it would also sign the real app out); where to remove it is said.
+- Copilot: its Claude models are offered, over Anthropic's Messages on the plan's host, within each model's output limit
+  and without `cache_control`. tazuna's own requests (follow-ups, retries, hand-offs, explorer questions, tool rounds) go
+  as `X-Initiator: agent`; only what the user typed counts as a premium request.
+- Mistral and Mistral Vibe are two providers on one API: per token, or the Vibe plan ("on your plan", nothing against
+  the $1 cap), every model on both (Mistral's docs put no model limit on a Vibe key). Vibe keys come from
+  chat.mistral.ai/code/extensions (Advanced). A key saved under both by 0.1.197 is used by neither until the user says
+  which it is on its row; no saved key is removed without the row saying so, and a paid key is never shown as a plan.
+  Resumed runs keep the key variable they ran on.
+- The window: a signed-in row says "signed in" once and names no terminal command; a plan's model shows its quiet line
+  under the message box ("→ GPT-6.2 Sol on your ChatGPT plan"); thinking variants read "Opus 4.6 thinking". A server-sent
+  event split over several `data:` lines is joined (single-line events are read as before).
+- Key routes and the ChatGPT and SuperGrok requests are unchanged.
+- Footprint: binary 6.03 MB to 6.21 MB (+3.0%), no new crate; release build 71 s.
+- An independent review found 4 major and 16 minor defects (a "Yes" that could save abandoned text and delete the key, a
+  duplicate key hidden by the environment that showed a paid key as a plan, blocked prompts retried 11 times, a key
+  deleted when another was typed, Claude's thinking merged under one signature, the desktop unable to finish a Workspace
+  sign-in), each fixed with a test. 310 tests pass. Verified live: none (no account was signed in); every flow against
+  stand-in servers.
+
 ## 0.1.197 (2026-11-22): sign in with ChatGPT, GitHub Copilot and SuperGrok
 
 The user, on omp's logins: add them, "if it needs the user's discretion (i.e. it might ban their account), we will say

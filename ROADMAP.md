@@ -302,6 +302,13 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-22: Gemini CLI and Antigravity sign-ins built behind the strongest warning (Google's terms forbid both outside
+  their apps; Google suspended Antigravity accounts and omp paused that login); the user chose to ship them as the user's
+  own risk. Claude models a plan serves are offered (Copilot's, Antigravity's): they are GitHub's and Google's services on
+  the user's plan, not Claude Code's login or Anthropic's API, so "Claude only through its CLI" still holds for Claude's
+  own login. Google sign-out keeps Google's grant (revoking it signs the real app out too). Mistral split into Mistral
+  (per token) and Mistral Vibe (plan) so the picker says which pays; a key that could be either is used by neither until
+  the user says.
 - 2026-11-22: sign-ins built for ChatGPT (OpenAI's own flow), GitHub Copilot and SuperGrok (0.1.197); Gemini CLI and
   Antigravity wait for a Cloud Code Assist wire in the engine. Skipped: Codex CLI's login (Sign in with ChatGPT covers its
   models), Mistral Vibe (WORKING.md: never impersonate it), the sign-ins that only mint an API key (Kimi, Z.ai, Xiaomi,

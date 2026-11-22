@@ -170,17 +170,24 @@ the providers, and picking one opens the page where its keys are made in your br
 it in `~/.config/tazuna/keys.json` (readable by you only) and puts the provider on `~/.config/tazuna/trusted-providers`,
 since it will see your code. A key in the environment (`MORTERA_API_KEY` and so on) still works and wins.
 
-Three plans take a sign-in instead of a key, in `/login` and the desktop's Settings: **ChatGPT** through OpenAI's own Sign
+Five plans take a sign-in instead of a key, in `/login` and the desktop's Settings: **ChatGPT** through OpenAI's own Sign
 in with ChatGPT for open-source apps (requests use your ChatGPT plan; manage it at chatgpt.com/settings/usage), and
-**GitHub Copilot** and **SuperGrok**, which send another app's identity (OpenCode's GitHub app and Copilot CLI's headers,
-xAI's Grok CLI): each says so with its provider's terms before the first sign-in, and you confirm once. Their tokens stay in
+**GitHub Copilot**, **SuperGrok**, **Gemini CLI** and **Antigravity**, which send another app's identity (OpenCode's
+GitHub app and Copilot CLI's headers, xAI's Grok CLI, Google's sign-in as Gemini CLI or Antigravity): each says so with
+its provider's terms before the first sign-in, and you confirm once. Google's terms forbid both Google logins outside
+their own apps and let Google suspend the account for it, which it has done for Antigravity: use them at your own risk.
+Signing out of them deletes tazuna's tokens only: the grant stays at Google until you remove it at
+myaccount.google.com/connections, which also signs Gemini CLI or Antigravity itself out. Their tokens stay in
 `~/.config/tazuna/logins/` (readable by you only), never in an environment the agent's commands see; tazuna never picks
-their models on its own. Claude's login is never used outside the claude CLI.
+their models on its own. Claude models a plan serves (Copilot's, Antigravity's) are offered as that plan's; Claude's own
+login is never used outside the claude CLI.
 
 - **SubRouter** (DeepSeek, GPT, Kimi, GLM, MiniMax ...): your own key, or `tazuna subrouter --manage` makes one with the
   providers tazuna checked (they differ a lot: some serve another model, some barely cache); `tazuna subrouter --apply`
   sets them on your own key.
-- **Mistral**: an API key, or one made under Code › Vibe CLI.
+- **Mistral** and **Mistral Vibe**: the same models on Mistral's API, billed per token on an API key, or against the Vibe
+  plan on the Vibe API key (chat.mistral.ai/code/extensions, under "Advanced >"; shown "on your plan"). A key saved for
+  both before 0.1.198 is used by neither until you say which it is on its row.
 - **Mortera** (Gemini, GPT, Kimi, Grok, Qwen, GLM, DeepSeek ... at reseller prices): once its key is in, `/model` lists
   every text model on its list, as not checked yet.
 - **OpenRouter**: every model on its list that takes tools (about 300), newest free ones first, then the newest paid

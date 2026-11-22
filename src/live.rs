@@ -1024,6 +1024,10 @@ impl Live {
         if followup && self.provider.is_some() {
             line["tazuna_followup"] = json!(true);
         }
+        // a hand-off's turn is tazuna's message to the agent, not one the user typed (Copilot's X-Initiator, engine.rs)
+        if self.handoff.is_some() && self.provider.is_some() {
+            line["tazuna_agent"] = json!(true);
+        }
         let stdin = self.stdin.as_mut().context("claude stdin closed")?;
         writeln!(stdin, "{line}")?;
         stdin.flush()?;
@@ -1947,6 +1951,8 @@ impl Live {
             // which API the own loop ran on, or who billed claude (none on the plan): the usage page names it. `plan`: the
             // run log called every claude run plan, so the start page counted an API key's runs as nothing paid
             "provider": self.provider.as_ref().map(|(u, k)| crate::models::provider_name(u, k)).or_else(|| self.claude_bill.1.filter(|_| !self.claude_bill.0).map(String::from)),
+            // the key's variable: two providers can share an API (Mistral and Mistral Vibe), and a resume goes on on the same
+            "key_env": self.provider.as_ref().map(|(_, k)| k),
             "plan": self.provider.is_none() && self.claude_bill.0,
         })
     }

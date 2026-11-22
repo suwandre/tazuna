@@ -927,7 +927,14 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme, band: Rect) {
             }
             lines.push(Line::from(vec![Span::styled("> ", st(th.accent)), Span::styled("•".repeat(fm.typed.min(iw.saturating_sub(3))), st(th.text)),
                                        Span::styled("▍", st(th.accent))]));
-            if !fm.has.is_empty() {
+            // Mistral's unsure key: said where enter's meaning is, so it fits the page at 80x24
+            if fm.has.starts_with("same key as") {
+                lines.extend(wrapped("The same key is saved for Mistral and Mistral Vibe: tazuna cannot tell whether it bills per token or the \
+                    Vibe plan, so neither uses it. Enter with nothing typed keeps it as this provider's key and removes it from the other.", th.warn));
+            } else if fm.has.starts_with("kept from before") {
+                lines.extend(wrapped("This key was saved for both Mistral and Mistral Vibe before; a new key replaced it under Mistral. Enter \
+                    with nothing typed keeps it as your Vibe key; delete removes it.", th.warn));
+            } else if !fm.has.is_empty() {
                 lines.push(Line::from(Span::styled("Enter with nothing typed keeps the key it has.", st(th.faint))));
             }
             lines.push(Line::from(""));
@@ -942,7 +949,7 @@ fn draw_login(f: &mut Frame, p: &LoginPanel, th: &Theme, band: Rect) {
             (format!("log in to {}", fm.name), "enter saves the key · esc cancels", lines)
         }
         None => {
-            let mut lines = wrapped("Log in to a provider to use its models in /model: an API key (the provider's page opens in your browser to make one), or for ChatGPT, GitHub Copilot and SuperGrok a sign-in.", th.faint);
+            let mut lines = wrapped("Log in to a provider to use its models in /model: an API key (the provider's page opens in your browser to make one), or for ChatGPT, GitHub Copilot, SuperGrok, Gemini CLI and Antigravity a sign-in.", th.faint);
             lines.push(Line::from(""));
             let nw = p.rows.iter().map(|r| r.0.chars().count()).max().unwrap_or(0);
             // the rows that fit (some 70 providers since 0.1.196), the selected one in view, its terms' line under them
@@ -1458,9 +1465,11 @@ pub fn pretty_model(id: &str) -> String {
     let m = id.trim().split_whitespace().next().unwrap_or_default();
     let bare = m.strip_prefix("claude-").unwrap_or(m);
     if let Some((fam, ver)) = bare.split_once('-') && ["opus", "sonnet", "haiku", "fable"].contains(&fam) {
-        let v: Vec<&str> = ver.split('-').take_while(|p| p.len() <= 2 && p.chars().all(|c| c.is_ascii_digit())).take(2).collect();
+        let v: Vec<&str> = ver.split(['-', '.']).take_while(|p| p.len() <= 2 && p.chars().all(|c| c.is_ascii_digit())).take(2).collect();
         if !v.is_empty() {
-            return format!("{}{} {}", fam[..1].to_uppercase(), &fam[1..], v.join("."));
+            // a thinking variant (Antigravity's "claude-opus-4-6-thinking") says so, beside its plain sibling
+            let thinking = if ver.split('-').any(|p| p == "thinking") { " thinking" } else { "" };
+            return format!("{}{} {}{thinking}", fam[..1].to_uppercase(), &fam[1..], v.join("."));
         }
     }
     const BRAND: [(&str, &str); 21] = [("zai", "Z.ai"), ("deepseek", "DeepSeek"), ("gpt", "GPT"), ("glm", "GLM"), ("qwen", "Qwen"), ("gemini", "Gemini"), ("gemma", "Gemma"),
@@ -2923,7 +2932,8 @@ mod tests {
     #[test]
     fn model_names_match_the_desktop_app() {
         // the cases of desktop/src/lib/types.ts MODEL_NAMES
-        for (id, want) in [("claude-opus-5-5", "Opus 5.5"), ("claude-haiku-4-5-20251001", "Haiku 4.5"), ("haiku", "Haiku"),
+        for (id, want) in [("claude-opus-5-5", "Opus 5.5"), ("claude-haiku-4-5-20251001", "Haiku 4.5"), ("haiku", "Haiku"), ("claude-opus-4-6-thinking", "Opus 4.6 thinking"),
+            ("claude-opus-4.6", "Opus 4.6"),
             ("deepseek-v4.1-flash-1017-fast", "DeepSeek V4.1 Flash 1017 Fast"), ("deepseek-v4-1-flash-1017", "DeepSeek V4.1 Flash 1017"),
             ("gpt-6.1-sol", "GPT-6.1 Sol"), ("gpt-5", "GPT-5"), ("glm-5.3-flash-ultrafast", "GLM-5.3 Flash Ultrafast"), ("mistral-small-2603", "Mistral Small 2603"),
             ("codestral-2508", "Codestral 2508"), ("grok-4.7", "Grok 4.7"), ("agy/gemini-4-hydrogen-high", "Gemini 4 Hydrogen"), ("muse-ember", "Muse Ember"),

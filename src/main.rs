@@ -1128,6 +1128,10 @@ fn app_sign_in(cmd: &serde_json::Value, tx: &std::sync::mpsc::Sender<serde_json:
             let _ = tx.send(json!({"type": "tazuna_lists"}));
         }
     };
+    // a Gemini CLI account's Google Cloud project, from its row (the window has no GOOGLE_CLOUD_PROJECT)
+    if let Some(p) = cmd["project"].as_str() && let Err(e) = oauth::set_project(l, p) {
+        return say(Some(false), format!("{e:#}"), false);
+    }
     if cmd["sign_out"] == true {
         std::thread::spawn(move || match oauth::sign_out(l) {
             Ok(t) => say(Some(true), t, false),
@@ -1137,11 +1141,11 @@ fn app_sign_in(cmd: &serde_json::Value, tx: &std::sync::mpsc::Sender<serde_json:
         say(Some(false), e, false);
     } else if cmd["other_account"] == true {
         std::thread::spawn(move || match oauth::forget_account(l) {
-            Ok(()) => sign_in_run(l, say),
+            Ok(()) => sign_in_run(l, true, say),
             Err(e) => say(Some(false), format!("{e:#}"), false),
         });
     } else {
-        sign_in_run(l, say);
+        sign_in_run(l, true, say);
     }
 }
 
@@ -1159,10 +1163,10 @@ fn sign_in_gate(l: &models::Login, confirm: bool) -> std::result::Result<(), Str
 
 /// A sign-in (oauth.rs) off the screen's thread: `say` gets its progress (None), then its outcome (Some(ok)) and whether
 /// it was the first sign-in on the ChatGPT plan (its welcome). Its host goes on the trusted list when it went through, as
-/// a saved key's does.
+/// a saved key's does. `window`: the desktop's words (no terminal command).
 #[inline(never)]
-fn sign_in_run(l: &'static models::Login, say: impl Fn(Option<bool>, String, bool) + Send + 'static) {
-    std::thread::spawn(move || match oauth::sign_in(l, &|t| say(None, t, false)) {
+fn sign_in_run(l: &'static models::Login, window: bool, say: impl Fn(Option<bool>, String, bool) + Send + 'static) {
+    std::thread::spawn(move || match oauth::sign_in(l, &|t| say(None, t, false), window) {
         Ok((text, first)) => {
             let trust = if !trusted_host(l.host()) && trust_host(l.host()).is_ok() { format!("; {} may see the code now (trusted-providers)", l.host()) } else { String::new() };
             say(Some(true), format!("{text}{trust}"), first);
@@ -1173,13 +1177,21 @@ fn sign_in_run(l: &'static models::Login, say: impl Fn(Option<bool>, String, boo
 
 /// A provider host on the trusted list (~/.config/tazuna/trusted-providers): it may see the code under `--data trusted`.
 fn trusted_host(host: &str) -> bool {
-    let file = platform::home().unwrap_or_default().join(".config/tazuna/trusted-providers");
+    let file = trusted_file().unwrap_or_default();
     std::fs::read_to_string(&file).unwrap_or_default().lines().any(|l| l.trim() == host)
+}
+
+/// ~/.config/tazuna/trusted-providers (in tests a file of the test's own, never the machine's).
+fn trusted_file() -> Result<PathBuf> {
+    #[cfg(test)]
+    return Ok(std::env::temp_dir().join(format!("tazuna-trusted-{}-{:?}", std::process::id(), std::thread::current().id()).replace(['(', ')'], "")));
+    #[cfg(not(test))]
+    Ok(platform::home().context("HOME")?.join(".config/tazuna/trusted-providers"))
 }
 
 /// Puts a provider host on the trusted list.
 fn trust_host(host: &str) -> Result<()> {
-    let file = platform::home().context("HOME")?.join(".config/tazuna/trusted-providers");
+    let file = trusted_file()?;
     std::fs::create_dir_all(file.parent().context("no folder")?)?;
     let mut t = std::fs::read_to_string(&file).unwrap_or_default();
     if !t.is_empty() && !t.ends_with('\n') {
@@ -1207,10 +1219,17 @@ struct LoginPick {
     shown: Option<Instant>,
 }
 
-/// `/login`, enter on a provider's page: saves the key typed (nothing typed: keeps the one it has) and trusts its host, as
-/// the page says. What it did, for the message line.
-fn login_save(l: &'static models::Login, typed: &str, tx: &std::sync::mpsc::Sender<serde_json::Value>) -> Result<String> {
+/// `/login`, enter on a provider's page (or the window's Settings): saves the key typed (nothing typed: keeps the one it
+/// has) and trusts its host, as the page says. What it did, for the message line (`window`: the window's row, which names
+/// no terminal command).
+#[inline(never)]
+fn login_save(l: &'static models::Login, typed: &str, tx: &std::sync::mpsc::Sender<serde_json::Value>, window: bool) -> Result<String> {
     let mut said = vec![];
+    // Mistral's two keys (one key under both until 0.1.198): what is unsure, and what this save says about it
+    let (unsure, kind) = (models::mistral_other(l).and_then(|_| models::mistral_unsure()), models::mistral_typed(l, typed));
+    if let Some(why) = models::mistral_refuses(l, unsure, kind) {
+        bail!("{why}");
+    }
     // nothing typed and the key only in this terminal's environment: that key is saved, for tazuna in every folder
     let from_env = (typed.trim().is_empty() && models::key_source(l.vars) == "key in this terminal only").then(|| models::env_value(l.vars)).flatten();
     let typed = from_env.as_deref().unwrap_or(typed);
@@ -1229,9 +1248,10 @@ fn login_save(l: &'static models::Login, typed: &str, tx: &std::sync::mpsc::Send
                 let _ = tx.send(json!({"type": "tazuna_lists"}));
             });
         }
-    } else if l.vars.iter().all(|v| models::key(v).is_none()) {
+    } else if l.vars.iter().all(|v| models::key(v).is_none()) && unsure.is_none() {
         bail!("no key typed");
     }
+    said.extend(models::settle_mistral(l, unsure, kind)?);
     if !trusted_host(l.host()) {
         trust_host(l.host())?;
         said.push(format!("{} may see the code now (trusted-providers)", l.host()));
@@ -1239,12 +1259,33 @@ fn login_save(l: &'static models::Login, typed: &str, tx: &std::sync::mpsc::Send
     if from_env.is_some() {
         said.push("this terminal's key, now saved for tazuna in every folder".into());
     }
-    said.push(format!("its models are in /model{}", if models::key_source(l.vars).starts_with("key in the environment") {
+    said.push(format!("its models are in {}{}", if window { "the model picker" } else { "/model" }, if models::key_source(l.vars).starts_with("key in the environment") {
         format!(" ({} in the environment wins over a saved key)", l.vars.join(" / "))
     } else {
         String::new()
     }));
     Ok(said.join("; "))
+}
+
+/// The window's key op (Settings › Providers): a key saved, kept, or (Mistral Vibe's kept from before) removed; how it went
+/// as a `signin` line for that provider's row, not in the conversation, then the pickers' rows again.
+#[inline(never)]
+fn app_key_login(cmd: &serde_json::Value, tx: &std::sync::mpsc::Sender<serde_json::Value>) {
+    let name = cmd["provider"].as_str().unwrap_or_default();
+    let out = match models::LOGINS.iter().find(|l| l.name == name) {
+        Some(l) if cmd["remove"] == true && models::mistral_other(l).is_some() && l.plan => models::remove_old_vibe().map(|()| "the key from before is removed".to_string()),
+        Some(l) => login_save(l, cmd["key"].as_str().unwrap_or_default(), tx, true),
+        None => Err(anyhow::anyhow!("no provider {name}")),
+    };
+    let (ok, text) = match out {
+        Ok(t) => (true, t),
+        Err(e) => (false, format!("{e:#}")),
+    };
+    use std::io::Write;
+    let mut o = std::io::stdout().lock();
+    let _ = writeln!(o, "{}", json!({"type": "signin", "provider": name, "ok": ok, "text": text, "first": false}));
+    let _ = o.flush();
+    let _ = tx.send(json!({"type": "tazuna_lists"}));
 }
 
 fn host_of(url: &str) -> String {
@@ -1876,6 +1917,11 @@ fn app_server(a: &Args) -> Result<()> {
                                 "key": models::key_source(l.vars), "trusted": trusted_host(l.host()), "note": l.note, "warn": l.warns(),
                                 "sign_in": l.sign_in(), "confirmed": !l.sign_in().is_empty() && oauth::confirmed(l),
                                 "plan_off": !l.sign_in().is_empty() && oauth::plan_declined(l),
+                                // a Gemini CLI account that needs its Google Cloud project: the row asks for it
+                                "needs_project": if l.sign_in() == "gemini" { oauth::needs_project(l) } else { None },
+                                // the same key saved for Mistral and Mistral Vibe: the row asks which it is
+                                "unsure": models::mistral_other(l).and_then(|_| models::mistral_unsure()).map(|u| if u == models::MistralUnsure::Pair { "pair" } else { "old_vibe" }),
+                                "hint": models::key_hint(l),
                             })).collect();
                             // the model servers found running on this machine: theirs without a key
                             providers.extend(models::local_running().into_iter().map(|name| json!({
@@ -1896,16 +1942,7 @@ fn app_server(a: &Args) -> Result<()> {
                         // warning (where it has one) comes with {"confirm": true} the first time; progress and outcome as
                         // `signin` lines, then the pickers' rows
                         Some("login") if models::LOGINS.iter().any(|l| l.name == cmd["provider"] && !l.sign_in().is_empty()) => app_sign_in(&cmd, &tx),
-                        Some("login") => {
-                            let name = cmd["provider"].as_str().unwrap_or_default();
-                            match models::LOGINS.iter().find(|l| l.name == name) {
-                                Some(l) => match login_save(l, cmd["key"].as_str().unwrap_or_default(), &tx) {
-                                    Ok(said) => s.apply(&note(said, false), at),
-                                    Err(e) => info(&mut s, format!("{e:#}")),
-                                },
-                                None => info(&mut s, format!("no provider {name}")),
-                            }
-                        }
+                        Some("login") => app_key_login(&cmd, &tx),
                         // the data policy for this session: "any" comes only with the page's own confirmation (as /data any
                         // confirm)
                         Some("data") => {
@@ -2738,6 +2775,8 @@ struct Earlier {
     /// `models::provider_name`; empty: claude, or a log from before 0.1.182)
     model: String,
     provider: String,
+    /// the key's variable its own-loop run read (the run log's since 0.1.198): Mistral and Mistral Vibe share an API
+    key_env: String,
     first: String,
     last_at: u64,
     messages: usize,
@@ -2773,7 +2812,7 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
         }
         let (ts, rec) = (r["ts"].as_u64().unwrap_or(0), m["recording"].as_str().map(std::path::PathBuf::from));
         let i = out.iter().position(|s| s.id == sid).unwrap_or_else(|| {
-            out.push(Earlier { id: sid.to_string(), model: String::new(), provider: String::new(), first: r["prompt"].as_str().unwrap_or_default().to_string(), last_at: ts, messages: 0, recordings: vec![], named: false });
+            out.push(Earlier { id: sid.to_string(), model: String::new(), provider: String::new(), key_env: String::new(), first: r["prompt"].as_str().unwrap_or_default().to_string(), last_at: ts, messages: 0, recordings: vec![], named: false });
             last_line.push(0);
             out.len() - 1
         });
@@ -2782,6 +2821,7 @@ fn sessions_of(base: &std::path::Path, cwd: &std::path::Path) -> Vec<Earlier> {
         e.messages += 1;
         e.model = m["model"].as_str().unwrap_or_default().to_string();
         e.provider = m["provider"].as_str().unwrap_or_default().to_string();
+        e.key_env = m["key_env"].as_str().unwrap_or_default().to_string();
         e.last_at = e.last_at.max(ts);
         if let Some(p) = rec.filter(|p| !e.recordings.contains(p)) {
             e.recordings.push(p);
@@ -2994,7 +3034,10 @@ fn resume_in(cs: &[models::Choice], e: &Earlier) -> Option<models::Choice> {
     // history format (with models.dev's providers many list one id, review 11); gone, it is shown, not continued
     // a sign-in's row only for a run that named that provider: a run logged before providers were (0.1.182) never moves
     // onto a plan login by its model's name
-    let named = |c: &models::Choice| c.route.as_ref().is_some_and(|r| models::provider_name(&r.0, &r.1) == e.provider);
+    // a run logged as "Mistral" before Mistral Vibe was a provider (0.1.198) may have read either key: it goes on on the Vibe
+    // key only, never moved to per-token billing unsaid; a run that logged its key's variable, on that variable
+    let (provider, var) = if e.key_env.is_empty() && e.provider == "Mistral" { ("Mistral Vibe", "") } else { (e.provider.as_str(), e.key_env.as_str()) };
+    let named = |c: &models::Choice| c.route.as_ref().is_some_and(|r| models::provider_name(&r.0, &r.1) == provider && (var.is_empty() || r.1 == var));
     let same = |c: &&models::Choice| c.model == e.model
         && (!own || if models::login_of(c).is_some_and(|l| !l.sign_in().is_empty()) { named(c) } else { e.provider.is_empty() || named(c) });
     cs.iter().filter(fits).find(same).or_else(|| if own { None } else { cs.iter().find(fits) }).cloned()
@@ -3709,13 +3752,20 @@ fn run_live(
                         login = None;
                     }
                 }
+                // Mistral Vibe's key kept from before (models::MistralUnsure::OldVibe): delete removes it
+                (Some(typed), KeyCode::Delete) if typed.is_empty() && models::LOGINS[lp.sel - 1].plan && models::mistral_other(&models::LOGINS[lp.sel - 1]).is_some()
+                    && models::mistral_unsure() == Some(models::MistralUnsure::OldVibe) => {
+                    let text = models::remove_old_vibe().map_or_else(|e| format!("{e:#}"), |()| "Mistral Vibe: the key from before is removed".into());
+                    s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
+                    login = None;
+                }
                 (Some(typed), KeyCode::Backspace) => {
                     typed.pop();
                 }
                 (Some(typed), KeyCode::Char(c)) if !ctrl => typed.push(c),
                 (Some(typed), KeyCode::Enter) => {
                     let l = &models::LOGINS[lp.sel - 1];
-                    match login_save(l, typed, &status_tx) {
+                    match login_save(l, typed, &status_tx, false) {
                         Ok(text) => {
                             s.apply(&json!({"type": "harness_info", "text": text}), live.elapsed_ms());
                             login = None;
@@ -4888,6 +4938,7 @@ fn app_models(cs: &[models::Choice], live: &live::Live) -> (Vec<serde_json::Valu
                 Some(l) if !oauth::signed_in(l) => "not signed in",
                 Some(l) if oauth::plan_declined(l) => "plan use not allowed",
                 Some(_) => "model list not loaded",
+                None if models::login_of(c).and_then(models::mistral_other).is_some() && models::mistral_unsure().is_some() => "which key",
                 None => "no key",
             });
             row["no_key"] = json!(true);
@@ -4978,13 +5029,13 @@ fn sign_in_key(l: &'static models::Login, code: KeyCode, tx: &std::sync::mpsc::S
             if l.warns() && let Err(e) = oauth::confirm(l) {
                 return Some(format!("{e:#}"));
             }
-            sign_in_run(l, move |ok, text, _| done(text, ok == Some(true)));
+            sign_in_run(l, false, move |ok, text, _| done(text, ok == Some(true)));
             Some(format!("signing in to {}…", l.name))
         }
         // ChatGPT with another account: the session revoked, the registration forgotten, a new one made
         KeyCode::Char('a') if l.sign_in() == "chatgpt" && oauth::signed_in(l) => {
             std::thread::spawn(move || match oauth::forget_account(l) {
-                Ok(()) => sign_in_run(l, move |ok, text, _| done(text, ok == Some(true))),
+                Ok(()) => sign_in_run(l, false, move |ok, text, _| done(text, ok == Some(true))),
                 Err(e) => done(format!("{e:#}"), false),
             });
             Some("signing in to ChatGPT with another account…".into())
@@ -5024,10 +5075,12 @@ fn login_panel(lp: &LoginPick) -> ui::LoginPanel {
             let how = match l.sign_in() {
                 "" => String::new(),
                 "chatgpt" => "Enter opens ChatGPT in your browser: sign in there and allow tazuna to use your ChatGPT plan.".into(),
+                "gemini" | "antigravity" => format!("Enter opens Google's sign-in in your browser: sign in there with the Google account to use; \
+                    tazuna then finds or sets up its Code Assist project, as {} does.", l.name),
                 _ => format!("Enter shows a code to type on {}'s page, which opens in your browser.", l.name),
             };
             Some(ui::LoginForm { name: l.name.into(), page: l.page.into(), opened: lp.opened, place: l.place.into(),
-                example: l.example.into(), typed: typed.chars().count(), host: l.host().into(), var: l.vars.join(" / "), note: l.note.into(),
+                example: l.example.into(), typed: typed.chars().count(), host: l.host().into(), var: l.vars.join(" / "), note: models::key_hint(l).unwrap_or(l.note).into(),
                 has: models::key_source(l.vars).to_string(), confirm: l.warns() && !how.is_empty() && !oauth::confirmed(l), sign_in: how,
                 other: l.sign_in() == "chatgpt" })
         }),
@@ -5241,7 +5294,7 @@ mod tests {
         let row = |url: &str, var: &str| models::Choice { model: "glm-5".into(), label: "glm-5".into(), route: Some((url.into(), var.into(), "1,0.1,3".into())),
             place: String::new(), efforts: vec![], price: String::new(), note: String::new(), stale: false, state: models::State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
         let cs = [row("https://api.z.ai/api/paas/v4", "ZAI_API_KEY")];
-        let e = |provider: &str| super::Earlier { id: "own-1-a".into(), model: "glm-5".into(), provider: provider.into(), first: String::new(), last_at: 0, messages: 1, recordings: vec![], named: false };
+        let e = |provider: &str| super::Earlier { id: "own-1-a".into(), model: "glm-5".into(), provider: provider.into(), key_env: String::new(), first: String::new(), last_at: 0, messages: 1, recordings: vec![], named: false };
         // it ran on the Coding Plan, which is gone here: shown, not continued on pay-as-you-go Z.ai, which lists the same id
         assert!(super::resume_in(&cs, &e("Z.ai Coding Plan")).is_none());
         assert_eq!(super::resume_in(&cs, &e("Z.ai")).and_then(|c| c.route).map(|r| r.0).as_deref(), Some("https://api.z.ai/api/paas/v4"));
@@ -5250,6 +5303,62 @@ mod tests {
         let signed = [row("https://api.openai.com/v1", "TAZUNA_SIGNIN_CHATGPT")];
         assert!(super::resume_in(&signed, &e("")).is_none() && super::resume_in(&signed, &e("OpenAI")).is_none());
         assert!(super::resume_in(&signed, &e("ChatGPT")).is_some());
+    }
+
+    #[test]
+    fn a_mistral_key_is_saved_on_its_row_without_a_wrong_price_or_a_key_lost_unseen() {
+        let dir = std::env::temp_dir().join(format!("tazuna-mistral-save-{}-{:?}", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::models::KEYS_AT.set(Some(dir.join("keys.json")));
+        crate::models::ENV_AT.set(Some(vec![]));
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let by = |n: &str| models::LOGINS.iter().find(|l| l.name == n).unwrap();
+        let (api, vibe) = (by("Mistral"), by("Mistral Vibe"));
+        let shared = || { models::save_key("MISTRAL_API_KEY", "k-shared").unwrap(); models::save_key("MISTRAL_VIBE_API_KEY", "k-shared").unwrap(); };
+        // the window's "Yes" on Mistral Vibe's row sends nothing typed: the shared key is the Vibe key, said on the row in the
+        // window's words
+        shared();
+        let said = super::login_save(vibe, "", &tx, true).unwrap();
+        assert!(said.contains("Mistral Vibe's now") && said.contains("the model picker") && !said.contains("/model"), "{said}");
+        assert!(models::key("MISTRAL_VIBE_API_KEY").as_deref() == Some("k-shared") && models::key("MISTRAL_API_KEY").is_none());
+        // a new key typed for Mistral Vibe: the shared one stays under Mistral, billed per token
+        shared();
+        let said = super::login_save(vibe, "k-vibe", &tx, true).unwrap();
+        assert!(said.contains("stays under Mistral, billed per token"), "{said}");
+        assert!(models::key("MISTRAL_API_KEY").as_deref() == Some("k-shared") && models::key("MISTRAL_VIBE_API_KEY").as_deref() == Some("k-vibe"));
+        // a new key typed for Mistral: the shared one stays under Mistral Vibe, unused until confirmed there (or removed)
+        shared();
+        let said = super::login_save(api, "k-api", &tx, true).unwrap();
+        assert!(said.contains("unused until you say") && models::key("MISTRAL_VIBE_API_KEY").is_none() && models::key("MISTRAL_API_KEY").as_deref() == Some("k-api"), "{said}");
+        assert!(super::login_save(vibe, "", &tx, true).unwrap().contains("is your Vibe key"));
+        assert_eq!(models::key("MISTRAL_VIBE_API_KEY").as_deref(), Some("k-shared"));
+        // the other's key typed: refused, nothing saved, so no row greys after "saved"
+        let e = format!("{:#}", super::login_save(vibe, "k-api", &tx, true).unwrap_err());
+        assert!(e.contains("this key is Mistral's already") && models::key("MISTRAL_VIBE_API_KEY").as_deref() == Some("k-shared"), "{e}");
+        // the environment's API key does not hide a pair saved before
+        shared();
+        crate::models::ENV_AT.set(Some(vec![("MISTRAL_API_KEY".into(), "k-env".into())]));
+        assert!(models::key("MISTRAL_VIBE_API_KEY").is_none() && models::mistral_unsure().is_some());
+        crate::models::ENV_AT.set(None);
+        crate::models::KEYS_AT.set(None);
+        std::fs::remove_dir_all(&dir).ok();
+        let _ = std::fs::remove_file(super::trusted_file().unwrap());
+    }
+
+    #[test]
+    fn a_mistral_run_goes_on_with_the_key_it_ran_on_and_an_old_one_never_moves_to_per_token_unsaid() {
+        let row = |var: &str| models::Choice { model: "codestral-2508".into(), label: "codestral-2508".into(), route: Some(("https://api.mistral.ai/v1".into(), var.into(), "0,0,0".into())),
+            place: String::new(), efforts: vec![], price: String::new(), note: String::new(), stale: false, state: models::State::Ready, bench: String::new(), aa: String::new(), pins: vec![] };
+        let e = |provider: &str, key_env: &str| super::Earlier { id: "own-1-a".into(), model: "codestral-2508".into(), provider: provider.into(), key_env: key_env.into(),
+            first: String::new(), last_at: 0, messages: 1, recordings: vec![], named: false };
+        let both = [row("MISTRAL_API_KEY"), row("MISTRAL_VIBE_API_KEY")];
+        let var = |c: Option<models::Choice>| c.and_then(|c| c.route).map(|r| r.1);
+        assert_eq!(var(super::resume_in(&both, &e("Mistral", "MISTRAL_API_KEY"))).as_deref(), Some("MISTRAL_API_KEY"));
+        assert_eq!(var(super::resume_in(&both, &e("Mistral Vibe", "MISTRAL_VIBE_API_KEY"))).as_deref(), Some("MISTRAL_VIBE_API_KEY"));
+        // logged as "Mistral" before the split (no key variable): it may have read the Vibe key, so the Vibe key or nothing
+        assert_eq!(var(super::resume_in(&both, &e("Mistral", ""))).as_deref(), Some("MISTRAL_VIBE_API_KEY"));
+        assert!(super::resume_in(&[row("MISTRAL_API_KEY")], &e("Mistral", "")).is_none(), "never per token unsaid");
     }
 
     #[test]
@@ -5266,6 +5375,7 @@ mod tests {
         assert!(super::sign_in_gate(of("copilot"), true).is_ok() && crate::oauth::confirmed(of("copilot")));
         assert!(super::sign_in_gate(of("copilot"), false).is_ok());
         assert!(super::sign_in_gate(of("xai"), false).is_err(), "each login its own answer");
+        assert!(super::sign_in_gate(of("gemini"), false).is_err() && super::sign_in_gate(of("antigravity"), false).is_err(), "Google's two, behind their warnings");
         assert!(super::sign_in_gate(of("chatgpt"), false).is_ok(), "OpenAI's own flow: no warning");
         crate::oauth::STAND_IN.set(None);
         std::fs::remove_dir_all(&dir).ok();

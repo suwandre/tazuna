@@ -148,6 +148,12 @@ thread_local! {
     /// cut-off reply tried again, an empty reply sent again. Sent with the call's cost (`tazuna_uncounted`): unsaid, a
     /// receipt's total read as all there was (design review 12). Per thread: the tests run engines side by side.
     static UNCOUNTED: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// The conversation's last user-role message was written by tazuna (a follow-up such as test results, a nudge, a note
+    /// after tool results), not typed by the user: Copilot counts the call as the agent's, not a premium request (oauth.rs).
+    static TAZUNA_WROTE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The next message `run` takes is tazuna's though it is not a follow-up: a hand-off's turn (live.rs `tazuna_agent`), an
+    /// explorer's question (the agent asks it).
+    static NEXT_IS_TAZUNAS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// USD per token: input, cached input, output.
@@ -180,6 +186,10 @@ enum Api {
     /// effort is set. Through a gateway's Chat Completions the thinking is dropped and effort rejected: Haiku 5.5 on BeatAPI
     /// ended one rclone run in nothing but empty replies.
     Messages,
+    /// Google's Cloud Code Assist (the Gemini CLI and Antigravity sign-ins, oauth.rs): Gemini's own format in an envelope.
+    /// A wire only: the conversation stays in Chat Completions' shape, turned into Gemini's for each call
+    /// (`gemini_request`) and its reply back (`from_stream`).
+    Gemini,
 }
 
 /// The API a provider documents for all its models (models.rs `LOGINS`: xAI and OpenAI Responses, MiniMax Messages, a local
@@ -353,6 +363,7 @@ pub fn serve(args: &[String]) -> Result<()> {
                 let at = loop_.msgs.len() - loop_.skip();
                 loop_.marks.push((u.to_string(), at));
             }
+            NEXT_IS_TAZUNAS.set(msg["tazuna_agent"] == true);
             loop_.run(&msg["message"]["content"], msg["tazuna_followup"] == true, &rx);
             loop_.save();
         }
@@ -539,7 +550,7 @@ fn empty_reply(reply: &Value, api: Api) -> bool {
         Api::Responses => !reply["output"].as_array().is_some_and(|items| items.iter().any(|i| i["type"] == "function_call" || i["type"] == "message")),
         // thinking alone is empty: nothing to show and nothing to run
         Api::Messages => !reply["content"].as_array().is_some_and(|bs| bs.iter().any(|b| b["type"] == "tool_use" || b["text"].as_str().is_some_and(|t| !t.trim().is_empty()))),
-        Api::Chat => {
+        Api::Chat | Api::Gemini => {
             let m = &reply["choices"][0]["message"];
             chat_content(&m["content"]).0.trim().is_empty() && m["tool_calls"].as_array().is_none_or(|c| c.is_empty())
         }
@@ -789,6 +800,7 @@ impl Loop {
     /// One user message: model calls and tool runs until the model answers without tools, or a cap or interrupt ends it.
     fn run(&mut self, content: &Value, followup: bool, rx: &Receiver<Value>) {
         self.msgs.push(json!({"role": "user", "content": text_of(content)}));
+        TAZUNA_WROTE.set(followup || NEXT_IS_TAZUNAS.replace(false));
         if !followup {
             self.task = (std::time::Instant::now(), self.cost);
         }
@@ -893,7 +905,7 @@ impl Loop {
                     }
                     b
                 }
-                Api::Chat => {
+                Api::Chat | Api::Gemini => {
                     let mut b = json!({"model": self.model, "messages": self.chat_messages(), "tools": self.tools});
                     if let Some(n) = self.max_out {
                         b["max_tokens"] = json!(n);
@@ -910,7 +922,10 @@ impl Loop {
                 o.remove("tools");
             }
             let t0 = std::time::Instant::now();
-            let mut reply = match (self.call)(&body) {
+            let first = (self.call)(&body);
+            // every later call for this message (a retry or re-send of this one, the turns after it) is the agent's
+            TAZUNA_WROTE.set(true);
+            let mut reply = match first {
                 Ok(r) => r,
                 // a thinking block's signature holds only on the upstream account that wrote it: a gateway that moves the
                 // conversation to another account mid-run (Mortera Cloud's failover) answers 400 "invalid" (Haiku 5.5
@@ -1073,7 +1088,7 @@ impl Loop {
                     }
                     (text, calls)
                 }
-                Api::Chat => {
+                Api::Chat | Api::Gemini => {
                     let m = &reply["choices"][0]["message"];
                     let (mut text, thinking) = chat_content(&m["content"]);
                     let mut calls: Vec<Value> = m["tool_calls"].as_array().cloned().unwrap_or_default();
@@ -1140,6 +1155,7 @@ impl Loop {
                         answered = text.clone();
                     }
                     self.msgs.push(json!({"role": "user", "content": NUDGE}));
+                    TAZUNA_WROTE.set(true);
                     (self.out)(&json!({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": NUDGE}]}}));
                     continue;
                 }
@@ -1185,13 +1201,16 @@ impl Loop {
                 }
                 match self.api {
                     Api::Responses => self.msgs.push(json!({"type": "function_call_output", "call_id": id, "output": text})),
-                    Api::Chat => self.msgs.push(json!({"role": "tool", "tool_call_id": id, "content": text})),
+                    Api::Chat | Api::Gemini => self.msgs.push(json!({"role": "tool", "tool_call_id": id, "content": text})),
                     Api::Messages => {} // all results in one user turn, below
                 }
                 results.push(json!({"type": "tool_result", "tool_use_id": id, "content": text, "is_error": is_error}));
             }
             // the note is a user turn of its own: appended to the tool output (0.0.80), DeepSeek ran 79-95 more turns after it
             let note = note.map(|n| json!({"type": "text", "text": n.trim()}));
+            if note.is_some() {
+                TAZUNA_WROTE.set(true);
+            }
             match (self.api, &note) {
                 (Api::Messages, Some(n)) => results.push(n.clone()),
                 (_, Some(n)) => self.msgs.push(json!({"role": "user", "content": n["text"]})),
@@ -1235,7 +1254,7 @@ pub fn ask(url: &str, key: &str, model: &str, effort: &str, system: &str, prompt
             "reasoning": {"effort": effort}}),
         Api::Messages => json!({"model": model, "max_tokens": MAX_OUTPUT, "system": system, "messages": [{"role": "user", "content": prompt}],
             "thinking": {"type": "adaptive"}, "output_config": {"effort": effort}}),
-        Api::Chat => json!({"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+        Api::Chat | Api::Gemini => json!({"model": model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             "reasoning_effort": effort}),
     };
     let r = chat(&http, url.trim_end_matches('/'), key, api, &body)?;
@@ -1245,7 +1264,7 @@ pub fn ask(url: &str, key: &str, model: &str, effort: &str, system: &str, prompt
         Api::Responses => r["output"].as_array().into_iter().flatten().filter(|i| i["type"] == "message")
             .map(|i| blocks(&i["content"], "output_text")).collect::<Vec<_>>().join("\n"),
         Api::Messages => blocks(&r["content"], "text"),
-        Api::Chat => chat_content(&r["choices"][0]["message"]["content"]).0,
+        Api::Chat | Api::Gemini => chat_content(&r["choices"][0]["message"]["content"]).0,
     };
     let u = &r["usage"];
     let n = |a: &Value, b: &Value| a.as_u64().or(b.as_u64()).unwrap_or(0);
@@ -1255,22 +1274,48 @@ pub fn ask(url: &str, key: &str, model: &str, effort: &str, system: &str, prompt
 }
 
 /// A signed-in plan's model (oauth.rs): its access token before each call, renewed with 5 minutes left and once more
-/// after a 401; Copilot's headers; ChatGPT's tools in a namespace (flat for the session after one refusal of that).
-/// The plan pays: no price (the $1 cap counts nothing), no model list to read one from.
+/// after a 401; Copilot's headers; ChatGPT's tools in a namespace (flat for the session after one refusal of that); a
+/// Google sign-in's calls in Gemini's format inside Code Assist's envelope (the engine keeps the conversation in Chat
+/// Completions' shape). The plan pays: no price (the $1 cap counts nothing), no model list to read one from.
 #[inline(never)]
 fn connect_sign_in(l: &'static crate::models::Login, url: &str, model: &str) -> Result<(Box<dyn FnMut(&Value) -> Result<Value>>, Api, Price)> {
     let (base, wire) = crate::oauth::route(l, model);
     // tests and a local stand-in name their own address; a real route goes where the sign-in's record says
     let base = if url.trim_end_matches('/') == l.url { base } else { url.trim_end_matches('/').to_string() };
-    let api = if wire == "responses" { Api::Responses } else { Api::Chat };
+    let api = match wire {
+        "responses" => Api::Responses,
+        "messages" => Api::Messages,
+        "gemini" => Api::Gemini,
+        _ => Api::Chat,
+    };
+    let mut google = if api == Api::Gemini { Some((crate::oauth::Wire::new(l, model)?, Signed { claude: model.starts_with("claude-"), ..Signed::default() })) } else { None };
     let http: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(CALL_TIMEOUT)).http_status_as_error(false).build().into();
     let mut flat = false;
     Ok((Box::new(move |body: &Value| {
-        let mut stale: Option<String> = None;
+        let (mut stale, mut again): (Option<String>, bool) = (None, false);
         loop {
             let token = crate::oauth::access_token(l, stale.as_deref())?;
             let shaped = crate::oauth::shape(l, body, flat);
-            match chat_in(&http, &base, &token, api, &shaped, groups(), Some(&crate::oauth::headers(l, &shaped))) {
+            let sent = match google.as_mut() {
+                // the trajectory's steps so far: each user turn, model turn and tool result (the system prompt is none)
+                Some((wire, signed)) => wire.wrap(gemini_request(&shaped, signed, l.sign_in() == "antigravity"),
+                    shaped["messages"].as_array().into_iter().flatten().filter(|m| m["role"] != "system").count())?,
+                None => shaped.clone(),
+            };
+            match chat_in(&http, &base, &token, api, &sent, groups(), Some(&crate::oauth::headers(l, &shaped, TAZUNA_WROTE.get()))) {
+                Ok(r) if let Some((wire, signed)) = google.as_mut() => {
+                    let (r, id) = signed.keep(r);
+                    wire.answered(id.as_deref());
+                    return Ok(r);
+                }
+                // Gemini's malformed call: asked once more (it is the model's slip, not the request's)
+                Err(e) if google.is_some() && !again && format!("{e:#}").contains("MALFORMED_FUNCTION_CALL") => again = true,
+                // a thinking block's signature refused (Claude on Antigravity): once more without the thinking sent back
+                Err(e) if !again && google.as_ref().is_some_and(|g| !g.1.thoughts.is_empty()) && format!("{e:#}").starts_with("HTTP 400")
+                    && format!("{e:#}").to_lowercase().contains("signature") => {
+                    again = true;
+                    google.as_mut().expect("a Google sign-in").1.thoughts.clear();
+                }
                 // an access token refused: renewed once (another engine may have renewed it already)
                 Err(e) if stale.is_none() && format!("{e:#}").starts_with("HTTP 401") => stale = Some(token),
                 Err(e) if !flat && shaped["tools"][0]["type"] == "namespace" && format!("{e:#}").contains("unsupported_capability")
@@ -1278,7 +1323,7 @@ fn connect_sign_in(l: &'static crate::models::Login, url: &str, model: &str) -> 
                 r => return r.map_err(|e| crate::oauth::explain(l, e)),
             }
         }
-    }), api, (0.0, 0.0, 0.0)))
+    }), if api == Api::Gemini { Api::Chat } else { api }, (0.0, 0.0, 0.0)))
 }
 
 /// `connect` with the key itself (a later route's, read at start).
@@ -1436,6 +1481,7 @@ session: format!("explore-{}", std::process::id()),
                 // a fresh conversation per question: answers stay focused and its context small
                 l.msgs = if l.api == Api::Chat { vec![json!({"role": "system", "content": l.system})] } else { vec![] };
                 let before = l.cost;
+                NEXT_IS_TAZUNAS.set(true);
                 l.run(&json!(question), false, &rx);
                 if let Some(f) = &costs {
                     if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(f) {
@@ -1649,8 +1695,8 @@ fn read_streaming(reader: impl std::io::Read, api: Api, stall: Duration, out: &m
     // 3 minutes, a user waiting on "waiting for first token", 2026-11-12): said on the screen every 30 s, given up at
     // `stall` instead of the 15-minute limit
     let (t0, mut data, mut said) = (std::time::Instant::now(), false, 0u64);
-    // the block open on the screen: "text" or "thinking"
-    let mut open: Option<&str> = None;
+    // the block open on the screen: "text" or "thinking"; an event's data lines not yet whole JSON
+    let (mut open, mut pending): (Option<&str>, String) = (None, String::new());
     let send = |out: &mut dyn FnMut(&Value), kind: &'static str, piece: &str, open: &mut Option<&str>| {
         if piece.is_empty() {
             return;
@@ -1682,7 +1728,10 @@ fn read_streaming(reader: impl std::io::Read, api: Api, stall: Duration, out: &m
             continue;
         }
         data |= line.starts_with("data:");
-        let Some(d) = line.strip_prefix("data:").map(str::trim).and_then(|d| serde_json::from_str::<Value>(d).ok()) else { continue };
+        if line.trim().is_empty() {
+            pending.clear();
+        }
+        let Some(d) = line.strip_prefix("data:").map(str::trim).and_then(|d| sse_data(&mut pending, d)) else { continue };
         let (text, thinking) = match api {
             // as `from_stream` reads it: Mistral sends content as typed blocks (thinking, then the first words of the text)
             // before plain strings, and an empty `reasoning_content` beside `reasoning` (the screen lost the thinking and
@@ -1703,6 +1752,11 @@ fn read_streaming(reader: impl std::io::Read, api: Api, stall: Duration, out: &m
                 (Some("content_block_delta"), Some("thinking_delta")) => (None, d["delta"]["thinking"].as_str().map(String::from)),
                 _ => (None, None),
             },
+            Api::Gemini => {
+                let parts = d["response"]["candidates"][0]["content"]["parts"].as_array().cloned().unwrap_or_default();
+                let of = |thought: bool| parts.iter().filter(|p| (p["thought"] == true) == thought).filter_map(|p| p["text"].as_str()).collect::<String>();
+                (Some(of(false)), Some(of(true)))
+            }
         };
         if let Some(t) = thinking {
             send(out, "thinking", &t, &mut open);
@@ -1738,10 +1792,12 @@ fn streams_by_default(url: &str, api: Api) -> bool {
     !url.contains("unorouter.com") && !(url.contains("mortera.cloud") && matches!(api, Api::Responses))
 }
 
-/// A refusal that no wait mends on a ChatGPT sign-in (plan usage: a limit, an account or a request it does not take):
-/// said at once. A key route whose gateway passes the same codes on keeps waiting them out, as before.
+/// A refusal that no wait mends on a sign-in (ChatGPT's plan usage: a limit, an account or a request it does not take;
+/// a Google quota used up): said at once. A key route whose gateway passes the same codes on keeps waiting them out, as
+/// before.
 fn refused_for_good(text: &str) -> bool {
-    ["subscription_sharing_usage_limit_exceeded", "subscription_sharing_user_not_eligible", "subscription_sharing_unsupported_capability",
+    // Google's quota used up (Code Assist's ErrorInfo reason, which Gemini CLI reads as final, unlike RATE_LIMIT_EXCEEDED)
+    [GEMINI_REFUSED, "QUOTA_EXHAUSTED", "subscription_sharing_usage_limit_exceeded", "subscription_sharing_user_not_eligible", "subscription_sharing_unsupported_capability",
      "subscription_sharing_route_not_supported", "subscription_sharing_invalid_user", "chatpass_v2_"].iter().any(|c| text.contains(c))
 }
 
@@ -1752,6 +1808,7 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         Api::Chat => "chat/completions",
         Api::Responses => "responses",
         Api::Messages => "messages",
+        Api::Gemini => "v1internal:streamGenerateContent?alt=sse",
     };
     // streamed by default: gateways cap a reply that is not streamed (UnoRouter: complete within 90 s, which a 130K-token
     // prompt cannot meet, and the task ended with a 413), and a started stream is not cut by the time limit. UnoRouter
@@ -1800,7 +1857,8 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         if stop_pending() {
             bail!("stopped");
         }
-        if stream {
+        // Code Assist streams by its path and refuses a field it does not know
+        if stream && api != Api::Gemini {
             body["stream"] = json!(true);
             if api == Api::Chat {
                 body["stream_options"] = json!({"include_usage": true});
@@ -1809,6 +1867,8 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
         let req = http.post(format!("{url}/{path}")).config().timeout_recv_response(Some(limit))
             .timeout_global(Some(Duration::from_secs(900))).build().header("Content-Type", "application/json");
         let req = match api {
+            // a sign-in's Messages (Copilot's Claude) take its token as a bearer, as Copilot's proxy asks
+            Api::Messages if sign_in.is_some() => req.header("Authorization", format!("Bearer {key}")).header("anthropic-version", "2023-06-01"),
             Api::Messages => req.header("x-api-key", key).header("anthropic-version", "2023-06-01"),
             _ => req.header("Authorization", format!("Bearer {key}")),
         };
@@ -1888,6 +1948,11 @@ fn chat_in(http: &ureq::Agent, url: &str, key: &str, api: Api, body: &Value, gro
                     continue;
                 }
                 Some(r) => return r,
+                // Code Assist without its event stream: its chunks as one JSON array
+                None if api == Api::Gemini => {
+                    let v: Value = serde_json::from_str(&text).context("provider reply is not JSON")?;
+                    return from_stream(&v.as_array().cloned().unwrap_or_else(|| vec![v]), api);
+                }
                 None => {
                     let r = serde_json::from_str(&text).context("provider reply is not JSON")?;
                     // some UnoRouter upstreams cut a slow unstreamed call at ~90 s with an empty 200 (0/0 tokens) instead of 413
@@ -2005,12 +2070,41 @@ fn sse(text: &str) -> Option<Vec<Value>> {
     if !text.trim_start().starts_with("data:") && !text.trim_start().starts_with("event:") && !text.trim_start().starts_with(':') {
         return None;
     }
-    Some(text.lines().filter_map(|l| l.strip_prefix("data:")).map(str::trim).filter(|d| *d != "[DONE]")
-        .filter_map(|d| serde_json::from_str(d).ok()).collect())
+    let mut pending = String::new();
+    Some(text.lines().filter_map(|l| {
+        if l.trim().is_empty() {
+            pending.clear();
+        }
+        l.strip_prefix("data:").map(str::trim).filter(|d| *d != "[DONE]").and_then(|d| sse_data(&mut pending, d))
+    }).collect())
+}
+
+/// One `data:` line of an event stream as JSON: the line alone, as providers send them; else joined with the event's lines
+/// before it, as the spec joins an event's data lines with "\n" (one JSON split over several lines was dropped).
+fn sse_data(pending: &mut String, d: &str) -> Option<Value> {
+    if !pending.is_empty() {
+        let joined = format!("{pending}\n{d}");
+        if let Ok(v) = serde_json::from_str(&joined) {
+            pending.clear();
+            return Some(v);
+        }
+    }
+    if let Ok(v) = serde_json::from_str(d) {
+        pending.clear();
+        return Some(v);
+    }
+    if !pending.is_empty() {
+        pending.push('\n');
+    }
+    pending.push_str(d);
+    None
 }
 
 /// A streamed reply put back into the shape of a reply that was not streamed.
 fn from_stream(events: &[Value], api: Api) -> Result<Value> {
+    if api == Api::Gemini {
+        return from_gemini(events);
+    }
     if api == Api::Messages {
         // blocks start whole and grow by deltas: text, thinking, signature, and a tool's input as pieces of JSON
         let (mut blocks, mut usage) = (Vec::<Value>::new(), json!({}));
@@ -2092,6 +2186,216 @@ fn from_stream(events: &[Value], api: Api) -> Result<Value> {
         message["reasoning_content"] = json!(reasoning);
     }
     Ok(json!({"choices": [{"message": message}], "usage": usage}))
+}
+
+/// Said by a Gemini reply no wait mends (blocked, stopped for safety or a malformed call): `refused_for_good` ends it at
+/// once; a malformed call is asked once more by the sign-in's call (`connect_sign_in`).
+const GEMINI_REFUSED: &str = "(no retry helps)";
+
+/// What a Gemini reply came with that its next requests need back, kept beside the conversation (which stays in Chat
+/// Completions' shape, and goes to no other provider with them): each function call's thought signature, and for Claude
+/// (on Antigravity, which needs its thinking before its calls) each turn's signed thinking blocks by its first call.
+#[derive(Default)]
+struct Signed {
+    calls: std::collections::HashMap<String, String>,
+    thoughts: std::collections::HashMap<String, Value>,
+    claude: bool,
+}
+
+impl Signed {
+    /// A reply's signatures and thoughts taken out of it (`from_gemini` put them there) and kept; its response id.
+    fn keep(&mut self, mut r: Value) -> (Value, Option<String>) {
+        let id = r.as_object_mut().and_then(|o| o.remove("gemini_response_id")).and_then(|v| v.as_str().map(String::from));
+        let m = &mut r["choices"][0]["message"];
+        let thoughts = m.as_object_mut().and_then(|o| o.remove("gemini_thoughts"));
+        for c in m["tool_calls"].as_array_mut().into_iter().flatten() {
+            let (Some(sig), Some(id)) = (c.as_object_mut().and_then(|o| o.remove("thought_signature")), c["id"].as_str().map(String::from)) else { continue };
+            if let Some(sig) = sig.as_str() {
+                self.calls.insert(id, sig.into());
+            }
+        }
+        if let (Some(t), Some(first), true) = (thoughts, m["tool_calls"][0]["id"].as_str(), self.claude) {
+            self.thoughts.insert(first.into(), t);
+        }
+        (r, id)
+    }
+}
+
+/// A Chat Completions request in Gemini's own format, for Google's Code Assist (`Api::Gemini`; the shapes as omp's
+/// google-shared.ts sends them, MIT): the system prompt as `systemInstruction`, turns as `contents` (the assistant's as
+/// `model`, a call's results as `functionResponse` parts of one user turn), tools as `functionDeclarations`. Gemini 3
+/// refuses a turn whose first call is unsigned: its own signature, else Google's stand-in. Claude (on Antigravity) gets
+/// ids on calls and results and its thinking back before its calls; `legacy`: schemas as `parameters` (Antigravity).
+fn gemini_request(body: &Value, signed: &Signed, legacy: bool) -> Value {
+    let model = body["model"].as_str().unwrap_or_default();
+    let claude = model.starts_with("claude-");
+    let (mut system, mut contents, mut names) = (vec![], Vec::<Value>::new(), std::collections::HashMap::<&str, &str>::new());
+    for m in body["messages"].as_array().into_iter().flatten() {
+        match m["role"].as_str().unwrap_or_default() {
+            "system" | "developer" => system.push(json!({"text": text_of(&m["content"])})),
+            "assistant" => {
+                let calls = m["tool_calls"].as_array().cloned().unwrap_or_default();
+                let first = calls.first().and_then(|c| c["id"].as_str()).unwrap_or_default();
+                let mut parts: Vec<Value> = if claude { signed.thoughts.get(first).and_then(Value::as_array).cloned().unwrap_or_default() } else { vec![] };
+                let text = chat_content(&m["content"]).0;
+                if !text.trim().is_empty() {
+                    parts.push(json!({"text": text}));
+                }
+                for (i, c) in m["tool_calls"].as_array().into_iter().flatten().enumerate() {
+                    let id = c["id"].as_str().unwrap_or_default();
+                    names.insert(id, c["function"]["name"].as_str().unwrap_or_default());
+                    let a = &c["function"]["arguments"];
+                    let args = a.as_str().map_or(a.clone(), |s| serde_json::from_str(s).unwrap_or(json!({})));
+                    let mut call = json!({"name": c["function"]["name"], "args": if args.is_object() { args } else { json!({}) }});
+                    if claude {
+                        call["id"] = json!(id);
+                    }
+                    let mut part = json!({"functionCall": call});
+                    match signed.calls.get(id) {
+                        Some(sig) => part["thoughtSignature"] = json!(sig),
+                        None if i == 0 && !claude => part["thoughtSignature"] = json!(crate::oauth::SKIP_SIGNATURE),
+                        None => {}
+                    }
+                    parts.push(part);
+                }
+                if !parts.is_empty() {
+                    contents.push(json!({"role": "model", "parts": parts}));
+                }
+            }
+            "tool" => {
+                let id = m["tool_call_id"].as_str().unwrap_or_default();
+                let mut answer = json!({"name": names.get(id).copied().unwrap_or("tool"), "response": {"output": text_of(&m["content"])}});
+                if claude {
+                    answer["id"] = json!(id);
+                }
+                let part = json!({"functionResponse": answer});
+                // all of a turn's results in one user turn, as Code Assist requires
+                match contents.last_mut().filter(|c| c["role"] == "user" && c["parts"].as_array().is_some_and(|p| p.iter().any(|x| x.get("functionResponse").is_some()))) {
+                    Some(c) => c["parts"].as_array_mut().expect("parts").push(part),
+                    None => contents.push(json!({"role": "user", "parts": [part]})),
+                }
+            }
+            _ => {
+                let text = text_of(&m["content"]);
+                if !text.trim().is_empty() {
+                    contents.push(json!({"role": "user", "parts": [{"text": text}]}));
+                }
+            }
+        }
+    }
+    let mut r = json!({"contents": contents});
+    if !system.is_empty() {
+        r["systemInstruction"] = json!({"parts": system});
+    }
+    // ponytail: schemas go as tazuna's tools write them (type, properties, required, description, all in Google's subset),
+    // with an object's `properties` always there for the legacy form, as omp's normalizer does; the rest of that normalizer
+    // if Google refuses a schema
+    if let Some(tools) = body["tools"].as_array().filter(|t| !t.is_empty()) {
+        let schema = if legacy { "parameters" } else { "parametersJsonSchema" };
+        r["tools"] = json!([{"functionDeclarations": tools.iter().map(|t| json!({"name": t["function"]["name"], "description": t["function"]["description"],
+            schema: if legacy { with_properties(t["function"]["parameters"].clone()) } else { t["function"]["parameters"].clone() }})).collect::<Vec<_>>()}]);
+    }
+    // its thinking on the screen; Gemini 2.0 and older do not think
+    if !["gemini-1", "gemini-2.0"].iter().any(|p| model.starts_with(p)) {
+        r["generationConfig"] = json!({"thinkingConfig": {"includeThoughts": true}});
+    }
+    r
+}
+
+/// An object schema's `properties` always there (Antigravity's `parameters` refuse an object without them: the mcp tool's
+/// free-form `arguments`), as omp's normalizer adds them.
+fn with_properties(mut v: Value) -> Value {
+    if let Some(o) = v.as_object_mut() {
+        if o.get("type").and_then(Value::as_str) == Some("object") && !o.contains_key("properties") {
+            o.insert("properties".into(), json!({}));
+        }
+        for x in o.values_mut() {
+            *x = with_properties(x.take());
+        }
+    } else if let Some(a) = v.as_array_mut() {
+        for x in a {
+            *x = with_properties(x.take());
+        }
+    }
+    v
+}
+
+/// Code Assist's event stream as a Chat Completions reply: text, thinking as `reasoning_content`, function calls (ids
+/// made where Gemini gives none), usage (prompt, cached, output with thinking). The calls' signatures and the turn's
+/// thinking blocks (each with its own signature, in order) ride along for `Signed::keep`. A reply Google blocked or
+/// stopped for a reason other than its end or its output limit (safety, recitation, a malformed call) is an error even
+/// with text: the answer is not whole, and no wait mends it (`refused_for_good`).
+fn from_gemini(events: &[Value]) -> Result<Value> {
+    let (mut text, mut thinking, mut calls, mut usage, mut finish, mut id) = (String::new(), String::new(), vec![], Value::Null, String::new(), Value::Null);
+    let (mut blocks, mut open) = (Vec::<Value>::new(), String::new());
+    for e in events {
+        if let Some(err) = e.get("error") {
+            bail!("provider error in stream: {}", err.to_string().chars().take(300).collect::<String>());
+        }
+        let r = if e["response"].is_object() { &e["response"] } else { e };
+        if let Some(b) = r["promptFeedback"]["blockReason"].as_str().filter(|_| r["candidates"].as_array().is_none_or(|c| c.is_empty())) {
+            bail!("Google blocked the request ({b}{}) {GEMINI_REFUSED}", r["promptFeedback"]["blockReasonMessage"].as_str().map_or(String::new(), |m| format!(": {m}")));
+        }
+        if r["responseId"].is_string() {
+            id = r["responseId"].clone();
+        }
+        let c = &r["candidates"][0];
+        for p in c["content"]["parts"].as_array().into_iter().flatten() {
+            let sig = p["thoughtSignature"].as_str().filter(|s| !s.is_empty());
+            if p["thought"] == true {
+                let t = p["text"].as_str().unwrap_or_default();
+                thinking.push_str(t);
+                open.push_str(t);
+                // a signature closes its thinking block: the next thought text is the next block
+                if let Some(sig) = sig {
+                    blocks.push(json!({"thought": true, "text": std::mem::take(&mut open), "thoughtSignature": sig}));
+                }
+            } else if let (Some(sig), true, None) = (sig, p["text"].as_str().is_none_or(str::is_empty), p.get("functionCall")) {
+                // a signature alone signs the thinking before it
+                if !open.is_empty() {
+                    blocks.push(json!({"thought": true, "text": std::mem::take(&mut open), "thoughtSignature": sig}));
+                }
+            } else if let Some(f) = p.get("functionCall") {
+                let made = format!("call_{}", crate::platform::random::<6>().iter().map(|b| format!("{b:02x}")).collect::<String>());
+                calls.push(json!({"id": f["id"].as_str().map_or(made, String::from), "type": "function",
+                    "function": {"name": f["name"], "arguments": f["args"].as_object().map_or("{}".into(), |a| Value::Object(a.clone()).to_string())},
+                    "thought_signature": p["thoughtSignature"]}));
+            } else if let Some(t) = p["text"].as_str() {
+                text.push_str(t);
+            }
+        }
+        if let Some(f) = c["finishReason"].as_str() {
+            finish = f.to_string();
+        }
+        if r["usageMetadata"].is_object() {
+            usage = r["usageMetadata"].clone();
+        }
+    }
+    if !["", "STOP", "MAX_TOKENS"].contains(&finish.as_str()) {
+        bail!("Gemini stopped: {finish} {GEMINI_REFUSED}");
+    }
+    let n = |k: &str| usage[k].as_u64().unwrap_or(0);
+    let output = n("candidatesTokenCount") + n("thoughtsTokenCount");
+    let prompt = if n("promptTokenCount") > 0 { n("promptTokenCount") } else { n("totalTokenCount").saturating_sub(output) };
+    let mut message = json!({"role": "assistant", "content": text});
+    if !calls.is_empty() {
+        message["tool_calls"] = json!(calls);
+    }
+    if !thinking.is_empty() {
+        message["reasoning_content"] = json!(thinking);
+    }
+    if !blocks.is_empty() {
+        message["gemini_thoughts"] = json!(blocks);
+    }
+    let mut r = json!({"choices": [{"message": message}], "usage": {"prompt_tokens": prompt, "completion_tokens": output,
+        "prompt_tokens_details": {"cached_tokens": n("cachedContentTokenCount").min(prompt)}}});
+    if !usage.is_object() {
+        r["usage"] = Value::Null;
+    }
+    if id.is_string() {
+        r["gemini_response_id"] = id;
+    }
+    Ok(r)
 }
 
 /// The model's prices from the provider's model list (per million tokens there, per token here), and the API it takes.
@@ -2896,6 +3200,7 @@ session: "s".into(),
                     && body["tools"][0]["name"] == "bash" && level(&body["reasoning"]["effort"]), "{provider}: {body}"),
                 Api::Messages => assert!(body["system"] == "sys" && body["messages"][0]["role"] == "user" && body["max_tokens"].is_u64()
                     && body["tools"][0]["input_schema"]["type"] == "object" && head.to_ascii_lowercase().contains("anthropic-version: 2023-06-01"), "{provider}: {body}"),
+                Api::Gemini => unreachable!("a sign-in's wire only"),
             }
             assert_eq!(events.borrow().last().unwrap()["subtype"], "success", "{provider}: the reply read back");
         }
@@ -2914,6 +3219,7 @@ session: "s".into(),
             "POST /v1/responses" => (200, completed.into()),
             "POST /api/accounts/oauth/token" => (200, json!({"access_token": "at2", "refresh_token": "rt2", "expires_in": 3600}).to_string()),
             "POST /chat/completions" => (200, r#"{"choices":[{"message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":5,"completion_tokens":1}}"#.into()),
+            "POST /v1/messages" => (200, r#"{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":5,"output_tokens":1}}"#.into()),
             _ => (404, "{}".into()),
         });
         let dir = temp("engine-sign-in");
@@ -2946,8 +3252,270 @@ session: "s".into(),
         for h in ["authorization: bearer gho_test", "copilot-integration-id: copilot-chat", "editor-version: copilot/1.0.82", "x-initiator: agent", "x-github-api-version: 2026-08-01"] {
             assert!(req.contains(h), "{h} in {req}");
         }
+        // Copilot's Claude: Anthropic's Messages on the plan's host under /v1, the GitHub token as a bearer (no x-api-key)
+        put(copilot, json!({"access_token": "gho_test", "api_url": base, "models": [{"id": "claude-opus-5.5", "api": "messages"}]}));
+        let (mut call, api, _) = connect_sign_in(copilot, "https://api.githubcopilot.com", "claude-opus-5.5").unwrap();
+        assert_eq!(api, Api::Messages);
+        let r = call(&json!({"model": "claude-opus-5.5", "max_tokens": 64000, "system": "s", "messages": [{"role": "user", "content": "hi"}],
+            "thinking": {"type": "adaptive"}, "cache_control": {"type": "ephemeral"}})).unwrap();
+        assert_eq!(r["content"][0]["text"], "ok");
+        let req = seen.lock().unwrap().iter().rev().find(|r| r.starts_with("POST /v1/messages")).cloned().unwrap();
+        let head = req.to_lowercase();
+        for h in ["authorization: bearer gho_test", "anthropic-version: 2023-06-01", "copilot-integration-id: copilot-chat", "x-initiator: user"] {
+            assert!(head.contains(h), "{h} in {req}");
+        }
+        assert!(!head.contains("x-api-key") && req.contains(r#""stream":true"#) && req.contains(r#""model":"claude-opus-5.5""#), "{req}");
         crate::oauth::STAND_IN.set(None);
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_chat_conversation_goes_to_code_assist_in_geminis_shape_and_its_reply_comes_back_in_chats() {
+        let body = json!({"model": "gemini-3.1-pro-preview", "messages": [{"role": "system", "content": "sys"}, {"role": "user", "content": "fix it"},
+            {"role": "assistant", "content": "", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read", "arguments": "{\"path\":\"a\"}"}},
+                {"id": "c2", "type": "function", "function": {"name": "bash", "arguments": "{\"command\":\"ls\"}"}}]},
+            {"role": "tool", "tool_call_id": "c1", "content": "A"}, {"role": "tool", "tool_call_id": "c2", "content": "a b"}, {"role": "user", "content": "tests fail"},
+            {"role": "assistant", "content": "looking", "tool_calls": [{"id": "c3", "type": "function", "function": {"name": "bash", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c3", "content": "ok"}],
+            "tools": [{"type": "function", "function": {"name": "bash", "description": "run", "parameters": {"type": "object", "properties": {"command": {"type": "string"}}}}}],
+            "reasoning_effort": "high"});
+        let mut signed = Signed::default();
+        signed.calls.insert("c3".into(), "c2lnLTM=".into());
+        let r = gemini_request(&body, &signed, false);
+        assert_eq!(r["systemInstruction"], json!({"parts": [{"text": "sys"}]}));
+        let c = r["contents"].as_array().unwrap();
+        assert_eq!(c.iter().map(|x| x["role"].as_str().unwrap()).collect::<Vec<_>>(), ["user", "model", "user", "user", "model", "user"]);
+        // a turn's first call unsigned: Google's stand-in; the second bare; both results in one user turn, by the calls' names
+        assert_eq!(c[1]["parts"][0], json!({"functionCall": {"name": "read", "args": {"path": "a"}}, "thoughtSignature": "skip_thought_signature_validator"}));
+        assert_eq!(c[1]["parts"][1], json!({"functionCall": {"name": "bash", "args": {"command": "ls"}}}));
+        assert_eq!(c[2]["parts"], json!([{"functionResponse": {"name": "read", "response": {"output": "A"}}}, {"functionResponse": {"name": "bash", "response": {"output": "a b"}}}]));
+        assert_eq!(c[3]["parts"][0]["text"], "tests fail");
+        assert_eq!(c[4]["parts"], json!([{"text": "looking"}, {"functionCall": {"name": "bash", "args": {}}, "thoughtSignature": "c2lnLTM="}]), "its own signature back");
+        assert_eq!(r["tools"][0]["functionDeclarations"][0]["parametersJsonSchema"]["properties"]["command"]["type"], "string");
+        assert_eq!(r["generationConfig"]["thinkingConfig"]["includeThoughts"], true);
+        assert!(r.get("reasoning_effort").is_none() && r.get("messages").is_none());
+        // Claude on Antigravity: ids on calls and results, its thinking before its calls, schemas as `parameters`, no stand-in
+        let mut claude = body.clone();
+        claude["model"] = json!("claude-sonnet-4-6");
+        signed.thoughts.insert("c1".into(), json!([{"thought": true, "text": "plan", "thoughtSignature": "dGg="}]));
+        let r = gemini_request(&claude, &signed, true);
+        assert_eq!(r["contents"][1]["parts"][0], json!({"thought": true, "text": "plan", "thoughtSignature": "dGg="}));
+        assert_eq!(r["contents"][1]["parts"][1], json!({"functionCall": {"name": "read", "args": {"path": "a"}, "id": "c1"}}));
+        assert_eq!(r["contents"][2]["parts"][0]["functionResponse"]["id"], "c1");
+        assert!(r["tools"][0]["functionDeclarations"][0]["parameters"].is_object());
+        // Antigravity's `parameters`: every object with `properties` (the mcp tool's free-form arguments were refused)
+        let mcp = json!({"model": "claude-sonnet-4-6", "messages": [], "tools": [{"type": "function", "function": {"name": "mcp", "description": "d",
+            "parameters": {"type": "object", "properties": {"arguments": {"type": "object"}}}}}]});
+        assert_eq!(gemini_request(&mcp, &signed, true)["tools"][0]["functionDeclarations"][0]["parameters"]["properties"]["arguments"], json!({"type": "object", "properties": {}}));
+        assert!(gemini_request(&mcp, &signed, false)["tools"][0]["functionDeclarations"][0]["parametersJsonSchema"]["properties"]["arguments"].get("properties").is_none(), "Gemini CLI's as written");
+
+        // the stream: thinking, text, a call with its signature, usage with the cached share
+        let events = sse("data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"hm\",\"thought\":true}]}}],\"responseId\":\"r1\"}}\n\n\
+            data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"I'll look\"},{\"functionCall\":{\"name\":\"read\",\"args\":{\"path\":\"b\"}},\"thoughtSignature\":\"c2ln\"}]},\"finishReason\":\"STOP\"}],\
+            \"usageMetadata\":{\"promptTokenCount\":1000,\"candidatesTokenCount\":20,\"thoughtsTokenCount\":30,\"cachedContentTokenCount\":800,\"totalTokenCount\":1050}},\"traceId\":\"t\"}\n\n").unwrap();
+        let r = from_stream(&events, Api::Gemini).unwrap();
+        let m = &r["choices"][0]["message"];
+        assert_eq!((m["content"].as_str(), m["reasoning_content"].as_str()), (Some("I'll look"), Some("hm")));
+        assert_eq!((m["tool_calls"][0]["function"]["name"].as_str(), m["tool_calls"][0]["function"]["arguments"].as_str(), m["tool_calls"][0]["thought_signature"].as_str()),
+            (Some("read"), Some(r#"{"path":"b"}"#), Some("c2ln")));
+        assert!(m["tool_calls"][0]["id"].as_str().unwrap().starts_with("call_"));
+        assert_eq!(r["usage"], json!({"prompt_tokens": 1000, "completion_tokens": 50, "prompt_tokens_details": {"cached_tokens": 800}}));
+        // kept beside the conversation, not in it
+        let mut signed = Signed::default();
+        let (kept, id) = signed.keep(r);
+        let call = kept["choices"][0]["message"]["tool_calls"][0].clone();
+        assert!(call.get("thought_signature").is_none() && kept["choices"][0]["message"].get("gemini_thoughts").is_none() && id.as_deref() == Some("r1"));
+        assert_eq!(signed.calls[call["id"].as_str().unwrap()], "c2ln");
+        // an error in the stream, a blocked prompt, a stop without an answer: errors
+        assert!(from_stream(&[json!({"error": {"code": 429, "message": "quota", "status": "RESOURCE_EXHAUSTED"}})], Api::Gemini).is_err());
+        assert!(format!("{:#}", from_stream(&[json!({"response": {"promptFeedback": {"blockReason": "SAFETY"}}})], Api::Gemini).unwrap_err()).contains("SAFETY"));
+        assert!(format!("{:#}", from_stream(&[json!({"response": {"candidates": [{"finishReason": "MALFORMED_FUNCTION_CALL"}]}})], Api::Gemini).unwrap_err()).contains("MALFORMED"));
+    }
+
+    #[test]
+    fn a_google_sign_in_calls_code_assist_as_its_app_and_sends_each_signature_back() {
+        use crate::oauth::tests::{login, put, stand_in, temp};
+        let reply = |sig: &str| format!("data: {{\"response\":{{\"candidates\":[{{\"content\":{{\"role\":\"model\",\"parts\":[{{\"functionCall\":{{\"name\":\"bash\",\"args\":{{\"command\":\"ls\"}}}},\"thoughtSignature\":\"{sig}\"}}]}},\"finishReason\":\"STOP\"}}],\"usageMetadata\":{{\"promptTokenCount\":10,\"candidatesTokenCount\":2,\"totalTokenCount\":12}},\"responseId\":\"resp-{sig}\"}}}}\n\n");
+        let (base, seen) = stand_in(move |line, head, _| match line {
+            "POST /v1internal:streamGenerateContent?alt=sse" if head.contains("Bearer ya29.old") => (401, r#"{"error":{"code":401,"message":"Request had invalid authentication credentials.","status":"UNAUTHENTICATED"}}"#.into()),
+            "POST /v1internal:streamGenerateContent?alt=sse" if head.contains("antigravity/hub/") => (200, reply("YWc=")),
+            "POST /v1internal:streamGenerateContent?alt=sse" => (200, reply("Z2M=")),
+            "POST /token" => (200, json!({"access_token": "ya29.new", "expires_in": 3599}).to_string()),
+            _ => (404, "{}".into()),
+        });
+        let dir = temp("engine-google");
+        crate::oauth::STAND_IN.set(Some((base.clone(), dir.clone())));
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let gemini = login("gemini");
+        put(gemini, json!({"access_token": "ya29.old", "refresh_token": "1//r", "expires_at": now + 3600, "project": "proj-123",
+            "models": [{"id": "gemini-3.1-pro-preview", "name": "gemini-3.1-pro-preview", "api": "gemini"}]}));
+        let (mut call, api, price) = connect_sign_in(gemini, &base, "gemini-3.1-pro-preview").unwrap();
+        assert_eq!((api, price), (Api::Chat, (0.0, 0.0, 0.0)), "the engine keeps Chat's shape; the plan pays");
+        let mut body = json!({"model": "gemini-3.1-pro-preview", "messages": [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
+            "tools": [{"type": "function", "function": {"name": "bash", "description": "run", "parameters": {"type": "object"}}}]});
+        let r = call(&body).unwrap();
+        let tool_call = r["choices"][0]["message"]["tool_calls"][0].clone();
+        assert!(tool_call.get("thought_signature").is_none() && tool_call["function"]["name"] == "bash", "{r}");
+        let calls: Vec<String> = seen.lock().unwrap().iter().filter(|r| r.starts_with("POST /v1internal:streamGenerateContent")).cloned().collect();
+        assert_eq!(calls.len(), 2, "a 401, renewed, then through");
+        let (head, sent) = calls[1].split_once("\n\n").map(|(h, b)| (h.to_lowercase(), serde_json::from_str::<Value>(b).unwrap())).unwrap();
+        for h in ["authorization: bearer ya29.new", "user-agent: geminicli/0.68.0/gemini-3.1-pro-preview (", "client-metadata: idetype=ide_unspecified", "accept: text/event-stream"] {
+            assert!(head.contains(h), "{h} in {head}");
+        }
+        assert_eq!((sent["model"].as_str(), sent["project"].as_str()), (Some("gemini-3.1-pro-preview"), Some("proj-123")));
+        assert!(sent["request"]["contents"][0]["parts"][0]["text"] == "hi" && sent.get("stream").is_none() && sent["request"].get("labels").is_none(), "{sent}");
+        // the next call sends the call back with the signature it came with; a sign-in with another account meanwhile: its
+        // project, with its token
+        body["messages"].as_array_mut().unwrap().extend([json!({"role": "assistant", "content": "", "tool_calls": [tool_call.clone()]}),
+            json!({"role": "tool", "tool_call_id": tool_call["id"], "content": "a b"})]);
+        put(gemini, json!({"access_token": "ya29.other", "refresh_token": "1//o", "expires_at": now + 3600, "project": "proj-456",
+            "models": [{"id": "gemini-3.1-pro-preview", "name": "gemini-3.1-pro-preview", "api": "gemini"}]}));
+        call(&body).unwrap();
+        let last = seen.lock().unwrap().iter().rev().find(|r| r.starts_with("POST /v1internal:streamGenerateContent")).cloned().unwrap();
+        assert!(last.contains(r#""thoughtSignature":"Z2M=""#) && !last.contains("skip_thought_signature_validator"), "{last}");
+        assert!(last.contains("Bearer ya29.other") && last.contains(r#""project":"proj-456""#), "{last}");
+
+        // Antigravity: the app's envelope (its session, request id, labels with the model's enum), its tool mode, the
+        // system prompt as a user's, the model's own output cap and thinking
+        let ag = login("antigravity");
+        put(ag, json!({"access_token": "ya29.ag", "refresh_token": "1//ag", "expires_at": now + 3600, "project": "ag-proj", "client_version": "2.34.0",
+            "models": [{"id": "gemini-3.1-pro-high", "api": "gemini", "enum": "MODEL_PLACEHOLDER_M36", "max_out": 65535, "level": "HIGH"}]}));
+        let (mut call, _, _) = connect_sign_in(ag, &base, "gemini-3.1-pro-high").unwrap();
+        let mut body = json!({"model": "gemini-3.1-pro-high", "messages": [{"role": "system", "content": "sys"}, {"role": "user", "content": "hi"}],
+            "tools": [{"type": "function", "function": {"name": "bash", "description": "run", "parameters": {"type": "object"}}}]});
+        let tool_call = call(&body).unwrap()["choices"][0]["message"]["tool_calls"][0].clone();
+        body["messages"].as_array_mut().unwrap().extend([json!({"role": "assistant", "content": "", "tool_calls": [tool_call.clone()]}),
+            json!({"role": "tool", "tool_call_id": tool_call["id"], "content": "a b"})]);
+        call(&body).unwrap();
+        let sent: Vec<(String, Value)> = seen.lock().unwrap().iter().filter(|r| r.contains("antigravity/hub/")).map(|r| {
+            let (h, b) = r.split_once("\n\n").unwrap();
+            (h.to_lowercase(), serde_json::from_str(b).unwrap())
+        }).collect();
+        assert_eq!(sent.len(), 2);
+        let (head, first) = &sent[0];
+        assert!(head.contains("user-agent: antigravity/hub/2.34.0 (aidev_client;") && !head.contains("client-metadata"), "{head}");
+        let req = &first["request"];
+        assert_eq!((first["project"].as_str(), first["model"].as_str(), first["userAgent"].as_str()), (Some("ag-proj"), Some("gemini-3.1-pro-high"), Some("antigravity")));
+        assert!(first["requestId"].as_str().unwrap().starts_with("agent/") && first["requestId"].as_str().unwrap().ends_with("/1"), "{first}");
+        assert_eq!(req["systemInstruction"]["role"], "user");
+        assert_eq!(req["toolConfig"], json!({"functionCallingConfig": {"mode": "VALIDATED"}}));
+        assert_eq!(req["generationConfig"], json!({"thinkingConfig": {"includeThoughts": true, "thinkingLevel": "HIGH"}, "maxOutputTokens": 65535}));
+        assert!(req["tools"][0]["functionDeclarations"][0]["parameters"].is_object() && req["sessionId"].as_str().unwrap().starts_with('-'));
+        let labels: Vec<&str> = req["labels"].as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(labels, ["cascade_id", "last_step_index", "model_enum", "request_id", "root_cascade_id", "trajectory_id", "used_claude", "used_claude_conservative", "used_non_gemini_model"]);
+        assert_eq!((req["labels"]["model_enum"].as_str(), req["labels"]["used_claude"].as_str(), req["labels"]["last_step_index"].as_str()), (Some("MODEL_PLACEHOLDER_M36"), Some("false"), Some("0")));
+        // the second request: the same session, one step on, the last answer's id, its signature back
+        let next = &sent[1].1;
+        assert_eq!(next["request"]["sessionId"], req["sessionId"]);
+        assert_eq!((next["request"]["labels"]["last_execution_id"].as_str(), next["request"]["labels"]["last_step_index"].as_str()), (Some("resp-YWc="), Some("2")));
+        assert!(next["request"]["labels"]["request_id"].as_str().unwrap().ends_with("-1") && next.to_string().contains(r#""thoughtSignature":"YWc=""#), "{next}");
+        crate::oauth::STAND_IN.set(None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_gemini_reply_google_stopped_ends_at_once_and_a_malformed_call_is_asked_once_more() {
+        use crate::oauth::tests::{login, put, stand_in, temp};
+        let stopped = |reason: &str| format!("data: {{\"response\":{{\"candidates\":[{{\"content\":{{\"role\":\"model\",\"parts\":[{{\"text\":\"partly\"}}]}},\"finishReason\":\"{reason}\"}}]}}}}\n\n");
+        let (base, seen) = stand_in(move |line, _, body| match line {
+            _ if body.contains("blocked") => (200, "data: {\"response\":{\"promptFeedback\":{\"blockReason\":\"PROHIBITED_CONTENT\"}}}\n\n".into()),
+            _ if body.contains("recite") => (200, stopped("RECITATION")),
+            "POST /v1internal:streamGenerateContent?alt=sse" => (200, stopped("MALFORMED_FUNCTION_CALL")),
+            _ => (404, "{}".into()),
+        });
+        let dir = temp("engine-gemini-stop");
+        crate::oauth::STAND_IN.set(Some((base.clone(), dir.clone())));
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let l = login("gemini");
+        put(l, json!({"access_token": "ya29.a", "refresh_token": "1//r", "expires_at": now + 3600, "project": "p", "models": [{"id": "gemini-3.1-pro-preview", "api": "gemini"}]}));
+        let (mut call, _, _) = connect_sign_in(l, &base, "gemini-3.1-pro-preview").unwrap();
+        let ask = |text: &str| json!({"model": "gemini-3.1-pro-preview", "messages": [{"role": "user", "content": text}]});
+        let calls = || seen.lock().unwrap().iter().filter(|r| r.starts_with("POST /v1internal:streamGenerateContent")).count();
+        // blocked, or stopped with text (recitation): final at once, never waited out
+        assert!(format!("{:#}", call(&ask("blocked")).unwrap_err()).contains("PROHIBITED_CONTENT"));
+        assert_eq!(calls(), 1);
+        assert!(format!("{:#}", call(&ask("recite")).unwrap_err()).contains("RECITATION"), "text with a stop that is not the end is not an answer");
+        assert_eq!(calls(), 2);
+        // a malformed call: once more, then said
+        assert!(format!("{:#}", call(&ask("go")).unwrap_err()).contains("MALFORMED_FUNCTION_CALL"));
+        assert_eq!(calls(), 4);
+        crate::oauth::STAND_IN.set(None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn claude_on_antigravity_gets_each_thinking_block_back_with_its_own_signature_and_without_them_after_a_refusal() {
+        use crate::oauth::tests::{login, put, stand_in, temp};
+        let reply = "data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"first \",\"thought\":true},{\"text\":\"thought\",\"thought\":true,\"thoughtSignature\":\"czE=\"}]}}]}}\n\n\
+            data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"second\",\"thought\":true},{\"text\":\"\",\"thoughtSignature\":\"czI=\"},\
+            {\"functionCall\":{\"name\":\"bash\",\"args\":{\"command\":\"ls\"},\"id\":\"toolu_1\"}}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":9,\"candidatesTokenCount\":3}}}\n\n";
+        let refused = Arc::new(AtomicUsize::new(0));
+        let r2 = refused.clone();
+        let (base, seen) = stand_in(move |_, _, body| {
+            if body.contains("czE=") && r2.fetch_add(1, Ordering::SeqCst) == 0 {
+                return (400, r#"{"error":{"code":400,"message":"messages.1.content.0: Invalid `signature` in `thinking` block","status":"INVALID_ARGUMENT"}}"#.into());
+            }
+            (200, reply.into())
+        });
+        let dir = temp("engine-claude-ag");
+        crate::oauth::STAND_IN.set(Some((base.clone(), dir.clone())));
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+        let l = login("antigravity");
+        put(l, json!({"access_token": "ya29.ag", "refresh_token": "1//ag", "expires_at": now + 3600, "project": "p", "models": [{"id": "claude-sonnet-4-6", "api": "gemini", "budget": 1024}]}));
+        let (mut call, _, _) = connect_sign_in(l, &base, "claude-sonnet-4-6").unwrap();
+        let mut body = json!({"model": "claude-sonnet-4-6", "messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "hi"}]});
+        let r = call(&body).unwrap();
+        let tool_call = r["choices"][0]["message"]["tool_calls"][0].clone();
+        assert_eq!((tool_call["id"].as_str(), r["choices"][0]["message"]["reasoning_content"].as_str()), (Some("toolu_1"), Some("first thoughtsecond")));
+        body["messages"].as_array_mut().unwrap().extend([json!({"role": "assistant", "content": "", "tool_calls": [tool_call]}),
+            json!({"role": "tool", "tool_call_id": "toolu_1", "content": "a b"})]);
+        call(&body).unwrap();
+        let sent: Vec<Value> = seen.lock().unwrap().iter().map(|r| serde_json::from_str(r.split_once("\n\n").unwrap().1).unwrap()).collect();
+        // each block in order with its own signature, before the call
+        assert_eq!(sent[1]["request"]["contents"][1]["parts"], json!([{"thought": true, "text": "first thought", "thoughtSignature": "czE="},
+            {"thought": true, "text": "second", "thoughtSignature": "czI="}, {"functionCall": {"name": "bash", "args": {"command": "ls"}, "id": "toolu_1"}}]));
+        // a signature refused: once more without the thinking sent back, and the call goes through
+        assert_eq!(sent.len(), 3, "the refusal and the call without the thinking");
+        assert!(!sent[2].to_string().contains("czE=") && sent[2]["request"]["contents"][1]["parts"][0]["functionCall"]["id"] == "toolu_1");
+        crate::oauth::STAND_IN.set(None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn copilots_claude_round_trip_keeps_to_the_models_limits() {
+        use crate::oauth::tests::{login, put, stand_in, temp};
+        let (base, seen) = stand_in(|_, _, _| (200, r#"{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":5,"output_tokens":1}}"#.into()));
+        let dir = temp("engine-copilot-claude");
+        crate::oauth::STAND_IN.set(Some((base.clone(), dir.clone())));
+        let l = login("copilot");
+        put(l, json!({"access_token": "gho_test", "api_url": base, "models": [{"id": "claude-sonnet-4.5", "api": "messages", "max_out": 32000, "adaptive": false}]}));
+        let (mut call, api, _) = connect_sign_in(l, "https://api.githubcopilot.com", "claude-sonnet-4.5").unwrap();
+        assert_eq!(api, Api::Messages);
+        call(&json!({"model": "claude-sonnet-4.5", "max_tokens": 64000, "system": "s", "thinking": {"type": "adaptive"}, "cache_control": {"type": "ephemeral"},
+            "messages": [{"role": "user", "content": "fix it"}, {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "bash", "input": {}}]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}]})).unwrap();
+        let req = seen.lock().unwrap().last().cloned().unwrap();
+        let (head, body) = req.split_once("\n\n").unwrap();
+        let body: Value = serde_json::from_str(body).unwrap();
+        assert!(head.to_lowercase().contains("x-initiator: agent"), "a tool's result is the agent's turn: {head}");
+        assert_eq!(body["max_tokens"], 32000, "the model's own cap");
+        assert!(body.get("cache_control").is_none() && body.get("thinking").is_none(), "{body}");
+        assert_eq!(body["messages"][2]["content"][0]["tool_result"], Value::Null);
+        assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "t1");
+        crate::oauth::STAND_IN.set(None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_event_split_over_data_lines_is_read_whole() {
+        // the spec joins an event's data lines with "\n"; one JSON over two lines was dropped
+        assert_eq!(sse("data: {\"a\":\ndata: 1}\n\ndata: {\"b\":2}\n\n").unwrap(), [json!({"a": 1}), json!({"b": 2})]);
+        // a line that is whole JSON alone reads as before, blank line or not
+        assert_eq!(sse("data: {\"a\":1}\ndata: {\"b\":2}\ndata: [DONE]\n").unwrap(), [json!({"a": 1}), json!({"b": 2})]);
+        let mut shown = String::new();
+        read_streaming(std::io::Cursor::new("data: {\"choices\":[{\"delta\":\ndata: {\"content\":\"hi\"}}]}\n\n"), Api::Chat, Duration::from_secs(5),
+            &mut |e| shown.push_str(e["event"]["delta"]["text"].as_str().unwrap_or_default())).unwrap();
+        assert_eq!(shown, "hi");
     }
 
     #[test]
@@ -3221,11 +3789,12 @@ session: "s".into(),
 
     #[test]
     fn a_400_on_thinking_from_another_account_drops_the_thinking_and_goes_again() {
-        let sent = Rc::new(RefCell::new(vec![]));
-        let s = sent.clone();
+        let (sent, wrote) = (Rc::new(RefCell::new(vec![])), Rc::new(RefCell::new(vec![])));
+        let (s, w) = (sent.clone(), wrote.clone());
         let mut l = Loop {
             call: Box::new(move |b: &Value| {
                 s.borrow_mut().push(b.clone());
+                w.borrow_mut().push(TAZUNA_WROTE.get());
                 if s.borrow().len() == 1 {
                     bail!("HTTP 400: {{\"error\":{{\"code\":\"invalid_request\"}}}}")
                 }
@@ -3260,10 +3829,19 @@ session: "s".into(),
         };
         let (_tx, rx) = std::sync::mpsc::channel();
         l.run(&json!("go on"), true, &rx);
-        let sent = sent.borrow();
-        assert_eq!(sent.len(), 2);
-        assert!(sent[0].to_string().contains("\"thinking\"") && !sent[1]["messages"].to_string().contains("\"thinking\""), "{sent:?}");
-        assert!(sent[1]["messages"].to_string().contains("tool_use"));
+        assert_eq!(*wrote.borrow(), [true, true], "tazuna's own follow-up, and the engine's own re-send of it: the agent's (Copilot)");
+        {
+            let sent = sent.borrow();
+            assert_eq!(sent.len(), 2);
+            assert!(sent[0].to_string().contains("\"thinking\"") && !sent[1]["messages"].to_string().contains("\"thinking\""), "{sent:?}");
+            assert!(sent[1]["messages"].to_string().contains("tool_use"));
+        }
+        l.run(&json!("thanks"), false, &rx);
+        assert!(!wrote.borrow()[2], "a typed message is the user's");
+        // a hand-off's turn and an explorer's question are tazuna's, not typed
+        NEXT_IS_TAZUNAS.set(true);
+        l.run(&json!("the hand-off"), false, &rx);
+        assert!(wrote.borrow()[3] && !NEXT_IS_TAZUNAS.get(), "once");
     }
 
     #[test]
@@ -3273,10 +3851,12 @@ session: "s".into(),
         let replies = Rc::new(RefCell::new(VecDeque::from(vec![empty; 12])));
         let sent = Rc::new(RefCell::new(vec![]));
         let events = Rc::new(RefCell::new(vec![]));
-        let (r, s, ev) = (replies.clone(), sent.clone(), events.clone());
+        let wrote = Rc::new(RefCell::new(vec![]));
+        let (r, s, ev, w) = (replies.clone(), sent.clone(), events.clone(), wrote.clone());
         let mut l = Loop {
             call: Box::new(move |b: &Value| {
                 s.borrow_mut().push(b.clone());
+                w.borrow_mut().push(TAZUNA_WROTE.get());
                 Ok(r.borrow_mut().pop_front().unwrap())
             }),
             api: Api::Chat,
@@ -3310,6 +3890,9 @@ session: "s".into(),
         assert_eq!(sent.borrow()[3], sent.borrow()[0], "a retry sends the same request");
         let last = sent.borrow()[8]["messages"].as_array().unwrap().last().unwrap().clone();
         assert_eq!((last["role"].as_str(), last["content"].as_str()), (Some("user"), Some(NUDGE)));
+        // the typed message's first call is the user's; the engine's own re-sends of it and the calls after tazuna's nudge are
+        // the agent's (Copilot's X-Initiator)
+        assert_eq!(wrote.borrow().iter().map(|w| *w as u8).collect::<Vec<_>>(), [0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
         assert_eq!(events.borrow().last().unwrap()["num_turns"].as_u64(), Some(3));
         // the provider sent no usage: each call's cost is not known (it read "Paid to X $0"), and the three empty replies
         // sent again before each answer may have been billed: tries not in the total (design review 12)

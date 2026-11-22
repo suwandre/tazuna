@@ -1,9 +1,10 @@
 //! Sign-in logins for the own loop (2026-11-22): subscription plans reached through an OAuth sign-in instead of an API
 //! key. ChatGPT through OpenAI's own "Sign in with ChatGPT" for open-source apps (developers.openai.com/siwc); GitHub
-//! Copilot and SuperGrok send another app's identity (its OAuth client, its headers), so they stay opt-in behind the
-//! warning on their row (`models::Login::note`), confirmed once. Their endpoints, client ids and headers as omp
-//! (oh-my-pi, MIT, github.com/can1357/oh-my-pi) has them, reimplemented here. Claude is never one: it runs on the claude
-//! CLI's own login only.
+//! Copilot, SuperGrok, Gemini CLI and Antigravity send another app's identity (its OAuth client, its headers), so they
+//! stay opt-in behind the warning on their row (`models::Login::note`), confirmed once. Their endpoints, client ids,
+//! headers and Google's Code Assist project setup as omp (oh-my-pi, MIT, github.com/can1357/oh-my-pi) has them,
+//! reimplemented here. Claude's own login is never one: Claude Code runs on the claude CLI's login only (Claude models a
+//! plan serves, Copilot's or Antigravity's, are that plan's service).
 //! - One record per login, ~/.config/tazuna/logins/ID.json (0600, written whole through a rename): its tokens, when they
 //!   run out, the models it offers, and what outlives a sign-out (ChatGPT's issued client and this machine's host id, the
 //!   warning confirmed).
@@ -29,6 +30,57 @@ const COPILOT_VERSION: &str = "copilot/1.0.82";
 /// xAI's Grok CLI client, as omp (from hermes-agent) signs in to SuperGrok.
 const XAI_CLIENT: &str = "b1a00492-073a-47ea-816f-4c329264a828";
 const XAI_SCOPES: &str = "openid profile email offline_access grok-cli:access api:access";
+const GOOGLE_AUTH: &str = "https://accounts.google.com/o/oauth2/v2/auth";
+const GOOGLE_TOKEN: &str = "https://oauth2.googleapis.com/token";
+/// Antigravity's client version when its update manifest does not answer (omp's pinned one); Google gates newer models on it.
+const ANTIGRAVITY_VERSION: &str = "2.26.0";
+/// The stand-in Google documents for a function call whose thought signature is not at hand (Gemini 3 refuses a turn whose
+/// first call is unsigned).
+pub(crate) const SKIP_SIGNATURE: &str = "skip_thought_signature_validator";
+
+/// A Google sign-in: the other app's OAuth client (an installed app's, so its secret is public; base64 as omp keeps them,
+/// which secret scanners leave alone), its scopes, its loopback callback, its Code Assist host.
+struct Google {
+    client: &'static str,
+    secret: &'static str,
+    scopes: &'static str,
+    port: u16,
+    path: &'static str,
+    host: &'static str,
+}
+
+const GEMINI_CLI: Google = Google {
+    client: "NjgxMjU1ODA5Mzk1LW9vOGZ0Mm9wcmRybnA5ZTNhcWY2YXYzaG1kaWIxMzVqLmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t",
+    secret: "R09DU1BYLTR1SGdNUG0tMW83U2stZ2VWNkN1NWNsWEZzeGw=",
+    scopes: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile",
+    port: 8085,
+    path: "/oauth2callback",
+    host: "https://cloudcode-pa.googleapis.com",
+};
+
+const ANTIGRAVITY: Google = Google {
+    client: "MTA3MTAwNjA2MDU5MS10bWhzc2luMmgyMWxjcmUyMzV2dG9sb2poNGc0MDNlcC5hcHBzLmdvb2dsZXVzZXJjb250ZW50LmNvbQ==",
+    secret: "R09DU1BYLUs1OEZXUjQ4NkxkTEoxbUxCOHNYQzR6NnFEQWY=",
+    scopes: "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/userinfo.profile \
+        https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/experimentsandconfigs https://www.googleapis.com/auth/aicode",
+    port: 51121,
+    path: "/oauth-callback",
+    host: "https://daily-cloudcode-pa.googleapis.com",
+};
+
+/// The Google sign-in a login is, if it is one.
+fn google_of(l: &Login) -> Option<&'static Google> {
+    match l.sign_in() {
+        "gemini" => Some(&GEMINI_CLI),
+        "antigravity" => Some(&ANTIGRAVITY),
+        _ => None,
+    }
+}
+
+/// A base64 constant as text.
+fn plain(b64: &str) -> String {
+    String::from_utf8(unb64url(b64).unwrap_or_default()).unwrap_or_default()
+}
 
 #[cfg(test)]
 thread_local! {
@@ -198,7 +250,7 @@ pub fn access_token(l: &Login, stale: Option<&str>) -> Result<String> {
     let fresh = |r: &Value| r["access_token"].as_str().filter(|t| Some(*t) != stale && r["expires_at"].as_u64().is_none_or(|e| e > now() + 300)).map(String::from);
     let rec = load(l);
     if !rec["access_token"].is_string() {
-        bail!("not signed in to {}: /login signs in", l.name);
+        bail!("not signed in to {}: sign in in Settings › Providers or /login", l.name);
     }
     if let Some(t) = fresh(&rec) {
         return Ok(t);
@@ -226,13 +278,20 @@ fn renew(l: &Login, rec: &mut Value) -> Result<()> {
     let Some(refresh) = rec["refresh_token"].as_str().map(String::from) else {
         forget_tokens(rec);
         save(l, rec)?;
-        bail!("{} refused the sign-in: sign in again (/login)", l.name);
+        bail!("{} refused the sign-in: sign in again in Settings › Providers or /login", l.name);
     };
+    let g = google_of(l);
     let (url, client) = match l.sign_in() {
         "chatgpt" => (at(&format!("{OPENAI_AUTH}/api/accounts/oauth/token")), rec["client_id"].as_str().unwrap_or_default().to_string()),
+        _ if let Some(g) = g => (at(GOOGLE_TOKEN), plain(g.client)),
         _ => (rec["token_endpoint"].as_str().map(at).context("no token endpoint: sign in again")?, XAI_CLIENT.to_string()),
     };
+    // Google's installed-app clients send their (public) secret
+    let secret = g.map(|g| plain(g.secret)).unwrap_or_default();
     let mut form = vec![("grant_type", "refresh_token"), ("refresh_token", refresh.as_str()), ("client_id", client.as_str())];
+    if !secret.is_empty() {
+        form.push(("client_secret", secret.as_str()));
+    }
     if l.sign_in() == "chatgpt" {
         form.push(("resource", OPENAI_API)); // no scope: the grant stays as it was
     }
@@ -246,14 +305,14 @@ fn renew(l: &Login, rec: &mut Value) -> Result<()> {
     if (400..500).contains(&status) && ["invalid_grant", "invalid_refresh_token", "token_expired", "refresh_token_"].iter().any(|c| why.contains(c)) {
         forget_tokens(rec);
         save(l, rec)?;
-        bail!("{} signed tazuna out ({why}): sign in again (/login)", l.name);
+        bail!("{} signed tazuna out ({why}): sign in again in Settings › Providers or /login", l.name);
     }
     bail!("{}: renewing the sign-in failed (HTTP {status}: {why})", l.name)
 }
 
 fn forget_tokens(rec: &mut Value) {
     if let Some(o) = rec.as_object_mut() {
-        for k in ["access_token", "refresh_token", "id_token", "expires_at", "scopes", "saved_at", "models_at"] {
+        for k in ["access_token", "refresh_token", "id_token", "expires_at", "scopes", "saved_at", "models_at", "project"] {
             o.remove(k);
         }
     }
@@ -281,6 +340,10 @@ fn revoke(l: &Login, rec: &Value) -> String {
     let (url, client) = match l.sign_in() {
         "chatgpt" => (Some(at(&format!("{OPENAI_AUTH}/api/accounts/oauth/revoke"))), rec["client_id"].as_str().unwrap_or_default()),
         "xai" => (rec["revocation_endpoint"].as_str().map(at), XAI_CLIENT),
+        // Google's grant is the other app's client's: revoked, it may sign that app itself out of the account (the user's
+        // call, 2026-11-22), so only tazuna's tokens go
+        "gemini" | "antigravity" => return format!("; the grant stays at Google until you remove it at https://myaccount.google.com/connections \
+            (removing it there also signs {} itself out of this account)", l.name),
         // GitHub ends an app's token only with the app's secret, which tazuna does not have
         _ => return "; the grant stays at GitHub until you revoke it at https://github.com/settings/applications".into(),
     };
@@ -315,18 +378,20 @@ pub fn forget_account(l: &Login) -> Result<()> {
 }
 
 /// A sign-in, start to end (the browser, a code to type, minutes of waiting: off the screen's thread). What it did, and
-/// whether this was the first sign-in that uses the ChatGPT plan (its welcome shows once).
+/// whether this was the first sign-in that uses the ChatGPT plan (its welcome shows once). `window`: said in the desktop
+/// window, which names no terminal command and shows "signed in" on the provider's row already.
 #[inline(never)]
-pub fn sign_in(l: &'static Login, say: &dyn Fn(String)) -> Result<(String, bool)> {
+pub fn sign_in(l: &'static Login, say: &dyn Fn(String), window: bool) -> Result<(String, bool)> {
     if l.warns() && !confirmed(l) {
         bail!("{}: confirm its warning first", l.name);
     }
     let _busy = Busy::take(l)?;
     let open = |link: &str| crate::platform::open_url(link).is_ok();
     match l.sign_in() {
-        "chatgpt" => chatgpt(l, say, &open),
-        "copilot" => copilot(l, say, &open).map(|t| (t, false)),
-        "xai" => xai(l, say, &open).map(|t| (t, false)),
+        "chatgpt" => chatgpt(l, say, &open, window),
+        "copilot" => copilot(l, say, &open, window).map(|t| (t, false)),
+        "xai" => xai(l, say, &open, window).map(|t| (t, false)),
+        "gemini" | "antigravity" => google(l, say, &open, window).map(|t| (t, false)),
         other => bail!("no sign-in {other}"),
     }
 }
@@ -361,10 +426,20 @@ pub fn refresh_models() {
             continue;
         }
         if let Ok(t) = access_token(l, None) {
-            let ms = fetch_models(l, &t, &load(l));
+            // Antigravity's current version first: Google gates models on it, and the list is asked with it
+            let (mut rec, version) = (load(l), (l.sign_in() == "antigravity").then(antigravity_version));
+            if let Some(v) = &version {
+                rec["client_version"] = json!(v);
+            }
+            let ms = fetch_models(l, &t, &rec);
             // an empty answer is asked again at the next start
             if !ms.is_empty() {
-                let _ = update(l, |r| (r["models"], r["models_at"]) = (json!(ms), json!(now())));
+                let _ = update(l, |r| {
+                    (r["models"], r["models_at"]) = (json!(ms), json!(now()));
+                    if let Some(v) = version {
+                        r["client_version"] = json!(v);
+                    }
+                });
             }
         }
     }
@@ -379,6 +454,16 @@ fn send_to_browser(name: &str, link: &str, open: &dyn Fn(&str) -> bool, say: &dy
     } else {
         say(format!("{name}: open this link (5 minutes): {link}"));
     }
+}
+
+/// What the user does to try again: /login in the terminal; the window has no terminal command.
+fn again(window: bool) -> &'static str {
+    if window { "sign in from Settings" } else { "/login" }
+}
+
+/// "N models in /model" (the terminal) or "in the model picker" (the window).
+fn in_picker(n: usize, window: bool) -> String {
+    format!("{n} models in {}", if window { "the model picker" } else { "/model" })
 }
 
 /// A random UUID (v4) as a URN: this machine's `ext_agent_host_id`, made once.
@@ -401,7 +486,7 @@ fn nonce() -> String {
 /// Sign in with ChatGPT, as OpenAI documents it for open-source apps: the first time a registration of its own
 /// (`dynamic_agent_client`, named tazuna, this machine's host id), later the issued client again; PKCE, state and nonce;
 /// the code through a listener on 127.0.0.1; the ID token checked against OpenAI's keys; the plan's scope checked.
-fn chatgpt(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool) -> Result<(String, bool)> {
+fn chatgpt(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool, window: bool) -> Result<(String, bool)> {
     if !load(l)["ext_agent_host_id"].is_string() {
         // kept before the first sign-in, as the docs ask
         update(l, |r| if !r["ext_agent_host_id"].is_string() { r["ext_agent_host_id"] = json!(host_id()) })?;
@@ -442,7 +527,7 @@ fn chatgpt(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool) -> Resu
     } else {
         send_to_browser(l.name, &link(&q), open, say, "continue");
     }
-    let back = wait_callback(&listener, &state, l.name, "/login")?;
+    let back = wait_callback(&listener, &state, l.name, again(window))?;
     let got = |k: &str| back.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone());
     let client = match (&saved, got("client_id")) {
         (None, Some(c)) if c != "dynamic_agent_client" => c,
@@ -476,7 +561,8 @@ fn chatgpt(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool) -> Resu
         // sign-in asks for consent again
         (rec["models"], rec["plan_declined"]) = (json!([]), json!(true));
         locked(l, || save(l, &rec))?;
-        bail!("{}: signed in, but ChatGPT plan use was not allowed; to use its models, sign in again (/login, enter) and allow it", l.name);
+        let how = if window { "choose Allow plan use" } else { "sign in again (/login, enter)" };
+        bail!("{}: signed in, but ChatGPT plan use was not allowed; to use its models, {how} and allow it", l.name);
     }
     rec.as_object_mut().map(|o| o.remove("plan_declined"));
     let ms = fetch_models(l, rec["access_token"].as_str().unwrap_or_default(), &rec);
@@ -487,9 +573,14 @@ fn chatgpt(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool) -> Resu
     let first = rec["welcomed"] != true;
     rec["welcomed"] = json!(true);
     locked(l, || save(l, &rec))?;
-    let who = rec["email"].as_str().map_or(String::new(), |e| format!(" as {e}"));
-    let models = if ms.is_empty() { "its model list did not load; /login again later".to_string() } else { format!("{} models in /model", ms.len()) };
-    Ok((format!("signed in to ChatGPT{who}: requests on its models use your ChatGPT plan ({models}); manage usage at https://chatgpt.com/settings/usage"), first))
+    let models = if ms.is_empty() { format!("its model list did not load; {} again later", again(window)) } else { in_picker(ms.len(), window) };
+    let said = format!("requests on its models use your ChatGPT plan ({models}); manage usage at https://chatgpt.com/settings/usage");
+    // the window's row says "signed in" already: the account, then what it means
+    Ok((match (rec["email"].as_str(), window) {
+        (Some(e), true) => format!("{e}: {said}"),
+        (None, true) => signed(l, true, said),
+        (e, false) => format!("signed in to ChatGPT{}: {said}", e.map_or(String::new(), |e| format!(" as {e}"))),
+    }, first))
 }
 
 /// base64url without padding, decoded.
@@ -545,7 +636,7 @@ fn check_id_token(token: &str, client: &str, nonce: &str, jwks: &Value, now: u64
 
 /// A device-code sign-in's wait: the provider's token endpoint asked every `interval` seconds until the user typed the
 /// code (RFC 8628: pending, slow down, refused, expired).
-fn device_wait(name: &str, url: &str, form: &[(&str, &str)], interval: u64, expires: u64) -> Result<Value> {
+fn device_wait(name: &str, url: &str, form: &[(&str, &str)], interval: u64, expires: u64, window: bool) -> Result<Value> {
     let (end, mut wait) = (now() + expires.clamp(60, 1800), interval.clamp(1, 60));
     loop {
         #[cfg(not(test))]
@@ -560,7 +651,7 @@ fn device_wait(name: &str, url: &str, form: &[(&str, &str)], interval: u64, expi
             _ => bail!("{name}: the sign-in was refused ({})", oauth_error(&t)),
         }
         if now() > end {
-            bail!("{name}: no sign-in within {} minutes: /login to try again", expires / 60);
+            bail!("{name}: no sign-in within {} minutes: {} to try again", expires / 60, again(window));
         }
     }
 }
@@ -579,14 +670,14 @@ fn clip(text: &str) -> bool {
 
 /// GitHub Copilot: GitHub's device flow as OpenCode's GitHub app (read:user), then the plan's own API address; the GitHub
 /// token is the bearer (it does not run out; a 401 means a new sign-in).
-fn copilot(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool) -> Result<String> {
+fn copilot(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool, window: bool) -> Result<String> {
     let (_, d) = post_form(&at("https://github.com/login/device/code"), &[("client_id", GITHUB_CLIENT), ("scope", "read:user")])?;
     let (Some(device), Some(code), Some(page)) = (d["device_code"].as_str(), d["user_code"].as_str(), d["verification_uri"].as_str()) else {
         bail!("{}: GitHub did not start the sign-in ({})", l.name, oauth_error(&d));
     };
     show_code(l.name, code, page, open, say);
     let t = device_wait(l.name, &at("https://github.com/login/oauth/access_token"), &[("client_id", GITHUB_CLIENT), ("device_code", device),
-        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code")], d["interval"].as_u64().unwrap_or(5), d["expires_in"].as_u64().unwrap_or(900))?;
+        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code")], d["interval"].as_u64().unwrap_or(5), d["expires_in"].as_u64().unwrap_or(900), window)?;
     let token = t["access_token"].as_str().unwrap_or_default();
     // individual, business or enterprise: the plan's API host; https and Copilot's own domain only
     let user = get_json(&at("https://api.github.com/copilot_internal/user"), &format!("token {token}"), &[("User-Agent", COPILOT_VERSION)]).ok();
@@ -606,12 +697,12 @@ fn copilot(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool) -> Resu
     if ms.is_empty() {
         bail!("{}: signed in, but Copilot listed no models for this account (is Copilot on for it?)", l.name);
     }
-    Ok(format!("signed in to {}: {} models in /model; they use your Copilot plan's requests", l.name, ms.len()))
+    Ok(signed(l, window, format!("{}; they use your Copilot plan's requests", in_picker(ms.len(), window))))
 }
 
 /// SuperGrok: xAI's device flow as the Grok CLI, its endpoints from xAI's discovery document (x.ai hosts over https only:
 /// every later refresh token goes there).
-fn xai(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool) -> Result<String> {
+fn xai(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool, window: bool) -> Result<String> {
     let conf = get_json(&at("https://auth.x.ai/.well-known/openid-configuration"), "", &[]).context("xAI's sign-in endpoints")?;
     let ours = |k: &str| conf[k].as_str().filter(|u| {
         let h = crate::models::host_of(u);
@@ -625,7 +716,7 @@ fn xai(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool) -> Result<S
     // the page with the code in it, where xAI gives one
     show_code(l.name, code, d["verification_uri_complete"].as_str().unwrap_or(page), open, say);
     let t = device_wait(l.name, &at(&token_at), &[("grant_type", "urn:ietf:params:oauth:grant-type:device_code"), ("device_code", device),
-        ("client_id", XAI_CLIENT)], d["interval"].as_u64().unwrap_or(5), d["expires_in"].as_u64().unwrap_or(900))?;
+        ("client_id", XAI_CLIENT)], d["interval"].as_u64().unwrap_or(5), d["expires_in"].as_u64().unwrap_or(900), window)?;
     let mut rec = load(l);
     take_tokens(&mut rec, &t);
     rec["token_endpoint"] = json!(token_at);
@@ -638,26 +729,371 @@ fn xai(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool) -> Result<S
         rec["models_at"] = json!(now());
     }
     locked(l, || save(l, &rec))?;
-    Ok(format!("signed in to {}: {} models in /model; they use your SuperGrok plan", l.name, ms.len()))
+    Ok(signed(l, window, format!("{}; they use your SuperGrok plan", in_picker(ms.len(), window))))
+}
+
+/// A sign-in's outcome: "signed in to X: what" in the terminal; the window's row says "signed in" already, so there it is
+/// what alone, its first letter raised.
+fn signed(l: &Login, window: bool, what: String) -> String {
+    if !window {
+        return format!("signed in to {}: {what}", l.name);
+    }
+    let mut c = what.chars();
+    c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+}
+
+/// Gemini CLI and Antigravity: Google's sign-in in the browser as that app's client (PKCE and state, back to tazuna on
+/// 127.0.0.1), then the account's Code Assist project, found or set up as the app does; renewed with Google's refresh
+/// token like the others.
+fn google(l: &Login, say: &dyn Fn(String), open: &dyn Fn(&str) -> bool, window: bool) -> Result<String> {
+    let g = google_of(l).context("not a Google sign-in")?;
+    let (client, secret) = (plain(g.client), plain(g.secret));
+    // the app's own port, else any: Google's installed apps take any loopback port
+    let listener = TcpListener::bind(("127.0.0.1", g.port)).or_else(|_| TcpListener::bind("127.0.0.1:0"))?;
+    let redirect = format!("http://127.0.0.1:{}{}", listener.local_addr()?.port(), g.path);
+    let (verifier, state) = (b64url(&crate::platform::random::<32>()), b64url(&crate::platform::random::<16>()));
+    let q = [("client_id", client.clone()), ("response_type", "code".into()), ("redirect_uri", redirect.clone()), ("scope", g.scopes.split_whitespace().collect::<Vec<_>>().join(" ")),
+        ("code_challenge", b64url(&sha256(verifier.as_bytes()))), ("code_challenge_method", "S256".into()), ("state", state.clone()),
+        ("access_type", "offline".into()), ("prompt", "consent".into())];
+    let link = format!("{}?{}", at(GOOGLE_AUTH), q.iter().map(|(k, v)| format!("{k}={}", enc(v))).collect::<Vec<_>>().join("&"));
+    send_to_browser(l.name, &link, open, say, "sign in with Google");
+    let back = wait_callback(&listener, &state, l.name, again(window))?;
+    let code = back.iter().find(|(k, _)| k == "code").map(|(_, v)| v.clone()).context("no code")?;
+    let (status, t) = post_form(&at(GOOGLE_TOKEN), &[("grant_type", "authorization_code"), ("client_id", &client), ("client_secret", &secret),
+        ("code", &code), ("redirect_uri", &redirect), ("code_verifier", &verifier)])?;
+    let Some(token) = t["access_token"].as_str() else { bail!("{}: the sign-in was refused (HTTP {status}: {})", l.name, oauth_error(&t)) };
+    // from here Google holds a grant for the app's client; tazuna does not revoke it (that may sign the app itself out), so
+    // a sign-in that stops says where it is
+    let grant = format!("; Google holds the grant this sign-in made until you remove it at https://myaccount.google.com/connections \
+        (removing it there also signs {} itself out of this account)", l.name);
+    let rest = || -> Result<String> {
+        if !t["refresh_token"].is_string() {
+            bail!("{}: Google sent no refresh token; sign in again", l.name);
+        }
+        let email = get_json(&at("https://www.googleapis.com/oauth2/v1/userinfo?alt=json"), &format!("Bearer {token}"), &[]).ok()
+            .and_then(|u| u["email"].as_str().map(String::from));
+        say(format!("{}: signed in; finding the account's Code Assist project", l.name));
+        let mut rec = load(l);
+        // the app's current version first: Google gates models on it, and every call below sends it
+        if l.sign_in() == "antigravity" {
+            rec["client_version"] = json!(antigravity_version());
+        }
+        let project = if l.sign_in() == "antigravity" { antigravity_project(l, token, say, &rec)? } else { gemini_project(l, token, say, &rec, window)? };
+        take_tokens(&mut rec, &t);
+        (rec["email"], rec["project"]) = (json!(email), json!(project));
+        rec.as_object_mut().map(|o| o.remove("needs_project"));
+        let ms = fetch_models(l, token, &rec);
+        rec["models"] = json!(ms);
+        if !ms.is_empty() {
+            rec["models_at"] = json!(now());
+        }
+        locked(l, || save(l, &rec))?;
+        let models = if ms.is_empty() { format!("its model list did not load; {} again later", again(window)) } else { in_picker(ms.len(), window) };
+        let what = format!("{models}; they use your {} quota", if l.sign_in() == "antigravity" { "Antigravity plan's" } else { "Gemini Code Assist" });
+        Ok(match (email, window) {
+            (Some(e), true) => format!("{e}: {what}"),
+            (Some(e), false) => format!("signed in to {} as {e}: {what}", l.name),
+            (None, w) => signed(l, w, what),
+        })
+    };
+    rest().map_err(|e| anyhow!("{e:#}{grant}"))
+}
+
+/// The Google Cloud project a Gemini CLI account needs (Workspace, a paid tier), as the window's row takes it (a desktop app
+/// started from the Finder has no GOOGLE_CLOUD_PROJECT); empty clears it. Kept in the login's record.
+#[inline(never)]
+pub fn set_project(l: &Login, project: &str) -> Result<()> {
+    let p = project.trim();
+    if !p.bytes().all(|b| b.is_ascii_alphanumeric() || b"-.:_".contains(&b)) || p.len() > 100 {
+        bail!("{}: that is not a Google Cloud project ID", l.name);
+    }
+    update(l, |r| r["own_project"] = if p.is_empty() { Value::Null } else { json!(p) })
+}
+
+/// The window's row asks for a Google Cloud project: the last sign-in said this account needs one. The one given, if any.
+#[inline(never)]
+pub fn needs_project(l: &Login) -> Option<String> {
+    let rec = load(l);
+    (rec["needs_project"] == true).then(|| rec["own_project"].as_str().unwrap_or_default().to_string())
+}
+
+/// A Cloud Code Assist call with the login's identity (`rec`: the record it is made from, Antigravity's version in it): a
+/// JSON body POSTed, or a GET without one; its status and answer.
+fn code_assist(l: &Login, token: &str, path: &str, body: Option<&Value>, rec: &Value) -> Result<(u16, Value)> {
+    let url = at(&format!("{}/{path}", google_of(l).context("not a Google sign-in")?.host));
+    let mut r = match body {
+        Some(b) => {
+            let mut req = short_agent().post(&url).header("Authorization", format!("Bearer {token}")).header("Content-Type", "application/json");
+            for (k, v) in google_headers(l, "", rec) {
+                req = req.header(k, v);
+            }
+            req.send(b.to_string())?
+        }
+        None => {
+            let mut req = short_agent().get(&url).header("Authorization", format!("Bearer {token}"));
+            for (k, v) in google_headers(l, "", rec) {
+                req = req.header(k, v);
+            }
+            req.call()?
+        }
+    };
+    let status = r.status().as_u16();
+    Ok((status, serde_json::from_str(&r.body_mut().with_config().limit(20 << 20).read_to_string()?).unwrap_or_default()))
+}
+
+/// A Google error body in a few words: its message and status.
+fn google_error(v: &Value) -> String {
+    let e = &v["error"];
+    format!("{} {}", e["message"].as_str().unwrap_or("no reason given"), e["status"].as_str().unwrap_or_default()).trim().chars().take(240).collect()
+}
+
+/// Gemini CLI's project, as Gemini CLI finds it (omp's google-gemini-cli.ts): the one Code Assist names for the account;
+/// else the free tier set up for it; a Workspace or paid account names its own Google Cloud project in
+/// GOOGLE_CLOUD_PROJECT, as Gemini CLI documents, or on the window's row (`set_project`).
+fn gemini_project(l: &Login, token: &str, say: &dyn Fn(String), rec: &Value, window: bool) -> Result<String> {
+    let own = ["GOOGLE_CLOUD_PROJECT", "GOOGLE_CLOUD_PROJECT_ID"].iter().find_map(|v| crate::models::env_var(v))
+        .or_else(|| rec["own_project"].as_str().filter(|p| !p.is_empty()).map(String::from));
+    let needs = || {
+        // the window's row asks for it from now on
+        let _ = update(l, |r| r["needs_project"] = json!(true));
+        let how = if window { "enter its ID on Gemini CLI's row and sign in again" } else { "set GOOGLE_CLOUD_PROJECT to it and sign in again" };
+        anyhow!("{}: this Google account needs its Google Cloud project: {how} (https://goo.gle/gemini-cli-auth-docs#workspace-gca)", l.name)
+    };
+    let meta = json!({"ideType": "IDE_UNSPECIFIED", "platform": "PLATFORM_UNSPECIFIED", "pluginType": "GEMINI"});
+    let mut ask = json!({"metadata": meta});
+    if let Some(p) = &own {
+        (ask["cloudaicompanionProject"], ask["metadata"]["duetProject"]) = (json!(p), json!(p));
+    }
+    let (status, d) = code_assist(l, token, "v1internal:loadCodeAssist", Some(&ask), rec)?;
+    if status != 200 {
+        bail!("{}: Google's Code Assist did not take the account (HTTP {status}: {})", l.name, google_error(&d));
+    }
+    let named = |v: &Value| v.as_str().or(v["id"].as_str()).filter(|p| !p.is_empty()).map(String::from);
+    if !d["currentTier"].is_null() {
+        return named(&d["cloudaicompanionProject"]).or(own).ok_or_else(needs);
+    }
+    let tier = d["allowedTiers"].as_array().into_iter().flatten().find(|t| t["isDefault"] == true).and_then(|t| t["id"].as_str()).unwrap_or("legacy-tier").to_string();
+    if tier != "free-tier" && own.is_none() {
+        return Err(needs());
+    }
+    say(format!("{}: Google sets up Code Assist for the account (a minute or two)", l.name));
+    let mut body = json!({"tierId": tier, "metadata": meta});
+    if let Some(p) = own.as_ref().filter(|_| tier != "free-tier") {
+        (body["cloudaicompanionProject"], body["metadata"]["duetProject"]) = (json!(p), json!(p));
+    }
+    let op = onboard(l, token, &body, 24, 5, rec)?;
+    named(&op["response"]["cloudaicompanionProject"]).or(own).ok_or_else(needs)
+}
+
+/// Antigravity's project, as Antigravity finds it (omp's google-antigravity.ts): the free tier set up where the account
+/// has none, then the project Code Assist names.
+fn antigravity_project(l: &Login, token: &str, say: &dyn Fn(String), rec: &Value) -> Result<String> {
+    let meta = json!({"ideType": "ANTIGRAVITY"});
+    let check = || -> Result<Value> {
+        let (status, d) = code_assist(l, token, "v1internal:loadCodeAssist", Some(&json!({"metadata": meta})), rec)?;
+        if status != 200 {
+            bail!("{}: Google's Code Assist did not take the account (HTTP {status}: {})", l.name, google_error(&d));
+        }
+        // a project without a paid tier: asked again with it, as the app does
+        if d["paidTier"].is_null() && let Some(p) = d["cloudaicompanionProject"].as_str().filter(|p| !p.is_empty()) {
+            let (status, again) = code_assist(l, token, "v1internal:loadCodeAssist", Some(&json!({"cloudaicompanionProject": p, "metadata": meta})), rec)?;
+            return if status == 200 { Ok(again) } else { bail!("{}: Google's Code Assist did not take the account (HTTP {status}: {})", l.name, google_error(&again)) };
+        }
+        Ok(d)
+    };
+    let d = check()?;
+    if d["currentTier"].is_null() {
+        // no tier yet and not eligible for the free one: Google's reason (and where to verify the account, if it says);
+        // an account with a tier of its own (a paid one) goes on whatever the free tier says
+        let free = d["allowedTiers"].as_array().into_iter().flatten().any(|t| t["id"] == "free-tier");
+        if let Some(t) = d["ineligibleTiers"].as_array().into_iter().flatten().find(|t| t["tierId"] == "free-tier").filter(|_| !free) {
+            bail!("{}: {} {}", l.name, t["reasonMessage"].as_str().unwrap_or("this account cannot use Antigravity's free tier"), t["validationUrl"].as_str().unwrap_or_default());
+        }
+        say(format!("{}: Google sets up Antigravity's free tier for the account", l.name));
+        let op = onboard(l, token, &json!({"tierId": "free-tier", "metadata": meta}), 30, 1, rec)?;
+        if !op["error"].is_null() {
+            bail!("{}: Google did not set up the account ({})", l.name, google_error(&json!({"error": op["error"]})));
+        }
+    }
+    check()?["cloudaicompanionProject"].as_str().filter(|p| !p.is_empty()).map(String::from)
+        .with_context(|| format!("{}: Google's Code Assist named no project for the account", l.name))
+}
+
+/// Code Assist's onboarding: the request, then its operation asked `tries` times `every` seconds until it is done.
+fn onboard(l: &Login, token: &str, body: &Value, tries: u32, every: u64, rec: &Value) -> Result<Value> {
+    let (status, mut op) = code_assist(l, token, "v1internal:onboardUser", Some(body), rec)?;
+    for _ in 0..tries {
+        if status != 200 {
+            bail!("{}: Google did not set up the account (HTTP {status}: {})", l.name, google_error(&op));
+        }
+        if op["done"] == true {
+            return Ok(op);
+        }
+        let name = op["name"].as_str().context("Google's setup named no operation")?.to_string();
+        #[cfg(not(test))]
+        std::thread::sleep(Duration::from_secs(every));
+        let _ = every;
+        let (s, next) = code_assist(l, token, &format!("v1internal/{name}"), None, rec)?;
+        if s != 200 {
+            bail!("{}: Google did not set up the account (HTTP {s}: {})", l.name, google_error(&next));
+        }
+        op = next;
+    }
+    bail!("{}: Google's setup of the account did not finish; sign in again in a few minutes", l.name)
+}
+
+/// Antigravity's current version from its update manifest (Google gates newer models on it), else the pinned one.
+fn antigravity_version() -> String {
+    let mut found = None;
+    if let Ok(mut r) = short_agent().get(at("https://antigravity-hub-auto-updater-974169037036.us-central1.run.app/manifest/latest-arm64-mac.yml"))
+        .header("User-Agent", "electron-builder").call() {
+        found = r.body_mut().read_to_string().ok().and_then(|t| t.lines().find_map(|l| l.trim().strip_prefix("version:").map(|v| v.trim().trim_matches(['"', '\'']).to_string())))
+            .filter(|v| v.split('.').count() == 3 && v.split('.').all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit())));
+    }
+    found.unwrap_or_else(|| ANTIGRAVITY_VERSION.into())
+}
+
+/// The app's identity on Code Assist: Gemini CLI's user agent (with the model) and client metadata, or Antigravity's
+/// user agent with its version and the build for this system.
+fn google_headers(l: &Login, model: &str, rec: &Value) -> Vec<(String, String)> {
+    let os = match std::env::consts::OS { "macos" => "darwin", "windows" => "win32", o => o };
+    if l.sign_in() == "antigravity" {
+        // the app ships one build each: macOS arm64, Linux and Windows x64
+        let build = match os { "darwin" => "os_type=darwin; arch=arm64", "win32" => "os_type=windows; arch=amd64", _ => "os_type=linux; arch=amd64" };
+        let version = rec["client_version"].as_str().unwrap_or(ANTIGRAVITY_VERSION);
+        return vec![("User-Agent".into(), format!("antigravity/hub/{version} (aidev_client; {build}; cl=1005016104)"))];
+    }
+    let arch = match std::env::consts::ARCH { "x86_64" => "x64", "aarch64" => "arm64", a => a };
+    let model = if model.is_empty() { "gemini-3.1-pro-preview" } else { model };
+    vec![("User-Agent".into(), format!("GeminiCLI/0.68.0/{model} ({os}; {arch}; terminal)")),
+         ("Client-Metadata".into(), "ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI".into())]
+}
+
+/// A Google sign-in's Code Assist project, from its record.
+fn project_of(l: &Login, rec: &Value) -> Result<String> {
+    rec["project"].as_str().filter(|p| !p.is_empty()).map(String::from)
+        .with_context(|| format!("{}: no Code Assist project on record: sign in again in Settings › Providers or /login", l.name))
+}
+
+/// A conversation on a Google sign-in, for the engine: the account's project and, on Antigravity, the request's envelope
+/// as the app sends it (its session, trajectory, step and labels) and the model's own constants from the account's list.
+pub struct Wire {
+    login: &'static Login,
+    model: String,
+    antigravity: Option<Trajectory>,
+}
+
+struct Trajectory {
+    agent: String,
+    trajectory: String,
+    session: String,
+    step: usize,
+    requests: usize,
+    last: Option<String>,
+    row: Value,
+}
+
+impl Wire {
+    pub fn new(l: &'static Login, model: &str) -> Result<Wire> {
+        let rec = load(l);
+        project_of(l, &rec)?;
+        let uuid = || host_id().trim_start_matches("urn:uuid:").to_string();
+        let antigravity = (l.sign_in() == "antigravity").then(|| Trajectory {
+            agent: uuid(),
+            trajectory: uuid(),
+            // a signed decimal below 9e18, as the app's
+            session: format!("-{}", u64::from_le_bytes(crate::platform::random::<8>()) % 9_000_000_000_000_000_000),
+            step: 0,
+            requests: 0,
+            last: None,
+            row: rec["models"].as_array().into_iter().flatten().find(|m| m["id"] == model).cloned().unwrap_or_default(),
+        });
+        Ok(Wire { login: l, model: model.into(), antigravity })
+    }
+
+    /// Gemini's request (engine.rs `gemini_request`) in Code Assist's envelope; `turns`: the conversation's messages. The
+    /// project read with each call: a sign-in with another account meanwhile brought its own.
+    pub fn wrap(&mut self, mut request: Value, turns: usize) -> Result<Value> {
+        let project = project_of(self.login, &load(self.login))?;
+        let Some(t) = self.antigravity.as_mut() else {
+            return Ok(json!({"model": self.model, "project": project, "request": request}));
+        };
+        // the app's own constants for the model: its output cap and the thinking its SKU fixes
+        let mut generation = request["generationConfig"].take();
+        if let Some(n) = t.row["max_out"].as_u64() {
+            generation["maxOutputTokens"] = json!(n);
+        }
+        if let Some(level) = t.row["level"].as_str() {
+            generation["thinkingConfig"] = json!({"includeThoughts": true, "thinkingLevel": level});
+        } else if let Some(b) = t.row["budget"].as_i64() {
+            generation["thinkingConfig"] = json!({"includeThoughts": true, "thinkingBudget": b});
+        } else if t.row["thinks"] == false && let Some(g) = generation.as_object_mut() {
+            g.remove("thinkingConfig");
+        }
+        if !generation.is_null() {
+            request["generationConfig"] = generation;
+        }
+        if request["systemInstruction"].is_object() {
+            request["systemInstruction"]["role"] = json!("user");
+        }
+        // the app's tool mode, Claude's even without tools
+        if request["tools"].is_array() || self.model.starts_with("claude-") {
+            request["toolConfig"] = json!({"functionCallingConfig": {"mode": "VALIDATED"}});
+        }
+        t.step = turns.max(1).max(t.step + 1);
+        let n = t.requests;
+        t.requests += 1;
+        let claude = self.model.starts_with("claude-").to_string();
+        // in the app's order (alphabetical)
+        let mut labels = serde_json::Map::new();
+        labels.insert("cascade_id".into(), json!(t.agent));
+        if let Some(last) = &t.last {
+            labels.insert("last_execution_id".into(), json!(last));
+        }
+        labels.insert("last_step_index".into(), json!((t.step - 1).to_string()));
+        if let Some(e) = t.row["enum"].as_str() {
+            labels.insert("model_enum".into(), json!(e));
+        }
+        labels.insert("request_id".into(), json!(format!("{}-{n}", t.trajectory)));
+        labels.insert("root_cascade_id".into(), json!(t.agent));
+        labels.insert("trajectory_id".into(), json!(t.trajectory));
+        labels.insert("used_claude".into(), json!(claude));
+        labels.insert("used_claude_conservative".into(), json!(claude));
+        labels.insert("used_non_gemini_model".into(), json!((!self.model.starts_with("gemini")).to_string()));
+        request["labels"] = Value::Object(labels);
+        request["sessionId"] = json!(t.session);
+        Ok(json!({"project": project, "requestId": format!("agent/{}/{}/{}/{}", t.agent, now() * 1000, t.trajectory, t.step),
+            "request": request, "model": self.model, "userAgent": "antigravity"}))
+    }
+
+    /// A call answered: Antigravity sends its response's id with the next request.
+    pub fn answered(&mut self, response_id: Option<&str>) {
+        if let Some(t) = self.antigravity.as_mut() {
+            t.last = response_id.map(String::from);
+        }
+    }
 }
 
 /// Copilot's API headers: Copilot CLI's identity, and whether the user asked (a premium request) or the agent goes on
-/// after a tool's result (not one), from the request's last message.
-fn copilot_headers(body: &Value, list: bool) -> Vec<(String, String)> {
+/// (not one): after a tool's result (Messages carry them in a user turn), or after a message tazuna wrote itself
+/// (`by_tazuna`: test results, a nudge), from the request's last message.
+fn copilot_headers(body: &Value, list: bool, by_tazuna: bool) -> Vec<(String, String)> {
     let last = body["messages"].as_array().or(body["input"].as_array()).and_then(|m| m.last()).cloned().unwrap_or_default();
-    let agent = last["role"] == "tool" || last["type"] == "function_call_output";
+    let results = last["content"].as_array().is_some_and(|c| c.iter().any(|b| b["type"] == "tool_result"));
+    let agent = last["role"] == "tool" || last["type"] == "function_call_output" || last["role"] == "user" && (by_tazuna || results);
     [("User-Agent", COPILOT_VERSION), ("Editor-Version", COPILOT_VERSION),
      ("Copilot-Integration-Id", if list { "copilot-developer-cli" } else { "copilot-chat" }), ("Copilot-Harness-Id", "copilot-sdk"),
      ("Openai-Intent", "conversation-agent"), ("X-GitHub-Api-Version", "2026-08-01"), ("X-Initiator", if agent { "agent" } else { "user" })]
         .iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
 }
 
-/// The models a sign-in offers, from its provider's list with the new token (none: the list did not answer). Claude
-/// stays out (the claude CLI only), as do models that cannot chat.
+/// The models a sign-in offers, from its provider's list with the new token (none: the list did not answer), but those
+/// that cannot chat. Claude among them where the plan serves it (Copilot: GitHub's service on the plan, not Anthropic's
+/// API or Claude Code's login; the user's call, 2026-11-22).
 fn fetch_models(l: &Login, token: &str, rec: &Value) -> Vec<Value> {
     let bearer = format!("Bearer {token}");
     let row = |id: &str, name: &str, api: &str| json!({"id": id, "name": name, "api": api});
-    let ok = |id: &str| !id.to_lowercase().contains("claude") && !["embed", "tts", "imagine", "image", "audio", "realtime", "transcribe"].iter().any(|w| id.contains(w));
+    let ok = |id: &str| !["embed", "tts", "imagine", "image", "audio", "realtime", "transcribe"].iter().any(|w| id.contains(w));
     match l.sign_in() {
         // OpenAI's list for this account: `models[]` (slug, display_name, visibility "list"), in its order
         "chatgpt" => get_json(&at(&format!("{OPENAI_API}/models")), &bearer, &[]).map(|v| {
@@ -666,10 +1102,11 @@ fn fetch_models(l: &Login, token: &str, rec: &Value) -> Vec<Value> {
                 ok(id).then(|| row(id, m["display_name"].as_str().unwrap_or(id), "responses"))
             }).collect()
         }).unwrap_or_default(),
-        // Copilot's picker models; Responses for the families Copilot serves only there (omp's api-routes)
+        // Copilot's picker models by the endpoint its list names: Anthropic's Messages for Claude, Responses for the families
+        // Copilot serves only there (omp's api-routes when the list names none)
         "copilot" => {
             let base = rec["api_url"].as_str().unwrap_or(l.url);
-            let hs = copilot_headers(&json!({}), true);
+            let hs = copilot_headers(&json!({}), true, false);
             let hs: Vec<(&str, &str)> = hs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
             get_json(&at(&format!("{base}/models")), &bearer, &hs).map(|v| {
                 v["data"].as_array().into_iter().flatten()
@@ -677,37 +1114,121 @@ fn fetch_models(l: &Login, token: &str, rec: &Value) -> Vec<Value> {
                     .filter_map(|m| {
                         let id = m["id"].as_str()?;
                         let eps: Vec<&str> = m["supported_endpoints"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-                        let responses = if eps.is_empty() { ["gpt-5", "gpt-6", "grok-4.", "oswe", "mai-"].iter().any(|p| id.starts_with(p)) }
-                            else { !eps.contains(&"/chat/completions") && eps.contains(&"/responses") };
-                        ok(id).then(|| row(id, m["name"].as_str().unwrap_or(id), if responses { "responses" } else { "chat" }))
+                        let api = if eps.contains(&"/v1/messages") || eps.is_empty() && id.starts_with("claude-") {
+                            "messages"
+                        } else if eps.is_empty() && ["gpt-5", "gpt-6", "grok-4.", "oswe", "mai-"].iter().any(|p| id.starts_with(p))
+                            || !eps.is_empty() && !eps.contains(&"/chat/completions") && eps.contains(&"/responses") {
+                            "responses"
+                        } else {
+                            "chat"
+                        };
+                        ok(id).then(|| {
+                            let mut r = row(id, m["name"].as_str().unwrap_or(id), api);
+                            // Claude's: its output cap as Copilot lists it, and whether it takes adaptive thinking (4.6 on;
+                            // Copilot names no reasoning bit, omp)
+                            if api == "messages" {
+                                if let Some(n) = m["capabilities"]["limits"]["max_output_tokens"].as_u64() {
+                                    r["max_out"] = json!(n);
+                                }
+                                r["adaptive"] = json!(adaptive_claude(id));
+                            }
+                            r
+                        })
                     }).collect()
             }).unwrap_or_default()
         }
+        // Gemini CLI's: the account's quota buckets (Gemini CLI's own /stats call), a bucket per model
+        "gemini" => code_assist(l, token, "v1internal:retrieveUserQuota", Some(&json!({"project": rec["project"]})), rec).ok().filter(|(s, _)| *s == 200).map(|(_, v)| {
+            let mut ids: Vec<&str> = v["buckets"].as_array().into_iter().flatten().filter_map(|b| b["modelId"].as_str())
+                .filter(|id| id.starts_with("gemini-") && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-') && ok(id)).collect();
+            ids.sort();
+            ids.dedup();
+            ids.into_iter().map(|id| row(id, id, "gemini")).collect()
+        }).unwrap_or_default(),
+        // Antigravity's roster for the account, Claude included (the plan's), with each model's own constants the app sends:
+        // its model_enum label, output cap and the thinking its SKU fixes; none the backend marks internal or unavailable
+        "antigravity" => code_assist(l, token, "v1internal:fetchAvailableModels", Some(&json!({"project": rec["project"]})), rec).ok().filter(|(s, _)| *s == 200).map(|(_, v)| {
+            let images: Vec<&str> = v["imageGenerationModelIds"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+            let mut out: Vec<Value> = v["models"].as_object().into_iter().flatten()
+                .filter(|(id, m)| ok(id) && !images.contains(&id.as_str()) && !["chat_20706", "chat_23310", "gemini-2.5-pro"].contains(&id.as_str())
+                    && m["isInternal"] != true && m["disabled"] != true)
+                .map(|(id, m)| {
+                    let mut r = row(id, m["displayName"].as_str().unwrap_or(id), "gemini");
+                    for (k, v) in [("enum", m["model"].clone()), ("max_out", m["maxOutputTokens"].clone()), ("budget", m["thinkingBudget"].clone()), ("thinks", m["supportsThinking"].clone()),
+                                   ("level", json!(match m["thinkingLevel"].as_u64() { Some(1) => "LOW", Some(2) => "MEDIUM", Some(3) => "HIGH", _ => "" }))] {
+                        if !v.is_null() && v != "" {
+                            r[k] = v;
+                        }
+                    }
+                    r
+                }).collect();
+            out.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+            out
+        }).unwrap_or_default(),
         _ => get_json(&at("https://api.x.ai/v1/models"), &bearer, &[]).map(|v| {
             v["data"].as_array().into_iter().flatten().filter_map(|m| m["id"].as_str()).filter(|id| ok(id)).map(|id| row(id, id, "responses")).collect()
         }).unwrap_or_default(),
     }
 }
 
-/// How the engine reaches a signed-in plan's model: the API's address (Copilot's plan host) and its wire.
+/// A Claude id's version takes adaptive thinking (Claude 4.6 on: "claude-opus-4.6", "claude-sonnet-5", "claude-opus-4-7").
+fn adaptive_claude(id: &str) -> bool {
+    let nums: Vec<u32> = id.split(['-', '.']).skip_while(|p| !p.starts_with(|c: char| c.is_ascii_digit())).take(2)
+        .map_while(|p| p.parse().ok().filter(|n| *n < 100)).collect();
+    matches!(nums[..], [major, ..] if major >= 5) || matches!(nums[..], [4, minor] if minor >= 6)
+}
+
+/// How the engine reaches a signed-in plan's model: the API's address (Copilot's plan host; its Messages under /v1) and
+/// its wire.
 pub fn route(l: &Login, model: &str) -> (String, &'static str) {
     let rec = load(l);
     let api = rec["models"].as_array().into_iter().flatten().find(|m| m["id"] == model).and_then(|m| m["api"].as_str())
-        .map_or(if l.api.is_empty() { "chat" } else { l.api }, |a| if a == "responses" { "responses" } else { "chat" });
-    (rec["api_url"].as_str().unwrap_or(l.url).to_string(), api)
+        .map_or(if l.api.is_empty() { "chat" } else { l.api }, |a| match a {
+            "responses" => "responses",
+            "messages" => "messages",
+            "gemini" => "gemini",
+            _ => "chat",
+        });
+    let base = rec["api_url"].as_str().unwrap_or(l.url);
+    (if api == "messages" { format!("{base}/v1") } else { base.to_string() }, api)
 }
 
-/// Extra headers for one call (Copilot's); none for the others.
-pub fn headers(l: &Login, body: &Value) -> Vec<(String, String)> {
-    if l.sign_in() == "copilot" { copilot_headers(body, false) } else { vec![] }
+/// Extra headers for one call (Copilot's, a Google app's); none for the others. `by_tazuna`: the last user-role message
+/// is tazuna's own.
+pub fn headers(l: &Login, body: &Value, by_tazuna: bool) -> Vec<(String, String)> {
+    match l.sign_in() {
+        "copilot" => copilot_headers(body, false, by_tazuna),
+        "gemini" | "antigravity" => {
+            let mut h = google_headers(l, body["model"].as_str().unwrap_or_default(), &load(l));
+            if l.sign_in() == "gemini" {
+                h.push(("Accept".into(), "text/event-stream".into()));
+            }
+            h
+        }
+        _ => vec![],
+    }
 }
 
 /// A request in the shape the plan's route takes. ChatGPT's preview takes function tools grouped in a namespace
-/// (OpenAI's preview limits); `flat` after it refused that once.
+/// (OpenAI's preview limits); `flat` after it refused that once. Copilot's Claude (Anthropic's Messages through GitHub's
+/// proxy): no top-level cache breakpoint (omp drops what the proxy does not take), the model's own output cap, adaptive
+/// thinking only where the model has it.
 pub fn shape(l: &Login, body: &Value, flat: bool) -> Value {
     let mut b = body.clone();
     if l.sign_in() == "chatgpt" && !flat && let Some(tools) = b["tools"].as_array().filter(|t| !t.is_empty()).cloned() {
         b["tools"] = json!([{"type": "namespace", "name": "tazuna", "description": "The coding agent's tools.", "tools": tools}]);
+    }
+    if l.sign_in() == "copilot" && b["max_tokens"].is_u64() && let Some(o) = b.as_object_mut() {
+        let rec = load(l);
+        let row = rec["models"].as_array().into_iter().flatten().find(|m| m["id"] == o["model"]).cloned().unwrap_or_default();
+        o.remove("cache_control");
+        if let Some(n) = row["max_out"].as_u64().filter(|n| o["max_tokens"].as_u64().is_some_and(|m| m > *n)) {
+            o.insert("max_tokens".into(), json!(n));
+        }
+        if row["adaptive"] == false {
+            o.remove("thinking");
+            o.remove("output_config");
+        }
     }
     b
 }
@@ -720,7 +1241,7 @@ pub fn explain(l: &Login, e: anyhow::Error) -> anyhow::Error {
     } else if t.contains("subscription_sharing_user_not_eligible") {
         "ChatGPT plan usage is not available for this account or workspace"
     } else if t.contains("subscription_sharing_invalid_user") || t.contains("chatpass_v2_") {
-        "ChatGPT did not accept this sign-in for plan usage: sign out and in again (/login)"
+        "ChatGPT did not accept this sign-in for plan usage: sign out and in again (Settings › Providers or /login)"
     } else {
         return e;
     };
@@ -839,7 +1360,7 @@ pub(crate) mod tests {
             std::thread::spawn(move || { let _ = ureq::get(&cb).call(); });
             true
         };
-        let (said, first) = chatgpt(l, &|_| {}, &open).unwrap();
+        let (said, first) = chatgpt(l, &|_| {}, &open, false).unwrap();
         assert!(said.contains("someone@example.com") && said.contains("1 models") && first, "{said}");
         let u = link.lock().unwrap().clone();
         for want in ["/api/accounts/authorize?client_id=dynamic_agent_client", "agent_name_hint=tazuna", "ext_agent_host_id=urn%3Auuid%3A",
@@ -868,7 +1389,7 @@ pub(crate) mod tests {
         assert!(e.contains("sign in again") && !e.contains("rt2") && !signed_in(l), "{e}");
         assert_eq!(load(l)["client_id"], "oaiapp_test");
         // signed in again: the issued client, no name hint; signed out: revoked, tokens gone, registration kept
-        chatgpt(l, &|_| {}, &open).unwrap();
+        chatgpt(l, &|_| {}, &open, false).unwrap();
         let u = link.lock().unwrap().clone();
         assert!(u.contains("client_id=oaiapp_test") && !u.contains("agent_name_hint") && u.contains("login_hint=someone%40example.com"), "{u}");
         let said = sign_out(l).unwrap();
@@ -891,7 +1412,8 @@ pub(crate) mod tests {
                 {"id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "capabilities": {"type": "chat"}, "model_picker_enabled": true, "supported_endpoints": ["/responses"]},
                 {"id": "gemini-3.7-pro", "name": "Gemini 3.7 Pro", "capabilities": {"type": "chat"}, "model_picker_enabled": true, "supported_endpoints": ["/chat/completions"]},
                 {"id": "grok-4.7", "name": "Grok 4.7", "capabilities": {"type": "chat"}, "model_picker_enabled": true},
-                {"id": "claude-opus-5.5", "name": "Claude Opus 5.5", "capabilities": {"type": "chat"}, "model_picker_enabled": true},
+                {"id": "claude-opus-5.5", "name": "Claude Opus 5.5", "capabilities": {"type": "chat"}, "model_picker_enabled": true, "supported_endpoints": ["/chat/completions", "/v1/messages"]},
+                {"id": "claude-haiku-5.5", "name": "Claude Haiku 5.5", "capabilities": {"type": "chat"}, "model_picker_enabled": true},
                 {"id": "text-embedding-3", "capabilities": {"type": "embeddings"}}]}).to_string()),
             "GET /.well-known/openid-configuration" => (200, json!({"device_authorization_endpoint": "https://auth.x.ai/oauth2/device/code", "token_endpoint": "https://auth.x.ai/oauth2/token",
                 "revocation_endpoint": "https://auth.x.ai/oauth2/revoke"}).to_string()),
@@ -905,16 +1427,19 @@ pub(crate) mod tests {
         STAND_IN.set(Some((base.clone(), dir.clone())));
         let copilot_l = login("copilot");
         assert!(copilot_l.warns(), "another app's identity: a warning to confirm");
-        assert!(format!("{:#}", sign_in(copilot_l, &|_| {}).unwrap_err()).contains("confirm its warning first"));
+        assert!(format!("{:#}", sign_in(copilot_l, &|_| {}, false).unwrap_err()).contains("confirm its warning first"));
         confirm(copilot_l).unwrap();
         let said = std::cell::RefCell::new(vec![]);
-        let done = copilot(copilot_l, &|t| said.borrow_mut().push(t), &|_| false).unwrap();
-        assert!(said.borrow()[0].contains("enter the code ABCD-1234 at https://github.com/login/device") && done.contains("3 models"), "{:?} {done}", said.borrow());
-        // Claude stays out; Responses where Copilot serves a model only there
+        let done = copilot(copilot_l, &|t| said.borrow_mut().push(t), &|_| false, false).unwrap();
+        assert!(said.borrow()[0].contains("enter the code ABCD-1234 at https://github.com/login/device") && done.contains("5 models"), "{:?} {done}", said.borrow());
+        // the endpoint Copilot's list names: Responses where it serves a model only there, Anthropic's Messages (under /v1)
+        // for Claude, which the plan serves (GitHub's service, not Anthropic's API or Claude Code's login)
         let route_of = |m: &str| route(copilot_l, m);
-        assert_eq!(models(copilot_l).iter().map(|m| m["id"].as_str().unwrap()).collect::<Vec<_>>(), ["gpt-6.1-sol", "gemini-3.7-pro", "grok-4.7"]);
+        assert_eq!(models(copilot_l).iter().map(|m| m["id"].as_str().unwrap()).collect::<Vec<_>>(), ["gpt-6.1-sol", "gemini-3.7-pro", "grok-4.7", "claude-opus-5.5", "claude-haiku-5.5"]);
         assert_eq!((route_of("gpt-6.1-sol").1, route_of("gemini-3.7-pro").1, route_of("grok-4.7").1), ("responses", "chat", "responses"));
         assert_eq!(route_of("gemini-3.7-pro").0, "https://api.individual.githubcopilot.com");
+        assert_eq!(route_of("claude-opus-5.5"), ("https://api.individual.githubcopilot.com/v1".to_string(), "messages"));
+        assert_eq!(route_of("claude-haiku-5.5").1, "messages", "a Claude row that names no endpoint: Messages, as omp routes it");
         assert_eq!((load(copilot_l)["access_token"].as_str(), load(copilot_l)["api_url"].as_str()), (Some("gho_test"), Some("https://api.individual.githubcopilot.com")));
         assert!(seen.lock().unwrap().iter().any(|r| r.starts_with("POST /login/device/code") && r.contains("client_id=Ov23li8tweQw6odWQebz") && r.contains("scope=read%3Auser")));
         // a Copilot token does not renew: a refusal signs it out (not a 401 on every call) and asks for a new sign-in
@@ -923,7 +1448,7 @@ pub(crate) mod tests {
         // SuperGrok: the discovered endpoints, the Grok CLI's client, models that chat
         let x = login("xai");
         confirm(x).unwrap();
-        let said = xai(x, &|_| {}, &|_| false).unwrap();
+        let said = xai(x, &|_| {}, &|_| false, false).unwrap();
         assert!(said.contains("1 models"), "{said}");
         assert_eq!((load(x)["token_endpoint"].as_str(), models(x)), (Some("https://auth.x.ai/oauth2/token"), vec![json!({"id": "grok-4.7", "name": "grok-4.7", "api": "responses"})]));
         assert!(seen.lock().unwrap().iter().any(|r| r.starts_with("POST /oauth2/device/code") && r.contains(&format!("client_id={XAI_CLIENT}")) && r.contains("grok-cli%3Aaccess")));
@@ -938,6 +1463,178 @@ pub(crate) mod tests {
         assert!(Busy::take(x).is_err() && Busy::take(copilot_l).is_ok());
         drop(first);
         assert!(Busy::take(x).is_ok());
+        STAND_IN.set(None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The browser for a Google sign-in: the link kept, the callback sent back with a code and the link's state.
+    fn google_browser(link: std::sync::Arc<std::sync::Mutex<String>>) -> impl Fn(&str) -> bool {
+        move |u: &str| {
+            *link.lock().unwrap() = u.to_string();
+            let q = crate::mcpc::query(u);
+            let v = |k: &str| q.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone()).unwrap_or_default();
+            let cb = format!("{}?code=g1&state={}&scope=email", v("redirect_uri"), v("state"));
+            std::thread::spawn(move || { let _ = ureq::get(&cb).call(); });
+            true
+        }
+    }
+
+    #[test]
+    fn gemini_cli_signs_in_with_google_sets_up_code_assist_and_lists_the_quotas_models() {
+        let polls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let p = polls.clone();
+        let (base, seen) = stand_in(move |line, head, body| match line {
+            "POST /token" if body.contains("grant_type=authorization_code") => (200, json!({"access_token": "ya29.a", "refresh_token": "1//r", "expires_in": 3599,
+                "scope": GEMINI_CLI.scopes, "token_type": "Bearer"}).to_string()),
+            "POST /token" if body.contains("refresh_token=1%2F%2Fr") => (200, json!({"access_token": "ya29.b", "expires_in": 3599}).to_string()),
+            "POST /token" => (400, json!({"error": "invalid_grant", "error_description": "Token has been expired or revoked."}).to_string()),
+            "GET /oauth2/v1/userinfo?alt=json" if head.contains("Bearer ya29.a") => (200, json!({"email": "someone@example.com"}).to_string()),
+            // a new account: no tier yet, the free tier its default, set up in a long-running operation
+            "POST /v1internal:loadCodeAssist" if head.contains("GeminiCLI/0.68.0/") => (200, json!({"allowedTiers": [{"id": "legacy-tier"}, {"id": "free-tier", "isDefault": true}]}).to_string()),
+            "POST /v1internal:onboardUser" if body.contains(r#""tierId":"free-tier""#) => (200, json!({"name": "operations/op1", "done": false}).to_string()),
+            "GET /v1internal/operations/op1" => {
+                let done = p.fetch_add(1, std::sync::atomic::Ordering::SeqCst) > 0;
+                (200, json!({"name": "operations/op1", "done": done, "response": {"cloudaicompanionProject": {"id": "proj-123"}}}).to_string())
+            }
+            "POST /v1internal:retrieveUserQuota" if body.contains("proj-123") => (200, json!({"buckets": [{"modelId": "gemini-2.5-pro", "tokenType": "REQUESTS"},
+                {"modelId": "gemini-3.1-pro-preview"}, {"modelId": "gemini-2.5-pro", "tokenType": "INPUT_TOKENS"}, {"modelId": "gemini-2.5-flash_vertex"}, {"modelId": "imagen-4"}]}).to_string()),
+            "POST /revoke" => (200, "{}".into()),
+            _ => (404, "{}".into()),
+        });
+        let dir = temp("gemini-cli");
+        STAND_IN.set(Some((base, dir.clone())));
+        // an environment of the test's own: the machine's GOOGLE_CLOUD_PROJECT must not decide the tier path
+        crate::models::ENV_AT.set(Some(vec![]));
+        let l = login("gemini");
+        assert!(l.warns() && l.note.contains("Gemini CLI") && l.note.contains("own risk"), "the strongest warning, confirmed before");
+        assert!(format!("{:#}", sign_in(l, &|_| {}, false).unwrap_err()).contains("confirm its warning first"));
+        confirm(l).unwrap();
+        let link = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let said = std::cell::RefCell::new(vec![]);
+        let done = google(l, &|t| said.borrow_mut().push(t), &google_browser(link.clone()), false).unwrap();
+        assert_eq!(done, "signed in to Gemini CLI as someone@example.com: 2 models in /model; they use your Gemini Code Assist quota");
+        assert!(said.borrow().iter().any(|t| t.contains("sets up Code Assist")), "{:?}", said.borrow());
+        // Google's sign-in as Gemini CLI's client: PKCE, state, offline access, consent, back to 127.0.0.1
+        let u = link.lock().unwrap().clone();
+        for want in ["/o/oauth2/v2/auth?client_id=681255809395-oo8ft2oprdrnp9e3aqf6av3hmdib135j.apps.googleusercontent.com", "response_type=code",
+                     "redirect_uri=http%3A%2F%2F127.0.0.1%3A", "%2Foauth2callback", "scope=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fcloud-platform%20",
+                     "code_challenge_method=S256", "access_type=offline", "prompt=consent", "state="] {
+            assert!(u.contains(want), "{want} in {u}");
+        }
+        let log = seen.lock().unwrap().clone();
+        let exchange = log.iter().find(|r| r.contains("grant_type=authorization_code")).unwrap();
+        assert!(exchange.contains("client_secret=GOCSPX-") && exchange.contains("code_verifier=") && exchange.contains("code=g1"), "{exchange}");
+        assert!(log.iter().any(|r| r.starts_with("POST /v1internal:loadCodeAssist") && r.contains(r#""pluginType":"GEMINI""#)
+            && r.to_lowercase().contains("client-metadata: idetype=ide_unspecified,platform=platform_unspecified,plugintype=gemini")));
+        let rec = load(l);
+        assert_eq!((rec["project"].as_str(), rec["email"].as_str(), rec["access_token"].as_str()), (Some("proj-123"), Some("someone@example.com"), Some("ya29.a")));
+        // Gemini models from the quota's buckets, each once, Gemini's wire
+        assert_eq!(models(l), vec![json!({"id": "gemini-2.5-pro", "name": "gemini-2.5-pro", "api": "gemini"}), json!({"id": "gemini-3.1-pro-preview", "name": "gemini-3.1-pro-preview", "api": "gemini"})]);
+        assert_eq!(route(l, "gemini-2.5-pro"), ("https://cloudcode-pa.googleapis.com".to_string(), "gemini"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(path(l).unwrap()).unwrap().permissions().mode() & 0o777, 0o600, "owner only");
+        }
+        // renewed with the client's secret; Google keeps the refresh token
+        assert_eq!(access_token(l, Some("ya29.a")).unwrap(), "ya29.b");
+        let renewal = seen.lock().unwrap().iter().rev().find(|r| r.contains("grant_type=refresh_token")).cloned().unwrap();
+        assert!(renewal.contains("client_secret=GOCSPX-") && renewal.contains("client_id=681255809395"), "{renewal}");
+        assert_eq!(load(l)["refresh_token"], "1//r");
+        // the window's words: no terminal command, no second "signed in"
+        assert_eq!(signed(l, true, in_picker(2, true)), "2 models in the model picker");
+        // signed out: tazuna's tokens and project gone, the confirmation kept; nothing revoked at Google (that may sign Gemini
+        // CLI itself out), and the user told where the grant is
+        let out = sign_out(l).unwrap();
+        assert!(out.contains("the grant stays at Google until you remove it at https://myaccount.google.com/connections") && !signed_in(l) && confirmed(l)
+            && load(l)["project"].is_null(), "{out}");
+        assert!(!seen.lock().unwrap().iter().any(|r| r.contains("revoke")));
+        // a refresh token Google refused: signed out, not a 401 on every call
+        put(l, json!({"access_token": "ya29.c", "refresh_token": "1//gone", "expires_at": now() + 30, "project": "proj-123", "confirmed": true}));
+        assert!(format!("{:#}", access_token(l, None).unwrap_err()).contains("sign in again") && !signed_in(l));
+        crate::models::ENV_AT.set(None);
+        STAND_IN.set(None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_workspace_gemini_account_takes_its_project_from_the_row_and_a_stopped_sign_in_says_where_the_grant_is() {
+        let (base, seen) = stand_in(move |line, _, body| match line {
+            "POST /token" => (200, json!({"access_token": "ya29.w", "refresh_token": "1//w", "expires_in": 3599}).to_string()),
+            "GET /oauth2/v1/userinfo?alt=json" => (200, json!({"email": "someone@example.com"}).to_string()),
+            // a Workspace account: a tier of its own, no project Code Assist names
+            "POST /v1internal:loadCodeAssist" if body.contains("my-proj-1") => (200, json!({"currentTier": {"id": "standard-tier"}}).to_string()),
+            "POST /v1internal:loadCodeAssist" => (200, json!({"currentTier": {"id": "standard-tier"}}).to_string()),
+            "POST /v1internal:retrieveUserQuota" if body.contains("my-proj-1") => (200, json!({"buckets": [{"modelId": "gemini-2.5-pro"}]}).to_string()),
+            _ => (404, "{}".into()),
+        });
+        let dir = temp("gemini-workspace");
+        STAND_IN.set(Some((base, dir.clone())));
+        crate::models::ENV_AT.set(Some(vec![]));
+        let l = login("gemini");
+        confirm(l).unwrap();
+        let link = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        // the window's words: the project's ID on the row; and the grant Google holds already, where to end it
+        let e = format!("{:#}", google(l, &|_| {}, &google_browser(link.clone()), true).unwrap_err());
+        assert!(e.contains("enter its ID on Gemini CLI's row") && e.contains("https://myaccount.google.com/connections") && !e.contains("/login"), "{e}");
+        assert_eq!(needs_project(l).as_deref(), Some(""), "the row asks for it");
+        assert!(!signed_in(l), "nothing kept from a sign-in that stopped");
+        let e = format!("{:#}", google(l, &|_| {}, &google_browser(link.clone()), false).unwrap_err());
+        assert!(e.contains("set GOOGLE_CLOUD_PROJECT"), "the terminal's words: {e}");
+        assert!(set_project(l, "my proj; rm").is_err());
+        set_project(l, "my-proj-1").unwrap();
+        let done = google(l, &|_| {}, &google_browser(link), true).unwrap();
+        assert!(done.contains("1 models in the model picker") && load(l)["project"] == "my-proj-1" && needs_project(l).is_none(), "{done}");
+        assert!(seen.lock().unwrap().iter().any(|r| r.starts_with("POST /v1internal:loadCodeAssist") && r.contains(r#""duetProject":"my-proj-1""#)));
+        crate::models::ENV_AT.set(None);
+        STAND_IN.set(None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn antigravity_signs_in_with_its_own_client_and_offers_the_plans_models_claude_included() {
+        let (base, seen) = stand_in(move |line, head, body| match line {
+            "POST /token" => (200, json!({"access_token": "ya29.ag", "refresh_token": "1//ag", "expires_in": 3599}).to_string()),
+            "GET /oauth2/v1/userinfo?alt=json" => (200, json!({"email": "someone@example.com"}).to_string()),
+            "GET /manifest/latest-arm64-mac.yml" => (200, "version: 2.34.0\nfiles:\n  - url: x\n".into()),
+            // a paid account the free tier refuses: it goes on on its own tier (the free tier's refusal matters only without
+            // one); asked with the app's current version from the start
+            "POST /v1internal:loadCodeAssist" if head.contains("antigravity/hub/2.34.0") && body.contains(r#""ideType":"ANTIGRAVITY""#) =>
+                (200, json!({"currentTier": {"id": "standard-tier"}, "paidTier": {"id": "g1-pro-tier"}, "allowedTiers": [{"id": "standard-tier"}],
+                    "ineligibleTiers": [{"tierId": "free-tier", "reasonMessage": "not eligible for the free tier"}], "cloudaicompanionProject": "ag-proj"}).to_string()),
+            "POST /v1internal:fetchAvailableModels" if body.contains("ag-proj") && head.contains("antigravity/hub/2.34.0") => (200, json!({"models": {
+                "gemini-3.1-pro-high": {"displayName": "Gemini 3.1 Pro (High)", "model": "MODEL_PLACEHOLDER_M36", "maxOutputTokens": 65535, "thinkingLevel": 3},
+                "gemini-4-hydrogen-xhigh": {"displayName": "Gemini 4 Hydrogen (XHigh)", "maxOutputTokens": 262144, "thinkingLevel": 100},
+                "claude-sonnet-4-6": {"displayName": "Claude Sonnet 4.6", "maxOutputTokens": 64000, "thinkingBudget": 1024},
+                "gemini-3-pro-image": {"displayName": "Gemini 3 Pro Image"},
+                "chat_20706": {"displayName": "internal chat"},
+                "gemini-4-argon-disabled": {"displayName": "Unavailable", "disabled": true},
+                "tab_flash_lite_preview": {"displayName": "Tab", "isInternal": true}},
+                "imageGenerationModelIds": ["gemini-3-pro-image"]}).to_string()),
+            _ => (404, "{}".into()),
+        });
+        let dir = temp("antigravity");
+        STAND_IN.set(Some((base, dir.clone())));
+        let l = login("antigravity");
+        assert!(l.warns() && l.note.contains("suspended accounts") && l.note.contains("own risk"));
+        let link = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let done = google(l, &|_| {}, &google_browser(link.clone()), true).unwrap();
+        assert_eq!(done, "someone@example.com: 3 models in the model picker; they use your Antigravity plan's quota", "the window's words");
+        let u = link.lock().unwrap().clone();
+        assert!(u.contains("client_id=1071006060591-") && u.contains("%2Foauth-callback") && u.contains("auth%2Fcclog") && u.contains("auth%2Faicode"), "{u}");
+        let loads = seen.lock().unwrap().iter().filter(|r| r.starts_with("POST /v1internal:loadCodeAssist")).count();
+        assert_eq!(loads, 2, "a paid tier: asked once to check, once after");
+        assert!(!seen.lock().unwrap().iter().any(|r| r.contains("onboardUser")), "a tier already: nothing to set up");
+        let rec = load(l);
+        assert_eq!((rec["project"].as_str(), rec["client_version"].as_str()), (Some("ag-proj"), Some("2.34.0")));
+        // the plan's models, Claude among them (Google's service on the plan, not Claude Code); each with the constants the
+        // app sends for it; image, internal and unavailable rows left out
+        assert_eq!(models(l), vec![json!({"id": "claude-sonnet-4-6", "name": "Claude Sonnet 4.6", "api": "gemini", "max_out": 64000, "budget": 1024}),
+            json!({"id": "gemini-3.1-pro-high", "name": "Gemini 3.1 Pro (High)", "api": "gemini", "enum": "MODEL_PLACEHOLDER_M36", "max_out": 65535, "level": "HIGH"}),
+            // a level Google's enum has no name for: none sent (the SKU fixes its own thinking)
+            json!({"id": "gemini-4-hydrogen-xhigh", "name": "Gemini 4 Hydrogen (XHigh)", "api": "gemini", "max_out": 262144})]);
+        let h = headers(l, &json!({"model": "gemini-3.1-pro-high"}), false);
+        assert!(h[0].1.starts_with("antigravity/hub/2.34.0 (aidev_client; os_type=") && h[0].1.ends_with("; cl=1005016104)"), "{h:?}");
         STAND_IN.set(None);
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -969,7 +1666,7 @@ pub(crate) mod tests {
             std::thread::spawn(move || { let _ = ureq::get(&cb).call(); });
             true
         };
-        let e = format!("{:#}", chatgpt(l, &|_| {}, &open).unwrap_err());
+        let e = format!("{:#}", chatgpt(l, &|_| {}, &open, false).unwrap_err());
         assert!(e.contains("plan use was not allowed") && signed_in(l) && plan_declined(l) && models(l).is_empty(), "{e}");
         assert!(why_not(l).unwrap().contains("not allowed"), "a greyed row with the reason, no model to pick");
         assert!(!seen.lock().unwrap().iter().any(|r| r.starts_with("GET /v1/models")), "no model list on an identity-only token");
@@ -979,13 +1676,13 @@ pub(crate) mod tests {
         sign_out(l).unwrap();
         assert!(plan_declined(l));
         grant.store(true, std::sync::atomic::Ordering::SeqCst);
-        chatgpt(l, &|_| {}, &open).unwrap();
+        chatgpt(l, &|_| {}, &open, false).unwrap();
         assert!(link.lock().unwrap().contains("prompt=consent"));
         assert!(!plan_declined(l) && models(l).len() == 1 && why_not(l).is_none());
         // another account: the session revoked, the registration forgotten, the next sign-in registers anew
         forget_account(l).unwrap();
         assert!(!signed_in(l) && load(l)["client_id"].is_null() && load(l)["ext_agent_host_id"].is_string());
-        chatgpt(l, &|_| {}, &open).unwrap();
+        chatgpt(l, &|_| {}, &open, false).unwrap();
         assert!(link.lock().unwrap().contains("client_id=dynamic_agent_client") && !link.lock().unwrap().contains("prompt=consent"));
         STAND_IN.set(None);
         std::fs::remove_dir_all(&dir).ok();
@@ -1028,10 +1725,15 @@ pub(crate) mod tests {
 
     #[test]
     fn copilot_says_who_asked_and_chatgpt_groups_its_tools() {
-        let h = |b: Value| copilot_headers(&b, false).into_iter().find(|(k, _)| k == "X-Initiator").unwrap().1;
-        assert_eq!(h(json!({"messages": [{"role": "user", "content": "hi"}]})), "user");
-        assert_eq!(h(json!({"messages": [{"role": "tool", "content": "ok"}]})), "agent");
-        assert_eq!(h(json!({"input": [{"type": "function_call_output", "output": "ok"}]})), "agent");
+        let h = |b: Value, by_tazuna: bool| copilot_headers(&b, false, by_tazuna).into_iter().find(|(k, _)| k == "X-Initiator").unwrap().1;
+        assert_eq!(h(json!({"messages": [{"role": "user", "content": "hi"}]}), false), "user");
+        assert_eq!(h(json!({"messages": [{"role": "tool", "content": "ok"}]}), false), "agent");
+        assert_eq!(h(json!({"input": [{"type": "function_call_output", "output": "ok"}]}), false), "agent");
+        // tazuna's own follow-up (test results, a nudge) is the agent's, not a premium request; the user's message stays one
+        assert_eq!(h(json!({"messages": [{"role": "tool", "content": "ok"}, {"role": "user", "content": "tests fail"}]}), true), "agent");
+        assert_eq!(h(json!({"input": [{"role": "user", "content": "tests fail"}]}), true), "agent");
+        // Claude's Messages: a call's results come back in a user turn, the agent's too
+        assert_eq!(h(json!({"messages": [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": "ok"}]}]}), false), "agent");
         let body = json!({"tools": [{"type": "function", "name": "bash"}], "input": []});
         let b = shape(login("chatgpt"), &body, false);
         assert_eq!((b["tools"][0]["type"].as_str(), b["tools"][0]["tools"][0]["name"].as_str()), (Some("namespace"), Some("bash")));

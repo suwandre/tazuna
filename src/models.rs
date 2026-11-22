@@ -218,7 +218,7 @@ pub fn providers(cs: &[Choice]) -> Vec<(String, Vec<usize>)> {
             None => out.push((p, vec![i])),
         }
     }
-    let rank = |n: &str| ["Claude", "SubRouter", "Mortera", "Mistral", "OpenRouter", "Kenari", "Cheaper Inference", "OmniRoute"].iter().position(|x| *x == n).unwrap_or(9);
+    let rank = |n: &str| ["Claude", "SubRouter", "Mortera", "Mistral", "Mistral Vibe", "OpenRouter", "Kenari", "Cheaper Inference", "OmniRoute"].iter().position(|x| *x == n).unwrap_or(9);
     // some 70 since 0.1.196: Claude, the ones with a key (or on this machine), then the rest, each part in that order
     let keyless = |is: &[usize]| is.iter().all(|&i| cs[i].state == State::NoKey);
     out.sort_by_key(|(n, is)| (rank(n) > 0, keyless(is), rank(n)));
@@ -235,8 +235,14 @@ pub fn why_not(c: &Choice) -> Option<String> {
             key: /login, or set {var} (its provider settings decide: a model without a list on it can land on any \
             provider)")),
         State::NoKey if let Some(l) = login_of(c).filter(|l| !l.sign_in().is_empty()) => crate::oauth::why_not(l).or_else(|| Some(format!("not signed in: /login signs in to {}", l.name))),
-        State::NoKey => Some(format!("no key: /login, or set the environment variable {var} before starting tazuna{}", match host {
-            "api.mistral.ai" => " (a Mistral API key, or one made under Code › Vibe CLI)",
+        State::NoKey if MISTRAL_PAIR.contains(&var.as_str()) && mistral_unsure() == Some(MistralUnsure::Pair) => Some(format!("the same key is \
+            saved for Mistral and Mistral Vibe, and tazuna cannot tell whether it bills per token or the Vibe plan: /login, {}, enter keeps \
+            it there", provider_of(c))),
+        State::NoKey if var == MISTRAL_PAIR[1] && mistral_unsure() == Some(MistralUnsure::OldVibe) => Some("the key saved for both Mistral and \
+            Mistral Vibe before is kept for Mistral Vibe until you say it is a Vibe key: /login, Mistral Vibe, enter keeps it, delete removes it".into()),
+        State::NoKey => Some(format!("no key: /login, or set the environment variable {var} before starting tazuna{}", match var.as_str() {
+            "MISTRAL_API_KEY" => " (a Mistral API key; a Vibe key goes under Mistral Vibe)",
+            "MISTRAL_VIBE_API_KEY" => " (the Vibe API key at chat.mistral.ai/code/extensions, under Advanced >)",
             _ => "",
         })),
         State::Untrusted => Some(format!("not trusted: the code would go to {host}; /login allows it, or add the line {host} to {}",
@@ -366,6 +372,8 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
             State::Ready
         };
         let state = state_of(var);
+        // a route on a plan's key (Mistral Vibe): the plan pays, so "plan" and nothing against the $1 cap
+        let plan = login_at(url, var).is_some_and(|l| l.plan);
         let mut pins: Vec<Pin> = r["pinned"].as_object().into_iter().flatten().filter_map(|(g, p)| Some(Pin {
             provider: g.clone(),
             key_env: p["key_env"].as_str()?.to_string(),
@@ -376,12 +384,12 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
         out.push(Choice {
             model,
             label,
-            route: Some((url.to_string(), var.to_string(), route_price(input, output, r["price"][2].as_f64()))),
+            route: Some((url.to_string(), var.to_string(), if plan { route_price(0.0, 0.0, None) } else { route_price(input, output, r["price"][2].as_f64()) })),
             // another host (Mistral's API on a Vibe-plan key, 2026-11-07) is named by its host, not as SubRouter
             place: if host == "subrouter.ai" { format!("SubRouter · {}", providers.join(", ")) } else { host.to_string() },
             // only the levels that differ (DeepSeek: off, high, max); a route that names none offers them all
             efforts: if distinct.is_empty() { LEVELS.iter().map(|e| e.to_string()).collect() } else { distinct.iter().map(|e| e.to_string()).collect() },
-            price: format!("{} / {}", per_m(input), per_m(output)),
+            price: if plan { "plan".into() } else { format!("{} / {}", per_m(input), per_m(output)) },
             // a route added without our checks (Mortera's models, 2026-11-09) says so instead of a cache share and a date
             note: if r["unchecked"] == true {
                 format!("not checked yet: prices from {}'s list; effort levels, cache and quality not measured", r["via"].as_str().unwrap_or(host))
@@ -400,6 +408,15 @@ fn catalog_rows(routes: &Path, trusted: impl Fn(&str) -> bool, keys: &KeyModels,
             pins,
         });
     }
+    // Mistral Vibe: Mistral's models again on the Vibe plan's key (Mistral names no model its plans leave out), "plan" in
+    // place of the price; a user's own route of a model on that key stands instead of its copy
+    let vibe = LOGINS.iter().find(|l| l.vars == [MISTRAL_PAIR[1]]).expect("Mistral Vibe is a provider");
+    let copies: Vec<Choice> = out.iter().filter(|c| c.route.as_ref().is_some_and(|r| r.1 == MISTRAL_PAIR[0] && r.0.trim_end_matches('/') == vibe.url))
+        .filter(|c| !out.iter().any(|o| o.model == c.model && o.route.as_ref().is_some_and(|r| r.1 == MISTRAL_PAIR[1])))
+        .map(|c| Choice { route: Some((vibe.url.to_string(), MISTRAL_PAIR[1].to_string(), route_price(0.0, 0.0, None))), price: "plan".into(),
+            state: if key(MISTRAL_PAIR[1]).is_none() { State::NoKey } else if !trusted(vibe.host()) { State::Untrusted } else { State::Ready },
+            pins: vec![], ..c.clone() }).collect();
+    out.extend(copies);
     // Mortera's own list (2026-11-09): every model that answers in text, from the copy `refresh_mortera` keeps
     // beside the routes file: the data folder in use, a test's own folder in tests
     if let Some(list) = routes.parent().and_then(|d| std::fs::read_to_string(d.join("mortera-models.json")).ok()) {
@@ -1376,19 +1393,38 @@ pub fn managed_key() -> Option<String> {
 
 /// Keys saved in tazuna (`/model`: enter on a provider without one), by variable name, readable by the user only.
 fn keys_file() -> Option<std::path::PathBuf> {
+    // tests: a file of their own, never the machine's keys
+    #[cfg(test)]
+    return KEYS_AT.with_borrow(|k| k.clone()).or_else(|| Some(std::env::temp_dir().join(format!("tazuna-no-keys-{}.json", std::process::id()))));
+    #[cfg(not(test))]
     crate::platform::home().map(|h| h.join(".config/tazuna/keys.json"))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: the keys file they read and write.
+    pub(crate) static KEYS_AT: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Saves a provider's key under its variable name (a file that does not parse is left alone: an error, not a reset).
 pub fn save_key(var: &str, value: &str) -> anyhow::Result<std::path::PathBuf> {
+    put_saved(var, Some(value.trim().into()))
+}
+
+/// An entry of keys.json set, or taken out with None (a file that does not parse is left alone: an error, not a reset).
+fn put_saved(var: &str, value: Option<Value>) -> anyhow::Result<std::path::PathBuf> {
     let p = keys_file().ok_or_else(|| anyhow::anyhow!("HOME not set"))?;
     let mut v: Value = match std::fs::read_to_string(&p) {
         Ok(t) => serde_json::from_str(&t).map_err(|e| anyhow::anyhow!("{} does not parse ({e}): fix or remove it", p.display()))?,
         Err(_) => serde_json::json!({}),
     };
     let Some(m) = v.as_object_mut() else { anyhow::bail!("{} is not a JSON object: fix or remove it", p.display()) };
-    m.insert(var.to_string(), value.trim().into());
+    match value {
+        Some(value) => m.insert(var.to_string(), value),
+        None => m.remove(var),
+    };
     crate::mcpc::write_private(&p, &v)?;
+    SAVED.set(None);
     Ok(p)
 }
 
@@ -1407,7 +1443,23 @@ fn saved_key(var: &str) -> Option<String> {
 }
 
 fn env_key(var: &str) -> Option<String> {
+    // tests: an environment of their own where they set one
+    #[cfg(test)]
+    if let Some(v) = ENV_AT.with_borrow(|e| e.as_ref().map(|e| e.iter().find(|(k, _)| k == var).map(|(_, v)| v.clone()))) {
+        return v;
+    }
     std::env::var(var).ok().filter(|k| !k.trim().is_empty())
+}
+
+/// A variable of tazuna's environment (in tests the stand-in's where one is set): oauth.rs reads GOOGLE_CLOUD_PROJECT so.
+pub(crate) fn env_var(var: &str) -> Option<String> {
+    env_key(var)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests: the environment `env_key` reads instead of the process's (None: the process's).
+    pub(crate) static ENV_AT: std::cell::RefCell<Option<Vec<(String, String)>>> = const { std::cell::RefCell::new(None) };
 }
 
 /// The first of these variables set in this process's environment: what `/login` saves for every folder when the user
@@ -1421,6 +1473,127 @@ fn own_key(var: &str) -> Option<String> {
     env_key(var).or_else(|| saved_key(var))
 }
 
+/// Mistral's two keys on one API: an API key (per token) and a Vibe CLI key (the Vibe plan).
+const MISTRAL_PAIR: [&str; 2] = ["MISTRAL_API_KEY", "MISTRAL_VIBE_API_KEY"];
+/// keys.json's mark on a Vibe key kept from before the split whose kind the user has not said yet (a new API key was saved
+/// over the shared one): unused until they do.
+const VIBE_UNCONFIRMED: &str = "MISTRAL_VIBE_API_KEY_UNCONFIRMED";
+
+/// What tazuna does not know about Mistral's keys. Until 0.1.198 /login saved a Mistral key under both variables, and a
+/// key does not say whether it bills per token or the Vibe plan: tazuna never shows a price that may be wrong (a paid key
+/// shown as the plan's hides spend), so an unsure key is used by neither provider until the user says which it is.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum MistralUnsure {
+    /// The same key for both (in keys.json, or the environment's against a saved one).
+    Pair,
+    /// The shared key, kept under Mistral Vibe once a new API key replaced it under Mistral.
+    OldVibe,
+}
+
+#[inline(never)]
+pub fn mistral_unsure() -> Option<MistralUnsure> {
+    let same = |a: Option<String>, b: Option<String>| a.is_some() && a == b;
+    let [api, vibe] = MISTRAL_PAIR;
+    if same(own_key(api), own_key(vibe)) || same(saved_key(api), saved_key(vibe)) {
+        Some(MistralUnsure::Pair)
+    } else if saved_key(vibe).is_some() && SAVED.with_borrow(|s| s.as_ref().map(|v| v[VIBE_UNCONFIRMED] == true)).unwrap_or_else(|| saved_keys()[VIBE_UNCONFIRMED] == true) {
+        Some(MistralUnsure::OldVibe)
+    } else {
+        None
+    }
+}
+
+/// The other provider of Mistral's pair, for a login of it.
+#[inline(never)]
+pub fn mistral_other(l: &Login) -> Option<&'static Login> {
+    let other = MISTRAL_PAIR.iter().find(|v| l.vars.contains(v) && l.vars.len() == 1).and_then(|v| MISTRAL_PAIR.iter().find(|o| *o != v))?;
+    LOGINS.iter().find(|o| o.vars == [*other])
+}
+
+/// What was typed on Mistral's or Mistral Vibe's row, against the other's key.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Typed {
+    Nothing,
+    /// The other provider's key.
+    Theirs,
+    New,
+}
+
+#[inline(never)]
+pub fn mistral_typed(l: &Login, typed: &str) -> Typed {
+    let theirs = mistral_other(l).and_then(|o| own_key(o.vars[0]));
+    match typed.trim() {
+        "" => Typed::Nothing,
+        t if theirs.as_deref() == Some(t) => Typed::Theirs,
+        _ => Typed::New,
+    }
+}
+
+/// The other provider's key typed on this row where that cannot be meant: saved, it would make the pair unsure and leave
+/// both rows greyed after "saved". The reason, said on the row.
+#[inline(never)]
+pub fn mistral_refuses(l: &Login, before: Option<MistralUnsure>, typed: Typed) -> Option<String> {
+    let other = mistral_other(l)?;
+    (typed == Typed::Theirs && (before.is_none() || before == Some(MistralUnsure::OldVibe) && l.plan)).then(|| format!("this key is {}'s \
+        already: if it is {}, replace or remove it under {} first", other.name, if l.plan { "a Vibe key" } else { "an API key" }, other.name))
+}
+
+/// After a key was saved (or, with nothing typed, kept) on Mistral's or Mistral Vibe's row while `before` was unsure: what
+/// follows, and what to tell the user on that row. No key goes without the user seeing it there, and never so that a paid
+/// key would show as the plan's:
+/// - the shared key kept (nothing typed, or typed again): it is this provider's; the other's saved copy goes;
+/// - a new key for Mistral Vibe: the shared one stays under Mistral, per token (over-counting is the safe side);
+/// - a new key for Mistral: the shared one stays under Mistral Vibe, unused until the user says it is a Vibe key;
+/// - that kept key: confirmed on Mistral Vibe's row with nothing typed, replaced by a new one, or typed on Mistral's row
+///   as its API key.
+#[inline(never)]
+pub fn settle_mistral(l: &Login, before: Option<MistralUnsure>, typed: Typed) -> anyhow::Result<Option<String>> {
+    let (Some(other), Some(before)) = (mistral_other(l), before) else { return Ok(None) };
+    use {MistralUnsure::*, Typed::*};
+    let said = match (before, typed, l.plan) {
+        (Pair, Nothing | Theirs, _) => {
+            put_saved(other.vars[0], None)?;
+            put_saved(VIBE_UNCONFIRMED, None)?;
+            format!("the key saved for both is {}'s now ({}), no longer {}'s", l.name, if l.plan { "the Vibe plan pays" } else { "billed per token" }, other.name)
+        }
+        (Pair, New, true) => "saved; the key that was saved for both stays under Mistral, billed per token: replace it there if it is not an API key".into(),
+        (Pair, New, false) => {
+            put_saved(VIBE_UNCONFIRMED, Some(Value::Bool(true)))?;
+            "saved; the key that was saved for both stays under Mistral Vibe, unused until you say whether it is your Vibe key".into()
+        }
+        (OldVibe, Nothing | New, true) => {
+            put_saved(VIBE_UNCONFIRMED, None)?;
+            if typed == Nothing { "the key from before is your Vibe key".into() } else { "saved in place of the key from before".into() }
+        }
+        (OldVibe, Theirs, false) => {
+            remove_old_vibe()?;
+            "the key from before is Mistral's now, billed per token, no longer Mistral Vibe's".into()
+        }
+        _ => return Ok(None),
+    };
+    // the environment's copy is the user's to change
+    if mistral_unsure() == Some(Pair) {
+        return Ok(Some(format!("{} in your environment holds the same key as {}: unset it there, or neither uses it", other.vars[0], l.vars[0])));
+    }
+    Ok(Some(said))
+}
+
+/// Mistral Vibe's key kept from before taken out (its row's "Remove"), with its mark.
+#[inline(never)]
+pub fn remove_old_vibe() -> anyhow::Result<()> {
+    put_saved(MISTRAL_PAIR[1], None)?;
+    put_saved(VIBE_UNCONFIRMED, None)?;
+    Ok(())
+}
+
+/// A line for Mistral's row where its key may be a Vibe key the old help sent there: MISTRAL_API_KEY in the environment,
+/// MISTRAL_VIBE_API_KEY unset.
+#[inline(never)]
+pub fn key_hint(l: &Login) -> Option<&'static str> {
+    (l.vars == [MISTRAL_PAIR[0]] && env_key(MISTRAL_PAIR[0]).is_some() && own_key(MISTRAL_PAIR[1]).is_none() && mistral_unsure().is_none())
+        .then_some("MISTRAL_API_KEY in your environment bills per token here; if it is a Vibe key, set MISTRAL_VIBE_API_KEY instead")
+}
+
 /// The key a route's variable names: the environment's, else one saved in tazuna, else for SUBROUTER_API_KEY tazuna's
 /// managed key. Saved and managed keys never go into tazuna's environment, where every child (claude, the agent's
 /// commands) would inherit them; only the own loop's engine gets its key, and takes it out of its environment before any
@@ -1429,6 +1602,13 @@ pub fn key(var: &str) -> Option<String> {
     // a sign-in: a stand-in while signed in (the engine reads the token itself, never from its environment)
     if let Some(l) = sign_in_of(var) {
         return crate::oauth::signed_in(l).then(|| "signed-in".to_string());
+    }
+    if MISTRAL_PAIR.contains(&var) && match mistral_unsure() {
+        Some(MistralUnsure::Pair) => true,
+        Some(MistralUnsure::OldVibe) => var == MISTRAL_PAIR[1],
+        None => false,
+    } {
+        return None;
     }
     own_key(var).or_else(|| (var == "SUBROUTER_API_KEY").then(managed_key).flatten())
         // a local server that wants no key gets a stand-in (the engine sends one)
@@ -1448,8 +1628,8 @@ pub struct Login {
     pub place: &'static str,
     pub example: &'static str,
     pub source: Source,
-    /// "chat", "responses" or "messages": the API every model there takes; empty: by the model's name (claude- Messages,
-    /// gpt- Responses, the rest Chat Completions), as before 0.1.196.
+    /// "chat", "responses", "messages" or (a Google sign-in) "gemini": the API every model there takes; empty: by the
+    /// model's name (claude- Messages, gpt- Responses, the rest Chat Completions), as before 0.1.196.
     pub api: &'static str,
     /// The provider's own terms in one line, where using it from tazuna can cost the user the plan or the account; shown on
     /// its row in /model, /login and the desktop. Empty: nothing to weigh.
@@ -1466,7 +1646,7 @@ pub enum Source {
     ModelsDev(&'static str),
     /// The provider's /models with the key, read at start: ids without prices (the engine reads one from it if it has one).
     List,
-    /// A sign-in instead of a key (oauth.rs: "chatgpt", "copilot", "xai"): its models from its record. Its one variable only
+    /// A sign-in instead of a key (oauth.rs: "chatgpt", "copilot", "xai", "gemini", "antigravity"): its models from its record. Its one variable only
     /// names the route and never holds a token. One whose note warns needs that warning confirmed once before its first
     /// sign-in.
     SignIn(&'static str),
@@ -1507,9 +1687,13 @@ pub const LOGINS: &[Login] = &[
             place: "your OpenRouter account", example: "sk-or-v1-...", ..OWN },
     Login { name: "Kenari", vars: &["KENARI_API_KEY"], url: "https://kenari.id/v1", page: "https://kenari.id/login?next=/keys",
             place: "your kenari dashboard (Keys)", ..OWN },
-    // a Vibe CLI key works on the same API, and a user's routes read it from MISTRAL_VIBE_API_KEY (2026-11-10)
-    Login { name: "Mistral", vars: &["MISTRAL_API_KEY", "MISTRAL_VIBE_API_KEY"], url: "https://api.mistral.ai/v1", page: "https://console.mistral.ai/api-keys",
-            place: "Mistral's console (or Code › Vibe CLI)", ..OWN },
+    // one API, two ways to pay (2026-11-22): an API key bills per token, a key made under Code › Vibe CLI bills the Vibe
+    // plan's usage (Mistral's docs: the plan's usage is shared across Studio, the API and Vibe Code, no model limit named),
+    // so the picker says which; a user's routes read the Vibe key from MISTRAL_VIBE_API_KEY (2026-11-10)
+    Login { name: "Mistral", vars: &["MISTRAL_API_KEY"], url: "https://api.mistral.ai/v1", page: "https://console.mistral.ai/api-keys",
+            place: "Mistral's console (API keys)", ..OWN },
+    Login { name: "Mistral Vibe", vars: &["MISTRAL_VIBE_API_KEY"], url: "https://api.mistral.ai/v1", page: "https://chat.mistral.ai/code/extensions",
+            place: "Le Chat's Code › Extensions page (click Advanced > to show the Vibe API key)", plan: true, ..OWN },
     // the own loop's first provider (2026-10-09); its list needs the key, so its models show once one is saved (2026-11-16)
     Login { name: "Cheaper Inference", vars: &["CHEAPER_INFERENCE_API_KEY"], url: "https://api.cheaperinference.com/v1",
             page: "https://platform.cheaperinference.com/dashboard", place: "your Cheaper Inference dashboard (API keys)", ..OWN },
@@ -1667,6 +1851,17 @@ pub const LOGINS: &[Login] = &[
     Login { name: "SuperGrok", vars: &["TAZUNA_SIGNIN_XAI"], url: "https://api.x.ai/v1", page: "https://grok.com",
             place: "your Grok account", api: "responses", plan: true, source: Source::SignIn("xai"),
             note: "tazuna signs in as xAI's Grok CLI. Whether xAI's terms allow this, or xAI acts on accounts for it, is unclear. Use at your own risk.", ..P },
+    // Google's: Gemini CLI's terms call using its login from other tools a violation that may suspend or end the account
+    // (github.com/google-gemini/gemini-cli docs/resources/tos-privacy.md; Roo Code removed this login at Google's request,
+    // 2025-06-28, Roo PR #5223); Antigravity's forbid third-party sign-in, and Google suspended accounts that used it (omp
+    // paused its own Antigravity login for that, omp #18341). Their wire is Gemini's own in Code Assist's envelope
+    // (engine.rs `Api::Gemini`)
+    Login { name: "Gemini CLI", vars: &["TAZUNA_SIGNIN_GEMINI"], url: "https://cloudcode-pa.googleapis.com", page: "https://myaccount.google.com/connections",
+            place: "your Google account (connections)", api: "gemini", plan: true, source: Source::SignIn("gemini"),
+            note: "Google's terms forbid using this login outside Gemini CLI, and Google may suspend or end the account for it. tazuna signs in as Gemini CLI. Use at your own risk.", ..P },
+    Login { name: "Antigravity", vars: &["TAZUNA_SIGNIN_ANTIGRAVITY"], url: "https://daily-cloudcode-pa.googleapis.com", page: "https://myaccount.google.com/connections",
+            place: "your Google account (connections)", api: "gemini", plan: true, source: Source::SignIn("antigravity"),
+            note: "Google's terms forbid signing in to Antigravity from other tools, and Google has suspended accounts that did. tazuna signs in as Antigravity: you do this at your own risk.", ..P },
     // gateways: many makers' models behind one key (Claude among them stays out: it runs through the claude CLI)
     Login { name: "Vercel AI Gateway", vars: &["AI_GATEWAY_API_KEY"], url: "https://ai-gateway.vercel.sh/v1", page: "https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway%2Fapi-keys",
             place: "Vercel's dashboard (AI Gateway, API keys)", example: "vck_...", source: Md("vercel"), ..P },
@@ -1768,6 +1963,14 @@ pub fn key_source(vars: &[&str]) -> &'static str {
             (true, false) => "signed in",
             (true, true) => "signed in, plan use not allowed",
         };
+    }
+    if vars.len() == 1 && MISTRAL_PAIR.contains(&vars[0]) {
+        match (mistral_unsure(), vars[0] == MISTRAL_PAIR[0]) {
+            (Some(MistralUnsure::Pair), true) => return "same key as Mistral Vibe: is it an API key?",
+            (Some(MistralUnsure::Pair), false) => return "same key as Mistral: is it a Vibe key?",
+            (Some(MistralUnsure::OldVibe), false) => return "kept from before: is it your Vibe key?",
+            _ => {}
+        }
     }
     // a variable set in one terminal is seen by tazuna started there only (a Mistral key showed in one folder's terminal
     // and not another's, 2026-11-12): /login saves it for every folder
@@ -2152,6 +2355,100 @@ mod tests {
     }
 
     #[test]
+    fn mistral_api_and_vibe_are_two_providers_and_a_key_saved_for_both_is_used_by_neither_until_the_user_says() {
+        // an environment of the test's own (the machine's may hold a Mistral key) and a keys file of its own
+        ENV_AT.set(Some(vec![]));
+        let dir = std::env::temp_dir().join(format!("tazuna-mistral-{}-{:?}", std::process::id(), std::thread::current().id()).replace(['(', ')'], ""));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        KEYS_AT.set(Some(dir.join("keys.json")));
+        let by = |n: &str| LOGINS.iter().find(|l| l.name == n).unwrap();
+        let (api, vibe) = (by("Mistral"), by("Mistral Vibe"));
+        // one API, told apart by the key's variable: the run log, the receipt and resume name the right one
+        let url = "https://api.mistral.ai/v1";
+        assert_eq!((provider_name(url, "MISTRAL_API_KEY"), provider_name(url, "MISTRAL_VIBE_API_KEY")), ("Mistral".to_string(), "Mistral Vibe".to_string()));
+        assert_eq!(paid_to(url, "MISTRAL_VIBE_API_KEY").as_deref(), Some("Mistral Vibe"));
+        assert!(!api.plan && vibe.plan && api_of(url).is_none());
+        assert_eq!((mistral_other(api).unwrap().name, mistral_other(vibe).unwrap().name), ("Mistral Vibe", "Mistral"));
+        // the shipped routes: per token on the API key, and each again on the Vibe key as "plan" ($0 against the cap); a
+        // user's own route on the Vibe key stands instead of its copy, as "plan" too
+        let routes = dir.join("routes.json");
+        std::fs::write(&routes, r#"{"routes": {"codestral-2508@mistral": {"url": "https://api.mistral.ai/v1", "key_env": "MISTRAL_API_KEY", "model": "codestral-2508", "price": [0.3, 0.9]},
+            "glm-5.3@mistral": {"url": "https://api.mistral.ai/v1", "key_env": "MISTRAL_API_KEY", "model": "glm-5.3", "price": [1.4, 4.4]},
+            "glm-5.3@vibe": {"url": "https://api.mistral.ai/v1", "key_env": "MISTRAL_VIBE_API_KEY", "model": "glm-5.3", "price": [1.4, 4.4]}}}"#).unwrap();
+        let rows = |cs: &[Choice], var: &str| cs.iter().filter(|c| c.route.as_ref().is_some_and(|r| r.1 == var)).map(|c| (c.model.clone(), c.price.clone(), c.route.as_ref().unwrap().2.clone(), c.state)).collect::<Vec<_>>();
+        save_key("MISTRAL_API_KEY", "k-api").unwrap();
+        save_key("MISTRAL_VIBE_API_KEY", "k-vibe").unwrap();
+        let cs = catalog(&routes, |_| true, &KeyModels::new(), u64::MAX / 2);
+        assert_eq!(rows(&cs, "MISTRAL_API_KEY"), [("codestral-2508".to_string(), "0.3 / 0.9".to_string(), "0.3,0.03,0.9".to_string(), State::Ready),
+            ("glm-5.3".to_string(), "1.4 / 4.4".to_string(), "1.4,0.14,4.4".to_string(), State::Ready)]);
+        assert_eq!(rows(&cs, "MISTRAL_VIBE_API_KEY"), [("glm-5.3".to_string(), "plan".to_string(), "0,0,0".to_string(), State::Ready),
+            ("codestral-2508".to_string(), "plan".to_string(), "0,0,0".to_string(), State::Ready)]);
+        let names: Vec<String> = providers(&cs).into_iter().map(|p| p.0).collect();
+        assert!(names.iter().position(|n| n == "Mistral").unwrap() + 1 == names.iter().position(|n| n == "Mistral Vibe").unwrap(), "{names:?}");
+        // before 0.1.198 /login saved a Mistral key under both: an API key or a Vibe key, the key does not say, so neither
+        // provider uses it and no row shows a price that may be wrong; its row asks which it is
+        save_key("MISTRAL_VIBE_API_KEY", "k-api").unwrap();
+        assert!(mistral_unsure() == Some(MistralUnsure::Pair) && key("MISTRAL_API_KEY").is_none() && key("MISTRAL_VIBE_API_KEY").is_none());
+        assert_eq!((key_source(api.vars), key_source(vibe.vars)), ("same key as Mistral Vibe: is it an API key?", "same key as Mistral: is it a Vibe key?"));
+        let cs = catalog(&routes, |_| true, &KeyModels::new(), u64::MAX / 2);
+        assert!(cs.iter().filter(|c| c.route.as_ref().is_some_and(|r| r.0 == url)).all(|c| c.state == State::NoKey));
+        let why = cs.iter().find(|c| c.route.as_ref().is_some_and(|r| r.1 == "MISTRAL_VIBE_API_KEY")).and_then(why_not).unwrap();
+        assert!(why.contains("cannot tell whether it bills per token or the Vibe plan") && why.contains("/login, Mistral Vibe"), "{why}");
+        // an environment's API key does not hide a pair saved in keys.json (the paid key would show as the plan's)
+        ENV_AT.set(Some(vec![("MISTRAL_API_KEY".into(), "k-env".into())]));
+        assert!(mistral_unsure() == Some(MistralUnsure::Pair) && key("MISTRAL_VIBE_API_KEY").is_none());
+        ENV_AT.set(Some(vec![]));
+        // the shared key kept (nothing typed) on Mistral Vibe's row: it is the Vibe key, and Mistral's copy goes
+        assert_eq!(mistral_typed(vibe, ""), Typed::Nothing);
+        assert!(settle_mistral(vibe, Some(MistralUnsure::Pair), Typed::Nothing).unwrap().unwrap().contains("Mistral Vibe's now"));
+        assert!(mistral_unsure().is_none() && key("MISTRAL_VIBE_API_KEY").as_deref() == Some("k-api") && key("MISTRAL_API_KEY").is_none());
+        // the other's key typed where it cannot be meant: refused, so both rows are never greyed after "saved"
+        assert_eq!(mistral_typed(api, "k-api"), Typed::Theirs);
+        assert!(mistral_refuses(api, None, Typed::Theirs).unwrap().contains("this key is Mistral Vibe's already"));
+        assert!(mistral_refuses(api, None, Typed::New).is_none() && mistral_refuses(by("DeepSeek"), None, Typed::Theirs).is_none());
+        // a new Vibe key while the pair was shared: the shared one stays under Mistral, per token (the safe side), nothing
+        // removed
+        save_key("MISTRAL_API_KEY", "k-api").unwrap();
+        save_key("MISTRAL_VIBE_API_KEY", "k-vibe").unwrap();
+        assert!(settle_mistral(vibe, Some(MistralUnsure::Pair), Typed::New).unwrap().unwrap().contains("stays under Mistral, billed per token"));
+        assert!(key("MISTRAL_API_KEY").as_deref() == Some("k-api") && key("MISTRAL_VIBE_API_KEY").as_deref() == Some("k-vibe"));
+        // a new API key while the pair was shared: the shared one stays under Mistral Vibe, unused until the user says
+        save_key("MISTRAL_VIBE_API_KEY", "k-old").unwrap();
+        save_key("MISTRAL_API_KEY", "k-new").unwrap();
+        assert!(settle_mistral(api, Some(MistralUnsure::Pair), Typed::New).unwrap().unwrap().contains("unused until you say"));
+        assert!(mistral_unsure() == Some(MistralUnsure::OldVibe) && key("MISTRAL_API_KEY").as_deref() == Some("k-new") && key("MISTRAL_VIBE_API_KEY").is_none());
+        assert_eq!(key_source(vibe.vars), "kept from before: is it your Vibe key?");
+        assert!(mistral_refuses(vibe, Some(MistralUnsure::OldVibe), mistral_typed(vibe, "k-new")).is_some(), "Mistral's key is not the Vibe key");
+        // ...then confirmed on Mistral Vibe's row (nothing typed)
+        assert!(settle_mistral(vibe, Some(MistralUnsure::OldVibe), Typed::Nothing).unwrap().unwrap().contains("is your Vibe key"));
+        assert!(mistral_unsure().is_none() && key("MISTRAL_VIBE_API_KEY").as_deref() == Some("k-old"));
+        // or removed from its row; or typed on Mistral's row as its API key
+        put_saved(VIBE_UNCONFIRMED, Some(Value::Bool(true))).unwrap();
+        remove_old_vibe().unwrap();
+        assert!(mistral_unsure().is_none() && key("MISTRAL_VIBE_API_KEY").is_none());
+        save_key("MISTRAL_VIBE_API_KEY", "k-old").unwrap();
+        put_saved(VIBE_UNCONFIRMED, Some(Value::Bool(true))).unwrap();
+        assert_eq!(mistral_typed(api, "k-old"), Typed::Theirs);
+        save_key("MISTRAL_API_KEY", "k-old").unwrap();
+        assert!(settle_mistral(api, Some(MistralUnsure::OldVibe), Typed::Theirs).unwrap().unwrap().contains("Mistral's now"));
+        assert!(mistral_unsure().is_none() && key("MISTRAL_API_KEY").as_deref() == Some("k-old") && key("MISTRAL_VIBE_API_KEY").is_none());
+        assert!(settle_mistral(api, None, Typed::Nothing).unwrap().is_none() && settle_mistral(by("DeepSeek"), Some(MistralUnsure::Pair), Typed::Nothing).unwrap().is_none(), "nothing unsure, nothing changed");
+        // a key in the environment under MISTRAL_API_KEY may be a Vibe key the old help sent there: said on Mistral's row
+        ENV_AT.set(Some(vec![("MISTRAL_API_KEY".into(), "k-env".into())]));
+        put_saved("MISTRAL_API_KEY", None).unwrap();
+        assert!(key_hint(api).unwrap().contains("set MISTRAL_VIBE_API_KEY instead") && key_hint(vibe).is_none());
+        ENV_AT.set(None);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(dir.join("keys.json")).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        KEYS_AT.set(None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn each_provider_takes_its_documented_api() {
         assert_eq!([api_of("https://api.x.ai/v1"), api_of("https://api.openai.com/v1"), api_of("https://api.minimax.io/anthropic/v1/"), api_of("https://api.deepseek.com"),
                     api_of("https://opencode.ai/inference/openai/v1"), api_of("http://127.0.0.1:11434/v1"), api_of("https://subrouter.ai/v1")],
@@ -2342,9 +2639,12 @@ mod tests {
         assert!(ds.note.contains("tazuna subrouter") && !ds.stale, "{}", ds.note);
         assert_eq!(ds.efforts, ["off", "high", "max"]);
         // a new install lists what the bench's machines list (0.1.77; four SubRouter models until then): Mistral's routes
-        // on Mistral's usual key variable, never stale, and SubRouter's other models; nothing on a private host
+        // on Mistral's usual key variable (each again on the Vibe plan's, as "plan"), never stale, and SubRouter's other
+        // models; nothing on a private host
         let mistral: Vec<&Choice> = cs.iter().filter(|c| c.place == "api.mistral.ai").collect();
-        assert!(!mistral.is_empty() && mistral.iter().all(|c| c.route.as_ref().unwrap().1 == "MISTRAL_API_KEY" && !c.stale && !c.note.contains("tazuna subrouter")));
+        let on = |var: &str| mistral.iter().filter(|c| c.route.as_ref().unwrap().1 == var).count();
+        assert!(on("MISTRAL_API_KEY") > 0 && on("MISTRAL_API_KEY") == on("MISTRAL_VIBE_API_KEY") && on("MISTRAL_API_KEY") * 2 == mistral.len());
+        assert!(mistral.iter().all(|c| !c.stale && !c.note.contains("tazuna subrouter") && (c.price == "plan") == (c.route.as_ref().unwrap().1 == "MISTRAL_VIBE_API_KEY")));
         assert!(cs.iter().filter(|c| c.place.starts_with("SubRouter")).count() > 10, "SubRouter's catalog ships");
         assert!(cs.iter().all(|c| c.route.as_ref().is_none_or(|r| !host_of(&r.0).starts_with(|ch: char| ch.is_ascii_digit()) && host_of(&r.0) != "localhost")));
         // SubRouter's other models once each, and none a copy of a subscription model (the list has "claude-opus-5.5")
