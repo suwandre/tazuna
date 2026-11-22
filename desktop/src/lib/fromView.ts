@@ -186,6 +186,11 @@ export function demoView() {
     heldTurn(idle, { prompts: 0, at: 0 }, 500), heldTurn({ ...idle, activity: "Tool" }, undefined, 0)];
   if (turns.join() !== "0,1500,0,0,-1") throw new Error(`held turns: ${turns}`);
   if (usage({ ...v, context: 5000, context_window: null }).contextPct !== 0 || usage({ ...v, context: 5000 }).contextPct !== 3) throw new Error("context window");
+  // an approval shows the asked call's change only: the exact path, else the one near match, else none (never a guess)
+  const ed = (id: string, p: string) => ({ kind: "tool", id, name: "Edit", input: { file_path: p }, error: false, secs: 0, running: true });
+  const ask = (blocks: unknown[], what: string) => askedInput({ ...v, blocks, asking: { tool: "Edit", what, note: "", once: false, queued: 0 } } as unknown as View);
+  if (ask([ed("1", "/p/a.ts"), ed("2", "/p/b.ts")], "/p/a.ts")?.file_path !== "/p/a.ts" || ask([ed("1", "/p/src/a.ts")], "src/a.ts")?.file_path !== "/p/src/a.ts"
+    || ask([ed("1", "/p/x/a.ts"), ed("2", "/p/y/a.ts")], "a.ts") !== null || ask([ed("1", "/p/b.ts")], "/p/a.ts") !== null) throw new Error("view: askedInput");
   console.log("view ok");
 }
 
@@ -197,7 +202,11 @@ export function askedInput(v: View | null): Record<string, unknown> | null | und
   if (!a) return undefined;
   const open = v.blocks.flatMap((b) => (b.kind === "tool" && b.running && name(b.name) === name(a.tool) ? [b.input] : []));
   const file = (i: Record<string, unknown> | null) => [i?.file_path, i?.path, i?.notebook_path].find((p): p is string => typeof p === "string");
-  return open.find((i) => { const f = file(i); return !!f && (a.what === f || a.what.endsWith(`/${f}`) || f.endsWith(`/${a.what}`)); }) ?? open[0];
+  // the change shown before Allow must be the asked call's own: the one open call whose path is the question's, never a
+  // guess (an automated security review, 0.1.104: the newest, then the first open call, could show another file's diff)
+  const same = open.filter((i) => file(i) === a.what);
+  const near = open.filter((i) => { const f = file(i); return !!f && (a.what.endsWith(`/${f}`) || f.endsWith(`/${a.what}`)); });
+  return same.length === 1 ? same[0] : same.length === 0 && near.length === 1 ? near[0] : null;
 }
 
 /** The files this conversation has changed so far, counted live (the work panel's tab), by the panel's own rule: the
