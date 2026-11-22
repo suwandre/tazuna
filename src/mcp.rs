@@ -165,7 +165,14 @@ impl Server {
                 "serverInfo": {"name": "lean", "version": "0.1.0"},
             })),
             "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({"tools": tools()})),
+            "tools/list" => {
+                // a turn a chat handed to the agent (live.rs hand_off) may need the web: fetch too
+                let mut t = tools();
+                if std::env::var_os("LEAN_FETCH").is_some() && let Some(list) = t.as_array_mut() {
+                    list.push(fetch_tool());
+                }
+                Ok(json!({"tools": t}))
+            }
             "tools/call" => self.call(&msg["params"]),
             _ if id.is_none() => return None,
             _ => Err((-32601, format!("method not found: {method}"))),

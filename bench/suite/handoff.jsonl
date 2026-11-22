@@ -1,0 +1,42 @@
+{"id": "umbrella-berlin", "text": "Should I bring an umbrella in Berlin tomorrow?", "want": "agent", "kind": "web"}
+{"id": "weather-tokyo", "text": "What's the weather like in Tokyo right now?", "want": "agent", "kind": "web"}
+{"id": "sol-buy", "text": "Is SOL worth buying right now?", "want": "agent", "kind": "web"}
+{"id": "crypto-market", "text": "Analyze the crypto market for me.", "want": "agent", "kind": "web"}
+{"id": "btc-price", "text": "What's the current price of Bitcoin?", "want": "agent", "kind": "web"}
+{"id": "stocks-today", "text": "How did the stock market do today?", "want": "agent", "kind": "web"}
+{"id": "cl-last-night", "text": "Who won the Champions League match last night?", "want": "agent", "kind": "web"}
+{"id": "news-today", "text": "What are the top news stories today?", "want": "agent", "kind": "web"}
+{"id": "node-latest", "text": "What's the latest version of Node.js?", "want": "agent", "kind": "web"}
+{"id": "spacex-next", "text": "When is the next SpaceX launch?", "want": "agent", "kind": "web"}
+{"id": "eurusd-today", "text": "What's the EUR to USD exchange rate today?", "want": "agent", "kind": "web"}
+{"id": "train-strikes", "text": "Are there any train strikes in Germany this week?", "want": "agent", "kind": "web"}
+{"id": "summarize-url", "text": "Summarize this article for me: https://www.anthropic.com/news", "want": "agent", "kind": "web"}
+{"id": "apple-event", "text": "What did Apple announce at their most recent event?", "want": "agent", "kind": "web"}
+{"id": "api-down", "text": "Is the Anthropic API down right now?", "want": "agent", "kind": "web"}
+{"id": "flights-lisbon", "text": "How much are flights from Berlin to Lisbon next weekend?", "want": "agent", "kind": "web"}
+{"id": "bundesliga-table", "text": "Where is Bayern in the Bundesliga table right now?", "want": "agent", "kind": "web"}
+{"id": "pc-stats", "text": "Can you check my PC stats?", "want": "agent", "kind": "machine"}
+{"id": "disk-free", "text": "How much free disk space do I have?", "want": "agent", "kind": "machine"}
+{"id": "which-laptop", "text": "What laptop am I using?", "want": "agent", "kind": "machine"}
+{"id": "gpu-temp", "text": "How hot does my GPU run?", "want": "agent", "kind": "machine"}
+{"id": "battery-health", "text": "What's my battery health?", "want": "agent", "kind": "machine"}
+{"id": "memory-apps", "text": "Which apps are using the most memory on my Mac right now?", "want": "agent", "kind": "machine"}
+{"id": "downloads", "text": "What files are in my Downloads folder?", "want": "agent", "kind": "machine"}
+{"id": "charge-watts", "text": "What's the maximum charging wattage my laptop supports?", "want": "agent", "kind": "machine"}
+{"id": "docker-running", "text": "Is Docker running on my machine?", "want": "agent", "kind": "machine"}
+{"id": "my-ip", "text": "What's my IP address?", "want": "agent", "kind": "machine"}
+{"id": "ram-m2pro", "text": "How much RAM can an M2 Pro MacBook Pro have at most?", "want": "chat", "kind": "tricky"}
+{"id": "what-bitcoin", "text": "What is Bitcoin, and how does mining work?", "want": "chat", "kind": "tricky"}
+{"id": "monsoon", "text": "Explain what causes monsoon seasons.", "want": "chat", "kind": "tricky"}
+{"id": "disk-tips", "text": "What are good general ways to free up disk space on a Mac?", "want": "chat", "kind": "tricky"}
+{"id": "battery-wear", "text": "Why do laptop batteries wear out over time?", "want": "chat", "kind": "tricky"}
+{"id": "ip-howto", "text": "How do I find my IP address on macOS?", "want": "chat", "kind": "tricky"}
+{"id": "stock-bond", "text": "What's the difference between a stock and a bond?", "want": "chat", "kind": "tricky"}
+{"id": "poem-rain", "text": "Write a short poem about rain in Berlin.", "want": "chat", "kind": "tricky"}
+{"id": "first-president", "text": "Who was the first president of the United States?", "want": "chat", "kind": "tricky"}
+{"id": "eurusd-how", "text": "How is the EUR/USD exchange rate determined?", "want": "chat", "kind": "tricky"}
+{"id": "boil-altitude", "text": "What is the boiling point of water at 2000 m altitude?", "want": "chat", "kind": "tricky"}
+{"id": "translate-de", "text": "Translate 'good morning, how are you?' into German.", "want": "chat", "kind": "tricky"}
+{"id": "sourdough", "text": "How do I make a sourdough starter?", "want": "chat", "kind": "tricky"}
+{"id": "gpu-throttle", "text": "Explain how GPU temperature throttling works.", "want": "chat", "kind": "tricky"}
+{"id": "flu", "text": "What are typical symptoms of the flu?", "want": "chat", "kind": "tricky"}

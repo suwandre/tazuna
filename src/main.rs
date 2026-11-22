@@ -888,7 +888,7 @@ fn verdict(answer: Option<&str>) -> Verdict {
 /// waits for the user as before.
 #[inline(never)]
 fn review_pending(live: &live::Live, s: &mut Session, reviewing: &mut Option<String>, tx: &std::sync::mpsc::Sender<serde_json::Value>) {
-    let Some(req) = live.pending.front().filter(|_| live.reviewer) else { return };
+    let Some(req) = live.pending.front().filter(|_| live.reviewer && !live.handing_off()) else { return };
     let id = req["request_id"].as_str().unwrap_or_default().to_string();
     if reviewing.as_deref() == Some(id.as_str()) {
         return;
@@ -923,9 +923,9 @@ fn review_done(live: &mut live::Live, s: &mut Session, e: &serde_json::Value) {
     let (id, why) = (e["id"].as_str().unwrap_or_default(), e["why"].as_str().unwrap_or_default());
     let cmd: String = e["command"].as_str().unwrap_or_default().chars().take(120).collect();
     let text = match e["verdict"].as_str() {
-        Some("allow") => live.answer_reviewed(id, true, e["input"].clone(), "").map(|ev| (ev, format!("review: allowed `{cmd}`, run in the sandbox (writes in the project only, no network)"))),
-        Some("deny") => live.answer_reviewed(id, false, json!(null), why).map(|ev| (ev, format!("review: refused `{cmd}`: {why}"))),
-        _ => live.pending.front().filter(|r| r["request_id"].as_str() == Some(id)).map(|_| ((live.elapsed_ms(), json!({})), format!("review: `{cmd}` is yours to answer: {why}"))),
+        Some("allow") => live.answer_reviewed(id, e["command"].as_str().unwrap_or_default(), true, e["input"].clone(), "").map(|ev| (ev, format!("review: allowed `{cmd}`, run in the sandbox (writes in the project only, no network)"))),
+        Some("deny") => live.answer_reviewed(id, e["command"].as_str().unwrap_or_default(), false, json!(null), why).map(|ev| (ev, format!("review: refused `{cmd}`: {why}"))),
+        _ => live.pending.front().filter(|r| !live.handing_off() && r["request_id"].as_str() == Some(id)).map(|_| ((live.elapsed_ms(), json!({})), format!("review: `{cmd}` is yours to answer: {why}"))),
     };
     if let Some(((t, ev), text)) = text {
         if ev.get("type").is_some() {
@@ -959,7 +959,7 @@ fn chat_turn(c: RouteCtx, text: String, prior: Option<ChatLast>, tx: std::sync::
     use std::io::{BufRead, Write};
     std::thread::spawn(move || {
         let date = platform::shell("date +%Y-%m-%d", &[]).output().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string()).unwrap_or_default();
-        let prompt = format!("You are a helpful assistant. Today is {date}.");
+        let prompt = live::chat_prompt(&date);
         let mut cmd = match &c.provider {
             None => {
                 let mut k = std::process::Command::new("claude");
@@ -985,22 +985,27 @@ fn chat_turn(c: RouteCtx, text: String, prior: Option<ChatLast>, tx: std::sync::
         };
         let child = cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null()).spawn();
         let Ok(mut child) = child else {
-            let _ = tx.send(json!({"type": "tazuna_chat_event", "e": not_started("could not start the chat answer")}));
+            let _ = tx.send(json!({"type": "tazuna_chat_event", "q": &text, "e": not_started("could not start the chat answer")}));
             return;
         };
+        let sent = with_prior(&text, prior.as_ref());
         if let Some(mut stdin) = child.stdin.take() {
-            let _ = writeln!(stdin, "{}", json!({"type": "user", "message": {"role": "user", "content": with_prior(&text, prior.as_ref())}}));
+            let _ = writeln!(stdin, "{}", json!({"type": "user", "message": {"role": "user", "content": sent}}));
         }
         if let Some(out) = child.stdout.take() {
             for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
                 // the chat's own start-up event would replace the session's model and tools on the screen; it runs as the
                 // session does (its model, route and key), so the session's says how it is paid. Its result is its own
                 // process's whole cost (`tazuna_chat`), beside the conversation's process and not part of its count
-                if let Ok(mut e) = serde_json::from_str::<serde_json::Value>(&line) && e["type"] != "system" {
-                    if e["type"] == "result" {
-                        e["tazuna_chat"] = json!(true);
+                if let Ok(e) = serde_json::from_str::<serde_json::Value>(&line) && e["type"] != "system" {
+                    // with its own question: two chat answers can overlap (one shared question handed the wrong one on); a
+                    // result with what the chat was sent, which a hand-off gives the agent
+                    let mut ev = json!({"type": "tazuna_chat_event", "q": &text, "e": e});
+                    if ev["e"]["type"] == "result" {
+                        ev["e"]["tazuna_chat"] = json!(true);
+                        ev["sent"] = json!(sent);
                     }
-                    let _ = tx.send(json!({"type": "tazuna_chat_event", "e": e}));
+                    let _ = tx.send(ev);
                 }
             }
         }
@@ -1008,11 +1013,40 @@ fn chat_turn(c: RouteCtx, text: String, prior: Option<ChatLast>, tx: std::sync::
     });
 }
 
+/// A message the router answers as a chat (`why`: the line that says so): a one-off chat answer beside the agent. Shown and
+/// recorded already.
+#[inline(never)]
+fn chat_answer(live: &mut live::Live, s: &mut Session, text: String, why: &str, prior: Option<ChatLast>, tx: &std::sync::mpsc::Sender<serde_json::Value>) {
+    s.apply(&json!({"type": "harness_info", "text": why}), live.elapsed_ms());
+    chat_turn(RouteCtx::of(live), text, prior, tx.clone());
+}
+
+/// One event of a router chat answer (chat_turn's `tazuna_chat_event`: the event and its question), on screen. Its result
+/// is the last reply and a follow-up's context, unless the chat said it needs the agent ([[agent]]): then the agent takes
+/// the message.
+#[inline(never)]
+fn chat_event(live: &mut live::Live, s: &mut Session, cmd: &serde_json::Value, chat_last: &mut Option<ChatLast>, last_reply: &mut String) {
+    let e = &cmd["e"];
+    let (t, ev) = live.note(e.clone());
+    s.apply(&ev, t);
+    let Some(r) = e["result"].as_str().filter(|_| e["type"] == "result") else { return };
+    let q = cmd["q"].as_str().unwrap_or_default().to_string();
+    if live::hands_off(r) && e["is_error"] != true {
+        // with the exchange the chat was sent, now or once the agent is free (live.rs hand_off); said when it cannot
+        if let Err(err) = live.hand_off(&q, cmd["sent"].as_str().unwrap_or(&q), live::HANDOFF_NEEDS) {
+            let (t, e) = live.note(not_started(format!("{err:#}")));
+            s.apply(&e, t);
+        }
+    } else {
+        *last_reply = r.to_string();
+        *chat_last = Some(ChatLast { q, a: r.to_string() });
+    }
+}
+
 /// A chat follow-up with the exchange before it (a chat answer is a one-off call that remembers nothing).
 fn with_prior(text: &str, prior: Option<&ChatLast>) -> String {
     match prior {
-        Some(p) => format!("Earlier in this chat you were asked: {}\nYou answered: {}\n\nThe new message: {text}",
-            p.q.chars().take(1500).collect::<String>(), p.a.chars().take(3000).collect::<String>()),
+        Some(p) => live::with_earlier(text, &[(p.q.clone(), p.a.clone())]),
         None => text.to_string(),
     }
 }
@@ -1254,7 +1288,7 @@ fn app_server(a: &Args) -> Result<()> {
         // the oldest open permission question, as the terminal shows it (text made safe), and how many wait behind it
         v["asking"] = live.pending.front().map_or(json!(null), |req| {
             let (tool, what, note) = question_parts(req);
-            json!({"tool": tool, "what": what, "note": note, "once": req["request"]["from_text"] == true, "queued": live.pending.len() - 1, "reviewing": live.reviewer && req["request_id"].as_str() == reviewing.borrow().as_deref()})
+            json!({"tool": tool, "what": what, "once": note.starts_with("once only"), "note": note, "queued": live.pending.len() - 1, "reviewing": live.reviewer && req["request_id"].as_str() == reviewing.borrow().as_deref()})
         });
         let mut o = out.lock();
         let _ = writeln!(o, "{v}");
@@ -1267,7 +1301,7 @@ fn app_server(a: &Args) -> Result<()> {
     let mut undo_note: Option<String> = None;
     emit(&s, &untrusted, &live, &done_turns);
     let mut last_reply = String::new();
-    let (mut chat_last, mut chat_q): (Option<ChatLast>, String) = (None, String::new());
+    let mut chat_last: Option<ChatLast> = None;
     // the router: on as in the terminal; the settings page turns it off (the terminal's /route off)
     let mut route_on = !a.no_route;
     // creator mode: writes and edits inside this folder (a panel's or plugin's own, under the desktop app's folder) are
@@ -1296,9 +1330,7 @@ fn app_server(a: &Args) -> Result<()> {
                                 // a short follow-up to a chat answer: a chat again, with the exchange before it
                                 s.apply(&json!({"type": "harness_user", "text": text}), at);
                                 live.note(json!({"type": "harness_user", "text": text}));
-                                s.apply(&json!({"type": "harness_info", "text": "answered as a chat: a follow-up to the last chat answer"}), at);
-                                chat_q = text.to_string();
-                                chat_turn(RouteCtx::of(&live), text.to_string(), chat_last.clone(), tx.clone());
+                                chat_answer(&mut live, &mut s, text.to_string(), "answered as a chat: a follow-up to the last chat answer", chat_last.clone(), &tx);
                             } else if open && !follow {
                                 // no sign of the code: the router's check decides, off this thread (the terminal's flow); the
                                 // message shows at once
@@ -1308,6 +1340,12 @@ fn app_server(a: &Args) -> Result<()> {
                                     let general = route_general(&c, &last, &msg, chat);
                                     let _ = tx.send(json!({"op": "routed", "general": general, "text": msg}));
                                 });
+                            } else if forced && live.profile == route::Profile::Chat {
+                                // "send to agent" and /agent in a chat-profile session: its lean agent (live.rs send_agent)
+                                match live.send_agent(text) {
+                                    Ok((t, e)) => s.apply(&e, t),
+                                    Err(e) => info(&mut s, format!("{e:#}")),
+                                }
                             } else {
                                 agent_send(&mut live, &mut s, text, &cwd, &mut turn, &mut undo_note, true);
                             }
@@ -1481,9 +1519,7 @@ fn app_server(a: &Args) -> Result<()> {
                             } else if cmd["general"] == true && live.idle() {
                                 // shown since the send: recorded now
                                 live.note(json!({"type": "harness_user", "text": text}));
-                                s.apply(&json!({"type": "harness_info", "text": "answered as a chat: not about this project"}), at);
-                                chat_q = text.clone();
-                                chat_turn(RouteCtx::of(&live), text, chat_last.clone(), tx.clone());
+                                chat_answer(&mut live, &mut s, text, "answered as a chat: not about this project", chat_last.clone(), &tx);
                             } else {
                                 agent_send(&mut live, &mut s, &text, &cwd, &mut turn, &mut undo_note, false);
                             }
@@ -1597,14 +1633,7 @@ fn app_server(a: &Args) -> Result<()> {
                                 s.apply(&e, t);
                             }
                         }
-                        Some("tazuna_chat_event") => {
-                            if cmd["e"]["type"] == "result" && let Some(r) = cmd["e"]["result"].as_str() {
-                                last_reply = r.to_string();
-                                chat_last = Some(ChatLast { q: std::mem::take(&mut chat_q), a: r.to_string() });
-                            }
-                            let (t, ev) = live.note(cmd["e"].clone());
-                            s.apply(&ev, t);
-                        }
+                        Some("tazuna_chat_event") => chat_event(&mut live, &mut s, &cmd, &mut chat_last, &mut last_reply),
                         // the model picker: the catalog as the terminal's /model shows it, answered as a `models` line
                         Some("models") => {
                             models::refresh_omniroute(); // on this machine: its list as it is now
@@ -1980,7 +2009,8 @@ fn app_server(a: &Args) -> Result<()> {
         for (t, e) in live.poll() {
             if e["type"] == "result" && let Some(r) = e["result"].as_str() {
                 last_reply = r.to_string();
-                chat_last = None; // the agent answered: a follow-up continues its work
+                // the agent answered: a follow-up continues its work, unless it answered a chat's question (live.rs handed)
+                chat_last = live.handed().map(|(q, a)| ChatLast { q, a });
             }
             if e["type"] == "result" && let Some(t) = turn.as_mut() {
                 t.1 = true;
@@ -1991,14 +2021,12 @@ fn app_server(a: &Args) -> Result<()> {
             s.apply(&e, t);
             changed = true;
         }
-        // creator mode: the oldest question, if it is a write or edit inside the allowed folder, is answered yes
-        if let Some(root) = &allow_root && let Some(req) = live.pending.front() && inside_root(req, root) {
-            if let Some((t, e)) = live.answer(true, false) {
-                s.apply(&e, t);
-                changed = true;
-            }
+        handoff_turn(&live, &mut turn, &cwd);
+        if let Some((t, e)) = creator_yes(&mut live, allow_root.as_deref()) {
+            s.apply(&e, t);
+            changed = true;
         }
-        if live.reviewer && live.pending.front().is_some_and(|r| reviewing.borrow().as_deref() != r["request_id"].as_str()) {
+        if live.reviewer && !live.handing_off() && live.pending.front().is_some_and(|r| reviewing.borrow().as_deref() != r["request_id"].as_str()) {
             review_pending(&live, &mut s, &mut reviewing.borrow_mut(), &review_tx);
             changed = true;
         }
@@ -2346,18 +2374,22 @@ fn question(req: &serde_json::Value) -> String {
 /// gets them apart, so it never has to cut the model's text out of the line.
 fn question_parts(req: &serde_json::Value) -> (String, String, String) {
     let r = &req["request"];
-    let tool = session::shown(r["tool_name"].as_str().unwrap_or_default(), 60);
+    // the lean tools by their own names ("bash", not "mcp__lean__bash")
+    let name = r["tool_name"].as_str().unwrap_or_default();
+    let tool = session::shown(name.strip_prefix("mcp__lean__").unwrap_or(name), 60);
     let i = &r["input"];
     let what = match ["command", "file_path", "path", "pattern", "url"].iter().find_map(|k| i[*k].as_str()) {
         _ if tool == "ExitPlanMode" => "approve this plan and start editing".to_string(),
         Some(w) => session::shown(w, 400),
         None => session::shown(&i.to_string(), 400),
     };
-    // a call the model wrote as text gets no "always": a or y both allow it once (live.rs)
+    // a call the model wrote as text, or one in a turn a chat handed over, gets no "always": a or y both allow it once (live.rs)
     let note = if r["from_text"] == true {
         "once only: the model wrote this call as text".to_string()
+    } else if r["handoff"] == true {
+        live::HANDOFF_ONCE.to_string()
     } else {
-        format!("always = {}", if matches!(tool.as_str(), "Bash" | "mcp__lean__bash" | "PowerShell") { "this command" } else { "this tool" })
+        format!("always = {}", if matches!(tool.as_str(), "Bash" | "bash" | "PowerShell") { "this command" } else { "this tool" })
     };
     (tool, what, note)
 }
@@ -2863,6 +2895,7 @@ fn restart_session(live: &mut live::Live, s: &mut Session, earlier: Option<&Earl
                 for part in conversation(r.take(usize::MAX), &e.id) {
                     for (t, ev) in &part {
                         s.apply(ev, *t);
+                        live.heard_before(ev);
                     }
                     // its costs are final: without this, the next part's restart at $0 read as a stopped turn
                     s.apply(&json!({"type": "harness_process_end"}), part.last().map_or(0.0, |e| e.0));
@@ -2931,6 +2964,7 @@ fn run_live(
     if let Some(mut r) = earlier.and_then(|p| Replay::load(&p, false).ok()) {
         for (t, e) in r.take(usize::MAX) {
             s.apply(e, *t);
+            live.heard_before(e); // a chat's answers from the agent that its next message carries
         }
         // a notice also closes the old process's cost: the resumed process reports from $0
         s.apply(&json!({"type": "harness_notice", "text": "── continued from here ──", "error": false}), 0.0);
@@ -2950,7 +2984,7 @@ fn run_live(
     // the per-message router (`/route on|off`, `--no-route`) and the last reply it shows the model check
     let mut route_on = !a.no_route;
     let mut last_reply = String::new();
-    let (mut chat_last, mut chat_q): (Option<ChatLast>, String) = (None, String::new());
+    let mut chat_last: Option<ChatLast> = None;
     fetch_balance(&status_tx);
     // no reading in any session yet (a new install, or a machine that only ran other providers) showed no plan line at
     // all (the Windows PC, 2026-11-08): claude's own /usage page reads it (no model call; a Haiku call until 0.1.174), and
@@ -3202,7 +3236,8 @@ fn run_live(
             s.apply(&e, t);
             if e["type"] == "result" && let Some(r) = e["result"].as_str() {
                 last_reply = r.to_string();
-                chat_last = None; // the agent answered: a follow-up continues its work
+                // the agent answered: a follow-up continues its work, unless it answered a chat's question (live.rs handed)
+                chat_last = live.handed().map(|(q, a)| ChatLast { q, a });
             }
             if e["type"] == "result" && e["tazuna_paid"] == true {
                 fetch_balance(&status_tx); // a run on SubRouter spent some of it
@@ -3246,11 +3281,8 @@ fn run_live(
                     let text = e["text"].as_str().unwrap_or_default().to_string();
                     // the message is on screen since Enter: recorded now, not shown twice
                     if e["general"] == true && live.idle() {
-                        let at = live.elapsed_ms();
                         live.note(json!({"type": "harness_user", "text": text}));
-                        s.apply(&json!({"type": "harness_info", "text": "answered as a chat: not about this project (/agent TEXT sends it to the agent, /route off stops this)"}), at);
-                        chat_q = text.clone();
-                        chat_turn(RouteCtx::of(live), text, chat_last.clone(), status_tx.clone());
+                        chat_answer(live, &mut s, text, "answered as a chat: not about this project (/agent TEXT sends it to the agent, /route off stops this)", chat_last.clone(), &status_tx);
                     } else if let Err(err) = live.send_typed(&text) {
                         s.apply(&not_started(format!("{err:#}")), live.elapsed_ms());
                     }
@@ -3263,15 +3295,8 @@ fn run_live(
                         s.apply(&note(e["text"].clone(), true), live.elapsed_ms());
                     }
                 }
-                Some("tazuna_chat_event") => {
-                    // a chat answer is the last reply too, for the router's next check, and a follow-up's context
-                    if e["e"]["type"] == "result" && let Some(r) = e["e"]["result"].as_str() {
-                        last_reply = r.to_string();
-                        chat_last = Some(ChatLast { q: std::mem::take(&mut chat_q), a: r.to_string() });
-                    }
-                    let (t, ev) = live.note(e["e"].clone());
-                    s.apply(&ev, t);
-                }
+                // a chat answer is the last reply too, for the router's next check, and a follow-up's context
+                Some("tazuna_chat_event") => chat_event(live, &mut s, &e, &mut chat_last, &mut last_reply),
                 Some("tazuna_balance") => s.balance = e["usd"].as_f64(),
                 Some("tazuna_update") => s.apply(&json!({"type": "harness_info", "text": e["text"]}), live.elapsed_ms()),
                 Some("tazuna_changelog") => match e["entries"].as_array().filter(|a| !a.is_empty()) {
@@ -4500,9 +4525,7 @@ fn run_live(
                     let at = live.elapsed_ms();
                     s.apply(&json!({"type": "harness_user", "text": text}), at);
                     live.note(json!({"type": "harness_user", "text": text}));
-                    s.apply(&json!({"type": "harness_info", "text": "answered as a chat: a follow-up to the last chat answer (/agent TEXT sends it to the agent)"}), at);
-                    chat_q = text.clone();
-                    chat_turn(RouteCtx::of(live), text, Some(prior), status_tx.clone());
+                    chat_answer(live, &mut s, text, "answered as a chat: a follow-up to the last chat answer (/agent TEXT sends it to the agent)", Some(prior), &status_tx);
                     v.scroll = 0;
                     continue;
                 }
@@ -4518,7 +4541,8 @@ fn run_live(
                     v.scroll = 0;
                     continue;
                 }
-                match if typed { live.send_typed(&text) } else { live.send(&text) } {
+                // /agent in a chat-profile session: its lean agent (live.rs send_agent)
+                match if forced { live.send_agent(&text) } else if typed { live.send_typed(&text) } else { live.send(&text) } {
                     Ok((t, e)) => s.apply(&e, t),
                     Err(err) => s.apply(&note(format!("{err:#}"), true), live.elapsed_ms()),
                 }
@@ -4609,6 +4633,23 @@ impl Picker {
 /// edit), and a request that also carries the other field is refused; a relative path is refused (the tool server's
 /// working folder follows `cd`). An existing file must be a plain file with one link (not a link to elsewhere, dangling or not); a new
 /// file is judged by its folder, which must exist. Anything else asks as usual (security reviews, 2026-11-16).
+/// Creator mode: the oldest question, a write or edit inside the allowed folder, answered yes. Not in a turn a chat handed
+/// over (live.rs hand_off): a fetched page could ask for such a write.
+#[inline(never)]
+fn creator_yes(live: &mut live::Live, root: Option<&std::path::Path>) -> Option<(f64, serde_json::Value)> {
+    let yes = !live.handing_off() && root.is_some_and(|r| live.pending.front().is_some_and(|req| inside_root(req, r)));
+    if yes { live.answer(true, false) } else { None }
+}
+
+/// A turn a chat handed to the agent (the router's, "send to agent" in a chat): the tree before it, as agent_send keeps
+/// it, so a write the user allowed there gets its change card and Undo.
+#[inline(never)]
+fn handoff_turn(live: &live::Live, turn: &mut Option<(String, bool)>, cwd: &std::path::Path) {
+    if live.handing_off() && turn.is_none() {
+        *turn = turns::snapshot(cwd).map(|b| (b, false));
+    }
+}
+
 fn inside_root(req: &serde_json::Value, root: &std::path::Path) -> bool {
     let r = &req["request"];
     if r["from_text"] == true {
@@ -4849,7 +4890,11 @@ mod tests {
         assert_eq!(verdict(Some("ask - not sure what this script does")), Verdict::Ask("not sure what this script does".into()));
         assert!(matches!(verdict(Some("Sure, I think it is fine")), Verdict::Ask(_)) && matches!(verdict(None), Verdict::Ask(_)), "unclear goes to the user");
         // an answer for a question no longer waiting changes nothing
-        assert!(live.answer_reviewed("perm-9", true, serde_json::json!({}), "").is_none());
+        assert!(live.answer_reviewed("perm-9", "", true, serde_json::json!({}), "").is_none());
+        // the own loop's ids start again in every process: a verdict on `ls` does not answer a later perm-1 for `rm -rf x`
+        live.pending.push_back(serde_json::json!({"request_id": "perm-1", "request": {"tool_name": "bash", "input": {"command": "rm -rf x"}}}));
+        assert!(live.answer_reviewed("perm-1", "ls", true, serde_json::json!({"command": "ls"}), "").is_none() && live.pending.len() == 1);
+        assert!(live.answer_reviewed("perm-1", "rm -rf x", false, serde_json::json!(null), "no").is_some() && live.pending.is_empty());
     }
 
     #[test]
@@ -5145,5 +5190,160 @@ not json"#;
         assert_eq!(texts(&rec, "s1"), vec!["a", "b"]);
         assert_eq!(texts(&rec, "f1"), vec!["── rewound conversation to before: b ──", "c"]);
         std::fs::remove_dir_all(&base).ok();
+    }
+
+    /// The router's chat answers: two that overlap keep their own questions; one that says [[agent]] hands its question to
+    /// the lean agent (the web alone allowed, no settings), the project's conversation stays the one `tazuna -c` continues,
+    /// and the next chat answer has the agent's answer.
+    #[cfg(unix)]
+    #[test]
+    fn a_router_chat_answer_hands_off_and_its_follow_up_has_the_agents_answer() {
+        let (mut live, dir) = live::stub::live("router-handoff");
+        (live.profile, live.permission_mode) = (route::Profile::Repo, "bypassPermissions".into());
+        live.resume("proj-1");
+        let mut s = Session::new("", "high");
+        let (mut chat_last, mut last_reply) = (None, String::new());
+        let ev = |q: &str, r: &str| json!({"type": "tazuna_chat_event", "q": q, "e": {"type": "result", "subtype": "success", "is_error": false, "result": r, "tazuna_chat": true}});
+        let pair = |c: &Option<ChatLast>| c.as_ref().map(|c| (c.q.clone(), c.a.clone()));
+        chat_event(&mut live, &mut s, &ev("capital of France?", "Paris."), &mut chat_last, &mut last_reply);
+        assert_eq!(pair(&chat_last), Some(("capital of France?".into(), "Paris.".into())));
+        // with what that chat was sent (chat_turn): the exchange before it
+        let mut handed = ev("weather in Berlin now?", "[[agent]]");
+        handed["sent"] = json!(with_prior("weather in Berlin now?", chat_last.as_ref()));
+        chat_event(&mut live, &mut s, &handed, &mut chat_last, &mut last_reply);
+        for (t, e) in live.poll() {
+            s.apply(&e, t);
+        }
+        assert!(live.handing_off() && s.blocks.iter().any(|b| matches!(b, session::Block::Notice { text, .. } if text == live::HANDOFF_NEEDS)));
+        let a = live::stub::started(&dir);
+        let f = |name: &str| live::stub::flag(&a, name);
+        assert_eq!((f("--permission-mode"), f("--allowedTools"), f("--setting-sources"), f("--tools")),
+            (Some("default".into()), Some("mcp__lean__fetch,WebSearch".into()), Some(String::new()), Some("WebSearch".into())), "{a:?}");
+        assert!(live::stub::sent(&dir, "You answered: Paris.\n\nThe new message: weather in Berlin now?"));
+        live::stub::feed(&live, json!({"type": "system", "subtype": "init", "session_id": "handoff-9"}));
+        live::stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": "12 °C and rain", "total_cost_usd": 0.0}));
+        for (t, e) in live.poll() {
+            // as both loops do with a result
+            if e["type"] == "result" {
+                chat_last = live.handed().map(|(q, a)| ChatLast { q, a });
+            }
+            s.apply(&e, t);
+        }
+        assert_eq!(pair(&chat_last), Some(("weather in Berlin now?".into(), "12 °C and rain".into())));
+        assert!(with_prior("and in Fahrenheit?", chat_last.as_ref()).contains("You answered: 12 °C and rain"));
+        assert_eq!(live.session_id(), Some("proj-1"));
+        // `tazuna -c` here continues the project's conversation, not the hand-off's
+        assert_eq!(previous_session(&dir, &dir, None).map(|p| p.0).as_deref(), Some("proj-1"));
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A chat-profile session on the stand-in: `n` questions the chat hands over, each answered by the agent. The stand-in
+    /// names its sessions as claude does: the one resumed, or a new one (a fork too).
+    #[cfg(unix)]
+    fn chat_hand_offs(live: &mut live::Live, dir: &std::path::Path, n: usize) {
+        (live.profile, live.permission_mode) = (route::Profile::Chat, "bypassPermissions".into());
+        let feed = |live: &live::Live, e: serde_json::Value| live::stub::feed(live, e);
+        let result = |r: &str| json!({"type": "result", "subtype": "success", "is_error": false, "result": r, "total_cost_usd": 0.0});
+        for i in 0..n {
+            live.send_typed(&format!("question {i}")).unwrap();
+            let a = live::stub::started(dir);
+            let id = live::stub::flag(&a, "--resume").filter(|_| !a.iter().any(|x| x == "--fork-session")).unwrap_or(format!("chat-{i}"));
+            feed(live, json!({"type": "system", "subtype": "init", "session_id": id}));
+            feed(live, result("[[agent]]"));
+            live.poll();
+            live::stub::started(dir);
+            feed(live, json!({"type": "system", "subtype": "init", "session_id": format!("agent-{i}")}));
+            feed(live, result(&format!("answer {i}")));
+            live.poll();
+        }
+    }
+
+    /// Five hand-offs in one chat are one conversation: one entry in the lists (/resume, the window's), whose replay shows
+    /// each question once. Each hand-off forked the chat: one entry per hand-off, each replaying the whole chat.
+    #[cfg(unix)]
+    #[test]
+    fn five_hand_offs_in_a_chat_are_one_conversation() {
+        let (mut live, dir) = live::stub::live("handoff-one");
+        chat_hand_offs(&mut live, &dir, 5);
+        let list = sessions_of(&dir, &dir);
+        assert_eq!(list.iter().map(|e| (e.id.as_str(), e.messages)).collect::<Vec<_>>(), [("chat-0", 10)]);
+        let mut s = Session::new("", "high");
+        restart_session(&mut live, &mut s, list.first()).unwrap();
+        let prompts: Vec<String> = s.blocks.iter().filter_map(|b| if let session::Block::Prompt(p) = b { Some(p.clone()) } else { None }).collect();
+        assert_eq!(prompts, (0..5).map(|i| format!("question {i}")).collect::<Vec<_>>());
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A chat resumed right after a hand-off (the window's list, /resume; `tazuna -c` replays the same way) still gives its
+    /// next message the agent's answer: rebuilt from the recording, which holds the question and the answer.
+    #[cfg(unix)]
+    #[test]
+    fn a_chat_resumed_after_a_hand_off_has_the_agents_answer() {
+        let (mut live, dir) = live::stub::live("handoff-resume");
+        chat_hand_offs(&mut live, &dir, 1);
+        drop(live);
+        let mut live = live::stub::in_dir(&dir, "rec2.jsonl");
+        (live.profile, live.permission_mode) = (route::Profile::Chat, "bypassPermissions".into());
+        let mut s = Session::new("", "high");
+        restart_session(&mut live, &mut s, sessions_of(&dir, &dir).first()).unwrap();
+        live.send_typed("and in Fahrenheit?").unwrap();
+        assert_eq!(live::stub::flag(&live::stub::started(&dir), "--resume").as_deref(), Some("chat-0"));
+        assert!(live::stub::sent(&dir, "Earlier in this chat you were asked: question 0\nYou answered: answer 0\n\nThe new message: and in Fahrenheit?"));
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A lean tool's question and its answer's line name it as the user knows it: "bash", not "mcp__lean__bash"; in a turn a
+    /// chat handed over the question offers no "always" (the window's card hides it for `once`).
+    #[test]
+    fn a_lean_tools_question_names_it_plainly() {
+        let mut req = json!({"request_id": "p", "request": {"subtype": "can_use_tool", "tool_name": "mcp__lean__bash", "input": {"command": "df -h"}}});
+        assert_eq!(question(&req), "bash: df -h  (always = this command)");
+        req["request"]["handoff"] = json!(true);
+        assert_eq!(question(&req), format!("bash: df -h  ({})", live::HANDOFF_ONCE));
+        let mut s = Session::new("", "high");
+        s.apply(&json!({"type": "harness_permission_done", "tool": "mcp__lean__bash", "allow": true, "always": false, "mode": "default"}), 1.0);
+        assert!(matches!(s.blocks.last(), Some(session::Block::Notice { text, .. }) if text == "allowed bash"));
+    }
+
+    /// The desktop keeps the tree before a turn a chat handed over, as before an agent's turn: a write allowed there gets its
+    /// change card and Undo.
+    #[cfg(unix)]
+    #[test]
+    fn a_handed_over_turn_keeps_the_tree_before_it_for_undo() {
+        let (mut live, dir) = live::stub::live("handoff-undo");
+        assert!(std::process::Command::new("git").args(["init", "-q"]).current_dir(&dir).status().unwrap().success());
+        let mut turn = None;
+        handoff_turn(&live, &mut turn, &dir);
+        assert!(turn.is_none(), "nothing handed over");
+        live.hand_off("weather in Berlin now?", "weather in Berlin now?", live::HANDOFF_NEEDS).unwrap();
+        handoff_turn(&live, &mut turn, &dir);
+        assert!(turn.as_ref().is_some_and(|t| !t.0.is_empty() && !t.1), "{turn:?}");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Creator mode's yes to writes in its folder is for the session's own work, not a turn a chat handed over.
+    #[cfg(unix)]
+    #[test]
+    fn creator_mode_does_not_answer_for_a_handed_over_turn() {
+        let (mut live, dir) = live::stub::live("handoff-creator");
+        let root = dir.canonicalize().unwrap().join("panel");
+        std::fs::create_dir_all(&root).unwrap();
+        let write = json!({"type": "control_request", "request_id": "perm-1", "request": {"subtype": "can_use_tool", "tool_name": "mcp__lean__write",
+            "input": {"path": root.join("a.txt").to_string_lossy(), "content": "x"}}});
+        live.hand_off("weather in Berlin now?", "weather in Berlin now?", live::HANDOFF_NEEDS).unwrap();
+        live::stub::started(&dir);
+        live.pending.push_back(write.clone());
+        assert!(creator_yes(&mut live, Some(&root)).is_none() && live.pending.len() == 1, "a fetched page could ask for it");
+        live.pending.clear();
+        live::stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": "12 °C", "total_cost_usd": 0.0}));
+        live.poll();
+        live.pending.push_back(write);
+        assert!(creator_yes(&mut live, Some(&root)).is_some() && live.pending.is_empty(), "the session's own work: yes");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

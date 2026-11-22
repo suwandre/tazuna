@@ -302,6 +302,12 @@ Worth borrowing: an OS sandbox for commands (Codex), checkpoints and rewind (par
 
 ## Decision log
 
+- 2026-11-22: a chat decides itself when it needs the agent. The chat profile stays the model alone (it answers ordinary
+  questions better than with tools), with one line that lets the model hand a question it cannot answer from training
+  (live data, a web page, this computer) to the agent; a word list or a router rule cannot know every such question. The
+  hand-off turn fetches and searches without asking and asks before every command, read, write and edit: a fetched page
+  must not be able to read a file and send it out. Measured on Opus, DeepSeek, Sol and ERNIE (CHANGELOG 0.1.194). A
+  search engine for the own loop (Brave, Tavily, a self-hosted one) waits until fetch alone is seen to fall short.
 - 2026-11-21: the receipt is tazuna's signature, and the terminal has two designs (design review 11, both the window and
   the terminal beside Claude, T3 Code, ZCode, DeepSeek Harness, Claude Code, Codex, opencode and pi). No rival shows
   what an answer cost honestly, and "cost is shown, never hidden" was a line in a status bar: every answer now carries

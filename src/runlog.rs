@@ -11,7 +11,7 @@ type Turn = [u64; 4];
 
 pub struct Run {
     started_ms: f64,
-    prompt: String,
+    pub prompt: String,
     turns: Vec<Turn>,
     /// tool name -> (calls, failures)
     tools: BTreeMap<String, (u32, u32)>,

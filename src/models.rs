@@ -481,7 +481,7 @@ fn mortera_choices(list: &Value, file: &Value, trusted: &impl Fn(&str) -> bool) 
         if !text || id.contains("embedding") || id.contains("image") || id.contains("banana") || id.starts_with("claude-") {
             return None;
         }
-        let rp = &m["pricing"]["payg_per_1m_idr"];
+        let rp = crate::engine::mortera_idr(m);
         let usd = |k: &str| rp[k].as_f64().map(|r| r / crate::engine::IDR_PER_USD);
         let (input, output) = (usd("in")?, usd("out")?);
         Some(Choice {
@@ -851,8 +851,10 @@ pub fn refresh_mortera() {
 }
 
 /// SubRouter's balance in USD, read with an API key (SUBROUTER_API_KEY, else any route key; none set: nothing is
-/// sent), never the account login. Its billing endpoints count in CNY at 6.8 to the dollar: (granted - used) / 6.8
-/// matched the account page to the cent (2026-11-02).
+/// sent), never the account login. Its billing endpoints count in the unit its public status names: on 2026-11-02 that
+/// was CNY at 6.8 to the dollar ((granted - used) / 6.8 matched the account page to the cent); by 2026-11-21 it was USD
+/// (`quota_display_type`), and the same division showed $0.046 for the user's $0.32. So the status decides, and without
+/// it the value stands as the endpoints give it.
 /// The other checked providers of the route `key_env` belongs to, cheapest first, as `TAZUNA_ROUTES` ("url key-env; ...",
 /// only keys that are set): a live own-loop session goes on there when its provider refuses or fails. SubRouter keeps a
 /// route's calls on one provider and does not forward a refusal: a6aa's content filter refused "when were you developed"
@@ -883,7 +885,16 @@ pub fn subrouter_balance() -> Option<f64> {
     };
     let granted = get("/v1/dashboard/billing/subscription")?["hard_limit_usd"].as_f64()?;
     let used = get("/v1/dashboard/billing/usage")?["total_usage"].as_f64()?;
-    Some((granted - used / 100.0) / 6.8)
+    Some(in_usd(granted - used / 100.0, &get("/api/status").unwrap_or_default()))
+}
+
+/// A SubRouter billing figure in dollars, by the unit its status (`/api/status`) says the figures are in.
+fn in_usd(v: f64, status: &Value) -> f64 {
+    let d = if status["data"].is_object() { &status["data"] } else { status };
+    match (d["quota_display_type"].as_str(), d["usd_exchange_rate"].as_f64()) {
+        (Some("CNY"), Some(rate)) if rate > 0.0 => v / rate,
+        _ => v,
+    }
 }
 
 /// The key tazuna makes and keeps in a user's SubRouter account (`tazuna subrouter --manage`).
@@ -1415,7 +1426,7 @@ mod tests {
     fn mortera_rows_are_its_text_models() {
         let list = serde_json::json!({"data": [
             {"id": "deepseek-v4.1-flash-1017-uncensored", "architecture": {"output_modalities": ["text"]}, "pricing": {"payg_per_1m_idr": {"in": 391, "out": 1630, "cache": 39}}},
-            {"id": "muse-spark-1.3", "pricing": {"payg_per_1m_idr": {"in": 1630, "out": 3260}}},
+            {"id": "muse-spark-1.3", "pricing": {"price_per_1m_idr": {"in": 1630, "out": 3260}}},
             {"id": "gpt-image-2", "architecture": {"output_modalities": ["image"]}, "pricing": {"payg_per_1m_idr": {"in": 1, "out": 1}}},
             {"id": "claude-opus-5-5", "pricing": {"payg_per_1m_idr": {"in": 1, "out": 1}}},
             {"id": "text-embedding-3-large", "pricing": {"payg_per_1m_idr": {"in": 1, "out": 1}}},
@@ -1427,6 +1438,17 @@ mod tests {
         let r = rows[1].route.as_ref().unwrap();
         assert_eq!((r.0.as_str(), r.1.as_str(), r.2.as_str()), ("https://mortera.cloud/v1", "MORTERA_API_KEY", "0.1,0.01,0.2"), "rupiah at 16,300 to the dollar");
         assert!(rows[0].note.starts_with("not checked yet"));
+        // both names of the price field (renamed 2026-11-21: every model had left /model)
+        assert!(rows[1].price.contains('/'), "a row priced from `price_per_1m_idr`");
+    }
+
+    #[test]
+    fn subrouter_balance_is_in_the_unit_its_status_names() {
+        let usd = serde_json::json!({"data": {"quota_display_type": "USD", "usd_exchange_rate": 6.8}});
+        let cny = serde_json::json!({"data": {"quota_display_type": "CNY", "usd_exchange_rate": 6.8}});
+        assert!((in_usd(0.315, &usd) - 0.315).abs() < 1e-9, "the user's $0.32 read as $0.046 with the old division");
+        assert!((in_usd(6.8, &cny) - 1.0).abs() < 1e-9);
+        assert!((in_usd(0.315, &serde_json::json!(null)) - 0.315).abs() < 1e-9, "no status: as the endpoints give it");
     }
 
     #[test]

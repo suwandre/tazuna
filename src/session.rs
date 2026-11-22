@@ -545,9 +545,9 @@ impl Session {
         fn cut(t: &str, n: usize) -> String {
             if t.chars().count() > n { format!("{}…", t.chars().take(n).collect::<String>()) } else { t.to_string() }
         }
-        let blocks: Vec<Value> = self.blocks.iter().map(|b| match b {
+        let blocks: Vec<Value> = self.blocks.iter().enumerate().map(|(i, b)| match b {
             Block::Prompt(text) => json!({"kind": "prompt", "text": text}),
-            Block::Text { text, live } => json!({"kind": "text", "text": text, "live": live}),
+            Block::Text { text, live } => json!({"kind": "text", "text": if self.hidden(i) { "" } else { text }, "live": live}),
             Block::Thinking { tokens, live, exact, text } => json!({"kind": "thinking", "tokens": tokens, "live": live, "exact": exact, "text": text.chars().take(20_000).collect::<String>()}),
             Block::Tool(t) => json!({"kind": "tool", "id": t.id, "name": t.name, "input": t.input, "result": t.result.as_deref().map(|r| cut(r, 4000)),
                 "error": t.error, "declined": t.declined(), "secs": t.secs(), "running": t.done_ms.is_none(), "stopped": t.done_ms.is_some() && t.result.is_none(), "sub": t.sub.as_ref().map(|(n, last)| json!({"calls": n, "last": last}))}),
@@ -746,6 +746,23 @@ impl Session {
             provider: if mixed { None } else { providers.first().cloned().or_else(|| self.provider.clone()).filter(|_| paid) },
             price_m: if mixed { None } else if own { price.or(self.price_m) } else { claude_list(&self.model) },
             providers: if mixed { providers } else { vec![] } })
+    }
+
+    /// A chat's hand-off (`[[agent]]`, live.rs) never shows in a chat's reply (a chat-profile session's, a router chat
+    /// answer): one that starts with it, nor, while it streams, the first characters that may still become it. An agent's
+    /// answer shows as it is, one that starts with the marker too.
+    pub fn hidden(&self, i: usize) -> bool {
+        let Some(Block::Text { text, live }) = self.blocks.get(i) else { return false };
+        let t = text.trim_start();
+        if !(t.starts_with(crate::live::HANDOFF) || (*live && !t.is_empty() && crate::live::HANDOFF.starts_with(t))) {
+            return false;
+        }
+        // its turn: between the messages before and after it
+        let prompt = |b: &Block| matches!(b, Block::Prompt(_));
+        let from = self.blocks[..i].iter().rposition(prompt).map_or(0, |p| p + 1);
+        let to = self.blocks[i..].iter().position(prompt).map_or(self.blocks.len(), |p| i + p);
+        let said = |line: &str| self.blocks[from..to].iter().any(|b| matches!(b, Block::Notice { text, .. } if text.starts_with(line)));
+        !said("answered by the agent") && (self.profile == "chat" || said("answered as a chat"))
     }
 
     fn push(&mut self, b: Block) {
@@ -982,7 +999,9 @@ impl Session {
                     (true, false) => "allowed",
                     _ => "declined",
                 };
-                self.push(Block::Notice { text: format!("{verb} {}", s(&e["tool"])), error: false });
+                // the lean tools by their own names ("allowed bash")
+                let tool = s(&e["tool"]);
+                self.push(Block::Notice { text: format!("{verb} {}", tool.strip_prefix("mcp__lean__").unwrap_or(&tool)), error: false });
             }
             (Some("harness_mode"), _) => {
                 self.mode = mode_name(e["mode"].as_str().unwrap_or_default()).to_string();
@@ -1000,6 +1019,39 @@ impl Session {
                     self.clock_off(at_ms, 0.0);
                     self.activity = Activity::Ready;
                 }
+            }
+            // the agent takes a chat's message (live.rs hand_off) in a process of its own (the one before it is gone). The
+            // chat's reply that handed it over goes (its text, the thinking before it, its receipt, its "answered as a chat"
+            // line), and only its (`q`: another router chat's answer may stand after the same message); its cost stays in
+            // the totals and joins the agent's answer. The line over that answer, if any, names the question when later
+            // messages came before the agent was free
+            (Some("harness_handoff"), _) => {
+                self.close_process();
+                let q = s(&e["q"]);
+                let last = self.blocks.iter().rposition(|b| matches!(b, Block::Prompt(_)));
+                let at = self.blocks.iter().rposition(|b| matches!(b, Block::Prompt(p) if *p == q)).or(last);
+                let from = at.map_or(0, |i| i + 1);
+                let marker = self.blocks[from..].iter().position(|b| matches!(b, Block::Text { text, .. } if crate::live::hands_off(text)));
+                if let Some(m) = marker.map(|i| from + i) {
+                    let think = self.blocks[..m].iter().rev().take_while(|b| matches!(b, Block::Thinking { .. })).count();
+                    let done = self.blocks[m..].iter().position(|b| matches!(b, Block::Done(_))).map(|i| m + i);
+                    let chat = self.blocks[from..m].iter().position(|b| matches!(b, Block::Notice { text, .. } if text.starts_with("answered as a chat"))).map(|i| from + i);
+                    let mut i = 0;
+                    self.blocks.retain(|_| {
+                        let gone = (m - think..=m).contains(&i) || Some(i) == done || Some(i) == chat;
+                        i += 1;
+                        !gone
+                    });
+                    self.call_thinking.clear();
+                }
+                let line = s(&e["text"]);
+                if !line.is_empty() {
+                    let line = if at == last { line } else { format!("{line} · {}", shown(&q, 60)) };
+                    self.push(Block::Notice { text: line, error: false });
+                }
+                self.clock_on(at_ms);
+                self.ready_at = Some(at_ms);
+                self.activity = Activity::Waiting;
             }
             // a message held while the tests ran is sent now: its work begins here, not at its first call's start
             (Some("harness_held_start"), _) => {
@@ -2244,5 +2296,100 @@ mod tests {
         assert_eq!(s.working_for(12_500.0), 0.0);
         s.apply(&json!({"type": "harness_held_start"}), 13_000.0);
         assert_eq!(s.working_for(14_000.0), 1_000.0);
+    }
+
+    #[test]
+    fn a_chats_hand_off_never_shows_and_its_cost_joins_the_agents_answer() {
+        // a chat-profile session on the own loop: the chat streams [[agent]], the agent answers in a process of its own
+        let ev = |e: Value| json!({"type": "stream_event", "event": e});
+        let delta = |t: &str| ev(json!({"type": "content_block_delta", "delta": {"type": "text_delta", "text": t}}));
+        let shown = |s: &Session| s.view()["blocks"].as_array().unwrap().iter().filter(|b| b["kind"] == "text").map(|b| b["text"].as_str().unwrap().to_string()).collect::<String>();
+        let mut s = Session::new("", "high");
+        s.profile = "chat".into();
+        s.apply(&json!({"type": "system", "subtype": "init", "model": "glm-5.3", "price_per_m": [1.0, 0.1, 2.0], "provider": "SubRouter"}), 0.0);
+        s.apply(&json!({"type": "harness_user", "text": "weather in Berlin now?"}), 1.0);
+        paid_call(&mut s, 2.0, 1000, 0, 5, 0.001);
+        s.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 3.5);
+        for (i, part) in ["\n[", "[age", "nt]", "]"].into_iter().enumerate() {
+            s.apply(&delta(part), 4.0 + i as f64);
+            assert_eq!(shown(&s), "", "the marker never flashes ({part:?})");
+        }
+        s.apply(&ev(json!({"type": "content_block_stop"})), 8.0);
+        s.apply(&json!({"type": "result", "subtype": "success", "result": "[[agent]]", "total_cost_usd": 0.001, "tazuna_paid": true}), 9.0);
+        s.apply(&json!({"type": "harness_handoff", "text": crate::live::HANDOFF_NEEDS}), 10.0);
+        // the chat's reply and its receipt are gone; the line stands over what the agent does next
+        assert!(!s.blocks.iter().any(|b| matches!(b, Block::Done(_) | Block::Text { .. })));
+        assert!(matches!(s.blocks.last(), Some(Block::Notice { text, error: false }) if text == crate::live::HANDOFF_NEEDS));
+        assert!(s.working_for(11.0) > 0.0 && s.activity == Activity::Waiting, "at work from the hand-off on");
+        paid_call(&mut s, 12.0, 3000, 0, 50, 0.02);
+        s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "text", "text": "12 °C and rain."}]}}), 13.5);
+        s.apply(&json!({"type": "result", "subtype": "success", "result": "12 °C and rain.", "total_cost_usd": 0.02, "tazuna_paid": true}), 14.0);
+        assert_eq!(shown(&s), "12 °C and rain.");
+        let d = dones(&s.view());
+        assert_eq!(d.len(), 1, "one answer");
+        assert!((d[0].1["run_cost"].as_f64().unwrap() - 0.021).abs() < 1e-9 && (s.cost() - 0.021).abs() < 1e-9, "the chat's call in it: {} {}", d[0].1["run_cost"], s.cost());
+        // the chat again, in a new process: its count starts over and adds to the total
+        s.apply(&json!({"type": "harness_process_end"}), 15.0);
+        s.apply(&json!({"type": "harness_user", "text": "and is [1] a list?"}), 16.0);
+        paid_call(&mut s, 17.0, 1000, 0, 5, 0.001);
+        s.apply(&ev(json!({"type": "content_block_start", "content_block": {"type": "text"}})), 18.5);
+        s.apply(&delta("["), 19.0);
+        assert_eq!(shown(&s), "12 °C and rain.", "held while it may still become the marker");
+        s.apply(&delta("1] is a list."), 20.0);
+        assert_eq!(shown(&s), "12 °C and rain.[1] is a list.", "an ordinary reply shows once it is clear");
+        s.apply(&json!({"type": "result", "subtype": "success", "result": "[1] is a list.", "total_cost_usd": 0.001, "tazuna_paid": true}), 21.0);
+        assert!((s.cost() - 0.022).abs() < 1e-9 && dones(&s.view()).iter().all(|(_, b)| b.get("estimate").is_none()), "{}", s.cost());
+        // sent to the agent (/agent, "send to agent"): no chat reply came, nothing goes
+        s.apply(&json!({"type": "harness_user", "text": "how full is my disk?"}), 22.0);
+        s.apply(&json!({"type": "harness_handoff", "text": crate::live::HANDOFF_SENT}), 22.5);
+        assert_eq!(dones(&s.view()).len(), 2);
+        assert!(matches!(&s.blocks[s.blocks.len() - 2], Block::Prompt(p) if p.starts_with("how full")));
+    }
+
+    /// Two router chats that overlap: the second hands its question over after the first's answer came in under it. Only the
+    /// second's reply goes (its [[agent]], receipt and "answered as a chat" line), not the first's answer.
+    #[test]
+    fn a_hand_off_takes_away_only_its_own_chats_reply() {
+        let mut s = Session::new("", "high");
+        for q in ["capital of France?", "weather in Berlin now?"] {
+            s.apply(&json!({"type": "harness_user", "text": q}), 1.0);
+            s.apply(&json!({"type": "harness_info", "text": "answered as a chat: not about this project"}), 1.5);
+        }
+        for a in ["Paris.", "[[agent]]"] {
+            s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "text", "text": a}]}}), 2.0);
+            s.apply(&json!({"type": "result", "subtype": "success", "result": a, "total_cost_usd": 0.001, "tazuna_chat": true}), 3.0);
+        }
+        s.apply(&json!({"type": "harness_handoff", "text": crate::live::HANDOFF_NEEDS, "q": "weather in Berlin now?"}), 4.0);
+        let texts: Vec<&str> = s.blocks.iter().filter_map(|b| if let Block::Text { text, .. } = b { Some(text.as_str()) } else { None }).collect();
+        assert_eq!(texts, ["Paris."], "the first chat's answer stays");
+        assert_eq!(s.blocks.iter().filter(|b| matches!(b, Block::Done(_))).count(), 1);
+        assert_eq!(s.blocks.iter().filter(|b| matches!(b, Block::Notice { text, .. } if text.starts_with("answered as a chat"))).count(), 1);
+        assert!(matches!(s.blocks.last(), Some(Block::Notice { text, .. }) if text == crate::live::HANDOFF_NEEDS));
+    }
+
+    #[test]
+    fn only_a_chats_reply_hides_the_marker() {
+        let text = |s: &Session| s.view()["blocks"].as_array().unwrap().iter().filter(|b| b["kind"] == "text").map(|b| b["text"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+        let reply = |s: &mut Session, q: &str, line: Option<&str>, a: &str| {
+            s.apply(&json!({"type": "harness_user", "text": q}), 1.0);
+            if let Some(l) = line {
+                s.apply(&json!({"type": "harness_info", "text": l}), 1.5);
+            }
+            s.apply(&json!({"type": "assistant", "message": {"content": [{"type": "text", "text": a}]}}), 2.0);
+        };
+        // a coding agent's answer that starts with the marker is an answer (it was blanked)
+        let mut s = Session::new("", "high");
+        reply(&mut s, "what does [[agent]] do in tazuna?", None, "[[agent]] is the chat's hand-off marker.");
+        assert_eq!(text(&s), ["[[agent]] is the chat's hand-off marker."]);
+        // a router chat answer's hand-off never shows, nor does the coding answer before it go
+        reply(&mut s, "weather in Berlin now?", Some("answered as a chat: not about this project"), "[[agent]]");
+        assert_eq!(text(&s), ["[[agent]] is the chat's hand-off marker.", ""]);
+        // a chat-profile session's reply, and the agent's answer in its place under the hand-off's line
+        let mut s = Session::new("", "high");
+        s.profile = "chat".into();
+        reply(&mut s, "weather in Berlin now?", None, "[[agent]]");
+        assert_eq!(text(&s), [""]);
+        reply(&mut s, "and this one?", Some(crate::live::HANDOFF_SENT), "[[agent]] is a marker; here is the answer.");
+        assert_eq!(text(&s), ["", "[[agent]] is a marker; here is the answer."]);
     }
 }

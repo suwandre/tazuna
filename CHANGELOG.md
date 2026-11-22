@@ -16,6 +16,75 @@ that change no measurable metric (CPU, memory, binary size, tokens, cost, qualit
 Also recorded per measurement: the `claude` CLI version. Claude Code updates itself, and its built-in prompt changes token
 counts (2.1.289 → 2.1.291 added ~104 input tokens per turn).
 
+## 0.1.194 (2026-11-22): a chat hands what it cannot know to the agent; SubRouter's balance in dollars; Mortera is back
+
+The user: "tazuna cannot open/fetch any data from my own PC, or search the web (e.g. if i ask it for the weather, or
+analyzing the crypto markets). why?" A plain chat (every session outside a project since 0.1.126, and the router's chat
+answers in a project since 0.1.127) is the model alone, without tools: measured better on ordinary questions (Opus 8.25
+against 8.00 with the agent's tools, 0.1.123), and helpless on these. A list of trigger words cannot know every such
+question ("should I bring an umbrella", "is SOL worth buying"), so the chat model decides itself.
+
+- One line in the chat's prompt: when a good answer needs something the model cannot know from training (anything
+  current or live, a web page, the user's own computer or files), its whole reply is `[[agent]]`. tazuna never shows
+  that reply; it sends the message, with the chat's earlier exchanges, to the agent as one hand-off turn, and the answer
+  carries "answered by the agent: needs live data or this computer". The chat stays one conversation and its next
+  message knows the agent's answer (also after `-c` or /resume). `TAZUNA_CHAT_HANDOFF=0` takes the line out (for
+  measuring the plain model).
+- A hand-off turn fetches pages and searches the web without asking, and asks before everything else: shell commands,
+  reading files, writes, edits, every MCP call, whatever the session's mode. No "always" there, no earlier "always"
+  answers, no repo settings or allow rules, no project instructions or skills in its prompt, no checks, escalation,
+  review, boss mode or explorer after it, and the spend cap applies. A fetched page may carry instructions; with reads
+  asking it cannot have the model read a file and send it out in a URL (the first build allowed reads; an automated
+  security check and the review caught it). A mode change during a hand-off waits for its end; a hand-off that cannot
+  start yet waits its turn.
+- The desktop: the tag under the answer, and "Send to agent" beside Copy under every chat answer. The terminal: the same
+  line; `/agent` sends a message to the agent by hand. An approval names a lean tool plainly (`allow bash`, not
+  `allow mcp__lean__bash`).
+- Measured before it stayed (bench/handoff.py, bench/handoff_judge.py, bench/suite/handoff.jsonl: 27 questions that
+  need live data or this computer, 15 that look like it and do not, the 36 general-set tasks; 2 runs each):
+
+  | | live or this computer: handed off | ordinary: handed off wrongly |
+  |---|---|---|
+  | Opus 5.5 medium (plan) | 54/54 | 0/102 |
+  | DeepSeek V4.1 Flash 1017 (SubRouter) | 54/54 | 0/102 |
+  | GPT-6.2 Sol xhigh (SubRouter) | 54/54 | 0/102 |
+  | ERNIE 5.5 Flash (Mortera, free) | 52/53 | 0/102 |
+
+  Does the line make ordinary answers worse? 12 general tasks x 2 runs, with and without it, side by side, judged by Opus
+  5.5 xhigh. The first wording ("reply with exactly [[agent]] and nothing else; otherwise answer normally") made every
+  model's answers shorter (Sol 986 to 890 characters, judge -0.42, CI -0.77 .. -0.06). The one that ships names the
+  rule as an exception that changes nothing else:
+
+  | | without | with the line | difference (CI) |
+  |---|---|---|---|
+  | Opus | 8.67 | 8.71 | +0.04 (-0.28 .. +0.36) |
+  | DeepSeek | 8.38 | 8.29 | -0.08 (-0.55 .. +0.39) |
+  | GPT-6.2 Sol | 8.46 | 8.25 | -0.21 (-0.56 .. +0.15) |
+  | ERNIE (Mortera) | 8.29 | 7.79 | -0.50 (-0.96 .. -0.04) |
+
+  ERNIE, free and weak, still writes about 20% shorter with any extra rule in its prompt; the user chose to accept it.
+  Tokens: the line adds about 80 input tokens to a chat call (cached after the first). A handed-off message costs one
+  short chat call more than the agent alone. Cost of the measurement: SubRouter $0.05, Mortera $0, about 16% of two
+  5-hour windows on the Claude plan.
+- Seen on the real claude CLI (Opus 5.5 medium): "will it rain in berlin tomorrow?" handed off and fetched Open-Meteo
+  without asking ($0.03); "and the day after?" handed off with the earlier subject; "convert both days to fahrenheit"
+  answered by the chat from both answers; "how much free disk space do I have?" asked `allow bash: df -h …` with no
+  "always"; one conversation in the run log for all of it.
+- Three independent reviews and an automated security check found 23 defects in the builds before this one (reads
+  allowed next to fetch, "always" answers and repo allow rules applying in a hand-off, one sidebar entry per hand-off, a
+  hand-off dropped when two messages were sent quickly, a mode change lifting the restriction, a follow-up reaching the
+  agent without its subject, a hand-off waiting for a background dev server holding every later message, a review-mode
+  verdict answering a hand-off's question), each fixed with a test. 270 tests pass.
+- SubRouter's balance in dollars: its billing endpoints count in the unit its public status names. On 2026-11-02 that
+  was yuan at 6.8 to the dollar; now it is dollars, and the same division showed $0.046 for the user's $0.32 (the user
+  noticed). tazuna divides only when the status says CNY.
+- Mortera is back in /model: it renamed its price field (`payg_per_1m_idr` to `price_per_1m_idr`), so every Mortera model
+  lost its price, the picker dropped them all and the own loop refused them. Both names are read now.
+- Changed on the side: a chat answer and a hand-off on the own loop no longer go on to Opus through the cascade (each
+  such answer was redone on Opus); the cascade still follows coding turns.
+- Known and left: `bench/guard.py` cannot read the plan's meter (claude's rate-limit event lost `resetsAt`), and a stale
+  PAUSE file from 11-09 sat in bench/; the measurement used its own meter loop on tazuna's plan reading.
+
 ## 0.1.193 (2026-11-21): one frame for every overlay, two designs, and how each turn was paid
 
 Design review 11's look, the user's picks from the prototype (desktop/mockups/v8.html: "all"), and two things the user

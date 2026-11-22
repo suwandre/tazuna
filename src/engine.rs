@@ -1453,13 +1453,8 @@ impl Loop {
         if self.mode == "plan" && matches!(tool, "write" | "edit") {
             return Permit::Deny("Plan mode: nothing is changed here. Describe the change instead.".into());
         }
-        // fetch reaches the network like bash: a page's injected text could make it send data out (security review,
-        // 2026-11-05), so it asks wherever bash asks
-        let ask = from_text || match self.mode.as_str() {
-            "default" | "plan" => matches!(tool, "bash" | "write" | "edit" | "fetch"),
-            "acceptEdits" => matches!(tool, "bash" | "fetch"),
-            _ => false,
-        } || (matches!(self.mode.as_str(), "default" | "acceptEdits" | "plan") && tool == "mcp" && self.hub.as_ref().is_some_and(|h| !h.reads_only(input)));
+        let ask = from_text || asks(&self.mode, tool)
+            || (matches!(self.mode.as_str(), "default" | "acceptEdits" | "plan") && tool == "mcp" && self.hub.as_ref().is_some_and(|h| !h.reads_only(input)));
         // an MCP tool can write (a comment, a ticket moved) where the service allows it: it asks where commands ask,
         // except for reading a tool's description
         if !ask {
@@ -1490,6 +1485,19 @@ impl Loop {
                 _ => self.set_mode(&m),
             }
         }
+    }
+}
+
+/// Whether a call asks the user first in permission mode `mode`. fetch reaches the network like bash: a page's injected
+/// text could make it send data out (security review, 2026-11-05), so it asks wherever bash asks, but in `handoff`: a
+/// chat's message handed to the agent (live.rs hand_off), alone in a fresh conversation. There everything else asks, a
+/// read and an MCP call too: a page could have the agent read a key and fetch a URL with it (review, 2026-11-21).
+fn asks(mode: &str, tool: &str) -> bool {
+    match mode {
+        "default" | "plan" => matches!(tool, "bash" | "write" | "edit" | "fetch"),
+        "acceptEdits" => matches!(tool, "bash" | "fetch"),
+        "handoff" => tool != "fetch",
+        _ => false,
     }
 }
 
@@ -2062,9 +2070,16 @@ fn price_override(v: &str) -> Result<Price> {
 /// ponytail: a fixed rate; read it from a rate source if the rupiah moves enough to matter for a $1 cap
 pub(crate) const IDR_PER_USD: f64 = 16_300.0;
 
+/// Mortera's rupiah per million (`in`, `cache`, `out`): `price_per_1m_idr` since 2026-11-21, `payg_per_1m_idr` before.
+/// With the rename every Mortera model lost its price: the picker dropped them all and the own loop refused to start.
+pub(crate) fn mortera_idr(m: &Value) -> &Value {
+    let p = &m["pricing"];
+    if p["price_per_1m_idr"].is_object() { &p["price_per_1m_idr"] } else { &p["payg_per_1m_idr"] }
+}
+
 /// CheaperInference and OpenRouter-style lists give USD per million (`input_per_million`, as string or number);
 /// Experiential Labs gives nano-USD per million (`input_nano_usd_per_million_tokens`) and names the upstream provider in
-/// `data_policy` instead of `owned_by`; Mortera gives rupiah per million (`payg_per_1m_idr`: `in`, `cache`, `out`).
+/// `data_policy` instead of `owned_by`; Mortera gives rupiah per million (`mortera_idr`: `in`, `cache`, `out`).
 fn parse_price(m: &Value) -> Result<(Price, bool)> {
     let model = &m["id"];
     // kenari: micro-rupiah per million (`input`, `cache_read`, `output`), null on its free models
@@ -2073,7 +2088,7 @@ fn parse_price(m: &Value) -> Result<(Price, bool)> {
         let input = usd("input").with_context(|| format!("no input price for {model}: the dollar cap needs one"))?;
         return Ok(((input / 1e6, usd("cache_read").unwrap_or(input) / 1e6, usd("output").context("no output price")? / 1e6), model.as_str().is_some_and(|id| id.starts_with("gpt-"))));
     }
-    let idr = &m["pricing"]["payg_per_1m_idr"];
+    let idr = mortera_idr(m);
     let p = |usd: &str, nano: &str| {
         let v = &m["pricing"][usd];
         let rupiah = match usd {
@@ -2181,6 +2196,10 @@ mod tests {
         let ((i, c, o), openai) = super::parse_price(&m).unwrap();
         assert_eq!(((i * 1e6 * 1000.0).round(), (c * 1e6 * 1000.0).round(), (o * 1e6).round()), (100.0, 10.0, 1.0));
         assert!(!openai);
+        // the field's name since 2026-11-21: without it the own loop refused every Mortera model ("lists without a price")
+        let m = json!({"id": "gpt-6.1-sol", "pricing": {"price_per_1m_idr": {"in": 1630, "out": 16300, "cache": 163}}});
+        let ((i, _, o), _) = super::parse_price(&m).unwrap();
+        assert_eq!(((i * 1e6 * 1000.0).round(), (o * 1e6).round()), (100.0, 1.0));
     }
 
     #[test]
@@ -3338,6 +3357,34 @@ session: "s".into(),
         assert!(!dir.join("b.txt").exists() && !ev.borrow().iter().any(|e| e["type"] == "control_request"));
         let result = ev.borrow().iter().find(|e| e["type"] == "user").cloned().unwrap();
         assert!(result["message"]["content"][0]["content"].as_str().unwrap().starts_with("Plan mode"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_handed_over_turn_fetches_without_asking_and_asks_for_everything_else() {
+        assert!(!super::asks("handoff", "fetch"), "the web, which the turn is for");
+        for tool in ["bash", "write", "edit", "read", "grep", "glob", "mcp"] {
+            assert!(super::asks("handoff", tool), "{tool}: a page could have it read a key and send it out");
+        }
+        assert!(super::asks("default", "fetch") && super::asks("acceptEdits", "fetch"), "elsewhere fetch asks wherever bash does");
+        assert!(!super::asks("bypassPermissions", "bash") && !super::asks("default", "read"));
+        // through the loop: a read of a key asks, and a no is honoured
+        let dir = std::env::temp_dir().join(format!("tazuna-handoff-mode-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("id_ed25519"), "SECRET KEY").unwrap();
+        let ev = Rc::new(RefCell::new(vec![]));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let no = json!({"type": "control_response", "response": {"subtype": "success", "request_id": "perm-1", "response": {"behavior": "deny", "message": "no"}}});
+        let mut l = asking_loop("handoff", &dir, ev.clone(), Some((tx, no)));
+        let replies = RefCell::new(VecDeque::from([
+            json!({"choices": [{"message": {"content": null, "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "read", "arguments": "{\"path\":\"id_ed25519\"}"}}]}}], "usage": {}}),
+            json!({"choices": [{"message": {"content": "done"}}], "usage": {}}),
+        ]));
+        l.call = Box::new(move |_: &Value| Ok(replies.borrow_mut().pop_front().unwrap()));
+        l.run(&json!("read id_ed25519"), false, &rx);
+        let ev = ev.borrow();
+        assert!(ev.iter().any(|e| e["type"] == "control_request" && e["request"]["tool_name"] == "read"), "{ev:?}");
+        assert!(!ev.iter().any(|e| e.to_string().contains("SECRET KEY")), "declined: the key was never read");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

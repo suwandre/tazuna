@@ -1628,7 +1628,7 @@ pub fn transcript(s: &Session, v: &View, th: &Theme, o: &Opts, width: usize) -> 
             owners.push(None);
         }
         let before = lines.len();
-        let body = if grouped { group_lines(&s.blocks[i..group_end], s, v, th, o, width) } else { block_lines(b, s, v, th, o, open, width) };
+        let body = if grouped { group_lines(&s.blocks[i..group_end], s, v, th, o, width) } else { block_lines(b, i, s, v, th, o, open, width) };
         for (l, cont) in body {
             lines.extend(wrap(l, width.max(10), &cont));
         }
@@ -1813,7 +1813,7 @@ pub fn transcript_lines(s: &Session, v: &View, width: u16) -> Vec<Line<'static>>
     transcript(s, v, th, o, width as usize).0
 }
 
-fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool, width: usize) -> Vec<Prefixed> {
+fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool, width: usize) -> Vec<Prefixed> {
     match b {
         Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o, open, width),
         Block::Verify(x) => verify_lines(x, v, th),
@@ -1862,7 +1862,7 @@ fn block_lines(b: &Block, s: &Session, v: &View, th: &Theme, o: &Opts, open: boo
         Block::Text { text, live } => {
             // no mark before a reply in either design: zen had none, cockpit a ▸ that was also the fold's arrow (design
             // review 11)
-            let mut out = markdown(text, th, width);
+            let mut out = markdown(if s.hidden(i) { "" } else { text }, th, width);
             if out.is_empty() {
                 out.push((Line::default(), vec![]));
             }
@@ -2634,15 +2634,18 @@ pub fn composer_rows(v: &View, th: &Theme, glyph: &str, placeholder: &str, width
 pub fn composer_rows_in(v: &View, th: &Theme, glyph: &str, placeholder: &str, width: u16, max: usize) -> Vec<Line<'static>> {
     if let Some(q) = &v.asking {
         // the answers are what to act on: the brightest text of the row, their keys in the accent (they were the
-        // dimmest on screen, design review 2026-11-19)
+        // dimmest on screen, design review 2026-11-19); no "always" where it is not given (main.rs question_parts)
+        let once = q.contains("  (once only");
         let q: String = q.chars().take((width as usize).saturating_sub(40)).collect();
         let key = |k: &'static str| Span::styled(k, st(th.accent).add_modifier(Modifier::BOLD));
         let word = |w: &'static str| Span::styled(w, st(th.text).add_modifier(Modifier::BOLD));
-        return vec![Line::from(vec![
-            Span::styled(" ? ", st(th.warn).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("allow {q}"), st(th.ink2)),
-            Span::raw("   "), key("y"), word(" yes   "), key("a"), word(" always   "), key("n"), word(" no"),
-        ])];
+        let mut row = vec![Span::styled(" ? ", st(th.warn).add_modifier(Modifier::BOLD)), Span::styled(format!("allow {q}"), st(th.ink2)),
+            Span::raw("   "), key("y"), word(" yes   ")];
+        if !once {
+            row.extend([key("a"), word(" always   ")]);
+        }
+        row.extend([key("n"), word(" no")]);
+        return vec![Line::from(row)];
     }
     if !(v.live && !v.input.is_empty()) {
         return vec![composer_line(v, th, glyph, placeholder, width)];
@@ -3678,7 +3681,7 @@ mod tests {
         // a notice longer than NOTICE_CHARS: cut and clickable, opened all of it
         let mut s = Session::new("", "medium");
         s.blocks.push(Block::Notice { text: "x".repeat(300), error: false });
-        let lines = |open: bool| block_lines(&s.blocks[0], &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
+        let lines = |open: bool| block_lines(&s.blocks[0], 0, &s, &View { design: Design::Cockpit, expand_all: open, scroll: 0, clock_ms: 0.0, speed: 1.0, paused: false, live: true, input: String::new(), cursor: 0, select: None, asking: None, mode: "auto".into(), hints: Vec::new(), menu: Vec::new(), menu_sel: 0, bg_running: 0, running: vec![], tasks: None, rewind: None, models: None, vim: "", open: Default::default(), hover: None, since_ms: 0.0, sessions: None, toast: None, changed: vec![], diff: None, mouse: None, list: None, hover_call: None, login: None, cold: 0 }, Design::Cockpit.theme(), &cockpit::OPTS, open, 400).iter().map(|(l, _)| l.to_string()).collect::<String>();
         assert!(lines(false).contains("click to show") && !lines(true).contains("click to show"));
     }
 

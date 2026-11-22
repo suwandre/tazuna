@@ -120,6 +120,56 @@ const PRECISE_ANSWER_RULE: &str = "When the request asks for an answer rather th
 /// The chat profile's whole prompt: the model alone, as the general set's baselines ran it (plus the date).
 const CHAT_PROMPT: &str = "You are a helpful assistant.";
 
+/// The chat's hand-off (2026-11-21, on by default): a chat has no tools, so a question about live data or this computer
+/// got a guess or "I cannot browse" (the user asked a chat for the weather and the crypto market). With this line the model
+/// itself says that it needs to look something up (a word list cannot know every such question), and tazuna gives the
+/// message to the agent (`hand_off`). Measured with bench/handoff.py on Opus 5.5, DeepSeek V4.1 Flash, GPT-6.2 Sol and
+/// ERNIE: 266 of 268 live or machine questions handed off, 0 of 510 ordinary ones; ordinary answers unchanged on Opus,
+/// DeepSeek and Sol, ERNIE's about 0.5 worse (accepted). An earlier wording ("reply with exactly [[agent]] and nothing
+/// else") made every model's ordinary answers shorter (Sol judge 8.46 to 8.04): this one names the rule as an exception
+/// and says that it changes nothing else. TAZUNA_CHAT_HANDOFF=0 leaves it out (benchmarks of the plain model).
+const CHAT_HANDOFF: &str = "One exception to how you answer: if a good answer needs something you cannot know from your training alone \
+(anything current or live: prices, weather, news, scores, schedules, recent releases or events; the content of a web page or URL; or \
+anything about the user's own computer, files or accounts), your whole reply is [[agent]], and an agent that can look it up takes \
+the question. The exception changes nothing else: answer every other question just as you would without it, with the same length \
+and detail.";
+
+/// A chat reply that is a hand-off starts with this (trimmed); one that only mentions it later is an answer.
+pub const HANDOFF: &str = "[[agent]]";
+
+/// tazuna's line over an answer the agent gave in a chat's place.
+pub const HANDOFF_NEEDS: &str = "answered by the agent: needs live data or this computer";
+/// One the user sent there (`/agent`, the window's "send to agent") in a chat-profile session.
+pub const HANDOFF_SENT: &str = "answered by the agent";
+/// A question in a turn a chat handed over: allowed once or not, never "always" (that turn's process is gone after it).
+pub const HANDOFF_ONCE: &str = "once only: the agent is answering a chat's question";
+
+/// The chat profile's system prompt (both paths, and the router's chat answers): the one line, the date, the hand-off line.
+pub fn chat_prompt(today: &str) -> String {
+    let mut p = format!("{CHAT_PROMPT} Today is {today}.");
+    if std::env::var_os("TAZUNA_CHAT_HANDOFF").is_none_or(|v| v != "0") {
+        p.push(' ');
+        p.push_str(CHAT_HANDOFF);
+    }
+    p
+}
+
+/// A chat's reply that hands its message to the agent.
+pub fn hands_off(reply: &str) -> bool {
+    reply.trim_start().starts_with(HANDOFF)
+}
+
+/// A chat message with the exchanges before it that its conversation does not hold (question, answer): a router chat
+/// answer's follow-up (main.rs), and a chat's next message after the agent answered in its place (`start_run`).
+pub fn with_earlier(text: &str, earlier: &[(String, String)]) -> String {
+    let mut m: String = earlier.iter().map(|(q, a)| format!("Earlier in this chat you were asked: {}\nYou answered: {}\n\n",
+        q.chars().take(1500).collect::<String>(), a.chars().take(3000).collect::<String>())).collect();
+    if !m.is_empty() {
+        m.push_str("The new message: ");
+    }
+    m + text
+}
+
 /// Experiment (TAZUNA_ANSWER_REVIEW, 2026-11-15): the self-review turn (`--self-review`) runs only after a change, so a plan
 /// or a review (the weakest kinds: 3-7 against 8-9 for questions) never got one. This turn follows an answer that changed
 /// nothing. Measured on Mistral's DeepSeek (5 dev plans): judge 7.10 to 7.40 (5 runs), acceptable 80% to 60%, billed
@@ -564,6 +614,13 @@ pub struct Live {
     pub profile: Profile,
     /// The profile before the last `/profile` or `/chat` switch: where `/chat` goes back to.
     pub prev_profile: Option<Profile>,
+    /// A turn a chat handed to the agent runs (`hand_off`): the session's profile, conversation and last reply, back after it.
+    handoff: Option<(Profile, Option<String>, Option<String>)>,
+    /// A chat's exchanges, oldest first (question, answer: the chat's own, or the agent's in its place; `heard`), and how many
+    /// of them its own conversation holds. The agent's answers after that go with the chat's next message (`start_run`); the
+    /// router's next chat answer has the last (`handed`); a message handed to the agent carries the last few (`earlier`).
+    said: Vec<(String, String)>,
+    told: usize,
     /// `--data any` or `/data any`: providers off the trusted list may see the code (the model picker allows them).
     pub data_any: bool,
     /// Also load the user's personal ~/.claude settings (repo profile).
@@ -573,8 +630,9 @@ pub struct Live {
     /// (bytes included, source files) for the run log.
     instructions_used: (usize, Vec<String>),
     verifying: bool,
-    /// Messages typed while tests run; sent once the run is over.
-    held: VecDeque<(String, bool)>,
+    /// Messages typed while tests or a handed-over turn run, and hand-offs waiting for the agent (Some: what it is sent, the
+    /// line over its answer): sent in order once it is free (`send_held`).
+    held: VecDeque<(String, bool, Option<(String, &'static str)>)>,
     /// claude's last result event and the last run-log line (headless mode reports them).
     pub last_result: Option<Value>,
     pub last_log: Option<Value>,
@@ -673,6 +731,9 @@ impl Live {
             project_instructions: true,
             profile: Profile::Lean,
             prev_profile: None,
+            handoff: None,
+            said: Vec::new(),
+            told: 0,
             data_any: false,
             user_settings: false,
             connectors: false,
@@ -693,9 +754,11 @@ impl Live {
         self.t0.elapsed().as_secs_f64() * 1000.0
     }
 
-    /// The claude session this conversation is (None before claude's first reply, and on the own loop's engine).
+    /// The claude session this conversation is (None before claude's first reply, and on the own loop's engine). While a
+    /// turn a chat handed over runs, the session's own one: that turn's conversation is thrown away after it, so neither the
+    /// run log (`tazuna -c`, the conversation lists) nor the window may take it for the session's.
     pub fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+        self.handoff.as_ref().map_or(self.session_id.as_deref(), |h| h.1.as_deref())
     }
 
     /// Continue an earlier claude session (`--continue`, `--resume`): the first message resumes it instead of starting fresh.
@@ -720,6 +783,120 @@ impl Live {
             }
         }
         self.send_message(text, true)
+    }
+
+    /// `/agent TEXT` and the window's "send to agent": the agent, in a chat-profile session too, where it is the lean agent
+    /// in this folder for one turn (`hand_off`; until 2026-11-21 such a message went to the chat).
+    #[inline(never)]
+    pub fn send_agent(&mut self, text: &str) -> Result<(f64, Value)> {
+        if self.profile != Profile::Chat {
+            return self.send_typed(text);
+        }
+        // shown at once; the agent takes it now or once it is free (`hand_off`)
+        self.within_cap()?;
+        let e = self.record(json!({"type": "harness_user", "text": text}));
+        let sent = with_earlier(text, self.earlier());
+        self.hand_off(text, &sent, HANDOFF_SENT)?;
+        Ok(e)
+    }
+
+    /// A chat's message for the agent (the chat replied `[[agent]]`, or the user sent it there): one turn of this folder's
+    /// lean agent, whatever the session's profile, in a fresh conversation, sent `sent` (the message with the chat's
+    /// exchanges before it, which the chat saw). One plain agent: no settings, hooks, skills, subagents, boss mode or project
+    /// instructions, the web at hand (its fetch, claude's web search) and claude's own file tools left out (`spawn`). Only
+    /// the web goes without a question, whatever the session's mode (`turn_mode`). It starts now when nothing runs, else it
+    /// waits its turn (`held`); then `line` stands over its answer. After it the session's own conversation goes on
+    /// (`hand_back`). Records nothing but its start: the message is the caller's.
+    #[inline(never)]
+    pub fn hand_off(&mut self, text: &str, sent: &str, line: &'static str) -> Result<()> {
+        // a paid model's turn like any other: every path to the agent comes here (the router's skipped the cap)
+        self.within_cap()?;
+        self.held.push_back((text.to_string(), false, Some((sent.to_string(), line))));
+        let out = self.send_held();
+        self.outbox.extend(out);
+        Ok(())
+    }
+
+    /// The last few of a chat's exchanges, for a message handed to the agent. ponytail: the last six; more if a hand-off's
+    /// follow-ups need a longer past.
+    fn earlier(&self) -> &[(String, String)] {
+        &self.said[self.said.len().saturating_sub(6)..]
+    }
+
+    /// A turn a chat handed over runs: its questions are the user's (review mode's reviewer does not answer them).
+    #[inline(never)]
+    pub fn handing_off(&self) -> bool {
+        self.handoff.is_some()
+    }
+
+    /// The handed-over turn is over: the session's profile and conversation again (its next message resumes it, with the
+    /// agent's answer: `heard`), and the event that tells the screen the agent's process is gone (its cost count starts over
+    /// with the next one).
+    fn hand_back(&mut self) -> Option<(f64, Value)> {
+        let (profile, id, last) = self.handoff.take()?;
+        self.respawn(self.model.clone(), self.effort.clone());
+        (self.profile, self.session_id, self.last_assistant) = (profile, id, last);
+        Some(self.record(json!({"type": "harness_process_end"})))
+    }
+
+    /// Keeps a chat's exchanges (`said`, `told`) by a recorded event: a chat's result or a handed-over turn's (`tazuna_q`, its
+    /// question, set in `poll`), and the line that starts another conversation. A resumed chat's recordings give them back
+    /// the same way (`heard_before`).
+    fn heard(&mut self, e: &Value) {
+        if e["type"] == "harness_notice" && e["text"].as_str().is_some_and(|t| t.starts_with("── ")) {
+            (self.said, self.told) = (Vec::new(), 0);
+        }
+        let Some(q) = e["tazuna_q"].as_str() else { return };
+        let a = e["result"].as_str().filter(|a| e["subtype"] == "success" && e["is_error"] != true && !a.trim().is_empty());
+        match (a, e["tazuna_handoff"] == true) {
+            // the agent's answer in the chat's place: not in the chat's conversation yet
+            (Some(a), true) => self.said.push((q.to_string(), a.to_string())),
+            // the chat's answer, or its [[agent]]: its conversation holds the message, and the answers that went with it
+            (Some(a), false) => {
+                if !hands_off(a) {
+                    self.said.push((q.to_string(), a.to_string()));
+                }
+                self.told = self.said.len();
+            }
+            (None, _) => {}
+        }
+    }
+
+    /// A resumed chat's recorded events, replayed (`tazuna -c`, /resume, the window's list): the agent's answers its
+    /// conversation does not hold yet go with its next message, as they would have before.
+    #[inline(never)]
+    pub fn heard_before(&mut self, e: &Value) {
+        if self.profile == Profile::Chat {
+            self.heard(e);
+        }
+    }
+
+    /// The router's chat answers (main.rs): the question a chat handed over and the agent's answer, once that turn is over,
+    /// for a follow-up's context. A chat-profile session's next message carries them itself (`start_run`).
+    #[inline(never)]
+    pub fn handed(&mut self) -> Option<(String, String)> {
+        // the session's profile, not the lean one a turn handed over runs in (the main loops ask at the chat's [[agent]] too)
+        if self.handoff.as_ref().map_or(self.profile, |h| h.0) == Profile::Chat {
+            return None;
+        }
+        let last = self.said[self.told..].last().cloned();
+        self.told = self.said.len();
+        last
+    }
+
+    /// The permission mode a process starts in, and the tools claude may use without a question: the session's, or in a
+    /// handed-over turn ask mode with the web alone allowed (the own loop's `handoff` mode, engine.rs `asks`). A file read
+    /// asks there too: with reads and fetches both allowed, a fetched page could have the agent read ~/.ssh or .env and send
+    /// it out in a URL (review, 2026-11-21).
+    fn turn_mode(&self) -> (&str, &'static str) {
+        let lean = "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit";
+        match (self.handoff.is_some(), self.provider.is_some(), self.profile) {
+            (true, true, _) => ("handoff", ""),
+            (true, false, _) => ("default", "mcp__lean__fetch,WebSearch"),
+            // pre-allowed only in auto: the other modes ask about the lean tools too
+            (false, false, Profile::Lean) if self.permission_mode == "bypassPermissions" => (&self.permission_mode, lean),
+            (false, ..) => (&self.permission_mode, ""),
+        }
     }
 
     /// claude runs commands and skills itself here (the repo profiles; the lean ones turn its slash commands off, so tazuna
@@ -760,10 +937,10 @@ impl Live {
         v.len() == 3 && v[0] == 0.0 && v[2] == 0.0
     }
 
-    fn send_message(&mut self, text: &str, attach: bool) -> Result<(f64, Value)> {
-        // a paid model (the own loop) in a live session stops at the user's cap; benchmarks have the usage guard instead
+    /// A paid model (the own loop) in a live session stops at the user's cap; benchmarks have the usage guard instead.
+    fn within_cap(&self) -> Result<()> {
         if self.provider.is_some() && self.mode != "headless" && !self.free() && let Some(cap) = spend_cap() {
-            let log = crate::labels::dir().map(|d| std::fs::read_to_string(d.join("runs.jsonl")).unwrap_or_default()).unwrap_or_default();
+            let log = std::fs::read_to_string(&self.runs_log).unwrap_or_default();
             let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
             let spent = paid_since(&log, now.saturating_sub(86_400));
             if spent >= cap {
@@ -771,15 +948,26 @@ impl Live {
                     Settings or ~/.config/tazuna/spend-cap (\"off\" for none), or switch to a Claude model on your plan (/model)");
             }
         }
-        if self.verifying {
-            self.held.push_back((text.to_string(), attach));
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn send_message(&mut self, text: &str, attach: bool) -> Result<(f64, Value)> {
+        self.within_cap()?;
+        // held while the tests run, and while a turn a chat handed over runs: it goes to the session's own conversation after
+        // that turn (`hand_back`), not into the one thrown away; and behind anything held before it
+        // behind a hand-off that waits only for background commands, it starts now (send_held lets it pass)
+        let behind = self.held.iter().any(|h| h.2.is_none()) || (!self.held.is_empty() && !self.runs.is_empty());
+        if self.verifying || self.handoff.is_some() || behind {
+            self.held.push_back((text.to_string(), attach, None));
         } else {
-            self.start_run(text, attach)?;
+            self.start_run(text, attach, None)?;
         }
         Ok(self.record(json!({"type": "harness_user", "text": text})))
     }
 
-    fn start_run(&mut self, text: &str, attach: bool) -> Result<()> {
+    /// `sent`: what the model gets instead of `text` (a handed-over turn's message with the chat's exchanges before it).
+    fn start_run(&mut self, text: &str, attach: bool, sent: Option<&str>) -> Result<()> {
         let mut run = Run::new(text, self.elapsed_ms(), &self.cwd);
         // ponytail: taken while claude starts reading; an edit that lands first is counted as known, never as new. The
         // tree of the last run's start again (a question, not an edit): its baseline holds. One per message cost a
@@ -794,16 +982,21 @@ impl Live {
         });
         self.types_last = run.types_before.clone().map(|b| (run.git_before.clone(), b));
         // the map orients the first message of a session; the run log keeps the user's own words
-        let first = if self.repo_map && !self.mapped && self.session_id.is_none() {
+        let first = if sent.is_some() {
+            sent.map(String::from)
+        } else if self.repo_map && !self.mapped && self.session_id.is_none() {
             self.mapped = true;
             crate::repomap::build(&self.cwd, text).map(|m| format!("{m}\n---\n\n{text}"))
+        } else if self.profile == Profile::Chat && self.told < self.said.len() {
+            // a chat after the agent answered in its place: the questions and those answers first, as its own
+            Some(with_earlier(text, &self.said[self.told..]))
         } else {
             None
         };
         let sent = first.as_deref().unwrap_or(text);
         // a typed message is a point /rewind can go back to (claude keeps the id we give it; the own loop marks where it
-        // begins in its saved history)
-        let uuid = Some(new_uuid());
+        // begins in its saved history); a handed-over turn is in a conversation of its own, not one to go back in
+        let uuid = self.handoff.is_none().then(new_uuid);
         if let Some(u) = &uuid {
             self.checkpoints.push(Checkpoint { uuid: u.clone(), text: text.to_string(), before: self.last_assistant.clone() });
         }
@@ -958,6 +1151,7 @@ impl Live {
         }
         self.prev_profile = Some(self.profile);
         self.profile = p;
+        (self.said, self.told) = (Vec::new(), 0);
         self.respawn(self.model.clone(), self.effort.clone());
         let what = match p {
             Profile::Chat => "a plain chat for questions that are not about code: no tools, no repo context (/chat again goes back)",
@@ -1049,7 +1243,7 @@ impl Live {
     pub fn answer(&mut self, allow: bool, always: bool) -> Option<(f64, Value)> {
         let req = self.pending.pop_front()?;
         let tool = req["request"]["tool_name"].as_str().unwrap_or_default().to_string();
-        if allow && always && req["request"]["from_text"] != true {
+        if allow && always && req["request"]["from_text"] != true && req["request"]["handoff"] != true {
             self.allowed.insert(always_key(&req));
         }
         // an approved plan leaves plan mode: edits go ahead, commands still ask
@@ -1084,7 +1278,8 @@ impl Live {
         let shown = mode;
         let mode = if self.reviewer { "acceptEdits" } else { mode };
         self.permission_mode = mode.to_string();
-        if let Some(stdin) = self.stdin.as_mut() {
+        // a handed-over turn keeps its own (`turn_mode`): the session's applies to the process `hand_back` starts anew
+        if self.handoff.is_none() && let Some(stdin) = self.stdin.as_mut() {
             self.requests_sent += 1;
             let req = json!({"type": "control_request", "request_id": format!("mode-{}", self.requests_sent), "request": {"subtype": "set_permission_mode", "mode": mode}});
             let _ = writeln!(stdin, "{req}").and_then(|_| stdin.flush());
@@ -1094,8 +1289,12 @@ impl Live {
 
     /// The reviewer's answer to the oldest question, if it is still request `id`: allowed with `input` (the command in its
     /// sandbox), or refused with `why`. None: the question was answered meanwhile.
-    pub fn answer_reviewed(&mut self, id: &str, allow: bool, input: Value, why: &str) -> Option<(f64, Value)> {
-        if self.pending.front()?["request_id"].as_str() != Some(id) {
+    #[inline(never)]
+    pub fn answer_reviewed(&mut self, id: &str, command: &str, allow: bool, input: Value, why: &str) -> Option<(f64, Value)> {
+        // the own loop's request ids start again at perm-1 in every engine process: a verdict on an earlier process's
+        // question must not answer a later one with the same id (a hand-off's, above all: review mode never answers there)
+        let front = self.pending.front()?;
+        if self.handing_off() || front["request_id"].as_str() != Some(id) || front["request"]["input"]["command"].as_str().unwrap_or_default() != command {
             return None;
         }
         let req = self.pending.pop_front()?;
@@ -1228,6 +1427,7 @@ impl Live {
     }
 
     /// Last resort: kill the process (the next message resumes the session).
+    #[inline(never)]
     fn kill(&mut self, why: &str) -> (f64, Value) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
@@ -1236,6 +1436,10 @@ impl Live {
         self.stdin = None;
         self.generation += 1;
         self.interrupting = None;
+        // its background commands went with it, and their end will never be reported (the old generation's messages are
+        // dropped): a held hand-off waiting for them would wait forever
+        self.tasks.clear();
+        self.tasks_done = None;
         self.end_runs();
         self.record(json!({"type": "harness_notice", "text": format!("{why} · send a message to continue"), "error": false}))
     }
@@ -1277,14 +1481,25 @@ impl Live {
                         // a tool call the own loop recovered from the model's text is asked every time: no "always"
                         // covers it (a page could hold such text, security review 2026-11-12)
                         let from_text = e["request"]["from_text"] == true;
-                        if !from_text && self.allowed.contains(&always_key(&e)) {
+                        // nor in a turn a chat handed over, where none is given either (`answer`): the session's "always"
+                        // answers were given to its own work, not to what a fetched page may ask for
+                        if self.handoff.is_some() {
+                            e["request"]["handoff"] = json!(true);
+                        }
+                        if !from_text && self.handoff.is_none() && self.allowed.contains(&always_key(&e)) {
                             self.respond(&e, true, None);
                         } else if self.mode == "headless" {
                             // nobody is there to answer: a question (AskUserQuestion, or any tool in ask mode) would wait forever
                             self.respond(&e, false, None);
                         } else {
                             let tool = e["request"]["tool_name"].as_str().unwrap_or_default().to_string();
-                            let scope = if from_text { "once only: the model wrote this call as text" } else { always_scope(&tool) };
+                            let scope = if from_text {
+                                "once only: the model wrote this call as text"
+                            } else if self.handoff.is_some() {
+                                HANDOFF_ONCE
+                            } else {
+                                always_scope(&tool)
+                            };
                             out.push(self.record(json!({"type": "harness_permission", "tool": tool, "input": e["request"]["input"], "scope": scope})));
                             self.pending.push_back(e);
                         }
@@ -1402,6 +1617,13 @@ impl Live {
                             run.add_cost(if total >= self.proc_cost { total - self.proc_cost } else { total });
                         }
                         self.proc_cost = total;
+                        // a chat's answer or the agent's in its place, with its question (`heard`)
+                        if let Some(run) = self.runs.front().filter(|_| self.profile == Profile::Chat || self.handoff.is_some()) {
+                            e["tazuna_q"] = json!(run.prompt);
+                            if self.handoff.is_some() {
+                                e["tazuna_handoff"] = json!(true);
+                            }
+                        }
                         self.last_result = Some(e.clone());
                         // a background task that finished during this turn wakes claude after its result: settle from here
                         if self.tasks_done.is_some() {
@@ -1442,14 +1664,42 @@ impl Live {
             let who = if self.provider.is_some() { "the model" } else { "claude" };
             out.push(self.kill(&format!("stopped ({who} did not respond, process restarted)")));
         }
+        // a hand-off that waited for the agent's background commands to end (`send_held`)
+        if self.runs.is_empty() && !self.verifying && !self.held.is_empty() {
+            out.extend(self.send_held());
+        }
         out
     }
 
     /// claude says the front run is done: verify it, or end it.
     fn after_result(&mut self) -> Vec<(f64, Value)> {
         let success = self.last_result.as_ref().is_some_and(|r| r["subtype"] == "success" && r["is_error"] != true);
-        // cascade: the cheap model on the own loop stopped with an error or changed nothing, so there is nothing to test
-        if let (Some(_), Some((m, e)), false) = (&self.provider, self.escalate.clone(), self.escalated) {
+        // the chat replied [[agent]]: its message goes to the agent (main.rs does the same for the router's chat answers)
+        let reply = self.last_result.as_ref().and_then(|r| r["result"].as_str()).unwrap_or_default();
+        if self.profile == Profile::Chat && self.mode != "headless" && success && hands_off(reply) {
+            // its question, read before `finish_front` starts the next message: the agent takes it with the exchanges the
+            // chat saw, before the messages sent after it (and after any hand-off waiting before it). The chat's conversation
+            // goes on as it is, the marker in it; its next message carries the agent's answer (`start_run`)
+            let q = self.runs.front().map_or_else(|| self.task.clone(), |r| r.prompt.clone());
+            let sent = with_earlier(&q, self.earlier());
+            let mut out = vec![];
+            match self.within_cap() {
+                Ok(()) => {
+                    let at = self.held.iter().take_while(|h| h.2.is_some()).count();
+                    self.held.insert(at, (q, false, Some((sent, HANDOFF_NEEDS))));
+                }
+                Err(e) => out.push(self.record(json!({"type": "harness_info", "text": format!("{e:#}"), "error": true, "ended": true}))),
+            }
+            out.extend(self.finish_front());
+            return out;
+        }
+        // a turn a chat handed over is a lookup, not a coding task: no review, tests or stronger model after it
+        if self.handoff.is_some() {
+            return self.finish_front();
+        }
+        // cascade: the cheap model on the own loop stopped with an error or changed nothing, so there is nothing to test. Not
+        // for a chat's answer: a question changes nothing (each went on to Opus, 2026-11-21)
+        if let (Some(_), Some((m, e)), false, false) = (&self.provider, self.escalate.clone(), self.escalated, self.profile == Profile::Chat) {
             let gave_up = self.runs.front().is_some_and(|r| !r.is_interrupted() && (!success || r.changed_files(&self.cwd).is_empty()));
             if gave_up {
                 self.escalated = true;
@@ -1621,16 +1871,45 @@ impl Live {
             let line = run.finish(self.last_result.as_ref(), self.elapsed_ms(), &self.meta(), &self.cwd);
             self.log(line);
         }
-        let mut out = Vec::new();
+        self.send_held()
+    }
+
+    /// Nothing runs: the session's own conversation again after a turn a chat handed over, then what was held meanwhile, in
+    /// order: a message, or a hand-off (`hand_off`).
+    #[inline(never)]
+    fn send_held(&mut self) -> Vec<(f64, Value)> {
+        let mut out: Vec<(f64, Value)> = (self.runs.is_empty() && !self.verifying).then(|| self.hand_back()).flatten().into_iter().collect();
         while self.runs.is_empty() && !self.verifying {
-            let Some((text, attach)) = self.held.pop_front() else { break };
-            match self.start_run(&text, attach) {
+            // a hand-off replaces the agent's process: not while its background commands run or may still wake it (`poll`
+            // comes back for it)
+            let busy = !self.tasks.is_empty() || self.tasks_done.is_some_and(|t| t.elapsed().as_secs() < 5);
+            // a hand-off waits for them; a message behind it does not (with a dev server running in the background, every
+            // later message waited until tazuna was restarted)
+            let next = if busy { self.held.iter().position(|h| h.2.is_none()) } else { Some(0) };
+            let Some((text, attach, agent)) = next.and_then(|i| self.held.remove(i)) else { break };
+            let started = match agent {
+                // the chat's question under its line; its process gives way to the agent's
+                Some((sent, line)) => self.start_handoff(&text, &sent).map(|()| json!({"type": "harness_handoff", "text": line, "q": text})),
                 // its message was shown when it was sent; its work begins now
-                Ok(()) => out.push(self.record(json!({"type": "harness_held_start"}))),
-                Err(e) => out.push(self.record(json!({"type": "harness_notice", "text": format!("{e:#}"), "error": true}))),
+                None => self.start_run(&text, attach, None).map(|()| json!({"type": "harness_held_start"})),
+            };
+            match started {
+                Ok(e) => out.push(self.record(e)),
+                Err(e) => {
+                    out.extend(self.hand_back());
+                    out.push(self.record(json!({"type": "harness_notice", "text": format!("{e:#}"), "error": true})));
+                }
             }
         }
         out
+    }
+
+    /// A hand-off's turn begins (`hand_off`): the lean agent in a process and conversation of its own.
+    fn start_handoff(&mut self, text: &str, sent: &str) -> Result<()> {
+        self.handoff = Some((self.profile, self.session_id.take(), self.last_assistant.take()));
+        self.profile = Profile::Lean;
+        self.respawn(self.model.clone(), self.effort.clone());
+        self.start_run(text, false, Some(sent))
     }
 
     /// The process is gone: runs without a result end here (stopped if the user asked, otherwise crashed).
@@ -1648,6 +1927,8 @@ impl Live {
         }
         self.proc_cost = 0.0;
         self.verifying = false;
+        let out = self.send_held();
+        self.outbox.extend(out);
     }
 
     fn meta(&self) -> Value {
@@ -1658,7 +1939,7 @@ impl Live {
             "profile": self.profile.name(), "setting_sources": self.setting_sources(),
             "project_instructions": {"bytes": self.instructions_used.0, "files": self.instructions_used.1},
             "lane": self.lane.0, "lane_reason": self.lane.1, "escalated": self.escalated,
-            "claude_version": self.claude_version, "cwd": self.cwd, "session_id": self.session_id, "recording": self.rec_path,
+            "claude_version": self.claude_version, "cwd": self.cwd, "session_id": self.session_id(), "recording": self.rec_path,
             "host": host(),
             // which API the own loop ran on, or who billed claude (none on the plan): the usage page names it. `plan`: the
             // run log called every claude run plan, so the start page counted an API key's runs as nothing paid
@@ -1690,6 +1971,7 @@ impl Live {
     }
 
     fn record(&mut self, e: Value) -> (f64, Value) {
+        self.heard(&e);
         let t = self.elapsed_ms();
         let _ = writeln!(self.rec, "{}", json!({"t": t as u64, "e": e}));
         (t, e)
@@ -1736,7 +2018,7 @@ impl Live {
             // with --search-tools the prompt must say the same as the tools (it said "grep in bash" through the whole
             // 2026-11-04 test of those tools)
             if self.profile == Profile::Chat {
-                let prompt = format!("{CHAT_PROMPT} Today is {}.", self.today());
+                let prompt = chat_prompt(&self.today());
                 let mut cmd = Command::new(std::env::current_exe().context("locating the tazuna binary")?);
                 cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--permission-mode", &self.permission_mode])
                     .env("TAZUNA_SYSTEM_PROMPT", &prompt)
@@ -1793,18 +2075,21 @@ impl Live {
                 prompt.push_str("\n- ");
                 prompt.push_str(PRECISE_ANSWER_RULE);
             }
-            if self.project_instructions {
+            // neither in a handed-over turn, whose fetch goes out without a question (nothing of the project goes with it)
+            if self.project_instructions && self.handoff.is_none() {
                 let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                 prompt.push_str(&text);
                 self.instructions_used = (bytes, sources);
             }
             // the skills claude would have (behave.rs): listed, for the model to read when a task fits
-            prompt.push_str(&crate::behave::skills_prompt(&crate::behave::skills(&self.cwd, self.behave_scope())));
+            if self.handoff.is_none() {
+                prompt.push_str(&crate::behave::skills_prompt(&crate::behave::skills(&self.cwd, self.behave_scope())));
+            }
             if std::env::var_os("TAZUNA_NO_IDENTITY").is_none() {
                 prompt = identity(&self.model, &url) + &prompt;
             }
             let mut cmd = Command::new(std::env::current_exe().context("locating the tazuna binary")?);
-            cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--permission-mode", &self.permission_mode])
+            cmd.args(["engine", "--url", &url, "--key-env", &key_env, "--model", &self.model, "--effort", &self.effort, "--permission-mode", self.turn_mode().0])
                 .env("TAZUNA_SYSTEM_PROMPT", &prompt)
                 .env("LEAN_BASH_CAP", self.bash_cap.to_string());
             if let Some(p) = &self.price {
@@ -1866,8 +2151,12 @@ impl Live {
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose", "--include-partial-messages"])
             .args(["--model", &self.model, "--effort", &self.effort])
             // claude asks tazuna (stdio) instead of a terminal it does not have; "auto" never asks
-            .args(["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions", "--permission-mode", &self.permission_mode])
+            .args(["--permission-prompt-tool", "stdio", "--allow-dangerously-skip-permissions", "--permission-mode", self.turn_mode().0])
             .args(["--setting-sources", self.setting_sources()]);
+        let allowed = self.turn_mode().1;
+        if !allowed.is_empty() {
+            cmd.args(["--allowedTools", allowed]);
+        }
         // the user's commands and skills made with /create (behave.rs), as a plugin where claude runs them itself
         if self.claude_commands() && let Some(d) = crate::behave::plugin_dir() {
             cmd.arg("--plugin-dir").arg(d);
@@ -1965,20 +2254,28 @@ impl Live {
                 // the general set's "Opus alone": a one-line prompt, no tools, no settings, MCP or skills
                 cmd.args(["--strict-mcp-config", "--disable-slash-commands", "--tools", ""])
                     .arg("--system-prompt")
-                    .arg(format!("{CHAT_PROMPT} Today is {}.", self.today()));
+                    .arg(chat_prompt(&self.today()));
             }
             Profile::Lean => {
                 let mut prompt = self.mid_prompt();
-                if self.project_instructions {
+                // neither in a handed-over turn, whose fetch goes out without a question (nothing of the project goes with it)
+                if self.project_instructions && self.handoff.is_none() {
                     let (text, bytes, sources) = project_instructions(&self.cwd, &["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"]);
                     prompt.push_str(&text);
                     self.instructions_used = (bytes, sources);
                 }
                 // its slash commands are off: the user's skills listed here, their commands expanded by tazuna (behave.rs)
-                prompt.push_str(&crate::behave::skills_prompt(&crate::behave::skills(&self.cwd, self.behave_scope())));
+                if self.handoff.is_none() {
+                    prompt.push_str(&crate::behave::skills_prompt(&crate::behave::skills(&self.cwd, self.behave_scope())));
+                }
                 // the lean tools are this binary's `mcp` mode
                 let exe = std::env::current_exe().context("locating the tazuna binary")?;
-                let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": exe, "args": ["mcp"], "env": {"LEAN_BASH_CAP": self.bash_cap.to_string()}}}}).to_string();
+                // a handed-over turn may need the web (a chat's question about live data): the lean tools' fetch
+                let mut env = json!({"LEAN_BASH_CAP": self.bash_cap.to_string()});
+                if self.handoff.is_some() {
+                    env["LEAN_FETCH"] = json!("1");
+                }
+                let mcp = json!({"mcpServers": {"lean": {"type": "stdio", "command": exe, "args": ["mcp"], "env": env}}}).to_string();
                 // cc-mid: lean prompt and tools, no skills or other MCP servers
                 if !self.connectors {
                     cmd.arg("--strict-mcp-config");
@@ -1986,9 +2283,13 @@ impl Live {
                 cmd.arg("--disable-slash-commands")
                     .arg("--system-prompt-file")
                     .arg(prompt_file(&prompt)?)
-                    .args(["--tools", if self.connectors { "Grep,Glob,ToolSearch" } else { "Grep,Glob" }, "--mcp-config", &mcp])
-                    // pre-allowed only in auto: the other modes ask about the lean tools too
-                    .args(if self.permission_mode == "bypassPermissions" { &["--allowedTools", "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit"][..] } else { &[] });
+                    .args(["--tools", match (self.handoff.is_some(), self.connectors) {
+                        // a handed-over turn: claude's web search, and no Grep or Glob, which read the folder without a question
+                        (true, false) => "WebSearch",
+                        (true, true) => "WebSearch,ToolSearch",
+                        (false, false) => "Grep,Glob",
+                        (false, true) => "Grep,Glob,ToolSearch",
+                    }, "--mcp-config", &mcp]);
             }
         }
         // `/mcp on`: the user's own servers too (tazuna's list, for every model); remote ones through `tazuna mcp-proxy`.
@@ -2493,5 +2794,513 @@ mod tests {
             std::fs::remove_dir_all(&outside).ok();
         }
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn a_chat_reply_hands_off_only_when_it_starts_with_the_marker() {
+        assert!(hands_off("[[agent]]") && hands_off("  \n[[agent]]\n ") && hands_off("[[agent]] It needs today's forecast."));
+        assert!(!hands_off("Berlin is mild in May; for today's weather the [[agent]] can look."), "mentioned later: an answer");
+        assert!(!hands_off("") && !hands_off("  ") && !hands_off("[[agen"));
+    }
+
+    #[test]
+    fn the_hand_off_line_is_in_the_chat_prompt_unless_switched_off() {
+        let with = |v: Option<&str>| {
+            // SAFETY: only this test reads or writes TAZUNA_CHAT_HANDOFF
+            unsafe {
+                match v {
+                    Some(v) => std::env::set_var("TAZUNA_CHAT_HANDOFF", v),
+                    None => std::env::remove_var("TAZUNA_CHAT_HANDOFF"),
+                }
+            }
+            chat_prompt("2026-11-21")
+        };
+        for v in [None, Some("1"), Some("2"), Some("")] {
+            let p = with(v);
+            assert!(p.starts_with("You are a helpful assistant. Today is 2026-11-21. One exception") && p.contains("your whole reply is [[agent]]"), "{v:?}: {p}");
+        }
+        assert_eq!(with(Some("0")), "You are a helpful assistant. Today is 2026-11-21.", "benchmarks of the plain model");
+        with(None);
+    }
+
+    #[test]
+    fn a_handed_over_turn_allows_only_the_web() {
+        let mut live = Live::new("", "").unwrap();
+        live.profile = Profile::Lean;
+        live.permission_mode = "bypassPermissions".into();
+        assert_eq!(live.turn_mode(), ("bypassPermissions", "mcp__lean__bash,mcp__lean__read,mcp__lean__write,mcp__lean__edit"));
+        live.handoff = Some((Profile::Chat, None, None));
+        // claude, whatever the session's mode: ask mode, the lean fetch and claude's web search allowed (a read asks)
+        assert_eq!(live.turn_mode(), ("default", "mcp__lean__fetch,WebSearch"));
+        live.permission_mode = "acceptEdits".into();
+        assert_eq!(live.turn_mode(), ("default", "mcp__lean__fetch,WebSearch"));
+        // the own loop: its handoff mode (engine.rs asks)
+        live.provider = Some(("https://api.example".into(), "KEY".into()));
+        assert_eq!(live.turn_mode(), ("handoff", ""));
+        live.handoff = None;
+        assert_eq!(live.turn_mode(), ("acceptEdits", ""), "every other turn: the session's own mode");
+        std::fs::remove_file(&live.rec_path).ok();
+    }
+
+    /// claude's start for a handed-over turn from each profile: the lean agent, alone, in ask mode with only the web allowed;
+    /// claude's own Read, Grep and Glob (which read the folder without a question) left out; no subagents, boss hook or
+    /// plugins; the web at hand.
+    #[cfg(unix)]
+    #[test]
+    fn a_handed_over_turn_on_claude_is_the_lean_agent_with_only_the_web_allowed() {
+        for (profile, connectors) in [(Profile::Chat, false), (Profile::Lean, true), (Profile::Repo, false), (Profile::RepoLean, false)] {
+            let (mut live, dir) = stub::live(&format!("handoff-tools-{}", profile.name()));
+            (live.profile, live.permission_mode, live.connectors) = (profile, "bypassPermissions".into(), connectors);
+            (live.boss, live.explorer) = (Some("haiku".into()), Some("sonnet".into()));
+            live.hand_off("weather in Berlin now?", "weather in Berlin now?", HANDOFF_NEEDS).unwrap();
+            let a = stub::started(&dir);
+            let f = |name: &str| stub::flag(&a, name);
+            assert_eq!((f("--permission-mode").as_deref(), f("--allowedTools").as_deref()), (Some("default"), Some("mcp__lean__fetch,WebSearch")), "{profile:?}");
+            assert_eq!(f("--tools").as_deref(), Some(if connectors { "WebSearch,ToolSearch" } else { "WebSearch" }), "{profile:?}: no Read, Grep or Glob");
+            assert!(f("--mcp-config").is_some_and(|c| c.contains("LEAN_FETCH")) && f("--resume").is_none(), "{profile:?}: the lean tools with fetch, a fresh conversation: {a:?}");
+            assert!(!a.iter().any(|x| x == "--agents" || x == "--plugin-dir" || x.contains("boss-hook") || x == "--append-system-prompt"), "{profile:?}: one plain agent: {a:?}");
+            assert!(stub::sent(&dir, "weather in Berlin now?"));
+            drop(live);
+            std::fs::remove_dir_all(&dir).ok();
+        }
+    }
+
+    /// The session's own "always" answers and its repo's settings (their allow rules and hooks) do not reach a handed-over
+    /// turn: what a fetched page asks for is asked.
+    #[cfg(unix)]
+    #[test]
+    fn a_handed_over_turn_ignores_always_answers_and_the_repos_settings() {
+        let (mut live, dir) = stub::live("handoff-always");
+        (live.profile, live.permission_mode, live.user_settings) = (Profile::Repo, "default".into(), true);
+        live.allowed.insert("mcp__lean__read".into());
+        let ask = |live: &Live, id: &str| stub::feed(live, json!({"type": "control_request", "request_id": id,
+            "request": {"subtype": "can_use_tool", "tool_name": "mcp__lean__read", "input": {"path": "/Users/x/.ssh/id_ed25519"}}}));
+        live.hand_off("weather in Berlin now?", "weather in Berlin now?", HANDOFF_NEEDS).unwrap();
+        assert_eq!(stub::flag(&stub::started(&dir), "--setting-sources").as_deref(), Some(""), "no allow rules or hooks from any settings file");
+        ask(&live, "perm-1");
+        let out = live.poll();
+        assert!(out.iter().any(|(_, e)| e["type"] == "harness_permission") && live.pending.len() == 1, "asked, though always allowed: {out:?}");
+        live.answer(false, false);
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": "12 °C", "total_cost_usd": 0.0}));
+        live.poll();
+        // the session's own work again: its answers hold
+        assert!(!live.handing_off());
+        live.send_typed("go on").unwrap();
+        assert_eq!(stub::flag(&stub::started(&dir), "--setting-sources").as_deref(), Some("user,project,local"));
+        ask(&live, "perm-2");
+        assert!(!live.poll().iter().any(|(_, e)| e["type"] == "harness_permission") && live.pending.is_empty());
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A chat's events on the stand-in: `r` as the result of the run in progress.
+    #[cfg(unix)]
+    fn result(live: &Live, r: &str) {
+        stub::feed(live, json!({"type": "result", "subtype": "success", "is_error": false, "result": r, "total_cost_usd": 0.0}));
+    }
+
+    /// After a hand-off the chat's own conversation goes on as it was, the marker in it (no fork, no rewind: one
+    /// conversation), and its next message carries the question and the agent's answer, as its own earlier answer.
+    #[cfg(unix)]
+    #[test]
+    fn after_a_hand_off_the_chat_goes_on_in_its_own_conversation_with_the_agents_answer() {
+        let (mut live, dir) = stub::live("handoff-chat");
+        (live.profile, live.permission_mode) = (Profile::Chat, "bypassPermissions".into());
+        live.resume("chat-1");
+        live.last_assistant = Some("reply-0".into());
+        live.send_typed("weather in Berlin now?").unwrap();
+        assert_eq!(stub::flag(&stub::started(&dir), "--resume").as_deref(), Some("chat-1"));
+        result(&live, "[[agent]]");
+        assert_eq!(live.poll().last().map(|(_, e)| e["text"].clone()), Some(json!(HANDOFF_NEEDS)));
+        assert_eq!(live.handed(), None, "a chat's: the main loops ask on every result");
+        stub::started(&dir);
+        result(&live, "12 °C and rain");
+        live.poll();
+        assert!(live.profile == Profile::Chat && !live.handing_off());
+        std::fs::remove_file(dir.join("stdin")).ok();
+        live.send_typed("and in Fahrenheit?").unwrap();
+        let a = stub::started(&dir);
+        assert_eq!(stub::flag(&a, "--resume").as_deref(), Some("chat-1"));
+        assert!(!a.iter().any(|x| x == "--fork-session" || x == "--resume-session-at"), "the same conversation: {a:?}");
+        assert!(stub::sent(&dir, "Earlier in this chat you were asked: weather in Berlin now?\nYou answered: 12 °C and rain\n\nThe new message: and in Fahrenheit?"));
+        // both messages are points /rewind can go back to
+        assert_eq!(live.checkpoints.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), ["weather in Berlin now?", "and in Fahrenheit?"]);
+        // the chat's answer to it: its conversation holds the agent's answer now
+        result(&live, "54 °F");
+        live.poll();
+        assert_eq!(live.told, live.said.len());
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A follow-up the chat hands over ("and tomorrow?") reaches the agent with the chat's exchanges before it, so the agent
+    /// knows what it is about (it got the bare message, review 2026-11-22).
+    #[cfg(unix)]
+    #[test]
+    fn a_follow_up_hand_off_gives_the_agent_the_chats_earlier_exchanges() {
+        let (mut live, dir) = stub::live("handoff-follow-up");
+        (live.profile, live.permission_mode) = (Profile::Chat, "bypassPermissions".into());
+        live.resume("chat-1");
+        live.send_typed("I fly to Berlin on Friday").unwrap();
+        stub::started(&dir);
+        result(&live, "Have a good trip!");
+        live.poll();
+        live.send_typed("weather there now?").unwrap();
+        result(&live, "[[agent]]");
+        live.poll();
+        stub::started(&dir);
+        assert!(stub::sent(&dir, "Earlier in this chat you were asked: I fly to Berlin on Friday\nYou answered: Have a good trip!\n\nThe new message: weather there now?"));
+        result(&live, "12 °C and rain");
+        live.poll();
+        live.send_typed("and tomorrow?").unwrap();
+        stub::started(&dir);
+        result(&live, "[[agent]]");
+        live.poll();
+        stub::started(&dir);
+        std::thread::sleep(Duration::from_millis(100));
+        let sent = std::fs::read_to_string(dir.join("stdin")).unwrap();
+        let agent: Value = serde_json::from_str(sent.lines().last().unwrap()).unwrap();
+        assert_eq!(agent["message"]["content"], "Earlier in this chat you were asked: I fly to Berlin on Friday\nYou answered: Have a good trip!\n\n\
+            Earlier in this chat you were asked: weather there now?\nYou answered: 12 °C and rain\n\nThe new message: and tomorrow?");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A hand-off that cannot start now waits its turn and runs in order, never refused: the chat hands a message over while
+    /// another waits behind it (the waiting one started first, and the hand-off failed as "still at work"), and /agent while
+    /// the chat is at work.
+    #[cfg(unix)]
+    #[test]
+    fn a_hand_off_that_cannot_start_now_waits_its_turn() {
+        let (mut live, dir) = stub::live("handoff-queue");
+        (live.profile, live.permission_mode) = (Profile::Chat, "bypassPermissions".into());
+        live.resume("chat-1");
+        live.send_agent("weather in Berlin now?").unwrap();
+        stub::started(&dir);
+        live.send_typed("and in Paris?").unwrap();
+        live.send_typed("tell me a joke").unwrap();
+        result(&live, "12 °C and rain");
+        live.poll();
+        stub::started(&dir);
+        // the chat hands "and in Paris?" over while "tell me a joke" waits: the hand-off goes first
+        result(&live, "[[agent]]");
+        let out = live.poll();
+        assert!(!out.iter().any(|(_, e)| e["error"] == true), "{out:?}");
+        assert!(out.iter().any(|(_, e)| e["type"] == "harness_handoff" && e["q"] == "and in Paris?") && live.handing_off() && live.held.len() == 1, "{out:?}");
+        assert_eq!(stub::flag(&stub::started(&dir), "--tools").as_deref(), Some("WebSearch"));
+        assert!(stub::sent(&dir, "The new message: and in Paris?"));
+        result(&live, "9 °C");
+        live.poll();
+        // then the joke, in the chat's own conversation, with the answer it does not hold yet
+        assert_eq!(stub::flag(&stub::started(&dir), "--resume").as_deref(), Some("chat-1"));
+        assert!(stub::sent(&dir, "You answered: 9 °C\n\nThe new message: tell me a joke"));
+        // /agent while the chat is at work: shown at once, taken once it is done
+        let (_, e) = live.send_agent("how full is my disk?").unwrap();
+        assert!(e["type"] == "harness_user" && !live.handing_off());
+        result(&live, "A joke.");
+        assert!(live.poll().iter().any(|(_, e)| e["type"] == "harness_handoff" && e["q"] == "how full is my disk?") && live.handing_off());
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A hand-off waiting for background commands (a dev server) lets the messages behind it run, and a stop forgets those
+    /// commands: with both, every later message waited until tazuna was restarted (review of 0.1.194).
+    #[cfg(unix)]
+    #[test]
+    fn a_hand_off_waiting_for_background_commands_does_not_hold_the_messages_behind_it() {
+        let (mut live, dir) = stub::live("handoff-busy");
+        (live.profile, live.permission_mode) = (Profile::Chat, "bypassPermissions".into());
+        live.resume("chat-1");
+        live.send_typed("start the dev server").unwrap();
+        stub::started(&dir);
+        // while it runs: a hand-off is queued, then a message behind it
+        live.held.push_back(("weather in Berlin now?".into(), false, Some(("weather in Berlin now?".into(), "answered by the agent".into()))));
+        live.send_typed("is it up?").unwrap();
+        assert_eq!(live.held.len(), 2);
+        // the turn ends with the dev server still running in the background: the message goes, the hand-off waits
+        live.tasks.insert("dev".into(), None);
+        result(&live, "Started.");
+        live.poll();
+        assert!(live.held.len() == 1 && live.held[0].2.is_some() && !live.runs.is_empty() && !live.handing_off(), "the message runs, the hand-off waits");
+        // with only the waiting hand-off held and nothing running, a new message starts at once
+        result(&live, "It is up.");
+        live.poll();
+        let (_, e) = live.send_typed("and the logs?").unwrap();
+        assert!(e["type"] == "harness_user" && !live.runs.is_empty() && live.held.len() == 1);
+        result(&live, "Clean.");
+        live.poll();
+        live.kill("stopped");
+        assert!(live.tasks.is_empty(), "a stop forgets the background commands");
+        // and the waiting hand-off starts as the stop ends the run
+        assert!(live.handing_off() && live.held.is_empty() && live.poll().iter().any(|(_, e)| e["type"] == "harness_handoff"));
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A mode change while a hand-off runs (shift-tab, the window's menu, a side chat's plan mode) is kept for the session:
+    /// the hand-off's process never gets it, so it keeps asking; the session's next process starts in it.
+    #[cfg(unix)]
+    #[test]
+    fn a_mode_change_during_a_hand_off_waits_for_the_session() {
+        let (mut live, dir) = stub::live("handoff-mode");
+        (live.profile, live.permission_mode) = (Profile::Chat, "default".into());
+        live.resume("chat-1");
+        live.send_agent("how full is my disk?").unwrap();
+        stub::started(&dir);
+        live.set_mode("bypassPermissions");
+        assert!(!stub::sent(&dir, "set_permission_mode"), "the hand-off's process keeps asking");
+        result(&live, "40% used");
+        live.poll();
+        live.send_typed("thanks").unwrap();
+        assert_eq!(stub::flag(&stub::started(&dir), "--permission-mode").as_deref(), Some("bypassPermissions"), "the session's own process: the new mode");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// No "always" in a handed-over turn: not offered (the question says once only), and an "always" answer allows it once.
+    #[cfg(unix)]
+    #[test]
+    fn no_always_during_a_hand_off() {
+        let (mut live, dir) = stub::live("handoff-once");
+        live.permission_mode = "default".into();
+        let ask = |live: &Live, id: &str| stub::feed(live, json!({"type": "control_request", "request_id": id,
+            "request": {"subtype": "can_use_tool", "tool_name": "mcp__lean__bash", "input": {"command": "df -h"}}}));
+        live.hand_off("how full is my disk?", "how full is my disk?", HANDOFF_SENT).unwrap();
+        stub::started(&dir);
+        ask(&live, "perm-1");
+        assert!(live.poll().iter().any(|(_, e)| e["type"] == "harness_permission" && e["scope"] == HANDOFF_ONCE));
+        assert_eq!(live.pending.front().map(|r| r["request"]["handoff"].clone()), Some(json!(true)));
+        live.answer(true, true);
+        assert!(live.allowed.is_empty(), "nothing kept for later turns");
+        result(&live, "40% used");
+        live.poll();
+        live.send_typed("and now?").unwrap();
+        stub::started(&dir);
+        ask(&live, "perm-2");
+        assert!(live.poll().iter().any(|(_, e)| e["type"] == "harness_permission" && e["scope"] == "this command"), "asked again");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A handed-over turn's prompt holds no project instructions and no skills list: its fetch goes out without a question.
+    #[cfg(unix)]
+    #[test]
+    fn a_handed_over_turn_gets_no_project_instructions_or_skills() {
+        let (mut live, dir) = stub::live("handoff-prompt");
+        std::fs::write(dir.join("CLAUDE.md"), "PROJECT-ONLY rules").unwrap();
+        (live.profile, live.user_settings) = (Profile::Lean, true);
+        let prompt = |a: &[String]| std::fs::read_to_string(stub::flag(a, "--system-prompt-file").unwrap()).unwrap();
+        live.send_typed("hi").unwrap();
+        assert!(prompt(&stub::started(&dir)).contains("PROJECT-ONLY"), "the session's own turns have them");
+        result(&live, "hello");
+        live.poll();
+        live.hand_off("weather in Berlin now?", "weather in Berlin now?", HANDOFF_NEEDS).unwrap();
+        let p = prompt(&stub::started(&dir));
+        assert!(!p.contains("PROJECT-ONLY") && !p.contains("Skills: instructions"), "{p}");
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// The run log (what `tazuna -c` and the conversation lists read) and the window know the session's own conversation
+    /// while a handed-over turn runs, never that turn's thrown-away one.
+    #[cfg(unix)]
+    #[test]
+    fn a_handed_over_turn_is_logged_under_the_sessions_own_conversation() {
+        let (mut live, dir) = stub::live("handoff-log");
+        live.profile = Profile::Repo;
+        live.resume("proj-1");
+        live.hand_off("weather in Berlin now?", "weather in Berlin now?", HANDOFF_NEEDS).unwrap();
+        stub::started(&dir);
+        stub::feed(&live, json!({"type": "system", "subtype": "init", "session_id": "handoff-9"}));
+        live.poll();
+        assert_eq!(live.session_id(), Some("proj-1"));
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": "12 °C", "total_cost_usd": 0.0}));
+        live.poll();
+        let log = std::fs::read_to_string(dir.join("runs.jsonl")).unwrap();
+        let last: Value = serde_json::from_str(log.lines().last().unwrap()).unwrap();
+        assert_eq!((last["prompt"].as_str(), last["meta"]["session_id"].as_str()), (Some("weather in Berlin now?"), Some("proj-1")));
+        assert_eq!(live.session_id(), Some("proj-1"));
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A message sent while a handed-over turn runs waits, and goes to the session's own conversation after it.
+    #[cfg(unix)]
+    #[test]
+    fn a_message_sent_during_a_hand_off_waits_for_the_sessions_conversation() {
+        let (mut live, dir) = stub::live("handoff-held");
+        (live.profile, live.permission_mode) = (Profile::Chat, "bypassPermissions".into());
+        live.resume("chat-1");
+        live.send_agent("weather in Berlin now?").unwrap();
+        stub::started(&dir);
+        assert!(stub::sent(&dir, "weather in Berlin now?"));
+        let (_, e) = live.send_typed("and a joke about rain?").unwrap();
+        assert!(e["type"] == "harness_user" && !live.idle());
+        std::thread::sleep(Duration::from_millis(200));
+        assert!(!stub::sent(&dir, "joke"), "not into the turn's conversation");
+        std::fs::remove_file(dir.join("stdin")).ok();
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": "12 °C and rain", "total_cost_usd": 0.0}));
+        let kinds: Vec<_> = live.poll().iter().map(|(_, e)| e["type"].as_str().unwrap_or_default().to_string()).collect();
+        assert_eq!(kinds, ["harness_handoff", "result", "harness_process_end", "harness_held_start"]);
+        let a = stub::started(&dir);
+        assert_eq!((stub::flag(&a, "--resume").as_deref(), stub::flag(&a, "--tools").as_deref()), (Some("chat-1"), Some("")), "the chat's own: {a:?}");
+        assert!(stub::sent(&dir, "You answered: 12 °C and rain\n\nThe new message: and a joke about rain?"));
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A paid model's handed-over turn stops at the spend cap like any message (the router's skipped it).
+    #[test]
+    fn a_hand_off_stops_at_the_spend_cap() {
+        if spend_cap().is_none() {
+            return; // the user's cap is off here: nothing to stop at
+        }
+        let mut live = Live::new("m", "high").unwrap();
+        live.runs_log = std::env::temp_dir().join(format!("tazuna-handoff-cap-{}.jsonl", std::process::id()));
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        std::fs::write(&live.runs_log, format!("{}\n", json!({"ts": now, "cost_usd": 1e9, "meta": {"claude_version": null}}))).unwrap();
+        (live.provider, live.price) = (Some(("http://127.0.0.1:9/v1".into(), "KEY".into())), Some("1,1,1".into()));
+        let err = live.hand_off("weather in Berlin now?", "weather in Berlin now?", HANDOFF_NEEDS).unwrap_err();
+        assert!(format!("{err:#}").contains("at your cap") && !live.handing_off() && live.idle(), "{err:#}");
+        std::fs::remove_file(&live.runs_log).ok();
+        std::fs::remove_file(&live.rec_path).ok();
+    }
+
+    /// A handed-over turn is a lookup: no tests, review or stronger model after it, whatever the session runs.
+    #[cfg(unix)]
+    #[test]
+    fn a_handed_over_turn_runs_no_checks_after_it() {
+        let (mut live, dir) = stub::live("handoff-checks");
+        live.verify = verify::Mode::Command("false".into());
+        (live.self_review, live.review_model) = (true, Some(("claude-opus-5-5".into(), "high".into())));
+        live.set_escalate("claude-opus-5-5".into(), "high".into());
+        live.hand_off("weather in Berlin now?", "weather in Berlin now?", HANDOFF_NEEDS).unwrap();
+        stub::started(&dir);
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": "12 °C", "total_cost_usd": 0.0}));
+        let kinds: Vec<_> = live.poll().iter().map(|(_, e)| e["type"].as_str().unwrap_or_default().to_string()).collect();
+        assert_eq!(kinds, ["harness_handoff", "result", "harness_process_end"]);
+        assert!(live.idle() && !live.escalated);
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Through a session on scripted events: the chat replies [[agent]], the lean agent takes the message in a fresh
+    /// conversation, and the chat's own comes back after it.
+    #[cfg(unix)]
+    #[test]
+    fn a_chat_hands_its_message_to_the_lean_agent_and_takes_the_session_back() {
+        let (mut live, dir) = stub::live("handoff");
+        (live.profile, live.permission_mode) = (Profile::Chat, "bypassPermissions".into());
+        live.resume("chat-1");
+        let kinds = |out: &[(f64, Value)]| out.iter().map(|(_, e)| e["type"].as_str().unwrap_or_default().to_string()).collect::<Vec<_>>();
+        // the chat's run on the question ends with the hand-off
+        live.runs.push_back(Run::new("weather in Berlin now?", 0.0, &live.cwd));
+        live.task = "weather in Berlin now?".into();
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": " [[agent]]\n", "total_cost_usd": 0.001}));
+        let out = live.poll();
+        assert_eq!(kinds(&out), ["result", "harness_handoff"]);
+        assert_eq!(out[1].1["text"], HANDOFF_NEEDS);
+        assert!(live.profile == Profile::Lean && live.handing_off() && live.session_id.is_none() && live.runs.len() == 1 && live.checkpoints.is_empty());
+        let a = stub::started(&dir);
+        assert_eq!(stub::flag(&a, "--permission-mode").as_deref(), Some("default"), "asks, though the session runs in auto");
+        // the agent's answer ends the turn: the chat again, its conversation resumed by the next message
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": "12 °C and rain", "total_cost_usd": 0.02}));
+        let out = live.poll();
+        assert_eq!(kinds(&out), ["result", "harness_process_end"]);
+        assert!(live.profile == Profile::Chat && !live.handing_off() && live.session_id.as_deref() == Some("chat-1") && live.idle());
+        // an answer that mentions the marker later stays an answer
+        live.runs.push_back(Run::new("what is [[agent]]?", 0.0, &live.cwd));
+        stub::feed(&live, json!({"type": "result", "subtype": "success", "is_error": false, "result": "The text [[agent]] is tazuna's hand-off.", "total_cost_usd": 0.001}));
+        assert_eq!(kinds(&live.poll()), ["result"]);
+        assert!(live.profile == Profile::Chat && !live.handing_off());
+        // /agent and "send to agent" there: the same agent, under its own line
+        let (_, e) = live.send_agent("how full is my disk?").unwrap();
+        assert!(e["type"] == "harness_user" && live.handing_off() && live.profile == Profile::Lean);
+        assert_eq!(live.poll()[0].1["text"], HANDOFF_SENT);
+        stub::started(&dir);
+        // stopped: the chat again too
+        let _ = live.kill("stopped");
+        assert!(live.profile == Profile::Chat && !live.handing_off() && live.session_id.as_deref() == Some("chat-1"));
+        assert_eq!(kinds(&live.poll()), ["harness_process_end"]);
+        drop(live);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+/// Test support: a stand-in for claude (the real one is a paid call) and a session that runs it in a folder of its own.
+#[cfg(all(test, unix))]
+pub(crate) mod stub {
+    use super::*;
+
+    /// The stand-in, first on PATH for the whole test run and never removed (no test may reach the real claude): in a folder
+    /// with a `stub` file it writes its arguments to `args` and what it is sent to `stdin` there. It says nothing itself:
+    /// a test gives its events (`feed`).
+    fn claude() {
+        static ONCE: std::sync::Once = std::sync::Once::new();
+        ONCE.call_once(|| {
+            use std::os::unix::fs::PermissionsExt;
+            let bin = std::env::temp_dir().join(format!("tazuna-stub-claude-{}", std::process::id()));
+            std::fs::create_dir_all(&bin).unwrap();
+            std::fs::write(bin.join("claude"), "#!/bin/sh\n[ -e stub ] || exec cat > /dev/null\nprintf '%s\\n' \"$@\" > args.tmp && mv args.tmp args\nexec cat >> stdin\n").unwrap();
+            std::fs::set_permissions(bin.join("claude"), std::fs::Permissions::from_mode(0o755)).unwrap();
+            // SAFETY: set once, and only prepended: everything else is found as before
+            unsafe { std::env::set_var("PATH", format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default())) };
+        });
+    }
+
+    /// A session on Opus in a fresh folder of its own (`name`), where the stand-in writes, with its run log there.
+    pub fn live(name: &str) -> (Live, PathBuf) {
+        claude();
+        let dir = std::env::temp_dir().join(format!("tazuna-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("stub"), "").unwrap();
+        (in_dir(&dir, "rec.jsonl"), dir)
+    }
+
+    /// Another session in `dir` (a later tazuna there), recording to `rec` in it.
+    pub fn in_dir(dir: &Path, rec: &str) -> Live {
+        let mut live = Live::new("claude-opus-5-5", "high").unwrap();
+        (live.cwd, live.runs_log, live.verify) = (dir.to_path_buf(), dir.join("runs.jsonl"), verify::Mode::Off);
+        // the recording: in the folder too, not in the user's sessions
+        let _ = std::fs::remove_file(&live.rec_path);
+        live.rec_path = dir.join(rec);
+        live.rec = File::create(&live.rec_path).unwrap();
+        live
+    }
+
+    /// The arguments the stand-in last started with in `dir` (waited for), taken.
+    pub fn started(dir: &Path) -> Vec<String> {
+        for _ in 0..200 {
+            if let Ok(a) = std::fs::read_to_string(dir.join("args")) && !a.is_empty() {
+                let _ = std::fs::remove_file(dir.join("args"));
+                return a.lines().map(String::from).collect();
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        panic!("claude did not start in {}", dir.display());
+    }
+
+    /// Whether the stand-ins in `dir` were sent `text` (waited for up to 2 s).
+    pub fn sent(dir: &Path, text: &str) -> bool {
+        let want = serde_json::to_string(text).unwrap();
+        let want = &want[1..want.len() - 1];
+        for _ in 0..80 {
+            if std::fs::read_to_string(dir.join("stdin")).is_ok_and(|s| s.contains(want)) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        false
+    }
+
+    /// A line of claude's output, as the running process would write it.
+    pub fn feed(live: &Live, e: Value) {
+        live.tx.send((live.generation, Msg::Line(e.to_string()))).unwrap();
+    }
+
+    /// The value after `flag` in `args`.
+    pub fn flag(args: &[String], flag: &str) -> Option<String> {
+        args.iter().position(|x| x == flag).and_then(|i| args.get(i + 1).cloned())
     }
 }
