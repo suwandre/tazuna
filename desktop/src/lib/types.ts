@@ -14,6 +14,8 @@ export type ToolStep = {
   stopped?: boolean;
   /** you said no to it: neither done nor failed (its result is the sentence written for the model, not shown) */
   declined?: boolean;
+  /** still open while a question to you is: it has not started (it read "Running … 3.0 s" while the card asked) */
+  waiting?: boolean;
   /** the call's id: a subagent's own conversation is asked for by it */
   id?: string;
   kind?: "tool" | "thinking"; name?: string; input?: Record<string, unknown> | null; result?: string; text?: string;

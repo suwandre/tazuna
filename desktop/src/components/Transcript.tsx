@@ -153,7 +153,9 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /** What a reply's steps did, in a few words: "read 2 files, edited 1, ran 3 commands". */
 export function workSummary(tools: ToolStep[]): string {
   const n = new Map<string, number>();
-  for (const t of tools) if (t.kind !== "thinking") n.set(t.verb, (n.get(t.verb) ?? 0) + 1);
+  // a step you declined did not happen: said apart ("declined 1"), not "ran 1 command" (real window, 2026-11-22)
+  for (const t of tools) if (t.kind !== "thinking" && !t.declined && !t.waiting) n.set(t.verb, (n.get(t.verb) ?? 0) + 1);
+  const declined = tools.filter((t) => t.declined).length;
   const edits = (n.get("Edited") ?? 0) + (n.get("Wrote") ?? 0);
   n.delete("Edited"); n.delete("Wrote");
   const parts: string[] = [];
@@ -169,6 +171,7 @@ export function workSummary(tools: ToolStep[]): string {
   for (const [verb, count] of n) if (known.includes(verb)) parts.push(`${verb.toLowerCase()}${count > 1 ? ` ×${count}` : ""}`);
   const other = [...n].filter(([v]) => !known.includes(v)).reduce((a, [, c]) => a + c, 0);
   if (other) parts.push(`used ${plural(other, "other tool")}`);
+  if (declined) parts.push(`declined ${declined}`);
   if (!parts.length && tools.some((t) => t.kind === "thinking")) parts.push("thought it through");
   return parts.slice(0, 4).join(", ");
 }

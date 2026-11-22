@@ -28,7 +28,9 @@ const views = {
   p1: { ...base, cwd: PROJ, profile: "repo", session_id: "p1", activity: "Tool", blocks: fix, cost: 0.051, turns: 6, usage: u(2600, 15100, 1700), context: 68000,
     changes: [{ turn: 0, at_block: 8, undone: false, can_undo: true, files: [{ path: "tests/retry.test.ts", added: 9, removed: 3, status: "M" }, { path: "src/retry.ts", added: 3, removed: 0, status: "M" }] }],
     calls: [{ block: 1, fresh: 2100, cached: 0, out: 300, cost: 0.02, first_ms: 900, tps: 60, total_ms: 5000 }] },
-  p2: { ...base, cwd: PROJ, profile: "repo", session_id: "p2", activity: "Tool", blocks: [{ kind: "prompt", text: "Bump the TLS library to the latest minor" }, tool("u1", "Bash", { command: "npm outdated" }, 1.2)],
+  p2: { ...base, cwd: PROJ, profile: "repo", session_id: "p2", activity: "Tool", blocks: [{ kind: "prompt", text: "Bump the TLS library to the latest minor" }, tool("u1", "Bash", { command: "npm outdated" }, 1.2),
+    // the asked command's own step, open while the card asks: "Run npm install … · waits for you", no clock (0.1.100)
+    { ...tool("u2", "Bash", { command: "npm install tls-lib@2.4" }, 0), running: true, result: undefined }],
     asking: { tool: "Bash", what: "npm install tls-lib@2.4", note: "", once: false, queued: 0 } },
 };
 const cwdOf = {};

@@ -87,6 +87,8 @@ export function Elapsed({ secs }: { secs: number }) {
 }
 
 // a step still going says so: "Running npm test", then "Ran npm test"
+// a step that waits for your answer has not started: "Run npm install · waits for you"
+const WAIT: Record<string, string> = { Read: "Read", Ran: "Run", Edited: "Edit", Wrote: "Write", Searched: "Search", Listed: "List", Fetched: "Fetch" };
 const NOW: Record<string, string> = { Read: "Reading", Ran: "Running", Edited: "Editing", Wrote: "Writing", Searched: "Searching", Listed: "Listing", Fetched: "Fetching" };
 
 // A step before the answer, one line; a click opens what it was given and what came back (or the reasoning, where the
@@ -108,12 +110,12 @@ export function Step({ t }: { t: ToolStep }) {
           : t.stopped || t.declined ? <Square size={10} strokeWidth={2} fill="currentColor" className="mx-0.5 flex-none text-faint" aria-label={t.declined ? "declined" : "stopped"} />
           : t.ok ? <Check size={14} strokeWidth={1.5} className="flex-none text-ok" />
           : <X size={14} strokeWidth={1.75} className="flex-none text-bad" aria-label="failed" />}
-        <span className={t.running ? "tz-live" : ""}>{t.running ? (NOW[t.verb] ?? t.verb) : t.verb}</span> {t.target && <span className="truncate font-mono text-[11.5px] text-ink-2">{t.target}</span>}
+        <span className={t.running && !t.waiting ? "tz-live" : ""}>{t.waiting ? `${WAIT[t.verb] ?? t.verb} · waits for you` : t.running ? (NOW[t.verb] ?? t.verb) : t.verb}</span> {t.target && <span className="truncate font-mono text-[11.5px] text-ink-2">{t.target}</span>}
         {t.detail && <span className="flex items-center text-faint"><Sep />{t.detail}</span>}
         {t.stopped && <span className="flex items-center text-faint"><Sep />stopped</span>}
         {t.declined && <span className="flex items-center text-faint"><Sep />declined</span>}
         {/* the time beside the step, not at the far right (the eye went 600 px for it) */}
-        {!thinking && <span className="flex-none whitespace-nowrap text-[12px] tabular-nums text-faint">{t.running ? <Elapsed secs={t.secs} /> : `${t.secs.toFixed(1)} s`}</span>}
+        {!thinking && !t.waiting && <span className="flex-none whitespace-nowrap text-[12px] tabular-nums text-faint">{t.running ? <Elapsed secs={t.secs} /> : `${t.secs.toFixed(1)} s`}</span>}
         {more && <ChevronRight size={13} strokeWidth={1.5} className={`flex-none text-faint transition-transform duration-150 ${open ? "rotate-90" : ""}`} />}
       </button>
       {agent && <button onClick={() => window.dispatchEvent(new CustomEvent("tazuna-agent", { detail: t.id }))} title="See what this subagent did: its reasoning, steps and answers"

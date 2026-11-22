@@ -64,9 +64,13 @@ export function messages(v: View): Message[] {
     // review 9: it opened empty under a red "/model to the model it used first")
     else if (b.kind === "notice" && !b.error && b.text.startsWith("This conversation ran on ")) { (current().info ??= []).push(b.text); }
     else if (b.kind === "text") { if (b.text.trim()) current().prose.push(b.text); }
+    // ToolSearch is Claude Code loading a deferred tool before using it ("select:mcp__lean__bash"): plumbing, not a step
+    // (it showed in every hand-off and added "used 1 other tool" to the summary; real window, 2026-11-22)
+    else if (b.kind === "tool" && b.name === "ToolSearch") { /* nothing */ }
     else if (b.kind === "tool") {
       const t: ToolStep = { kind: "tool", id: b.id, name: b.name, verb: verb(b.name), target: target(b.input ?? {}), secs: b.secs ?? 0, ok: !b.error,
-        running: b.running, stopped: b.stopped, declined: b.declined, input: b.input, result: b.declined ? undefined : b.result };
+        running: b.running, stopped: b.stopped, declined: b.declined, input: b.input, result: b.declined ? undefined : b.result,
+        waiting: !!(b.running && v.asking) };
       current().tools!.push(t);
     }
     else if (b.kind === "thinking") {
