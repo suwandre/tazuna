@@ -701,7 +701,7 @@ export default function App() {
               if (line?.paid && paidKey && !localStorage.getItem(paidKey)) { setPaidAsk(text); return; }
               sendNow(text);
             }}
-            below={line && (line.paid || line.low) && (
+            below={line && (line.paid || line.plan || line.low) && (
               <div className={`flex items-center gap-2 text-[11.5px] ${line.low ? "text-warn" : "text-faint"}`}>
                 <span className="truncate" title="Where your next message goes and what it costs">→ {line.text}</span>
                 {line.offer && <button onClick={() => core.setModel(line.offer!)} className="font-medium text-accent-ink">Switch to {line.offer.label}</button>}

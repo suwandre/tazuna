@@ -94,9 +94,9 @@ localStorage.setItem("tazuna.projects", JSON.stringify([PROJ]));
 
 // Settings' providers as the core lists them since 0.1.196 (models.rs LOGINS): three with a key, a model server running
 // here, the rest without one; their terms, in the warning colour where the account may be at risk or tazuna refused
-const KEYS = { SubRouter: "managed key (tazuna subrouter --manage)", DeepSeek: "key in the environment", Groq: "logged in" };
+const KEYS = { SubRouter: "managed key (tazuna subrouter --manage)", DeepSeek: "key in the environment", Groq: "logged in", "Mistral Vibe": "logged in" };
 const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera.cloud"], ["OpenRouter", "openrouter.ai", "sk-or-v1-..."], ["Kenari", "kenari.id"],
-  ["Mistral", "api.mistral.ai"], ["Cheaper Inference", "api.cheaperinference.com"], ["OmniRoute", "localhost:20128"], ["DeepSeek", "api.deepseek.com", "sk-..."],
+  ["Mistral", "api.mistral.ai"], ["Mistral Vibe", "api.mistral.ai"], ["Cheaper Inference", "api.cheaperinference.com"], ["OmniRoute", "localhost:20128"], ["DeepSeek", "api.deepseek.com", "sk-..."],
   ["Moonshot", "api.moonshot.ai", "sk-..."], ["Kimi Code", "api.kimi.ai", "", "Kimi may refuse tazuna as a client: check before buying the plan"],
   ["Kimi Code China", "api.kimi.com", "", "Kimi may refuse tazuna as a client: check before buying the plan"], ["Z.ai", "api.z.ai"],
   ["Z.ai Coding Plan", "api.z.ai", "", "Z.ai allows the Coding Plan only in its listed tools and tazuna is not listed: the account may be at risk"],
@@ -124,10 +124,12 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
   ["Helmcode", "api.helmcode.com", "sk-..."], ["Otari", "api.otari.ai", "tk_..."], ["SingularityAPI", "api.singularityapi.dev", "sk-sapi-..."]]
   .map(([name, host, example = "", note = ""]) => ({ name, host, example, note, warn: /at risk|refuse|suspended|blocked|revoked/.test(note), key: KEYS[name] ?? "", trusted: !!KEYS[name],
     page: `https://${host}`, place: `${name}'s console (API keys)` }))
-  // sign-ins (core oauth.rs, 2026-11-22): ChatGPT's own flow, two that send another app's identity behind a warning
+  // sign-ins (core oauth.rs, 2026-11-22): ChatGPT's own flow, four that send another app's identity behind a warning
   .concat([["ChatGPT", "api.openai.com", "chatgpt", "OpenAI's own sign-in for open-source apps: requests use your ChatGPT plan (manage usage in ChatGPT's settings)"],
     ["GitHub Copilot", "api.githubcopilot.com", "copilot", "tazuna signs in as OpenCode's GitHub app and calls Copilot as Copilot CLI. Whether GitHub's terms allow this, or GitHub acts on accounts for it, is unclear. Use at your own risk."],
-    ["SuperGrok", "api.x.ai", "xai", "tazuna signs in as xAI's Grok CLI. Whether xAI's terms allow this, or xAI acts on accounts for it, is unclear. Use at your own risk."]]
+    ["SuperGrok", "api.x.ai", "xai", "tazuna signs in as xAI's Grok CLI. Whether xAI's terms allow this, or xAI acts on accounts for it, is unclear. Use at your own risk."],
+    ["Gemini CLI", "cloudcode-pa.googleapis.com", "gemini", "Google's terms forbid using this login outside Gemini CLI, and Google may suspend or end the account for it. tazuna signs in as Gemini CLI. Use at your own risk."],
+    ["Antigravity", "daily-cloudcode-pa.googleapis.com", "antigravity", "Google's terms forbid signing in to Antigravity from other tools, and Google has suspended accounts that did. tazuna signs in as Antigravity: you do this at your own risk."]]
     .map(([name, host, sign_in, note]) => ({ name, host, example: "", note, warn: /own risk/.test(note), key: "", trusted: false, page: `https://${host}`, place: `${name}'s settings`, sign_in, confirmed: false })))
   .concat([{ name: "Ollama", host: "localhost:11434", example: "", note: "", warn: false, key: "running on this machine", trusted: true, page: "", place: "", local: true }]);
 
@@ -144,11 +146,27 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
       if (args.msg.sign_out) { p.key = ""; say({ ok: true, text: `signed out of ${p.name}` }); return null; }
       if (p.warn && !p.confirmed && !args.msg.confirm) { say({ ok: false, text: `${p.name}: confirm its warning first` }); return null; }
       if (args.msg.confirm) p.confirmed = true;
+      // Google's two: the browser, the account's Code Assist project, then signed in (the window's words: no "signed in" again)
+      if (p.sign_in === "gemini" || p.sign_in === "antigravity") {
+        say({ text: `${p.name}: sign in with Google in the browser tab that just opened (5 minutes)` });
+        say({ text: `${p.name}: signed in; finding the account's Code Assist project` }, 400);
+        setTimeout(() => { p.key = "signed in"; p.trusted = true; }, 690);
+        say({ ok: true, text: `someone@example.com: ${p.sign_in === "gemini" ? "2 models in the model picker; they use your Gemini Code Assist quota" : "4 models in the model picker; they use your Antigravity plan's quota"}` }, 700);
+        return null;
+      }
       if (p.sign_in !== "chatgpt") { say({ text: `${p.name}: enter the code ABCD-1234 at https://github.com/login/device (the page just opened in your browser; the code is on the clipboard)` }); return null; }
       say({ text: "ChatGPT: continue in the browser tab that just opened (5 minutes)" });
       setTimeout(() => { p.key = "signed in"; p.trusted = true; }, 690);
-      say({ ok: true, first: true, text: "signed in to ChatGPT as someone@example.com: requests on its models use your ChatGPT plan (3 models in /model); manage usage at https://chatgpt.com/settings/usage" }, 700);
+      say({ ok: true, first: true, text: "someone@example.com: requests on its models use your ChatGPT plan (3 models in the model picker); manage usage at https://chatgpt.com/settings/usage" }, 700);
       return null;
+    }
+    // a key saved, kept or removed (core 0.1.198): how it went, as a line on its row
+    if (cmd === "op" && args.msg.op === "login") {
+      const p = PROVIDERS.find((x) => x.name === args.msg.provider);
+      if (p && args.msg.remove) { p.key = ""; p.unsure = null; m({ type: "signin", provider: p.name, ok: true, text: "the key from before is removed", first: false }); return null; }
+      if (p && (args.msg.key || p.key)) { if (args.msg.key) p.key = "logged in"; const was = p.unsure; for (const x of PROVIDERS) if (x.unsure) x.unsure = null;
+        m({ type: "signin", provider: p.name, ok: true, first: false, text: was ? `the key saved for both is ${p.name}'s now; its models are in the model picker` : `logged in to ${p.name}: key saved in /Users/x/.config/tazuna/keys.json (readable by you only); its models are in the model picker` }); return null; }
+      if (p) { m({ type: "signin", provider: p.name, ok: false, text: "no key typed", first: false }); return null; }
     }
     if (cmd === "op" && args.msg.op === "mcp") { m({ type: "mcp", on: true, claude: true, servers: [{ name: "github", target: "https://api.githubcopilot.com/mcp/" }], note: "" }); return null; }
     if (cmd === "op" && args.msg.op === "hook") { m({ type: "hook", cwd: "/Users/x/api-gateway", after_turn: "npm run lint -- --fix", note: "" }); return null; }
@@ -178,10 +196,15 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
       blocks: [{ kind: "prompt", text: "test" }, { kind: "notice", error: true, text: "provider · provider error in stream: {\"message\":\"[404]: Antigravity upstream error (404): Requested entity was not found.\",\"type\":\"invalid_request_error\",\"code\":\"model_not_found\"} · trying again in 2s" }, done(4, 0, false, true)] },
     c5: { ...base, session_id: "c5", cost: 0.12, turns: 8, blocks: Array.from({ length: 8 }, (_, i) => [{ kind: "prompt", text: i === 3 ? "Can you write the whole thing again but this time with the error handling we discussed, the retries capped at three, the logging through our logger and not console, and the tests updated so they cover the timeout path as well as the happy path? Also keep the public API the same." : `Question ${i + 1}: what about edge case ${i + 1}?` }, { kind: "text", text: `Edge case ${i + 1} is covered by the guard in \`parse()\`: an empty input returns \`null\` before the loop. ` .repeat(3), live: false }, done(6 + i, 0.015)]).flat() },
   };
+  // the model picked (op "model") stays picked: its row comes back `current`
+  let picked = null;
   T.invoke = async (cmd, args) => {
     const m = (msg) => setTimeout(() => T.emit("tazuna-view", { tid: args.tid, msg }), 20);
     if (cmd === "op" && args.msg.op === "resume" && views[args.msg.id]) { setTimeout(() => T.view(args.tid, views[args.msg.id]), 10); return null; }
-    if (cmd === "op" && args.msg.op === "models") { const c = (o) => ({ efforts: ["low", "medium", "high", "max"], effort: "high", bench: "", why_not: null, key_env: null, url: null, current: false, ...o });
+    if (cmd === "op" && args.msg.op === "model") { picked = args.msg; return T.invoke("op", { tid: args.tid, msg: { op: "models" } }); }
+    if (cmd === "op" && args.msg.op === "models") { const c = (o) => { const r = { efforts: ["low", "medium", "high", "max"], effort: "high", bench: "", why_not: null, key_env: null, url: null, current: false, ...o };
+      return picked ? { ...r, current: r.model === picked.model && r.url === (picked.url ?? null) && r.key_env === (picked.key_env ?? null) } : r; };
+      const signed = (name) => PROVIDERS.find((x) => x.name === name).key;
       m({ type: "models", rebuild: null, choices: [
         c({ model: "claude-opus-5-5", label: "Opus 5.5", place: "Claude · subscription", provider: "Claude", price: "plan", current: true }),
         c({ model: "claude-sonnet-5-5", label: "Sonnet 5.5", place: "Claude · subscription", provider: "Claude", price: "plan" }),
@@ -191,6 +214,9 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
         c({ model: "deepseek-v4.1-flash", label: "deepseek-v4.1-flash · subrouter", place: "subrouter.ai", provider: "SubRouter", price: "0.14 / 0.56", bench: "7.1 (16)", efforts: ["off", "high", "max"] }),
         c({ model: "codestral-2508", label: "codestral-2508 · mistral", place: "api.mistral.ai", provider: "Mistral", price: "0.3 / 0.9" }),
         c({ model: "mistral-large-3", label: "mistral-large-3 · mistral", place: "api.mistral.ai", provider: "Mistral", price: "2 / 6", bench: "7.8 (12)" }),
+        // the same models on a Vibe CLI key (core 0.1.198): the Vibe plan pays
+        c({ model: "codestral-2508", label: "codestral-2508 · mistral", place: "api.mistral.ai", provider: "Mistral Vibe", price: "plan", url: "https://api.mistral.ai/v1", key_env: "MISTRAL_VIBE_API_KEY" }),
+        c({ model: "mistral-large-3", label: "mistral-large-3 · mistral", place: "api.mistral.ai", provider: "Mistral Vibe", price: "plan", url: "https://api.mistral.ai/v1", key_env: "MISTRAL_VIBE_API_KEY", bench: "7.8 (12)" }),
         c({ model: "agy/gemini-4-hydrogen", label: "gemini-4-hydrogen · agy", place: "OmniRoute · agy", provider: "OmniRoute", price: "plan" }),
         // rows that cannot be picked come compact (core 0.1.196): no key yet, or a host not trusted
         { model: "or/qwen-4-coder", label: "qwen-4-coder · openrouter", provider: "OpenRouter", price: "0.2 / 0.8", why_not: "no key: /login, or set the environment variable OPENROUTER_API_KEY before starting tazuna", no_key: true },
@@ -199,11 +225,19 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
         { model: "glm-5.3", provider: "Z.ai Coding Plan", price: "plan", why_not: "no key: /login, or set the environment variable ZAI_CODING_API_KEY before starting tazuna", no_key: true },
         { model: "zai-org/glm-5.3", provider: "Chutes", price: "0.2 / 0.8", why_not: "not trusted: the code would go to llm.chutes.ai; /login allows it, or add the line llm.chutes.ai to /Users/x/.config/tazuna/trusted-providers" },
         // sign-ins: ChatGPT's models once signed in (the plan pays), a greyed row before; Copilot not signed in
-        ...(PROVIDERS.find((x) => x.name === "ChatGPT").key
+        ...(signed("ChatGPT")
           ? [["gpt-6.2-sol", "GPT-6.2 Sol"], ["gpt-6.1-sol", "GPT-6.1 Sol"], ["gpt-6-luna", "GPT-6 Luna"]].map(([model, label]) => c({ model, label, place: "ChatGPT", provider: "ChatGPT", price: "plan", url: "https://api.openai.com/v1", key_env: "TAZUNA_SIGNIN_CHATGPT", efforts: ["low", "medium", "high", "xhigh", "max"] }))
           : [{ model: "chatgpt-models", label: "ChatGPT's models", provider: "ChatGPT", price: "plan", why_not: "not signed in", no_key: true }]),
         { model: "copilot-models", label: "GitHub Copilot's models", provider: "GitHub Copilot", price: "plan", why_not: "not signed in", no_key: true },
-      ], cautions: { ChatGPT: { note: "OpenAI's own sign-in for open-source apps: requests use your ChatGPT plan (manage usage in ChatGPT's settings)", warn: false },
+        // Google's two (core 0.1.198): Gemini CLI's models from its quota once signed in, Antigravity's plan with Claude among them
+        ...(signed("Gemini CLI")
+          ? ["gemini-2.5-pro", "gemini-3.1-pro-preview"].map((model) => c({ model, label: model, place: "Gemini CLI", provider: "Gemini CLI", price: "plan", url: "https://cloudcode-pa.googleapis.com", key_env: "TAZUNA_SIGNIN_GEMINI", efforts: [], effort: null }))
+          : [{ model: "gemini-models", label: "Gemini CLI's models", provider: "Gemini CLI", price: "plan", why_not: "not signed in", no_key: true }]),
+        ...(signed("Antigravity")
+          ? [["gemini-3.1-pro-high", "Gemini 3.1 Pro (High)"], ["gemini-3.1-pro-low", "Gemini 3.1 Pro (Low)"], ["claude-sonnet-4-6", "Claude Sonnet 4.6"], ["claude-opus-4-6-thinking", "Claude Opus 4.6 (Thinking)"]]
+            .map(([model, label]) => c({ model, label, place: "Antigravity", provider: "Antigravity", price: "plan", url: "https://daily-cloudcode-pa.googleapis.com", key_env: "TAZUNA_SIGNIN_ANTIGRAVITY", efforts: [], effort: null }))
+          : [{ model: "antigravity-models", label: "Antigravity's models", provider: "Antigravity", price: "plan", why_not: "not signed in", no_key: true }]),
+      ], cautions: { "Gemini CLI": { note: PROVIDERS.find((x) => x.name === "Gemini CLI").note, warn: true }, Antigravity: { note: PROVIDERS.find((x) => x.name === "Antigravity").note, warn: true }, ChatGPT: { note: "OpenAI's own sign-in for open-source apps: requests use your ChatGPT plan (manage usage in ChatGPT's settings)", warn: false },
         "GitHub Copilot": { note: "tazuna signs in as OpenCode's GitHub app and calls Copilot as Copilot CLI. Whether GitHub's terms allow this, or GitHub acts on accounts for it, is unclear. Use at your own risk.", warn: true }, "Z.ai Coding Plan": { note: "Z.ai allows the Coding Plan only in its listed tools and tazuna is not listed: the account may be at risk", warn: true },
         Chutes: { note: "Chutes' terms: interactive and low-volume use, not large automated runs", warn: false } } }); return null; }
     if (cmd === "op" && args.msg.op === "sessions") { m({ type: "sessions", dirs: [

@@ -43,7 +43,8 @@ export function price(p: string): string {
 
 /** What a row that cannot be picked needs, by the core's reason: a key, or a sign-in's state (core oauth.rs). */
 const NO_KEY: Record<string, string> = { "no key": "No key yet · add one in Settings", "not signed in": "Not signed in · sign in in Settings",
-  "plan use not allowed": "Plan use not allowed · allow it in Settings", "model list not loaded": "Its model list has not loaded yet" };
+  "plan use not allowed": "Plan use not allowed · allow it in Settings", "model list not loaded": "Its model list has not loaded yet",
+  "which key": "Same key as Mistral or Mistral Vibe · say which in Settings" };
 
 export function ModelPicker({ models, onPick, onClose, onKey, efforts = [], effort, onEffort }: { models: Models | null; onPick: (c: ModelChoice) => void; onClose: () => void;
   /** a row whose provider has no key: Settings on that provider, its key field open */

@@ -6,7 +6,9 @@ import type { ModelChoice, View } from "./tazuna";
 import type { Row } from "./usage";
 import { modelLabel, usd } from "./types";
 
-export type RouteLine = { text: string; paid: boolean; low?: string; offer?: ModelChoice; est?: number };
+/** `plan`: a subscription's model on a route of its own (a sign-in, a plan key), said quietly so it does not read as the same
+ * model on a paid route; Claude on its CLI says nothing unless its plan runs low. */
+export type RouteLine = { text: string; paid: boolean; plan?: boolean; low?: string; offer?: ModelChoice; est?: number };
 
 export const isFree = (c: ModelChoice) => c.price === "free" || /^0(\.0+)? \/ 0(\.0+)?$/.test(c.price.trim());
 
@@ -39,7 +41,7 @@ export function routeLine(c: ModelChoice | undefined, v: View | null, rows: Row[
   }
   if (isFree(c)) return { text: `${modelLabel(c.model)} on ${c.provider}, free`, paid: false };
   // a subscription's model (a plan key, a sign-in such as ChatGPT's): its plan pays, not per token
-  if (c.price === "plan") return { text: `${modelLabel(c.model)} on your ${c.provider} plan`, paid: false };
+  if (c.price === "plan") return { text: `${modelLabel(c.model)} on your ${c.provider} plan`, paid: false, plan: true };
   const est = estimate(c, v, rows);
   return { text: `${modelLabel(c.model)} on ${c.provider}, paid, ${est != null ? `about ${usd(est)} a message` : `$${c.price} per million tokens`}`, paid: true, est };
 }

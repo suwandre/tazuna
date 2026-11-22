@@ -60,7 +60,7 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   useEffect(() => { getVersion().then(setAppVersion).catch(() => {}); }, []);
   useEffect(() => {
     if (!st || !focus) return;
-    const at = document.querySelector<HTMLElement>(`[aria-label="${CSS.escape(focus)} key"], [data-sign-in="${CSS.escape(focus)}"]`);
+    const at = document.querySelector<HTMLElement>(`[data-key-for="${CSS.escape(focus)}"], [aria-label="${CSS.escape(focus)} key"], [data-sign-in="${CSS.escape(focus)}"]`);
     at?.scrollIntoView({ block: "center" });
     if (at?.tagName === "BUTTON") at.focus();
   }, [!!st]);
@@ -121,12 +121,18 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
     window.addEventListener("keydown", esc);
     return () => { for (const o of [off, offMcp, offStatus, offHook, offGallery, offItem, offSign]) o.then((f) => f()); window.removeEventListener("keydown", esc); };
   }, []);
-  const save = async (name: string) => {
-    await core.login(name, keys[name] ?? "");
-    setKeys((k) => ({ ...k, [name]: "" }));
-    setKeyFor(null);
+  // `key` given: what to send whatever the field holds ("" for Mistral's "Yes": keep the key it has); how it went comes
+  // back as a `signin` line for the row
+  const save = async (name: string, key = keys[name] ?? "") => {
+    setSigning((all) => { const { [name]: _, ...rest } = all; return rest; });
+    await core.login(name, key);
+    closeKey(name);
     refresh(); core.models().catch(() => {});
   };
+  // a key field closed (Cancel, Escape, saved): what was typed in it goes, so nothing abandoned is sent later
+  const closeKey = (name: string) => { setKeys((k) => ({ ...k, [name]: "" })); setKeyFor(null); };
+  // a Gemini CLI account's Google Cloud project, typed on its row when its sign-in said it needs one
+  const [projects, setProjects] = useState<Record<string, string>>({});
   const input = "rounded-md border border-line bg-field px-2 py-1 font-mono text-[12px] text-ink outline-none focus:border-accent placeholder:font-sans placeholder:text-faint";
   const button = quietButton;
   // Yours: the providers with a key and the model servers running here; the rest under More providers
@@ -135,16 +141,23 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
   const signIn = (p: Provider, other = false) => {
     setConfirming(null);
     setSigning((all) => ({ ...all, [p.name]: { provider: p.name, text: "Starting…" } }));
-    (other ? core.signInOther(p.name) : core.signIn(p.name, p.warn)).catch(() => {});
+    (other ? core.signInOther(p.name) : core.signIn(p.name, p.warn, p.needs_project != null ? projects[p.name] ?? p.needs_project : undefined)).catch(() => {});
   };
   const busy = (p: Provider) => !!signing[p.name] && signing[p.name].ok == null;
   const provider = (p: Provider) => (
     <Row key={p.name} title={p.name} note={<>{/* one line: with the key field open, "managed key (tazuna subrouter --manage)" broke inside "--manage" */}
-      <span title={p.key || p.host} className={`block truncate ${p.plan_off ? "text-warn" : p.key ? "text-ok" : "font-mono text-[11.5px] text-faint"}`}>{p.key || p.host}</span>
+      <span title={p.key || p.host} className={`block truncate ${p.plan_off || p.unsure ? "text-warn" : p.key ? "text-ok" : "font-mono text-[11.5px] text-faint"}`}>{p.key || p.host}</span>
       {/* its terms, quiet; in the warning colour only where the account may be at risk or it may refuse tazuna */}
       {p.note && <span className={`block ${p.warn ? "text-warn" : "text-faint"}`}>{p.note}</span>}
-      {/* a sign-in: what to do now (a code to type, the browser tab), then how it went */}
-      {p.sign_in && signing[p.name] && <span role="status" className={`block ${signing[p.name].ok === false ? "text-bad" : signing[p.name].ok ? "text-ok" : "text-ink-2"}`}>{signing[p.name].text}</span>}</>}>
+      {/* a key the core cannot price for sure (Mistral's MISTRAL_API_KEY from the environment) */}
+      {p.hint && <span className="block text-warn">{p.hint}</span>}
+      {/* Mistral's key kept from before under Mistral Vibe: asked on both rows */}
+      {p.unsure === "old_vibe" && p.name === "Mistral" && <span className="block text-warn">The key saved for both before stays under Mistral Vibe, unused: is it your Vibe key?</span>}
+      {/* a sign-in: what to do now (a code to type, the browser tab), then how it went; a key's save, how it went */}
+      {signing[p.name] && <span role="status" className={`block ${signing[p.name].ok === false ? "text-bad" : signing[p.name].ok ? "text-ok" : "text-ink-2"}`}>{signing[p.name].text}</span>}</>}>
+      {/* the Google Cloud project a Gemini CLI account needs, before signing in again */}
+      {p.needs_project != null && !p.key && <input value={projects[p.name] ?? p.needs_project} onChange={(e) => setProjects((all) => ({ ...all, [p.name]: e.target.value }))}
+        aria-label={`${p.name} Google Cloud project`} placeholder="Google Cloud project ID" autoComplete="off" spellCheck={false} className={`w-44 ${input}`} />}
       {p.sign_in && <>
         {confirming === p.name ? <>
           <button onClick={() => setConfirming(null)} className={quietButton}>Cancel</button>
@@ -164,11 +177,20 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
       {!p.local && !p.sign_in && <>
         {keyFor === p.name ? <>
           <input autoFocus type="password" value={keys[p.name] ?? ""} onChange={(e) => setKeys((k) => ({ ...k, [p.name]: e.target.value }))}
-            onKeyDown={(e) => { if (e.key === "Enter" && keys[p.name]) save(p.name); if (e.key === "Escape") { e.stopPropagation(); setKeyFor(null); } }} aria-label={`${p.name} key`}
+            onKeyDown={(e) => { if (e.key === "Enter" && keys[p.name]) save(p.name); if (e.key === "Escape") { e.stopPropagation(); closeKey(p.name); } }} aria-label={`${p.name} key`}
             placeholder={p.key ? "Paste a new key" : `Paste a key${p.example ? ` (${p.example})` : ""}`} autoComplete="off" spellCheck={false} className={`w-56 ${input}`} />
           <button disabled={!keys[p.name]} onClick={() => save(p.name)} className={button}>Save</button>
-          <button onClick={() => setKeyFor(null)} className={quietButton}>Cancel</button>
-        </> : <button onClick={() => setKeyFor(p.name)} className={button}>{p.key ? "Replace key" : "Add key"}</button>}
+          <button onClick={() => closeKey(p.name)} className={quietButton}>Cancel</button>
+        </> : <>
+          {/* the same key on Mistral and Mistral Vibe: the row's line asks which it is; yes keeps it here (nothing typed is sent)
+            and takes it off the other. Kept from before under Mistral Vibe: yes confirms it there, remove takes it out */}
+          {p.unsure === "pair" && <button onClick={() => save(p.name, "")} data-key-for={p.name} className={button}>Yes</button>}
+          {p.unsure === "old_vibe" && <>
+            <button onClick={() => save("Mistral Vibe", "")} data-key-for={p.name} className={button}>Yes</button>
+            <button onClick={() => { core.removeKey("Mistral Vibe").catch(() => {}); refresh(); }} className={button}>Remove it</button>
+          </>}
+          <button onClick={() => setKeyFor(p.name)} className={button}>{p.key ? "Replace key" : "Add key"}</button>
+        </>}
         <button onClick={() => core.openKeyPage(p.page)} aria-label={`Make a key in ${p.place}`} title={`Make a key in ${p.place}`} className="rounded p-1 text-muted hover:text-ink"><ExternalLink size={14} strokeWidth={1.5} /></button>
       </>}
     </Row>
@@ -203,7 +225,7 @@ export function SettingsView({ onClose, focus, items = [], onEnable, onEdit, onR
           </Section>
           {!st && tab !== "Appearance" && <div className="text-[12.5px] text-faint">Loading…</div>}
           {st && <>
-            <Section title="Providers" label="Yours" note="Claude runs on your subscription through the claude CLI, with its own login. Other providers need an API key (tazuna saves it on this machine, readable by you only, and never shows it again) or, for ChatGPT, GitHub Copilot and SuperGrok, a sign-in.">
+            <Section title="Providers" label="Yours" note="Claude runs on your subscription through the claude CLI, with its own login. Other providers need an API key (tazuna saves it on this machine, readable by you only, and never shows it again) or, for ChatGPT, GitHub Copilot, SuperGrok, Gemini CLI and Antigravity, a sign-in.">
               {yours.length ? yours.map(provider) : <div className="px-4 py-2.5 text-[12.5px] text-faint">No keys yet: add one under More providers.</div>}
             </Section>
             <Section title="Providers" label={<button onClick={() => setMore(!more)} aria-expanded={more} className="-mx-1.5 flex items-center gap-1 rounded-md px-1.5 py-0.5 hover:text-ink">

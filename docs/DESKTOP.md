@@ -532,6 +532,19 @@ model of one not signed in says "Not signed in · sign in in Settings". The usag
 - Seen: the sweep on test data (the picker's not-signed-in row, the warning, the code, ChatGPT's welcome, signed in).
   Not seen: a real sign-in (no account was used).
 
+0.1.102 (with tazuna 0.1.198): Gemini CLI and Antigravity in Settings → Providers ("Sign in" under their warning: Google's
+sign-in in the browser, then the account's Code Assist project); Antigravity's models include the Claude models its plan
+serves, as Copilot's do. A signed-in row says "signed in" once: its outcome line is the account and its models ("3 models
+in the model picker"), never a terminal command. Mistral and Mistral Vibe are two rows (per token, or the Vibe plan); a key
+saved for both asks on each row which it is ("Yes" keeps it there; a new API key over it keeps the old one under Mistral
+Vibe, unused, with "Yes" or "Remove it"). A key's save says how it went on its row, not in the conversation. A Gemini CLI
+account that needs its Google Cloud project gets a field for it on the row. Signing out of a Google sign-in keeps
+Google's grant (removing it at myaccount.google.com/connections also signs the real app out). A plan's model (a
+sign-in, a plan key) shows the quiet line under the message box, "→ GPT-6.2 Sol on your ChatGPT plan", as a paid model's
+does. Claude's thinking variants read "Opus 4.6 thinking".
+- Seen: the sweep on test data (the Google rows' warning and signed-in state, Antigravity's picker, Mistral's two groups,
+  the unsure key, the plan line). Not seen: a real sign-in (no account was used).
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.

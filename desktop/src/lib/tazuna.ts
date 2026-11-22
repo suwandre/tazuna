@@ -66,13 +66,22 @@ export type Provider = { name: string; host: string; page: string; place: string
   note: string; warn: boolean;
   /** a model server running on this machine (Ollama, LM Studio, llama.cpp, vLLM): it needs no key */
   local?: boolean;
-  /** a sign-in instead of a key (core oauth.rs, 2026-11-22): "chatgpt", "copilot", "xai"; empty or absent: a key. `key` is
-   * "signed in" while signed in; one whose `warn` is set needs that warning confirmed before its first sign-in */
+  /** a sign-in instead of a key (core oauth.rs, 2026-11-22): "chatgpt", "copilot", "xai", "gemini", "antigravity"; empty or
+   * absent: a key. `key` is "signed in" while signed in; one whose `warn` is set needs that warning confirmed before its
+   * first sign-in */
   sign_in?: string;
   /** its warning was confirmed once (it stays through a sign-out) */
   confirmed?: boolean;
   /** signed in to ChatGPT with plan use declined at its consent page: no model until a sign-in allows it */
-  plan_off?: boolean };
+  plan_off?: boolean;
+  /** what tazuna does not know about Mistral's keys (billed per token or by the Vibe plan, a key does not say): "pair", the
+   * same key for both, used by neither until the user says which it is on one of the two rows (`key` asks); "old_vibe",
+   * that key kept under Mistral Vibe once a new API key replaced it, unused until confirmed or removed */
+  unsure?: "pair" | "old_vibe" | null;
+  /** a line on what the key may be (MISTRAL_API_KEY in the environment may be a Vibe key) */
+  hint?: string | null;
+  /** a Gemini CLI account needs its Google Cloud project (its last sign-in said so): the one given so far ("" none) */
+  needs_project?: string | null };
 /** A sign-in's progress (`ok` null: still going; its text says what to do: a code to type, the browser tab) and then its
  * outcome. `first`: the first sign-in on the ChatGPT plan, whose welcome shows once. */
 export type SignIn = { provider: string; ok?: boolean | null; text: string; first?: boolean };
@@ -147,7 +156,9 @@ export const core = {
   settings: () => to("op", { msg: { op: "settings" } }),
   login: (provider: string, key: string) => to("op", { msg: { op: "login", provider, key } }),
   /** a sign-in (the core opens the browser and waits for it); `confirm`: the user confirmed the provider's warning */
-  signIn: (provider: string, confirm = false) => to("op", { msg: { op: "login", provider, confirm } }),
+  signIn: (provider: string, confirm = false, project?: string) => to("op", { msg: { op: "login", provider, confirm, ...(project != null ? { project } : {}) } }),
+  /** Mistral Vibe's key kept from before (unsure "old_vibe"): taken out */
+  removeKey: (provider: string) => to("op", { msg: { op: "login", provider, remove: true } }),
   signOut: (provider: string) => to("op", { msg: { op: "login", provider, sign_out: true } }),
   /** ChatGPT with another account: the session revoked, a new registration */
   signInOther: (provider: string) => to("op", { msg: { op: "login", provider, other_account: true } }),

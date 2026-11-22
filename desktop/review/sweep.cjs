@@ -193,6 +193,23 @@ const log = [];
     log.push(`${theme} signed in: ${await p.getByRole("button", { name: "Sign out" }).count()} sign-out, ${await p.getByRole("button", { name: "Other account" }).count()} other-account button (1, 1 wanted)`);
     await esc(p);
     await step(p, `${T}-picker-signed-in`, async () => { await p.getByTitle("Model and effort").click(); await p.keyboard.type("gpt-6"); });
+    // a plan's model picked: the line under the message box says the plan pays (it read as the same model on a paid route)
+    // the second GPT-6.2 Sol: ChatGPT's (the first is SubRouter's)
+    await step(p, `${T}-composer-plan-line`, async () => { await p.getByText("GPT-6.2 Sol", { exact: true }).nth(1).click(); await p.waitForTimeout(500); await esc(p); });
+    log.push(`${theme} plan line: ${JSON.stringify(await p.evaluate(() => [...document.querySelectorAll("span")].map((e) => e.textContent).find((t) => t?.startsWith("→ ")) ?? null))} (→ GPT-6.2 Sol on your ChatGPT plan wanted)`);
+    await esc(p); await esc(p);
+    // Google's two (core 0.1.198): their warning first, Google's sign-in in the browser, the account's project, signed in;
+    // Antigravity's plan in the picker with Claude among its models
+    await step(p, `${T}-google-warning`, async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click();
+      await p.getByRole("button", { name: /^More providers/ }).click(); await p.getByLabel("Search providers").fill("gemini cli"); await p.locator('[data-sign-in="Gemini CLI"]').click(); });
+    await step(p, `${T}-google-signed-in`, async () => { await p.getByRole("button", { name: "I understand, sign in" }).click(); await p.waitForTimeout(1000); await p.getByLabel("Search providers").fill(""); });
+    log.push(`${theme} Gemini CLI: ${await p.getByText("someone@example.com: 2 models in the model picker; they use your Gemini Code Assist quota").count()} outcome line, ${await p.getByText(/\/model|\/login/).count()} terminal commands (1, 0 wanted)`);
+    await step(p, `${T}-antigravity-warning`, async () => { await p.getByLabel("Search providers").fill("antigravity"); await p.locator('[data-sign-in="Antigravity"]').click(); });
+    await step(p, `${T}-antigravity-signed-in`, async () => { await p.getByRole("button", { name: "I understand, sign in" }).click(); await p.waitForTimeout(1000); });
+    await esc(p); await esc(p);
+    await step(p, `${T}-picker-antigravity`, async () => { await p.getByTitle("Model and effort").click(); await p.keyboard.type("antigravity"); });
+    await esc(p); await esc(p);
+    await step(p, `${T}-picker-mistral`, async () => { await p.getByTitle("Model and effort").click(); await p.keyboard.type("mistral"); });
     await esc(p); await esc(p);
     log.push(`${theme} providers page errors: ${JSON.stringify(p.errs.slice(0, 5))}`);
     await ctx.close();
@@ -202,6 +219,24 @@ const log = [];
     const [ctx, p] = await ctxOf({ extra: off });
     await step(p, "d-sign-in-plan-off", async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); });
     log.push(`plan off: ${await p.getByRole("button", { name: "Allow plan use" }).count()} allow button (1 wanted)`);
+    await ctx.close(); }
+  // a key saved for both Mistral and Mistral Vibe before the split (core 0.1.198): neither uses it, each row asks which it is;
+  // "Yes" sends nothing typed, even after a key typed and cancelled; how it went says so on the row
+  { const unsure = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T), inv = T.invoke.bind(T); let pair = true; T.invoke = async (c, a) => { if (c === "op" && a.msg.op === "login") { window.__sent = a.msg; pair = false; } return inv(c, a); }; T.emit = (e, p) => { if (p?.msg?.type === "settings" && pair) p.msg.providers = p.msg.providers.map((x) => x.name === "Mistral" ? { ...x, key: "same key as Mistral Vibe: is it an API key?", trusted: true, unsure: "pair" } : x.name === "Mistral Vibe" ? { ...x, key: "same key as Mistral: is it a Vibe key?", unsure: "pair" } : x); return emit(e, p); }; })();`;
+    const [ctx, p] = await ctxOf({ extra: unsure });
+    await step(p, "d-mistral-unsure", async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); await p.getByText("Mistral Vibe", { exact: true }).first().scrollIntoViewIfNeeded(); });
+    log.push(`mistral unsure: ${await p.getByRole("button", { name: "Yes", exact: true }).count()} yes buttons (2 wanted)`);
+    await step(p, "d-mistral-yes", async () => { await p.getByRole("button", { name: "Replace key" }).nth(2).click(); await p.getByLabel("Mistral Vibe key").fill("abandoned"); await p.getByRole("button", { name: "Cancel" }).click();
+      await p.getByRole("button", { name: "Yes", exact: true }).nth(1).click(); await p.waitForTimeout(500); });
+    log.push(`mistral yes sent: ${JSON.stringify(await p.evaluate(() => window.__sent))} (key "" wanted)`);
+    await ctx.close(); }
+  // that key kept under Mistral Vibe after a new API key: both rows ask, Yes or Remove it; MISTRAL_API_KEY from the
+  // environment may be a Vibe key: said on Mistral's row; a Workspace Gemini CLI account: its project on the row
+  { const kept = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { if (p?.msg?.type === "settings") p.msg.providers = p.msg.providers.map((x) => x.name === "Mistral" ? { ...x, key: "key in the environment", trusted: true, unsure: "old_vibe", hint: "MISTRAL_API_KEY in your environment bills per token here; if it is a Vibe key, set MISTRAL_VIBE_API_KEY instead" } : x.name === "Mistral Vibe" ? { ...x, key: "kept from before: is it your Vibe key?", unsure: "old_vibe" } : x.name === "Gemini CLI" ? { ...x, needs_project: "", confirmed: true } : x); return emit(e, p); }; })();`;
+    const [ctx, p] = await ctxOf({ extra: kept });
+    await step(p, "d-mistral-kept", async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); await p.getByText("Mistral Vibe", { exact: true }).first().scrollIntoViewIfNeeded(); });
+    log.push(`mistral kept: ${await p.getByRole("button", { name: "Remove it" }).count()} remove buttons (2 wanted)`);
+    await step(p, "d-gemini-project", async () => { await p.getByRole("button", { name: /^More providers/ }).click(); await p.getByLabel("Search providers").fill("gemini cli"); await p.getByLabel("Gemini CLI Google Cloud project").fill("my-project-123"); });
     await ctx.close(); }
   // a fresh install: no key yet, nothing running here
   { const none = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { if (p?.msg?.type === "settings") p.msg.providers = p.msg.providers.filter((x) => !x.local).map((x) => ({ ...x, key: "" })); return emit(e, p); }; })();`;

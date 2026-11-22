@@ -87,7 +87,8 @@ export function modelLabel(id?: string | null): string {
   if (!id) return "";
   let m = id.trim().split(/\s/)[0];
   const c = m.match(/^(?:claude-)?(opus|sonnet|haiku|fable)-(\d+)(?:[-.](\d+))?/i);
-  if (c) return `${c[1][0].toUpperCase()}${c[1].slice(1).toLowerCase()} ${c[2]}${c[3] ? `.${c[3]}` : ""}`;
+  // a thinking variant (Antigravity's "claude-opus-4-6-thinking") says so: it sat beside its plain sibling as the same name
+  if (c) return `${c[1][0].toUpperCase()}${c[1].slice(1).toLowerCase()} ${c[2]}${c[3] ? `.${c[3]}` : ""}${/-thinking(?:-|$)/i.test(m) ? " thinking" : ""}`;
   const route = m.includes("/") ? m.split("/")[0] : "";
   m = m.replace(/^[\w.-]+\//, "");
   const free = m.endsWith(":free");
@@ -110,7 +111,8 @@ export function modelLabel(id?: string | null): string {
 
 /** The cases of modelLabel, in one place for both apps: `npx tsx -e 'import("./src/lib/types.ts").then(m => m.demoModels())'`. */
 export const MODEL_NAMES: [string, string][] = [
-  ["claude-opus-5-5", "Opus 5.5"], ["claude-haiku-4-5-20251001", "Haiku 4.5"], ["haiku", "Haiku"],
+  ["claude-opus-5-5", "Opus 5.5"], ["claude-haiku-4-5-20251001", "Haiku 4.5"], ["haiku", "Haiku"], ["claude-opus-4-6-thinking", "Opus 4.6 thinking"],
+  ["claude-opus-4.6", "Opus 4.6"],
   ["deepseek-v4.1-flash-1017-fast", "DeepSeek V4.1 Flash 1017 Fast"], ["deepseek-v4-1-flash-1017", "DeepSeek V4.1 Flash 1017"],
   ["gpt-6.1-sol", "GPT-6.1 Sol"], ["gpt-5", "GPT-5"], ["glm-5.3-flash-ultrafast", "GLM-5.3 Flash Ultrafast"], ["mistral-small-2603", "Mistral Small 2603"],
   ["codestral-2508", "Codestral 2508"], ["grok-4.7", "Grok 4.7"], ["agy/gemini-4-hydrogen-high", "Gemini 4 Hydrogen"], ["muse-ember", "Muse Ember"],
