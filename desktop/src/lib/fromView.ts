@@ -24,7 +24,7 @@ function target(input: Record<string, unknown>): string {
 function verb(name: string): string {
   const n = name.replace(/^mcp__\w+__/, "");
   return ({ Read: "Read", read: "Read", Bash: "Ran", bash: "Ran", Grep: "Searched", Glob: "Listed", Edit: "Edited", edit: "Edited", Write: "Wrote", write: "Wrote",
-    Task: "Asked a subagent", Agent: "Asked a subagent", fetch: "Fetched", WebFetch: "Fetched", Skill: "Used skill", WebSearch: "Searched the web" } as Record<string, string>)[n] ?? n;
+    Task: "Asked a subagent", Agent: "Asked a subagent", fetch: "Fetched", WebFetch: "Fetched", Skill: "Used skill", WebSearch: "Searched the web", search: "Searched the web" } as Record<string, string>)[n] ?? n;
 }
 
 /** Each call with what it called: the tool blocks from its start to the next call's (or the end). */

@@ -515,6 +515,9 @@ user's pick from the prototype mockups/v8.html):
 - Seen: the sweep on test data (144 steps, both themes, the hand-off tag and Send to agent), the hand-off on the real
   claude CLI in the terminal. Not seen: the desktop window on the real core.
 
+0.1.99 (with tazuna 0.1.195): a hand-off on the own loop can search the web (Exa, no key needed); its steps read
+"Searched …" in the fold.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
