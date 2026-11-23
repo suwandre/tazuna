@@ -60,6 +60,9 @@ async fn start(app: AppHandle, core: State<'_, Core>, tid: String, cwd: Option<S
     if let Some(p) = profile {
         cmd.args(["--profile", &p]);
     }
+    // the app has no console, so Windows would open a new one for the core: CREATE_NO_WINDOW
+    #[cfg(windows)]
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
     let mut child = cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()
         .map_err(|e| format!("could not start {} app-server: {e}", tazuna_bin()))?;
     eprintln!("tazuna desktop: app-server running (pid {})", child.id());
