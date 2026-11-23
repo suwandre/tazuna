@@ -622,6 +622,9 @@ installing an older version.
 why under the message box; the review shows uncommitted files in a folder with no commit yet; a draft stays visible
 when the window narrows; outside the app (the browser demo) everything says it is read-only.
 
+0.1.113 (with tazuna 0.1.213; PRs #19, #22): a message the core refuses comes back into the box, as it was typed; a
+jump from the narrow work panel closes it and shows the message it went to.
+
 ## Decided (2026-11-15)
 - macOS, Windows and Linux together, as for the CLI (Linux renders through WebKitGTK: test it from week one).
 - Tauri with a React frontend in this repo (`desktop/`); the Rust side links tazuna's core.
