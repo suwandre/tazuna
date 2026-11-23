@@ -1518,13 +1518,15 @@ fn app_server(a: &Args) -> Result<()> {
                             };
                             let open = route_on && !forced && live.idle() && live.profile != route::Profile::Chat && route::code_signals(text, &cwd).is_empty();
                             let follow = route::short_followup(text, !s.last_prompt.is_empty());
-                            if let Some(why) = untrusted_in_use(&live) {
+                            let accepted = if let Some(why) = untrusted_in_use(&live) {
                                 info(&mut s, why);
+                                false
                             } else if open && follow && chat_last.is_some() {
                                 // a short follow-up to a chat answer: a chat again, with the exchange before it
                                 s.apply(&json!({"type": "harness_user", "text": text}), at);
                                 live.note(json!({"type": "harness_user", "text": text}));
                                 chat_answer(&mut live, &mut s, text.to_string(), "answered as a chat: a follow-up to the last chat answer", chat_last.clone(), &tx);
+                                true
                             } else if open && !follow {
                                 // no sign of the code: the router's check decides, off this thread (the terminal's flow); the
                                 // message shows at once
@@ -1534,14 +1536,20 @@ fn app_server(a: &Args) -> Result<()> {
                                     let general = route_general(&c, &last, &msg, chat);
                                     let _ = tx.send(json!({"op": "routed", "general": general, "text": msg}));
                                 });
+                                true
                             } else if forced && live.profile == route::Profile::Chat {
                                 // "send to agent" and /agent in a chat-profile session: its lean agent (live.rs send_agent)
                                 match live.send_agent(text) {
-                                    Ok((t, e)) => s.apply(&e, t),
-                                    Err(e) => info(&mut s, format!("{e:#}")),
+                                    Ok((t, e)) => { s.apply(&e, t); true }
+                                    Err(e) => { info(&mut s, format!("{e:#}")); false }
                                 }
                             } else {
-                                agent_send(&mut live, &mut s, text, &cwd, &mut turn, &mut undo_note, true);
+                                agent_send(&mut live, &mut s, text, &cwd, &mut turn, &mut undo_note, true)
+                            };
+                            if !accepted && let Some(text) = cmd["draft"].as_str() {
+                                let mut o = out.lock();
+                                let _ = writeln!(o, "{}", json!({"type": "send_rejected", "text": text}));
+                                let _ = o.flush();
                             }
                         }
                         // the permission mode: auto, full, ask, edits, review or plan (plan on the own loop: reads only,
@@ -5096,7 +5104,7 @@ fn edit_points(s: &Session, live: &live::Live) -> Vec<usize> {
 /// message carries the note that tells the model its last changes are gone. ponytail: the snapshot runs on the server's
 /// one thread (git add -A on a large repo takes a moment); off it if that shows.
 /// `show`: false when the message is on screen already (it waited for the router's check).
-fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::path::Path, turn: &mut Option<(String, bool)>, undo_note: &mut Option<String>, show: bool) {
+fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::path::Path, turn: &mut Option<(String, bool)>, undo_note: &mut Option<String>, show: bool) -> bool {
     if turn.is_none() {
         *turn = turns::snapshot(cwd).map(|b| (b, false));
     }
@@ -5105,12 +5113,12 @@ fn agent_send(live: &mut live::Live, s: &mut Session, text: &str, cwd: &std::pat
         None => text.to_string(),
     };
     match live.send_typed(&text) {
-        Ok((t, e)) if show => s.apply(&e, t),
-        Ok(_) => {}
+        Ok((t, e)) => { if show { s.apply(&e, t); } true }
         Err(e) => {
             *turn = None;
             // not `show`n here: on screen since the router's check began, and counting as work since
             s.apply(&if show { note(format!("{e:#}"), true) } else { not_started(format!("{e:#}")) }, live.elapsed_ms());
+            false
         }
     }
 }

@@ -136,8 +136,8 @@ fn stop_all(core: &Core) {
 
 /// `agent`: past the router, straight to the agent ("send to agent" on a message answered as a chat).
 #[tauri::command]
-fn send(core: State<Core>, tid: String, text: String, agent: bool) -> Result<(), String> {
-    write(&core, &tid, serde_json::json!({"op": "send", "text": text, "agent": agent}))
+fn send(core: State<Core>, tid: String, text: String, agent: bool, draft: Option<String>) -> Result<(), String> {
+    write(&core, &tid, serde_json::json!({"op": "send", "text": text, "agent": agent, "draft": draft}))
 }
 
 /// The user's yes to trusting the open folder's settings (hooks, skills); the window starts the core again after it.

@@ -357,11 +357,27 @@ const log = [];
   { const none = `(() => { const T = window.__TAURI_INTERNALS__, emit = T.emit.bind(T); T.emit = (e, p) => { if (p?.msg?.type === "settings") p.msg.providers = p.msg.providers.filter((x) => !x.local).map((x) => ({ ...x, key: "" })); return emit(e, p); }; })();`;
     const [ctx, p] = await ctxOf({ extra: `${none} window.__NO_CLAUDE__ = true;` });
     await step(p, "d-send-no-provider", async () => {
-      await p.getByRole("textbox", { name: "Message" }).fill("Hello");
+      await p.getByRole("textbox", { name: "Message" }).fill("  Hello\nWorld  ");
       await p.getByTitle("Send (Enter)").click();
       await p.getByRole("alert").filter({ hasText: "starting claude (is it installed and on PATH?)" }).waitFor({ state: "visible", timeout: 4000 });
+      await p.waitForFunction(() => document.querySelector('textarea[aria-label="Message"]')?.value === "  Hello\nWorld  ", null, { timeout: 4000 });
     });
     await step(p, "d-providers-none", async () => { await p.keyboard.press("Control+,"); await p.waitForTimeout(600); await p.getByRole("button", { name: "Providers", exact: true }).click(); });
+    await ctx.close(); }
+  { const [ctx, p] = await ctxOf({ extra: "window.__DRAFT_SEND_SUCCESS__ = true;" });
+    const box = p.getByRole("textbox", { name: "Message" });
+    await step(p, "d-send-clears-draft", async () => {
+      await box.fill("First message");
+      await p.getByTitle("Send (Enter)").click();
+      await p.locator("[data-msg]").getByText("First message", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
+      if (await box.inputValue()) throw new Error("an accepted send left its draft in the box");
+    });
+    await step(p, "d-queue-clears-draft", async () => {
+      await box.fill("Second message");
+      await p.getByTitle("Send after this reply (Enter)").click();
+      await p.getByText("Second message", { exact: true }).waitFor({ state: "visible", timeout: 4000 });
+      if (await box.inputValue()) throw new Error("a queued send left its draft in the box");
+    });
     await ctx.close(); }
   // the model picker's search takes the typing as it opens (0.1.74 to 0.1.76 it did not)
   { const [ctx, p] = await ctxOf({});

@@ -415,7 +415,13 @@ const PROVIDERS = [["SubRouter", "subrouter.ai", "sk-..."], ["Mortera", "mortera
     if (cmd === "op" && msg.op === "setup") { m(window.__NO_CLAUDE__ ? { type: "setup", claude: null, claude_login: null } : { type: "setup", claude: "2.1.330 (Claude Code)", claude_login: !out() }); return null; }
     if (cmd === "send" && window.__NO_CLAUDE__ && last[tid]) {
       const v = last[tid];
+      if (args.draft != null) m({ type: "send_rejected", text: args.draft });
       m({ ...v, from: 0, blocks: [...v.blocks, { kind: "notice", text: "starting claude (is it installed and on PATH?): No such file or directory (os error 2)", error: true }] });
+      return null;
+    }
+    if (cmd === "send" && window.__DRAFT_SEND_SUCCESS__ && last[tid]) {
+      const v = last[tid];
+      m({ ...v, from: 0, activity: "Thinking", blocks: [...v.blocks, { kind: "prompt", text: args.text }] });
       return null;
     }
     if (cmd === "op" && msg.op === "resume" && views[msg.id]) { setTimeout(() => T.view(tid, views[msg.id]), 10); return null; }
