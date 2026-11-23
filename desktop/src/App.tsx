@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState, type CSSProperties } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { GitBranch, LoaderCircle, MessagesSquare, PanelLeft, PanelRight } from "lucide-react";
 import { AgentPanel } from "./components/AgentPanel";
 import { Approval } from "./components/Approval";
@@ -38,7 +38,7 @@ import { Parts } from "./components/Sep";
 
 /** What is open over the window or the box that Esc should shut before the work panel over the conversation: menus and
  * popovers (`tz-pop`; a closed one's fading copy is `tz-out`), the completion menu, dialogs. */
-const MENUS = ".tz-pop:not([data-panel]):not(.tz-out), [role=menu], [role=listbox], [role=dialog]:not(.tz-out)";
+const MENUS = ".tz-pop:not([data-panel]):not(.tz-out), [role=menu], [role=listbox], [role=dialog]:not(.tz-out), dialog[open]";
 
 const NO_USAGE: Usage = { contextPct: 0, contextUsed: "0", contextMax: "", plan5h: null, plan5hReset: "", planWeek: null, threadCost: 0, threadTurns: 0, cachedPct: 0, saved: 0, today: 0, todayTurns: 0, todaySeries: [], balance: null };
 import { THEME, applyLooks, darkNow, look } from "./lib/chrome";
@@ -514,8 +514,15 @@ export default function App() {
   const width = useWidth();
   const narrow = width < 1000;
   const [navOpen, setNavOpen] = useState(false);
+  const navDialog = useRef<HTMLDialogElement>(null);
   // and when a dialog opens over the window: the narrow sidebar over it took the first click (review of design review 12)
   useEffect(() => setNavOpen(false), [active, narrow, overlay]);
+  useLayoutEffect(() => {
+    const dialog = navDialog.current;
+    if (!narrow || !navOpen || !dialog) return;
+    dialog.showModal();
+    return () => dialog.close();
+  }, [narrow, navOpen]);
   // in a project it stays folded, a small tab on the sheet's edge that counts the files changed so far, and it never opens
   // or closes by itself: opening at a turn's end moved the reading column under the reader, and Undo moved it back (design
   // review 12; review 11 had it open by itself at the first change)
@@ -895,6 +902,18 @@ export default function App() {
   // that cannot be said (a title without the polite opening repeated the whole message, design review 12)
   const said = title.replace(/…$/, "").toLowerCase(), at = firstAsked.toLowerCase().indexOf(said);
   const more = at < 0 ? "" : firstAsked.slice(at + said.length).replace(/^[\s.?!,;:]+/, "");
+  const sidebar = <Sidebar active={inTauri ? listedId(threads.find((t) => t.tid === active)) ?? folder ?? "" : "t1"}
+    chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
+    projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} / ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
+    onNewChat={inTauri ? () => open(null) : undefined} onOpenFolder={inTauri ? pick : undefined} onOpenProject={inTauri ? (p) => p.path && open(p.path) : undefined}
+    onOpenThread={inTauri ? (t, p) => open(p?.path ?? null, t.id) : undefined} onSearch={() => setOverlay("palette")} onSettings={inTauri ? () => setOverlay("settings") : undefined}
+    open={inTauri ? threads.filter((t) => t.tid === active || t.view?.blocks.some((b) => b.kind === "prompt")).map((t) => ({ tid: t.tid, id: listedId(t), model: t.view?.model, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
+      state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
+    activeTid={active} onSwitch={show} onClose={close}
+    onRename={inTauri ? (t, title) => core.rename(t.id, title).then(refreshSessions) : undefined}
+    onHide={inTauri ? (t) => core.hide(t.id).then(refreshSessions) : undefined}
+    onDismiss={narrow ? () => setNavOpen(false) : undefined}
+    planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />;
   return (
     // paper on the desk (design review 10): the window is the desk; the conversation (and a side chat or subagent beside it)
     // is a sheet on it; the sidebar, the work panel and the status bar lie on the desk
@@ -902,20 +921,12 @@ export default function App() {
     <div data-tauri-drag-region className="grid min-h-0 flex-1 overflow-hidden"
       // the right column is always a track (0 px when shut), so it slides: a track that came and went was a jump cut
       style={{ gridTemplateColumns: [narrow ? null : "248px", "minmax(0, 1fr)", reviewing ? "0px" : agentHere ? "440px" : side ? "380px" : panelOpen && !col.over ? "300px" : "0px"].filter(Boolean).join(" "), transition: "grid-template-columns .18s cubic-bezier(.2, 0, 0, 1)" }}>
-      {narrow && navOpen && <div onMouseDown={() => setNavOpen(false)} className="tz-fade fixed inset-0 z-40 bg-scrim" />}
-      <div className={narrow ? (navOpen ? "tz-enter fixed inset-y-0 left-0 z-40 flex w-[248px] shadow-[var(--shadow-pop)]" : "hidden") : "flex min-h-0"}>
-      <Sidebar active={inTauri ? listedId(threads.find((t) => t.tid === active)) ?? folder ?? "" : "t1"}
-        chats={inTauri ? rowsOf(home ? sessions[home] : undefined) : demo.chats}
-        projects={inTauri ? projects.map((p) => ({ name: isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} / ${base(p)}` : base(p), path: p, open: p === folder, threads: rowsOf(sessions[p], isWorktree(p) ? `${base(p.replace(/[\\/][^\\/]+$/, ""))} · ${base(p)}` : base(p), p) })) : demo.projects}
-        onNewChat={inTauri ? () => open(null) : undefined} onOpenFolder={inTauri ? pick : undefined} onOpenProject={inTauri ? (p) => p.path && open(p.path) : undefined}
-        onOpenThread={inTauri ? (t, p) => open(p?.path ?? null, t.id) : undefined} onSearch={() => setOverlay("palette")} onSettings={inTauri ? () => setOverlay("settings") : undefined}
-        open={inTauri ? threads.filter((t) => t.tid === active || t.view?.blocks.some((b) => b.kind === "prompt")).map((t) => ({ tid: t.tid, id: listedId(t), model: t.view?.model, title: titleOf(t), place: t.folder ? base(t.folder) : "chat",
-          state: t.error ? "stopped" : t.view?.asking ? "asking" : busyView(t.view) ? "working" : "idle" })) : []}
-        activeTid={active} onSwitch={show} onClose={close}
-        onRename={inTauri ? (t, title) => core.rename(t.id, title).then(refreshSessions) : undefined}
-        onHide={inTauri ? (t) => core.hide(t.id).then(refreshSessions) : undefined}
-        planLeft={view?.limits ? `${Math.round(100 - view.limits[0])}% left` : inTauri ? "" : "Max · 62% left"} />
-      </div>
+      {narrow ? <dialog ref={navDialog} id="conversation-drawer" aria-label="Conversations"
+        onCancel={(e) => { e.preventDefault(); setNavOpen(false); }}
+        onClick={(e) => { if (e.target === e.currentTarget) setNavOpen(false); }}
+        className="tz-enter fixed inset-y-0 left-0 m-0 h-dvh max-h-none w-[248px] max-w-none shadow-[var(--shadow-pop)] open:flex backdrop:bg-scrim">
+        {sidebar}
+      </dialog> : <div className="flex min-h-0">{sidebar}</div>}
       {/* relative: the review is a pane over the conversation (header and box too), not a dialog over the window. tz-keep: the
           reading column keeps the left edge centring gives it in the sheet with the panel shut (`col.left`), so an open
           panel beside it narrows it on the right and nothing jumps (design review 12, B3; styles.css .tz-col); a side chat or
@@ -927,7 +938,7 @@ export default function App() {
             its title too */}
         <header data-tauri-drag-region="deep" className={`flex h-[calc(40*var(--tz-pt)+1px)] flex-none items-center justify-between gap-3 border-b border-line-soft pr-4 ${narrow && macOverlay ? "pl-[calc(92*var(--tz-pt)-8px)]" : "pl-7"}`}>
           <div className="flex min-w-0 flex-1 items-center gap-2 font-medium">
-            {narrow && <button onClick={() => setNavOpen(true)} aria-label="Conversations" title="Conversations" className={`${macOverlay ? "" : "-ml-3"} grid size-7 flex-none place-items-center rounded-md text-muted hover:text-ink`}><PanelLeft size={16} strokeWidth={1.5} /></button>}
+            {narrow && <button onClick={(e) => { e.currentTarget.focus(); setNavOpen(true); }} aria-label="Conversations" aria-haspopup="dialog" aria-controls="conversation-drawer" title="Conversations" className={`${macOverlay ? "" : "-ml-3"} grid size-7 flex-none place-items-center rounded-md text-muted hover:text-ink`}><PanelLeft size={16} strokeWidth={1.5} /></button>}
             <span className="min-w-0 max-w-[30%] truncate text-muted">{place}</span><span className="text-faint" aria-hidden="true">/</span><h1 key={`title:${active}`} title={firstAsked || title} className={`tz-enter truncate text-[inherit] font-[inherit] ${view && more ? "max-w-[60%] shrink-[0.3]" : ""} min-w-0`}>{title}</h1>
             {view && more && <span className="min-w-0 truncate text-[12px] font-normal text-faint" aria-hidden="true">— {more}</span>}</div>
           <div className="flex flex-none items-center gap-1.5">

@@ -78,7 +78,7 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose,
   if (mode === "rename") {
     return (
       <input autoFocus value={title} onChange={(e) => setTitle(e.target.value)} onBlur={() => setMode("view")}
-        onKeyDown={(e) => { if (e.key === "Enter" && title.trim()) { onRename?.(title.trim()); setMode("view"); } if (e.key === "Escape") setMode("view"); }}
+        onKeyDown={(e) => { if (e.key === "Enter" && title.trim()) { onRename?.(title.trim()); setMode("view"); } if (e.key === "Escape") { e.preventDefault(); back.current = true; setMode("view"); } }}
         className={`mx-[2px] rounded-md border border-line-strong bg-card px-[7px] ${sub ? "ml-6 py-[5px]" : "py-[11px]"} text-ink outline-none`} />
     );
   }
@@ -87,7 +87,7 @@ function ThreadRow({ t, active, sub, onClick, onRename, onHide, opened, onClose,
     return (
       // the row's own height and its name stay: it said only "Remove?" and the list jumped by 18 px (design review 11).
       // Esc, Cancel or the focus going elsewhere leaves the question.
-      <div title="Remove from the list (its recording stays)" onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); back.current = true; setMode("view"); } }}
+      <div title="Remove from the list (its recording stays)" onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); back.current = true; setMode("view"); } }}
         onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget)) setMode("view"); }}
         className={`rounded-md bg-field px-[9px] ${twoLinesAsk ? "py-[5px]" : "flex items-center gap-2 py-1.5"} ${sub ? "pl-7" : ""}`}>
         <span className="block min-w-0 flex-1 truncate text-ink">{t.title}</span>
@@ -163,6 +163,7 @@ type Props = {
   activeTid?: string;
   onSwitch?: (tid: string) => void;
   onClose?: (tid: string) => void;
+  onDismiss?: () => void;
 };
 
 const STATE: Record<string, [string, string]> = {
@@ -172,7 +173,7 @@ const STATE: Record<string, [string, string]> = {
   stopped: ["bg-bad", "stopped"],
 };
 
-export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch, onSettings, onRename, onHide, open = [], activeTid, onSwitch, onClose }: Props) {
+export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFolder, onOpenProject, onOpenThread, onSearch, onSettings, onRename, onHide, open = [], activeTid, onSwitch, onClose, onDismiss }: Props) {
   // the chevron folds and unfolds a project's conversations by itself (until 0.1.57 "open" was only "the active project":
   // a click opened it and nothing folded it again); the name opens the project
   const [fold, setFold] = useState<Record<string, boolean>>({});
@@ -213,6 +214,7 @@ export function Sidebar({ chats, projects, active, planLeft, onNewChat, onOpenFo
       <div data-tauri-drag-region="deep" className={`-mx-2.5 mb-1.5 flex h-[calc(48*var(--tz-pt))] flex-none items-center gap-2 pt-[calc(8*var(--tz-pt))] font-semibold tracking-[-0.01em] ${macOverlay ? "pl-[calc(92*var(--tz-pt))]" : "pl-[18px]"}`}>
         <Mark size={20} />
         <span>tazuna</span>
+        {onDismiss && <button type="button" onClick={onDismiss} aria-label="Close conversations" title="Close conversations" className="ml-auto mr-2.5 grid size-7 place-items-center rounded-md text-muted hover:bg-hover hover:text-ink"><X {...icon} /></button>}
       </div>
       <button onClick={onSearch} className="tz-search mb-1 flex items-center gap-2 rounded-md border border-line px-[9px] py-[7px] text-left text-muted hover:bg-hover">
         <Search {...icon} /><span>Search</span><Kbd always>⌘K</Kbd>
