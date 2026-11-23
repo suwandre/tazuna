@@ -5,7 +5,7 @@ import { keysOf } from "../lib/types";
 import { dialogShell } from "./Controls";
 
 /** One thing the palette can do: shown under its group, found by its label and `keywords`. */
-export type Action = { id: string; group: string; label: string; hint?: string; keys?: string; keywords?: string; run: () => void };
+export type Action = { id: string; group: string; label: string; hint?: string; keys?: string; keywords?: string; unavailable?: string; run: () => void };
 
 // Cmd-K: every action of the window in one searchable list (new chat, folders, conversations, model, effort, mode, undo,
 // theme). Arrows move, Enter runs, Esc closes. With nothing typed it shows the first few of each group.
@@ -32,7 +32,7 @@ export function Palette({ actions, onClose, query = "" }: { actions: Action[]; o
   }, [actions, q]);
   useEffect(() => setSel(0), [q]);
   useEffect(() => { list.current?.querySelector(`[data-i="${sel}"]`)?.scrollIntoView({ block: "nearest" }); }, [sel]);
-  const run = (a?: Action) => { if (!a) return; onClose(); a.run(); };
+  const run = (a?: Action) => { if (!a || a.unavailable) return; onClose(); a.run(); };
   return (
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 flex justify-center bg-scrim pt-[12vh]">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Commands" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()}
@@ -52,9 +52,9 @@ export function Palette({ actions, onClose, query = "" }: { actions: Action[]; o
           {rows.map((a, i) => (
             <div key={a.id}>
               {(i === 0 || rows[i - 1].group !== a.group) && <div className="px-3.5 pb-0.5 pt-2 text-[11.5px] font-medium text-faint">{a.group}</div>}
-              <button data-i={i} onMouseMove={() => setSel(i)} onClick={() => run(a)}
-                className={`flex w-full items-center gap-3 px-3.5 py-[6px] text-left ${i === sel ? "bg-selected text-ink" : "text-ink-2"}`}>
-                <span className="min-w-0 flex-1 truncate">{marked(a.label, q)}{a.hint && <span className="ml-2 text-[12px] text-faint">{a.hint}</span>}</span>
+              <button data-i={i} disabled={!!a.unavailable} title={a.unavailable} onMouseMove={() => setSel(i)} onClick={() => run(a)}
+                className={`flex w-full items-center gap-3 px-3.5 py-[6px] text-left disabled:cursor-default disabled:text-muted ${i === sel ? "bg-selected text-ink" : "text-ink-2"}`}>
+                <span className="min-w-0 flex-1 truncate">{marked(a.label, q)}{(a.unavailable || a.hint) && <span className="ml-2 text-[12px] text-faint">{a.unavailable || a.hint}</span>}</span>
                 {a.keys && <kbd className="rounded-[5px] border border-line px-[5px] py-px font-mono text-[11px] text-faint">{keysOf(a.keys)}</kbd>}
               </button>
             </div>
@@ -75,7 +75,7 @@ const SHORTCUTS: [string, string][] = [
 ];
 
 /** Cmd-/: the keyboard shortcuts. */
-export function Shortcuts({ onClose }: { onClose: () => void }) {
+export function Shortcuts({ onClose, readOnly = false }: { onClose: () => void; readOnly?: boolean }) {
   const dialog = useDialog();
   useEffect(() => {
     const esc = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -86,7 +86,8 @@ export function Shortcuts({ onClose }: { onClose: () => void }) {
     <div onMouseDown={onClose} className="tz-fade fixed inset-0 z-30 grid place-items-center bg-scrim">
       <div ref={dialog} role="dialog" aria-modal="true" aria-label="Keyboard shortcuts" tabIndex={-1} onMouseDown={(e) => e.stopPropagation()} className={`${dialogShell(420)} overflow-y-auto! px-4 py-3`}>
         <div className="mb-2 text-[11.5px] font-medium text-faint">Keyboard shortcuts</div>
-        {SHORTCUTS.map(([k, what]) => (
+        {readOnly && <p className="mb-2 text-[12px] text-muted">Read-only demo · shortcuts for this preview</p>}
+        {(readOnly ? SHORTCUTS.filter(([k]) => ["⌘K", "⌘/", "⇧Enter", "⌘\\", "⌘⇧L"].includes(k)) : SHORTCUTS).map(([k, what]) => (
           <div key={k} className="flex items-center py-[5px] text-ink-2">
             <span className="flex-1">{what}</span>
             <kbd className="rounded-[5px] border border-line px-[6px] py-px font-mono text-[11.5px] text-muted">{keysOf(k)}</kbd>
