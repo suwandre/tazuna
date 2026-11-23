@@ -1962,7 +1962,7 @@ fn news_lines(n: &crate::versions::News, th: &Theme) -> Vec<Prefixed> {
 
 fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts, open: bool, width: usize) -> Vec<Prefixed> {
     match b {
-        Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o, open, width),
+        Block::Prompt(p) => prompt_lines(p, first_prompt(s, b), th, o, open, width, v.live),
         Block::Verify(x) => verify_lines(x, v, th),
         // a long notice (a provider's error) shows its start until clicked, then all of it
         // a provider's error reads as its message ("provider error: [404] … not found"), the raw reply on a click
@@ -1975,7 +1975,7 @@ fn block_lines(b: &Block, i: usize, s: &Session, v: &View, th: &Theme, o: &Opts,
                     Span::styled(if *error { "! " } else { "· " }, st(if *error { th.err } else { th.faint })),
                     // cut only where that saves room: "(+6 chars · click to show)" took 26 to hide 6 (design review 11)
                     Span::styled(if open || shown.chars().count() <= NOTICE_CHARS + 30 { shown } else {
-                        format!("{}… (+{} chars · click to show)", shown.chars().take(NOTICE_CHARS).collect::<String>(), shown.chars().count() - NOTICE_CHARS)
+                        format!("{}… (+{} chars · {})", shown.chars().take(NOTICE_CHARS).collect::<String>(), shown.chars().count() - NOTICE_CHARS, if v.live { "click to show" } else { "e to expand" })
                     }, st(if *error { th.err } else { th.dim })),
                 ]),
                 vec![Span::raw("  ")],
@@ -2126,10 +2126,11 @@ fn first_prompt(s: &Session, b: &Block) -> bool {
 }
 
 /// A long prompt shows its first PROMPT_LINES lines until it is opened (a click on it, or ctrl+o for every block).
-fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, open: bool, width: usize) -> Vec<Prefixed> {
+fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, open: bool, width: usize, live: bool) -> Vec<Prefixed> {
     let md = markdown(p, th, width.saturating_sub(4));
     let keep = if open { md.len() } else { PROMPT_LINES };
     let more = md.len().saturating_sub(keep);
+    let fold_hint = if live { "click to show" } else { "e to expand" };
     let mut out: Vec<Prefixed> = Vec::new();
     match o.prompt {
         PromptStyle::Bar => {
@@ -2144,7 +2145,7 @@ fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, open: bool, width: u
                 out.push((l, cont));
             }
             if more > 0 {
-                out.push((Line::from(vec![bar(), Span::styled(format!("… {more} more lines · click to show"), st(th.faint))]), vec![]));
+                out.push((Line::from(vec![bar(), Span::styled(format!("… {more} more lines · {fold_hint}"), st(th.faint))]), vec![]));
             }
         }
         PromptStyle::Quote => {
@@ -2154,7 +2155,7 @@ fn prompt_lines(p: &str, first: bool, th: &Theme, o: &Opts, open: bool, width: u
                 out.push((Line::from(spans), cont));
             }
             if more > 0 {
-                out.push((Line::from(Span::styled(format!("… {more} more lines · click to show"), st(th.faint))), vec![]));
+                out.push((Line::from(Span::styled(format!("… {more} more lines · {fold_hint}"), st(th.faint))), vec![]));
             }
         }
     }
@@ -4091,11 +4092,15 @@ mod tests {
         let th = Design::Cockpit.theme();
         let o = Opts { prompt: PromptStyle::Bar, group_tools: true, durations: false };
         let p = (1..=20).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n\n");
-        let text = |open| prompt_lines(&p, true, &th, &o, open, 80).iter().map(|(l, _)| l.to_string()).collect::<Vec<_>>().join("\n");
+        let text = |open| prompt_lines(&p, true, &th, &o, open, 80, true).iter().map(|(l, _)| l.to_string()).collect::<Vec<_>>().join("\n");
         let closed = text(false);
         assert!(closed.contains("more lines · click to show") && !closed.contains("line 20"), "{closed}");
         let opened = text(true);
         assert!(opened.contains("line 20") && !opened.contains("more lines"), "{opened}");
+        for prompt in [PromptStyle::Bar, PromptStyle::Quote] {
+            let replay = prompt_lines(&p, true, &th, &Opts { prompt, ..o }, false, 80, false).iter().map(|(l, _)| l.to_string()).collect::<String>();
+            assert!(replay.contains("e to expand") && !replay.contains("click to show"), "{replay}");
+        }
     }
 
     #[test]
