@@ -645,9 +645,13 @@ export default function App() {
       e.stopPropagation(); toggleNow.current();
     };
     const away = (e: MouseEvent) => { if (!(e.target as Element).closest?.("[data-panel]")) toggleNow.current(); };
+    // A timeline jump reveals the conversation, not a target left under this floating panel. The docked rail stays put.
+    const jump = (e: Event) => { const i = Number((e as CustomEvent).detail); if (Number.isInteger(i) && i >= 0) toggleNow.current(); };
     window.addEventListener("keydown", key, true); window.addEventListener("mousedown", away, true);
+    window.addEventListener("tazuna-jump", jump);
     return () => {
       window.removeEventListener("keydown", key, true); window.removeEventListener("mousedown", away, true);
+      window.removeEventListener("tazuna-jump", jump);
       const now = document.activeElement;
       if (before?.isConnected && (!now || now === document.body || pop?.contains(now))) before.focus({ preventScroll: true });
     };
